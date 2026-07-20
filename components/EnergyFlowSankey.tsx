@@ -27,10 +27,18 @@ export const DEFAULT_SANKEY_OPTIONS: SankeyOptions = {
   batteryMiddle: false,
 };
 
-/** One tooltip value: a primary spelling, optionally with a "/ secondary" (e.g. "12.3 kWh / 2.1 kW"). */
+/** One value within a tooltip metric: a number spelling with its unit rendered BENEATH it (mirrors a
+ *  Sankey node's "58.4" over "kWh"). `unit` is omitted where it's already part of the value ("$2.25",
+ *  "80%") or absent. */
+export interface SankeyMetricValue {
+  value: string;
+  unit?: string;
+}
+
+/** One tooltip metric: an absolute value plus an optional secondary rate, shown as two columns. */
 export interface SankeyMetric {
-  primary: string;
-  secondary?: string;
+  primary: SankeyMetricValue;
+  secondary?: SankeyMetricValue;
 }
 
 /**
@@ -105,6 +113,13 @@ interface HoveredNode {
   geomSvg: { x0: number; x1: number; y0: number; y1: number };
   /** Which discovered column the node sits in — drives which side(s) the panel(s) appear on. */
   columnPos: "left" | "right" | "interior";
+  /** The node's vertical position within its column — "top"/"bottom" anchor the panel to that edge of
+   *  the node; "middle" (and lone nodes) centre it. */
+  vertPos: "top" | "bottom" | "middle";
+  /** The node's fill colour — the tooltip renders as a coloured "card" of the node (see NodeTooltip).
+   *  For the battery-middle dual `{left,right}` case it's the single battery node's colour, shared by
+   *  both panels. */
+  color: string;
 }
 
 interface SankeyNodeData {
@@ -644,6 +659,18 @@ export default function EnergyFlowSankey({
             : Math.round(node.x0) === maxColumnX
               ? "right"
               : "interior";
+        // Topmost/bottommost within the node's column (reflow fills each column edge-to-edge, so the
+        // top node's y0 is the column min and the bottom node's y1 the column max). A lone node stays
+        // "middle" — there's no other node to be above/below, so it just centres.
+        const colNodes: any[] = columnsByX.get(Math.round(node.x0)) ?? [];
+        const vertPos: "top" | "bottom" | "middle" =
+          colNodes.length < 2
+            ? "middle"
+            : node.y0 === Math.min(...colNodes.map((n) => n.y0))
+              ? "top"
+              : node.y1 === Math.max(...colNodes.map((n) => n.y1))
+                ? "bottom"
+                : "middle";
         const resolve = (): HoveredNode | null => {
           const content = nodeTooltipRef.current?.({
             id: node.id,
@@ -657,6 +684,8 @@ export default function EnergyFlowSankey({
             content,
             geomSvg: { x0: node.x0, x1: node.x1, y0: node.y0, y1: node.y1 },
             columnPos,
+            vertPos,
+            color: node.color,
           };
         };
         if (isMobile) {
@@ -847,7 +876,7 @@ export default function EnergyFlowSankey({
       return;
     }
 
-    const PANEL_WIDTH = 220;
+    const PANEL_WIDTH = 184; // keep in sync with NodeTooltip's `width` default
     const GAP = 12;
     const PAD = 8;
     // Captured into a local `const` so `isDualTooltip`'s narrowing survives into the nested `compute`
@@ -870,6 +899,8 @@ export default function EnergyFlowSankey({
       const { x0, x1, y0, y1 } = hovered.geomSvg;
       const nodeLeftVp = r.left + x0 * sx;
       const nodeRightVp = r.left + x1 * sx;
+      const nodeTopVp = r.top + y0 * sy;
+      const nodeBottomVp = r.top + y1 * sy;
       const nodeCenterYVp = r.top + ((y0 + y1) / 2) * sy;
 
       const H = ref.current?.offsetHeight || estimatedHeight;
@@ -892,10 +923,16 @@ export default function EnergyFlowSankey({
         };
       }
 
-      const top = Math.max(
-        bandTopVp,
-        Math.min(nodeCenterYVp - H / 2, bandBottomVp - H),
-      );
+      // Vertical anchoring: the topmost node in a column top-aligns the panel (its top edge = the
+      // node's top edge), the bottommost bottom-aligns it, everything else centres on the node. This
+      // stops a tall edge node's centred panel from drifting to the band middle, away from the node.
+      const desiredTop =
+        hovered.vertPos === "top"
+          ? nodeTopVp
+          : hovered.vertPos === "bottom"
+            ? nodeBottomVp - H
+            : nodeCenterYVp - H / 2;
+      const top = Math.max(bandTopVp, Math.min(desiredTop, bandBottomVp - H));
       const beakTop = Math.max(
         12,
         Math.min(nodeCenterYVp - top, Math.max(H - 12, 12)),
@@ -903,8 +940,8 @@ export default function EnergyFlowSankey({
       return { side, left, top, beakTop, variant: "side", visible: true };
     };
 
-    const ESTIMATE_FULL = 190;
-    const ESTIMATE_LIMITED = 90;
+    const ESTIMATE_FULL = 300;
+    const ESTIMATE_LIMITED = 110;
     const estimateFor = (c: SankeyNodeTooltip) =>
       c.variant === "full" ? ESTIMATE_FULL : ESTIMATE_LIMITED;
 
@@ -980,6 +1017,7 @@ export default function EnergyFlowSankey({
     data: SankeyNodeTooltip;
     placement: PanelPlacement | null;
     ref: React.RefObject<HTMLDivElement | null>;
+    color: string;
   }[] = hovered
     ? isDualTooltip(hovered.content)
       ? [
@@ -988,12 +1026,14 @@ export default function EnergyFlowSankey({
             data: hovered.content.left,
             placement: placementL,
             ref: panelRefL,
+            color: hovered.color,
           },
           {
             key: "right" as const,
             data: hovered.content.right,
             placement: placementR,
             ref: panelRefR,
+            color: hovered.color,
           },
         ]
       : hovered.columnPos === "right"
@@ -1003,6 +1043,7 @@ export default function EnergyFlowSankey({
               data: hovered.content,
               placement: placementR,
               ref: panelRefR,
+              color: hovered.color,
             },
           ]
         : [
@@ -1011,6 +1052,7 @@ export default function EnergyFlowSankey({
               data: hovered.content,
               placement: placementL,
               ref: panelRefL,
+              color: hovered.color,
             },
           ]
     : [];
@@ -1033,6 +1075,7 @@ export default function EnergyFlowSankey({
               <NodeTooltip
                 key={p.key}
                 data={p.data}
+                nodeColor={p.color}
                 variant={p.placement.variant}
                 side={p.placement.side}
                 left={p.placement.left}

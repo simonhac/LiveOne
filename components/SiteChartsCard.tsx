@@ -783,11 +783,11 @@ export default function SiteChartsCard({
                       : 24;
 
               const buildNodeTooltip: SankeyNodeTooltipResolver = (node) => {
-                const avgPower = (energyKwh: number): string => {
+                const avgPower = (energyKwh: number) => {
                   const avgW =
                     windowHours > 0 ? (energyKwh * 1000) / windowHours : 0;
                   const { value, unit: u } = formatValue(avgW, "W");
-                  return `${value} ${u}`;
+                  return { value, unit: u };
                 };
 
                 if (unit === "kW") {
@@ -795,7 +795,9 @@ export default function SiteChartsCard({
                   return {
                     name: node.name,
                     variant: "energy",
-                    energy: { primary: `${node.total.toFixed(1)} kW` },
+                    energy: {
+                      primary: { value: node.total.toFixed(1), unit: "kW" },
+                    },
                   };
                 }
                 if (!daySlice) {
@@ -804,7 +806,7 @@ export default function SiteChartsCard({
                     name: node.name,
                     variant: "energy",
                     energy: {
-                      primary: `${formatKwh(node.total)} kWh`,
+                      primary: { value: formatKwh(node.total), unit: "kWh" },
                       secondary: avgPower(node.total),
                     },
                   };
@@ -822,19 +824,32 @@ export default function SiteChartsCard({
                   name: node.name,
                   variant: "full",
                   energy: {
-                    primary: `${formatKwh(summary.energyKwh)} kWh`,
+                    primary: {
+                      value: formatKwh(summary.energyKwh),
+                      unit: "kWh",
+                    },
                     secondary: avgPower(summary.energyKwh),
                   },
                   emissions: {
-                    primary: `${formatKgCo2(summary.kgCo2)} kg`,
-                    secondary: `${formatGramsPerKwh(summary.avgGramsPerKwh)} g/kWh`,
+                    primary: { value: formatKgCo2(summary.kgCo2), unit: "kg" },
+                    secondary: {
+                      value: formatGramsPerKwh(summary.avgGramsPerKwh),
+                      unit: "g/kWh",
+                    },
                   },
                   cost: {
-                    primary: formatDollars(summary.costC),
-                    secondary: `${formatCentsPerKwh(summary.avgCentsPerKwh)} c/kWh`,
+                    // "$" is baked into the value — no unit beneath.
+                    primary: { value: formatDollars(summary.costC) },
+                    secondary: {
+                      value: formatCentsPerKwh(summary.avgCentsPerKwh),
+                      unit: "c/kWh",
+                    },
                   },
+                  // "%" is baked into the value — no unit beneath.
                   renewable: {
-                    primary: formatRenewablePct(summary.pctRenewable),
+                    primary: {
+                      value: formatRenewablePct(summary.pctRenewable),
+                    },
                   },
                   estimatedPct: summary.pctEstimated,
                 });
@@ -851,7 +866,7 @@ export default function SiteChartsCard({
                   const empty: SankeyNodeTooltip = {
                     name: node.name,
                     variant: "energy",
-                    energy: { primary: "—" },
+                    energy: { primary: { value: "—" } },
                   };
                   return {
                     left: charge ? toFull(charge) : empty,
