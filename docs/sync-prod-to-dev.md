@@ -1,6 +1,6 @@
 # Keeping `liveone-dev` in sync (DB + KV)
 
-> **Status:** current — last verified 2026-06-16.
+> **Status:** current — last verified 2026-07-20.
 
 `liveone-dev` is the single datastore shared by **local dev and Vercel preview** (see
 `CLAUDE.md` → "`liveone-dev` — the shared dev/preview database"). It is never prod. Because
@@ -55,6 +55,14 @@ No local credentials needed — the runner holds the GitHub Actions secrets.
   `INSERT … ON CONFLICT`. Cost ≈ _O(rows since last run)_, not table size.
 - **Small config tables** (`systems`, `point_info`, `areas`, `area_bindings`, …): full refresh
   - upsert (no deletes).
+
+**Transport:** it holds exactly TWO persistent `pg` connections for the whole run (one read-only
+prod, one dev-write) and streams each table `COPY (SELECT …) TO STDOUT` (prod) →
+`COPY sync_staging.<t> FROM STDIN` (dev) over them — no `psql`, no temp files. The DB is in Sydney
+and CI runs cross-Pacific, so a fresh connection costs ~1s of TCP+TLS+auth; the old
+psql-per-operation design paid that ~150× (≈190s of pure handshakes, independent of row count).
+Two connections pay it twice. Any query rejection (bad statement, COPY constraint violation, broken
+stream) fails the whole run — nothing is swallowed.
 
 **Safety:** it refuses to run if the write target resolves to the prod host/branch (it compares
 the username and the `PLANETSCALE_PROD_BRANCH_ID` token), so a mis-pasted URL can't write prod.

@@ -29,19 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install pg client 17
-        run: |
-          set -euo pipefail
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
-            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17
-          # psql must match the 17.10 server; pg_wrapper otherwise picks the runner's PG16.
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-
+      # No psql needed: the DB sync now streams over node-postgres (pure JS) COPY connections, and the
+      # other legs are all tsx/pg. (Was: install postgresql-client-17 to match the 17.10 server.)
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -59,18 +48,6 @@ jobs:
           LIVEONE_DEV_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
           PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
         run: npm run db:sync-dev-db
-
-      # Dev/preview use a SEPARATE Clerk instance, so your dev login has a different clerk_user_id
-      # than prod. The sync copies prod-owned rows, so re-own them to your dev id — DEV_OWNER_REMAP
-      # secret = "prodId:devId" — so your dev login sees the same areas/dashboards as prod. No-op if
-      # the secret is unset; non-fatal (continue-on-error) so it never blocks the data sync.
-      - name: Re-own dev data to the dev login
-        continue-on-error: true
-        env:
-          LIVEONE_DEV_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
-          DEV_OWNER_REMAP: ${{ secrets.DEV_OWNER_REMAP }}
-          PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
-        run: npm run db:reown-dev
 
       # Crons are off in dev/preview, so the run-period recompute never runs organically and
       # device_run_periods isn't copied by the sync (composite PK can't mirror; recomputed rows
@@ -93,6 +70,19 @@ jobs:
           KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
           KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
         run: npm run db:rebuild-dev-kv
+
+      # Re-own LAST: the DB / KV / run-period refresh is the important work, so a reown bug shouldn't
+      # block it — but it still FAILS the job (loud red + Slack alert), never continue-on-error.
+      # Dev/preview use a SEPARATE Clerk instance, so your dev login has a different clerk_user_id than
+      # prod; the sync copies prod-owned rows, so re-own them to your dev id (DEV_OWNER_REMAP =
+      # "prodId:devId") so your dev login sees the same areas/dashboards as prod. No-op (exit 0) if the
+      # secret is unset. Runs before the reporting step, so its time still counts toward the target.
+      - name: Re-own dev data to the dev login
+        env:
+          LIVEONE_DEV_DATABASE_URL: ${{ secrets.LIVEONE_DEV_DATABASE_URL }}
+          DEV_OWNER_REMAP: ${{ secrets.DEV_OWNER_REMAP }}
+          PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
+        run: npm run db:reown-dev
 
       # On a clean run: (1) warn to Slack if the sync blew the 5-min target, outputting the elapsed time;
       # (2) if the previous run was unhealthy (failed or timed out), post a one-shot "recovered" ping.

@@ -1,0 +1,1 @@
+CREATE INDEX "pr5m_updated_at_idx" ON "point_readings_agg_5m" USING btree ("updated_at");

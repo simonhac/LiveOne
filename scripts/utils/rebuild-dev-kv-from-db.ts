@@ -106,6 +106,27 @@ const LATEST_SQL = `
   ORDER BY c.system_id, c.point_id, c.src_rank, c.mt DESC
 `;
 
+// Bounded-concurrency runner. The KV writes below are independent per point, but Upstash is a
+// REST/HTTP store so each is a round trip — sequential awaits made the whole leg ~77s. Rejects (fails
+// hard) as soon as any task rejects; in-flight tasks settle but the process exits non-zero via
+// main().catch, so a partial rebuild is never reported as success.
+const KV_CONCURRENCY = 16;
+async function runPool<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      await fn(items[next++]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+}
+
 async function main(): Promise<void> {
   // Belt-and-braces: getEnvironment() also decides the KV key prefix, so this both
   // documents intent and prevents writing the prod: namespace.
@@ -121,6 +142,18 @@ async function main(): Promise<void> {
   if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
     console.error(
       "✗ KV_REST_API_URL / KV_REST_API_TOKEN not set — nothing would be written. Aborting.",
+    );
+    process.exit(1);
+  }
+
+  // Belt-and-braces, with NO escape hatch (unlike the DB layer's ALLOW_PROD_DB_IN_DEV): dev and prod
+  // share ONE KV store separated only by the env key prefix, so refuse outright if the DB URL carries
+  // the prod branch id. A prod URL here would pump prod data into dev: — never what we want.
+  const prodToken = process.env.PLANETSCALE_PROD_BRANCH_ID?.toLowerCase();
+  const dbUrl = (process.env.PLANETSCALE_DATABASE_URL ?? "").toLowerCase();
+  if (prodToken && dbUrl.includes(prodToken)) {
+    console.error(
+      `✗ Refusing to run: PLANETSCALE_DATABASE_URL carries the production identifier (${prodToken}).`,
     );
     process.exit(1);
   }
@@ -145,8 +178,16 @@ async function main(): Promise<void> {
     bySystem.set(row.system_id, list);
   }
 
-  let systems = 0;
-  let points = 0;
+  // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
+  // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
+  // point values land (updateSubscriberSummaries reads them back from KV).
+  const pointTasks: Array<() => Promise<void>> = [];
+  const systemSummaries: Array<{
+    systemId: number;
+    values: Array<{ logicalPath: string; value: number }>;
+    maxMeasurementTimeMs: number;
+  }> = [];
+
   for (const [systemId, systemRows] of bySystem) {
     const summaryValues: Array<{ logicalPath: string; value: number }> = [];
     let maxMeasurementTimeMs = 0;
@@ -160,20 +201,21 @@ async function main(): Promise<void> {
       const measurementTimeMs = Number(row.measurement_time_ms);
       const receivedTimeMs = Number(row.received_time_ms);
 
-      await updateLatestPointValue(
-        systemId,
-        row.point_id,
-        logicalPath,
-        cacheValue,
-        measurementTimeMs,
-        receivedTimeMs,
-        row.metric_unit,
-        row.display_name,
-        undefined, // sourceSystemName (deprecated / unused)
-        row.session_id ?? undefined,
-        row.session_label ?? undefined,
+      pointTasks.push(() =>
+        updateLatestPointValue(
+          systemId,
+          row.point_id,
+          logicalPath,
+          cacheValue,
+          measurementTimeMs,
+          receivedTimeMs,
+          row.metric_unit,
+          row.display_name,
+          undefined, // sourceSystemName (deprecated / unused)
+          row.session_id ?? undefined,
+          row.session_label ?? undefined,
+        ),
       );
-      points++;
 
       if (typeof cacheValue === "number") {
         summaryValues.push({ logicalPath, value: cacheValue });
@@ -183,16 +225,27 @@ async function main(): Promise<void> {
       }
     }
 
-    // Source summary, then propagate to composite subscribers (mirrors point-manager.ts).
     if (summaryValues.length > 0) {
-      await updateSystemSummary(systemId, summaryValues, maxMeasurementTimeMs);
-      await updateSubscriberSummaries(systemId);
+      systemSummaries.push({
+        systemId,
+        values: summaryValues,
+        maxMeasurementTimeMs,
+      });
     }
-    systems++;
   }
 
+  // Phase 1: write every point's latest value (bounded concurrency). Fail hard on any rejection.
+  await runPool(pointTasks, KV_CONCURRENCY, (task) => task());
+
+  // Phase 2: source summary + composite propagation, AFTER all points are in KV (mirrors
+  // point-manager.ts: updateSubscriberSummaries reads the just-written subscriber latest values).
+  await runPool(systemSummaries, KV_CONCURRENCY, async (s) => {
+    await updateSystemSummary(s.systemId, s.values, s.maxMeasurementTimeMs);
+    await updateSubscriberSummaries(s.systemId);
+  });
+
   console.log(
-    `✓ Rebuilt dev: KV from DB — ${points} point value(s) across ${systems} source system(s).`,
+    `✓ Rebuilt dev: KV from DB — ${pointTasks.length} point value(s) across ${bySystem.size} source system(s).`,
   );
   process.exit(0);
 }

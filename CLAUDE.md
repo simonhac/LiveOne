@@ -74,11 +74,17 @@ a pluggable signer so that's a config/infra add, not a rewrite.
 
 #### Setting up Vercel KV
 
-The application uses Vercel KV to cache the latest point values for fast retrieval. Follow these steps to set up:
+The application uses Vercel KV to cache the latest point values for fast retrieval.
 
-1. **Create KV databases in Vercel dashboard**:
-   - Development: `liveone-kv-dev`
-   - Production: `liveone-kv-prod`
+**One store, prefix-namespaced (NOT one-store-per-environment).** There is a SINGLE physical KV
+(Redis) store, shared by dev and prod. Isolation is by an environment key prefix: every key is
+namespaced by `kvKey()` (`lib/kv.ts`) → `prod:` / `dev:` / `test:`, driven by `getEnvironment()`
+(`lib/env.ts`: `prod` when `VERCEL_ENV=production`, `test` when `NODE_ENV=test`, else `dev`). So the
+same `KV_REST_API_URL` / `KV_REST_API_TOKEN` pair is used everywhere and there is nothing to
+"replicate between instances" — see `docs/sync-prod-to-dev.md` and `docs/architecture/kv-store.md`.
+Follow these steps to set up:
+
+1. **Create one KV database in the Vercel dashboard** (Storage → KV) — a single shared store.
 
 2. **Get credentials from Vercel dashboard**:
    - Go to your project → Storage → Your KV database

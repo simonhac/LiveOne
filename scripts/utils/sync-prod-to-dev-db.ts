@@ -23,14 +23,24 @@
  * manifest only carries what can't be derived (watermark column, overlap,
  * conflict override for point_readings' unique index, FK-safety filter).
  *
+ * TRANSPORT — why this is fast: it holds exactly TWO persistent `pg` connections
+ * for the whole run (one read-only prod, one dev-write) and streams each table
+ * `COPY (SELECT …) TO STDOUT` (prod) → `COPY sync_staging.<t> FROM STDIN` (dev)
+ * over them. No `psql`, no temp files. The DB is in Sydney and CI runs
+ * cross-Pacific, so a fresh connection costs ~1s of TCP+TLS+auth; the previous
+ * psql-per-operation design paid that ~8×/table × 19 tables ≈ 150 times (~190s of
+ * pure handshakes, independent of row count). Two connections pays it twice.
+ *
+ * FAIL HARD: any query rejection (a bad statement, a COPY constraint violation, a
+ * broken stream) propagates to the top-level handler → `process.exit(1)`. Nothing
+ * is swallowed. The per-table transaction paths ROLLBACK before rethrowing.
+ *
  * Assumes liveone-dev shares prod's schema (true right after an R2 restore).
- * Requires `psql` on PATH.
  */
 
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { Client } from "pg";
+import { pipeline } from "node:stream/promises";
+import { to as copyTo, from as copyFrom } from "pg-copy-streams";
 
 // ── Manifest ────────────────────────────────────────────────────────────────
 
@@ -269,26 +279,39 @@ const INCREMENTAL: IncrementalTable[] = [
 
 const MANIFEST: Table[] = [...FULL, ...INCREMENTAL];
 
-// ── psql helpers ──────────────────────────────────────────────────────────────
+// ── connection + catalog helpers ────────────────────────────────────────────
 
-function psql(url: string, args: string[]): string {
-  const res = spawnSync("psql", [url, "-v", "ON_ERROR_STOP=1", ...args], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 64,
-  });
-  if (res.status !== 0) {
-    throw new Error(
-      `psql failed (${res.status}): ${args.join(" ")}\n${res.stderr ?? ""}`,
-    );
-  }
-  return (res.stdout ?? "").trim();
+/** disable-ish ssl signal (DB_SSL or a URL `sslmode`): "disable" / "false" / "0" / "disabled". */
+function isSslDisabled(value: string | null | undefined): boolean {
+  return ["0", "false", "disable", "disabled"].includes(
+    (value ?? "").toLowerCase(),
+  );
 }
 
-/** Scalar query (tuples-only, unaligned). Empty string when NULL/no rows. */
-const scalar = (url: string, sql: string) => psql(url, ["-tAc", sql]);
-
-/** Run statements, no result expected. */
-const exec = (url: string, sql: string) => void psql(url, ["-c", sql]);
+// Build a pg Client the same way the app's pool does (lib/db/planetscale): parse
+// the URL and set TLS EXPLICITLY, because node-postgres' bundled
+// pg-connection-string can't handle PlanetScale's `sslrootcert=system` (it tries
+// to open('system') as a file → ENOENT and the connection dies). Managed Postgres
+// here connects encrypted-without-strict-CA; `sslmode=disable`/`DB_SSL=disable`
+// still opts out for a local plaintext server.
+function makeClient(url: string): Client {
+  try {
+    const u = new URL(url);
+    const sslDisabled =
+      isSslDisabled(u.searchParams.get("sslmode")) ||
+      isSslDisabled(process.env.DB_SSL);
+    for (const p of ["sslmode", "sslrootcert", "sslcert", "sslkey", "ssl"]) {
+      u.searchParams.delete(p);
+    }
+    return new Client({
+      connectionString: u.toString(),
+      ssl: sslDisabled ? false : { rejectUnauthorized: false },
+    });
+  } catch {
+    // Not a parseable URL — hand it to pg as-is and let it surface the error.
+    return new Client({ connectionString: url });
+  }
+}
 
 function hostOf(url: string): string {
   try {
@@ -308,46 +331,64 @@ function userOf(url: string): string {
   }
 }
 
-// Column order and PK from the DEST (dev) catalog — both DBs share the schema.
-function columnsOf(url: string, table: string): string[] {
-  const out = scalar(
-    url,
-    `SELECT string_agg(column_name, ',' ORDER BY ordinal_position)
+// Column order + PK for every manifest table, in ONE query each, from the DEST
+// (dev) catalog — both DBs share the schema. Batched (not per-table) because even
+// on a persistent connection each round trip is a ~200ms cross-Pacific hop.
+async function columnsOf(
+  client: Client,
+  tables: string[],
+): Promise<Map<string, string[]>> {
+  const res = await client.query(
+    `SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) AS cols
        FROM information_schema.columns
-       WHERE table_schema='public' AND table_name='${table}'`,
+       WHERE table_schema='public' AND table_name = ANY($1)
+       GROUP BY table_name`,
+    [tables],
   );
-  return out ? out.split(",") : [];
+  const m = new Map<string, string[]>();
+  for (const r of res.rows) m.set(r.table_name, String(r.cols).split(","));
+  return m;
 }
 
-function pkOf(url: string, table: string): string[] {
-  const out = scalar(
-    url,
-    `SELECT string_agg(a.attname, ',' ORDER BY array_position(i.indkey, a.attnum))
+async function pkOf(
+  client: Client,
+  tables: string[],
+): Promise<Map<string, string[]>> {
+  const res = await client.query(
+    `SELECT c.relname AS t,
+            string_agg(a.attname, ',' ORDER BY array_position(i.indkey, a.attnum)) AS pk
        FROM pg_index i
+       JOIN pg_class c     ON c.oid = i.indrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-       WHERE i.indrelid = 'public.${table}'::regclass AND i.indisprimary`,
+       WHERE n.nspname='public' AND i.indisprimary AND c.relname = ANY($1)
+       GROUP BY c.relname`,
+    [tables],
   );
-  return out ? out.split(",") : [];
+  const m = new Map<string, string[]>();
+  for (const r of res.rows) m.set(r.t, String(r.pk).split(","));
+  return m;
 }
 
 // ── per-table sync ────────────────────────────────────────────────────────────
 
-function syncTable(
-  prodUrl: string,
-  devUrl: string,
-  scratch: string,
+async function syncTable(
+  prod: Client,
+  dev: Client,
   t: Table,
-): { table: string; rows: number } {
+  colsByTable: Map<string, string[]>,
+  pkByTable: Map<string, string[]>,
+): Promise<{ table: string; rows: number }> {
   const mirror = t.mode === "full" && t.mirror === true; // narrows t to FullTable
   const exclude = new Set(
     mirror ? [] : ((t as IncrementalTable).excludeCols ?? []),
   );
-  const cols = columnsOf(devUrl, t.name).filter((c) => !exclude.has(c));
+  const cols = (colsByTable.get(t.name) ?? []).filter((c) => !exclude.has(c));
   if (cols.length === 0)
     throw new Error(`no columns found for ${t.name} (schema mismatch?)`);
   const colList = cols.join(", ");
 
-  const pk = pkOf(devUrl, t.name);
+  const pk = pkByTable.get(t.name) ?? [];
   const conflictCols = mirror
     ? pk
     : ((t as IncrementalTable).conflictCols ?? pk);
@@ -358,43 +399,48 @@ function syncTable(
       `mirror ${t.name} requires a single-column PK (got ${pk.length})`,
     );
 
-  // Source predicate: incremental ⇒ rows newer than (dev max − overlap).
+  // Source predicate: incremental ⇒ rows newer than (dev max − overlap). Read the
+  // watermark HERE (lazily, per table), not batched up front, because the full leg
+  // that runs before the incremental leg can idDrift-delete rows from these tables —
+  // the watermark must reflect the post-delete max so the deleted children re-sync.
   let predicate = "";
   if (t.mode === "incremental") {
-    const wm = scalar(
-      devUrl,
-      `SELECT (max(${t.watermark}) - interval '${t.overlap}') FROM public.${t.name}`,
+    const wmRes = await dev.query(
+      `SELECT (max(${t.watermark}) - interval '${t.overlap}')::text AS wm FROM public.${t.name}`,
     );
+    const wm = wmRes.rows[0]?.wm as string | null;
     if (wm) predicate = `WHERE ${t.watermark} > '${wm}'`;
   }
 
-  const dump = join(scratch, `${t.name}.tsv`);
-
-  // 1. Export the delta from prod (read-only) to a local file (text/TSV → faithful NULLs).
-  exec(
-    prodUrl,
-    `\\copy (SELECT ${colList} FROM public.${t.name} ${predicate}) TO '${dump}'`,
-  );
-
-  // 2. Stage on dev, then upsert. `LIKE` (no defaults) keeps the staging table from
-  // burning the real serial sequence; drop NOT NULL on excluded cols so the partial
-  // COPY (which omits them) doesn't trip a NOT NULL constraint.
+  // 1. Stage on dev. `LIKE` (no defaults) keeps the staging table from burning the
+  // real serial sequence; drop NOT NULL on excluded cols so the partial COPY (which
+  // omits them) doesn't trip a NOT NULL constraint.
   const dropNotNull = [...exclude]
     .map(
       (c) =>
         `ALTER TABLE sync_staging.${t.name} ALTER COLUMN ${c} DROP NOT NULL;`,
     )
     .join(" ");
-  exec(
-    devUrl,
+  await dev.query(
     `CREATE SCHEMA IF NOT EXISTS sync_staging;
      DROP TABLE IF EXISTS sync_staging.${t.name};
      CREATE UNLOGGED TABLE sync_staging.${t.name} (LIKE public.${t.name}); ${dropNotNull}`,
   );
-  exec(devUrl, `\\copy sync_staging.${t.name} (${colList}) FROM '${dump}'`);
 
-  const rows =
-    Number(scalar(devUrl, `SELECT count(*) FROM sync_staging.${t.name}`)) || 0;
+  // 2. Stream the delta prod → dev over the wire: COPY … TO STDOUT (read-only prod)
+  // piped straight into COPY … FROM STDIN (dev staging). Default COPY text format →
+  // faithful NULLs (\N), same fidelity as the old file-based \copy. Backpressure and
+  // errors propagate through pipeline() (a rejection here fails the whole run).
+  const source = prod.query(
+    copyTo(
+      `COPY (SELECT ${colList} FROM public.${t.name} ${predicate}) TO STDOUT`,
+    ),
+  );
+  const dest = dev.query(
+    copyFrom(`COPY sync_staging.${t.name} (${colList}) FROM STDIN`),
+  );
+  await pipeline(source, dest);
+  const rows = dest.rowCount ?? 0;
 
   const conflictSet = new Set(conflictCols);
   const updatable = cols.filter((c) => !conflictSet.has(c));
@@ -412,14 +458,16 @@ function syncTable(
 
   const idDrift = t.mode === "full" ? t.idDrift : undefined;
 
-  if (mirror) {
-    const idCol = conflictCols[0];
-    // ONE transaction so a crash can't leave dev half-synced: delete orphans FIRST (frees the
-    // colliding alias/system values held by divergent dev rows), upsert prod rows by PK, realign the
-    // serial (is_called=true ⇒ next nextval = max+1). id is NOT NULL so `NOT IN` is safe.
-    exec(
-      devUrl,
-      `BEGIN;
+  // 3. Upsert into dev. The transaction paths ROLLBACK before rethrowing so a failure
+  // never leaves the persistent dev connection stuck in an aborted transaction.
+  try {
+    if (mirror) {
+      const idCol = conflictCols[0];
+      // ONE transaction so a crash can't leave dev half-synced: delete orphans FIRST (frees the
+      // colliding alias/system values held by divergent dev rows), upsert prod rows by PK, realign the
+      // serial (is_called=true ⇒ next nextval = max+1). id is NOT NULL so `NOT IN` is safe.
+      await dev.query(
+        `BEGIN;
        DELETE FROM public.${t.name}
          WHERE ${idCol} NOT IN (SELECT ${idCol} FROM sync_staging.${t.name});
        ${upsert}
@@ -427,45 +475,57 @@ function syncTable(
                      GREATEST((SELECT max(${idCol}) FROM public.${t.name}), 1), true);
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,
-    );
-  } else if (idDrift) {
-    // Same-logical-row-different-PK: dev rows sharing ANY secondary unique key with a staged prod row
-    // but sitting under a different PK. Whichever key collides would abort the by-PK upsert, so clear
-    // them (and their FK children — not all ON DELETE CASCADE) inside the upsert's transaction. `_drift`
-    // carries the parent's PK columns; children map their FK columns positionally onto that PK.
-    const match = idDrift.uniqueKeys
-      .map((key) => "(" + key.map((c) => `d.${c} = s.${c}`).join(" AND ") + ")")
-      .join(" OR ");
-    const samePk = pk.map((c) => `d.${c} = s.${c}`).join(" AND ");
-    const childDeletes = idDrift.children
-      .map((c) => {
-        const on = c.cols
-          .map((col, i) => `x.${col} = b.${pk[i]}`)
-          .join(" AND ");
-        return `DELETE FROM public.${c.table} x USING _drift b WHERE ${on};`;
-      })
-      .join("\n       ");
-    exec(
-      devUrl,
-      `BEGIN;
+      );
+    } else if (idDrift) {
+      // Same-logical-row-different-PK: dev rows sharing ANY secondary unique key with a staged prod row
+      // but sitting under a different PK. Whichever key collides would abort the by-PK upsert, so clear
+      // them (and their FK children — not all ON DELETE CASCADE) inside the upsert's transaction. `_drift`
+      // carries the parent's PK columns; children map their FK columns positionally onto that PK.
+      const match = idDrift.uniqueKeys
+        .map(
+          (key) => "(" + key.map((c) => `d.${c} = s.${c}`).join(" AND ") + ")",
+        )
+        .join(" OR ");
+      const samePk = pk.map((c) => `d.${c} = s.${c}`).join(" AND ");
+      const childDeletes = idDrift.children
+        .map((c) => {
+          const on = c.cols
+            .map((col, i) => `x.${col} = b.${pk[i]}`)
+            .join(" AND ");
+          return `DELETE FROM public.${c.table} x USING _drift b WHERE ${on};`;
+        })
+        .join("\n       ");
+      // ANALYZE _drift before the child DELETEs: it's a just-created temp table with no
+      // stats, and on the normal (no-drift) run it's EMPTY. Without stats the planner
+      // mis-estimates its cardinality and full-seq-scans the huge child tables
+      // (point_readings ~13M, agg_5m ~3M) to find zero matches — ~40s/run for nothing.
+      // Accurate stats ⇒ a trivial nested loop keyed off _drift (never scans the big
+      // tables when empty; index-probes them when drift is genuinely present).
+      await dev.query(
+        `BEGIN;
        CREATE TEMP TABLE _drift ON COMMIT DROP AS
          SELECT DISTINCT ${pk.map((c) => `d.${c}`).join(", ")}
            FROM public.${t.name} d
            JOIN sync_staging.${t.name} s ON (${match})
           WHERE NOT (${samePk});
+       ANALYZE _drift;
        ${childDeletes}
        DELETE FROM public.${t.name} d USING _drift b
          WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};
        ${upsert}
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,
-    );
-  } else {
-    exec(
-      devUrl,
-      `${upsert}
+      );
+    } else {
+      await dev.query(
+        `${upsert}
      DROP TABLE sync_staging.${t.name};`,
-    );
+      );
+    }
+  } catch (err) {
+    // Leave the shared dev connection clean for the top-level handler's teardown.
+    await dev.query("ROLLBACK").catch(() => {});
+    throw err;
   }
 
   return { table: t.name, rows };
@@ -473,7 +533,7 @@ function syncTable(
 
 // ── main ──────────────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   const prodUrl = process.env.PG_PROD_RO_DATABASE_URL;
   const devUrl = process.env.LIVEONE_DEV_DATABASE_URL;
   if (!prodUrl)
@@ -502,12 +562,29 @@ function main() {
   console.log(
     `Sync prod → dev  (write target: ${devUser || "?"}@${hostOf(devUrl) || "?"})`,
   );
-  const scratch = mkdtempSync(join(tmpdir(), "liveone-sync-"));
+
+  // Two persistent connections for the whole run (see TRANSPORT in the header).
+  const prod = makeClient(prodUrl);
+  const dev = makeClient(devUrl);
+  await prod.connect();
+  await dev.connect();
+
   const started = Date.now();
   try {
+    // Columns + PK for every table, batched from the dev catalog (both DBs share the schema).
+    const names = MANIFEST.map((t) => t.name);
+    const colsByTable = await columnsOf(dev, names);
+    const pkByTable = await pkOf(dev, names);
+
     for (const t of MANIFEST) {
       const t0 = Date.now();
-      const { table, rows } = syncTable(prodUrl, devUrl, scratch, t);
+      const { table, rows } = await syncTable(
+        prod,
+        dev,
+        t,
+        colsByTable,
+        pkByTable,
+      );
       const secs = ((Date.now() - t0) / 1000).toFixed(1);
       // Per-table timing: makes a slow leg obvious in the Actions log (and pairs with the
       // workflow's >5-min Slack warning). point_readings used to dominate at ~20 min; see its filter.
@@ -515,17 +592,18 @@ function main() {
         `  ${rows.toString().padStart(8)}  ${table.padEnd(30)} ${secs.padStart(7)}s`,
       );
     }
+    console.log(
+      `✓ Sync complete in ${((Date.now() - started) / 1000).toFixed(1)}s`,
+    );
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    await prod.end().catch(() => {});
+    await dev.end().catch(() => {});
   }
-  console.log(
-    `✓ Sync complete in ${((Date.now() - started) / 1000).toFixed(1)}s`,
-  );
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-}
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
