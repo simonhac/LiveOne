@@ -1,12 +1,19 @@
 /**
  * Re-own dev-mirror data from a PROD clerk id to a DEV clerk id, so your dev login sees the same
- * areas / dashboards / systems as prod.
+ * areas / dashboards / systems as prod — AND grant the prod id read-back access to what it just lost,
+ * so Vercel preview (which deliberately signs in with the LIVE prod Clerk session — see the
+ * bind-preview skill — not this separate dev instance's id) can still see the same mirrored data.
  *
  * Dev + Vercel preview use a SEPARATE Clerk instance, so "you" has a different `clerk_user_id` there
  * than on prod. The prod→dev sync (sync-prod-to-dev-db.ts) copies config data carrying the PROD owner
  * ids, so on `liveone-dev` your data is owned by your prod id while you log in with your dev id — you
  * can open things by URL (admin) but they aren't "yours" (menu / ownership / default dashboard). This
- * remaps the ownership columns prod→dev so dev-you genuinely owns the mirrored data.
+ * remaps the ownership columns prod→dev so dev-you genuinely owns the mirrored data — and then GRANTS
+ * (viewer role, `user_systems` / `dashboard_grants`, purely additive) the prod id back onto everything
+ * it just lost ownership of, so a prod-Clerk-authenticated session (preview) still resolves it via
+ * `getSystemsVisibleByUser`/`listAccessibleDashboards`'s existing owned-OR-granted logic. Idempotent
+ * (ON CONFLICT DO NOTHING) and never revokes/deletes a grant, matching the sync's own "full refresh,
+ * upsert, no deletes" convention for small config tables.
  *
  * Configured by DEV_OWNER_REMAP = comma-separated `prodId:devId` pairs. If unset it's a no-op (exit 0),
  * so it can sit as a leg of the sync until you configure the mapping.
@@ -107,6 +114,47 @@ async function main() {
             `  ERR ${table}.${col}: ${e instanceof Error ? e.message : e}`,
           );
         }
+      }
+
+      // Grant the PROD id (`from`) read-back access to what it just lost ownership of, above. Purely
+      // additive viewer-role grants — doesn't touch the ownership columns, so the local-dev "it's
+      // mine" experience (menu/default dashboard) is unaffected. Selects by current ownership (`to`)
+      // rather than "just remapped by this run", so it also backfills anything remapped by an EARLIER
+      // run (before this grant-back existed) or by a prior sync cycle.
+      try {
+        const sysGrant = await c.query(
+          `INSERT INTO user_systems (clerk_user_id, system_id, role)
+             SELECT $1, id, 'viewer' FROM systems WHERE owner_clerk_user_id = $2
+             ON CONFLICT (clerk_user_id, system_id) DO NOTHING`,
+          [from, to],
+        );
+        if (sysGrant.rowCount)
+          console.log(
+            `  user_systems: granted ${from} -> ${sysGrant.rowCount} systems`,
+          );
+      } catch (e) {
+        hadError = true;
+        console.error(
+          `  ERR user_systems grant-back: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+      try {
+        const dashGrant = await c.query(
+          `INSERT INTO dashboard_grants (dashboard_id, clerk_user_id, role, created_at_ms)
+             SELECT id, $1, 'viewer', (extract(epoch from now()) * 1000)::bigint
+               FROM dashboards WHERE clerk_user_id = $2
+             ON CONFLICT (dashboard_id, clerk_user_id) DO NOTHING`,
+          [from, to],
+        );
+        if (dashGrant.rowCount)
+          console.log(
+            `  dashboard_grants: granted ${from} -> ${dashGrant.rowCount} dashboards`,
+          );
+      } catch (e) {
+        hadError = true;
+        console.error(
+          `  ERR dashboard_grants grant-back: ${e instanceof Error ? e.message : e}`,
+        );
       }
 
       // users.clerk_user_id is the PK: if the dev user row already exists, copy the prod row's prefs
