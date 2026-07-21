@@ -13,8 +13,6 @@ import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
 import { descriptorAreaIds } from "@/lib/dashboard/composition";
-import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
-import { resolveGridContextForSystem } from "@/lib/grid/context";
 import { getOrCreateUserPreferences } from "@/lib/user-preferences";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { getQueryClient } from "@/app/get-query-client";
@@ -93,48 +91,45 @@ async function renderCompositionDashboard(
   ];
   const queryClient = getQueryClient();
   const seeded: Record<string, unknown> = {};
-  const prefetch = async () => {
-    // SP1.2b: a tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a
-    // public NEM region system; a member device for `device-metrics`). Those pins are NOT section
-    // handles, so today they self-fetch /api/data on the client. Seed them too — but ONLY pins that
-    // are authorization-safe: reachable from an area the viewer may read (its member devices, or its
-    // derived grid region system). Anything else falls through to a client self-fetch, as before.
-    const pins = new Set<number>();
-    for (const s of descriptor.sections) {
-      if (!areaById.has(s.areaId)) continue; // only authorized sections
-      for (const c of s.cards) {
-        if (typeof c.deviceSystemId === "number") pins.add(c.deviceSystemId);
-        for (const t of c.tiles ?? []) {
-          if (typeof t.deviceSystemId === "number") pins.add(t.deviceSystemId);
-        }
+  // A tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a public NEM
+  // region system; a member device for `device-metrics`). Those pins are NOT section handles, so
+  // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
+  const pins = new Set<number>();
+  for (const s of descriptor.sections) {
+    if (!areaById.has(s.areaId)) continue; // only authorized sections
+    for (const c of s.cards) {
+      if (typeof c.deviceSystemId === "number") pins.add(c.deviceSystemId);
+      for (const t of c.tiles ?? []) {
+        if (typeof t.deviceSystemId === "number") pins.add(t.deviceSystemId);
       }
     }
-    const seedIds = new Set<number>(handles);
-    if (pins.size > 0) {
-      // Authorization universe: for each authorized area ON THIS DASHBOARD, its member device systems
-      // + its derived public grid region system. Derived from already-authorized areas — never a raw
-      // int read out of the opaque descriptor.
-      const dashboardAreas = [...new Set(descriptor.sections.map((s) => s.areaId))]
-        .map((id) => areaById.get(id))
-        .filter((a): a is NonNullable<typeof a> => a != null);
-      const authorized = new Set<number>(handles);
-      await Promise.all(
-        dashboardAreas.map(async (a) => {
-          for (const id of await getAreaDeviceSystemIds(a.id)) authorized.add(id);
-          const grid = await resolveGridContextForSystem(a.legacySystemId);
-          if (grid?.regionSystemId != null) authorized.add(grid.regionSystemId);
-        }),
-      );
-      for (const p of pins) if (authorized.has(p)) seedIds.add(p);
-    }
+  }
+  const prefetch = async () => {
+    // SP1.2b: seed section handles (already authorized) unconditionally, plus device pins — but a pin
+    // is seeded only if the payload we ALREADY fetch shows it's authorization-safe WITHOUT any extra
+    // lookup: a public (owner-less) system, e.g. the oe-grid NEM region system, or one owned by the
+    // viewer. `getSystemDataForCache` does no per-viewer auth, so this owner check off the fetched
+    // system is the guard. Anything else (a private pin we can't cheaply vouch for) falls through to
+    // a client self-fetch, where /api/data enforces access — exactly as before. No re-derivation of
+    // the pin from the opaque descriptor, so no extra DB round-trips on the render's critical path.
+    const pinIds = [...pins].filter((p) => !handles.includes(p));
     await Promise.all(
-      [...seedIds].map(async (h) => {
+      [
+        ...handles.map((id) => ({ id, isPin: false })),
+        ...pinIds.map((id) => ({ id, isPin: true })),
+      ].map(async ({ id, isPin }) => {
         try {
-          const value = await getSystemDataForCache(h);
-          if (value != null) {
-            queryClient.setQueryData(queryKeys.data(h), value);
-            seeded[String(h)] = value;
+          const value = await getSystemDataForCache(id);
+          if (value == null) return;
+          if (isPin) {
+            const owner = (
+              value as { system?: { ownerClerkUserId?: string | null } }
+            ).system?.ownerClerkUserId;
+            const safe = owner === null || (userId != null && owner === userId);
+            if (!safe) return; // private pin we can't cheaply authorize → let the card self-fetch
           }
+          queryClient.setQueryData(queryKeys.data(id), value);
+          seeded[String(id)] = value;
         } catch {
           // best-effort prefetch — the card will self-fetch on the client
         }
