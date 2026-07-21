@@ -12,6 +12,7 @@ import EnergyFlowSankey, {
   type SankeyOptions,
   type SankeyNodeTooltip,
   type SankeyNodeTooltipResolver,
+  type SankeyLinkTooltipResolver,
   DEFAULT_SANKEY_OPTIONS,
 } from "@/components/EnergyFlowSankey";
 import FlowsSettingsMenu, {
@@ -25,6 +26,7 @@ import {
   combineSolarSources,
   reduceLoadProvenance,
   reduceSourceProvenance,
+  reduceEdgeProvenance,
   type DailyFlowMatrices,
 } from "@/lib/energy-flow-matrix";
 import {
@@ -875,6 +877,43 @@ export default function SiteChartsCard({
                 return summary ? toFull(summary) : null;
               };
 
+              // Per-link (spline) tooltip — mirrors buildNodeTooltip's degradation ladder so link and
+              // node numbers can't drift: focused sub-daily sample → power only; no attributed legs →
+              // energy only; otherwise the exact per-edge reduction over the SAME `daySlice`. The energy
+              // line always uses `link.value` (matches the ribbon width); only the detail line comes from
+              // the reduction.
+              const buildLinkTooltip: SankeyLinkTooltipResolver = (link) => {
+                if (unit === "kW") {
+                  return { energy: link.value.toFixed(1), energyUnit: "kW" };
+                }
+                const base = {
+                  energy: formatKwh(link.value),
+                  energyUnit: "kWh",
+                };
+                if (!daySlice) return base;
+                // Battery-middle relocates the battery to a synthetic middle node; map it back to the
+                // raw provenance ids (charge = source→load.battery, discharge = source.battery→load).
+                const sourceId =
+                  link.source.id === "bidi.battery"
+                    ? "source.battery"
+                    : link.source.id;
+                const loadId =
+                  link.target.id === "bidi.battery"
+                    ? "load.battery"
+                    : link.target.id;
+                if (!sourceId || !loadId) return base;
+                const edge = reduceEdgeProvenance(daySlice, sourceId, loadId, {
+                  combineSolar: sankeyOptions.combineSolar,
+                });
+                if (!edge) return base;
+                return {
+                  ...base,
+                  emissions: `${formatKgCo2(edge.kgCo2)} kg`,
+                  cost: formatDollars(edge.costC),
+                  renewable: formatRenewablePct(edge.pctRenewable),
+                };
+              };
+
               return (
                 <div className="sm:p-4">
                   <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
@@ -899,6 +938,7 @@ export default function SiteChartsCard({
                       width={600}
                       height={680}
                       nodeTooltip={buildNodeTooltip}
+                      linkTooltip={buildLinkTooltip}
                     />
                   </div>
                   {label && (

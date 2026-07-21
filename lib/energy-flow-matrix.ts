@@ -324,6 +324,97 @@ export function reduceSourceProvenance(
 }
 
 /**
+ * The per-edge (one source → one load) provenance summary over a modern (attributed) window — the
+ * single-cell reduction behind the Sankey LINK tooltip. Same filtered-denominator averaging discipline
+ * as {@link reduceLoadProvenance}/{@link reduceSourceProvenance}, restricted to one `[source][load]`
+ * cell (summed across days, and across every solar source index when `combineSolar` folds them).
+ */
+export interface EdgeProvenanceSummary {
+  energyKwh: number;
+  costC: number; // signed cents
+  avgCentsPerKwh: number | null;
+  pctRenewable: number | null; // 0..100
+  avgGramsPerKwh: number | null;
+  kgCo2: number;
+  pctEstimated: number; // 0..100
+}
+
+/**
+ * Reduce a modern {@link DailyFlowMatrices} to a single edge's provenance summary — the cell-level
+ * intersection of {@link reduceLoadProvenance} (one load column) and {@link reduceSourceProvenance}
+ * (one source row). Returns null when the source or load isn't in the payload, or the metric legs are
+ * absent (i.e. a legacy payload).
+ *
+ * `opts.combineSolar`: when `sourceId` is a solar id AND `combineSolar` is set, sums over EVERY solar
+ * source index (matching the combined "Solar" box), exactly like {@link reduceSourceProvenance}.
+ */
+export function reduceEdgeProvenance(
+  d: DailyFlowMatrices,
+  sourceId: string,
+  loadId: string,
+  opts: { combineSolar?: boolean } = {},
+): EdgeProvenanceSummary | null {
+  const indices =
+    opts.combineSolar && isSolarSourceId(sourceId)
+      ? d.sources
+          .map((s, i) => (isSolarSourceId(s.id) ? i : -1))
+          .filter((i) => i >= 0)
+      : (() => {
+          const i = d.sources.findIndex((s) => s.id === sourceId);
+          return i >= 0 ? [i] : [];
+        })();
+  const loadIdx = d.loads.findIndex((l) => l.id === loadId);
+  if (indices.length === 0 || loadIdx < 0) return null;
+  // Metric legs ride only on modern payloads; bail if the first day lacks them.
+  if (d.days.length > 0 && d.days[0].emissionsG === undefined) return null;
+
+  let energyKwh = 0;
+  let emissionsG = 0;
+  let emissionsKnownKwh = 0;
+  let renewableKwh = 0;
+  let renewableKnownKwh = 0;
+  let costC = 0;
+  let costKnownKwh = 0;
+  let estimatedKwh = 0;
+
+  for (const day of d.days) {
+    for (const s of indices) {
+      const e = day.matrix[s]?.[loadIdx] ?? 0;
+      if (e === 0) continue;
+      energyKwh += e;
+      const eg = day.emissionsG?.[s]?.[loadIdx];
+      if (eg != null) {
+        emissionsG += eg;
+        emissionsKnownKwh += e;
+      }
+      const rk = day.renewableKwh?.[s]?.[loadIdx];
+      if (rk != null) {
+        renewableKwh += rk;
+        renewableKnownKwh += e;
+      }
+      const cc = day.costC?.[s]?.[loadIdx];
+      if (cc != null) {
+        costC += cc;
+        costKnownKwh += e;
+      }
+      estimatedKwh += day.estimatedKwh?.[s]?.[loadIdx] ?? 0;
+    }
+  }
+
+  return {
+    energyKwh,
+    costC,
+    avgCentsPerKwh: costKnownKwh > 0 ? costC / costKnownKwh : null,
+    pctRenewable:
+      renewableKnownKwh > 0 ? (100 * renewableKwh) / renewableKnownKwh : null,
+    avgGramsPerKwh:
+      emissionsKnownKwh > 0 ? emissionsG / emissionsKnownKwh : null,
+    kgCo2: emissionsG / 1000,
+    pctEstimated: energyKwh > 0 ? (100 * estimatedKwh) / energyKwh : 0,
+  };
+}
+
+/**
  * Collapse every solar source node (`source.solar`, per-array `source.solar.<leaf>`, and the synthetic
  * `source.solar.residual`) into a single "Solar" source — the "combine solar arrays" Sankey option.
  *
