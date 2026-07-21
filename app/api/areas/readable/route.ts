@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listReadableAreas } from "@/lib/areas/list";
+import { makeTimer } from "@/lib/server-timing";
 
 /**
  * GET /api/areas/readable — the Areas the signed-in user may read, for the multi-area card picker
@@ -9,10 +10,16 @@ import { listReadableAreas } from "@/lib/areas/list";
  * inline from /api/dashboard-share/[token] instead.
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth(request);
+  const t = makeTimer(request);
+  const auth = await requireAuth(request, t);
   if (auth instanceof NextResponse) return auth;
-  const areas = await listReadableAreas(auth.userId, {
-    withChartCapability: true,
-  });
-  return NextResponse.json({ areas });
+  const areas = await t.time("areas", () =>
+    listReadableAreas(auth.userId, {
+      withChartCapability: true,
+    }),
+  );
+  return NextResponse.json(
+    { areas },
+    { headers: { "Server-Timing": t.header() } },
+  );
 }

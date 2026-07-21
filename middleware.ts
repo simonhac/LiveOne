@@ -1,11 +1,20 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import {
+  NextResponse,
+  type NextFetchEvent,
+  type NextRequest,
+} from "next/server";
+import {
   isPublicRoute,
   isShareableRoute,
   hasAccessToken,
 } from "@/lib/route-matchers";
+import {
+  MIDDLEWARE_DUR_HEADER,
+  forwardRequestHeader,
+} from "@/lib/server-timing";
 
-export default clerkMiddleware(async (auth, request) => {
+const clerk = clerkMiddleware(async (auth, request) => {
   // A `?access=<token>` share link skips Clerk ONLY for a read-only (GET/HEAD) request to a
   // share-eligible route (isShareableRoute). The token is validated downstream by
   // requireDashboardAccess; this edge check is fail-closed — a stray/garbage token on any other route
@@ -29,6 +38,30 @@ export default clerkMiddleware(async (auth, request) => {
     await auth.protect();
   }
 });
+
+// Server-Timing instrumentation (lib/server-timing.ts): time the WHOLE clerkMiddleware invocation
+// and self-report it to the route handler, which reproduces it as the `mw` entry of its
+// Server-Timing response header. The wrapper is load-bearing: Clerk runs `authenticateRequest`
+// (session/JWT verification, JWKS fetch on cold instances) BEFORE invoking the callback above, and
+// `auth.protect()` is only an in-memory check on that already-resolved state — timing inside the
+// callback would read ~0 and misattribute the Clerk cost to invocation/network. Runs for EVERY
+// matched route (public ones too — only protect() is conditional), so `mw` is comparable across
+// routes. Forwarded as a REQUEST header (not a response Server-Timing header) so the route emits
+// ONE merged header with no edge/origin same-name merge ambiguity.
+export default async function middleware(
+  request: NextRequest,
+  event: NextFetchEvent,
+) {
+  const mwStart = performance.now();
+  const res = (await clerk(request, event)) ?? NextResponse.next();
+  forwardRequestHeader(
+    res,
+    request,
+    MIDDLEWARE_DUR_HEADER,
+    (performance.now() - mwStart).toFixed(1),
+  );
+  return res;
+}
 
 export const config = {
   matcher: [
