@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listReadableAreas } from "@/lib/areas/list";
-import { makeTimer } from "@/lib/server-timing";
+import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
 /**
  * GET /api/areas/readable — the Areas the signed-in user may read, for the multi-area card picker
@@ -18,8 +18,5 @@ export async function GET(request: NextRequest) {
       withChartCapability: true,
     }),
   );
-  return NextResponse.json(
-    { areas },
-    { headers: { "Server-Timing": t.header() } },
-  );
+  return NextResponse.json({ areas }, { headers: serverTimingHeaders(t) });
 }

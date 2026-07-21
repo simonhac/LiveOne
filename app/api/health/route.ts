@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { makeTimer } from "@/lib/server-timing";
+import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     await t.time("db", () => requirePlanetscaleDb().execute(sql`SELECT 1`));
     return NextResponse.json(
       { status: "ok", database: "postgres" },
-      { headers: { "Server-Timing": t.header() } },
+      { headers: serverTimingHeaders(t) },
     );
   } catch (error) {
     return NextResponse.json(

@@ -8,7 +8,11 @@ import { jsonResponse, transformDates } from "@/lib/json";
 import { PointManager } from "@/lib/point/point-manager";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
 import type { SystemWithPolling } from "@/lib/systems-manager";
-import { makeTimer, type ServerTimer } from "@/lib/server-timing";
+import {
+  makeTimer,
+  serverTimingHeaders,
+  type ServerTimer,
+} from "@/lib/server-timing";
 
 /**
  * One row of the detailed "latest readings" table (`include=readings`). A superset of the `latest`
@@ -224,7 +228,7 @@ export async function GET(request: NextRequest) {
       // Return with automatic date formatting and field renaming
       // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
       return jsonResponse(payload, authResult.system.timezoneOffsetMin, {
-        headers: { "Server-Timing": t.header() },
+        headers: serverTimingHeaders(t),
       });
     }
 
@@ -249,10 +253,7 @@ export async function GET(request: NextRequest) {
     const data = Object.fromEntries(
       results.filter((r): r is readonly [number, unknown] => r !== null),
     );
-    return NextResponse.json(
-      { data },
-      { headers: { "Server-Timing": t.header() } },
-    );
+    return NextResponse.json({ data }, { headers: serverTimingHeaders(t) });
   } catch (error) {
     console.error("API Error:", error);
     return NextResponse.json(
