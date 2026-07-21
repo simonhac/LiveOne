@@ -72,11 +72,26 @@ a React Query `HydrationBoundary`. The SSR seed *is* the values.
 - **Effect:** cards render populated from the initial payload; the client data stage leaves the critical
   path. Don't wait on any network round-trip (or, later, the SSE connection) for first fill.
 
-### 1.3 Precompute / cache `/api/history` (the ~198 ms tail)
+### 1.3 Trim `/api/history` (the ~198 ms server tail)
 
-`/api/history` (`fetch` 82 ms DB + `attr` 66 ms battery-provenance) is the slowest request and gates
-settle. Cache/materialize the sankey + attributed series (derived, largely daily-stable) so it returns
-in tens of ms.
+`/api/history` (`fetch` 82 ms + `attr` 66 ms battery-provenance) is the slowest request and gates settle.
+The measured tail is the **sub-daily live-compute path** (the profiled request carries a `logical` span,
+emitted only for `includeSankey && interval !== "1d"`) — so, unlike the 1d path which already reads the
+precomputed `flow_attr_1d` rollup, **nothing here is materialized yet.** Three levers, cheapest → hardest
+(code trace: [`dashboard-fetch-waterfall.md` → "Inside `/api/history`: three server-side levers"](../performance/dashboard-fetch-waterfall.md#inside-apihistory-three-server-side-levers)):
+
+- **1.3a — Dedupe the `agg_5m` read.** `fetch` (`fetchAggRowsPg`) and `attr` (`loadFlowSeriesFromAgg5m`,
+  inside `buildAttributedFlowMatrix`) issue **two separate `agg_5m` queries for the same role points** in
+  one request. Reuse the already-fetched rows (or a per-request cache) instead of re-querying. Smallest
+  change, no new storage.
+- **1.3b — Trim the fold warm-up over-read.** The stateful provenance fold seeds from a checkpoint anchor
+  (≤ 3.5 days) or, on seed-miss, over-reads `startMs − 7 days` of `agg_5m`. Keep the seeded path the norm
+  so a 1-day sankey doesn't read a week of history.
+- **1.3c — Materialize the sub-daily sankey + attributed series.** The residual after 1.3a/1.3b is in-Node
+  CPU (densify/bucket + the stateful fold + flow-accounting) that a faster read can't cut. Precompute it —
+  a **new** sub-daily rollup (there is no sub-daily counterpart to `flow_attr_1d` today), not a cache of an
+  existing table — so the request serves a stored result in tens of ms. Biggest lift; do it last, only if
+  1.3a/1.3b don't bring the tail down enough.
 
 - **Effect:** cuts the dominant remaining server cost — for an AU user this *is* the tail.
 
@@ -294,6 +309,33 @@ Move the *trigger* off Vercel Cron and add a *disk*; freeze the transport contra
 | **SEC-1** | SSE stream token scoping must mirror `requireDashboardAccess` **exactly**; a bug leaks another system's live values to a share-token viewer. | `/api/sse-token` + `liveone-sse` | **BLOCKING (P3)** | Short TTL + handle-scoping + TLS; audit that a share-token JWT can never claim an out-of-dashboard handle. |
 
 ---
+
+## Interaction with the config-v4 redesign
+
+A separate clean-sheet config-model redesign is in flight — `config-v4-clean-sheet.md` (the
+`config-model-redesign` workspace): it retires the polymorphic integer `systemId` handle, renames
+`systems → devices`, moves to TypeID public IDs (`dev_`/`area_`/`dash_`), makes the dashboard document a
+recursive **node tree** (card/tile unified), unifies sharing onto dashboards only, and generalizes
+trackers/HWS into `derivations`. Its **§10 explicitly names this SSR work as the target contract**, so
+Superphase 1 builds *toward* it. Guardrails so the SSR work doesn't cement v3 shapes:
+
+- **The resolve step is one pure, shape-agnostic server function** (doc + referenced areas/devices →
+  names / capabilities / context), reused by the shared, grantee, and owner paths — exactly v4 §10's
+  "a server component calls it in-process." SP1.1 factors it this way (the shared view already inlines it).
+- **Don't bake v3 `sections/tiles/deviceSystemId` into new SSR plumbing.** v4's descriptor is a recursive
+  node tree; keep the seam as "resolve doc → context; cards self-fetch by id" so only the resolver's
+  internals change at cutover, not the SSR architecture.
+- **Design any SSR fragment / `/api/history` cache dashboard-scoped** so v4's `(dashboard_id, revision)`
+  key slots in later (revision doesn't exist yet — don't block on it).
+- **Keep `?systemId=` behind a seam.** v4 makes `?area=area_…` / `?device=dev_…` primary and `?systemId=N`
+  a compat alias (`legacy_handles`); SP1.2's data-prefetch uses `?systemId=` today, which is fine.
+
+Later-phase intersections (Phase 3–4, not now): the SSE lane's KV keyspaces
+(`latest:system:N` / `subscriptions:system:N`) and the `"systemId.pointIndex"` ref grammar are
+**deleted/rebuilt** by the v4 cutover (`latest:area:{…}` / `latest:device:{…}`) — keep those seams
+abstract. The receiver/outbox durability spine survives (outbox re-keys `system_id → device_rid`, payload
+carries a device uuid); the bug register stands (BUG-1's 5m-native last-writer-wins guard is
+keying-independent). Reconcile against config-v4 before building Phase 3+.
 
 ## Open questions
 

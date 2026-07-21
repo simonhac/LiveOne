@@ -340,6 +340,49 @@ any cold penalty. Here the residual is provably network (zero connection time; c
 warm data stage), so no cold-start is hiding in it — but on a genuinely cold first hit that would not
 hold, and the residual, not `st`, is where it would show.
 
+### Inside `/api/history`: three server-side levers
+
+The `/api/history` total above (~198 ms: `fetch` 82 + `attr` 66) is the **sub-daily sankey path** — the
+profiled request carries a `logical` span, which the route emits only for `includeSankey && interval !==
+"1d"` (`app/api/history/route.ts:614`). That path computes the attributed flow matrix **live**
+(`route.ts:682` → `buildAttributedFlowMatrix`); the **1d** path instead reads the precomputed
+`flow_attr_1d` rollup in a single indexed lookup (`route.ts:654-682`, `readAttributedDailyMatrices`). So
+the tail measured here is the *un-materialized* variant, and that sets how hard each lever below is. All
+three are code fixes in the **existing PostgreSQL path — none needs a new datastore.** (A columnar/OLAP
+engine like ClickHouse would not move them: the DB-read slice they touch is already a bounded, indexed
+range scan of *pre-aggregated* `agg_5m` rows — no scan/aggregation for a column store to accelerate — and
+the bulk of the 148 ms is in-Node CPU, which a faster database does not reduce. Fuller ClickHouse
+assessment: it helps ~nothing at current scale, since the page's latency is network geography + client
+waterfall shape + in-Node CPU, not DB scan/aggregation.)
+
+Ordered cheapest → hardest:
+
+1. **Redundant `agg_5m` double-read (`fetch` ↔ `attr`).** The `fetch` phase reads the role-point `agg_5m`
+   rows via `fetchAggRowsPg` (`lib/history/readings-pg.ts:111-130`) and densifies them onto the 5-min grid
+   in JS (`:132-158`). The `attr` phase then **re-reads the same table for the same role points** via
+   `loadFlowSeriesFromAgg5m` (`lib/aggregation/flow-series-pg.ts:67-82`), reached through
+   `buildAttributedFlowMatrix` → `loadProvenanceInputs`. That is two separate `agg_5m` queries over
+   overlapping rows in one request. **Lever:** hand the already-fetched rows to the attribution path (or a
+   per-request cache) instead of re-querying. Smallest change, no new storage.
+
+2. **Warm-up over-read in `attr`.** The battery-provenance fold is *stateful*, so `attr` loads **more**
+   `agg_5m` history than the displayed window: seeded from a checkpoint anchor capped at `MAX_SEED_SPAN_MS
+   = 3.5 days` (`lib/db/planetscale/battery-provenance-pg.ts:516`), or — when seeding fails — from `startMs
+   − WARMUP_MS` with `WARMUP_MS = 7 days` (`battery-provenance-pg.ts:71`, applied at
+   `lib/history/build-attributed-flow-matrix.ts:155`). So a 1-day sankey can pull up to a week of rows.
+   **Lever:** keep the seeded (≤ 3.5-day) path the norm and avoid the 7-day fallback; tighten the seed span.
+
+3. **Densify + fold CPU (not DB).** A large share of the 82 + 66 ms is **in-Node CPU** that no faster read
+   reduces: on the `fetch` side the JS densify / 30-min bucketing / series build + the Sankey trapezoidal
+   integration (`readings-pg.ts:132-158`, `lib/aggregation/flow-matrix-core.ts`); on the `attr` side the
+   stateful `foldBatteryProvenance` + `computeFlowAccounting` (`lib/battery-provenance/compute.ts`,
+   `flow-matrix-core.ts:117-248`). **Lever:** materialize the sub-daily sankey + attributed series so the
+   request serves a stored result. Note there is **no sub-daily counterpart to `flow_attr_1d` today** (only
+   the 1d rollup exists), so this is a genuinely *new* materialization, not a cache of an existing table —
+   the biggest lift, worth doing last and only if levers 1–2 don't bring the tail down enough.
+
+These three are the concrete unpacking of `live-dashboard-roadmap.md` §1.3 (1.3a / 1.3b / 1.3c).
+
 ## Cross-region confirmation — Sydney (AWS `ap-southeast-2`) vs Italy, 2026-07-21
 
 The runs above were captured from a browser in **Italy**, which ingresses Vercel at the Frankfurt edge
