@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Settings, Plus, Layers, ChevronDown } from "lucide-react";
 import Dashboard from "@/components/Dashboard";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
@@ -11,6 +12,7 @@ import DashboardsMenu, {
 } from "@/components/DashboardsMenu";
 import NewDashboardDialog from "@/components/NewDashboardDialog";
 import AddAreaDialog from "@/components/AddAreaDialog";
+import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
 import { readableAreasQuery } from "@/lib/queries";
 import { sectionAreaIdsV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import {
@@ -20,6 +22,11 @@ import {
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import type { ReadableArea } from "@/lib/areas/list";
+
+// Shared styling for the header cog menu's action items (mirrors FlowsSettingsMenu's ITEM_CLASS).
+const MENU_ITEM_CLASS =
+  "flex items-center gap-2 px-3 py-2 text-sm rounded outline-none cursor-pointer " +
+  "text-gray-300 hover:bg-gray-700 data-[highlighted]:bg-gray-700";
 
 interface DashboardClientProps {
   dashboard: {
@@ -50,6 +57,7 @@ export default function DashboardClient({
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [addAreaOpen, setAddAreaOpen] = useState(false);
+  const [createAreaOpen, setCreateAreaOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
   // Warm the switcher's dashboards + default so the dropdown paints fully on first open (no jump).
@@ -124,26 +132,56 @@ export default function DashboardClient({
                 </div>
               )}
               {canEdit && (
-                <div className="flex items-center gap-1">
-                  <HeaderButton
-                    title="Dashboard settings"
-                    onClick={() => setRenameOpen(true)}
-                  >
-                    <Settings className="h-4 w-4" />
-                  </HeaderButton>
-                  <HeaderButton
-                    title="Add area"
-                    onClick={() => setAddAreaOpen(true)}
-                  >
-                    <Layers className="h-4 w-4" />
-                  </HeaderButton>
-                  <HeaderButton
-                    title="New dashboard"
-                    onClick={() => setNewOpen(true)}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </HeaderButton>
-                </div>
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      title="Dashboard actions"
+                      aria-label="Dashboard actions"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 outline-none transition-colors hover:bg-gray-800 hover:text-white data-[state=open]:bg-gray-800 data-[state=open]:text-white"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      align="end"
+                      sideOffset={5}
+                      className="min-w-[200px] rounded-lg border border-gray-700 bg-gray-800 p-1 shadow-xl"
+                      style={{ zIndex: 9999 }}
+                    >
+                      <DropdownMenu.Item
+                        className={MENU_ITEM_CLASS}
+                        onSelect={() => setNewOpen(true)}
+                      >
+                        <Plus className="h-4 w-4 text-gray-400" />
+                        New dashboard
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item
+                        className={MENU_ITEM_CLASS}
+                        onSelect={() => setAddAreaOpen(true)}
+                      >
+                        <Layers className="h-4 w-4 text-gray-400" />
+                        Add existing area…
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Item
+                        className={MENU_ITEM_CLASS}
+                        onSelect={() => setCreateAreaOpen(true)}
+                      >
+                        <Plus className="h-4 w-4 text-gray-400" />
+                        Create new area…
+                      </DropdownMenu.Item>
+                      <DropdownMenu.Separator className="my-1 h-px bg-gray-700" />
+                      <DropdownMenu.Item
+                        className={MENU_ITEM_CLASS}
+                        onSelect={() => setRenameOpen(true)}
+                      >
+                        <Settings className="h-4 w-4 text-gray-400" />
+                        Settings…
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
               )}
             </div>
             {showNav && navHandle != null && (
@@ -187,29 +225,15 @@ export default function DashboardClient({
               isOpen={newOpen}
               onClose={() => setNewOpen(false)}
             />
+            <AreaBuilderDialog
+              isOpen={createAreaOpen}
+              areaId={null}
+              onClose={() => setCreateAreaOpen(false)}
+              onSaved={() => router.refresh()}
+            />
           </>
         )}
       </div>
     </ChartFocusProvider>
-  );
-}
-
-function HeaderButton({
-  title,
-  onClick,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-800 hover:text-white"
-    >
-      {children}
-    </button>
   );
 }
