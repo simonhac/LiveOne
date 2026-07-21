@@ -64,11 +64,32 @@ Full write-up + raw data: [`docs/performance/dashboard-fetch-waterfall.md`](../.
 | `/api/history` client `dur` | ~1015 ms | **250 ms** (server ~176 ms) |
 | `/api/data?sys=8` client `dur` | ~740 ms | **86 ms** (server ~34 ms) |
 
-## What a re-run after Superphase 1 should move
+## Recorded — post-SSR re-run (2026-07-22)
 
-Superphase 1's **`/api/history` precompute (1.3)** and **SSR data-prefetch (1.2)** touch the render path
-this harness exercises, so expect the shared-view **settle** (dominated by the ~176 ms `history` server
-tail) to drop. The **network floor (~46 ms) will not change** — it's physics, not code. The authed
-owner-path win (structure server-resolution, 1.1) is **not** visible here (no auth); measure that with a
-signed-in browser per the main waterfall doc. Record the new run as a dated `-sydney-lambda-prod-<date>.json`
-and add a comparison row to the waterfall doc.
+SP1 landed (SSR-first load, PR #203). This harness was **augmented** to capture what SSR changed
+(`index.mjs` / `analyse.py`): SSR **decoupled time-to-content from time-to-settle**, so `/api`-settle
+alone is no longer the story. It now also captures Navigation Timing + Paint (FCP/LCP) in-page and a
+**node document-TTFB probe** (the SSR server time). Result (10 runs, `syd1::syd1`), vs the pre-SSR
+Sydney baseline:
+
+| Metric | Pre-SSR (07-21) | **Post-SSR (07-22)** |
+|---|---|---|
+| Network floor (health warm) | ~46 ms | 48 ms (unchanged — physics) |
+| **Time-to-content — FCP (tiles SSR'd)** | n/a | **202 ms** |
+| Time-to-settle — chart (`/api/history`) | 496 ms | 519 ms (~flat — history still un-seeded) |
+| SSR document TTFB (node warm) | n/a | ~95–107 ms → **~40–59 ms SSR server compute** |
+| `/api/history` server `total` | 176 ms | ~150–185 ms (flat; Lever 1's DB saving < variance) |
+| client requests (shared) | 3 | 2 |
+
+Takeaway: **SSR delivered time-to-content (tiles at ~200 ms); time-to-settle is flat** because the
+settle tail is the un-seeded `/api/history` — the next lever is SSR-prefetching it (stream via Suspense
+so tile-FCP doesn't regress). Full write-up + raw data:
+[`docs/performance/dashboard-fetch-waterfall.md`](../../../docs/performance/dashboard-fetch-waterfall.md)
+("Post-SSR re-run — Sydney, 2026-07-22") and the two `…-sydney-lambda-prod-2026-07-22*.json` files.
+
+The **SSR-render decomposition** (PR #205, inline `#__ssr_timing`) splits the ~40–59 ms server compute:
+`areas` ~11 + `data` ~11 dominate; `auth`/`token`/`dashboard` are trivial warm (`token` read 108 ms in
+a *cold* fra1 sample but 3.7 ms warm — cold-instance artifact, not a real cost). The render is cheap
+and balanced; the tail is client-side `/api/history`, not the SSR render. The authed owner-path win
+(SP1.1) is **not** visible here (no auth) — measure that with a signed-in browser per the main
+waterfall doc.

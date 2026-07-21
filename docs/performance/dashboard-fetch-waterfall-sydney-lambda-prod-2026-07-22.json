@@ -1,0 +1,734 @@
+{
+  "region": "ap-southeast-2",
+  "target": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+  "chromiumPath": "/tmp/chromium",
+  "health": [
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "dns": 167,
+      "tcp": 171,
+      "tls": 179,
+      "status": 200,
+      "xServerTiming": "mw;dur=1.4, db;dur=2.6, total;dur=2.7",
+      "xVercelId": "syd1::syd1::7jdkq-1784671579044-9efd32146ef9",
+      "xVercelCache": "MISS",
+      "ttfb": 235,
+      "total": 236
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.4, db;dur=2.4, total;dur=2.4",
+      "xVercelId": "syd1::syd1::7jdkq-1784671579112-6b2efc9aebe7",
+      "xVercelCache": "MISS",
+      "ttfb": 69,
+      "total": 69
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.2, db;dur=2.5, total;dur=2.5",
+      "xVercelId": "syd1::syd1::7jdkq-1784671579171-de1dddf2b8fb",
+      "xVercelCache": "MISS",
+      "ttfb": 47,
+      "total": 47
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.2, db;dur=2.6, total;dur=2.6",
+      "xVercelId": "syd1::syd1::7jdkq-1784671579218-e18bf5cd3486",
+      "xVercelCache": "MISS",
+      "ttfb": 49,
+      "total": 49
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=2.3, db;dur=2.4, total;dur=2.4",
+      "xVercelId": "syd1::syd1::7jdkq-1784671579268-a559cee110b3",
+      "xVercelCache": "MISS",
+      "ttfb": 46,
+      "total": 46
+    }
+  ],
+  "document": [
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::9m6sv-1784671579313-f0f1c57b6fef",
+      "xVercelCache": "MISS",
+      "ttfb": 184,
+      "total": 186
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::9m6sv-1784671579499-c9bcab04816c",
+      "xVercelCache": "MISS",
+      "ttfb": 144,
+      "total": 145
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::9m6sv-1784671579651-0d30d2facccd",
+      "xVercelCache": "MISS",
+      "ttfb": 107,
+      "total": 108
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::9m6sv-1784671579752-363435fc7f43",
+      "xVercelCache": "MISS",
+      "ttfb": 84,
+      "total": 84
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::9m6sv-1784671579836-2a661a5ce341",
+      "xVercelCache": "MISS",
+      "ttfb": 91,
+      "total": 91
+    }
+  ],
+  "browserRuns": [
+    {
+      "count": 2,
+      "settleRaw": 520,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 4,
+        "responseEnd": 103,
+        "domInteractive": 266,
+        "domContentLoadedEventEnd": 266,
+        "domComplete": 286,
+        "loadEventEnd": 286,
+        "transferSize": 10707,
+        "encodedBodySize": 10407,
+        "decodedBodySize": 55422
+      },
+      "paint": { "firstPaint": 208, "firstContentfulPaint": 208 },
+      "lcp": 208,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 948 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 319,
+          "end": 520,
+          "dur": 201,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.7",
+            "auth;dur=30.7",
+            "logical;dur=20.0",
+            "fetch;dur=69.3",
+            "attr;dur=46.4",
+            "serialize;dur=1.6",
+            "total;dur=168.9"
+          ],
+          "vid": "syd1::syd1::5v898-1784671596412-48e5030211d0"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 320,
+          "end": 459,
+          "dur": 139,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.5",
+            "clerk;dur=0.4",
+            "auth;dur=24.0",
+            "polling;dur=3.2",
+            "kv;dur=9.5",
+            "build;dur=9.6",
+            "total;dur=33.6"
+          ],
+          "vid": "syd1::syd1::5v898-1784671596687-71c6ba0b69b7"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 575,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 4,
+        "responseEnd": 104,
+        "domInteractive": 256,
+        "domContentLoadedEventEnd": 256,
+        "domComplete": 296,
+        "loadEventEnd": 297,
+        "transferSize": 10764,
+        "encodedBodySize": 10464,
+        "decodedBodySize": 55422
+      },
+      "paint": { "firstPaint": 164, "firstContentfulPaint": 164 },
+      "lcp": 164,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 948 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 362,
+          "end": 575,
+          "dur": 212,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.8",
+            "auth;dur=25.7",
+            "logical;dur=21.0",
+            "fetch;dur=99.1",
+            "attr;dur=33.9",
+            "serialize;dur=1.4",
+            "total;dur=181.9"
+          ],
+          "vid": "syd1::syd1::865fl-1784671602771-b304c78dcf31"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 364,
+          "end": 468,
+          "dur": 104,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.8",
+            "clerk;dur=0.5",
+            "auth;dur=24.0",
+            "polling;dur=2.4",
+            "kv;dur=4.0",
+            "build;dur=4.0",
+            "total;dur=28.1"
+          ],
+          "vid": "syd1::syd1::865fl-1784671603022-8872e33d9d60"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 476,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 4,
+        "responseEnd": 95,
+        "domInteractive": 199,
+        "domContentLoadedEventEnd": 201,
+        "domComplete": 270,
+        "loadEventEnd": 270,
+        "transferSize": 10761,
+        "encodedBodySize": 10461,
+        "decodedBodySize": 55422
+      },
+      "paint": { "firstPaint": 228, "firstContentfulPaint": 228 },
+      "lcp": 228,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 948 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 265,
+          "end": 476,
+          "dur": 211,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.5",
+            "auth;dur=23.0",
+            "logical;dur=18.0",
+            "fetch;dur=60.9",
+            "attr;dur=31.9",
+            "serialize;dur=1.0",
+            "total;dur=135.3"
+          ],
+          "vid": "syd1::syd1::cwjgb-1784671608287-22b211680c3e"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 266,
+          "end": 344,
+          "dur": 78,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.6",
+            "clerk;dur=0.5",
+            "auth;dur=32.9",
+            "polling;dur=2.7",
+            "kv;dur=4.2",
+            "build;dur=4.3",
+            "total;dur=37.2"
+          ],
+          "vid": "syd1::syd1::cwjgb-1784671608485-02106566e211"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 527,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 4,
+        "responseEnd": 94,
+        "domInteractive": 196,
+        "domContentLoadedEventEnd": 196,
+        "domComplete": 272,
+        "loadEventEnd": 272,
+        "transferSize": 10759,
+        "encodedBodySize": 10459,
+        "decodedBodySize": 55422
+      },
+      "paint": { "firstPaint": 156, "firstContentfulPaint": 156 },
+      "lcp": 156,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 948 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 299,
+          "end": 527,
+          "dur": 228,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.5",
+            "auth;dur=24.8",
+            "logical;dur=18.6",
+            "fetch;dur=75.0",
+            "attr;dur=28.7",
+            "serialize;dur=1.0",
+            "total;dur=148.6"
+          ],
+          "vid": "syd1::syd1::6hf5s-1784671614684-42f31aaa9d2a"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 300,
+          "end": 393,
+          "dur": 93,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.5",
+            "clerk;dur=0.5",
+            "auth;dur=23.0",
+            "polling;dur=2.7",
+            "kv;dur=4.3",
+            "build;dur=4.4",
+            "total;dur=27.5"
+          ],
+          "vid": "syd1::syd1::6hf5s-1784671614902-1551b3f0aed9"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 561,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 4,
+        "responseEnd": 97,
+        "domInteractive": 225,
+        "domContentLoadedEventEnd": 225,
+        "domComplete": 279,
+        "loadEventEnd": 279,
+        "transferSize": 10729,
+        "encodedBodySize": 10429,
+        "decodedBodySize": 55422
+      },
+      "paint": { "firstPaint": 192, "firstContentfulPaint": 192 },
+      "lcp": 192,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 948 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 320,
+          "end": 561,
+          "dur": 242,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.3",
+            "auth;dur=25.4",
+            "logical;dur=19.8",
+            "fetch;dur=111.5",
+            "attr;dur=33.8",
+            "serialize;dur=0.9",
+            "total;dur=192.0"
+          ],
+          "vid": "syd1::syd1::sxmdx-1784671620942-1d6654f1ef7d"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 321,
+          "end": 411,
+          "dur": 90,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.3",
+            "clerk;dur=0.4",
+            "auth;dur=23.5",
+            "polling;dur=2.5",
+            "kv;dur=3.9",
+            "build;dur=4.0",
+            "total;dur=27.5"
+          ],
+          "vid": "syd1::syd1::sxmdx-1784671621192-0285b01f7783"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 463,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 3,
+        "responseEnd": 99,
+        "domInteractive": 230,
+        "domContentLoadedEventEnd": 230,
+        "domComplete": 258,
+        "loadEventEnd": 258,
+        "transferSize": 10739,
+        "encodedBodySize": 10439,
+        "decodedBodySize": 55422
+      },
+      "paint": { "firstPaint": 200, "firstContentfulPaint": 200 },
+      "lcp": 200,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 948 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 280,
+          "end": 463,
+          "dur": 184,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.2",
+            "auth;dur=23.7",
+            "logical;dur=18.4",
+            "fetch;dur=69.4",
+            "attr;dur=33.2",
+            "serialize;dur=1.0",
+            "total;dur=146.1"
+          ],
+          "vid": "syd1::syd1::dc2gw-1784671626429-e30d37f7eb54"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 281,
+          "end": 378,
+          "dur": 97,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.2",
+            "clerk;dur=0.5",
+            "auth;dur=25.5",
+            "polling;dur=3.3",
+            "kv;dur=9.0",
+            "build;dur=9.1",
+            "total;dur=34.7"
+          ],
+          "vid": "syd1::syd1::dc2gw-1784671626628-b709222625d4"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 559,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 4,
+        "responseEnd": 84,
+        "domInteractive": 224,
+        "domContentLoadedEventEnd": 225,
+        "domComplete": 245,
+        "loadEventEnd": 245,
+        "transferSize": 10799,
+        "encodedBodySize": 10499,
+        "decodedBodySize": 55472
+      },
+      "paint": { "firstPaint": 236, "firstContentfulPaint": 236 },
+      "lcp": 236,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 956 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 258,
+          "end": 559,
+          "dur": 301,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.2",
+            "auth;dur=26.2",
+            "logical;dur=20.0",
+            "fetch;dur=77.9",
+            "attr;dur=33.1",
+            "serialize;dur=1.0",
+            "total;dur=158.7"
+          ],
+          "vid": "syd1::syd1::cwjgb-1784671632692-83c0e73e283d"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 259,
+          "end": 350,
+          "dur": 91,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.3",
+            "clerk;dur=0.4",
+            "auth;dur=32.4",
+            "polling;dur=1.7",
+            "kv;dur=4.2",
+            "build;dur=4.3",
+            "total;dur=36.8"
+          ],
+          "vid": "syd1::syd1::cwjgb-1784671632902-35d006398e40"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 478,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 5,
+        "responseEnd": 104,
+        "domInteractive": 160,
+        "domContentLoadedEventEnd": 161,
+        "domComplete": 263,
+        "loadEventEnd": 263,
+        "transferSize": 10779,
+        "encodedBodySize": 10479,
+        "decodedBodySize": 55472
+      },
+      "paint": { "firstPaint": 184, "firstContentfulPaint": 184 },
+      "lcp": 184,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 956 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 284,
+          "end": 478,
+          "dur": 194,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "auth;dur=23.6",
+            "logical;dur=18.3",
+            "fetch;dur=60.3",
+            "attr;dur=32.1",
+            "serialize;dur=1.0",
+            "total;dur=135.7"
+          ],
+          "vid": "syd1::syd1::865fl-1784671638992-5e1bd2cd2bfb"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 286,
+          "end": 355,
+          "dur": 69,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "clerk;dur=0.5",
+            "auth;dur=20.2",
+            "polling;dur=2.2",
+            "kv;dur=3.8",
+            "build;dur=3.9",
+            "total;dur=24.2"
+          ],
+          "vid": "syd1::syd1::865fl-1784671639178-97c9259e7c10"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 506,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 4,
+        "responseEnd": 95,
+        "domInteractive": 143,
+        "domContentLoadedEventEnd": 143,
+        "domComplete": 253,
+        "loadEventEnd": 254,
+        "transferSize": 10752,
+        "encodedBodySize": 10452,
+        "decodedBodySize": 55472
+      },
+      "paint": { "firstPaint": 216, "firstContentfulPaint": 216 },
+      "lcp": 216,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 956 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 305,
+          "end": 506,
+          "dur": 201,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "auth;dur=24.3",
+            "logical;dur=17.7",
+            "fetch;dur=64.2",
+            "attr;dur=33.0",
+            "serialize;dur=1.0",
+            "total;dur=140.8"
+          ],
+          "vid": "syd1::syd1::nrklq-1784671645267-4646dda79175"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 307,
+          "end": 389,
+          "dur": 82,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.2",
+            "clerk;dur=0.5",
+            "auth;dur=15.8",
+            "polling;dur=2.8",
+            "kv;dur=4.7",
+            "build;dur=4.7",
+            "total;dur=20.6"
+          ],
+          "vid": "syd1::syd1::nrklq-1784671645464-98172075d08f"
+        }
+      ]
+    },
+    {
+      "count": 2,
+      "settleRaw": 518,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 8,
+        "responseEnd": 106,
+        "domInteractive": 222,
+        "domContentLoadedEventEnd": 222,
+        "domComplete": 288,
+        "loadEventEnd": 288,
+        "transferSize": 10800,
+        "encodedBodySize": 10500,
+        "decodedBodySize": 55472
+      },
+      "paint": { "firstPaint": 204, "firstContentfulPaint": 204 },
+      "lcp": 204,
+      "content": { "skeletons": 0, "renderedValues": 17, "bodyTextLen": 956 },
+      "ssrTiming": [],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 290,
+          "end": 518,
+          "dur": 228,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "auth;dur=23.4",
+            "logical;dur=18.3",
+            "fetch;dur=79.2",
+            "attr;dur=31.3",
+            "serialize;dur=0.9",
+            "total;dur=153.7"
+          ],
+          "vid": "syd1::syd1::7ntwg-1784671651566-11c8ea5647e1"
+        },
+        {
+          "path": "/api/data",
+          "sys": "12",
+          "sankey": false,
+          "start": 291,
+          "end": 363,
+          "dur": 72,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.3",
+            "clerk;dur=0.4",
+            "auth;dur=15.9",
+            "polling;dur=2.7",
+            "kv;dur=11.0",
+            "build;dur=11.1",
+            "total;dur=27.0"
+          ],
+          "vid": "syd1::syd1::zqlqt-1784671651776-b2d558ff59fc"
+        }
+      ]
+    }
+  ]
+}

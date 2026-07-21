@@ -435,3 +435,163 @@ Sydney-vs-Italy comparison. **Re-run after Superphase 1 lands** (see
 [`../architecture/live-dashboard-roadmap.md`](../architecture/live-dashboard-roadmap.md)) and add a dated
 `-sydney-lambda-prod-<date>.json` + a comparison row here. Expect the shared-view **settle** to drop (the
 `/api/history` precompute + SSR prefetch touch this render path); the **~46 ms network floor won't move**.
+
+## Post-SSR re-run — Sydney (AWS `ap-southeast-2`), 2026-07-22
+
+SSR-first load (SP1.1/1.2 + 1.3a/1.3b; PR #203, commit `17810ce`) is live on prod. Re-ran the Sydney
+harness against the same shared target `…/dashboard/id/5?access=…` (Kinkora), 10 runs. Raw data:
+[`dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22.json).
+
+**The harness was augmented for this run** (`scripts/perf/sydney-lambda/`) because SSR **decoupled
+time-to-content from time-to-settle**, and the old `/api`-settle-only harness was blind to the first.
+It now also captures Navigation Timing + Paint (FCP/LCP) in-page and a **node-level document-TTFB
+probe** (the browser's `responseStart` is unreliable under headless Chromium — it read ~4 ms here vs
+the node probe's 107 ms). `syd1::syd1` confirmed on every request (health, document, and both `/api`).
+
+| Metric | Pre-SSR Sydney (2026-07-21) | **Post-SSR Sydney (2026-07-22)** | Δ |
+|---|---|---|---|
+| Network floor — health warm TTFB | ~46 ms | 48 ms | — (physics) |
+| Client requests (shared) | 3 (`data`×2 + `history`) | **2** (`history` + 1 un-seeded device `data`) | −1 |
+| Waterfall stages | 1 | 1 | — |
+| **Time-to-content — FCP (tiles)** | n/a¹ | **202 ms** (156–236) | NEW |
+| LCP | — | 202 ms | NEW |
+| DOMContentLoaded | — | 224 ms | NEW |
+| **Time-to-settle — chart (`/api/history` end)** | 496 ms | **519 ms** (463–575) | ~flat² |
+| `/api/history` client `dur` | 250 ms | 212 ms | −38 ms |
+| `/api/history` server `total` | 176 ms | ~150–185 ms³ | ~flat³ |
+| SSR document TTFB (node, warm) | n/a | **107 ms** | NEW |
+| SSR server compute (doc − floor) | n/a | **~40–59 ms**³ | NEW |
+
+The headline column is the core run
+([`…-2026-07-22.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22.json)); a second,
+instrumented run ([`…-2026-07-22-decomp.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22-decomp.json))
+bracketed it — floor 55, doc TTFB 95 (compute ~40), FCP 214, settle 586, `history` server 185 ms —
+same shape, run-to-run variance (³).
+
+¹ Pre-SSR the tiles could not paint until `/api/data` returned (~430 ms into the Sydney baseline
+load), and the old harness captured no paint timing — so there's no pre-SSR FCP to diff. The
+structural change *is* the headline: **tile values are now in the SSR HTML** (harness content proof:
+`skeletons=0`, 17 rendered value-strings at settle), so they paint at FCP ~202 ms regardless of any
+`/api` call.
+
+² Settle is ~flat by design: SSR **did not touch `/api/history`** (it's still an un-seeded client
+round-trip, the settle-gating tail). What SSR moved is *content*, not settle — see below.
+
+### What the numbers say
+
+- **Time-to-content collapsed onto FCP.** Tiles render filled from the dehydrated `/api/data` seed at
+  **~202 ms** (= LCP), **317 ms before the chart settles** (519 ms). Pre-SSR the two were conflated in
+  the ~496 ms settle and the tiles couldn't appear until `/api/data` returned. This is the SSR win, and
+  it's the metric the old harness couldn't see.
+- **The SSR render is cheap: ~59 ms server compute** (document TTFB 107 − 48 ms floor), i.e. the
+  `/api/data` KV prefetch + areas/dashboard resolve + React render all fit in ~59 ms. The per-request
+  decomposition of that 59 ms lands with the SSR-render instrumentation (separate PR — see below).
+- **Waterfall shape 3 → 2 requests.** The area handle (sys 8) is seeded server-side and never fires.
+  The *other* system (12) still fires — but **not** from staleness: it's a directly-referenced device,
+  **not in the dehydrated seed at all** (only `["data","8"]` is; see the prefetch-gap note below), so
+  its card self-fetches every load. Its tile is a skeleton until that returns (~460 ms) — a small
+  per-card time-to-content gap. The chart's `/api/history` is the true settle tail.
+- **`/api/history` server time is ~150–185 ms across the two runs**³ — comparable to the pre-SSR
+  176 ms. SP1.3a (`agg5m-cache.ts`) eliminated the `agg_5m` double-read, but at Sydney's co-located
+  DB latency (~1–5 ms/read) that saving is smaller than the run-to-run variance, so it doesn't show
+  cleanly here; the span is dominated by in-Node CPU, not the DB read Lever 1 removed.
+- **The un-seeded system is a prefetch *gap*, not staleness.** Only the area handle (`legacySystemId
+  8`) is in the dehydrated seed; the dashboard's other system (12) is a directly-referenced device,
+  **not reachable via `descriptorAreaIds → areaById → legacySystemId`**, so SP1.2's prefetch skips it
+  and its card self-fetches `/api/data?sys=12` every load. Extending the prefetch to cover
+  directly-referenced device systems (not just area handles) would seed it too.
+
+³ Two runs, ~1 min apart; the second is the instrumented decomposition run. Ranges: floor 48–55,
+doc TTFB 95–107 (SSR compute ~40–59), FCP 202–214, settle 519–586, `history` server 151–185 ms.
+
+### SSR-render decomposition (inline `#__ssr_timing`, instrumented run, 10 runs)
+
+With the render instrumented (PR #205, `page.tsx` emits an inline `#__ssr_timing` Server-Timing mirror
+— a Next page can't set response headers), the ~40–59 ms SSR server compute splits cleanly (Sydney,
+warm):
+
+| span | warm median | what it is |
+|---|---|---|
+| `auth` | 1.1 ms | Clerk `auth()` (signed-out share request) |
+| `token` | 3.7 ms | `validateDashboardShareToken` (DB lookup) |
+| `dashboard` | 1.9 ms | `getDashboard` |
+| `areas` | 10.7 ms | `resolveAreasByIds` (DB) |
+| `data` | 11.2 ms | `getSystemDataForCache` KV latest prefetch |
+| **`total`** | **28.1 ms** | data-gather (spans overlap; the remaining ~12 ms of the node doc-TTFB is React/RSC serialization) |
+
+**No fat phase — the SSR render is cheap and balanced.** `areas` (11) + `data` (11) dominate; `auth`/
+`token`/`dashboard` are trivial warm. Note `token` read **108 ms in a cold fra1 sample** but **3.7 ms
+warm** — a cold-instance artifact (first DB connect), not a real cost; don't optimize it. This confirms
+the SSR render is *not* where the remaining latency is — the tail is the client-side, un-seeded
+`/api/history` (see next-fruit below), and SSR-prefetching it would move ~150–185 ms of `history`
+server work into this render (28 → ~180 ms), which is exactly why it should **stream via Suspense** so
+the tiles' FCP (~200 ms) doesn't regress.
+
+### Post-#207 — SSR-seeding the device pins: a shape win that net-regressed FCP
+
+PR #207 (SP1.2b) extended the SSR prefetch to also seed a tile's `deviceSystemId` pins — chiefly the
+`oe-grid` tile, which pins a public NEM region system (sys 12), previously a client `/api/data?sys=12`
+self-fetch. Re-ran the Sydney harness on the deployed build. Raw data:
+[`…-sydney-lambda-prod-2026-07-22-ttc.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22-ttc.json).
+
+| Metric | Pre-#207 (instrumented) | Post-#207 (device pins seeded) | Δ |
+|---|---|---|---|
+| Client requests (shared) | 2 (`history` + `data?sys=12`) | **1** (`history` only) | **−1 (shape win)** |
+| **FCP (time-to-content)** | 214 ms | **268 ms** | **+54 ms (regression)** |
+| Settle (`/api/history` end) | 586 ms | 606 ms | +20 ms (~flat, noisy) |
+| SSR `data` span | 11.2 ms | **24.6 ms** | **+13 ms** |
+| SSR `total` span | 28.1 ms | **50.9 ms** | **+23 ms** |
+
+Both SSR spans are tight distributions (data 22.7–28.9, total 45.4–58.1 over 10 runs) — the +23 ms is
+real, not an outlier. FCP shifted up across the whole distribution (min 236 > the pre-#207 median 214).
+
+**The trade was net-negative, and the mechanism is the exact one the section above predicted.** The
+removed `/api/data?sys=12` was **concurrent with `/api/history`** (it fired at hydration alongside it and
+finished first — it was *never* the settle tail), so deleting it saved **nothing** on settle. But the
+work that replaced it — `getAreaDeviceSystemIds` + `resolveGridContextForSystem` (3 DB queries) + the
+sys-12 `getSystemDataForCache` — runs **inside the awaited SSR render**, on the critical path, so it
+added ~23 ms to the document and pushed FCP for **every** tile from ~214 → ~268 ms. Net: worse FCP, no
+settle change; the only gain is the sys-12 tile now completing at FCP (~268 ms) instead of at its old
+client-fetch return (~460 ms).
+
+**Lesson (same as the `/api/history` case): don't block the SSR render on off-critical-path prefetches.**
+A concurrent client request that isn't the settle tail costs the user ~nothing; moving it into the
+blocking render costs *everyone* the added server time. The fix is to either (a) revert the device-pin
+seed, or (b) make it non-blocking / cheap — authorize the public oe-grid pin with one lightweight
+"is-public-OE-system" check instead of `resolveGridContextForSystem`'s 3 queries, and/or resolve it
+outside the awaited path. SP1.4 (the authed header-switcher seed) is **not** exercised here (shared
+view) and should be measured on a signed-in page — it adds two blocking DB reads too, so watch its FCP.
+
+### Post-#208 — cheap pin authorization recovers the regression
+
+PR #208 took fix (b): authorize a `deviceSystemId` pin off the payload the render **already fetches** —
+seed it only if that system is public (`ownerClerkUserId === null`, e.g. the oe-grid NEM region system)
+or owned by the viewer — dropping `#207`'s `getAreaDeviceSystemIds` + `resolveGridContextForSystem`
+(3 DB queries) entirely. Re-ran the Sydney harness. Raw data:
+[`…-sydney-lambda-prod-2026-07-22-pinauth.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22-pinauth.json).
+
+| Signal (median) | pre-#207 | #207 | **#208** |
+|---|---|---|---|
+| Client requests (shared) | 2 | 1 | **1** (shape win kept) |
+| **Document TTFB (node, warm)** — the clean signal | 95 ms | 131 ms | **104 ms** |
+| SSR `data` span | 11.2 ms | 24.6 ms | **16.8 ms** |
+| SSR `total` span | 28.1 ms | 50.9 ms | **38.9 ms** |
+| Browser FCP | 208 ms | 268 ms | 294 ms (too noisy — see below) |
+
+**The regression is recovered on the metric that can be trusted.** The node-measured document TTFB —
+tight (warm samples 92/94/104/115) and the honest measure of the SSR render — came back from 131 → 104 ms,
+essentially the pre-#207 95 ms baseline; the SSR spans dropped in step. The auth overhead is gone.
+
+**Browser FCP is not reliable at this precision and should not be read as a regression.** Its medians
+(208 / 268 / 294) move *opposite* to the provably-cheaper render, with hugely overlapping ranges
+(#208 FCP spans 216–420) — headless-Chromium paint jitter + cold-instance hits dominate the 10-run
+sample (this is the same `responseStart = 0` class of headless quirk the doc flags). Trust the node
+document TTFB, not the in-page paint timing, for server-render cost from this harness.
+
+**Residual and verdict.** #208's document TTFB sits ~9 ms above the pre-#207 baseline (104 vs 95) — the
+*inherent* cost of actually fetching the extra sys-12 payload on the blocking path (one more KV read),
+which is the seed we want. That is a **good trade** (the sys-12 tile now renders at first paint instead
+of ~460 ms, and one fewer client request), unlike #207's ~36 ms. If even ~9 ms is unwanted, reverting
+the pin seed entirely remains valid since it doesn't affect settle — but at ~9 ms the seed is worth
+keeping. Settle is unchanged throughout (~590–610 ms, gated by the un-seeded `/api/history` — the
+outstanding lever, to be done via Suspense streaming so it doesn't repeat this blocking-render mistake).
