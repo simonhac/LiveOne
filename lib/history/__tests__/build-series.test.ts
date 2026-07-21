@@ -177,6 +177,29 @@ describe("buildSeriesFromAggRows", () => {
     expect(out[0].history.data).toEqual([1, 2, 3, 4]);
   });
 
+  it("1d: densifies a sparse day range to the full window (nulls for missing days)", async () => {
+    const point = fakePoint({ index: 9, systemId: 1, metricType: "soc" });
+    const d = (s: string) => new Date(s + "T00:00:00Z").getTime();
+    // Only the last two days of a 5-day window have rows (a sparsely-reporting SoC point). They must
+    // land at their true day offsets (indices 3,4), not be packed at the window start — the client
+    // aligns positionally (data[i] == day firstInterval+i), so a sparse series would otherwise be
+    // mis-placed at the start (the "band stops early" bug).
+    const allRows: AggRow[] = [
+      { system_id: 1, point_id: 9, day: "2026-01-16", min: 20 },
+      { system_id: 1, point_id: 9, day: "2026-01-17", min: 21 },
+    ];
+    const out = await buildSeriesFromAggRows(
+      allRows,
+      [seriesInfo(point, "min")],
+      "1d",
+      system,
+      d("2026-01-13"),
+      d("2026-01-17"),
+    );
+    expect(out[0].history.numIntervals).toBe(5);
+    expect(out[0].history.data).toEqual([null, null, null, 20, 21]);
+  });
+
   it("skips a series whose source system is missing", async () => {
     const point = fakePoint({ index: 1, systemId: 999 });
     const allRows: AggRow[] = [

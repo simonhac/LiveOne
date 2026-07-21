@@ -193,11 +193,16 @@ export default function LinesChartCard({
           const firstTime = timestamps[0];
           const lastTime = timestamps[timestamps.length - 1];
 
-          // Add padding timestamps (half day before/after to ensure coverage)
+          // Pad the band ±12h so its fill reaches the bar edges — but CLAMP to the x-axis window
+          // [windowStart, now]. A pad point placed BEYOND the axis makes Chart.js's `fill: "+1"`
+          // filler drop that end's lower boundary to the axis baseline (0%) — the trailing band
+          // "collapse to 0" bug. Clamped, the band still reaches the edges without the artifact.
+          const clampMs = (ms: number) =>
+            Math.min(Math.max(ms, windowStart.getTime()), now.getTime());
           const paddedTimestamps = [
-            new Date(firstTime.getTime() - 12 * 60 * 60 * 1000), // 12 hours before
+            new Date(clampMs(firstTime.getTime() - 12 * 60 * 60 * 1000)), // ≥ windowStart
             ...timestamps,
-            new Date(lastTime.getTime() + 12 * 60 * 60 * 1000), // 12 hours after
+            new Date(clampMs(lastTime.getTime() + 12 * 60 * 60 * 1000)), // ≤ now
           ];
 
           // Extend the SOC values (use the same values at edges)

@@ -211,13 +211,26 @@ export async function buildSeriesFromAggRows(
       }
     }
 
-    // 1d rows are grouped but not guaranteed day-ordered: Postgres can return a recomputed/
-    // upserted day out of heap position (an unordered scan), which would shift the served series
-    // by one since this transform maps rows in arrival order. Sort by interval_end so the
-    // 1d series is day-ascending regardless of the source's row order. No-op for the 5m/30m paths
-    // (already dense / bucket-sorted ascending).
+    // 1d: densify to a dense day grid over [firstEpoch, lastEpoch] (step 24h), null where a day has
+    // no row. agg_1d is sparse — a point only has a row for days it actually reported — but every
+    // client aligns series POSITIONALLY: it assumes data[i] is the day `firstInterval + i`. So a
+    // sparse series (e.g. an intermittently-reporting SoC point) gets mis-placed at the window start
+    // instead of its true dates (the "band stops early" bug). Filling every day makes index ==
+    // day-offset for every series, so positional alignment is correct by construction. This also
+    // subsumes the day-ordering the sparse rows lacked (an upserted/recomputed day could arrive out
+    // of heap position). 5m/30m are already dense (see readings-pg densify). Raw `rows` upstream are
+    // untouched, so the Sankey/flow-matrix read is unaffected.
     if (interval === "1d") {
-      rows = [...rows].sort((a, b) => a.interval_end - b.interval_end);
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const byDay = new Map(rows.map((r) => [r.interval_end, r.value]));
+      const dense: typeof rows = [];
+      for (let t = firstEpoch; t <= lastEpoch; t += DAY_MS) {
+        dense.push({
+          interval_end: t,
+          value: byDay.has(t) ? byDay.get(t)! : null,
+        });
+      }
+      rows = dense;
     }
 
     // Get source system for series ID
