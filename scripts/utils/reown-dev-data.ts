@@ -29,15 +29,25 @@ import { Client } from "pg";
 
 // Every clerk-id-keyed OWNERSHIP column. `users.clerk_user_id` is the PRIMARY KEY — handled separately
 // below (copy prefs, don't rename) to avoid a collision when both the prod and dev user rows exist.
+//
+// GRANT tables (`user_systems`, `dashboard_grants`) are deliberately NOT here. They are access grants
+// with a COMPOSITE UNIQUE key — `(clerk_user_id, system_id)` / `(dashboard_id, clerk_user_id)` — not
+// ownership. Two reasons they must stay out of the ownership remap:
+//   1. Redundant: dev-you already sees the data by OWNING it (the systems/dashboards/areas owner
+//      columns below remap to the dev id); an extra grant for the dev id buys nothing.
+//   2. Harmful: `UPDATE ... SET clerk_user_id = <dev>` collides with the row a previous run's
+//      grant-back already created for that (user, system/dashboard) pair → a duplicate-key abort
+//      (`user_system_unique` / `dashboard_grants_dashboard_user_unique`) that failed the sync every
+//      steady-state run, drifting `liveone-dev`.
+// The PROD id's read-back access is handled purely additively by the ON CONFLICT DO NOTHING
+// grant-back below — which is the ONLY thing that should touch these two tables.
 const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
   [
     { table: "systems", col: "owner_clerk_user_id" },
-    { table: "user_systems", col: "clerk_user_id" },
     { table: "share_tokens", col: "owner_clerk_user_id" },
     // Legacy per-system dashboards (and their `system_id` column) were dropped in the P6 demolition
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     { table: "dashboards", col: "clerk_user_id" },
-    { table: "dashboard_grants", col: "clerk_user_id" },
     { table: "areas", col: "owner_clerk_user_id" },
   ];
 
