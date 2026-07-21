@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/planetscale/schema";
 import { applyPowerTransform } from "@/lib/aggregation/flow-series";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
+import { isSettledQuality } from "@/lib/data-quality";
 import {
   resolveLogicalSystem,
   type LogicalSystem,
@@ -136,11 +137,24 @@ async function loadOeRawSeries(
   };
 }
 
-/** Forward-fill a source series onto the target timeline (≤ maxStaleMs); flags fills / non-good quality. */
-function forwardFill(
+/**
+ * Forward-fill a source series onto the target timeline (≤ maxStaleMs); flags fills / provisional
+ * quality as `estimated`.
+ *
+ * `nativeIntervalMs` is the series' OWN cadence: a slot is only a "fill" (→ estimated) when it is
+ * more than one native interval past the last sample. Up-sampling a natively-coarse series (e.g. a
+ * 30-min Amber rate onto the 5-min flow timeline) is NOT a gap-fill, so its between-tick slots must
+ * not be flagged. A REAL gap (a missed native interval) still exceeds `nativeIntervalMs` → estimated,
+ * and beyond `maxStaleMs` the value nulls out (also estimated). Defaults to `FIVE_MIN_MS` so 5-min
+ * native callers (OE, SoC) are unchanged.
+ *
+ * Exported for unit testing (the estimated-flag semantics behind the "% estimated" chip).
+ */
+export function forwardFill(
   timeline: number[],
   src: SeriesPoint[],
   maxStaleMs: number,
+  nativeIntervalMs: number = FIVE_MIN_MS,
 ): { value: (number | null)[]; estimated: boolean[] } {
   const value = new Array<number | null>(timeline.length).fill(null);
   const estimated = new Array<boolean>(timeline.length).fill(false);
@@ -151,8 +165,8 @@ function forwardFill(
     while (j < src.length && src[j].t <= t) last = src[j++];
     if (last && t - last.t <= maxStaleMs) {
       value[i] = last.v;
-      const filled = t - last.t > FIVE_MIN_MS;
-      estimated[i] = filled || (last.dq != null && last.dq !== "good");
+      const filled = t - last.t > nativeIntervalMs;
+      estimated[i] = filled || (last.dq != null && !isSettledQuality(last.dq));
     } else {
       value[i] = null;
       estimated[i] = true;
@@ -328,6 +342,9 @@ export async function loadProvenanceInputs(
       (b) => b.stem === "bidi.grid.import" || b.stem === "bidi.grid.export",
     );
   const RATE_FILL_MS = 35 * 60 * 1000;
+  // Amber rates are 30-min native; up-sampling onto the 5-min timeline is not a gap-fill, so only a
+  // gap beyond one native interval (a genuinely missed tick) counts as estimated.
+  const RATE_NATIVE_MS = 30 * 60 * 1000;
   const chargeBind = bound.find(
     (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
   );
@@ -424,7 +441,7 @@ export async function loadProvenanceInputs(
   let gridPriceEstimated = new Array<boolean>(timeline.length).fill(true);
   let gridExportPrice = new Array<number | null>(timeline.length).fill(null);
   for (const { stem, s } of rateSeriesResults) {
-    const ff = forwardFill(timeline, s, RATE_FILL_MS);
+    const ff = forwardFill(timeline, s, RATE_FILL_MS, RATE_NATIVE_MS);
     if (stem === "bidi.grid.import") {
       gridPrice = ff.value;
       gridPriceEstimated = ff.estimated;
