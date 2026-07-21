@@ -381,3 +381,14 @@ server-resolved chrome routes) — so its settle isn't the authed settle, but it
 `/api/health` floor are what an AU browser sees, which is what we needed. (2) In headless Chromium the
 `PerformanceResourceTiming` `responseStart` came back 0, so the browser rows use client `dur` (network +
 server) and the clean network floor comes from the node-level `/api/health` probe; the two agree.
+
+### Re-running this (turnkey)
+
+The Sydney harness is captured as reusable code at
+[`scripts/perf/sydney-lambda/`](../../scripts/perf/sydney-lambda/): `./run.sh` builds a headless-Chromium
+Lambda, deploys it to `ap-southeast-2`, invokes the same 10-run harness + `/api/health` floor probe, saves
+the JSON, and **tears everything down** (cost: a few cents); `python3 analyse.py <result.json>` prints the
+Sydney-vs-Italy comparison. **Re-run after Superphase 1 lands** (see
+[`../architecture/live-dashboard-roadmap.md`](../architecture/live-dashboard-roadmap.md)) and add a dated
+`-sydney-lambda-prod-<date>.json` + a comparison row here. Expect the shared-view **settle** to drop (the
+`/api/history` precompute + SSR prefetch touch this render path); the **~46 ms network floor won't move**.
