@@ -5,7 +5,7 @@ import {
   setDefaultDashboardById,
   clearDefaultDashboard,
 } from "@/lib/user-preferences";
-import { makeTimer } from "@/lib/server-timing";
+import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
 // GET /api/user/preferences - Get current user preferences
 export async function GET(request: NextRequest) {
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
         success: true,
         preferences,
       },
-      { headers: { "Server-Timing": t.header() } },
+      { headers: serverTimingHeaders(t) },
     );
   } catch (error) {
     console.error("Error fetching user preferences:", error);

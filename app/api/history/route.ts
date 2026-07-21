@@ -32,7 +32,11 @@ import type {
   EnergyFlowMatrix,
   DailyFlowMatrices,
 } from "@/lib/energy-flow-matrix";
-import { makeTimer, type ServerTimer } from "@/lib/server-timing";
+import {
+  makeTimer,
+  serverTimingHeaders,
+  type ServerTimer,
+} from "@/lib/server-timing";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -522,7 +526,7 @@ function buildResponse(
     status: 200,
     headers: {
       "Content-Type": "application/json",
-      ...(timer && { "Server-Timing": timer.header() }),
+      ...serverTimingHeaders(timer),
     },
   });
 }

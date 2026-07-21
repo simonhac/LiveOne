@@ -8,7 +8,7 @@ import {
   DashboardAliasTakenError,
 } from "@/lib/dashboard/dashboards";
 import { emptyCompositionDescriptor } from "@/lib/dashboard/composition";
-import { makeTimer } from "@/lib/server-timing";
+import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
 /**
  * Composition-first dashboards (Phase 2b-2), owner-scoped.
@@ -25,10 +25,7 @@ export async function GET(request: NextRequest) {
   const dashboards = await t.time("list", () =>
     listAccessibleDashboards(auth.userId),
   );
-  return NextResponse.json(
-    { dashboards },
-    { headers: { "Server-Timing": t.header() } },
-  );
+  return NextResponse.json({ dashboards }, { headers: serverTimingHeaders(t) });
 }
 
 export async function POST(request: NextRequest) {

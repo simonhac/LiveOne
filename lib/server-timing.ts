@@ -93,3 +93,26 @@ export function makeTimer(request?: Request): ServerTimer {
     },
   };
 }
+
+/**
+ * Response headers carrying the Server-Timing value. Emits BOTH the standard `Server-Timing` header
+ * AND a custom `x-server-timing` mirror with the identical value (computed once).
+ *
+ * Why the mirror: Vercel's edge STRIPS the reserved `Server-Timing` response header on production
+ * deployments (vercel/next.js#62353, #12382) — so the standard header, though correct and surfaced
+ * by `PerformanceResourceTiming.serverTiming` in local dev / browser devtools, never reaches the
+ * client on prod. Custom `x-*` headers pass through untouched, so the fetch-waterfall benchmark
+ * (docs/performance/dashboard-fetch-waterfall.md) reads the phase decomposition off `x-server-timing`
+ * with an explicit same-origin `fetch(url).then(r => r.headers.get('x-server-timing'))` — the
+ * Resource Timing API only parses the standard header, not the mirror.
+ *
+ * Returns `{}` when `timer` is absent, so it can be spread unconditionally into a headers object
+ * (e.g. `{ "Content-Type": "application/json", ...serverTimingHeaders(timer) }`).
+ */
+export function serverTimingHeaders(
+  timer?: ServerTimer,
+): Record<string, string> {
+  if (!timer) return {};
+  const value = timer.header();
+  return { "Server-Timing": value, "x-server-timing": value };
+}

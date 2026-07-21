@@ -192,16 +192,41 @@ fetch-slimming PR + the Performance CPU tier together.
 
 ## Server-side phase decomposition (Server-Timing)
 
-The six dashboard endpoints (+ `/api/health` as a public control) emit a `Server-Timing` response
-header decomposing each request into named phases — always on, durations only (`lib/server-timing.ts`;
-the middleware self-reports its elapsed via an `x-middleware-dur` request header that the routes fold
-in as the `mw` entry). Browsers surface the header on the same
-`performance.getEntriesByType('resource')` API the harness reads, so append this to the harness's
-per-entry mapper to capture it with every run:
+The six dashboard endpoints (+ `/api/health` as a public control) decompose each request into named
+phases — always on, durations only (`lib/server-timing.ts`; the middleware self-reports its elapsed
+via an `x-middleware-dur` request header that the routes fold in as the `mw` entry).
+
+**⚠️ Vercel strips `Server-Timing` in production — read the `x-server-timing` mirror instead.** The
+routes emit the phases under **two** headers with the same value (`serverTimingHeaders()`): the
+standard `Server-Timing` **and** a custom `x-server-timing`. This is load-bearing: Vercel's edge
+removes the reserved `Server-Timing` response header on prod/preview deployments
+([vercel/next.js#62353](https://github.com/vercel/next.js/discussions/62353),
+[#12382](https://github.com/vercel/next.js/issues/12382)), so the standard header — and therefore the
+passive `performance.getEntriesByType('resource')[].serverTiming` field — is **empty on prod**. It is
+only populated where there is no Vercel edge in front (local `next dev`/`next start`). The
+`x-server-timing` mirror passes through untouched everywhere.
+
+Because the Resource Timing API only parses the standard header, capture the mirror with an explicit
+**post-settle re-fetch** of each request the run recorded (same-origin, so the signed-in tab reads
+the header directly; these are idempotent GET reads). Append this after the harness's settle loop and
+merge `st` back onto each entry by path:
 
 ```js
-st: (e.serverTiming || []).map(s => `${s.name}:${Math.round(s.duration)}`)
+// after the settle loop, before building the JSON result — `entries2` is the settled resource list
+const stByUrl = {};
+for (const url of [...new Set(entries2.map(e => e.name))]) {
+  try {
+    const r = await fetch(url, { credentials: 'include' });
+    const h = r.headers.get('x-server-timing');
+    if (h) stByUrl[url] = h.split(', ').map(s => s.replace(/;dur=/, ':').replace(/(\.\d)\d*$/, '$1'));
+  } catch {}
+}
+// …then in the per-entry mapper add:  st: stByUrl[e.name] || []
 ```
+
+(Off-Vercel — local dev — you can instead read it passively without the re-fetch via
+`st: (e.serverTiming || []).map(s => \`${s.name}:${Math.round(s.duration)}\`)`, since the standard
+header survives there.)
 
 Span names: `mw` (the **whole** edge middleware invocation — Clerk's `authenticateRequest`
 session/JWT verification + JWKS fetch on cold instances + `auth.protect()`; timed by wrapping

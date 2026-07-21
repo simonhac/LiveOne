@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   makeTimer,
+  serverTimingHeaders,
   forwardRequestHeader,
   MIDDLEWARE_DUR_HEADER,
 } from "../server-timing";
@@ -81,6 +82,23 @@ describe("makeTimer", () => {
     await t.time("clerk", async () => {});
     const names = parse(t.header()).map(([n]) => n);
     expect(names.filter((n) => n === "clerk")).toHaveLength(2);
+  });
+});
+
+describe("serverTimingHeaders", () => {
+  it("emits BOTH the standard header and the x-server-timing mirror with one identical value", () => {
+    // The mirror exists because Vercel strips the reserved `Server-Timing` header on prod
+    // (vercel/next.js#62353); `x-*` passes through so the benchmark can still read the phases.
+    const t = makeTimer();
+    const headers = serverTimingHeaders(t);
+    expect(headers["Server-Timing"]).toBeDefined();
+    expect(headers["x-server-timing"]).toBe(headers["Server-Timing"]);
+    // The value is a well-formed Server-Timing string (here just the implicit `total`).
+    expect(parse(headers["Server-Timing"]).map(([n]) => n)).toEqual(["total"]);
+  });
+
+  it("returns an empty object when the timer is absent (spread-safe)", () => {
+    expect(serverTimingHeaders(undefined)).toEqual({});
   });
 });
 
