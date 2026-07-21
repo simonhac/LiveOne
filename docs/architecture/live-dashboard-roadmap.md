@@ -84,9 +84,16 @@ precomputed `flow_attr_1d` rollup, **nothing here is materialized yet.** Three l
   inside `buildAttributedFlowMatrix`) issue **two separate `agg_5m` queries for the same role points** in
   one request. Reuse the already-fetched rows (or a per-request cache) instead of re-querying. Smallest
   change, no new storage.
-- **1.3b — Trim the fold warm-up over-read.** The stateful provenance fold seeds from a checkpoint anchor
-  (≤ 3.5 days) or, on seed-miss, over-reads `startMs − 7 days` of `agg_5m`. Keep the seeded path the norm
-  so a 1-day sankey doesn't read a week of history.
+- **1.3b — Trim the fold warm-up over-read.** The stateful provenance fold seeds from the most recent
+  per-area checkpoint (`battery_provenance_daily.fold_state`, anchored at local midnight, written by the
+  nightly heal). For a battery area on a normal day that checkpoint is **very likely** the requested day's
+  own midnight, so a 1-day sankey seeds there and reads **~1 day** of `agg_5m`. The reader keeps a safety
+  net for the uncommon miss (today's checkpoint not yet written pre-00:05, a `BATPROV_MODEL_VERSION` bump,
+  learn warm-up): it searches back `SEED_LOOKBACK_DAYS = 2` and tolerates a stale anchor up to
+  `MAX_SEED_SPAN_MS = 3.5 days`; past that, or on any seed-miss, it over-reads `startMs − 7 days`
+  (`WARMUP_MS`) from a zero fold state. Keep the seeded path the norm so a 1-day sankey reads ~1 day, not
+  a week — the 1.3b win is making the ~1-day seed the overwhelming common case (and, optionally,
+  tightening the rare fallback lead-in itself).
 - **1.3c — Materialize the sub-daily sankey + attributed series.** The residual after 1.3a/1.3b is in-Node
   CPU (densify/bucket + the stateful fold + flow-accounting) that a faster read can't cut. Precompute it —
   a **new** sub-daily rollup (there is no sub-daily counterpart to `flow_attr_1d` today), not a cache of an
