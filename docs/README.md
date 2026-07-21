@@ -45,11 +45,12 @@
 
 ## Plans (proposed — not yet started)
 
-- [plans/info-producers-consumers.md](plans/info-producers-consumers.md) — typed-shape **info producers & consumers**: devices advertise what info (status _and_ config) they can supply; consumers seek the best source per input; **auto-connect on shape-agreement** (HA discovery) + **explicit Area wiring** (with priority). Battery energy provenance is the first consumer; generalizes the capability/binding/KV-fan-out seams
+- [plans/config-v4-clean-sheet.md](plans/config-v4-clean-sheet.md) — **the clean-sheet config model**: one TypeID space (integer handle retired), `systems`→`devices`, eager areas (tz/location area-only, fixed-offset days endorsed), per-role bindings with deterministic slot resolution, trackers generalized to `derivations`, recursive group/card dashboard docs (tile=small card) with whole-doc PUT + revisions, one share-token semantics, one-time cutover migration. **Supersedes** info-producers-consumers + identity-address-split-and-labels and parts of areas-and-dashboards
+- [plans/info-producers-consumers.md](plans/info-producers-consumers.md) — _superseded by config-v4-clean-sheet.md_ — typed-shape **info producers & consumers**: advertise/seek/auto-connect on shape-agreement + explicit Area wiring with priority; kept for the seam map + battery-provenance first-consumer analysis
 - [plans/battery-provenance-ops-hardening.md](plans/battery-provenance-ops-hardening.md) — **battery energy provenance** correctness bugs (modern `flow_attr_1d` energy leg diverging from the legacy `flow_1d` Sankey; the `recompute-provenance` API dropping a boundary day per batch — both root-caused & FIXED on this branch) + scoped ops-ergonomics follow-ups (a legacy↔modern consistency monitor, an activate/verify operation, handle→areaId lookup) — surfaced during the 2026-07-13 Daylesford reprice
 - [plans/battery-provenance-merge-handoff.md](plans/battery-provenance-merge-handoff.md) — **merge handoff** for the `battery-energy-provenance` branch: pre-merge gates (tests, replay byte-identity, card gallery) + post-merge choreography (deploy verification, the one-time Daylesford re-backfill + 184.2 kWh acceptance, Kinkora `exportTariff`, the ops-hardening "Do" list, unblocking info-producers P2)
 - [plans/timestamptz-migration.md](plans/timestamptz-migration.md) — migrate time-series time columns to `timestamptz` (needs schema-change approval)
-- [plans/identity-address-split-and-labels.md](plans/identity-address-split-and-labels.md) — two HA-borrowings: split point identity from address (`point_uid`) + a Label orthogonal tag dimension (needs schema-change approval)
+- [plans/identity-address-split-and-labels.md](plans/identity-address-split-and-labels.md) — _superseded by config-v4-clean-sheet.md_ — split point identity from address (`point_uid`) + a Label orthogonal tag dimension; kept as the argument record
 
 ## Deferred work
 

@@ -1,6 +1,8 @@
 # LiveOne vs. Home Assistant — architecture & object model
 
-> **Status:** current — last verified 2026-06-15. An analytical comparison, not a spec.
+> **Status:** current as analysis; for design decisions it is superseded by
+> [config-v4-clean-sheet.md](../plans/config-v4-clean-sheet.md) (2026-07-21), which carries the
+> HA-relationship choices forward. An analytical comparison, not a spec.
 > Where it describes LiveOne, the source of truth is `lib/db/planetscale/schema.ts` +
 > `docs/architecture/{overview,data-model,areas-and-dashboards,engine-web-separation}.md`.
 > Where it describes Home Assistant, it reflects the HA developer docs as of mid-2026

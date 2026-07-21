@@ -1,10 +1,10 @@
 # Plan: two HA-borrowings — split identity from address + a Label tag dimension
 
-> **Status:** proposed — not started (drafted 2026-06-15). Two _independent_ arguments,
-> drawn from the [Home Assistant comparison](../architecture/home-assistant-comparison.md);
-> either can be done alone. **No schema change has been made — get explicit approval before
-> generating/applying any migration** (`CLAUDE.md` → Database Migrations). This doc is an
-> argument for _why_, not an approved design.
+> **Status:** superseded by [config-v4-clean-sheet.md](config-v4-clean-sheet.md) (2026-07-21) —
+> the identity/address split is absorbed there (`points.id` *is* the identity; the sequential
+> address dies), and Labels remain a deferred seam in its terms. Kept as the argument record.
+> Original status: proposed — not started (drafted 2026-06-15). Two _independent_ arguments,
+> drawn from the [Home Assistant comparison](../architecture/home-assistant-comparison.md).
 
 ## Why these two, and why now
 
