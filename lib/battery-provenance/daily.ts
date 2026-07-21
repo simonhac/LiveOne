@@ -99,6 +99,18 @@ export function dayIndexOf(tMs: number, tzOffsetMin: number): number {
   return Math.floor((tMs + tzOffsetMin * 60_000 - 1) / DAY_MS);
 }
 
+/** Local-day bucket of a WINDOW LOWER BOUND (start-inclusive: a timestamp exactly at local midnight
+ *  belongs to the day it STARTS, not the day that just finished). The start-side mirror of the
+ *  end-exclusive `dayIndexOf` — use it to find the checkpoint anchored at (or before) a window's own
+ *  start-midnight. Identical to `dayIndexOf` for any non-midnight timestamp; `dayIndexOf(t) + 1` when
+ *  `t` is exactly a local midnight. */
+export function dayIndexStartingAtOrBefore(
+  tMs: number,
+  tzOffsetMin: number,
+): number {
+  return Math.floor((tMs + tzOffsetMin * 60_000) / DAY_MS);
+}
+
 /**
  * The interval-end range OWNED by a local day, as `[startExclusiveMs, endInclusiveMs]`:
  * `dayIndexOf(t) === d  ⇔  startExclusiveMs < t ≤ endInclusiveMs`. NOTE this is the learner/bucketer

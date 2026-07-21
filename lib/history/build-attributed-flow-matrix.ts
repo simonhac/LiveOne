@@ -26,6 +26,7 @@ import {
   tryLoadSeededProvenanceInputs,
   type ProvenanceSeedResult,
 } from "@/lib/db/planetscale/battery-provenance-pg";
+import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import {
   computeFlowAccounting,
   type FlowAccountingResult,
@@ -130,6 +131,9 @@ export async function buildAttributedFlowMatrix(
    *  once for the energy-only Sankey) — skips two internal `resolveLogicalSystem` calls (here and
    *  inside `loadProvenanceInputs`). Must be for the same `handle`; not verified. */
   logicalSystem?: LogicalSystem,
+  /** Request-scoped `agg_5m` avg cache from the `/api/history` "fetch" span, so the flow-series read
+   *  reuses the in-window rows fetch already loaded instead of re-querying (§1.3a). */
+  avgCache?: Agg5mAvgCache,
 ): Promise<DailyFlowMatrices | null> {
   const db = requirePlanetscaleDb();
   // Best-effort: any failure here (including a thrown error, not just a guard's {seeded:false})
@@ -143,6 +147,7 @@ export async function buildAttributedFlowMatrix(
       startMs,
       endMs,
       logicalSystem,
+      avgCache,
     );
   } catch (err) {
     console.error("[history] checkpoint seed lookup failed:", err);
@@ -153,7 +158,7 @@ export async function buildAttributedFlowMatrix(
     : await loadProvenanceInputs(
         handle,
         { startMs: startMs - WARMUP_MS, endMs },
-        { logicalSystem },
+        { logicalSystem, avgCache },
       );
   if (!inputs) return null;
 

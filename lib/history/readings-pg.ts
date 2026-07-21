@@ -16,6 +16,7 @@ import {
 } from "@/lib/db/planetscale/schema";
 import { FIVE_MIN_MS } from "@/lib/aggregation/point-aggregates";
 import type { AggRow } from "./build-series";
+import type { Agg5mAvgCache } from "./agg5m-cache";
 
 export interface AggFetchParams {
   /** Distinct `[systemId, pointId]` pairs to fetch. */
@@ -47,7 +48,12 @@ function groupPointIdsBySystem(
 /**
  * Fetch the uniform `AggRow[]` from Postgres for `/api/history`.
  */
-export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
+export async function fetchAggRowsPg(
+  p: AggFetchParams,
+  /** When set (the `/api/history` sankey path), record the raw sparse `avg` rows read here so the attr
+   *  span's flow-series read can reuse them instead of re-querying `agg_5m` (§1.3a). 5m/30m only. */
+  avgCache?: Agg5mAvgCache,
+): Promise<AggRow[]> {
   const db = requirePlanetscaleDb();
   const idsBySystem = groupPointIdsBySystem(p.uniquePairs);
 
@@ -128,6 +134,10 @@ export async function fetchAggRowsPg(p: AggFetchParams): Promise<AggRow[]> {
             lte(pgAgg5m.intervalEnd, new Date(lastEpoch)),
           ),
         );
+
+      // §1.3a: cache the PRE-densify sparse rows so the attr flow-series read reuses them. Populated
+      // per system over the same [queryFirstEpoch, lastEpoch] window; densify below is unaffected.
+      avgCache?.record(systemId, ids, queryFirstEpoch, lastEpoch, res);
 
       const byKey = new Map<string, (typeof res)[number]>();
       for (const r of res)

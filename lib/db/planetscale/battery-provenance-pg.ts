@@ -43,6 +43,7 @@ import {
   updateLatestPointValue,
 } from "@/lib/kv-cache-manager";
 import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
+import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
 import {
   BATPROV_MODEL_VERSION,
@@ -53,6 +54,7 @@ import {
 } from "@/lib/battery-provenance/checkpoint";
 import {
   dayIndexOf,
+  dayIndexStartingAtOrBefore,
   dayIndexToDayString,
 } from "@/lib/battery-provenance/daily";
 import {
@@ -736,6 +738,7 @@ export async function tryLoadSeededProvenanceInputs(
   targetStartMs: number,
   endMs: number,
   logicalSystem?: LogicalSystem,
+  avgCache?: Agg5mAvgCache,
 ): Promise<ProvenanceSeedResult> {
   const [area] = await db
     .select({ id: areas.id, tz: areas.timezoneOffsetMin })
@@ -747,7 +750,12 @@ export async function tryLoadSeededProvenanceInputs(
   const cp = await loadLatestFoldCheckpoint(
     db,
     area.id,
-    dayIndexOf(targetStartMs, area.tz),
+    // `targetStartMs` is the window's LOWER bound, not an interval end. A day-aligned request starts
+    // exactly at a local midnight `M_k`; the end-exclusive `dayIndexOf(M_k)` returns `k-1`, which would
+    // exclude the checkpoint stored at day `k` (the window's own start-midnight, anchor ≤ M_k) and seed
+    // a whole day earlier — an unnecessary ~2-day read, and a `span-too-long` fallback for 2.5–3.5d
+    // windows. Use the start-inclusive bucket so the tightest valid checkpoint is found (1.3b).
+    dayIndexStartingAtOrBefore(targetStartMs, area.tz),
   );
   if (!cp) return { seeded: false, reason: "no-checkpoint" };
   const { env } = cp;
@@ -794,7 +802,7 @@ export async function tryLoadSeededProvenanceInputs(
   const inputs = await loadProvenanceInputs(
     handle,
     { startMs: env.anchorMs, endMs },
-    { logicalSystem },
+    { logicalSystem, avgCache },
   );
   if (!inputs) return { seeded: false, reason: "no-inputs" };
   if (!inputsAreCanonical(inputs))
