@@ -16,6 +16,7 @@ import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { getQueryClient } from "@/app/get-query-client";
 import { queryKeys } from "@/lib/queries/keys";
 import { getSystemDataForCache } from "@/lib/dashboard/serve-data";
+import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 
 interface PageProps {
   params: Promise<{
@@ -52,6 +53,11 @@ async function renderCompositionDashboard(
   // Owner/admin authed view: the caller's full readable Areas, resolved server-side, so the client
   // skips the /api/areas/readable round-trip on load (SP1.1) while keeping the switcher + editor.
   initialReadableAreas?: Awaited<ReturnType<typeof listReadableAreas>>,
+  // Optional SSR-render timer (server-timing instrumentation): times the `data` prefetch and, on
+  // return, its `header()` (resolve + data + total) is surfaced inline as `#__ssr_timing` so the
+  // Sydney perf harness can decompose the document TTFB. A Next page can't set response headers, so
+  // the mirror rides in the DOM. See docs/performance/dashboard-fetch-waterfall.md.
+  timer?: ServerTimer,
 ) {
   const raw: unknown = dashboard.descriptor;
   const descriptor: DashboardV3 = isDashboardV3(raw)
@@ -75,19 +81,21 @@ async function renderCompositionDashboard(
   ];
   const queryClient = getQueryClient();
   const seeded: Record<string, unknown> = {};
-  await Promise.all(
-    handles.map(async (h) => {
-      try {
-        const value = await getSystemDataForCache(h);
-        if (value != null) {
-          queryClient.setQueryData(queryKeys.data(h), value);
-          seeded[String(h)] = value;
+  const prefetch = () =>
+    Promise.all(
+      handles.map(async (h) => {
+        try {
+          const value = await getSystemDataForCache(h);
+          if (value != null) {
+            queryClient.setQueryData(queryKeys.data(h), value);
+            seeded[String(h)] = value;
+          }
+        } catch {
+          // best-effort prefetch — the card will self-fetch on the client
         }
-      } catch {
-        // best-effort prefetch — the card will self-fetch on the client
-      }
-    }),
-  );
+      }),
+    );
+  await (timer ? timer.time("data", prefetch) : prefetch());
   // A multi-system dashboard also runs dashboardDataBatchQuery(handles); seed its key (the same
   // sorted string-id set the client derives) so it doesn't refetch despite warm per-system caches.
   const batchIds = [...new Set(handles.map(String))].sort();
@@ -96,19 +104,30 @@ async function renderCompositionDashboard(
   }
 
   return (
-    <HydrationBoundary state={dehydrate(queryClient)}>
-      <DashboardClient
-        dashboard={{
-          id: dashboard.id,
-          displayName: dashboard.displayName,
-          alias: dashboard.alias,
-          descriptor,
-        }}
-        canEdit={canEdit}
-        sharedAreas={sharedAreas}
-        initialReadableAreas={initialReadableAreas}
-      />
-    </HydrationBoundary>
+    <>
+      {timer ? (
+        // Inline mirror of the SSR-render Server-Timing (a Next page can't set response headers).
+        // Read by the Sydney perf harness via document.getElementById('__ssr_timing'); inert JSON.
+        <script
+          id="__ssr_timing"
+          type="application/json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(timer.header()) }}
+        />
+      ) : null}
+      <HydrationBoundary state={dehydrate(queryClient)}>
+        <DashboardClient
+          dashboard={{
+            id: dashboard.id,
+            displayName: dashboard.displayName,
+            alias: dashboard.alias,
+            descriptor,
+          }}
+          canEdit={canEdit}
+          sharedAreas={sharedAreas}
+          initialReadableAreas={initialReadableAreas}
+        />
+      </HydrationBoundary>
+    </>
   );
 }
 
@@ -121,7 +140,11 @@ export default async function DashboardPage({
   params,
   searchParams,
 }: PageProps) {
-  const { userId } = await auth();
+  // Time the SSR render's server-side phases (auth / token / dashboard / areas / data prefetch) so
+  // the Sydney perf harness can decompose the document TTFB. Surfaced inline in the rendered HTML by
+  // renderCompositionDashboard (a Next page can't set response headers).
+  const timer = makeTimer();
+  const { userId } = await timer.time("auth", () => auth());
   const { slug } = await params;
 
   // Shared view: a valid `?access=` token renders the composition dashboard read-only, no sign-in.
@@ -130,18 +153,29 @@ export default async function DashboardPage({
   const sp = await searchParams;
   const accessToken = typeof sp?.access === "string" ? sp.access : undefined;
   if (accessToken) {
-    const valid = await validateDashboardShareToken(accessToken);
+    const valid = await timer.time("token", () =>
+      validateDashboardShareToken(accessToken),
+    );
     if (valid) {
       // The token is authoritative; render the v3 descriptor read-only with the referenced Areas
       // resolved server-side, so each card's data fetch (token-authorized by the live union scope)
       // runs without an authed /api/areas/readable call.
-      const composition = await getDashboard(valid.dashboardId);
+      const composition = await timer.time("dashboard", () =>
+        getDashboard(valid.dashboardId),
+      );
       if (composition && composition.displayName) {
-        const sharedAreas = await resolveAreasByIds(
-          descriptorAreaIds(composition.descriptor),
-          { withChartCapability: true },
+        const sharedAreas = await timer.time("areas", () =>
+          resolveAreasByIds(descriptorAreaIds(composition.descriptor), {
+            withChartCapability: true,
+          }),
         );
-        return await renderCompositionDashboard(composition, false, sharedAreas);
+        return await renderCompositionDashboard(
+          composition,
+          false,
+          sharedAreas,
+          undefined,
+          timer,
+        );
       }
     }
   }
@@ -150,7 +184,7 @@ export default async function DashboardPage({
     redirect("/sign-in");
   }
 
-  const isAdmin = await isUserAdmin();
+  const isAdmin = await timer.time("admin", () => isUserAdmin());
 
   const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
 
@@ -163,7 +197,9 @@ export default async function DashboardPage({
         ? slug[2]
         : null;
   if (compositionId && /^\d+$/.test(compositionId)) {
-    const dashboard = await getDashboard(parseInt(compositionId, 10));
+    const dashboard = await timer.time("dashboard", () =>
+      getDashboard(parseInt(compositionId, 10)),
+    );
     if (!dashboard) redirect("/dashboard");
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
     // A signed-in non-owner with a grant views read-only; a true stranger is bounced (a public,
@@ -179,13 +215,16 @@ export default async function DashboardPage({
     // Owner/admin: SSR the caller's full readable-areas list so the client doesn't fire the
     // /api/areas/readable "chrome" request (SP1.1). Grantees already skip it via sharedAreas.
     const initialReadableAreas = canEdit
-      ? await listReadableAreas(userId, { withChartCapability: true })
+      ? await timer.time("areas", () =>
+          listReadableAreas(userId, { withChartCapability: true }),
+        )
       : undefined;
     return await renderCompositionDashboard(
       dashboard,
       canEdit,
       sharedAreas,
       initialReadableAreas,
+      timer,
     );
   }
 
@@ -202,14 +241,15 @@ export default async function DashboardPage({
     if (ownerId) {
       const dash = await getDashboardByOwnerAlias(ownerId, slug[1]);
       if (dash && (dash.ownerClerkUserId === userId || isAdmin)) {
-        const initialReadableAreas = await listReadableAreas(userId, {
-          withChartCapability: true,
-        });
+        const initialReadableAreas = await timer.time("areas", () =>
+          listReadableAreas(userId, { withChartCapability: true }),
+        );
         return await renderCompositionDashboard(
           dash,
           true,
           undefined,
           initialReadableAreas,
+          timer,
         );
       }
     }
