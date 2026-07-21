@@ -26,12 +26,19 @@ interface DashboardClientProps {
   canEdit: boolean;
   /** Read-only shared view: referenced Areas resolved server-side (no authed areas fetch). */
   sharedAreas?: ReadableArea[];
+  /**
+   * Owner/admin authed view: the caller's full readable Areas resolved server-side (SSR seed), so the
+   * client skips the `/api/areas/readable` round-trip on load (SP1.1) while keeping the switcher +
+   * editor. Distinct from `sharedAreas`, which also flags the read-only shared view.
+   */
+  initialReadableAreas?: ReadableArea[];
 }
 
 export default function DashboardClient({
   dashboard,
   canEdit,
   sharedAreas,
+  initialReadableAreas,
 }: DashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -43,8 +50,14 @@ export default function DashboardClient({
   // The switcher is only shown to a real authed owner (not the read-only shared view).
   usePrefetchDashboardsMenu(!sharedAreas);
 
-  // areaId → Area: authed views fetch the caller's readable areas; the shared view gets them inline.
-  const { data: areasResp } = useQuery(readableAreasQuery(!sharedAreas));
+  // areaId → Area: the shared view gets them inline (sharedAreas); an authed owner is seeded from SSR
+  // (initialReadableAreas) so the query resolves without a client fetch; otherwise it fetches.
+  const { data: areasResp } = useQuery({
+    ...readableAreasQuery(!sharedAreas),
+    ...(initialReadableAreas
+      ? { initialData: { areas: initialReadableAreas } }
+      : {}),
+  });
   const readableAreas: ReadableArea[] = sharedAreas ?? areasResp?.areas ?? [];
   const areaById = useMemo(
     () => new Map(readableAreas.map((a) => [a.id, a] as const)),

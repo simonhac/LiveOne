@@ -10,7 +10,7 @@ import {
 import DashboardClient from "@/components/DashboardClient";
 import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
-import { resolveAreasByIds } from "@/lib/areas/list";
+import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
 import { descriptorAreaIds } from "@/lib/dashboard/composition";
 
 interface PageProps {
@@ -45,6 +45,9 @@ async function renderCompositionDashboard(
   dashboard: CompositionDashboard,
   canEdit: boolean,
   sharedAreas?: Awaited<ReturnType<typeof resolveAreasByIds>>,
+  // Owner/admin authed view: the caller's full readable Areas, resolved server-side, so the client
+  // skips the /api/areas/readable round-trip on load (SP1.1) while keeping the switcher + editor.
+  initialReadableAreas?: Awaited<ReturnType<typeof listReadableAreas>>,
 ) {
   const raw: unknown = dashboard.descriptor;
   const descriptor: DashboardV3 = isDashboardV3(raw)
@@ -60,6 +63,7 @@ async function renderCompositionDashboard(
       }}
       canEdit={canEdit}
       sharedAreas={sharedAreas}
+      initialReadableAreas={initialReadableAreas}
     />
   );
 }
@@ -142,7 +146,17 @@ export default async function DashboardPage({
           withChartCapability: true,
         })
       : undefined;
-    return await renderCompositionDashboard(dashboard, canEdit, sharedAreas);
+    // Owner/admin: SSR the caller's full readable-areas list so the client doesn't fire the
+    // /api/areas/readable "chrome" request (SP1.1). Grantees already skip it via sharedAreas.
+    const initialReadableAreas = canEdit
+      ? await listReadableAreas(userId, { withChartCapability: true })
+      : undefined;
+    return await renderCompositionDashboard(
+      dashboard,
+      canEdit,
+      sharedAreas,
+      initialReadableAreas,
+    );
   }
 
   // Pretty owner-scoped alias: `/dashboard/{user}/{shortname}`. A composition dashboard the caller
@@ -158,7 +172,15 @@ export default async function DashboardPage({
     if (ownerId) {
       const dash = await getDashboardByOwnerAlias(ownerId, slug[1]);
       if (dash && (dash.ownerClerkUserId === userId || isAdmin)) {
-        return await renderCompositionDashboard(dash, true);
+        const initialReadableAreas = await listReadableAreas(userId, {
+          withChartCapability: true,
+        });
+        return await renderCompositionDashboard(
+          dash,
+          true,
+          undefined,
+          initialReadableAreas,
+        );
       }
     }
     // No matching composition dashboard → fall through to the device redirect below.
