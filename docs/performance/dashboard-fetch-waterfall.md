@@ -247,3 +247,137 @@ How to read a result: **client-observed `dur` − `mw` − `total` = function in
 routes' residuals against. Within `total`, a fat `admin` span = the Clerk-API fallback round trip
 (fix: configure the isPlatformAdmin session claim); a fat `kv` span = the Vercel KV REST hop (check
 the KV store's region vs `syd1`); `auth` − `clerk` − `admin` ≈ DB-side access checks.
+
+## Recorded — Server-Timing phase decomposition, PROD, 2026-07-21 (post-#199)
+
+Target: `https://liveone.energy/dashboard/id/5` (Kinkora), signed in as the account owner. 10 runs
+with the harness **augmented by the `x-server-timing` re-fetch block above**, plus a single extra run
+capturing each request's full `PerformanceResourceTiming` (connection vs TTFB vs download). Raw data in
+[`dashboard-fetch-waterfall-serverTiming-prod-2026-07-21.jsonl`](./dashboard-fetch-waterfall-serverTiming-prod-2026-07-21.jsonl).
+This is the **first prod capture of the per-phase decomposition** — it became readable on prod only
+after PR #199 (`54ef2b1`) mirrored `Server-Timing` to `x-server-timing` (Vercel strips the standard
+header; confirmed here — every route returned a populated `x-server-timing`, all 10 runs `count == 6`).
+
+Settle sanity (no regression vs. the recorded post-#195 runs): min 1975 / **median 2310** / mean 2352 /
+max 2933 / stdev 285 ms; client boot (first request start) median ~768 ms. (The 2310 ms median sits
+between the recorded Standard-CPU 2362 ms and Performance-CPU 1962 ms medians; the live Function-CPU
+tier was not determined, and — see the geography finding below — the settle comparison is confounded by
+measuring-client location anyway. `tier` is logged as `"unknown"` in the `.jsonl`.)
+
+### Per-endpoint phase medians (10 runs)
+
+`dur` = client-observed; `mw` (Clerk edge middleware) and `total` (handler) + route spans come from the
+warm `x-server-timing` re-fetch. `residual = dur − mw − total`.
+
+| Endpoint | client `dur` | `mw` | `total` | **residual** | fattest server span(s) |
+|---|---|---|---|---|---|
+| `/api/dashboards` | 614 | 2.8 | 7.5 | **604** | list 5.8 |
+| `/api/user/preferences` | 608 | 2.8 | 4.2 | **600** | prefs 3.0 |
+| `/api/areas/readable` | 672 | 3.0 | 84.8 | **584** | areas 83.3 (DB, varies 44–140) |
+| `/api/data?sys=8` | 642 | 3.3 | 25.9 | **613** | auth 14.9, build 11.2, kv 11.1 |
+| `/api/data?sys=12` | 610 | 2.8 | 12.1 | **596** | auth 8.2 |
+| `/api/history` (sankey+hws) | 818 | 3.1 | 198.4 | **617** | fetch 82.2, attr 66.3, logical 23.1 |
+
+### The ~600 ms floor is network transport (fra1→syd1), not compute — mystery solved
+
+The CPU experiment above flagged a "~600 ms floor dominated by something other than CPU — profile with
+Server-Timing before optimizing further." The instrumentation answers it: **the residual is a nearly
+constant ~585–617 ms on every endpoint, regardless of how much server work it does** (handler `total`
+ranges 4 → 198 ms; the residual barely moves). The single-run `PerformanceResourceTiming` breakdown
+pins down what that residual *is*:
+
+| Request | dns | conn | tls | **ttfb** | download |
+|---|---|---|---|---|---|
+| dashboards | 0 | 0 | 0 | 705 | 1 |
+| user/preferences | 0 | 0 | 0 | 689 | 1 |
+| areas/readable | 0 | 0 | 0 | 752 | 1 |
+| data?sys=8 | 0 | 0 | 0 | 612 | 9 |
+| data?sys=12 | 0 | 0 | 0 | 597 | 1 |
+| history | 0 | 0 | 0 | 880 | 4 |
+
+DNS/connection/TLS are **0** (HTTP/2 connection reused) and downloads are ~1 ms (tiny payloads) — the
+**entire ~600 ms is TTFB**. And the request's edge id was **`x-vercel-id: fra1::syd1::…`**: the client
+reached Vercel at the **Frankfurt** edge (`fra1`), while the function executes in **Sydney** (`syd1`).
+So each request pays the **fra1↔syd1 round trip** (~585 ms) on top of its server time:
+`TTFB ≈ 585 ms network floor + server total` (history 880 ≈ 585 + ~198; data8 612 ≈ 585 + ~26;
+data12 597 ≈ 585 + ~12). The floor is **geography**, not application code — and it is *not* cold-start
+(zero connection time; residual is identical on the warm data-stage requests as on the first chrome
+request).
+
+**Consequences.**
+- This measuring client is far from `syd1` (ingress via `fra1` — traveling / VPN / anycast routing).
+  A real user in Australia hits the `syd1` edge, where the edge→function hop is ~0, so their per-request
+  TTFB collapses to ~server time (5–200 ms) and settle time is far lower than the 2.3 s recorded here.
+  **The environment-independent metric (6 requests, 2 stages) is the trustworthy one** (as this doc's
+  intro warns); the absolute settle numbers throughout this doc carry whatever fra1↔syd1 tax the
+  measuring client incurred.
+- **Handler micro-optimization won't move the chrome routes** — `/api/dashboards` and
+  `/api/user/preferences` already return in 4–8 ms server-side. The settle-time levers are structural:
+  request **count** (7→6 done) and the **2-stage waterfall** (chrome stage median start ~768 ms → data
+  stage ~1460 ms, a ~690 ms gap ≈ one fra1↔syd1 round trip, because the data stage still waits
+  client-side for the chrome/areas response).
+
+### Confirmed non-issues (the instrumentation clears them)
+
+- **Clerk admin fallback is NOT firing** — `admin` ≈ 0.5 ms on every route (the doc warned a fat `admin`
+  = a Clerk-API round trip from a missing `isPlatformAdmin` claim; it isn't happening).
+- **KV hop is healthy** — `kv` ≈ 4–11 ms (same-region REST; `sys=8` heavier than `sys=12`, ~11 vs ~4,
+  tracking Kinkora's larger payload). Not a region problem.
+- **Clerk edge + handler auth are cheap warm** — `mw` ≈ 3 ms, `clerk` ≈ 0.7 ms.
+
+### The one real server-side target: `/api/history`
+
+`/api/history` (the sankey + hot-water request) is the only route where server work is a meaningful
+slice of its latency: `total` ≈ **198 ms**, dominated by `fetch` ≈ 82 ms (series DB read) + `attr` ≈
+66 ms (battery-provenance attribution) + `logical` ≈ 23 ms. It is also the **last request to settle**,
+so it gates the page's settle time — for an Australian user (no network floor) this ~198 ms *is* the
+tail. If a server-side optimization is wanted, `history`'s `fetch` + `attr` is where it pays off;
+`/api/areas/readable` (`areas` ≈ 85 ms, DB-bound, high variance) is a distant second.
+
+**Methodology caveat.** The `mw`/`total`/route spans are from a **post-settle warm re-fetch**, so they
+measure server phases on a warm instance; the residual (`dur − mw − total`) is what carries network +
+any cold penalty. Here the residual is provably network (zero connection time; constant across the
+warm data stage), so no cold-start is hiding in it — but on a genuinely cold first hit that would not
+hold, and the residual, not `st`, is where it would show.
+
+## Cross-region confirmation — Sydney (AWS `ap-southeast-2`) vs Italy, 2026-07-21
+
+The runs above were captured from a browser in **Italy**, which ingresses Vercel at the Frankfurt edge
+(`x-vercel-id: fra1::syd1`) — so every request paid the ~585 ms `fra1↔syd1` round trip. To measure what
+an **Australian** user actually sees, the same harness was run from inside `ap-southeast-2`: a throwaway
+**Lambda** (`puppeteer-core` + `@sparticuz/chromium`, non-VPC so it has direct egress) driving headless
+Chromium against the **shared** URL `…/dashboard/id/5?access=…` (no auth needed — the share token
+bypasses Clerk), plus a node-level `/api/health` probe for a clean network floor. All resources were
+deleted after the run. Raw result:
+[`dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-21.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-21.json).
+
+**The origin flipped as intended:** every request returned **`x-vercel-id: syd1::syd1`** (ingress *and*
+function both in Sydney), vs Italy's `fra1::syd1`. That collapses the network floor:
+
+| Metric | Italy (fra1 edge) | Sydney (`ap-southeast-2`) | Δ |
+|---|---|---|---|
+| `/api/health` warm TTFB (network floor; server ~2.7 ms) | ~610 ms | **~46–50 ms** | **~13× / −93%** |
+| Shared-view settle (3 req, 1 stage) | ~1850 ms (1 run) | **496 ms** (median of 10) | ~3.7× |
+| `/api/data?sys=8` client `dur` | ~740 ms | **86 ms** (server 34 ms) | — |
+| `/api/history` client `dur` | ~1015 ms | **250 ms** (server 176 ms) | — |
+
+Server-side `total` per route was **unchanged** across regions (history ~176–198 ms, data ~26–34 ms) —
+exactly as predicted, since the function always runs in `syd1`; only the network leg moved. This is the
+direct confirmation that the ~585 ms floor in the Italy runs was **geography, not application code**.
+
+**Implications, now measured rather than modelled:**
+- A real Australian user pays a **~46 ms** per-request network floor, not ~585 ms. Reconstructing the
+  authed 6-req / 2-stage page for an AU user (network ~46 ms + the known location-independent server
+  phases): settle ≈ boot (~700 ms) + stage-1 (~46 + areas 85) + stage-2 (~46 + history 198) ≈
+  **~1.0–1.1 s**, vs the 2.3 s measured from Italy. The absolute settle numbers elsewhere in this doc
+  are inflated by the measuring client's distance from `syd1`; **request count + waterfall shape remain
+  the trustworthy cross-environment metrics.**
+- With the network tax gone, **`/api/history`'s ~198 ms server time is the dominant remaining tail** for
+  an AU user — reinforcing it as the one worthwhile server-side optimization target (`fetch` 82 ms +
+  `attr` 66 ms).
+
+**Method caveats.** (1) The shared view is 3 requests / 1 stage, not the authed 6/2 (it skips the
+server-resolved chrome routes) — so its settle isn't the authed settle, but its per-route TTFB and the
+`/api/health` floor are what an AU browser sees, which is what we needed. (2) In headless Chromium the
+`PerformanceResourceTiming` `responseStart` came back 0, so the browser rows use client `dur` (network +
+server) and the clean network floor comes from the node-level `/api/health` probe; the two agree.
