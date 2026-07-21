@@ -97,8 +97,24 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
   }
 }
 
-const FLOW_ATTR_VERSION = 1;
+export const FLOW_ATTR_VERSION = 1;
+/** ~72h estimated→final settlement window (matches the schema comment on
+ *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
+ *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */
+export const SETTLEMENT_WINDOW_MS = 72 * 3600 * 1000;
 const MIN_ATTR_KWH = 0.001;
+
+/**
+ * A flow_attr_1d day is FINAL once its local day-end is past the settlement window; NULL while still
+ * settling. Purely time-based — the per-interval estimated flag already captures input settledness, so the
+ * finalize decision doesn't re-inspect quality. Pure + exported for unit tests.
+ */
+export function computeFinalizedAt(
+  dayEndMs: number,
+  nowMs: number,
+): Date | null {
+  return nowMs - dayEndMs > SETTLEMENT_WINDOW_MS ? new Date(nowMs) : null;
+}
 
 /**
  * Local calendar days (Area tz) that a `[startMs, endMs]` window covers, where `endMs` is the INCLUSIVE
@@ -144,6 +160,7 @@ async function writeAttrRollup(
   result: ProvenanceResult,
   winStartMs: number,
   winEndMs: number,
+  nowMs: number,
 ): Promise<number> {
   let total = 0;
   for (const day of localDaysInRange(
@@ -155,6 +172,9 @@ async function writeAttrRollup(
       day,
       inputs.timezoneOffsetMin,
     );
+    // Delete-then-insert below means this records the LAST post-cutoff recompute, not the first finalize
+    // instant — fine while no consumer reads finalizedAt as an instant (it's just the "don't re-grind" flag).
+    const finalizedAt = computeFinalizedAt(endUnix * 1000, nowMs);
     const acc = computeFlowAccounting({
       timestamps: inputs.timeline,
       sources: inputs.sources,
@@ -182,6 +202,7 @@ async function writeAttrRollup(
           estimatedKwh: acc.estimatedKwh[s][l],
           sampleCount: acc.intervalsUsed,
           version: FLOW_ATTR_VERSION,
+          finalizedAt,
         });
       }
     }
@@ -245,6 +266,9 @@ export async function recomputeBatteryProvenanceForWindow(
     writeRollup?: boolean;
     writeCheckpoints?: boolean;
     config?: ProvenanceConfig;
+    /** Clock for the finalize stamp (defaults to Date.now()) — threaded so all days in one heal run and
+     *  a DB-level test share one cutoff instant. */
+    nowMs?: number;
   } = {},
 ): Promise<RecomputeResult> {
   const inputs = await loadProvenanceInputs(handle, {
@@ -305,6 +329,7 @@ export async function recomputeBatteryProvenanceForWindow(
         result,
         winStartMs,
         winEndMs,
+        opts.nowMs ?? Date.now(),
       );
     } catch (e) {
       console.warn("[BatProv] attr rollup write failed:", e);
@@ -486,6 +511,7 @@ export async function recomputeBatteryProvenanceForWindowBestEffort(
     writeRollup?: boolean;
     writeCheckpoints?: boolean;
     config?: ProvenanceConfig;
+    nowMs?: number;
   } = {},
 ): Promise<void> {
   if (!planetscaleDb) return;

@@ -21,7 +21,9 @@ import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/r
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
 import {
   recomputeRange as recomputeBatteryProvenanceRange,
+  rehealStaleAttrDays,
   learnForAllHandles,
+  REHEAL_TRAILING_MS,
 } from "@/lib/battery-provenance/recompute";
 
 // Earliest date for point data aggregation (when point data collection began)
@@ -279,11 +281,29 @@ export async function aggregateRange(
   // battery_provenance_daily cache — ordering enforced inside), so the blend/rollup recompute below
   // READS reproducible values (via inputs.etaSeries / capacitySeries / chargeEfficiencySeries /
   // idleLossKwhPerDaySeries) instead of re-learning them per window.
+  // The contiguous recompute always covers the trailing settlement window (~72h + a 1-day buffer) so
+  // late-settling inputs flow in and each day gets one recompute AFTER it crosses the cutoff (→ stamped
+  // finalized_at); `Math.min` keeps an explicit larger range (e.g. `last=30d` regenerate) intact.
   try {
-    await learnForAllHandles(Date.now());
-    await recomputeBatteryProvenanceRange(rangeStartMs, Date.now());
+    const nowMs = Date.now();
+    const trailingStartMs = Math.min(rangeStartMs, nowMs - REHEAL_TRAILING_MS);
+    await learnForAllHandles(nowMs);
+    await recomputeBatteryProvenanceRange(trailingStartMs, nowMs);
   } catch (error) {
     console.error("[Daily Points] battery-provenance heal pass failed:", error);
+  }
+
+  // Scattered-backlog reheal (days older than the settlement window that are still unfinalized or carry a
+  // stale attribution version). Runs LAST in its OWN best-effort try/catch so a hiccup/timeout here can
+  // never roll back the already-committed contiguous pass above. Bounded per run.
+  try {
+    const r = await rehealStaleAttrDays(Date.now());
+    if (r.days > 0)
+      console.log(
+        `[Daily Points] flow_attr reheal: ${r.days} stale day(s) across ${r.handles} handle(s)`,
+      );
+  } catch (error) {
+    console.error("[Daily Points] flow_attr scattered reheal failed:", error);
   }
 
   console.log(
