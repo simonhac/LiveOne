@@ -48,7 +48,18 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // Legacy per-system dashboards (and their `system_id` column) were dropped in the P6 demolition
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     { table: "dashboards", col: "clerk_user_id" },
-    { table: "areas", col: "owner_clerk_user_id" },
+    // Only reown areas whose handle IS a real `systems` row. An orphan/composite handle (a multi-device
+    // area with no `systems` row, e.g. a "Unified" area) is readable ONLY via ownership —
+    // `getSystemsVisibleByUser` excludes area views and `user_systems` grants inner-join `systems`, so
+    // NO grant-back can reach it. Reowning it to the dev id strips the prod-Clerk preview session's only
+    // read path (→ a blank dashboard on preview). Keep those prod-owned by skipping the remap; the
+    // tradeoff is dev-local won't own them. Real-system areas still remap — preview reaches them via the
+    // systems grant-back below.
+    {
+      table: "areas",
+      col: "owner_clerk_user_id",
+      where: "legacy_system_id IN (SELECT id FROM systems)",
+    },
   ];
 
 function parseRemap(raw: string): Array<[from: string, to: string]> {
