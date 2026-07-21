@@ -14,6 +14,7 @@ import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
 import { getViewerDevices } from "@/lib/devices/viewer-devices";
+import { hasTimeTravelingCard } from "@/lib/dashboard/temporal-cards";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
 
@@ -259,6 +260,19 @@ export default async function DevicePage({ params }: PageProps) {
     };
   }
 
+  // The single header temporal navigator: shown only when the device's default view hosts a
+  // time-traveling component. Pure predicate over the same chartCapable the renderer gates on (here
+  // undefined for a device area, so site charts — which also don't render — are excluded).
+  const temporalNav =
+    system &&
+    descriptor &&
+    hasTimeTravelingCard(
+      descriptor,
+      area ? new Map([[area.id, area]]) : new Map(),
+    )
+      ? { handle: system.id, timezoneOffsetMin: system.timezoneOffsetMin }
+      : null;
+
   // Render the device viewer. When the system doesn't exist, render without the chrome (the viewer
   // shows the Access-Denied state).
   if (!system) {
@@ -285,6 +299,7 @@ export default async function DevicePage({ params }: PageProps) {
       lastUpdate={null}
       systemInfo={null}
       supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+      temporalNav={temporalNav}
     >
       <DeviceViewer
         systemId={systemId}

@@ -4,7 +4,6 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { historyQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
-import TemporalNavigator from "./TemporalNavigator";
 import ServerErrorModal from "./ServerErrorModal";
 import DashboardChart from "./DashboardChart";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
@@ -284,12 +283,6 @@ export default function LinesChartCard({
     <div
       className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}
     >
-      <div className="mb-2 md:mb-3 px-1 md:px-0">
-        <TemporalNavigator
-          timezoneOffsetMin={timezoneOffsetMin}
-          loading={loading}
-        />
-      </div>
       {renderChartContent()}
 
       <ServerErrorModal

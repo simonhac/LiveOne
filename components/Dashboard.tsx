@@ -3,7 +3,6 @@
 import { type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers } from "lucide-react";
-import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import { CARD_RENDERERS } from "@/components/dashboard/cards/registry";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import { ChartSkeleton } from "@/components/dashboard/cards/shared";
@@ -199,11 +198,9 @@ function AreaSectionView({
           <span>{area.displayName}</span>
         </div>
       )}
-      {/* One shared chart-focus per section: the line chart + stacked charts + Sankey of this Area
-          sync their hover/highlight; areas don't cross-sync. */}
-      <ChartFocusProvider>
-        <div className="space-y-4">{body}</div>
-      </ChartFocusProvider>
+      {/* Chart-focus (hover/highlight sync) is provided page-level by the host (DashboardClient /
+          DeviceLayout) so the header's TemporalNavigator shares it too — see HeaderTemporalNav. */}
+      <div className="space-y-4">{body}</div>
     </section>
   );
 }

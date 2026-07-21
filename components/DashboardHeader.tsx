@@ -29,6 +29,7 @@ import SystemInfoTooltip from "@/components/SystemInfoTooltip";
 import MobileHeaderMenu from "@/components/MobileHeaderMenu";
 import SystemsMenu from "@/components/SystemsMenu";
 import { usePrefetchDashboardsMenu } from "@/components/DashboardsMenu";
+import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
 
 interface SystemInfo {
   model?: string;
@@ -81,6 +82,9 @@ export interface DashboardHeaderProps {
 
   // Shift key state (for dry run)
   shiftKeyDown?: boolean;
+
+  /** Header temporal navigator config (handle + tz), computed server-side; null ⇒ none shown. */
+  temporalNav?: { handle: number; timezoneOffsetMin: number } | null;
 }
 
 export default function DashboardHeader({
@@ -103,6 +107,7 @@ export default function DashboardHeader({
   onSystemSettings,
   onUpdateCredentials,
   shiftKeyDown = false,
+  temporalNav,
 }: DashboardHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -221,7 +226,7 @@ export default function DashboardHeader({
   }, [showSystemDropdown, showSettingsDropdown, isMobileSystemDropdownOpen]);
 
   return (
-    <header className="bg-gray-800 border-b border-gray-700">
+    <header className="sticky top-0 z-30 bg-gray-800 border-b border-gray-700">
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-2 sm:py-4">
         {/* Mobile Header Bar */}
         <div className="sm:hidden">
@@ -300,6 +305,14 @@ export default function DashboardHeader({
               </button>
             </div>
           </div>
+          {temporalNav && (
+            <div className="mt-2">
+              <HeaderTemporalNav
+                handle={temporalNav.handle}
+                timezoneOffsetMin={temporalNav.timezoneOffsetMin}
+              />
+            </div>
+          )}
         </div>
 
         {/* Mobile Menu Overlay */}
@@ -357,6 +370,12 @@ export default function DashboardHeader({
             )}
           </div>
           <div className="flex items-center gap-4">
+            {temporalNav && (
+              <HeaderTemporalNav
+                handle={temporalNav.handle}
+                timezoneOffsetMin={temporalNav.timezoneOffsetMin}
+              />
+            )}
             <LastUpdateTime lastUpdate={lastUpdate} />
             {systemInfo && (
               <SystemInfoTooltip

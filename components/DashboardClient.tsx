@@ -13,6 +13,12 @@ import NewDashboardDialog from "@/components/NewDashboardDialog";
 import AddAreaDialog from "@/components/AddAreaDialog";
 import { readableAreasQuery } from "@/lib/queries";
 import { sectionAreaIdsV3, type DashboardV3 } from "@/lib/dashboard/v3";
+import {
+  hasTimeTravelingCard,
+  primaryHandle,
+} from "@/lib/dashboard/temporal-cards";
+import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
+import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import type { ReadableArea } from "@/lib/areas/list";
 
 interface DashboardClientProps {
@@ -51,106 +57,127 @@ export default function DashboardClient({
     [readableAreas],
   );
 
+  // The single page-header temporal navigator: shown only when this dashboard actually hosts a
+  // time-traveling component, formatted in the first section's timezone. It drives every chart on
+  // the page via the shared URL window.
+  const showNav = hasTimeTravelingCard(dashboard.descriptor, areaById);
+  const navHandle = primaryHandle(dashboard.descriptor, areaById);
+
   return (
-    <div className="min-h-screen bg-gray-900">
-      <header className="border-b border-gray-800 bg-gray-900/80 px-4 py-3">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-          <div className="relative min-w-0">
-            {sharedAreas ? (
-              <h1 className="truncate text-lg font-semibold text-white">
-                {dashboard.displayName ?? "Dashboard"}
-              </h1>
-            ) : (
-              <button
-                onClick={() => setSwitcherOpen((o) => !o)}
-                className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
-              >
+    <ChartFocusProvider>
+      <div className="min-h-screen bg-gray-900">
+        <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-900/80 px-4 py-3 backdrop-blur">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+            <div className="relative min-w-0">
+              {sharedAreas ? (
                 <h1 className="truncate text-lg font-semibold text-white">
                   {dashboard.displayName ?? "Dashboard"}
                 </h1>
-                <ChevronDown
-                  className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-            )}
-            {switcherOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setSwitcherOpen(false)}
-                />
-                <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
-                  <DashboardsMenu
-                    currentDashboardId={dashboard.id}
-                    enabled={!sharedAreas}
-                    onNew={() => setNewOpen(true)}
-                    onNavigate={() => setSwitcherOpen(false)}
+              ) : (
+                <button
+                  onClick={() => setSwitcherOpen((o) => !o)}
+                  className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-gray-800"
+                >
+                  <h1 className="truncate text-lg font-semibold text-white">
+                    {dashboard.displayName ?? "Dashboard"}
+                  </h1>
+                  <ChevronDown
+                    className={`h-4 w-4 flex-shrink-0 text-gray-400 transition-transform ${switcherOpen ? "rotate-180" : ""}`}
                   />
+                </button>
+              )}
+              {switcherOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setSwitcherOpen(false)}
+                  />
+                  <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
+                    <DashboardsMenu
+                      currentDashboardId={dashboard.id}
+                      enabled={!sharedAreas}
+                      onNew={() => setNewOpen(true)}
+                      onNavigate={() => setSwitcherOpen(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Temporal navigator, left of the edit cluster (desktop). Mobile → own row below. */}
+              {showNav && navHandle != null && (
+                <div className="hidden sm:block">
+                  <HeaderTemporalNav handle={navHandle} />
                 </div>
-              </>
+              )}
+              {canEdit && (
+                <div className="flex items-center gap-1">
+                  <HeaderButton
+                    title="Dashboard settings"
+                    onClick={() => setRenameOpen(true)}
+                  >
+                    <Settings className="h-4 w-4" />
+                  </HeaderButton>
+                  <HeaderButton
+                    title="Add area"
+                    onClick={() => setAddAreaOpen(true)}
+                  >
+                    <Layers className="h-4 w-4" />
+                  </HeaderButton>
+                  <HeaderButton
+                    title="New dashboard"
+                    onClick={() => setNewOpen(true)}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </HeaderButton>
+                </div>
+              )}
+            </div>
+            {showNav && navHandle != null && (
+              <div className="w-full sm:hidden">
+                <HeaderTemporalNav handle={navHandle} />
+              </div>
             )}
           </div>
-          {canEdit && (
-            <div className="flex items-center gap-1">
-              <HeaderButton
-                title="Dashboard settings"
-                onClick={() => setRenameOpen(true)}
-              >
-                <Settings className="h-4 w-4" />
-              </HeaderButton>
-              <HeaderButton
-                title="Add area"
-                onClick={() => setAddAreaOpen(true)}
-              >
-                <Layers className="h-4 w-4" />
-              </HeaderButton>
-              <HeaderButton
-                title="New dashboard"
-                onClick={() => setNewOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-              </HeaderButton>
-            </div>
-          )}
-        </div>
-      </header>
+        </header>
 
-      <main className="mx-auto max-w-7xl px-1 py-4">
-        <Dashboard
-          dashboardId={dashboard.id}
-          descriptor={dashboard.descriptor}
-          areaById={areaById}
-          onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
-        />
-      </main>
-
-      {canEdit && (
-        <>
-          <DashboardSettingsDialog
-            isOpen={renameOpen}
-            onClose={() => setRenameOpen(false)}
-            id={dashboard.id}
-            initialName={dashboard.displayName ?? ""}
-            initialAlias={dashboard.alias ?? ""}
-            areaIds={sectionAreaIdsV3(dashboard.descriptor)}
-            onDeleted={() => router.push("/dashboard")}
-            onSaved={() => router.refresh()}
-          />
-          <AddAreaDialog
-            isOpen={addAreaOpen}
-            onClose={() => setAddAreaOpen(false)}
+        <main className="mx-auto max-w-7xl px-1 py-4">
+          <Dashboard
             dashboardId={dashboard.id}
             descriptor={dashboard.descriptor}
-            readableAreas={readableAreas}
-            onSaved={() => router.refresh()}
+            areaById={areaById}
+            onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
           />
-          <NewDashboardDialog
-            isOpen={newOpen}
-            onClose={() => setNewOpen(false)}
-          />
-        </>
-      )}
-    </div>
+        </main>
+
+        {canEdit && (
+          <>
+            <DashboardSettingsDialog
+              isOpen={renameOpen}
+              onClose={() => setRenameOpen(false)}
+              id={dashboard.id}
+              initialName={dashboard.displayName ?? ""}
+              initialAlias={dashboard.alias ?? ""}
+              areaIds={sectionAreaIdsV3(dashboard.descriptor)}
+              onDeleted={() => router.push("/dashboard")}
+              onSaved={() => router.refresh()}
+            />
+            <AddAreaDialog
+              isOpen={addAreaOpen}
+              onClose={() => setAddAreaOpen(false)}
+              dashboardId={dashboard.id}
+              descriptor={dashboard.descriptor}
+              readableAreas={readableAreas}
+              onSaved={() => router.refresh()}
+            />
+            <NewDashboardDialog
+              isOpen={newOpen}
+              onClose={() => setNewOpen(false)}
+            />
+          </>
+        )}
+      </div>
+    </ChartFocusProvider>
   );
 }
 

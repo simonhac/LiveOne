@@ -36,7 +36,6 @@ import {
   formatRenewablePct,
 } from "@/lib/provenance-format";
 import { formatValue } from "@/lib/energy-formatting";
-import TemporalNavigator from "@/components/TemporalNavigator";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
@@ -588,14 +587,6 @@ export default function SiteChartsCard({
             historyFetching && !historyLoading ? "opacity-60" : ""
           }`}
         >
-          {/* Shared header with date/time and period switcher */}
-          <div className="px-2 sm:px-4 pt-2 sm:pt-4 pb-1 sm:pb-2">
-            <TemporalNavigator
-              timezoneOffsetMin={system?.timezoneOffsetMin ?? 600}
-              loading={historyLoading}
-            />
-          </div>
-
           {/* Loads Chart with Table */}
           {cardVisible("chart:load") && (
             <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
