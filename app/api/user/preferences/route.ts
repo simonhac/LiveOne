@@ -5,20 +5,27 @@ import {
   setDefaultDashboardById,
   clearDefaultDashboard,
 } from "@/lib/user-preferences";
+import { makeTimer } from "@/lib/server-timing";
 
 // GET /api/user/preferences - Get current user preferences
 export async function GET(request: NextRequest) {
   try {
-    const authResult = await requireAuth(request);
+    const t = makeTimer(request);
+    const authResult = await requireAuth(request, t);
     if (authResult instanceof NextResponse) return authResult;
     const { userId } = authResult;
 
-    const preferences = await getOrCreateUserPreferences(userId);
+    const preferences = await t.time("prefs", () =>
+      getOrCreateUserPreferences(userId),
+    );
 
-    return NextResponse.json({
-      success: true,
-      preferences,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        preferences,
+      },
+      { headers: { "Server-Timing": t.header() } },
+    );
   } catch (error) {
     console.error("Error fetching user preferences:", error);
     return NextResponse.json(

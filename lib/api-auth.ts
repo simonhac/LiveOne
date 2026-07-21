@@ -9,6 +9,7 @@ import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
+import type { ServerTimer } from "@/lib/server-timing";
 
 // Authorization result with context
 export interface AuthContext {
@@ -58,9 +59,14 @@ function isCronRequest(request: NextRequest): boolean {
   );
 }
 
-// Base auth check - returns context
+// Base auth check - returns context. The optional `timer` (Server-Timing instrumentation — see
+// lib/server-timing.ts) splits the two Clerk-side costs: `clerk` = session/JWT resolution,
+// `admin` = the isUserAdmin check (which falls back to a Clerk API network call when the
+// isPlatformAdmin session claim isn't configured). Duplicate spans in one response mean this ran
+// more than once (e.g. a requireDashboardAccess fallback branch) — that repetition is itself signal.
 export async function getAuthContext(
   request: NextRequest,
+  timer?: ServerTimer,
 ): Promise<AuthContext> {
   const isClaudeDev = isClaudeDevRequest(request);
   const isCron = isCronRequest(request);
@@ -70,8 +76,14 @@ export async function getAuthContext(
     return { userId: "claude-dev", isAdmin: true, isCron, isClaudeDev };
   }
 
-  const { userId } = await auth();
-  const isAdmin = userId ? await isUserAdmin(userId) : false;
+  const { userId } = timer
+    ? await timer.time("clerk", () => auth())
+    : await auth();
+  const isAdmin = userId
+    ? timer
+      ? await timer.time("admin", () => isUserAdmin(userId))
+      : await isUserAdmin(userId)
+    : false;
 
   return { userId, isAdmin, isCron, isClaudeDev };
 }
@@ -81,8 +93,9 @@ export async function getAuthContext(
 // Require authentication only
 export async function requireAuth(
   request: NextRequest,
+  timer?: ServerTimer,
 ): Promise<AuthenticatedContext | NextResponse> {
-  const ctx = await getAuthContext(request);
+  const ctx = await getAuthContext(request, timer);
   if (!ctx.userId) {
     return unauthorized();
   }
@@ -122,8 +135,9 @@ export async function requireSystemAccess(
   request: NextRequest,
   systemId: number,
   options: { requireWrite?: boolean } = {},
+  timer?: ServerTimer,
 ): Promise<SystemAuthContext | NextResponse> {
-  const ctx = await getAuthContext(request);
+  const ctx = await getAuthContext(request, timer);
 
   // Get system
   const systemsManager = SystemsManager.getInstance();
@@ -198,6 +212,7 @@ export interface DashboardAuthContext {
 export async function requireDashboardAccess(
   request: NextRequest,
   systemId: number,
+  timer?: ServerTimer,
 ): Promise<DashboardAuthContext | NextResponse> {
   const token = new URL(request.url).searchParams.get("access");
   if (token) {
@@ -232,7 +247,7 @@ export async function requireDashboardAccess(
   // (owner / admin / public). requireSystemAccess stays strict (real systems + /device routes).
   const sm = SystemsManager.getInstance();
   if (await sm.isAreaHandle(systemId)) {
-    const ctx = await getAuthContext(request);
+    const ctx = await getAuthContext(request, timer);
     const view = await sm.getViewableSystem(systemId);
     if (!view) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
@@ -256,12 +271,12 @@ export async function requireDashboardAccess(
     };
   }
 
-  const result = await requireSystemAccess(request, systemId);
+  const result = await requireSystemAccess(request, systemId, {}, timer);
   if (result instanceof NextResponse) {
     // Grant fallback: an authed grantee gets read-only access to systems within the scope of any
     // dashboard shared with them (the same scope a share token would grant), without needing system
     // ownership/viewer access. Only consulted once normal system auth has denied.
-    const ctx = await getAuthContext(request);
+    const ctx = await getAuthContext(request, timer);
     if (
       ctx.userId != null &&
       (await grantedSystemScopeForUser(ctx.userId)).has(systemId)

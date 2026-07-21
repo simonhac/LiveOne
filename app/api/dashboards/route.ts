@@ -8,6 +8,7 @@ import {
   DashboardAliasTakenError,
 } from "@/lib/dashboard/dashboards";
 import { emptyCompositionDescriptor } from "@/lib/dashboard/composition";
+import { makeTimer } from "@/lib/server-timing";
 
 /**
  * Composition-first dashboards (Phase 2b-2), owner-scoped.
@@ -18,10 +19,16 @@ import { emptyCompositionDescriptor } from "@/lib/dashboard/composition";
  * convenience, not a home. It must be an Area the caller can read (no escalation).
  */
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth(request);
+  const t = makeTimer(request);
+  const auth = await requireAuth(request, t);
   if (auth instanceof NextResponse) return auth;
-  const dashboards = await listAccessibleDashboards(auth.userId);
-  return NextResponse.json({ dashboards });
+  const dashboards = await t.time("list", () =>
+    listAccessibleDashboards(auth.userId),
+  );
+  return NextResponse.json(
+    { dashboards },
+    { headers: { "Server-Timing": t.header() } },
+  );
 }
 
 export async function POST(request: NextRequest) {

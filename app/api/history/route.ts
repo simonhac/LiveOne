@@ -32,6 +32,7 @@ import type {
   EnergyFlowMatrix,
   DailyFlowMatrices,
 } from "@/lib/energy-flow-matrix";
+import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
@@ -443,6 +444,7 @@ function buildResponse(
   flowMatrixOmittedReason?: string,
   attributedFlow?: DailyFlowMatrices | null,
   attributedFlowOmittedReason?: string,
+  timer?: ServerTimer,
 ): NextResponse {
   // Format date strings based on interval type
   let requestStartStr: string;
@@ -512,12 +514,15 @@ function buildResponse(
     response.attributedFlowOmittedReason = attributedFlowOmittedReason;
   }
 
-  const jsonStr = formatOpenNEMResponse(response);
+  const jsonStr = timer
+    ? timer.timeSync("serialize", () => formatOpenNEMResponse(response))
+    : formatOpenNEMResponse(response);
 
   return new NextResponse(jsonStr, {
     status: 200,
     headers: {
       "Content-Type": "application/json",
+      ...(timer && { "Server-Timing": timer.header() }),
     },
   });
 }
@@ -528,6 +533,7 @@ function buildResponse(
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
+  const t = makeTimer(request);
   try {
     // Parse basic parameters (systemId, interval, debug)
     const searchParams = request.nextUrl.searchParams;
@@ -540,9 +546,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Authenticate and check access (owner/admin/viewer/public, or a valid dashboard share token).
-    const authResult = await requireDashboardAccess(
-      request,
-      basicParams.systemId!,
+    // `auth` spans the whole access check; the threaded timer adds its inner `clerk`/`admin` splits.
+    const authResult = await t.time("auth", () =>
+      requireDashboardAccess(request, basicParams.systemId!, t),
     );
     if (authResult instanceof NextResponse) return authResult;
     const { system } = authResult;
@@ -602,7 +608,9 @@ export async function GET(request: NextRequest) {
     let sankey: { logicalSystem: LogicalSystem } | undefined;
     let sankeyOmittedReason: string | undefined;
     if (includeSankey && interval !== "1d") {
-      const logicalSystem = await resolveLogicalSystem(basicParams.systemId!);
+      const logicalSystem = await t.time("logical", () =>
+        resolveLogicalSystem(basicParams.systemId!),
+      );
       if (!logicalSystem || !logicalSystem.isComplete) {
         sankeyOmittedReason = "not-a-logical-system";
       } else {
@@ -618,14 +626,16 @@ export async function GET(request: NextRequest) {
       sqlQueries,
       flowMatrix,
       flowMatrixOmittedReason,
-    } = await getSystemHistoryInOpenNEMFormat(
-      system,
-      timeRange.startTime!,
-      timeRange.endTime!,
-      interval,
-      seriesPatterns.length > 0 ? seriesPatterns : undefined,
-      basicParams.enableDebug,
-      sankey,
+    } = await t.time("fetch", () =>
+      getSystemHistoryInOpenNEMFormat(
+        system,
+        timeRange.startTime!,
+        timeRange.endTime!,
+        interval,
+        seriesPatterns.length > 0 ? seriesPatterns : undefined,
+        basicParams.enableDebug,
+        sankey,
+      ),
     );
 
     // The ATTRIBUTED matrix (energy + emissions/renewable/cost/estimated legs) behind the Sankey node
@@ -636,58 +646,62 @@ export async function GET(request: NextRequest) {
     let attributedFlow: DailyFlowMatrices | undefined;
     let attributedFlowOmittedReason: string | undefined;
     if (includeSankey) {
-      if (interval === "1d") {
-        if (!planetscaleDb) {
-          attributedFlowOmittedReason = "database-unavailable";
-        } else {
+      await t.time("attr", async () => {
+        if (interval === "1d") {
+          if (!planetscaleDb) {
+            attributedFlowOmittedReason = "database-unavailable";
+          } else {
+            try {
+              const startYMD = (timeRange.startTime as CalendarDate).toString();
+              const endYMD = (timeRange.endTime as CalendarDate).toString();
+              // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
+              // it handles null/incomplete internally (→ reason "not-a-logical-system").
+              const logicalSystem = await resolveLogicalSystem(
+                basicParams.systemId!,
+              );
+              const attr = await readAttributedDailyMatrices(
+                planetscaleDb,
+                logicalSystem,
+                startYMD,
+                endYMD,
+              );
+              if (attr.days.length > 0) {
+                attributedFlow = attr;
+              } else {
+                attributedFlowOmittedReason = attr.reason ?? "not-materialized";
+              }
+            } catch (error) {
+              console.error("[history] attributed flow (1d) failed:", error);
+              attributedFlowOmittedReason = "attributed-compute-failed";
+            }
+          }
+        } else if (sankey) {
           try {
-            const startYMD = (timeRange.startTime as CalendarDate).toString();
-            const endYMD = (timeRange.endTime as CalendarDate).toString();
-            // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
-            // it handles null/incomplete internally (→ reason "not-a-logical-system").
-            const logicalSystem = await resolveLogicalSystem(
+            const startMs = (timeRange.startTime as ZonedDateTime)
+              .toDate()
+              .getTime();
+            const endMs = (timeRange.endTime as ZonedDateTime)
+              .toDate()
+              .getTime();
+            const attr = await buildAttributedFlowMatrix(
               basicParams.systemId!,
+              startMs,
+              endMs,
+              sankey.logicalSystem,
             );
-            const attr = await readAttributedDailyMatrices(
-              planetscaleDb,
-              logicalSystem,
-              startYMD,
-              endYMD,
-            );
-            if (attr.days.length > 0) {
+            if (attr) {
               attributedFlow = attr;
             } else {
-              attributedFlowOmittedReason = attr.reason ?? "not-materialized";
+              attributedFlowOmittedReason = "no-provenance-inputs";
             }
           } catch (error) {
-            console.error("[history] attributed flow (1d) failed:", error);
+            console.error("[history] attributed flow failed:", error);
             attributedFlowOmittedReason = "attributed-compute-failed";
           }
+        } else {
+          attributedFlowOmittedReason = sankeyOmittedReason;
         }
-      } else if (sankey) {
-        try {
-          const startMs = (timeRange.startTime as ZonedDateTime)
-            .toDate()
-            .getTime();
-          const endMs = (timeRange.endTime as ZonedDateTime).toDate().getTime();
-          const attr = await buildAttributedFlowMatrix(
-            basicParams.systemId!,
-            startMs,
-            endMs,
-            sankey.logicalSystem,
-          );
-          if (attr) {
-            attributedFlow = attr;
-          } else {
-            attributedFlowOmittedReason = "no-provenance-inputs";
-          }
-        } catch (error) {
-          console.error("[history] attributed flow failed:", error);
-          attributedFlowOmittedReason = "attributed-compute-failed";
-        }
-      } else {
-        attributedFlowOmittedReason = sankeyOmittedReason;
-      }
+      });
     }
 
     // Build and return response
@@ -709,6 +723,7 @@ export async function GET(request: NextRequest) {
         : undefined,
       attributedFlow,
       attributedFlowOmittedReason,
+      t,
     );
   } catch (error) {
     console.error("Error fetching historical data:", error);
