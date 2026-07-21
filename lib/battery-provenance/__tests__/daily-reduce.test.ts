@@ -10,6 +10,7 @@ import {
   reduceThroughputToDays,
   sliceThroughput,
   dayIndexOf,
+  dayIndexStartingAtOrBefore,
   dayIndexRangeMs,
   dayIndexToDayString,
   dayStringToDayIndex,
@@ -156,6 +157,22 @@ describe("day helpers", () => {
       expect(dayIndexOf(startEx + 1, tz)).toBe(d);
       expect(dayIndexOf(endInc, tz)).toBe(d);
       expect(dayIndexOf(endInc + 1, tz)).toBe(d + 1);
+    }
+  });
+
+  it("dayIndexStartingAtOrBefore is the start-inclusive mirror of dayIndexOf (1.3b)", () => {
+    for (const tz of [600, 570, -300]) {
+      const d = dayStringToDayIndex("2025-09-10");
+      const [startEx, endInc] = dayIndexRangeMs(d, tz); // startEx=M_d, endInc=M_{d+1} (exact midnights)
+      // A window LOWER bound exactly at local midnight belongs to the day it STARTS (start-inclusive),
+      // whereas the end-exclusive dayIndexOf assigns it to the day that just closed.
+      expect(dayIndexOf(startEx, tz)).toBe(d - 1);
+      expect(dayIndexStartingAtOrBefore(startEx, tz)).toBe(d);
+      expect(dayIndexStartingAtOrBefore(endInc, tz)).toBe(d + 1);
+      // Any NON-midnight timestamp: identical to dayIndexOf.
+      for (const t of [startEx + 1, startEx + 60_000, endInc - 1, endInc - 60_000]) {
+        expect(dayIndexStartingAtOrBefore(t, tz)).toBe(dayIndexOf(t, tz));
+      }
     }
   });
 });

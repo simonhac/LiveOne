@@ -11,7 +11,7 @@
  * (battery/grid direction, solar leaf/residual, rest-of-house).
  */
 
-import { and, asc, eq, gte, lte, or } from "drizzle-orm";
+import { and, eq, gte, lt, lte, or } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
 import {
@@ -20,6 +20,7 @@ import {
   ClassifiedPoint,
 } from "@/lib/aggregation/flow-series";
 import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
+import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
@@ -55,48 +56,105 @@ export async function loadFlowSeriesFromAgg5m(
   points: FlowSeriesPoint[],
   startMs: number,
   endMs: number,
+  /** Optional request-scoped cache of the raw sparse `agg_5m` avg rows the `/api/history` "fetch" span
+   *  already read (§1.3a). Covered role points reuse those in-window rows and query only the pre-window
+   *  lead-in `[startMs, cache.from)`; uncovered points fall back to a full `[startMs, endMs]` query. The
+   *  reconstructed row set is identical to the single-query path — a pure read elimination. */
+  cache?: Agg5mAvgCache,
 ): Promise<FlowSeriesBundle> {
   if (points.length === 0) return { timeline: [], sources: [], loads: [] };
 
-  const refConds = points.map((p) =>
-    and(
-      eq(pointReadingsAgg5m.systemId, p.ref.systemId),
-      eq(pointReadingsAgg5m.pointId, p.ref.pointId),
-    ),
-  );
-  const rows = await db
-    .select({
-      systemId: pointReadingsAgg5m.systemId,
-      pointId: pointReadingsAgg5m.pointId,
-      intervalEnd: pointReadingsAgg5m.intervalEnd,
-      avg: pointReadingsAgg5m.avg,
-    })
-    .from(pointReadingsAgg5m)
-    .where(
+  type NormRow = {
+    systemId: number;
+    pointId: number;
+    t: number;
+    avg: number | null;
+  };
+  const merged: NormRow[] = [];
+
+  // Query `batch` over [lo, hi) (hiInclusive=false) or [lo, hi] (true) and append normalized rows.
+  const queryInto = async (
+    batch: FlowSeriesPoint[],
+    lo: number,
+    hi: number,
+    hiInclusive: boolean,
+  ): Promise<void> => {
+    if (batch.length === 0) return;
+    const refConds = batch.map((p) =>
       and(
-        or(...refConds),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(startMs)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(endMs)),
+        eq(pointReadingsAgg5m.systemId, p.ref.systemId),
+        eq(pointReadingsAgg5m.pointId, p.ref.pointId),
       ),
-    )
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
+    );
+    const rows = await db
+      .select({
+        systemId: pointReadingsAgg5m.systemId,
+        pointId: pointReadingsAgg5m.pointId,
+        intervalEnd: pointReadingsAgg5m.intervalEnd,
+        avg: pointReadingsAgg5m.avg,
+      })
+      .from(pointReadingsAgg5m)
+      .where(
+        and(
+          or(...refConds),
+          gte(pointReadingsAgg5m.intervalEnd, new Date(lo)),
+          hiInclusive
+            ? lte(pointReadingsAgg5m.intervalEnd, new Date(hi))
+            : lt(pointReadingsAgg5m.intervalEnd, new Date(hi)),
+        ),
+      );
+    for (const r of rows)
+      merged.push({
+        systemId: r.systemId,
+        pointId: r.pointId,
+        t: r.intervalEnd.getTime(),
+        avg: r.avg,
+      });
+  };
 
-  if (rows.length === 0) return { timeline: [], sources: [], loads: [] };
+  // Split into cache-covered points (reuse in-window rows + query only the lead-in) and uncovered
+  // points (full [startMs, endMs] query). With no cache, every point is a full query — today's path.
+  const fullPoints: FlowSeriesPoint[] = [];
+  const leadInPoints: FlowSeriesPoint[] = [];
+  let leadInFrom: number | undefined;
+  for (const p of points) {
+    const s = cache?.slice(p.ref.systemId, p.ref.pointId, startMs, endMs);
+    if (s?.covered) {
+      for (const r of s.rows)
+        merged.push({
+          systemId: p.ref.systemId,
+          pointId: p.ref.pointId,
+          t: r.t,
+          avg: r.avg,
+        });
+      // Lead-in only when the window starts before the cache's lower bound (uniform across covered
+      // points in one request). A seeded anchor inside the cache window needs no lead-in query.
+      if (startMs < s.from) {
+        leadInPoints.push(p);
+        leadInFrom = s.from;
+      }
+    } else {
+      fullPoints.push(p);
+    }
+  }
+  if (leadInPoints.length > 0 && leadInFrom !== undefined)
+    await queryInto(leadInPoints, startMs, leadInFrom, false); // [startMs, from)
+  await queryInto(fullPoints, startMs, endMs, true); // [startMs, endMs]
 
-  const timeline = [...new Set(rows.map((r) => r.intervalEnd.getTime()))].sort(
-    (a, b) => a - b,
-  );
+  if (merged.length === 0) return { timeline: [], sources: [], loads: [] };
+
+  const timeline = [...new Set(merged.map((r) => r.t))].sort((a, b) => a - b);
   const tIndex = new Map<number, number>(timeline.map((t, i) => [t, i]));
 
   const avgByPoint = new Map<string, Map<number, number | null>>();
-  for (const r of rows) {
+  for (const r of merged) {
     const key = `${r.systemId}.${r.pointId}`;
     let series = avgByPoint.get(key);
     if (!series) {
       series = new Map();
       avgByPoint.set(key, series);
     }
-    series.set(r.intervalEnd.getTime(), r.avg);
+    series.set(r.t, r.avg);
   }
 
   const classified: ClassifiedPoint[] = [];

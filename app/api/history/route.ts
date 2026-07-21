@@ -20,6 +20,7 @@ import {
   type AggRow,
 } from "@/lib/history/build-series";
 import { fetchAggRowsPg } from "@/lib/history/readings-pg";
+import { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import {
   resolveLogicalSystem,
   type LogicalSystem,
@@ -318,6 +319,8 @@ async function getSystemHistoryInOpenNEMFormat(
   sqlQueries?: string[];
   flowMatrix?: EnergyFlowMatrix | null;
   flowMatrixOmittedReason?: string;
+  /** §1.3a: the raw sparse `agg_5m` avg rows read here, for the attr span to reuse. */
+  avgCache?: Agg5mAvgCache;
 }> {
   // Get filtered SeriesInfo[] from PointManager
   // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
@@ -400,14 +403,20 @@ async function getSystemHistoryInOpenNEMFormat(
     interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
 
   // Serve from Postgres: read the window and build the OpenNEM series via the shared transform.
-  const rows = await fetchAggRowsPg({
-    uniquePairs: uniquePairsArray,
-    interval,
-    queryFirstEpoch,
-    lastEpoch,
-    startDate,
-    endDate,
-  });
+  // §1.3a: when a Sankey is requested, cache the raw sparse avg rows so the attr flow-series read
+  // reuses them instead of re-querying agg_5m for the same role points.
+  const avgCache = sankey ? new Agg5mAvgCache() : undefined;
+  const rows = await fetchAggRowsPg(
+    {
+      uniquePairs: uniquePairsArray,
+      interval,
+      queryFirstEpoch,
+      lastEpoch,
+      startDate,
+      endDate,
+    },
+    avgCache,
+  );
   if (computeSankey)
     flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
   const series = await buildSeriesFromAggRows(
@@ -426,6 +435,7 @@ async function getSystemHistoryInOpenNEMFormat(
     debug,
     flowMatrix,
     flowMatrixOmittedReason,
+    avgCache,
   };
 }
 
@@ -630,6 +640,7 @@ export async function GET(request: NextRequest) {
       sqlQueries,
       flowMatrix,
       flowMatrixOmittedReason,
+      avgCache,
     } = await t.time("fetch", () =>
       getSystemHistoryInOpenNEMFormat(
         system,
@@ -692,6 +703,7 @@ export async function GET(request: NextRequest) {
               startMs,
               endMs,
               sankey.logicalSystem,
+              avgCache,
             );
             if (attr) {
               attributedFlow = attr;

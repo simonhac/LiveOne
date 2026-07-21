@@ -1,0 +1,10 @@
+{
+  "name": "liveone-perf-sydney-lambda",
+  "private": true,
+  "type": "module",
+  "description": "Sydney-origin dashboard perf benchmark (headless Chromium on AWS Lambda ap-southeast-2)",
+  "dependencies": {
+    "@sparticuz/chromium": "*",
+    "puppeteer-core": "*"
+  }
+}
