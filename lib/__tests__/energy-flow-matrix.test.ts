@@ -2,7 +2,9 @@ import { describe, it, expect } from "@jest/globals";
 import {
   calculateEnergyFlowMatrix,
   combineSolarSources,
+  reduceEdgeProvenance,
   EnergyFlowMatrix,
+  DailyFlowMatrices,
 } from "../energy-flow-matrix";
 import { ProcessedSiteData } from "../site-data-processor";
 import { ChartData } from "@/lib/charts/types";
@@ -575,5 +577,140 @@ describe("combineSolarSources", () => {
   it("is a no-op with no solar sources", () => {
     const m = build(["source.grid", "source.battery"], ["load"], [[5], [2]]);
     expect(combineSolarSources(m)).toBe(m);
+  });
+});
+
+describe("reduceEdgeProvenance", () => {
+  // Two-day attributed payload. Sources: solar.local, grid, solar.remote; loads: house, battery.
+  // Grid→battery on day 1 carries energy but NULL metric legs (unknown intensity) + estimated kWh —
+  // the null-averaging / confidence path.
+  const fixture = (): DailyFlowMatrices => ({
+    sources: [
+      { id: "source.solar.local", label: "Solar Local", color: "#000" },
+      { id: "source.grid", label: "Grid", color: "#000" },
+      { id: "source.solar.remote", label: "Solar Remote", color: "#000" },
+    ],
+    loads: [
+      { id: "load.house", label: "House", color: "#000" },
+      { id: "load.battery", label: "Battery", color: "#000" },
+    ],
+    days: [
+      {
+        day: "2025-01-01",
+        matrix: [
+          [2, 1], // solar.local
+          [3, 2], // grid
+          [1, 0], // solar.remote
+        ],
+        emissionsG: [
+          [0, 0],
+          [300, null], // grid→battery: intensity unknown
+          [0, 0],
+        ],
+        renewableKwh: [
+          [2, 1],
+          [0, null],
+          [1, 0],
+        ],
+        costC: [
+          [0, 0],
+          [90, null],
+          [0, 0],
+        ],
+        estimatedKwh: [
+          [0, 0],
+          [0, 1], // grid→battery attributed with an estimated intensity
+          [0, 0],
+        ],
+      },
+      {
+        day: "2025-01-02",
+        matrix: [
+          [1, 0],
+          [4, 0],
+          [2, 0],
+        ],
+        emissionsG: [
+          [0, 0],
+          [500, 0],
+          [0, 0],
+        ],
+        renewableKwh: [
+          [1, 0],
+          [0, 0],
+          [2, 0],
+        ],
+        costC: [
+          [0, 0],
+          [120, 0],
+          [0, 0],
+        ],
+        estimatedKwh: [
+          [0, 0],
+          [0, 0],
+          [0, 0],
+        ],
+      },
+    ],
+  });
+
+  it("sums one edge's legs across days (grid → house)", () => {
+    const edge = reduceEdgeProvenance(fixture(), "source.grid", "load.house")!;
+    expect(edge).not.toBeNull();
+    expect(edge.energyKwh).toBeCloseTo(7, 6); // 3 + 4
+    expect(edge.kgCo2).toBeCloseTo(0.8, 6); // (300 + 500) / 1000
+    expect(edge.avgGramsPerKwh).toBeCloseTo(800 / 7, 6);
+    expect(edge.costC).toBeCloseTo(210, 6); // 90 + 120 (cents)
+    expect(edge.avgCentsPerKwh).toBeCloseTo(30, 6); // 210 / 7
+    expect(edge.pctRenewable).toBeCloseTo(0, 6); // no renewable kWh on the grid edge
+    expect(edge.pctEstimated).toBeCloseTo(0, 6);
+  });
+
+  it("expands to every solar row when combineSolar folds them (solar → house)", () => {
+    const edge = reduceEdgeProvenance(fixture(), "source.solar", "load.house", {
+      combineSolar: true,
+    })!;
+    expect(edge.energyKwh).toBeCloseTo(6, 6); // local (2+1) + remote (1+2)
+    expect(edge.pctRenewable).toBeCloseTo(100, 6); // fully renewable
+    expect(edge.avgGramsPerKwh).toBeCloseTo(0, 6); // clean cells present → 0, not null
+    expect(edge.kgCo2).toBeCloseTo(0, 6);
+  });
+
+  it("does NOT expand non-solar ids even when combineSolar is set", () => {
+    const edge = reduceEdgeProvenance(fixture(), "source.grid", "load.house", {
+      combineSolar: true,
+    })!;
+    expect(edge.energyKwh).toBeCloseTo(7, 6); // just the grid row
+  });
+
+  it("null intensity legs → null averages, and estimated kWh drives pctEstimated (grid → battery)", () => {
+    const edge = reduceEdgeProvenance(
+      fixture(),
+      "source.grid",
+      "load.battery",
+    )!;
+    expect(edge.energyKwh).toBeCloseTo(2, 6); // day-1 only (day-2 cell is 0)
+    expect(edge.avgGramsPerKwh).toBeNull();
+    expect(edge.kgCo2).toBeCloseTo(0, 6);
+    expect(edge.avgCentsPerKwh).toBeNull();
+    expect(edge.pctRenewable).toBeNull();
+    expect(edge.pctEstimated).toBeCloseTo(50, 6); // 1 estimated / 2 total
+  });
+
+  it("returns null for an unknown source or load, or a legacy (leg-less) payload", () => {
+    expect(
+      reduceEdgeProvenance(fixture(), "source.nope", "load.house"),
+    ).toBeNull();
+    expect(
+      reduceEdgeProvenance(fixture(), "source.grid", "load.nope"),
+    ).toBeNull();
+    const legacy: DailyFlowMatrices = {
+      sources: [{ id: "source.grid", label: "Grid", color: "#000" }],
+      loads: [{ id: "load.house", label: "House", color: "#000" }],
+      days: [{ day: "2025-01-01", matrix: [[5]] }], // no metric legs
+    };
+    expect(
+      reduceEdgeProvenance(legacy, "source.grid", "load.house"),
+    ).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import {
 } from "d3-sankey";
 import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import NodeTooltip from "@/components/NodeTooltip";
+import LinkTooltip from "@/components/LinkTooltip";
 
 /** How the Sankey lays out storage. "columns" = classic sources→loads bipartite; "battery-middle" =
  *  3-column with the battery relocated to a central STORAGE column (charge in, discharge out). */
@@ -80,6 +81,30 @@ function isDualTooltip(
   return "left" in c && "right" in c;
 }
 
+/**
+ * The hover tooltip payload for one Sankey LINK (spline). `energy`/`energyUnit` is the flow's energy
+ * ("12.3"/"kWh") or instantaneous power ("5.2"/"kW"); the `emissions`/`cost`/`renewable` trio is present
+ * only for attributed (kWh) windows (each a fully-formatted string, e.g. "1.2 kg", "$0.45", "80%").
+ */
+export interface SankeyLinkTooltip {
+  energy: string;
+  energyUnit: string;
+  emissions?: string;
+  cost?: string;
+  renewable?: string;
+}
+
+/**
+ * Resolves a hovered link to its tooltip content. Returns `null` when there's nothing to show (no
+ * listeners are then wasted). The `source`/`target` carry the node's canonical id (for the per-edge
+ * provenance lookup) plus its side/name.
+ */
+export type SankeyLinkTooltipResolver = (link: {
+  source: { id?: string; side?: "source" | "load"; name: string };
+  target: { id?: string; side?: "source" | "load"; name: string };
+  value: number;
+}) => SankeyLinkTooltip | null;
+
 interface EnergyFlowSankeyProps {
   matrix: EnergyFlowMatrix;
   /** Unit shown on node values + link tooltips: cumulative window energy ("kWh") or focused-point power ("kW"). */
@@ -90,6 +115,8 @@ interface EnergyFlowSankeyProps {
   height?: number;
   /** Per-node hover/tap tooltip resolver. Omitted ⇒ no tooltip listeners are attached at all. */
   nodeTooltip?: SankeyNodeTooltipResolver;
+  /** Per-link (spline) hover tooltip resolver. Omitted ⇒ links keep the native SVG `<title>` fallback. */
+  linkTooltip?: SankeyLinkTooltipResolver;
 }
 
 /** Screen-space placement for one side-panel (or the overlay, which ignores left/top/beakTop). */
@@ -127,6 +154,18 @@ interface HoveredNode {
    *  For the battery-middle dual `{left,right}` case it's the single battery node's colour, shared by
    *  both panels. */
   color: string;
+}
+
+/** A hovered link's tooltip content + its spline-midpoint placement (viewport coords). */
+interface HoveredLink {
+  /** `${source.name}→${target.name}` — identifies the link for hover toggling across re-renders. */
+  key: string;
+  content: SankeyLinkTooltip;
+  /** The link's SOURCE colour — the tooltip card's background (see LinkTooltip). */
+  color: string;
+  /** Viewport coords of the spline midpoint; the card centres on this point. */
+  left: number;
+  top: number;
 }
 
 interface SankeyNodeData {
@@ -167,6 +206,12 @@ function shortenLabel(label: string): string {
 // Colors now come from the matrix nodes (energy-flow-matrix.ts uses centralized colors)
 
 const LINK_MIN = 0.01; // ignore negligible flows (kWh/kW)
+
+/** Ribbon opacities: the resting value, and the node-hover emphasis pair (connected strong, others
+ *  weak). Tunable — "strong contrast" per the design. */
+const LINK_BASE_OPACITY = 0.6;
+const LINK_EMPHASIS_ON = 0.85;
+const LINK_EMPHASIS_OFF = 0.15;
 
 /** Min node box height (px) for the node to render its own title chip (see the draw loop). Below this
  *  the node has no title, so the hover tooltip carries the heading instead. */
@@ -335,12 +380,14 @@ export default function EnergyFlowSankey({
   width = 600,
   height = 680,
   nodeTooltip,
+  linkTooltip,
 }: EnergyFlowSankeyProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(false);
   const [actualWidth, setActualWidth] = useState(width);
   const [hovered, setHovered] = useState<HoveredNode | null>(null);
+  const [hoveredLink, setHoveredLink] = useState<HoveredLink | null>(null);
   const [placementL, setPlacementL] = useState<PanelPlacement | null>(null);
   const [placementR, setPlacementR] = useState<PanelPlacement | null>(null);
   const panelRefL = useRef<HTMLDivElement>(null);
@@ -354,6 +401,12 @@ export default function EnergyFlowSankey({
   useEffect(() => {
     nodeTooltipRef.current = nodeTooltip;
   }, [nodeTooltip]);
+  // Read through a ref for the same reason as `nodeTooltipRef` — a link-resolver identity change alone
+  // must not force the expensive `svg.innerHTML = ""` rebuild below.
+  const linkTooltipRef = useRef(linkTooltip);
+  useEffect(() => {
+    linkTooltipRef.current = linkTooltip;
+  }, [linkTooltip]);
 
   // Detect mobile screen size and container width
   useEffect(() => {
@@ -385,6 +438,7 @@ export default function EnergyFlowSankey({
     // The rebuilt SVG GCs its old node listeners (`svg.innerHTML = ""` above); any hovered/tapped
     // tooltip's geometry belongs to the PREVIOUS render and must not linger across a data/layout change.
     setHovered(null);
+    setHoveredLink(null);
 
     // Filter out sources and loads with < 0.1 kWh
     const MIN_ENERGY = 0.1;
@@ -587,6 +641,37 @@ export default function EnergyFlowSankey({
 
     svgElement.appendChild(defs);
 
+    // Every ribbon's <path> + its link datum, collected so hovering a node OR a spline can emphasise the
+    // relevant ribbon(s) and fade the rest (`link.source`/`link.target` are node refs after layout).
+    const linkEls: { path: SVGPathElement; link: any }[] = [];
+
+    // Hover emphasis (shared by node + link hover): strengthen the relevant ribbon(s), fade the rest,
+    // then restore the base — opacity-only, imperative (mirrors the imperative draw). `emphasizeForNode`
+    // brightens every ribbon touching the node; `emphasizeForLink` brightens just the one hovered ribbon.
+    const emphasizeForNode = (node: any) => {
+      for (const { path, link } of linkEls) {
+        const connected = link.source === node || link.target === node;
+        path.setAttribute(
+          "opacity",
+          String(connected ? LINK_EMPHASIS_ON : LINK_EMPHASIS_OFF),
+        );
+      }
+    };
+    const emphasizeForLink = (hoveredLinkDatum: any) => {
+      for (const { path, link } of linkEls) {
+        path.setAttribute(
+          "opacity",
+          String(
+            link === hoveredLinkDatum ? LINK_EMPHASIS_ON : LINK_EMPHASIS_OFF,
+          ),
+        );
+      }
+    };
+    const resetEmphasis = () => {
+      for (const { path } of linkEls)
+        path.setAttribute("opacity", String(LINK_BASE_OPACITY));
+    };
+
     // Draw links with gradients (extended to overlap with rounded rect corners)
     graph.links.forEach((link: any, i: number) => {
       // Create extended link coordinates to fill gap from rounded corners (extend INTO boxes)
@@ -604,27 +689,65 @@ export default function EnergyFlowSankey({
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", `url(#gradient-${i})`);
       path.setAttribute("stroke-width", String(Math.max(1, link.width)));
-      path.setAttribute("opacity", "0.6");
+      path.setAttribute("opacity", String(LINK_BASE_OPACITY));
       path.setAttribute("class", "sankey-link");
 
-      // Add hover effect
-      path.addEventListener("mouseenter", () => {
-        path.setAttribute("opacity", "0.9");
-        path.setAttribute("stroke-width", String(Math.max(1, link.width) + 2));
-      });
-      path.addEventListener("mouseleave", () => {
-        path.setAttribute("opacity", "0.6");
-        path.setAttribute("stroke-width", String(Math.max(1, link.width)));
-      });
+      // Hover emphasis: strengthen this spline, fade the rest — the SAME opacity settings as node hover.
+      // Desktop only (touch has no reliable hover; a tap could leave the chart stuck dimmed).
+      if (!isMobile) {
+        path.addEventListener("mouseenter", () => emphasizeForLink(link));
+        path.addEventListener("mouseleave", resetEmphasis);
+      }
 
-      // Tooltip
-      const title = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "title",
-      );
-      title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(1)} ${unit}`;
-      path.appendChild(title);
+      // Link (spline) tooltip. When a resolver is supplied (desktop), the ugly native SVG <title> is
+      // replaced by the pretty centred LinkTooltip (positioned at the spline midpoint). Absent, or on
+      // mobile (where the spline is an awkward hit target) → keep the native <title> fallback.
+      if (linkTooltipRef.current && !isMobile) {
+        const linkKey = `${link.source.name}→${link.target.name}`;
+        path.addEventListener("mouseenter", () => {
+          const content = linkTooltipRef.current?.({
+            source: {
+              id: link.source.id,
+              side: link.source.side,
+              name: link.source.name,
+            },
+            target: {
+              id: link.target.id,
+              side: link.target.side,
+              name: link.target.name,
+            },
+            value: link.value,
+          });
+          const svgEl = svgRef.current;
+          if (!content || !svgEl) return;
+          const r = svgEl.getBoundingClientRect();
+          const sx = r.width / actualWidth;
+          const sy = r.height / height;
+          // The spline midpoint: nodeRadius extension cancels in x, and sankeyLinkHorizontal's curve
+          // passes through the endpoint-average y at its horizontal centre (t=0.5).
+          const xMid = (link.source.x1 + link.target.x0) / 2;
+          const yMid = (link.y0 + link.y1) / 2;
+          setHoveredLink({
+            key: linkKey,
+            content,
+            color: link.source.color,
+            left: r.left + xMid * sx,
+            top: r.top + yMid * sy,
+          });
+        });
+        path.addEventListener("mouseleave", () => {
+          setHoveredLink((h) => (h?.key === linkKey ? null : h));
+        });
+      } else {
+        const title = document.createElementNS(
+          "http://www.w3.org/2000/svg",
+          "title",
+        );
+        title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(1)} ${unit}`;
+        path.appendChild(title);
+      }
 
+      linkEls.push({ path, link });
       svgElement.appendChild(path);
     });
 
@@ -659,6 +782,13 @@ export default function EnergyFlowSankey({
       rect.setAttribute("stroke", "none");
       rect.setAttribute("rx", "4");
       rect.setAttribute("class", "sankey-node");
+
+      // Node-hover spline emphasis (desktop). Independent of the tooltip resolver so it works on any
+      // diagram (incl. the /test-sankey page). Hover the node → its ribbons strengthen, the rest fade.
+      if (!isMobile) {
+        rect.addEventListener("mouseenter", () => emphasizeForNode(node));
+        rect.addEventListener("mouseleave", resetEmphasis);
+      }
 
       // Node hover/tap tooltip. Attached to the RECT only — the label/value text drawn on top of it
       // (below) is `pointer-events="none"` so the rect stays the sole hit target. `nodeTooltip` absent
@@ -1038,8 +1168,11 @@ export default function EnergyFlowSankey({
   // Dismissal: outside tap (touch devices), scroll (capture-phase — a `position:fixed` panel would
   // otherwise detach from its node), and resize all close the tooltip.
   useEffect(() => {
-    if (!hovered) return;
-    const close = () => setHovered(null);
+    if (!hovered && !hoveredLink) return;
+    const close = () => {
+      setHovered(null);
+      setHoveredLink(null);
+    };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     const handleTouchOutside = (e: TouchEvent) => {
@@ -1056,7 +1189,7 @@ export default function EnergyFlowSankey({
       if (isTouch)
         document.removeEventListener("touchstart", handleTouchOutside);
     };
-  }, [hovered]);
+  }, [hovered, hoveredLink]);
 
   const panels: {
     key: "left" | "right";
@@ -1141,6 +1274,17 @@ export default function EnergyFlowSankey({
               />,
               document.body,
             ),
+        )}
+      {typeof document !== "undefined" &&
+        hoveredLink &&
+        createPortal(
+          <LinkTooltip
+            data={hoveredLink.content}
+            color={hoveredLink.color}
+            left={hoveredLink.left}
+            top={hoveredLink.top}
+          />,
+          document.body,
         )}
     </>
   );
