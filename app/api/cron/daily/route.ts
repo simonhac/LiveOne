@@ -6,6 +6,10 @@ import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 
+// Headroom for the daily heal: the flow_attr settlement-window recompute + the bounded scattered-backlog
+// reheal run here (matches repair-coverage). Without this the route falls back to the platform default.
+export const maxDuration = 300;
+
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
 

@@ -1,10 +1,12 @@
 # Info Producers & Consumers — typed-shape info exchange (auto-connect + explicit wiring)
 
-> **Status:** plan (proposed — not yet started). A design to hand off to an implementing workspace.
+> **Status:** superseded by [config-v4-clean-sheet.md](config-v4-clean-sheet.md) (2026-07-21) —
+> the model (per-slot deterministic resolution with priority, bind-time shape validation, config
+> producers, availability→estimated) is absorbed into its §4.3; `derivations` is the persisted
+> wiring. Implement against the v4 model, not the seams mapped below (the determinism fixes may
+> still land earlier as a standalone bug fix). Kept for the seam map + first-consumer analysis.
 > Where it describes today's code, the source of truth is `lib/db/planetscale/schema.ts` +
 > `lib/capabilities/*` + `lib/roles/registry.ts` + `lib/areas/*` + `lib/kv-cache-manager.ts`.
-> HA references reflect Home-Assistant developer docs mid-2026 (indicative). Companion:
-> [`../architecture/home-assistant-comparison.md`](../architecture/home-assistant-comparison.md).
 
 ## Why this exists
 

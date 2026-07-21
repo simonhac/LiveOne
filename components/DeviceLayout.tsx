@@ -14,6 +14,7 @@ import { AddSystemDialog } from "@/components/AddSystemDialog";
 import ViewDataModal from "@/components/ViewDataModal";
 import SystemSettingsDialog from "@/components/SystemSettingsDialog";
 import ConnectionNotification from "@/components/ConnectionNotification";
+import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 
 interface SystemInfo {
   model?: string;
@@ -65,6 +66,8 @@ interface DeviceLayoutProps {
     displayName?: string;
     alias?: string | null;
   }) => void;
+  /** Header temporal navigator config, computed server-side; null ⇒ no time-traveling component. */
+  temporalNav?: { handle: number; timezoneOffsetMin: number } | null;
 }
 
 /**
@@ -82,6 +85,7 @@ export default function DeviceLayout({
   supportsPolling,
   children,
   onSystemUpdate,
+  temporalNav,
 }: DeviceLayoutProps) {
   const router = useRouter();
   const [showTestConnection, setShowTestConnection] = useState(false);
@@ -161,119 +165,122 @@ export default function DeviceLayout({
   };
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      {/* Connection Notification */}
-      <ConnectionNotification />
+    <ChartFocusProvider>
+      <div className="min-h-screen bg-gray-900">
+        {/* Connection Notification */}
+        <ConnectionNotification />
 
-      {/* Header */}
-      <DashboardHeader
-        displayName={system.displayName}
-        systemId={system.id.toString()}
-        vendorSiteId={system.vendorSiteId}
-        lastUpdate={lastUpdate ?? null}
-        systemInfo={systemInfo ?? null}
-        vendorType={system.vendorType}
-        supportsPolling={supportsPolling ?? system.supportsPolling ?? false}
-        systemStatus={system.status as "active" | "disabled" | "removed"}
-        isAdmin={isAdmin}
-        userId={userId}
-        availableSystems={availableSystems}
-        onLogout={handleLogout}
-        onTestConnection={() => setShowTestConnection(true)}
-        onViewData={() => setShowViewDataModal(true)}
-        onPollNow={(dryRun) =>
-          setShowPollNow({ isOpen: true, dryRun: dryRun || false })
-        }
-        onAddSystem={() => setShowAddSystemDialog(true)}
-        onSystemSettings={() => setShowSystemSettingsDialog(true)}
-        onUpdateCredentials={
-          canUpdateCredentials
-            ? () => setShowUpdateCredentials(true)
-            : undefined
-        }
-        shiftKeyDown={shiftKeyDown}
-      />
-
-      {/* Main Content */}
-      {children}
-
-      {/* Test Connection Modal */}
-      {showTestConnection && (
-        <TestConnectionModal
-          systemId={system.id}
+        {/* Header */}
+        <DashboardHeader
+          temporalNav={temporalNav}
           displayName={system.displayName}
-          vendorType={system.vendorType}
-          onClose={() => setShowTestConnection(false)}
-        />
-      )}
-
-      {/* Update Credentials Modal */}
-      {showUpdateCredentials && (
-        <UpdateCredentialsModal
-          systemId={system.id}
-          displayName={system.displayName}
-          vendorType={system.vendorType}
-          onClose={() => setShowUpdateCredentials(false)}
-          onUpdated={() => router.refresh()}
-        />
-      )}
-
-      {/* Poll Now Modal */}
-      {showPollNow.isOpen && (
-        <PollNowModal
-          systemId={system.id}
-          displayName={system.displayName}
-          vendorType={system.vendorType}
-          dryRun={showPollNow.dryRun}
-          onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
-        />
-      )}
-
-      {/* Add System Dialog */}
-      <AddSystemDialog
-        open={showAddSystemDialog}
-        onOpenChange={setShowAddSystemDialog}
-      />
-
-      <ServerErrorModal
-        isOpen={serverError.type !== null}
-        onClose={() => setServerError({ type: null })}
-        errorType={serverError.type}
-        errorDetails={serverError.details}
-      />
-
-      <SessionTimeoutModal
-        isOpen={showSessionTimeout}
-        onReconnect={() => {
-          setShowSessionTimeout(false);
-          window.location.reload();
-        }}
-      />
-
-      {/* View Data Modal */}
-      {showViewDataModal && (
-        <ViewDataModal
-          isOpen={showViewDataModal}
-          onClose={() => setShowViewDataModal(false)}
-          systemId={system.id}
-          systemName={system.displayName}
-          vendorType={system.vendorType}
+          systemId={system.id.toString()}
           vendorSiteId={system.vendorSiteId}
-          timezoneOffsetMin={system.timezoneOffsetMin}
+          lastUpdate={lastUpdate ?? null}
+          systemInfo={systemInfo ?? null}
+          vendorType={system.vendorType}
+          supportsPolling={supportsPolling ?? system.supportsPolling ?? false}
+          systemStatus={system.status as "active" | "disabled" | "removed"}
+          isAdmin={isAdmin}
+          userId={userId}
+          availableSystems={availableSystems}
+          onLogout={handleLogout}
+          onTestConnection={() => setShowTestConnection(true)}
+          onViewData={() => setShowViewDataModal(true)}
+          onPollNow={(dryRun) =>
+            setShowPollNow({ isOpen: true, dryRun: dryRun || false })
+          }
+          onAddSystem={() => setShowAddSystemDialog(true)}
+          onSystemSettings={() => setShowSystemSettingsDialog(true)}
+          onUpdateCredentials={
+            canUpdateCredentials
+              ? () => setShowUpdateCredentials(true)
+              : undefined
+          }
+          shiftKeyDown={shiftKeyDown}
         />
-      )}
 
-      {/* Device Settings Dialog */}
-      <SystemSettingsDialog
-        isOpen={showSystemSettingsDialog}
-        onClose={() => setShowSystemSettingsDialog(false)}
-        systemId={system.id}
-        vendorType={system.vendorType}
-        metadata={system.metadata}
-        ownerClerkUserId={system.ownerClerkUserId ?? undefined}
-        isAdmin={isAdmin}
-        onUpdate={handleUpdateSystemSettings}
-      />
-    </div>
+        {/* Main Content */}
+        {children}
+
+        {/* Test Connection Modal */}
+        {showTestConnection && (
+          <TestConnectionModal
+            systemId={system.id}
+            displayName={system.displayName}
+            vendorType={system.vendorType}
+            onClose={() => setShowTestConnection(false)}
+          />
+        )}
+
+        {/* Update Credentials Modal */}
+        {showUpdateCredentials && (
+          <UpdateCredentialsModal
+            systemId={system.id}
+            displayName={system.displayName}
+            vendorType={system.vendorType}
+            onClose={() => setShowUpdateCredentials(false)}
+            onUpdated={() => router.refresh()}
+          />
+        )}
+
+        {/* Poll Now Modal */}
+        {showPollNow.isOpen && (
+          <PollNowModal
+            systemId={system.id}
+            displayName={system.displayName}
+            vendorType={system.vendorType}
+            dryRun={showPollNow.dryRun}
+            onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
+          />
+        )}
+
+        {/* Add System Dialog */}
+        <AddSystemDialog
+          open={showAddSystemDialog}
+          onOpenChange={setShowAddSystemDialog}
+        />
+
+        <ServerErrorModal
+          isOpen={serverError.type !== null}
+          onClose={() => setServerError({ type: null })}
+          errorType={serverError.type}
+          errorDetails={serverError.details}
+        />
+
+        <SessionTimeoutModal
+          isOpen={showSessionTimeout}
+          onReconnect={() => {
+            setShowSessionTimeout(false);
+            window.location.reload();
+          }}
+        />
+
+        {/* View Data Modal */}
+        {showViewDataModal && (
+          <ViewDataModal
+            isOpen={showViewDataModal}
+            onClose={() => setShowViewDataModal(false)}
+            systemId={system.id}
+            systemName={system.displayName}
+            vendorType={system.vendorType}
+            vendorSiteId={system.vendorSiteId}
+            timezoneOffsetMin={system.timezoneOffsetMin}
+          />
+        )}
+
+        {/* Device Settings Dialog */}
+        <SystemSettingsDialog
+          isOpen={showSystemSettingsDialog}
+          onClose={() => setShowSystemSettingsDialog(false)}
+          systemId={system.id}
+          vendorType={system.vendorType}
+          metadata={system.metadata}
+          ownerClerkUserId={system.ownerClerkUserId ?? undefined}
+          isAdmin={isAdmin}
+          onUpdate={handleUpdateSystemSettings}
+        />
+      </div>
+    </ChartFocusProvider>
   );
 }

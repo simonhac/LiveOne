@@ -4,20 +4,26 @@
  * (recomputeBatteryProvenanceForWindow*) over a trailing window (minutely) or an explicit range (daily
  * heal / backfill), chunked. Best-effort throughout so a fold hiccup never breaks the aggregation it trails.
  */
-import { and, eq, isNotNull, max } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lt, max, or } from "drizzle-orm";
+import { parseDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areas,
   systems,
   pointReadingsAgg5m,
+  pointReadingsFlowAttr1d,
 } from "@/lib/db/planetscale/schema";
 import {
+  FLOW_ATTR_VERSION,
+  SETTLEMENT_WINDOW_MS,
   recomputeBatteryProvenanceForWindowBestEffort,
   reconcileFromCheckpointBestEffort,
 } from "@/lib/db/planetscale/battery-provenance-pg";
 import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
 import { listCompleteLogicalSystems } from "@/lib/aggregation/logical-system";
+import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
+import { getTodayInTimezone } from "@/lib/date-utils";
 import type { ProvenanceConfig } from "./types";
 
 /** Minutely trailing window. 12h (> HWS/run-tracking's 6h) because Amber revises hours later and devices
@@ -25,6 +31,17 @@ import type { ProvenanceConfig } from "./types";
 export const DEFAULT_TRAILING_MS = 12 * 60 * 60 * 1000;
 const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
+
+/** Trailing settlement window the nightly heal re-materialises contiguously: SETTLEMENT_WINDOW_MS + a
+ *  1-day buffer so a day gets one recompute AFTER it crosses the cutoff (→ finalized_at stamped). */
+export const REHEAL_TRAILING_MS = SETTLEMENT_WINDOW_MS + 24 * 60 * 60 * 1000;
+/** The scattered-backlog ceiling sits this many days back from "today" — biased LATE (≥ every fleet tz's
+ *  trailing-oldest day) so the seam OVERLAPS the trailing window (harmless: trailing stamps first) instead
+ *  of leaving a multi-tz gap. */
+const REHEAL_CEILING_LAG_DAYS = 3;
+/** Per-run cap on the scattered backlog — bounds the nightly reheal so it can never grind all history; a
+ *  version-bump backlog drains oldest-first over successive nights. */
+const REHEAL_MAX_DAYS_PER_RUN = 20;
 
 /** All Area handles that have a bound battery (role='battery', metric='power') — the recompute targets. */
 export async function listBatteryProvenanceHandles(): Promise<number[]> {
@@ -229,4 +246,90 @@ export async function recomputeRange(
       onChunk?.({ handle, chunkStartMs: cs, chunkEndMs: ce });
     }
   }
+}
+
+/**
+ * Bounded, oldest-first reheal of the SCATTERED `point_readings_flow_attr_1d` backlog the contiguous
+ * trailing recompute (recomputeRange over the settlement window) can't reach: days OLDER than the window
+ * that are still unfinalized (`finalized_at IS NULL`) or carry a stale attribution version
+ * (`version < FLOW_ATTR_VERSION`). Recomputing re-materialises the day and — being past the cutoff —
+ * stamps `finalized_at`, so each day is handled once and drops out of the backlog.
+ *
+ * Capped per run (REHEAL_MAX_DAYS_PER_RUN) so it can never grind all history; a version-bump backlog drains
+ * over successive nights. Steady-state backlog is ~empty (routine late data is WITHIN the window, handled by
+ * the trailing pass). Runs LAST in the daily heal, best-effort — a hiccup here must never roll back the
+ * already-committed trailing pass.
+ */
+export async function rehealStaleAttrDays(
+  nowMs: number,
+  opts: { limit?: number } = {},
+): Promise<{ days: number; handles: number }> {
+  const db = requirePlanetscaleDb();
+  const limit = opts.limit ?? REHEAL_MAX_DAYS_PER_RUN;
+
+  // Representative tz for the ceiling. It's late-biased, so a few hours of inter-area tz difference only
+  // widens the (harmless) overlap with the trailing window — it can never open a seam gap.
+  const [rep] = await db
+    .select({ tz: areas.timezoneOffsetMin })
+    .from(areas)
+    .where(isNotNull(areas.legacySystemId))
+    .limit(1);
+  const ceilingDay = getTodayInTimezone(rep?.tz ?? 0)
+    .subtract({ days: REHEAL_CEILING_LAG_DAYS })
+    .toString();
+
+  const rows = await db
+    .selectDistinct({
+      handle: areas.legacySystemId,
+      tz: areas.timezoneOffsetMin,
+      day: pointReadingsFlowAttr1d.day,
+    })
+    .from(pointReadingsFlowAttr1d)
+    .innerJoin(areas, eq(areas.id, pointReadingsFlowAttr1d.areaId))
+    .where(
+      and(
+        lt(pointReadingsFlowAttr1d.day, ceilingDay),
+        or(
+          isNull(pointReadingsFlowAttr1d.finalizedAt),
+          lt(pointReadingsFlowAttr1d.version, FLOW_ATTR_VERSION),
+        ),
+        isNotNull(areas.legacySystemId),
+      ),
+    )
+    .orderBy(asc(pointReadingsFlowAttr1d.day))
+    .limit(limit);
+
+  if (rows.length === 0) return { days: 0, handles: 0 };
+
+  // Group the selected days by handle, then recompute each handle's [oldest, newest] span in ONE window
+  // call (one 7-day warm-up + fold, vs one per day). After a version bump the oldest-N stale days are
+  // contiguous per handle, so the span stays small. updateLatest + writeCheckpoints are LEFT OFF: rehealing
+  // an old day must not clobber the live KV latest, and the O(today) reconcile never reads a checkpoint
+  // this old.
+  const byHandle = new Map<number, { tz: number; days: string[] }>();
+  for (const r of rows) {
+    if (r.handle == null) continue;
+    const g = byHandle.get(r.handle);
+    if (g) g.days.push(r.day);
+    else byHandle.set(r.handle, { tz: r.tz, days: [r.day] });
+  }
+
+  for (const [handle, { tz, days }] of byHandle) {
+    const sorted = [...days].sort();
+    const [winStartSec] = dayToUnixRangeForAggregation(
+      parseDate(sorted[0]),
+      tz,
+    );
+    const [, winEndSec] = dayToUnixRangeForAggregation(
+      parseDate(sorted[sorted.length - 1]),
+      tz,
+    );
+    await recomputeBatteryProvenanceForWindowBestEffort(
+      handle,
+      winStartSec * 1000,
+      winEndSec * 1000,
+      { writeRollup: true, nowMs },
+    );
+  }
+  return { days: rows.length, handles: byHandle.size };
 }
