@@ -5,6 +5,7 @@ import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import {
   getDashboard,
   getDashboardByOwnerAlias,
+  listAccessibleDashboards,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
 import DashboardClient from "@/components/DashboardClient";
@@ -12,9 +13,13 @@ import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
 import { descriptorAreaIds } from "@/lib/dashboard/composition";
+import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
+import { resolveGridContextForSystem } from "@/lib/grid/context";
+import { getOrCreateUserPreferences } from "@/lib/user-preferences";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { getQueryClient } from "@/app/get-query-client";
 import { queryKeys } from "@/lib/queries/keys";
+import { MY_DASHBOARDS_KEY, USER_PREFERENCES_KEY } from "@/lib/queries";
 import { getSystemDataForCache } from "@/lib/dashboard/serve-data";
 import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 
@@ -58,6 +63,9 @@ async function renderCompositionDashboard(
   // Sydney perf harness can decompose the document TTFB. A Next page can't set response headers, so
   // the mirror rides in the DOM. See docs/performance/dashboard-fetch-waterfall.md.
   timer?: ServerTimer,
+  // The signed-in viewer (owner/admin authed path). When present with no `sharedAreas`, the header
+  // switcher's two queries are SSR-seeded (SP1.4). Omitted on the read-only shared (`?access=`) path.
+  userId?: string | null,
 ) {
   const raw: unknown = dashboard.descriptor;
   const descriptor: DashboardV3 = isDashboardV3(raw)
@@ -72,6 +80,10 @@ async function renderCompositionDashboard(
   const areaById = new Map(
     (sharedAreas ?? initialReadableAreas ?? []).map((a) => [a.id, a] as const),
   );
+  // Section handles (the whole-area systems). These ALONE form the client's dashboardDataBatchQuery
+  // key (Dashboard.tsx derives it from section handles, ignoring device pins), so keep them separate
+  // from the expanded per-tile seed set below — folding pins into `batchIds` would break the key
+  // match and force a client batch refetch.
   const handles = [
     ...new Set(
       descriptorAreaIds(raw)
@@ -81,9 +93,42 @@ async function renderCompositionDashboard(
   ];
   const queryClient = getQueryClient();
   const seeded: Record<string, unknown> = {};
-  const prefetch = () =>
-    Promise.all(
-      handles.map(async (h) => {
+  const prefetch = async () => {
+    // SP1.2b: a tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a
+    // public NEM region system; a member device for `device-metrics`). Those pins are NOT section
+    // handles, so today they self-fetch /api/data on the client. Seed them too — but ONLY pins that
+    // are authorization-safe: reachable from an area the viewer may read (its member devices, or its
+    // derived grid region system). Anything else falls through to a client self-fetch, as before.
+    const pins = new Set<number>();
+    for (const s of descriptor.sections) {
+      if (!areaById.has(s.areaId)) continue; // only authorized sections
+      for (const c of s.cards) {
+        if (typeof c.deviceSystemId === "number") pins.add(c.deviceSystemId);
+        for (const t of c.tiles ?? []) {
+          if (typeof t.deviceSystemId === "number") pins.add(t.deviceSystemId);
+        }
+      }
+    }
+    const seedIds = new Set<number>(handles);
+    if (pins.size > 0) {
+      // Authorization universe: for each authorized area ON THIS DASHBOARD, its member device systems
+      // + its derived public grid region system. Derived from already-authorized areas — never a raw
+      // int read out of the opaque descriptor.
+      const dashboardAreas = [...new Set(descriptor.sections.map((s) => s.areaId))]
+        .map((id) => areaById.get(id))
+        .filter((a): a is NonNullable<typeof a> => a != null);
+      const authorized = new Set<number>(handles);
+      await Promise.all(
+        dashboardAreas.map(async (a) => {
+          for (const id of await getAreaDeviceSystemIds(a.id)) authorized.add(id);
+          const grid = await resolveGridContextForSystem(a.legacySystemId);
+          if (grid?.regionSystemId != null) authorized.add(grid.regionSystemId);
+        }),
+      );
+      for (const p of pins) if (authorized.has(p)) seedIds.add(p);
+    }
+    await Promise.all(
+      [...seedIds].map(async (h) => {
         try {
           const value = await getSystemDataForCache(h);
           if (value != null) {
@@ -95,12 +140,42 @@ async function renderCompositionDashboard(
         }
       }),
     );
+  };
   await (timer ? timer.time("data", prefetch) : prefetch());
   // A multi-system dashboard also runs dashboardDataBatchQuery(handles); seed its key (the same
-  // sorted string-id set the client derives) so it doesn't refetch despite warm per-system caches.
+  // sorted string-id set the client derives from SECTION HANDLES — not the pins) so it doesn't
+  // refetch despite warm per-system caches. The extra pin entries in `seeded` are harmless (the
+  // client seeds per-id from the same map shape).
   const batchIds = [...new Set(handles.map(String))].sort();
   if (batchIds.length > 1) {
     queryClient.setQueryData(queryKeys.dataBatch(batchIds), seeded);
+  }
+
+  // SP1.4: on the authed owner/admin path (the read-only shared view disables the switcher via
+  // `enabled = !sharedAreas`), SSR-seed the header switcher's two queries — the user's dashboards
+  // list + preferences — so DashboardsMenu paints without a client /api/dashboards +
+  // /api/user/preferences round-trip on load. Date fields → ISO strings to match the wire shape.
+  if (!sharedAreas && userId) {
+    const seedSwitcher = async () => {
+      const [dashboardList, prefs] = await Promise.all([
+        listAccessibleDashboards(userId),
+        getOrCreateUserPreferences(userId),
+      ]);
+      queryClient.setQueryData(MY_DASHBOARDS_KEY, {
+        dashboards: dashboardList.map((d) => ({
+          ...d,
+          updatedAt: d.updatedAt.toISOString(),
+        })),
+      });
+      queryClient.setQueryData(USER_PREFERENCES_KEY, {
+        success: true,
+        preferences: {
+          clerkUserId: prefs.clerkUserId,
+          defaultDashboardId: prefs.defaultDashboardId,
+        },
+      });
+    };
+    await (timer ? timer.time("switcher", seedSwitcher) : seedSwitcher());
   }
 
   return (
@@ -225,6 +300,7 @@ export default async function DashboardPage({
       sharedAreas,
       initialReadableAreas,
       timer,
+      userId,
     );
   }
 
@@ -250,6 +326,7 @@ export default async function DashboardPage({
           undefined,
           initialReadableAreas,
           timer,
+          userId,
         );
       }
     }
