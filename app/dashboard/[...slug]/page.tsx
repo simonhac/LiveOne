@@ -12,6 +12,10 @@ import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
 import { descriptorAreaIds } from "@/lib/dashboard/composition";
+import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
+import { getQueryClient } from "@/app/get-query-client";
+import { queryKeys } from "@/lib/queries/keys";
+import { getSystemDataForCache } from "@/lib/dashboard/serve-data";
 
 interface PageProps {
   params: Promise<{
@@ -53,18 +57,58 @@ async function renderCompositionDashboard(
   const descriptor: DashboardV3 = isDashboardV3(raw)
     ? raw
     : { version: 3, sections: [] };
+
+  // SP1.2: SSR-prefetch each referenced system's /api/data (latest values) in-process and seed a
+  // React Query HydrationBoundary, so cards render filled from cache instead of a client round-trip.
+  // Handles come from the areas already resolved + authorized server-side (sharedAreas for a shared/
+  // grantee view, initialReadableAreas for an owner) — we only prefetch systems the viewer may read.
+  // Best-effort: a miss just means the card self-fetches, exactly as before.
+  const areaById = new Map(
+    (sharedAreas ?? initialReadableAreas ?? []).map((a) => [a.id, a] as const),
+  );
+  const handles = [
+    ...new Set(
+      descriptorAreaIds(raw)
+        .map((aid) => areaById.get(aid)?.legacySystemId)
+        .filter((h): h is number => h != null),
+    ),
+  ];
+  const queryClient = getQueryClient();
+  const seeded: Record<string, unknown> = {};
+  await Promise.all(
+    handles.map(async (h) => {
+      try {
+        const value = await getSystemDataForCache(h);
+        if (value != null) {
+          queryClient.setQueryData(queryKeys.data(h), value);
+          seeded[String(h)] = value;
+        }
+      } catch {
+        // best-effort prefetch — the card will self-fetch on the client
+      }
+    }),
+  );
+  // A multi-system dashboard also runs dashboardDataBatchQuery(handles); seed its key (the same
+  // sorted string-id set the client derives) so it doesn't refetch despite warm per-system caches.
+  const batchIds = [...new Set(handles.map(String))].sort();
+  if (batchIds.length > 1) {
+    queryClient.setQueryData(queryKeys.dataBatch(batchIds), seeded);
+  }
+
   return (
-    <DashboardClient
-      dashboard={{
-        id: dashboard.id,
-        displayName: dashboard.displayName,
-        alias: dashboard.alias,
-        descriptor,
-      }}
-      canEdit={canEdit}
-      sharedAreas={sharedAreas}
-      initialReadableAreas={initialReadableAreas}
-    />
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <DashboardClient
+        dashboard={{
+          id: dashboard.id,
+          displayName: dashboard.displayName,
+          alias: dashboard.alias,
+          descriptor,
+        }}
+        canEdit={canEdit}
+        sharedAreas={sharedAreas}
+        initialReadableAreas={initialReadableAreas}
+      />
+    </HydrationBoundary>
   );
 }
 
@@ -93,25 +137,11 @@ export default async function DashboardPage({
       // runs without an authed /api/areas/readable call.
       const composition = await getDashboard(valid.dashboardId);
       if (composition && composition.displayName) {
-        const raw: unknown = composition.descriptor;
-        const descriptor: DashboardV3 = isDashboardV3(raw)
-          ? raw
-          : { version: 3, sections: [] };
-        const sharedAreas = await resolveAreasByIds(descriptorAreaIds(raw), {
-          withChartCapability: true,
-        });
-        return (
-          <DashboardClient
-            dashboard={{
-              id: composition.id,
-              displayName: composition.displayName,
-              alias: composition.alias,
-              descriptor,
-            }}
-            canEdit={false}
-            sharedAreas={sharedAreas}
-          />
+        const sharedAreas = await resolveAreasByIds(
+          descriptorAreaIds(composition.descriptor),
+          { withChartCapability: true },
         );
+        return await renderCompositionDashboard(composition, false, sharedAreas);
       }
     }
   }
