@@ -35,3 +35,9 @@ as already applied without executing it:
 
 After baselining, every subsequent change is: edit `schema.ts` → `db:pg:generate` →
 review the SQL → `db:pg:migrate`.
+
+## Checking what's applied
+
+`GET /api/health?migrations=1` reports applied vs expected migration counts + the newest applied
+hash — a cheap prod↔dev drift check that reads `drizzle.__drizzle_migrations`. See
+`docs/migrations.md` › **Checking applied migrations**.
