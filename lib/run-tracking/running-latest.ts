@@ -11,6 +11,7 @@
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo } from "@/lib/db/planetscale/schema";
+import { mintPointUid } from "@/lib/point/mint-point-uid";
 import { updateLatestPointValue } from "@/lib/kv-cache-manager";
 import { ROLES } from "@/lib/roles/registry";
 import { listEnabledTrackers } from "./resolve";
@@ -52,12 +53,13 @@ async function ensureRunningPoint(
   const nextIndex =
     all.length > 0 ? Math.max(...all.map((p) => p.index)) + 1 : 0;
 
+  const physicalPathTail = `derived/${stem}/${RUNNING_METRIC}`;
   const [row] = await db
     .insert(pointInfo)
     .values({
       systemId,
       index: nextIndex,
-      physicalPathTail: `derived/${stem}/${RUNNING_METRIC}`,
+      physicalPathTail,
       logicalPathStem: stem,
       metricType: RUNNING_METRIC,
       metricUnit: RUNNING_UNIT,
@@ -66,6 +68,7 @@ async function ensureRunningPoint(
       subsystem: null,
       transform: null,
       active: true,
+      pointUid: await mintPointUid(systemId, physicalPathTail),
       createdAt: new Date(),
     })
     .returning({ index: pointInfo.index });

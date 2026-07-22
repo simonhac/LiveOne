@@ -14,6 +14,7 @@
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
+import { mintPointUid } from "@/lib/point/mint-point-uid";
 
 const BATTERY_STEM = "bidi.battery";
 
@@ -184,12 +185,13 @@ export async function ensureBatteryProvenancePoints(
     .where(eq(pointInfo.systemId, systemId));
   let nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
   for (const p of missing) {
+    const physicalPathTail = `derived/${BATTERY_STEM}/${p.metricType}`;
     const [row] = await db
       .insert(pointInfo)
       .values({
         systemId,
         index: nextIndex++,
-        physicalPathTail: `derived/${BATTERY_STEM}/${p.metricType}`,
+        physicalPathTail,
         logicalPathStem: BATTERY_STEM,
         metricType: p.metricType,
         metricUnit: p.metricUnit,
@@ -198,6 +200,7 @@ export async function ensureBatteryProvenancePoints(
         subsystem: "battery",
         transform: null,
         active: true,
+        pointUid: await mintPointUid(systemId, physicalPathTail),
         createdAt: new Date(),
       })
       .returning({ index: pointInfo.index });
