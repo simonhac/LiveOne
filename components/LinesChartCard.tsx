@@ -10,6 +10,7 @@ import type { LineChartData as ChartData } from "@/lib/charts/types";
 import { buildSeriesParam, buildChartData } from "@/lib/charts/lines-data";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 
 interface LinesChartCardProps {
@@ -31,10 +32,24 @@ export default function LinesChartCard({
     details?: string;
   }>({ type: null });
 
-  // Shared temporal-navigator state (period + historical window) from the URL.
-  const { period, start, end, isHistoricalMode } = useTemporalRange({
+  // Shared temporal-navigator state (period + historical window) from the URL. This is the INSTANT
+  // desired window (the header label follows it immediately); the chart fetches a settled copy so a
+  // rapid click-burst collapses to one request for the window landed on (see useSettledWindow).
+  const {
+    period: desiredPeriod,
+    start: desiredStart,
+    end: desiredEnd,
+  } = useTemporalRange({
     timezoneOffsetMin,
   });
+  const desiredWindow = useMemo(
+    () => ({ period: desiredPeriod, start: desiredStart, end: desiredEnd }),
+    [desiredPeriod, desiredStart, desiredEnd],
+  );
+  const [committedWindow, reportHistoryFetching] =
+    useSettledWindow(desiredWindow);
+  const { period, start, end } = committedWindow;
+  const isHistoricalMode = !!(start || end);
   // Shared focus instant for this chart cluster — publish our hover here, and read it back so the
   // red focus line + the values tooltip follow whatever point is focused on ANY chart in the section.
   const { focusedTime, setFocusedTime } = useChartFocus();
@@ -57,6 +72,7 @@ export default function LinesChartCard({
   const {
     data: rawHistory,
     isPending,
+    isFetching,
     isError,
     error: queryError,
   } = useQuery(
@@ -73,6 +89,12 @@ export default function LinesChartCard({
         : { last: duration }),
     }),
   );
+
+  // Report the fetch state back to the committer so it advances to the next requested window only
+  // once the current fetch settles (single-flight — see useSettledWindow).
+  useEffect(() => {
+    reportHistoryFetching(isFetching);
+  }, [isFetching, reportHistoryFetching]);
 
   const chartData = useMemo<ChartData | null>(
     () =>
