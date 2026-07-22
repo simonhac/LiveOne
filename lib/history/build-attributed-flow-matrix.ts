@@ -91,6 +91,10 @@ export function shapeAttributedFlowMatrix(
     matrix: numGrid(acc.energyKwh),
     emissionsG: knownGrid(acc.emissionsG, acc.emissionsKnownKwh),
     renewableKwh: knownGrid(acc.renewableKwh, acc.renewableKnownKwh),
+    selfRenewableKwh: knownGrid(
+      acc.selfRenewableKwh,
+      acc.selfRenewableKnownKwh,
+    ),
     costC: knownGrid(acc.costC, acc.priceKnownKwh),
     estimatedKwh: numGrid(acc.estimatedKwh),
   };

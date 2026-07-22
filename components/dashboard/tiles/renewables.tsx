@@ -2,29 +2,28 @@
 
 import { Leaf } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDate } from "@internationalized/date";
 import Tile from "@/components/Tile";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { getPointValue } from "./shared";
 import { useAreaDatum } from "@/components/dashboard/cards/shared";
-import {
-  areaByHandleQuery,
-  renewablesSummaryQuery,
-} from "@/lib/queries/renewablesSummary";
+import { siteDataQuery } from "@/lib/queries";
+import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
 
 /**
- * The "Renewables" tile — three labelled percentages over a trailing window:
+ * The "Renewables" tile — three labelled percentages over the DASHBOARD's currently-selected period
+ * (1D/7D/30D), so it follows the shared temporal navigator like the charts (NOT a fixed window, and NOT
+ * an instantaneous value):
  *   1. Renewable autarky              — consumption covered by OUR OWN renewable generation.
  *   2. Own-renewable self-consumption — of the renewable WE generated, the share consumed on site.
  *   3. Renewable share of consumption — own + grid renewables.
  * Metrics 1-2 draw on the joint `self_renewable_kwh` leg; metric 3 on the existing `renewable_kwh`.
  *
- * Data plumbing mirrors a self-fetching tile (hot-water): it self-fetches from an AREA-keyed route
- * (`/api/areas/[areaId]/renewables-summary`) but a tile only receives the numeric handle, so it first
- * resolves the area UUID via `/api/areas/by-handle/[handle]` (owner/admin/cron — a share-token-only
- * viewer therefore sees no tile; the summary route itself is share-token aware for when an areaId is
- * in hand). Window: the trailing 30 COMPLETED local days (the flow_attr rollup is per completed day).
+ * NO dedicated route: it reads the SAME period-scoped attributed-flow payload the Sankey uses
+ * (`siteDataQuery` → `/api/history?include=sankey` → `attributedFlow`, deduped with the charts) and
+ * reduces it client-side via `reduceRenewablesMetrics`. Sub-daily (1D/7D) is computed live, so
+ * "today so far" is real; 30D reads the daily rollup.
  */
 
 const fmtPct = (x: number | null | undefined): string =>
@@ -32,7 +31,8 @@ const fmtPct = (x: number | null | undefined): string =>
 
 const AUTARKY_TIP =
   "Renewable autarky — the share of your consumption covered by your OWN renewable generation " +
-  "(solar directly, or via the battery at its self-renewable blend). Grid renewables are excluded.";
+  "(solar directly, or via the battery at its self-renewable blend). Grid imports and any backup " +
+  "generator are self-origin only when renewable, so grid mix and generator energy are excluded here.";
 const SELF_CONSUMPTION_TIP =
   "Own-renewable self-consumption — of the renewable energy you generated, the fraction consumed on " +
   "site rather than exported. Battery round-trip losses reduce it. “—” when you generated no own " +
@@ -40,21 +40,6 @@ const SELF_CONSUMPTION_TIP =
 const SHARE_TIP =
   "Renewable share of consumption — your own renewables plus the renewable fraction of the grid you " +
   "imported.";
-const GENERATOR_NOTE =
-  " Your generator's energy is self-origin but NOT renewable, so it is excluded from this metric.";
-
-function trailingWindow(tzOffsetMin: number): { start: string; end: string } {
-  // Last completed local day (yesterday in the area's tz) back 30 days — the rollup's grain.
-  const nowLocal = new Date(Date.now() + tzOffsetMin * 60_000);
-  const today = new CalendarDate(
-    nowLocal.getUTCFullYear(),
-    nowLocal.getUTCMonth() + 1,
-    nowLocal.getUTCDate(),
-  );
-  const end = today.subtract({ days: 1 });
-  const start = end.subtract({ days: 29 });
-  return { start: start.toString(), end: end.toString() };
-}
 
 function MetricRow({
   label,
@@ -77,26 +62,28 @@ function MetricRow({
 }
 
 function RenewablesTile({ systemId, staleThresholdSeconds }: TileRenderProps) {
-  const { datum } = useAreaDatum(systemId ?? 0);
-  const tz = datum?.system?.timezoneOffsetMin;
+  const { datum, paused } = useAreaDatum(systemId ?? 0);
+  const tz = datum?.system?.timezoneOffsetMin ?? 600;
 
-  const { data: area } = useQuery(
-    areaByHandleQuery(systemId ?? 0, systemId != null),
-  );
-  const areaId = area?.areaId;
+  // Follow the shared temporal navigator (URL state) — the same 1D/7D/30D + window the charts use.
+  const { period, start, end } = useTemporalRange({ timezoneOffsetMin: tz });
 
-  const win = tz != null ? trailingWindow(tz) : null;
-  const { data: summary, isError } = useQuery(
-    renewablesSummaryQuery({
-      areaId: areaId ?? "",
-      startDay: win?.start,
-      endDay: win?.end,
-      enabled: !!areaId && win != null,
+  const { data: siteData, isError } = useQuery(
+    siteDataQuery({
+      systemId: systemId ?? 0,
+      period,
+      start,
+      end,
+      timezoneOffsetMin: tz,
+      paused,
+      enabled: systemId != null,
     }),
   );
 
+  const flow = siteData?.attributedFlow;
+  const summary = flow ? reduceRenewablesMetrics(flow) : null;
   const m = summary?.metrics;
-  const loading = !isError && !summary;
+  const loading = !isError && !siteData;
 
   return (
     <Tile
@@ -108,15 +95,13 @@ function RenewablesTile({ systemId, staleThresholdSeconds }: TileRenderProps) {
       bgColor="bg-green-900/20"
       borderColor="border-green-700"
       staleThresholdSeconds={staleThresholdSeconds}
-      extraInfo={
-        summary?.hasGenerator ? "generator excluded from autarky" : undefined
-      }
+      extraInfo={`over ${period}`}
       extra={
         <div className="text-xs space-y-0.5">
           <MetricRow
             label="Autarky"
             value={loading ? "…" : fmtPct(m?.renewableAutarky)}
-            tip={AUTARKY_TIP + (summary?.hasGenerator ? GENERATOR_NOTE : "")}
+            tip={AUTARKY_TIP}
           />
           <MetricRow
             label="Self-use"

@@ -1,5 +1,13 @@
 import { describe, it, expect } from "@jest/globals";
-import { computeRenewablesMetrics, type RenewablesEdgeAgg } from "../summary";
+import {
+  computeRenewablesMetrics,
+  reduceRenewablesMetrics,
+  type RenewablesEdgeAgg,
+} from "../summary";
+import type {
+  DailyFlowMatrices,
+  EnergyFlowNode,
+} from "@/lib/energy-flow-matrix";
 
 /** Build an edge with inert defaults (no metric leg, no null rows). */
 function edge(p: Partial<RenewablesEdgeAgg>): RenewablesEdgeAgg {
@@ -170,5 +178,85 @@ describe("computeRenewablesMetrics", () => {
     expect(r.metrics.ownRenewableSelfConsumption).toBeNull();
     expect(r.metrics.renewableShare).toBeNull();
     expect(r.pctEstimated).toBe(0);
+  });
+});
+
+// ── The DailyFlowMatrices reducer (the tile's entry point over the shared attributed-flow payload) ──
+
+const node = (id: string): EnergyFlowNode => ({ id, label: id, color: "#000" });
+
+describe("reduceRenewablesMetrics", () => {
+  it("sums the attributed payload across days and edges into the three metrics", () => {
+    // sources: [solar, grid]; loads: [load, load.grid]. Two days, same shape.
+    const sources = [node("source.solar"), node("source.grid")];
+    const loads = [node("load"), node("load.grid")];
+    // Per day: solar→load 3 (self-renew 3), solar→grid 1 (self-renew 1), grid→load 2 (self-renew 0, 40% renew).
+    const mkDay = (day: string) => ({
+      day,
+      matrix: [
+        [3, 1],
+        [2, 0],
+      ],
+      emissionsG: [
+        [0, 0],
+        [null, null],
+      ] as (number | null)[][],
+      renewableKwh: [
+        [3, 1],
+        [0.8, null],
+      ] as (number | null)[][],
+      selfRenewableKwh: [
+        [3, 1],
+        [0, null],
+      ] as (number | null)[][],
+      estimatedKwh: [
+        [0, 0],
+        [0, 0],
+      ],
+    });
+    const d: DailyFlowMatrices = {
+      sources,
+      loads,
+      days: [mkDay("2026-07-01"), mkDay("2026-07-02")],
+    };
+    const r = reduceRenewablesMetrics(d)!;
+    // consumption = (3 solar→load + 2 grid→load) × 2 days = 10
+    expect(r.consumptionKwh).toBeCloseTo(10, 9);
+    // selfRenewToLoads = 3×2 = 6 → autarky 6/10 = 0.6
+    expect(r.metrics.renewableAutarky).toBeCloseTo(0.6, 9);
+    // renewToLoads = (3 + 0.8)×2 = 7.6 → share 0.76
+    expect(r.metrics.renewableShare).toBeCloseTo(0.76, 9);
+    // selfRenewGenerated = solar edges (3+1)×2 = 8; exported = solar→grid 1×2 = 2 → 1 − 2/8 = 0.75
+    expect(r.metrics.ownRenewableSelfConsumption).toBeCloseTo(0.75, 9);
+  });
+
+  it("returns null for a legacy energy-only payload (no metric legs)", () => {
+    const d: DailyFlowMatrices = {
+      sources: [node("source.solar")],
+      loads: [node("load")],
+      days: [{ day: "2026-07-01", matrix: [[5]] }],
+    };
+    expect(reduceRenewablesMetrics(d)).toBeNull();
+  });
+
+  it("absent self_renewable leg → metrics 1-2 unavailable, metric 3 still computes", () => {
+    // emissionsG present (modern payload) but selfRenewableKwh absent (older attributed payload).
+    const d: DailyFlowMatrices = {
+      sources: [node("source.solar")],
+      loads: [node("load")],
+      days: [
+        {
+          day: "2026-07-01",
+          matrix: [[10]],
+          emissionsG: [[0]],
+          renewableKwh: [[10]],
+          estimatedKwh: [[0]],
+        },
+      ],
+    };
+    const r = reduceRenewablesMetrics(d)!;
+    expect(r.metrics.renewableAutarky).toBeNull();
+    expect(r.metrics.ownRenewableSelfConsumption).toBeNull();
+    expect(r.metrics.renewableShare).toBeCloseTo(1, 9); // 10/10
   });
 });

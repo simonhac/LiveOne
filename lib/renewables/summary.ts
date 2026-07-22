@@ -1,8 +1,9 @@
 /**
- * Renewables-summary — the client-safe shared contract for the `renewables` tile and its API route
- * (`GET /api/areas/[areaId]/renewables-summary`). Both import the response shape AND the pure metric
- * function from HERE so they can never disagree (the field-registry pattern). No DB / HTTP / React —
- * only types + arithmetic, safe to import from the browser bundle.
+ * Renewables metrics — the client-safe reduction the `renewables` tile computes from the SHARED
+ * attributed-flow payload (`DailyFlowMatrices`, served by `/api/history?include=sankey` and consumed
+ * via `siteDataQuery` — NO dedicated route). `reduceRenewablesMetrics` flattens that period-scoped
+ * payload into per-edge aggregates and runs the pure `computeRenewablesMetrics` below. No DB / HTTP /
+ * React — only types + arithmetic, safe to import from the browser bundle.
  *
  * The three metrics, over a period, from the flow matrix (`point_readings_flow_attr_1d`; multi-day =
  * SUM by source_path/load_path):
@@ -33,6 +34,8 @@
  * flows as `source.grid` with self_renewable = 0, so it never enters selfRenewToLoads.
  */
 
+import type { DailyFlowMatrices } from "@/lib/energy-flow-matrix";
+
 /** One aggregated source→load edge over the requested period (summed across days). */
 export interface RenewablesEdgeAgg {
   sourcePath: string;
@@ -62,13 +65,7 @@ export interface RenewablesMetrics {
   renewableShare: number | null;
 }
 
-export interface RenewablesSummaryResponse {
-  ok: true;
-  areaId: string;
-  /** The area's integer handle (legacySystemId), null for an unhandled area. */
-  systemId: number | null;
-  /** Resolved window, area-local YYYY-MM-DD inclusive. */
-  range: { start: string; end: string };
+export interface RenewablesSummary {
   metrics: RenewablesMetrics;
   /** Consumption energy (kWh) over the period — the denominator of metrics 1 & 3. */
   consumptionKwh: number;
@@ -78,9 +75,6 @@ export interface RenewablesSummaryResponse {
   estimatedKwh: number;
   /** 100 · estimatedKwh / consumptionKwh (0 when there is no consumption). */
   pctEstimated: number;
-  /** True when the area has a backup/off-grid generator — the tile shows the "generator is self-origin
-   *  but not renewable, so excluded from renewable autarky" tooltip note only then. */
-  hasGenerator: boolean;
 }
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -107,14 +101,10 @@ function isBehindMeterGenerator(sourcePath: string): boolean {
   return channel(sourcePath) === "solar";
 }
 
-/** Pure metric computation over the period's aggregated edges. Shared by the route and its tests. */
-export function computeRenewablesMetrics(edges: RenewablesEdgeAgg[]): {
-  metrics: RenewablesMetrics;
-  consumptionKwh: number;
-  selfRenewGeneratedKwh: number;
-  estimatedKwh: number;
-  pctEstimated: number;
-} {
+/** Pure metric computation over the period's aggregated edges. */
+export function computeRenewablesMetrics(
+  edges: RenewablesEdgeAgg[],
+): RenewablesSummary {
   let consumption = 0;
   let selfRenewToLoads = 0;
   let renewToLoads = 0;
@@ -171,4 +161,57 @@ export function computeRenewablesMetrics(edges: RenewablesEdgeAgg[]): {
     pctEstimated:
       consumption > 0 ? (100 * estimatedConsumption) / consumption : 0,
   };
+}
+
+/**
+ * Reduce the shared attributed-flow payload (a `source=modern` {@link DailyFlowMatrices}) to the three
+ * renewables metrics over the whole window — summing across all days and all edges, the same additive
+ * discipline as `reduceLoadProvenance`/`reduceSourceProvenance`. This is the tile's entry point: it
+ * follows the dashboard's selected period (1D/7D/30D) because the payload does.
+ *
+ * Returns null for a legacy energy-only payload (no metric legs at all). When the metric legs are
+ * present but `selfRenewableKwh` is absent (an older attributed payload predating this leg), every
+ * energy-bearing edge counts as an unknown self-renewable row — so metrics 1-2 come back null
+ * (unavailable) while metric 3 still computes from `renewableKwh`.
+ */
+export function reduceRenewablesMetrics(
+  d: DailyFlowMatrices,
+): RenewablesSummary | null {
+  // Metric legs ride only on modern payloads; bail if the first day lacks them entirely.
+  if (d.days.length > 0 && d.days[0].emissionsG === undefined) return null;
+
+  const S = d.sources.length;
+  const L = d.loads.length;
+  const edges: RenewablesEdgeAgg[] = [];
+  for (let s = 0; s < S; s++) {
+    for (let l = 0; l < L; l++) {
+      let energyKwh = 0;
+      let renewableKwh = 0;
+      let selfRenewableKwh = 0;
+      let selfRenewableNullRows = 0;
+      let estimatedKwh = 0;
+      for (const day of d.days) {
+        const e = day.matrix[s]?.[l] ?? 0;
+        if (e <= 0) continue;
+        energyKwh += e;
+        const rk = day.renewableKwh?.[s]?.[l];
+        if (rk != null) renewableKwh += rk;
+        const sr = day.selfRenewableKwh?.[s]?.[l];
+        if (sr != null) selfRenewableKwh += sr;
+        else selfRenewableNullRows += 1; // energy flowed but self-renewable was unknown that day
+        estimatedKwh += day.estimatedKwh?.[s]?.[l] ?? 0;
+      }
+      if (energyKwh <= 0) continue;
+      edges.push({
+        sourcePath: d.sources[s].id,
+        loadPath: d.loads[l].id,
+        energyKwh,
+        renewableKwh,
+        selfRenewableKwh,
+        selfRenewableNullRows,
+        estimatedKwh,
+      });
+    }
+  }
+  return computeRenewablesMetrics(edges);
 }

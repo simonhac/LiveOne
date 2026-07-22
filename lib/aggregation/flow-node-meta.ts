@@ -185,6 +185,7 @@ export function toDailyFlowMatrices(
     // Present only for `source=modern` (point_readings_flow_attr_1d).
     emissionsG?: unknown;
     renewableKwh?: unknown;
+    selfRenewableKwh?: unknown;
     costC?: unknown;
     estimatedKwh?: unknown;
   }[],
@@ -211,6 +212,7 @@ export function toDailyFlowMatrices(
     matrix: number[][];
     emissionsG?: (number | null)[][];
     renewableKwh?: (number | null)[][];
+    selfRenewableKwh?: (number | null)[][];
     costC?: (number | null)[][];
     estimatedKwh?: number[][];
   }
@@ -224,6 +226,7 @@ export function toDailyFlowMatrices(
       if (includeMetrics) {
         d.emissionsG = nullGrid();
         d.renewableKwh = nullGrid();
+        d.selfRenewableKwh = nullGrid();
         d.costC = nullGrid();
         d.estimatedKwh = numGrid();
       }
@@ -235,6 +238,7 @@ export function toDailyFlowMatrices(
     if (includeMetrics) {
       d.emissionsG![si][li] = num(r.emissionsG);
       d.renewableKwh![si][li] = num(r.renewableKwh);
+      d.selfRenewableKwh![si][li] = num(r.selfRenewableKwh);
       d.costC![si][li] = num(r.costC);
       d.estimatedKwh![si][li] = Number(r.estimatedKwh) || 0;
     }

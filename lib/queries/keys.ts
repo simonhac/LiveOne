@@ -64,15 +64,6 @@ export const queryKeys = {
   /** Keyed by AREA uuid (not systemId) — battery-provenance daily history for the panel. */
   provenanceDaily: (areaId: string, rangeKey: string) =>
     ["provenanceDaily", areaId, rangeKey] as const,
-
-  /** handle → area-uuid resolution (`/api/areas/by-handle/[handle]`), for the tiles that hit an
-   *  area-keyed route but only receive the numeric handle. */
-  areaByHandle: (systemId: SystemIdLike) =>
-    ["areaByHandle", sid(systemId)] as const,
-
-  /** Keyed by AREA uuid — the renewables tile's three-metric summary. */
-  renewablesSummary: (areaId: string, rangeKey: string) =>
-    ["renewablesSummary", areaId, rangeKey] as const,
 } as const;
 
 /**
