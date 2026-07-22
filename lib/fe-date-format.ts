@@ -4,6 +4,29 @@
  */
 
 /**
+ * Traditional Australian short month names (1-indexed as `[month - 1]`). Hardcoded rather than derived
+ * from `Intl`/`toLocaleDateString("en-AU", { month: "short" })` so month rendering is DETERMINISTIC:
+ * the ICU/CLDR data those APIs read changes between Node/ICU versions (e.g. ICU 78 shortened en-AU
+ * "June" → "Jun" while leaving September as "Sept"), which made the same code render differently across
+ * local / CI / Vercel. May/June/July stay unabbreviated and September is "Sept", the long-standing
+ * en-AU convention these formatters were written for.
+ */
+export const EN_AU_SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "June",
+  "July",
+  "Aug",
+  "Sept",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/**
  * Format a date/time for display in the UI
  * Returns time in 12-hour format with no leading zero and lowercase am/pm
  * Date in short month format
@@ -288,11 +311,13 @@ export function formatDateTimeRange(
     return `${displayHour}${minuteStr}${period}`;
   };
 
-  // Helper to format month using locale (e.g., "Sep", "Oct")
-  const formatMonth = (month: number): string => {
-    const date = new Date(2000, month - 1, 1);
-    return date.toLocaleDateString("en-AU", { month: "short" });
-  };
+  // Australian short month names, e.g. "3 – 5 Sept 2025", "6 June 2025". Hardcoded ON PURPOSE rather
+  // than `toLocaleDateString("en-AU", { month: "short" })`: that reads the runtime's ICU/CLDR data,
+  // which drifts between Node/ICU versions (ICU 78 changed en-AU June "June" → "Jun" while keeping
+  // "Sept") — so the same build renders differently across local / CI / Vercel and silently over time.
+  // This table is the traditional en-AU abbreviation set (May/June/July unabbreviated, September
+  // "Sept") and is environment-independent. 1-indexed via EN_AU_SHORT_MONTHS[month - 1].
+  const formatMonth = (month: number): string => EN_AU_SHORT_MONTHS[month - 1];
 
   // Check if it's the same point in time
   if (start.compare(end) === 0) {
