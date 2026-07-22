@@ -13,55 +13,56 @@
 ## ▶ NEXT ACTION — paste this into a fresh workspace to do the next PR
 
 > **Self-perpetuating handoff (maintenance rule).** This block always holds exactly ONE live prompt: the
-> very next PR to build. Whoever lands that PR **must replace this block** with the following PR's prompt
-> — same structure, same closing "when landed, write the next prompt here" instruction — so the chain
-> keeps itself current. Keep the prose lengths and constraints; only swap the specifics (PR letter,
-> scope, files, verify steps, baseline count, prior-PR/branch references). Every adoption PR's prompt
-> **must carry the "append a row to the Readings-seam ratchet ledger" step** (see that section) so the
-> trajectory never falls behind the baseline.
+> very next PR to build. The agent building that PR **must, as the FINAL step BEFORE opening the PR — in
+> the same commit, NOT after merge** — (a) flip the Phase-3 progress note, (b) append the landed row to
+> the § Readings-seam ratchet ledger, and (c) **replace this block** with the next PR's prompt (same
+> structure, same closing instruction). Doing this before-merge is what keeps `main` never behind the
+> baseline even if the merge is delayed — the doc that ships *in* the PR already reflects that PR. Keep the
+> prose lengths and constraints; only swap the specifics (PR letter, scope, files, verify steps, baseline
+> count, prior-PR/branch references).
 
 ```text
 Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
-config-v4-clean-sheet.md for the why. PR-A (DAO seam + ratchet, #214), PR-B (receiver adoption), and PR-C
-(first materialization writer aggregate-points-pg.ts) have LANDED. aggregate-points-pg.ts now speaks only
-PointId through ReadingsDao (readRaw/insert5m for 5m; read5m/upsert1d for 1d), keeps the per-system
-pg_advisory_xact_lock tx, and is off the ratchet baseline (29 modules remain). PR-C added the DAO's
-value-columns-only 5m upsert mode `insert5m(rows, {upsert:true, preserveVendorMeta:true})` — its on-conflict
-SET is the 7 value cols + updated_at, so the raw→5m recompute never clobbers the vendor-meta columns
-(session_id/value_str/data_quality) a 5m-native queue write owns; verified byte-identical + idempotent on
-liveone-dev, and prod measurement_time confirmed ms-granular (the readRaw fromMs=prevStart + JS `tMs >
-prevStart` guard is exact). Phase 3 adds NO migration (reads Phase-2's point_uid/rid).
+config-v4-clean-sheet.md for the why. PR-A (DAO seam + ratchet, #214), PR-B (receiver, #215), PR-C (first
+materialization writer aggregate-points-pg.ts, #218), and PR-D (daily 1d aggregation
+lib/aggregation/daily-points.ts, #221) have LANDED. lib/readings/dao.ts is the seam: PointId-keyed
+readRaw/read5m/read1d/latestForPoints + insertRaw/insert5m/upsert1d, PLUS a non-point-keyed maintenance
+surface delete1dRange(range)/earliestAgg5mMs()/systemIdsWithAgg5mSince(sinceMs) (the last tagged // SEAM:;
+the other two cutover-invariant). 28 modules remain on the baseline (18 app_lib + 10 scripts). Phase 3 adds
+NO migration (reads Phase-2's point_uid/rid).
 
-Do PR-D: migrate lib/aggregation/daily-points.ts onto ReadingsDao. It's in the app_lib baseline, so it
-still touches the hot tables directly (it drives the daily 1d aggregation: aggregate / regenerate / delete
-actions over point_readings_agg_1d, and may read agg_5m). recomputeAgg1dForDay is ALREADY on the DAO
-(PR-C) — this PR migrates daily-points.ts's OWN direct hot-table access. This is a prod-write-path change
-(regenerate/delete mutate agg_1d): build and verify fully, but PAUSE for Simon's explicit go-ahead before
-committing/merging.
+Do PR-E: migrate lib/history/readings-pg.ts onto ReadingsDao. It's in the app_lib baseline — a serving-path
+READER (`fetchAggRowsPg`, only `.select(...)` over point_readings_agg_5m / point_readings_agg_1d; no
+writes). Because it only reads, it is NOT a prod-write-path change and does NOT need a go-ahead pause (still
+verify fully). CONFIRM the read-only claim first with a grep; if it turns out to write a hot table, treat it
+like PR-C/D and PAUSE for Simon's explicit go-ahead before committing/merging.
 
 Scope:
-1. Replace the module's raw hot-table access with the DAO. The delete/regenerate actions need a DELETE
-   surface the DAO does NOT have yet — add it to lib/readings/dao.ts (e.g. delete1d(points, dayRange) /
-   delete5m) following PR-C's pattern (uuids in, composite-key SQL behind a // SEAM:, exec? param, a
-   dao.test.ts case). Reads via read1d/read5m; identity via point_info point_uid → Point.encode; catch
-   UnknownIdError to skip-and-continue where the old code was point_info-agnostic. Semantics VERBATIM.
-2. Shrink the ratchet — remove lib/aggregation/daily-points.ts from BOTH .eslintrc.json's override AND
-   .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 28 baselined. Don't put a raw
-   hot-table name in any string literal (the boundary script greps those; comments/JSDoc are stripped).
+1. Replace its direct agg_5m/agg_1d `.select` reads with the DAO (read5m/read1d, both PointId; epoch-ms at
+   the boundary; agg_1d day key stays 'YYYY-MM-DD'). Resolve identity via point_info point_uid →
+   Point.encode; catch UnknownIdError to skip-and-continue where the old code was point_info-agnostic. Reuse
+   the EXISTING read methods — readers should need NO new DAO surface; add one only if a read shape is
+   genuinely missing, following PR-C's // SEAM: + exec? + dao.test.ts pattern. Semantics VERBATIM
+   (byte-identical served values, incl. the null-data_quality quirk the module already notes).
+2. Shrink the ratchet — remove lib/history/readings-pg.ts from BOTH .eslintrc.json's override AND
+   .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 27 baselined (17 app_lib). Don't
+   put a raw hot-table name in any string literal (the boundary script greps those; comments/JSDoc stripped).
 
-Verify before asking for go-ahead: `npm run build:local && npm run type-check` clean; `node
-scripts/check-readings-boundary.mjs` green with 28 baselined; `npx next lint --file <changed files>` clean
-(the module passes WITHOUT the override); `npm test` green; then drive the real daily aggregation
-(aggregate + regenerate) for a settled day/system on liveone-dev and confirm the agg_1d rows are
-byte-identical (value cols) to the pre-change output + idempotent (a throwaway scripts/temp diff script is
-fine; delete it before committing). Then stop and report; Simon gives the go-ahead to land.
+Verify: `npm run build:local && npm run type-check` clean; `node scripts/check-readings-boundary.mjs` green
+with 27 baselined; `npx next lint --file <changed files>` clean (the module passes WITHOUT the override);
+`npm test` green; then drive the real serving read path that calls fetchAggRowsPg (the history route/pages)
+against liveone-dev and confirm the served values are byte-identical to pre-change (a throwaway scripts/temp
+diff script is fine; delete it before committing).
 
-WHEN PR-D IS LANDED: update this doc — flip the Phase 3 progress notes, append the PR-D row to the
-Readings-seam ratchet ledger (`daily-points.ts`, 18 / 10 / 28), then REPLACE the "▶ NEXT ACTION"
-block at the top with the PR-E prompt (next the readers history/readings-pg.ts, flow-series-pg.ts,
-battery-provenance/load.ts, coverage/find-gaps.ts, then the admin/cron raw-SQL routes — each PR migrates
-one module AND deletes its baseline entry; writer PRs pause for go-ahead). Keep this same self-perpetuating
-closing instruction in the new block.
+IMMEDIATELY BEFORE OPENING THE PR — in the SAME commit, NOT a post-merge chore: update this doc —
+(1) flip the Phase-3 progress-table note (PR-E landed / N modules remain / name the next reader);
+(2) append the PR-E landed row to the § Readings-seam ratchet ledger (module | app_lib | scripts | remaining;
+the new `remaining` MUST equal `npm run check:readings`); (3) REPLACE this "▶ NEXT ACTION" block with the
+PR-F prompt (next reader lib/aggregation/flow-series-pg.ts, then battery-provenance/load.ts,
+coverage/find-gaps.ts, the battery-provenance/*-pg writers + run-periods-pg, then the admin/cron raw-SQL
+routes — each PR migrates one module AND deletes its baseline entry; writer PRs pause for go-ahead). Keep
+this same self-perpetuating closing instruction — including this "immediately before the PR" timing — in the
+new block.
 ```
 
 ## Progress
@@ -71,7 +72,7 @@ closing instruction in the new block.
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) landed; **29 modules remain** on the baseline (trajectory in § Readings-seam ratchet ledger). PR-D = next writer `lib/aggregation/daily-points.ts` (needs a DAO delete surface), pauses for go-ahead. |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) landed; **28 modules remain** on the baseline (trajectory in § Readings-seam ratchet ledger). PR-E = next reader `lib/history/readings-pg.ts` (pure reader, no go-ahead pause). |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -95,14 +96,16 @@ current list, so it never drifts.
 | A · #214 | — (installed the baseline) | 21 | 10 | 31 |
 | B · #215 | `app/api/observations/receive/route.ts` | 20 | 10 | 30 |
 | C · #218 | `lib/db/planetscale/aggregate-points-pg.ts` | 19 | 10 | 29 |
+| D · #221 | `lib/aggregation/daily-points.ts` | 18 | 10 | 28 |
 
-**Next:** PR-D `lib/aggregation/daily-points.ts` → 18 / 10 / **28**. **End state:** `app_lib` reaches
+**Next:** PR-E `lib/history/readings-pg.ts` → 17 / 10 / **27**. **End state:** `app_lib` reaches
 **0** → delete `.readings-boundary-baseline.json` + the `.eslintrc.json` override → the seam becomes a
 hard wall. The `scripts` lane is the slower / possibly-permanent-allow track (per the baseline JSON's
 own `_doc`), so the hard-wall milestone keys off `app_lib`, not the combined total.
 
-> **Maintenance:** every adoption PR appends one row here (landed fact only — not the forecast row) and
-> deletes its baseline entry in the same PR; the newest `remaining` must equal `npm run check:readings`.
+> **Maintenance:** every adoption PR appends one row here (the row for the PR *itself* — not the forecast
+> row for the next one) and deletes its baseline entry **in the same commit, as the final step before the
+> PR is opened** (never a post-merge chore); the newest `remaining` must equal `npm run check:readings`.
 
 ## Context
 
