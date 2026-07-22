@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import type { ChartTimeRange } from "@/lib/charts/scaffold";
 import {
   decodeRangeFromParams,
@@ -39,52 +39,64 @@ export function useTemporalRange({
 }: {
   timezoneOffsetMin: number;
 }): UseTemporalRange {
-  const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Reactive range for rendering (the label, the newer-button disabled state). Re-derives on
+  // every URL change — including our own `window.history.pushState` below, which Next syncs
+  // into `useSearchParams()`.
   const range = useMemo(
     () => decodeRangeFromParams(searchParams),
     [searchParams],
   );
 
-  const push = useCallback(
-    (params: URLSearchParams) => {
-      router.push(`?${params.toString()}`, { scroll: false });
-    },
-    [router],
-  );
+  // Shallow client-side URL write via the native History API: NO server round-trip (the
+  // dashboard RSC reads only `?access`), so `useSearchParams()` — and therefore every
+  // navigator's label — updates IMMEDIATELY on click instead of after the fetch/redraw commits.
+  const push = useCallback((params: URLSearchParams) => {
+    window.history.pushState(null, "", `?${params.toString()}`);
+  }, []);
 
+  // The step actions read the LIVE URL synchronously (`pushState` updates
+  // `window.location.search` synchronously) rather than the memoised `range`, so a rapid burst
+  // of clicks COMPOUNDS — each click steps from the URL the previous click just wrote, without
+  // waiting for React to re-render. Still pure functions of the current URL, so concurrent
+  // firings across multiple navigator instances converge on one step.
   const older = useCallback(() => {
-    const next = computeOlder(range);
+    const params = new URLSearchParams(window.location.search);
+    const current = decodeRangeFromParams(params);
+    const next = computeOlder(current);
     push(
-      encodeRangeToParams(searchParams, next, {
-        period: range.period,
+      encodeRangeToParams(params, next, {
+        period: current.period,
         timezoneOffsetMin,
       }),
     );
-  }, [range, searchParams, timezoneOffsetMin, push]);
+  }, [timezoneOffsetMin, push]);
 
   const newer = useCallback(() => {
-    const next = computeNewer(range);
+    const params = new URLSearchParams(window.location.search);
+    const current = decodeRangeFromParams(params);
+    const next = computeNewer(current);
     if (!next) return;
     push(
-      encodeRangeToParams(searchParams, next, {
-        period: range.period,
+      encodeRangeToParams(params, next, {
+        period: current.period,
         timezoneOffsetMin,
       }),
     );
-  }, [range, searchParams, timezoneOffsetMin, push]);
+  }, [timezoneOffsetMin, push]);
 
   const setPeriod = useCallback(
     (period: ChartTimeRange) => {
+      const params = new URLSearchParams(window.location.search);
       push(
-        encodeRangeToParams(searchParams, "live", {
+        encodeRangeToParams(params, "live", {
           period,
           timezoneOffsetMin,
         }),
       );
     },
-    [searchParams, timezoneOffsetMin, push],
+    [timezoneOffsetMin, push],
   );
 
   return { ...range, older, newer, setPeriod };

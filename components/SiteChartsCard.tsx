@@ -39,6 +39,7 @@ import {
 } from "@/lib/provenance-format";
 import { formatValue } from "@/lib/energy-formatting";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { formatHoverTimestamp } from "@/lib/charts/scaffold";
@@ -312,10 +313,25 @@ export default function SiteChartsCard({
   const { isAnyModalOpen } = useModalContext();
 
   // Shared temporal-navigator state (period + historical window) read from the URL — one source of
-  // truth shared with the line chart and every navigator instance on the page.
-  const { period, start, end } = useTemporalRange({
+  // truth shared with the line chart and every navigator instance on the page. This is the INSTANT
+  // desired window (the label follows it immediately); the chart body fetches a settled copy below.
+  const {
+    period: desiredPeriod,
+    start: desiredStart,
+    end: desiredEnd,
+  } = useTemporalRange({
     timezoneOffsetMin: system?.timezoneOffsetMin ?? 600,
   });
+  const desiredWindow = useMemo(
+    () => ({ period: desiredPeriod, start: desiredStart, end: desiredEnd }),
+    [desiredPeriod, desiredStart, desiredEnd],
+  );
+  // Single-flight + latest-wins committer: rapid navigation collapses to one in-flight fetch for the
+  // window the user lands on (skipped days never requested). The whole chart body reads the committed
+  // window, so the chart stays internally consistent while the header label scrubs instantly.
+  const [committedWindow, reportHistoryFetching] =
+    useSettledWindow(desiredWindow);
+  const { period, start, end } = committedWindow;
   // Shared focus instant for this chart cluster — the load + generation charts publish their hover
   // here, and the red focus line / EnergyTable highlight / Sankey all read it back, so they also
   // follow focus set by the sibling line chart.
@@ -388,6 +404,12 @@ export default function SiteChartsCard({
       enabled: runSiteQuery && !!systemId,
     }),
   );
+  // Report the fetch state back to the committer so it can advance to the next requested window
+  // only once the current fetch settles (single-flight — see useSettledWindow).
+  useEffect(() => {
+    reportHistoryFetching(historyFetching);
+  }, [historyFetching, reportHistoryFetching]);
+
   const processedHistoryData = useMemo<ProcessedSiteData>(
     () => siteData ?? { load: null, generation: null },
     [siteData],
@@ -910,7 +932,14 @@ export default function SiteChartsCard({
                   ...base,
                   emissions: `${formatKgCo2(edge.kgCo2)} kg`,
                   cost: formatDollars(edge.costC),
-                  renewable: formatRenewablePct(edge.pctRenewable),
+                  // The link tooltip prints this bare (no caption), so self-label it "RE"
+                  // to distinguish it from the emissions/cost figures beside it. Only when a
+                  // value exists — an unknown stays "—", not "— RE". (The node tooltip already
+                  // has a "renewable" caption, so it keeps the bare `formatRenewablePct`.)
+                  renewable:
+                    edge.pctRenewable != null
+                      ? `${formatRenewablePct(edge.pctRenewable)} RE`
+                      : formatRenewablePct(edge.pctRenewable),
                 };
               };
 

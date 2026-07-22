@@ -13,8 +13,6 @@ import { useChartFocus } from "@/lib/charts/ChartFocusContext";
 interface TemporalNavigatorProps {
   /** System/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
   timezoneOffsetMin: number;
-  /** Disables keyboard stepping while the chart's data is loading. */
-  loading?: boolean;
   className?: string;
 }
 
@@ -29,16 +27,16 @@ interface TemporalNavigatorProps {
  */
 export default function TemporalNavigator({
   timezoneOffsetMin,
-  loading = false,
   className = "",
 }: TemporalNavigatorProps) {
   const { period, start, end, isHistoricalMode, older, newer, setPeriod } =
     useTemporalRange({ timezoneOffsetMin });
   const { focusedTime } = useChartFocus();
 
-  // Keyboard navigation: ArrowLeft = older, ArrowRight = newer (historical only). Safe with multiple
-  // navigator instances — older/newer are pure functions of the current URL, so concurrent firings
-  // compute the same target and push the same URL (one step, no double-stepping).
+  // Keyboard navigation: ArrowLeft = older, ArrowRight = newer (historical only). NOT gated on the
+  // fetch state — stepping is a synchronous URL write (see useTemporalRange), so held/rapid arrow
+  // keys compound instantly while the data catches up. Safe with multiple navigator instances:
+  // older/newer read the live URL, so concurrent firings converge on one step (no double-stepping).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -50,13 +48,11 @@ export default function TemporalNavigator({
         return;
       }
       if (e.key === "ArrowLeft") {
-        if (!loading) {
-          e.preventDefault();
-          e.stopPropagation();
-          older();
-        }
+        e.preventDefault();
+        e.stopPropagation();
+        older();
       } else if (e.key === "ArrowRight") {
-        if (isHistoricalMode && !loading) {
+        if (isHistoricalMode) {
           e.preventDefault();
           e.stopPropagation();
           newer();
@@ -65,7 +61,7 @@ export default function TemporalNavigator({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [loading, isHistoricalMode, older, newer]);
+  }, [isHistoricalMode, older, newer]);
 
   // Range label from the requested window (or the live trailing window ending at now). Computed from
   // the shared range — identical across every navigator instance on the page.
