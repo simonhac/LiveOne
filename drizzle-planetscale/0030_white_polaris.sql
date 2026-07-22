@@ -1,11 +1,14 @@
 -- 0030 config-v4 Phase 2 (B2 + B3): harden point identity — point_uid NOT NULL + global rid sequence.
 -- Hand-authored (replaces drizzle's generated ADD COLUMN/SET NOT NULL): drizzle cannot express a
--- CREATE SEQUENCE, a deterministic ordered backfill, the nextval DEFAULT, or ALTER SEQUENCE ... OWNED
--- BY. meta/0030_snapshot.json is kept as machine-written so future db:pg:generate diffs clean.
+-- CREATE SEQUENCE, a deterministic ordered backfill, or the nextval DEFAULT.
+-- meta/0030_snapshot.json is kept as machine-written so future db:pg:generate diffs clean.
 -- Applied in a single transaction (all statements are transactional DDL) — any guard abort rolls the
 -- whole migration back. Additive: the (system_id, id) address and all six composite FKs are untouched.
--- Apply as the persistent `postgres` role: the new point_rid_seq + pi_rid_unique must be postgres-owned
--- or the app's per-insert nextval() gets "permission denied for sequence" (see CLAUDE.md ownership trap).
+-- OWNERSHIP: point_rid_seq is owned by whichever role applies this. The app connects as `postgres` and
+-- calls nextval() on every insert, so point_rid_seq MUST end up postgres-owned. When applied via a temp
+-- `pscale role`, reassign it afterward (`pscale role reassign … --successor postgres`). The sequence is
+-- intentionally NOT column-owned (no ALTER SEQUENCE … OWNED BY — that requires the sequence and table to
+-- share an owner, which fails under a temp role); the rollback drops it explicitly instead.
 
 -- B2 guard: refuse if any point_uid is still NULL. Runs first, so the table is untouched on abort.
 DO $$
@@ -51,6 +54,3 @@ END $$;
 ALTER TABLE "point_info" ALTER COLUMN "rid" SET NOT NULL;
 --> statement-breakpoint
 CREATE UNIQUE INDEX "pi_rid_unique" ON "point_info" USING btree ("rid");
---> statement-breakpoint
--- Tie the sequence lifecycle to the column (auto-dropped with it). Requires ownership of BOTH objects.
-ALTER SEQUENCE "point_rid_seq" OWNED BY "point_info"."rid";
