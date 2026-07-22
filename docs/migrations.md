@@ -83,9 +83,52 @@ cleanly. Still verify row counts after applying.
   don't assume they match.
 - **Verify env vars are set** before relying on them: `vercel env ls production`.
 - **Verify incrementally after deploy** — don't assume success. Start with
-  `curl -s https://liveone.vercel.app/api/health | jq '.status'` (expect `"healthy"`), then
-  spot-check the affected endpoints/pages.
+  `curl -s https://liveone.vercel.app/api/health | jq '.status'` (expect `"ok"`), then
+  spot-check the affected endpoints/pages. After a **migration** deploy, add `?migrations=1` and
+  check `.migrations.inSync` (see [Checking applied migrations](#checking-applied-migrations) below).
 - **Document any manual steps** a deploy requires, and write them down _before_ starting.
+
+## Checking applied migrations
+
+`GET /api/health?migrations=1` returns a cheap snapshot of migration state for a fast prod↔dev drift
+check. The field is **opt-in** (the `?migrations=1` query param) — the default liveness response omits
+it so that path stays a single `SELECT 1` and its `db` Server-Timing stays a clean latency control:
+
+```json
+{
+  "status": "ok",
+  "database": "postgres",
+  "migrations": {
+    "applied": 32,                 // rows in drizzle.__drizzle_migrations (DB truth)
+    "expected": 32,                // migrations this build ships (meta/_journal.json — code truth)
+    "latestTag": "0031_bright_ben_parker",
+    "latestHash": "ac081f16…",     // sha256 of the newest APPLIED migration
+    "inSync": true                 // applied >= expected
+  }
+}
+```
+
+- **Compare two environments** (are prod and dev on the same migrations?): compare **`applied` +
+  `latestHash`**. `latestHash` is the `sha256` of the migration `.sql` file — drizzle stores exactly
+  that in `drizzle.__drizzle_migrations`, so it is content-addressed and identical across envs when the
+  same migration is the newest applied.
+- **Is one env's DB behind its deployed code?** check **`inSync`** (`applied >= expected`).
+  `expected`/`latestTag` come from the bundled `meta/_journal.json` — the *code* that env is running
+  (prod runs `main`; dev/preview run the branch), so this catches "deployed a migration-dependent build
+  but forgot to apply the migration".
+- **Why `count(*)`, not `max(id)`:** the `drizzle.__drizzle_migrations` PK is a serial that gaps on any
+  row delete/re-apply, so `max(id)` can differ across envs (dev has read 33 while prod read 32) even
+  when the schemas are identical. `count(*)` is the stable count; the file hashes are the definitive
+  per-migration identity.
+
+To compare the **full** applied set (not just the newest), diff the hashes directly against the repo's
+migration files (empty diff ⇒ every repo migration is applied and nothing extra is):
+
+```bash
+diff <(shasum -a 256 drizzle-planetscale/*.sql | awk '{print $1}' | sort) \
+     <(npm run db:psql -- -tA -c 'SELECT hash FROM drizzle."__drizzle_migrations"' \
+        | grep -E '^[0-9a-f]{64}$' | sort)
+```
 
 ## Lessons Learned
 
