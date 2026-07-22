@@ -1,0 +1,38 @@
+{
+  "_doc": "config-v4 Phase 3 readings-seam ratchet (scripts/check-readings-boundary.mjs). Files here MAY touch point_readings/_agg_5m/_agg_1d because they predate the DAO. Remove one entry per migration PR (the STALE check forces it); a NEW file is hard-failed. `app_lib` is the served-app boundary next lint + Vercel enforce; `scripts` is a slower/possibly-permanent-allow track. End state: both arrays empty => delete this file + the .eslintrc override.",
+  "app_lib": [
+    "app/api/admin/observations/stats/route.ts",
+    "app/api/admin/systems/[systemId]/point-readings/route.ts",
+    "app/api/cron/monitor-observations/route.ts",
+    "app/api/observations/receive/route.ts",
+    "app/labs/kinkora-hws/page.tsx",
+    "lib/aggregation/daily-points.ts",
+    "lib/aggregation/flow-series-pg.ts",
+    "lib/battery-provenance/load.ts",
+    "lib/battery-provenance/recompute.ts",
+    "lib/coverage/find-gaps.ts",
+    "lib/db/planetscale/aggregate-points-pg.ts",
+    "lib/db/planetscale/battery-provenance-daily-pg.ts",
+    "lib/db/planetscale/battery-provenance-pg.ts",
+    "lib/db/planetscale/readings-read-pg.ts",
+    "lib/db/planetscale/run-periods-pg.ts",
+    "lib/history/readings-pg.ts",
+    "lib/hws/recompute.ts",
+    "lib/vendors/amber/client.ts",
+    "lib/vendors/enphase/adapter.ts",
+    "lib/vendors/enphase/enphase-history.ts",
+    "lib/vendors/openelectricity/scheduler.ts"
+  ],
+  "scripts": [
+    "scripts/audit-pg-fk-orphans.ts",
+    "scripts/cleanup/p1-data-hygiene.ts",
+    "scripts/delete-battery-param-points.ts",
+    "scripts/openelectricity/bulk-ingest.ts",
+    "scripts/qstash-health.ts",
+    "scripts/seed-battery-provenance.ts",
+    "scripts/seed-preview-db.ts",
+    "scripts/utils/rebuild-dev-kv-from-db.ts",
+    "scripts/utils/sync-prod-to-dev-db.ts",
+    "scripts/verify-daily-learn-equivalence.ts"
+  ]
+}
