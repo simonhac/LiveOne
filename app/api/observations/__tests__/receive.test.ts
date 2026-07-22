@@ -25,6 +25,41 @@ import type {
 } from "@/lib/observations/types";
 import type { WithProcessQueueMessage } from "../receive/route";
 
+// The receiver now resolves each observation to a PointId through the readings DAO seam, which
+// reads point identity from `@/lib/registry` (RegistryCache) on the REAL pooled connection — not
+// the injected fake `db`. Mock the registry with a CONSISTENT factory so `pointForAddr` (old-grammar
+// resolution) and `addrsForPoints` (the DAO's internal address lookup) agree on the same fake
+// PointId: the DAO then still calls `tx.insert(pointReadings)` on the fake tx, so the write-order /
+// dual-shape assertions below are unchanged. Without this, loading `@/lib/registry` pulls in
+// `requirePlanetscaleDb()` ("not configured" in a unit test) and `addrs.get(point)` is undefined.
+jest.mock("@/lib/registry", () => {
+  const fakePoint = (systemId: number, index: number) =>
+    `pt_fake${systemId}${index}`;
+  return {
+    RegistryCache: {
+      pointForAddr: jest.fn(async (systemId: number, index: number) =>
+        fakePoint(systemId, index),
+      ),
+      addrsForPoints: jest.fn(
+        async (ids: string[]) =>
+          new Map(
+            ids.map((id) => [
+              id,
+              {
+                pointId: id,
+                uuid: "00000000-0000-7000-8000-000000000000",
+                rid: 1,
+                systemId: 1,
+                index: 0,
+              },
+            ]),
+          ),
+      ),
+    },
+    UnknownIdError: class UnknownIdError extends Error {},
+  };
+});
+
 // The route's POST export calls verifySignatureAppRouter() at module-load time,
 // which throws unless a QStash signing key is present. Provide dummy keys BEFORE the
 // route module is evaluated, then load it via require() (ES imports would hoist above

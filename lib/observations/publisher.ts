@@ -60,6 +60,7 @@ export function buildObservations(
 ): Observation[] {
   return inputs.map((input) => ({
     sessionId: input.sessionId,
+    pointUid: input.point.pointUid,
     topic: buildTopic(system, input.point),
     measurementTime: formatTimestamp(
       input.measurementTimeMs,

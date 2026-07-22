@@ -4,7 +4,6 @@
     "app/api/admin/observations/stats/route.ts",
     "app/api/admin/systems/[systemId]/point-readings/route.ts",
     "app/api/cron/monitor-observations/route.ts",
-    "app/api/observations/receive/route.ts",
     "app/labs/kinkora-hws/page.tsx",
     "lib/aggregation/daily-points.ts",
     "lib/aggregation/flow-series-pg.ts",

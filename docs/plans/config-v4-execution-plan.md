@@ -20,43 +20,44 @@
 
 ```text
 Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
-config-v4-clean-sheet.md for the why. PR-A (the DAO seam foundation + lint ratchet) landed — see PR #214
-/ branch simonhac/config-v4-phase3-dao-seam: lib/registry/registry-cache.ts (RegistryCache),
-lib/readings/dao.ts (ReadingsDao), lib/readings/schema-internal.ts, and the ratchet (.eslintrc.json +
-scripts/check-readings-boundary.mjs + .readings-boundary-baseline.json). Nothing consumes the seam yet.
+config-v4-clean-sheet.md for the why. PR-A (DAO seam foundation + ratchet, PR #214) and PR-B (receiver
+adoption) have LANDED. The observations receiver (app/api/observations/receive/route.ts) now writes
+through ReadingsDao, dual-grammar: v2 payload `pointUid` → Point.encode; buffered/in-flight old
+"{systemId}.{index}" refs → RegistryCache.pointForAddr(systemId, index); UnknownIdError propagates
+(matches the old FK-abort). The publisher payload carries `pointUid` (lib/observations/types.ts +
+publisher.ts; surfaced on PointInfoRow in lib/point/point-manager.ts). The receiver is off the ratchet
+baseline (30 modules remain). Phase 3 adds NO migration (reads Phase-2's point_uid/rid).
 
-Do PR-B: adopt the DAO in the observations receiver (receiver-first). This is the FIRST prod-write-path
-change — build and verify it fully, but PAUSE for Simon's explicit go-ahead before committing/merging.
-Phase 3 adds NO migration.
+Do PR-C: migrate the FIRST materialization WRITER — lib/db/planetscale/aggregate-points-pg.ts (the 5m +
+1d recompute) — onto ReadingsDao. This is a prod-write-path change: build and verify fully, but PAUSE for
+Simon's explicit go-ahead before committing/merging.
 
 Scope:
-1. Publisher payload v2 — add `pointUid: string` to `Observation` (lib/observations/types.ts), set in
-   `buildObservations` (lib/observations/publisher.ts) from `input.point.pointUid`. To have it available,
-   surface `pointUid` on the served `PointInfoRow` + `pgPointInfoToServed` (lib/point/point-manager.ts) —
-   NOT `rid` (stays below-seam). `RawObservationInput.point` is a `PointInfoRow`, so the uuid is then in
-   hand at publish time. Additive/back-compatible (keep the existing `debug.reference`).
-2. Dual-grammar receiver (app/api/observations/receive/route.ts) — resolve each observation to a `PointId`
-   two ways: (a) new v2 → `Point.encode(obs.pointUid)`; (b) buffered/in-flight old "{systemId}.{index}"
-   refs → `RegistryCache.pointForAddr(systemId, index)`. Route writes through `ReadingsDao.insertRaw` /
-   `insert5m({upsert})` INSIDE the existing `db.transaction` (pass the tx as `exec`; keep session-first
-   ordering — `insertRaw` has the session FK). Device identity stays `systemId` (== future device_rid; no
-   device uuid column). Keep the 5m-recompute skip-missing-meta guard BEFORE any PointId resolution
-   (aggregate-points-pg.ts is best-effort — must not throw UnknownIdError); don't regress it.
-3. Shrink the ratchet — remove app/api/observations/receive/route.ts from BOTH .eslintrc.json's baseline
-   overrides AND .readings-boundary-baseline.json app_lib (the STALE check enforces this). Leave
-   aggregate-points-pg.ts etc. for later reader PRs.
+1. Replace this module's raw hot-table access with the DAO: reads via ReadingsDao.readRaw / read5m (the
+   recompute reads raw point_readings over (prevStart, intervalEnd] per interval, and for 1d reads agg_5m
+   over the day span + prev-day 00:00), writes via ReadingsDao.insert5m({upsert:true}) / upsert1d.
+   Semantics VERBATIM — same conflict targets/sets, same per-system pg_advisory_xact_lock tx, same
+   interval math (lib/aggregation/point-aggregates.ts). point_info meta (transform/metricType) still
+   comes from point-manager, not the readings DAO.
+2. CRITICAL — keep the best-effort skip-missing-meta guard (aggregate-points-pg.ts ~228-232): a point
+   absent from the point_info mirror is SKIPPED, never throws. The DAO/registry THROW UnknownIdError on
+   unknown points, so resolve identity defensively — skip a missing point BEFORE any PointId resolution
+   that could throw; recompute5mForRawObservationsBestEffort / recompute1dForDayBestEffort must stay
+   never-throwing (each is wrapped in a swallowing try/catch — don't rely on that, keep them clean).
+3. Shrink the ratchet — remove lib/db/planetscale/aggregate-points-pg.ts from BOTH .eslintrc.json's
+   override AND .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 29 baselined.
 
 Verify before asking for go-ahead: `npm run build:local && npm run type-check` clean; `node
-scripts/check-readings-boundary.mjs` green with 30 baselined; `npm test` green; and drive a REAL poll →
-receiver → read back via `ReadingsDao` and confirm identical rows (the plan's Phase-3 verification). Then
-stop and report; Simon gives the go-ahead to land.
+scripts/check-readings-boundary.mjs` green with 29 baselined; `npm test` green; and drive a REAL raw poll
+→ receiver → post-commit 5m recompute (and a daily 1d recompute) on liveone-dev, then read the agg rows
+back via ReadingsDao AND raw SQL and confirm identical rows to the pre-change recompute. Then stop and
+report; Simon gives the go-ahead to land.
 
-WHEN PR-B IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
-block at the top with the PR-C prompt (first writer/reader module migrations to ReadingsDao, one module
-per PR: start with the materialization writers aggregate-points-pg.ts 5m/1d recompute + daily-points.ts,
-then readers history/readings-pg.ts, flow-series-pg.ts, battery-provenance/load.ts, coverage/find-gaps.ts,
-the admin/cron raw-SQL routes — each PR migrates one module AND deletes its baseline entry; writer PRs
-pause for go-ahead). Keep this same self-perpetuating closing instruction in the new block.
+WHEN PR-C IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
+block at the top with the PR-D prompt (next module lib/aggregation/daily-points.ts, then the readers
+history/readings-pg.ts, flow-series-pg.ts, battery-provenance/load.ts, coverage/find-gaps.ts, then the
+admin/cron raw-SQL routes — each PR migrates one module AND deletes its baseline entry; writer PRs pause
+for go-ahead). Keep this same self-perpetuating closing instruction in the new block.
 ```
 
 ## Progress
@@ -66,7 +67,7 @@ pause for go-ahead). Keep this same self-perpetuating closing instruction in the
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler; branch `simonhac/config-v4-phase3-dao-seam`. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A = dark foundation + ratchet (no prod writes); PR-B receiver adoption pauses for go-ahead (first prod-write change). |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) landed; receiver off the baseline (30 remain). PR-C = first materialization writer `aggregate-points-pg.ts`, pauses for go-ahead. |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -212,7 +213,15 @@ Ordering is a hard dependency chain (migrations lead code to prod).
 > `lib/readings/dao.ts` + tests + the two-tool ratchet (`.eslintrc.json` `no-restricted-imports` +
 > `scripts/check-readings-boundary.mjs` + `.readings-boundary-baseline.json`, 21 `app_lib` + 10
 > `scripts`). Build-verified no-op (`build:local` green; both gates fail on a new violator). No adoption.
-> **Next: PR-B receiver adoption — first prod-write change, pauses for go-ahead.**
+>
+> **PR-B landed** (receiver adoption — first prod-write change): publisher payload v2 adds `pointUid`
+> (`Observation` + `buildObservations`; surfaced on `PointInfoRow`/`pgPointInfoToServed`), the receiver
+> (`app/api/observations/receive/route.ts`) resolves dual-grammar (v2 `pointUid` → `Point.encode`;
+> legacy `{systemId}.{index}` → `RegistryCache.pointForAddr`, `UnknownIdError` propagates = old FK-abort)
+> and writes through `ReadingsDao.insertRaw`/`insert5m` inside the existing tx; removed from both ratchet
+> lists (30 remain). Verified: type-check/lint/`npm test` green, `build:local` clean, and a real
+> receiver→DAO E2E on `liveone-dev` (both grammars, DAO read == raw SQL).
+> **Next: PR-C — first materialization writer `aggregate-points-pg.ts` (5m/1d recompute), pauses for go-ahead.**
 - `lib/registry/registry-cache.ts` — the ONLY owner of uuid↔rid↔address, branded `PointRid`/`DeviceRid`
   (number brands), `UnknownIdError`. `globalThis`-memoized, 60s per-entry TTL, `invalidate()` on writes;
   batch `addrsForPoints`/`ridsForPoints`/`addrsForRids` + `pointForAddr` (old-grammar / backlog map).

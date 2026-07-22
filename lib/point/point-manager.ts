@@ -47,6 +47,9 @@ import { publishObservationBatch } from "../observations/publisher";
 export interface PointInfoRow {
   systemId: number;
   index: number;
+  /** Stable public identity (uuid) — the `point_uid` column (NOT NULL). Carried on the
+   * observation payload (v2) so the receiver resolves via the DAO seam. `rid` stays below the seam. */
+  pointUid: string;
   physicalPathTail: string;
   logicalPathStem: string | null;
   metricType: string;
@@ -100,6 +103,7 @@ function pgPointInfoToServed(
   return {
     systemId: pgRow.systemId,
     index: pgRow.index,
+    pointUid: pgRow.pointUid,
     physicalPathTail: pgRow.physicalPathTail,
     logicalPathStem: pgRow.logicalPathStem,
     metricType: pgRow.metricType,
@@ -636,6 +640,7 @@ export class PointManager {
       newPoint = {
         systemId: pgRow.systemId,
         index: pgRow.index,
+        pointUid: pgRow.pointUid,
         physicalPathTail: pgRow.physicalPathTail,
         logicalPathStem: pgRow.logicalPathStem,
         metricType: pgRow.metricType,

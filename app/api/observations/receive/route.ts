@@ -20,15 +20,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withQstashSignatureVerification } from "@/lib/observations/qstash-receiver";
-import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import {
-  pointReadings,
-  pointReadingsAgg5m,
-  sessions,
-  systems,
-} from "@/lib/db/planetscale/schema";
+import { sessions, systems } from "@/lib/db/planetscale/schema";
+import { ReadingsDao } from "@/lib/readings";
+import type { RawInsert, Agg5mInsert } from "@/lib/readings";
+import { RegistryCache } from "@/lib/registry";
+import { Point } from "@/lib/ids";
+import type { PointId } from "@/lib/ids";
 import type {
   QueueMessage,
   Observation,
@@ -94,6 +93,42 @@ function extractPointId(observation: Observation): number | null {
 }
 
 /**
+ * Resolve an observation to its public PointId (the readings-DAO seam identity), dual-grammar:
+ *  - Payload v2: `obs.pointUid` → `Point.encode` (pure). A malformed uuid is an *identification*
+ *    failure → return null (skip), matching today's "no valid reference → skip".
+ *  - Legacy: `debug.reference` "{systemId}.{index}" → `RegistryCache.pointForAddr`. A genuinely
+ *    unknown point throws `UnknownIdError`, which propagates → the message fails → QStash retries,
+ *    exactly as today's composite-FK violation aborted the insert. (v2 existence is checked the
+ *    same way, later, inside `ReadingsDao.insertRaw`'s address resolution.)
+ *
+ * `systemId` is the message-level id; the reference's own systemId component is advisory only
+ * (the legacy `extractPointId` ignores it, and the write scopes to `message.systemId`).
+ */
+async function resolvePointId(
+  obs: Observation,
+  systemId: number,
+): Promise<PointId | null> {
+  if (obs.pointUid != null) {
+    try {
+      return Point.encode(obs.pointUid);
+    } catch {
+      console.warn(
+        `[ObservationsReceiver] Skipping observation with malformed pointUid: ${obs.topic}`,
+      );
+      return null;
+    }
+  }
+  const index = extractPointId(obs);
+  if (index === null) {
+    console.warn(
+      `[ObservationsReceiver] Skipping observation without valid pointId: ${obs.topic}`,
+    );
+    return null;
+  }
+  return RegistryCache.pointForAddr(systemId, index);
+}
+
+/**
  * Insert raw observations into point_readings table (single batched statement).
  * Returns the number of rows actually inserted (conflicts are skipped) and the
  * number skipped for lacking a resolvable pointId.
@@ -104,23 +139,19 @@ async function insertRawObservations(
   observations: Observation[],
 ): Promise<{ inserted: number; skipped: number }> {
   let skipped = 0;
-  const rows: (typeof pointReadings.$inferInsert)[] = [];
+  const rows: RawInsert[] = [];
 
   for (const obs of observations) {
-    const pointId = extractPointId(obs);
-    if (pointId === null) {
-      console.warn(
-        `[ObservationsReceiver] Skipping observation without valid pointId: ${obs.topic}`,
-      );
+    const point = await resolvePointId(obs, systemId);
+    if (point === null) {
       skipped++;
       continue;
     }
     rows.push({
-      systemId,
-      pointId,
+      point,
       sessionId: obs.sessionId,
-      measurementTime: parseTimestamp(obs.measurementTime),
-      receivedTime: parseTimestamp(obs.receivedTime),
+      measurementTimeMs: parseTimestamp(obs.measurementTime).getTime(),
+      receivedTimeMs: parseTimestamp(obs.receivedTime).getTime(),
       value: typeof obs.value === "number" ? obs.value : null,
       valueStr: typeof obs.value === "string" ? obs.value : null,
       dataQuality: "good",
@@ -129,13 +160,8 @@ async function insertRawObservations(
 
   if (rows.length === 0) return { inserted: 0, skipped };
 
-  const result = await db
-    .insert(pointReadings)
-    .values(rows)
-    .onConflictDoNothing()
-    .returning({ id: pointReadings.id });
-
-  return { inserted: result.length, skipped };
+  const { inserted } = await ReadingsDao.insertRaw(rows, db);
+  return { inserted, skipped };
 }
 
 /**
@@ -165,29 +191,23 @@ async function insert5mObservations(
   }
 
   let skipped = 0;
-  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
+  const rows: Agg5mInsert[] = [];
 
   for (const obs of observations) {
-    const pointId = extractPointId(obs);
-    if (pointId === null) {
-      console.warn(
-        `[ObservationsReceiver] Skipping 5m observation without valid pointId: ${obs.topic}`,
-      );
+    const point = await resolvePointId(obs, systemId);
+    if (point === null) {
       skipped++;
       continue;
     }
 
-    const base = {
-      systemId,
-      pointId,
-      intervalEnd: parseTimestamp(obs.measurementTime),
-      sessionId: obs.sessionId,
-    };
+    const intervalEndMs = parseTimestamp(obs.measurementTime).getTime();
 
     if (obs.agg) {
       const agg = obs.agg;
       rows.push({
-        ...base,
+        point,
+        intervalEndMs,
+        sessionId: obs.sessionId,
         avg: agg.avg,
         min: agg.min,
         max: agg.max,
@@ -199,10 +219,18 @@ async function insert5mObservations(
         dataQuality: agg.dataQuality,
       });
     } else {
-      // Legacy single-value payload (pre-fidelity-fix): preserve old behavior.
+      // Legacy single-value payload (pre-fidelity-fix): preserve old behavior. The DAO's
+      // Agg5mInsert requires every agg field, so avg/min/max/delta are set to null explicitly
+      // (drizzle defaulted them to null before — same stored NULLs).
       rows.push({
-        ...base,
+        point,
+        intervalEndMs,
+        sessionId: obs.sessionId,
+        avg: null,
+        min: null,
+        max: null,
         last: typeof obs.value === "number" ? obs.value : null,
+        delta: null,
         valueStr: typeof obs.value === "string" ? obs.value : null,
         sampleCount: 1,
         errorCount: 0,
@@ -213,43 +241,18 @@ async function insert5mObservations(
 
   if (rows.length === 0) return { inserted: 0, skipped };
 
-  // Conflict handling depends on who OWNS this system's 5m in PG:
-  //  - RAW vendors (useUpsert=false): the PG recompute recomputes 5m from PG raw right after this
-  //    insert, so it owns the values. Keep onConflictDoNothing (first-write-wins) to stay
-  //    idempotent on re-delivery and avoid out-of-order upsert hazards.
-  //  - 5m-NATIVE vendors (useUpsert=true, Amber/Enphase): there is NO raw and NO recompute — the
-  //    queue copy IS the value. Amber re-publishes late `updateUsage` refinements (estimated →
-  //    billable), so we must UPSERT to overwrite the earlier stale interval; onConflictDoNothing
-  //    would silently drop the refinement and leave PG stale (the divergence the value reconciler
-  //    flagged). See lib/vendors/native-intervals.ts.
-  const insert = db.insert(pointReadingsAgg5m).values(rows);
-  const result = await (
-    useUpsert
-      ? insert.onConflictDoUpdate({
-          target: [
-            pointReadingsAgg5m.systemId,
-            pointReadingsAgg5m.pointId,
-            pointReadingsAgg5m.intervalEnd,
-          ],
-          set: {
-            sessionId: sql`excluded.session_id`,
-            avg: sql`excluded.avg`,
-            min: sql`excluded.min`,
-            max: sql`excluded.max`,
-            last: sql`excluded.last`,
-            delta: sql`excluded.delta`,
-            valueStr: sql`excluded.value_str`,
-            sampleCount: sql`excluded.sample_count`,
-            errorCount: sql`excluded.error_count`,
-            dataQuality: sql`excluded.data_quality`,
-            updatedAt: sql`now()`,
-          },
-        })
-      : insert.onConflictDoNothing()
-  ).returning({ systemId: pointReadingsAgg5m.systemId });
-
-  // For onConflictDoUpdate, RETURNING counts both inserted and overwritten rows.
-  return { inserted: result.length, skipped };
+  // 5m-NATIVE vendors (useUpsert=true, Amber/Enphase): there is NO raw and NO recompute — the
+  // queue copy IS the value. Amber re-publishes late `updateUsage` refinements (estimated →
+  // billable), so we UPSERT to overwrite the earlier stale interval (onConflictDoNothing would
+  // silently drop the refinement — see lib/vendors/native-intervals.ts). Raw vendors returned
+  // above (their 5m is PG-recomputed from raw). `ReadingsDao.insert5m` mirrors this conflict
+  // handling verbatim; it returns `{written}` (inserted + overwritten rows).
+  const { written } = await ReadingsDao.insert5m(
+    rows,
+    { upsert: useUpsert },
+    db,
+  );
+  return { inserted: written, skipped };
 }
 
 /**
