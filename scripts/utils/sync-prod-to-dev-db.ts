@@ -141,6 +141,8 @@ const FULL: FullTable[] = [
         ["system_id", "physical_path_tail"], // pi_system_physical_path_unique
         ["system_id", "logical_path_stem", "metric_type"], // pi_system_stem_metric_unique
         ["point_uid"], // pi_point_uid_unique (system-independent)
+        ["rid"], // pi_rid_unique (system-independent; config-v4 Phase 2) — dev adopts prod's rid,
+        // so clear any dev row holding an incoming prod rid before the by-PK upsert (like point_uid)
       ],
       children: [
         { table: "point_readings_agg_5m", cols: ["system_id", "point_id"] },

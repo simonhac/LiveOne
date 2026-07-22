@@ -211,6 +211,13 @@
       "when": 1784550985287,
       "tag": "0029_slim_praxagora",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1784710555893,
+      "tag": "0030_white_polaris",
+      "breakpoints": true
     }
   ]
 }
