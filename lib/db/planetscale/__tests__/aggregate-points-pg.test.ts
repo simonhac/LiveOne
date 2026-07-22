@@ -3,98 +3,108 @@
  * (lib/db/planetscale/aggregate-points-pg.ts).
  *
  * The per-point math is covered exhaustively in
- * lib/aggregation/__tests__/point-aggregates.test.ts; here we pin the DB orchestration:
+ * lib/aggregation/__tests__/point-aggregates.test.ts; the DAO's own SQL in
+ * lib/readings/__tests__/dao.test.ts. Here we pin the DB orchestration NOW ON THE DAO SEAM:
  *  - deriving the affected 5m intervals from raw observations,
- *  - grouping raw readings (current interval vs previous-interval previousLast),
- *  - the upserted row shapes for both 5m and 1d.
+ *  - grouping raw readings (current interval vs previous-interval previousLast), incl. the
+ *    prevStart-boundary JS guard that reproduces the legacy half-open `(prevStart, intervalEnd]`,
+ *  - the exact windows + args handed to ReadingsDao (readRaw/insert5m/read5m/upsert1d),
+ *  - the value-only 5m upsert (`preserveVendorMeta`) and the per-system advisory lock.
  *
- * A minimal fake `db` stands in for the drizzle node-postgres surface the recompute
- * touches: select(cols).from(table).where(cond)[.orderBy(...)] resolving to canned rows,
- * and insert(table).values(rows).onConflictDoUpdate(cfg) recording the upsert.
+ * The readings seam is mocked: `ReadingsDao.readRaw/read5m` return canned per-point series keyed by
+ * the real `PointId` (built from each point_info row's `point_uid` via the real codec), and
+ * `insert5m/upsert1d` record their calls. A minimal fake `db` serves the `point_info` read and the
+ * transaction/advisory-lock surface.
  */
-import { describe, it, expect } from "@jest/globals";
-import {
-  affectedIntervalEndsMs,
-  withSuccessorIntervals,
-  recomputeAgg5mForIntervals,
-  recomputeAgg1dForDay,
-} from "../aggregate-points-pg";
-import {
-  pointInfo,
-  pointReadings,
-  pointReadingsAgg5m,
-  pointReadingsAgg1d,
-} from "../schema";
+import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { Point, type PointId } from "@/lib/ids";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import type { Observation } from "@/lib/observations/types";
 import { CalendarDate } from "@internationalized/date";
 
 const FIVE = 5 * 60 * 1000;
 
-function tableName(t: unknown): string {
-  if (t === pointInfo) return "point_info";
-  if (t === pointReadings) return "point_readings";
-  if (t === pointReadingsAgg5m) return "point_readings_agg_5m";
-  if (t === pointReadingsAgg1d) return "point_readings_agg_1d";
-  return "unknown";
+// ── mock the readings seam ──────────────────────────────────────────────────────────────────────
+const mockReadRaw = jest.fn<(...args: any[]) => any>();
+const mockRead5m = jest.fn<(...args: any[]) => any>();
+const mockInsert5m = jest.fn<(...args: any[]) => any>();
+const mockUpsert1d = jest.fn<(...args: any[]) => any>();
+jest.mock("@/lib/readings", () => ({
+  ReadingsDao: {
+    readRaw: (...a: unknown[]) => mockReadRaw(...a),
+    read5m: (...a: unknown[]) => mockRead5m(...a),
+    insert5m: (...a: unknown[]) => mockInsert5m(...a),
+    upsert1d: (...a: unknown[]) => mockUpsert1d(...a),
+  },
+}));
+// mock the registry so UnknownIdError is a shared, side-effect-free class (no DB import).
+jest.mock("@/lib/registry", () => ({
+  UnknownIdError: class UnknownIdError extends Error {
+    constructor(
+      public kind: string,
+      public id: string | number,
+    ) {
+      super(`unknown ${kind}: ${id}`);
+      this.name = "UnknownIdError";
+    }
+  },
+}));
+
+import {
+  affectedIntervalEndsMs,
+  withSuccessorIntervals,
+  recomputeAgg5mForIntervals,
+  recomputeAgg1dForDay,
+} from "../aggregate-points-pg";
+import { UnknownIdError } from "@/lib/registry";
+
+// Per-test canned data, keyed by PointId — the mocked reads seed every requested point (missing → []).
+const cannedRaw = new Map<PointId, unknown[]>();
+const cannedAgg5m = new Map<PointId, unknown[]>();
+
+beforeEach(() => {
+  cannedRaw.clear();
+  cannedAgg5m.clear();
+  mockReadRaw.mockReset();
+  mockRead5m.mockReset();
+  mockInsert5m.mockReset();
+  mockUpsert1d.mockReset();
+  mockReadRaw.mockImplementation(
+    async (pids: PointId[]) =>
+      new Map(pids.map((id) => [id, cannedRaw.get(id) ?? []])),
+  );
+  mockRead5m.mockImplementation(
+    async (pids: PointId[]) =>
+      new Map(pids.map((id) => [id, cannedAgg5m.get(id) ?? []])),
+  );
+  mockInsert5m.mockImplementation(async (rows: unknown[]) => ({
+    written: rows.length,
+  }));
+  mockUpsert1d.mockImplementation(async (rows: unknown[]) => ({
+    written: rows.length,
+  }));
+});
+
+/** A point_info row with a real point_uid, plus the PointId the module will derive from it. */
+function pointRow(transform: string | null, metricType: string) {
+  const id = Point.generate();
+  return { id, row: { pointUid: Point.toUuid(id), transform, metricType } };
 }
 
-interface Canned {
-  point_info?: unknown[];
-  point_readings?: unknown[];
-  point_readings_agg_5m?: unknown[];
-}
-
-function makeFakeDb(canned: Canned) {
-  const upserts: { table: string; rows: any[] }[] = [];
-  // Raw SQL executed (e.g. the per-system advisory lock) — recorded so tests can assert it.
+/** Minimal fake db: `select().from().where()` → the canned point_info rows; tx + advisory lock. */
+function makeFakeDb(pointInfoRows: unknown[]) {
   const executed: unknown[] = [];
-
-  function makeQuery(rows: unknown[]) {
-    const p = Promise.resolve(rows);
-    return {
-      orderBy: () => Promise.resolve(rows),
-      then: (onF: any, onR: any) => p.then(onF, onR),
-      catch: (onR: any) => p.catch(onR),
-      finally: (onF: any) => p.finally(onF),
-    };
-  }
-
-  const db = {
-    select() {
-      return {
-        from(table: unknown) {
-          const name = tableName(table);
-          const rows = (canned as Record<string, unknown[]>)[name] ?? [];
-          return { where: () => makeQuery(rows) };
-        },
-      };
-    },
-    insert(table: unknown) {
-      const name = tableName(table);
-      return {
-        values(rows: any[]) {
-          return {
-            onConflictDoUpdate() {
-              upserts.push({ table: name, rows });
-              return Promise.resolve(undefined);
-            },
-          };
-        },
-      };
-    },
-    // recomputeAgg5mForIntervals wraps its work in a transaction guarded by an advisory lock.
-    execute(q: unknown) {
+  const db: Record<string, unknown> = {
+    select: () => ({
+      from: () => ({ where: () => Promise.resolve(pointInfoRows) }),
+    }),
+    execute: (q: unknown) => {
       executed.push(q);
       return Promise.resolve({ rows: [] });
     },
-    transaction(cb: (tx: unknown) => unknown) {
-      // The transaction handle is the same fake surface (select/insert/execute).
-      return Promise.resolve(cb(db));
-    },
+    transaction: (cb: (tx: unknown) => unknown) => Promise.resolve(cb(db)),
   };
-
-  return { db, upserts, executed };
+  return { db, executed };
 }
 
 const asDb = (db: unknown) =>
@@ -152,189 +162,190 @@ describe("withSuccessorIntervals", () => {
 });
 
 describe("recomputeAgg5mForIntervals", () => {
-  it("acquires the per-system advisory lock before recomputing (order-safety)", async () => {
+  it("acquires the per-system advisory lock and reads/writes on the tx handle", async () => {
     const intervalEndMs = 1_700_000_400_000;
-    const { db, executed } = makeFakeDb({
-      point_info: [{ index: 1, transform: null, metricType: "power" }],
-      point_readings: [
-        { pointId: 1, measurementTime: new Date(intervalEndMs), value: 5 },
-      ],
-    });
+    const p1 = pointRow(null, "power");
+    const { db, executed } = makeFakeDb([p1.row]);
+    cannedRaw.set(p1.id, [{ measurementTimeMs: intervalEndMs, value: 5 }]);
+
     await recomputeAgg5mForIntervals(asDb(db), 7, [intervalEndMs]);
+
     // The recompute runs in a transaction whose only raw statement is the advisory lock.
     expect(executed).toHaveLength(1);
+    expect(mockReadRaw).toHaveBeenCalled();
+    expect(mockReadRaw.mock.calls[0][2]).toBe(db); // ran on the tx handle
+    expect(mockInsert5m.mock.calls[0][2]).toBe(db);
   });
 
-  it("computes per-point 5m from raw and upserts the expected rows", async () => {
+  it("computes per-point 5m from raw and upserts value-only rows via the DAO", async () => {
     const intervalEndMs = 1_700_000_400_000; // multiple of FIVE
     const intervalStartMs = intervalEndMs - FIVE;
 
-    const canned: Canned = {
-      point_info: [
-        { index: 1, transform: null, metricType: "power" },
-        { index: 2, transform: null, metricType: "energy" },
-        { index: 3, transform: "d", metricType: "energy" },
-        { index: 4, transform: null, metricType: "power" },
-      ],
-      // Ordered by (pointId asc, measurementTime asc), as the real query returns.
-      point_readings: [
-        // p1 power: avg 20, min 10, max 30, last 30
-        {
-          pointId: 1,
-          measurementTime: new Date(intervalStartMs + 60_000),
-          value: 10,
-        },
-        {
-          pointId: 1,
-          measurementTime: new Date(intervalStartMs + 120_000),
-          value: 20,
-        },
-        { pointId: 1, measurementTime: new Date(intervalEndMs), value: 30 },
-        // p2 energy: avg 15, delta = sum = 45
-        {
-          pointId: 2,
-          measurementTime: new Date(intervalStartMs + 60_000),
-          value: 5,
-        },
-        {
-          pointId: 2,
-          measurementTime: new Date(intervalStartMs + 120_000),
-          value: 15,
-        },
-        { pointId: 2, measurementTime: new Date(intervalEndMs), value: 25 },
-        // p3 transform='d': prev reading at intervalStart=100; delta = 120 - 100 = 20
-        { pointId: 3, measurementTime: new Date(intervalStartMs), value: 100 },
-        {
-          pointId: 3,
-          measurementTime: new Date(intervalStartMs + 60_000),
-          value: 110,
-        },
-        {
-          pointId: 3,
-          measurementTime: new Date(intervalStartMs + 120_000),
-          value: 120,
-        },
-        // p4 power, all errors → sampleCount 0, errorCount 2
-        {
-          pointId: 4,
-          measurementTime: new Date(intervalStartMs + 60_000),
-          value: null,
-        },
-        {
-          pointId: 4,
-          measurementTime: new Date(intervalStartMs + 120_000),
-          value: null,
-        },
-      ],
-    };
+    const p1 = pointRow(null, "power");
+    const p2 = pointRow(null, "energy");
+    const p3 = pointRow("d", "energy");
+    const p4 = pointRow(null, "power");
+    const { db } = makeFakeDb([p1.row, p2.row, p3.row, p4.row]);
 
-    const { db, upserts } = makeFakeDb(canned);
+    // p1 power: avg 20, min 10, max 30, last 30
+    cannedRaw.set(p1.id, [
+      { measurementTimeMs: intervalStartMs + 60_000, value: 10 },
+      { measurementTimeMs: intervalStartMs + 120_000, value: 20 },
+      { measurementTimeMs: intervalEndMs, value: 30 },
+    ]);
+    // p2 energy: avg 15, delta = sum = 45
+    cannedRaw.set(p2.id, [
+      { measurementTimeMs: intervalStartMs + 60_000, value: 5 },
+      { measurementTimeMs: intervalStartMs + 120_000, value: 15 },
+      { measurementTimeMs: intervalEndMs, value: 25 },
+    ]);
+    // p3 transform='d': prev reading at intervalStart=100; delta = 120 - 100 = 20
+    cannedRaw.set(p3.id, [
+      { measurementTimeMs: intervalStartMs, value: 100 },
+      { measurementTimeMs: intervalStartMs + 60_000, value: 110 },
+      { measurementTimeMs: intervalStartMs + 120_000, value: 120 },
+    ]);
+    // p4 power, all errors → sampleCount 0, errorCount 2
+    cannedRaw.set(p4.id, [
+      { measurementTimeMs: intervalStartMs + 60_000, value: null },
+      { measurementTimeMs: intervalStartMs + 120_000, value: null },
+    ]);
+
     const res = await recomputeAgg5mForIntervals(asDb(db), 1, [intervalEndMs]);
-
     expect(res).toEqual({ intervalsProcessed: 1, rowsUpserted: 4 });
-    expect(upserts).toHaveLength(1);
-    expect(upserts[0].table).toBe("point_readings_agg_5m");
-    expect(upserts[0].rows).toEqual([
+
+    expect(mockInsert5m).toHaveBeenCalledTimes(1);
+    const [rows, opts] = mockInsert5m.mock.calls[0];
+    expect(opts).toEqual({ upsert: true, preserveVendorMeta: true });
+    expect(rows).toEqual([
       {
-        systemId: 1,
-        pointId: 1,
-        intervalEnd: new Date(intervalEndMs),
+        point: p1.id,
+        intervalEndMs,
         avg: 20,
         min: 10,
         max: 30,
         last: 30,
         delta: null,
+        valueStr: null,
         sampleCount: 3,
         errorCount: 0,
+        dataQuality: null,
+        sessionId: null,
       },
       {
-        systemId: 1,
-        pointId: 2,
-        intervalEnd: new Date(intervalEndMs),
+        point: p2.id,
+        intervalEndMs,
         avg: 15,
         min: 5,
         max: 25,
         last: 25,
         delta: 45,
+        valueStr: null,
         sampleCount: 3,
         errorCount: 0,
+        dataQuality: null,
+        sessionId: null,
       },
       {
-        systemId: 1,
-        pointId: 3,
-        intervalEnd: new Date(intervalEndMs),
+        point: p3.id,
+        intervalEndMs,
         avg: null,
         min: null,
         max: null,
         last: 120,
         delta: 20,
+        valueStr: null,
         sampleCount: 2,
         errorCount: 0,
+        dataQuality: null,
+        sessionId: null,
       },
       {
-        systemId: 1,
-        pointId: 4,
-        intervalEnd: new Date(intervalEndMs),
+        point: p4.id,
+        intervalEndMs,
         avg: null,
         min: null,
         max: null,
         last: null,
         delta: null,
+        valueStr: null,
         sampleCount: 0,
         errorCount: 2,
+        dataQuality: null,
+        sessionId: null,
       },
     ]);
+
+    // Reads the previous + current interval: [prevStart, intervalEnd] (JS guard drops == prevStart).
+    expect(mockReadRaw.mock.calls[0][1]).toEqual({
+      fromMs: intervalStartMs - FIVE,
+      toMs: intervalEndMs,
+    });
+  });
+
+  it("drops a reading exactly on prevStart (legacy gt(prevStart) bound) → delta stays null", async () => {
+    const intervalEndMs = 1_700_000_400_000;
+    const intervalStartMs = intervalEndMs - FIVE;
+    const prevStartMs = intervalStartMs - FIVE;
+    const p = pointRow("d", "energy");
+    const { db } = makeFakeDb([p.row]);
+    // The reading exactly on prevStart must be ignored, leaving an empty previous interval → no
+    // previousLast → delta null (matches the legacy half-open lower bound).
+    cannedRaw.set(p.id, [
+      { measurementTimeMs: prevStartMs, value: 100 },
+      { measurementTimeMs: intervalStartMs + 60_000, value: 110 },
+      { measurementTimeMs: intervalStartMs + 120_000, value: 120 },
+    ]);
+    await recomputeAgg5mForIntervals(asDb(db), 1, [intervalEndMs]);
+    const [rows] = mockInsert5m.mock.calls[0];
+    expect(rows[0]).toMatchObject({ point: p.id, last: 120, delta: null });
+  });
+
+  it("computes delta from a previousLast inside (prevStart, intervalStart]", async () => {
+    const intervalEndMs = 1_700_000_400_000;
+    const intervalStartMs = intervalEndMs - FIVE;
+    const p = pointRow("d", "energy");
+    const { db } = makeFakeDb([p.row]);
+    cannedRaw.set(p.id, [
+      { measurementTimeMs: intervalStartMs, value: 100 }, // previous interval → prevLast 100
+      { measurementTimeMs: intervalStartMs + 60_000, value: 110 },
+      { measurementTimeMs: intervalStartMs + 120_000, value: 120 },
+    ]);
+    await recomputeAgg5mForIntervals(asDb(db), 1, [intervalEndMs]);
+    const [rows] = mockInsert5m.mock.calls[0];
+    expect(rows[0]).toMatchObject({ point: p.id, last: 120, delta: 20 });
   });
 
   it("does not create a row for a point present only in the previous interval", async () => {
     const intervalEndMs = 1_700_000_400_000;
     const intervalStartMs = intervalEndMs - FIVE;
-    const canned: Canned = {
-      point_info: [{ index: 9, transform: "d", metricType: "energy" }],
-      point_readings: [
-        // Only a previous-interval reading; nothing in the current interval.
-        { pointId: 9, measurementTime: new Date(intervalStartMs), value: 50 },
-      ],
-    };
-    const { db, upserts } = makeFakeDb(canned);
+    const p9 = pointRow("d", "energy");
+    const { db } = makeFakeDb([p9.row]);
+    cannedRaw.set(p9.id, [
+      { measurementTimeMs: intervalStartMs, value: 50 }, // only a previous-interval reading
+    ]);
     const res = await recomputeAgg5mForIntervals(asDb(db), 1, [intervalEndMs]);
     expect(res.rowsUpserted).toBe(0);
-    expect(upserts).toHaveLength(0);
+    expect(mockInsert5m).not.toHaveBeenCalled();
   });
 
-  it("no-ops on an empty interval list", async () => {
-    const { db, upserts } = makeFakeDb({});
+  it("no-ops on an empty interval list (no tx, no DAO calls)", async () => {
+    const { db, executed } = makeFakeDb([]);
     const res = await recomputeAgg5mForIntervals(asDb(db), 1, []);
     expect(res).toEqual({ intervalsProcessed: 0, rowsUpserted: 0 });
-    expect(upserts).toHaveLength(0);
+    expect(executed).toHaveLength(0);
+    expect(mockReadRaw).not.toHaveBeenCalled();
+    expect(mockInsert5m).not.toHaveBeenCalled();
   });
 
-  it("skips a point present in raw but absent from the PG point_info mirror (avoids wrong metadata)", async () => {
+  it("skips an interval when the DAO throws UnknownIdError, never throwing", async () => {
     const intervalEndMs = 1_700_000_400_000;
-    const intervalStartMs = intervalEndMs - FIVE;
-    const canned: Canned = {
-      // point_info has point 1 but NOT point 2.
-      point_info: [{ index: 1, transform: null, metricType: "power" }],
-      point_readings: [
-        {
-          pointId: 1,
-          measurementTime: new Date(intervalStartMs + 60_000),
-          value: 10,
-        },
-        // point 2 has a current reading but no point_info → must be skipped, not defaulted.
-        {
-          pointId: 2,
-          measurementTime: new Date(intervalStartMs + 60_000),
-          value: 99,
-        },
-      ],
-    };
-    const { db, upserts } = makeFakeDb(canned);
+    const p = pointRow(null, "power");
+    const { db } = makeFakeDb([p.row]);
+    mockReadRaw.mockRejectedValueOnce(new UnknownIdError("point", "pt_x"));
     const res = await recomputeAgg5mForIntervals(asDb(db), 1, [intervalEndMs]);
-
-    expect(res.rowsUpserted).toBe(1); // only point 1
-    expect(upserts).toHaveLength(1);
-    expect(upserts[0].rows.map((r: any) => r.pointId)).toEqual([1]);
+    expect(res).toEqual({ intervalsProcessed: 1, rowsUpserted: 0 });
+    expect(mockInsert5m).not.toHaveBeenCalled();
   });
 });
 
@@ -347,58 +358,53 @@ describe("recomputeAgg1dForDay", () => {
     const dayEndMs = endUnix * 1000;
     const prevEndMs = dayStartMs - FIVE;
 
-    const canned: Canned = {
-      point_readings_agg_5m: [
-        // Previous-day 00:00 interval → supplies `last`, not aggregated into the day.
-        {
-          pointId: 1,
-          intervalEnd: new Date(prevEndMs),
-          avg: 999,
-          min: 999,
-          max: 999,
-          last: 500,
-          delta: 9,
-          sampleCount: 1,
-          errorCount: 0,
-        },
-        // Two in-day intervals + the inclusive end (00:00 next day).
-        {
-          pointId: 1,
-          intervalEnd: new Date(dayStartMs),
-          avg: 10,
-          min: 5,
-          max: 15,
-          last: 12,
-          delta: 2,
-          sampleCount: 3,
-          errorCount: 0,
-        },
-        {
-          pointId: 1,
-          intervalEnd: new Date(dayStartMs + FIVE),
-          avg: 20,
-          min: 10,
-          max: 30,
-          last: 22,
-          delta: 4,
-          sampleCount: 3,
-          errorCount: 1,
-        },
-        {
-          pointId: 1,
-          intervalEnd: new Date(dayEndMs),
-          avg: 1,
-          min: 1,
-          max: 1,
-          last: 1,
-          delta: 1,
-          sampleCount: 1,
-          errorCount: 0,
-        },
-      ],
-    };
+    const p1 = pointRow(null, "power");
+    const { db } = makeFakeDb([p1.row]);
+    cannedAgg5m.set(p1.id, [
+      // Previous-day 00:00 interval → supplies `last`, not aggregated into the day.
+      {
+        intervalEndMs: prevEndMs,
+        avg: 999,
+        min: 999,
+        max: 999,
+        last: 500,
+        delta: 9,
+        sampleCount: 1,
+        errorCount: 0,
+      },
+      // Two in-day intervals + the inclusive end (00:00 next day).
+      {
+        intervalEndMs: dayStartMs,
+        avg: 10,
+        min: 5,
+        max: 15,
+        last: 12,
+        delta: 2,
+        sampleCount: 3,
+        errorCount: 0,
+      },
+      {
+        intervalEndMs: dayStartMs + FIVE,
+        avg: 20,
+        min: 10,
+        max: 30,
+        last: 22,
+        delta: 4,
+        sampleCount: 3,
+        errorCount: 1,
+      },
+      {
+        intervalEndMs: dayEndMs,
+        avg: 1,
+        min: 1,
+        max: 1,
+        last: 1,
+        delta: 1,
+        sampleCount: 1,
+        errorCount: 0,
+      },
+    ]);
 
-    const { db, upserts } = makeFakeDb(canned);
     const res = await recomputeAgg1dForDay(
       asDb(db),
       { id: 1, timezoneOffsetMin: tz },
@@ -406,11 +412,11 @@ describe("recomputeAgg1dForDay", () => {
     );
 
     expect(res.rowsUpserted).toBe(1);
-    expect(upserts).toHaveLength(1);
-    expect(upserts[0].table).toBe("point_readings_agg_1d");
-    const row = upserts[0].rows[0];
-    expect(row.systemId).toBe(1);
-    expect(row.pointId).toBe(1);
+    expect(mockUpsert1d).toHaveBeenCalledTimes(1);
+    const [rows, execArg] = mockUpsert1d.mock.calls[0];
+    expect(execArg).toBe(db);
+    const row = rows[0];
+    expect(row.point).toBe(p1.id);
     expect(row.day).toBe("2026-01-15");
     expect(row.avg).toBeCloseTo((10 + 20 + 1) / 3, 10);
     expect(row.min).toBe(1);
@@ -419,17 +425,24 @@ describe("recomputeAgg1dForDay", () => {
     expect(row.last).toBe(500); // from the previous-day 00:00 interval
     expect(row.sampleCount).toBe(3 + 3 + 1);
     expect(row.errorCount).toBe(1);
+
+    // Read window inclusive at both ends (matches the legacy 1d bounds exactly).
+    expect(mockRead5m.mock.calls[0][1]).toEqual({
+      fromMs: prevEndMs,
+      toMs: dayEndMs,
+    });
   });
 
   it("no-ops when there is no PG 5m for the day", async () => {
     const day = new CalendarDate(2026, 1, 15);
-    const { db, upserts } = makeFakeDb({ point_readings_agg_5m: [] });
+    const p1 = pointRow(null, "power");
+    const { db } = makeFakeDb([p1.row]); // cannedAgg5m empty → read5m returns [] for p1
     const res = await recomputeAgg1dForDay(
       asDb(db),
       { id: 1, timezoneOffsetMin: 600 },
       day,
     );
     expect(res.rowsUpserted).toBe(0);
-    expect(upserts).toHaveLength(0);
+    expect(mockUpsert1d).not.toHaveBeenCalled();
   });
 });

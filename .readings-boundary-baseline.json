@@ -10,7 +10,6 @@
     "lib/battery-provenance/load.ts",
     "lib/battery-provenance/recompute.ts",
     "lib/coverage/find-gaps.ts",
-    "lib/db/planetscale/aggregate-points-pg.ts",
     "lib/db/planetscale/battery-provenance-daily-pg.ts",
     "lib/db/planetscale/battery-provenance-pg.ts",
     "lib/db/planetscale/readings-read-pg.ts",

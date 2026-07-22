@@ -20,44 +20,45 @@
 
 ```text
 Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
-config-v4-clean-sheet.md for the why. PR-A (DAO seam foundation + ratchet, PR #214) and PR-B (receiver
-adoption) have LANDED. The observations receiver (app/api/observations/receive/route.ts) now writes
-through ReadingsDao, dual-grammar: v2 payload `pointUid` → Point.encode; buffered/in-flight old
-"{systemId}.{index}" refs → RegistryCache.pointForAddr(systemId, index); UnknownIdError propagates
-(matches the old FK-abort). The publisher payload carries `pointUid` (lib/observations/types.ts +
-publisher.ts; surfaced on PointInfoRow in lib/point/point-manager.ts). The receiver is off the ratchet
-baseline (30 modules remain). Phase 3 adds NO migration (reads Phase-2's point_uid/rid).
+config-v4-clean-sheet.md for the why. PR-A (DAO seam + ratchet, #214), PR-B (receiver adoption), and PR-C
+(first materialization writer aggregate-points-pg.ts) have LANDED. aggregate-points-pg.ts now speaks only
+PointId through ReadingsDao (readRaw/insert5m for 5m; read5m/upsert1d for 1d), keeps the per-system
+pg_advisory_xact_lock tx, and is off the ratchet baseline (29 modules remain). PR-C added the DAO's
+value-columns-only 5m upsert mode `insert5m(rows, {upsert:true, preserveVendorMeta:true})` — its on-conflict
+SET is the 7 value cols + updated_at, so the raw→5m recompute never clobbers the vendor-meta columns
+(session_id/value_str/data_quality) a 5m-native queue write owns; verified byte-identical + idempotent on
+liveone-dev, and prod measurement_time confirmed ms-granular (the readRaw fromMs=prevStart + JS `tMs >
+prevStart` guard is exact). Phase 3 adds NO migration (reads Phase-2's point_uid/rid).
 
-Do PR-C: migrate the FIRST materialization WRITER — lib/db/planetscale/aggregate-points-pg.ts (the 5m +
-1d recompute) — onto ReadingsDao. This is a prod-write-path change: build and verify fully, but PAUSE for
-Simon's explicit go-ahead before committing/merging.
+Do PR-D: migrate lib/aggregation/daily-points.ts onto ReadingsDao. It's in the app_lib baseline, so it
+still touches the hot tables directly (it drives the daily 1d aggregation: aggregate / regenerate / delete
+actions over point_readings_agg_1d, and may read agg_5m). recomputeAgg1dForDay is ALREADY on the DAO
+(PR-C) — this PR migrates daily-points.ts's OWN direct hot-table access. This is a prod-write-path change
+(regenerate/delete mutate agg_1d): build and verify fully, but PAUSE for Simon's explicit go-ahead before
+committing/merging.
 
 Scope:
-1. Replace this module's raw hot-table access with the DAO: reads via ReadingsDao.readRaw / read5m (the
-   recompute reads raw point_readings over (prevStart, intervalEnd] per interval, and for 1d reads agg_5m
-   over the day span + prev-day 00:00), writes via ReadingsDao.insert5m({upsert:true}) / upsert1d.
-   Semantics VERBATIM — same conflict targets/sets, same per-system pg_advisory_xact_lock tx, same
-   interval math (lib/aggregation/point-aggregates.ts). point_info meta (transform/metricType) still
-   comes from point-manager, not the readings DAO.
-2. CRITICAL — keep the best-effort skip-missing-meta guard (aggregate-points-pg.ts ~228-232): a point
-   absent from the point_info mirror is SKIPPED, never throws. The DAO/registry THROW UnknownIdError on
-   unknown points, so resolve identity defensively — skip a missing point BEFORE any PointId resolution
-   that could throw; recompute5mForRawObservationsBestEffort / recompute1dForDayBestEffort must stay
-   never-throwing (each is wrapped in a swallowing try/catch — don't rely on that, keep them clean).
-3. Shrink the ratchet — remove lib/db/planetscale/aggregate-points-pg.ts from BOTH .eslintrc.json's
-   override AND .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 29 baselined.
+1. Replace the module's raw hot-table access with the DAO. The delete/regenerate actions need a DELETE
+   surface the DAO does NOT have yet — add it to lib/readings/dao.ts (e.g. delete1d(points, dayRange) /
+   delete5m) following PR-C's pattern (uuids in, composite-key SQL behind a // SEAM:, exec? param, a
+   dao.test.ts case). Reads via read1d/read5m; identity via point_info point_uid → Point.encode; catch
+   UnknownIdError to skip-and-continue where the old code was point_info-agnostic. Semantics VERBATIM.
+2. Shrink the ratchet — remove lib/aggregation/daily-points.ts from BOTH .eslintrc.json's override AND
+   .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 28 baselined. Don't put a raw
+   hot-table name in any string literal (the boundary script greps those; comments/JSDoc are stripped).
 
 Verify before asking for go-ahead: `npm run build:local && npm run type-check` clean; `node
-scripts/check-readings-boundary.mjs` green with 29 baselined; `npm test` green; and drive a REAL raw poll
-→ receiver → post-commit 5m recompute (and a daily 1d recompute) on liveone-dev, then read the agg rows
-back via ReadingsDao AND raw SQL and confirm identical rows to the pre-change recompute. Then stop and
-report; Simon gives the go-ahead to land.
+scripts/check-readings-boundary.mjs` green with 28 baselined; `npx next lint --file <changed files>` clean
+(the module passes WITHOUT the override); `npm test` green; then drive the real daily aggregation
+(aggregate + regenerate) for a settled day/system on liveone-dev and confirm the agg_1d rows are
+byte-identical (value cols) to the pre-change output + idempotent (a throwaway scripts/temp diff script is
+fine; delete it before committing). Then stop and report; Simon gives the go-ahead to land.
 
-WHEN PR-C IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
-block at the top with the PR-D prompt (next module lib/aggregation/daily-points.ts, then the readers
-history/readings-pg.ts, flow-series-pg.ts, battery-provenance/load.ts, coverage/find-gaps.ts, then the
-admin/cron raw-SQL routes — each PR migrates one module AND deletes its baseline entry; writer PRs pause
-for go-ahead). Keep this same self-perpetuating closing instruction in the new block.
+WHEN PR-D IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
+block at the top with the PR-E prompt (next the readers history/readings-pg.ts, flow-series-pg.ts,
+battery-provenance/load.ts, coverage/find-gaps.ts, then the admin/cron raw-SQL routes — each PR migrates
+one module AND deletes its baseline entry; writer PRs pause for go-ahead). Keep this same self-perpetuating
+closing instruction in the new block.
 ```
 
 ## Progress
@@ -67,7 +68,7 @@ for go-ahead). Keep this same self-perpetuating closing instruction in the new b
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) landed; receiver off the baseline (30 remain). PR-C = first materialization writer `aggregate-points-pg.ts`, pauses for go-ahead. |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) landed; **29 modules remain** on the baseline. PR-D = next writer `lib/aggregation/daily-points.ts` (needs a DAO delete surface), pauses for go-ahead. |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -221,7 +222,20 @@ Ordering is a hard dependency chain (migrations lead code to prod).
 > and writes through `ReadingsDao.insertRaw`/`insert5m` inside the existing tx; removed from both ratchet
 > lists (30 remain). Verified: type-check/lint/`npm test` green, `build:local` clean, and a real
 > receiver→DAO E2E on `liveone-dev` (both grammars, DAO read == raw SQL).
-> **Next: PR-C — first materialization writer `aggregate-points-pg.ts` (5m/1d recompute), pauses for go-ahead.**
+>
+> **PR-C landed** (first materialization writer): `lib/db/planetscale/aggregate-points-pg.ts` (5m + 1d
+> recompute) now speaks only `PointId` through `ReadingsDao` (`readRaw`/`insert5m` for 5m under the
+> unchanged per-system `pg_advisory_xact_lock` tx; `read5m`/`upsert1d` for 1d), points enumerated from
+> `point_info` `point_uid` → `Point.encode`, `UnknownIdError` caught per-interval/day (never-throw kept).
+> Added the DAO's value-columns-only 5m upsert mode `insert5m(rows, {upsert:true, preserveVendorMeta:true})`
+> (on-conflict SET = 7 value cols + `updated_at`) so the recompute never clobbers the vendor-meta columns a
+> 5m-native queue write owns — byte-identical **by construction**, not by an emergent invariant. The
+> half-open lower bound is reproduced with `readRaw` `fromMs=prevStart` + a JS `tMs > prevStart` guard
+> (exact for ms-granular data; prod `measurement_time` confirmed 0 sub-ms). Removed from both ratchet lists
+> (**29 remain**). Verified: `build:local`/`type-check`/lint/`npm test` (1015) green, boundary green at 29,
+> and a real 5m + 1d recompute on `liveone-dev` (raw-vendor system 1) reproduced the pre-change rows
+> byte-for-byte + idempotent.
+> **Next: PR-D — writer `lib/aggregation/daily-points.ts` (needs a new DAO delete surface), pauses for go-ahead.**
 - `lib/registry/registry-cache.ts` — the ONLY owner of uuid↔rid↔address, branded `PointRid`/`DeviceRid`
   (number brands), `UnknownIdError`. `globalThis`-memoized, 60s per-entry TTL, `invalidate()` on writes;
   batch `addrsForPoints`/`ridsForPoints`/`addrsForRids` + `pointForAddr` (old-grammar / backlog map).

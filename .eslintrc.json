@@ -58,7 +58,6 @@
         "lib/aggregation/flow-series-pg.ts",
         "lib/battery-provenance/load.ts",
         "lib/battery-provenance/recompute.ts",
-        "lib/db/planetscale/aggregate-points-pg.ts",
         "lib/db/planetscale/battery-provenance-daily-pg.ts",
         "lib/db/planetscale/battery-provenance-pg.ts",
         "lib/db/planetscale/run-periods-pg.ts",

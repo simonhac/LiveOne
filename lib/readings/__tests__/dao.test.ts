@@ -31,14 +31,24 @@ function tableName(t: unknown): string {
   return "?";
 }
 
-/** Fake exec: records inserts and the conflict mode; `.select…().where().orderBy()` returns canned rows. */
+/** Fake exec: records inserts, the conflict mode, and the on-conflict SET keys; `.select…().where().orderBy()` returns canned rows. */
 function makeFakeExec(selectRows: any[] = []) {
-  const inserts: { table: string; rows: any[]; mode: string }[] = [];
+  const inserts: {
+    table: string;
+    rows: any[];
+    mode: string;
+    setKeys?: string[];
+  }[] = [];
   const exec: any = {
     insert(table: unknown) {
       return {
         values(rows: any[]) {
-          const rec = { table: tableName(table), rows, mode: "" };
+          const rec: {
+            table: string;
+            rows: any[];
+            mode: string;
+            setKeys?: string[];
+          } = { table: tableName(table), rows, mode: "" };
           const returning = () => Promise.resolve(rows.map(() => ({})));
           return {
             onConflictDoNothing() {
@@ -46,8 +56,9 @@ function makeFakeExec(selectRows: any[] = []) {
               inserts.push(rec);
               return { returning };
             },
-            onConflictDoUpdate() {
+            onConflictDoUpdate(cfg: { set: Record<string, unknown> }) {
               rec.mode = "update";
+              rec.setKeys = Object.keys(cfg.set);
               inserts.push(rec);
               return { returning };
             },
@@ -149,6 +160,83 @@ describe("ReadingsDao writes — composite-key expansion", () => {
     const first = makeFakeExec();
     await ReadingsDao.insert5m([base], { upsert: false }, first.exec);
     expect(first.inserts[0].mode).toBe("nothing");
+  });
+
+  it("insert5m upsert overwrites the vendor-meta columns by default", async () => {
+    const p = point(14, 2, 0);
+    const base = {
+      point: p,
+      intervalEndMs: 1_700_000_000_000,
+      avg: 1,
+      min: 0,
+      max: 2,
+      last: 1,
+      delta: 0,
+      valueStr: null,
+      sampleCount: 5,
+      errorCount: 0,
+      dataQuality: null,
+      sessionId: null,
+    };
+    const { exec, inserts } = makeFakeExec();
+    await ReadingsDao.insert5m([base], { upsert: true }, exec);
+    // Full-fidelity SET (receiver path): value columns + vendor meta.
+    expect(inserts[0].setKeys).toEqual(
+      expect.arrayContaining([
+        "avg",
+        "min",
+        "max",
+        "last",
+        "delta",
+        "sampleCount",
+        "errorCount",
+        "updatedAt",
+        "sessionId",
+        "valueStr",
+        "dataQuality",
+      ]),
+    );
+  });
+
+  it("insert5m upsert with preserveVendorMeta leaves session/value_str/data_quality untouched", async () => {
+    const p = point(15, 2, 0);
+    const base = {
+      point: p,
+      intervalEndMs: 1_700_000_000_000,
+      avg: 1,
+      min: 0,
+      max: 2,
+      last: 1,
+      delta: 0,
+      valueStr: null,
+      sampleCount: 5,
+      errorCount: 0,
+      dataQuality: null,
+      sessionId: null,
+    };
+    const { exec, inserts } = makeFakeExec();
+    await ReadingsDao.insert5m(
+      [base],
+      { upsert: true, preserveVendorMeta: true },
+      exec,
+    );
+    expect(inserts[0].mode).toBe("update");
+    // Value-only SET (recompute path): the 7 aggregate value columns + updated_at, and NOTHING else.
+    expect(inserts[0].setKeys!.sort()).toEqual(
+      [
+        "avg",
+        "delta",
+        "errorCount",
+        "last",
+        "max",
+        "min",
+        "sampleCount",
+        "updatedAt",
+      ].sort(),
+    );
+    expect(inserts[0].setKeys).not.toContain("sessionId");
+    expect(inserts[0].setKeys).not.toContain("valueStr");
+    expect(inserts[0].setKeys).not.toContain("dataQuality");
   });
 
   it("upsert1d always upserts into agg_1d keyed by day", async () => {
