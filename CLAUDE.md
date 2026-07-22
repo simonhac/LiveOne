@@ -199,8 +199,11 @@ The JWT expires after ~60s — mint it in the same command that uses it.
 
 ```bash
 # Connect with psql (dev branch, from .env.local)
-psql "$PLANETSCALE_DATABASE_URL"
-# Production (sydney branch): use the prod connection string deliberately
+npm run db:psql -- -c "select now()"   # wrapper sets PGSSLROOTCERT=system (verify-full needs a CA source)
+# bare `psql "$PLANETSCALE_DATABASE_URL"` also works once ~/.zshrc exports PGSSLROOTCERT=system;
+#   otherwise libpq fails on a missing root CA (~/.postgresql/root.crt). Node's pg is unaffected —
+#   getPoolConfig (lib/db/planetscale/index.ts) strips the ssl params.
+# Production (sydney branch): mint a role url, then PSQL_URL="<url>" npm run db:psql -- -c "…"
 ```
 
 PG uses **native UTC timestamps** (no epoch-ms conversion needed):

@@ -23,6 +23,7 @@
     "test:integration": "jest --config jest.config.integration.js",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "db:psql": "scripts/utils/psql.sh",
     "db:pg:generate": "drizzle-kit generate --config=drizzle-planetscale.config.ts",
     "db:pg:migrate": "drizzle-kit migrate --config=drizzle-planetscale.config.ts",
     "db:sync-dev-db": "tsx scripts/utils/sync-prod-to-dev-db.ts",
