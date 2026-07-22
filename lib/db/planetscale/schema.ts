@@ -51,6 +51,7 @@ import {
   foreignKey,
   timestamp,
   date,
+  pgSequence,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -217,6 +218,13 @@ export const sessions = pgTable(
 // ============================================================================
 // Point Info table - stores individual monitoring points
 // ============================================================================
+
+// Global point rid allocator (config-v4 Phase 2, migration 0030). Declared so the schema model fully
+// describes final DB state and drizzle's machine-written snapshot stays authoritative; the actual
+// CREATE SEQUENCE + deterministic backfill + OWNED BY are hand-authored in 0030 (drizzle can't express
+// them). Below the uuid↔rid seam, hot tables re-key to `rid` at cutover; nothing above the seam reads it.
+export const pointRidSeq = pgSequence("point_rid_seq");
+
 export const pointInfo = pgTable(
   "point_info",
   {
@@ -225,6 +233,13 @@ export const pointInfo = pgTable(
       .notNull()
       .references(() => systems.id),
     index: integer("id").notNull(), // Sequential per system
+
+    // Global integer identity, sequence-allocated (see pointRidSeq). Additive — the per-system
+    // (system_id, id) ADDRESS and all composite FKs are untouched. Auto-filled by the DB DEFAULT, so
+    // writers must NEVER name it in insert .values(...); introduce no max(rid)+1 pattern.
+    rid: integer("rid")
+      .notNull()
+      .default(sql`nextval('point_rid_seq')`),
 
     // Paths
     physicalPathTail: text("physical_path_tail").notNull(),
@@ -249,7 +264,8 @@ export const pointInfo = pgTable(
     // point reproduces the same uid; a duplicate-site collision falls back to a random uid. Nullable
     // for now (backfilled + minted by ensurePointInfo going forward); a later migration may tighten
     // to NOT NULL. See docs/plans/identity-address-split-and-labels.md (Part 1).
-    pointUid: uuid("point_uid"),
+    // Tightened to NOT NULL in config-v4 Phase 2 (migration 0030) after the backfill + writer-fix.
+    pointUid: uuid("point_uid").notNull(),
 
     // Timestamps
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -264,6 +280,7 @@ export const pointInfo = pgTable(
     // NULLs are distinct in Postgres, so this permits many un-backfilled (null) rows while still
     // enforcing one row per non-null identity.
     pointUidUnique: uniqueIndex("pi_point_uid_unique").on(table.pointUid),
+    ridUnique: uniqueIndex("pi_rid_unique").on(table.rid),
     systemStemMetricUnique: uniqueIndex("pi_system_stem_metric_unique").on(
       table.systemId,
       table.logicalPathStem,
