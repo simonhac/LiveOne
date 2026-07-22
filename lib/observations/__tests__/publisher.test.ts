@@ -18,6 +18,7 @@ describe("buildObservations", () => {
 
   const point = {
     index: 1,
+    pointUid: "0192f000-0000-7000-8000-0000000000aa",
     physicalPathTail: "mp/energyNowW",
     metricType: "power",
     metricUnit: "W",
@@ -45,5 +46,22 @@ describe("buildObservations", () => {
     // ...and round-trip back to the exact epoch-ms (no precision lost on the queue).
     expect(new Date(obs.measurementTime).getTime()).toBe(measurementTimeMs);
     expect(new Date(obs.receivedTime).getTime()).toBe(receivedTimeMs);
+  });
+
+  it("carries the point's pointUid on the payload (v2, for the DAO-seam receiver)", () => {
+    const [obs] = buildObservations(system, [
+      {
+        sessionId: "s1",
+        point,
+        value: 0,
+        measurementTimeMs: 1749081599611,
+        receivedTimeMs: 1749081596775,
+        interval: "raw",
+      },
+    ]);
+
+    expect(obs.pointUid).toBe("0192f000-0000-7000-8000-0000000000aa");
+    // The legacy reference grammar is still emitted (dual-grammar back-compat).
+    expect(obs.debug?.reference).toBe("6.1");
   });
 });

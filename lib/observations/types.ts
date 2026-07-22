@@ -12,6 +12,13 @@ export interface Observation {
   /** Session ID that captured this observation (UUIDv7 text; historical = stringified int) */
   sessionId: string;
 
+  /**
+   * Payload v2: the point's stable public identity (`point_uid` uuid). The receiver resolves
+   * this via the DAO seam (`Point.encode` → `ReadingsDao`). Optional because buffered/in-flight
+   * pre-v2 messages lack it — the receiver falls back to the legacy `debug.reference` grammar.
+   */
+  pointUid?: string;
+
   /** MQTT-style topic: "liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}" */
   topic: string;
 

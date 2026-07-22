@@ -53,7 +53,6 @@
     },
     {
       "files": [
-        "app/api/observations/receive/route.ts",
         "app/labs/kinkora-hws/page.tsx",
         "lib/aggregation/daily-points.ts",
         "lib/aggregation/flow-series-pg.ts",
