@@ -10,6 +10,7 @@ import {
   SankeyLink,
 } from "d3-sankey";
 import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
+import { formatFlowMagnitude } from "@/lib/energy-formatting";
 import NodeTooltip from "@/components/NodeTooltip";
 import LinkTooltip from "@/components/LinkTooltip";
 
@@ -743,7 +744,7 @@ export default function EnergyFlowSankey({
           "http://www.w3.org/2000/svg",
           "title",
         );
-        title.textContent = `${link.source.name} → ${link.target.name}: ${link.value.toFixed(1)} ${unit}`;
+        title.textContent = `${link.source.name} → ${link.target.name}: ${formatFlowMagnitude(link.value)} ${unit}`;
         path.appendChild(title);
       }
 
@@ -922,7 +923,7 @@ export default function EnergyFlowSankey({
           energyText.setAttribute("font-weight", "700");
           energyText.setAttribute("fill", "#000000");
           energyText.setAttribute("pointer-events", "none");
-          energyText.textContent = totalEnergy.toFixed(1);
+          energyText.textContent = formatFlowMagnitude(totalEnergy);
           svgElement.appendChild(energyText);
 
           if (boxHeight >= minHeightForUnit) {

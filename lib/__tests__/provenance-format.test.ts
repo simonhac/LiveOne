@@ -70,6 +70,12 @@ describe("formatKwh", () => {
     expect(formatKwh(13.26)).toBe("13.3");
     expect(formatKwh(0)).toBe("0.0");
   });
+  it("drops the decimal once the value reaches 100 ('over 99.9')", () => {
+    expect(formatKwh(99.9)).toBe("99.9"); // at the threshold, keep the decimal
+    expect(formatKwh(99.94)).toBe("99.9"); // rounds to 99.9 → keep
+    expect(formatKwh(99.96)).toBe("100"); // rounds to 100.0 → drop, never "100.0"
+    expect(formatKwh(123.4)).toBe("123");
+  });
 });
 
 describe("formatKgCo2", () => {

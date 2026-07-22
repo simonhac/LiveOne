@@ -37,7 +37,7 @@ import {
   formatCentsPerKwh,
   formatRenewablePct,
 } from "@/lib/provenance-format";
-import { formatValue } from "@/lib/energy-formatting";
+import { formatValue, formatFlowMagnitude } from "@/lib/energy-formatting";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
@@ -811,7 +811,10 @@ export default function SiteChartsCard({
                     name: node.name,
                     variant: "energy",
                     energy: {
-                      primary: { value: node.total.toFixed(1), unit: "kW" },
+                      primary: {
+                        value: formatFlowMagnitude(node.total),
+                        unit: "kW",
+                      },
                     },
                   };
                 }
@@ -906,7 +909,10 @@ export default function SiteChartsCard({
               // the reduction.
               const buildLinkTooltip: SankeyLinkTooltipResolver = (link) => {
                 if (unit === "kW") {
-                  return { energy: link.value.toFixed(1), energyUnit: "kW" };
+                  return {
+                    energy: formatFlowMagnitude(link.value),
+                    energyUnit: "kW",
+                  };
                 }
                 const base = {
                   energy: formatKwh(link.value),

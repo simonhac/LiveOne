@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import Tile from "@/components/Tile";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
-import { getPointValue } from "./shared";
+import { getPointValue, getMeasurementTime } from "./shared";
 import { useAreaDatum } from "@/components/dashboard/cards/shared";
 import { siteDataQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
@@ -28,6 +28,11 @@ import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
 
 const fmtPct = (x: number | null | undefined): string =>
   x == null ? "—" : `${Math.round(x * 100)}%`;
+
+/** The headline value only — no "%": the Tile renders the (small) "%" via its `unit` prop, so a "%"
+ *  here too would double it up ("21%%"). The `extra` MetricRows keep `fmtPct` (single, inline "%"). */
+const fmtPctValue = (x: number | null | undefined): string =>
+  x == null ? "—" : `${Math.round(x * 100)}`;
 
 const AUTARKY_TIP =
   "Renewable autarky — the share of your consumption covered by your OWN renewable generation " +
@@ -61,9 +66,21 @@ function MetricRow({
   );
 }
 
-function RenewablesTile({ systemId, staleThresholdSeconds }: TileRenderProps) {
+function RenewablesTile({
+  latest,
+  systemId,
+  staleThresholdSeconds,
+}: TileRenderProps) {
   const { datum, paused } = useAreaDatum(systemId ?? 0);
   const tz = datum?.system?.timezoneOffsetMin ?? 600;
+
+  // Freshness of the site's live feed (like the sibling tiles) — without a measurementTime the Tile
+  // treats the tile as permanently stale and paints the diagonal "stale" hatch + dims it.
+  const measurementTime =
+    getMeasurementTime(latest, "load/power") ??
+    getMeasurementTime(latest, "bidi.grid/power") ??
+    getMeasurementTime(latest, "source.solar/power") ??
+    undefined;
 
   // Follow the shared temporal navigator (URL state) — the same 1D/7D/30D + window the charts use.
   const { period, start, end } = useTemporalRange({ timezoneOffsetMin: tz });
@@ -88,13 +105,14 @@ function RenewablesTile({ systemId, staleThresholdSeconds }: TileRenderProps) {
   return (
     <Tile
       title="Renewables"
-      value={loading ? "…" : fmtPct(m?.renewableAutarky)}
+      value={loading ? "…" : fmtPctValue(m?.renewableAutarky)}
       unit={loading || m?.renewableAutarky == null ? undefined : "%"}
       icon={<Leaf className="w-6 h-6" />}
       iconColor="text-green-400"
       bgColor="bg-green-900/20"
       borderColor="border-green-700"
       staleThresholdSeconds={staleThresholdSeconds}
+      measurementTime={measurementTime}
       extraInfo={`over ${period}`}
       extra={
         <div className="text-xs space-y-0.5">
