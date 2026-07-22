@@ -4,6 +4,29 @@
  */
 
 /**
+ * Short month names — strictly three letters (Jan, Feb, …, Jun, Jul, Aug, Sep, …, Dec), 1-indexed as
+ * `[month - 1]`. Hardcoded rather than derived from `Intl`/`toLocaleDateString("en-AU", { month:
+ * "short" })` so month rendering is DETERMINISTIC: the ICU/CLDR data those APIs read changes between
+ * Node/ICU versions (e.g. ICU 78 renders en-AU short as "Jun"/"Sept"), which made the same code render
+ * differently across local / CI / Vercel. This is the single source of truth for every short-month
+ * label in this module.
+ */
+export const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/**
  * Format a date/time for display in the UI
  * Returns time in 12-hour format with no leading zero and lowercase am/pm
  * Date in short month format
@@ -14,7 +37,7 @@
  *
  * Examples:
  * - Time: "6:23:45 am" (with non-breaking space before am/pm)
- * - Date: "12 Sept 2025" (with non-breaking spaces)
+ * - Date: "12 Sep 2025" (with non-breaking spaces)
  */
 export function formatDateTime(
   date: Date | string,
@@ -55,23 +78,9 @@ export function formatDateTime(
   }
   timeStr += `\u00A0${period}`; // Non-breaking space before am/pm
 
-  // Format date (short month)
-  const months = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sept",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
+  // Format date (short month — the shared 3-letter table)
   const day = dateObj.getDate();
-  const month = months[dateObj.getMonth()];
+  const month = SHORT_MONTHS[dateObj.getMonth()];
   const year = dateObj.getFullYear();
 
   // Build date string with non-breaking spaces
@@ -257,9 +266,9 @@ export function formatSecondsSince(seconds: number): string {
  * @returns Formatted range string
  *
  * Examples:
- * - Same point: "2 Sept 2025" or "4:30pm, 2 Sept 2025"
- * - Same day: "4:30pm – 7:35pm, 2 Sept 2025"
- * - Same month: "3 – 5 Sept 2025"
+ * - Same point: "2 Sep 2025" or "4:30pm, 2 Sep 2025"
+ * - Same day: "4:30pm – 7:35pm, 2 Sep 2025"
+ * - Same month: "3 – 5 Sep 2025"
  * - Same year: "28 Nov – 3 Dec 2025" or "4:35pm, 2 Oct – 7:10am, 11 Nov 2024"
  * - Different years: "30 Dec 2024 – 2 Jan 2025"
  */
@@ -288,11 +297,8 @@ export function formatDateTimeRange(
     return `${displayHour}${minuteStr}${period}`;
   };
 
-  // Helper to format month using locale (e.g., "Sep", "Oct")
-  const formatMonth = (month: number): string => {
-    const date = new Date(2000, month - 1, 1);
-    return date.toLocaleDateString("en-AU", { month: "short" });
-  };
+  // Short month via the shared 3-letter table (deterministic; not ICU-dependent). 1-indexed month.
+  const formatMonth = (month: number): string => SHORT_MONTHS[month - 1];
 
   // Check if it's the same point in time
   if (start.compare(end) === 0) {

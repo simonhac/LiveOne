@@ -472,6 +472,10 @@ export const pointReadingsFlowAttr1d = pgTable(
     // Metric legs — null when the source's intensity was unknown for that edge/day.
     emissionsG: doublePrecision("emissions_g"), // attributed gCO2
     renewableKwh: doublePrecision("renewable_kwh"), // attributed renewable energy (kWh)
+    // Joint behind-the-meter-AND-renewable energy (kWh) — the renewables tile's autarky /
+    // own-renewable-self-consumption legs. Null = self-renewable intensity unknown for that edge/day
+    // (a partial-day edge makes metrics 1-2 unavailable; metric 3 uses renewable_kwh and is unaffected).
+    selfRenewableKwh: doublePrecision("self_renewable_kwh"),
     costC: doublePrecision("cost_c"), // attributed cost (cents, signed)
 
     // Confidence: energy whose attribution used an estimated/unknown source intensity.

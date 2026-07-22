@@ -218,6 +218,13 @@
       "when": 1784710555893,
       "tag": "0030_white_polaris",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784735233487,
+      "tag": "0031_bright_ben_parker",
+      "breakpoints": true
     }
   ]
 }

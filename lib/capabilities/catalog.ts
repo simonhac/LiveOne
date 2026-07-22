@@ -92,6 +92,13 @@ export const TILE_CATALOG: Record<TileId, TileCatalogEntry> = {
     requires: { all: ["grid/rate"] },
   },
   ev: { id: "ev", label: "EV", requires: { all: ["ev/soc"] } },
+  // Solar OR grid: a solar site gets all three renewables metrics; a grid-only site still gets the
+  // renewable-share metric (metrics 1 & 2 then correctly read 0 / — rather than being hidden).
+  renewables: {
+    id: "renewables",
+    label: "Renewables",
+    requires: { any: ["solar/power", "grid/power"] },
+  },
 };
 
 /** Canonical tile order (mirrors TILE_IDS). */
@@ -103,6 +110,7 @@ export const TILE_ORDER: readonly TileId[] = [
   "house-to-grid",
   "amber",
   "ev",
+  "renewables",
 ];
 
 /** Which tiles an area/device with `caps` can show, in canonical order — replaces `availableTiles`. */

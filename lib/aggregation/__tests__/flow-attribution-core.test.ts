@@ -22,6 +22,7 @@ function constIntensity(
   return {
     emissions: new Array(n).fill(emissions),
     renewable: new Array(n).fill(renewable),
+    selfRenewable: new Array(n).fill(renewable),
     price: new Array(n).fill(price),
     estimated: new Array(n).fill(estimated),
   };

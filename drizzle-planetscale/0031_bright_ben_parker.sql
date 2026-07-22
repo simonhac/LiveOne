@@ -1,0 +1,1 @@
+ALTER TABLE "point_readings_flow_attr_1d" ADD COLUMN "self_renewable_kwh" double precision;

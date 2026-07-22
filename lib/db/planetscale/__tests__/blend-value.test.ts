@@ -7,6 +7,7 @@ function step(partial: Partial<FoldStep>): FoldStep {
   return {
     batteryEmissionsIntensity: null,
     batteryRenewableFraction: null,
+    batterySelfRenewableFraction: null,
     batteryPrice: null,
     batteryPriceForgone: null,
     storedKwh: 0,

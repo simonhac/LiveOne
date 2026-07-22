@@ -50,6 +50,9 @@ export interface DailyFlowMatrix {
   //    is the confidence denominator (energy attributed with an estimated/unknown intensity).
   emissionsG?: (number | null)[][]; // attributed gCO2
   renewableKwh?: (number | null)[][]; // attributed renewable energy (kWh)
+  /** attributed SELF-renewable energy (kWh) — behind-the-meter AND renewable (the renewables tile's
+   *  autarky / own-renewable-self-consumption legs). null cell = self-renewable intensity unknown. */
+  selfRenewableKwh?: (number | null)[][];
   costC?: (number | null)[][]; // attributed cost (cents, signed)
   estimatedKwh?: number[][];
 }

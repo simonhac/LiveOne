@@ -15,6 +15,7 @@ import { amberTile } from "./amber";
 import { evTile } from "./ev";
 import { hotWaterTile } from "./hot-water";
 import { oeGridTile } from "./oe-grid";
+import { renewablesTile } from "./renewables";
 
 export const TILE_RENDERERS = {
   solar: solarTile,
@@ -24,5 +25,6 @@ export const TILE_RENDERERS = {
   "house-to-grid": houseToGridTile,
   amber: amberTile,
   ev: evTile,
+  renewables: renewablesTile,
   "oe-grid": oeGridTile,
 } satisfies Record<TileView, TilePlugin>;

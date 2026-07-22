@@ -62,6 +62,36 @@ describe("computeBatteryProvenance", () => {
         );
   });
 
+  it("self-renewable leg: solar full, grid zero, battery ≤ renewable (joint attribute wired)", () => {
+    const inputs = scenario();
+    const result = computeBatteryProvenance(inputs, { efficiency: 1 });
+    const acc = result.accounting;
+    const si = (p: string) => inputs.sources.findIndex((s) => s.path === p);
+    const solar = si("source.solar");
+    const grid = si("source.grid");
+    const battery = si("source.battery");
+    for (let l = 0; l < inputs.loads.length; l++) {
+      // Grid is never behind-the-meter → self-renewable is exactly 0 on every grid edge.
+      expect(acc.selfRenewableKwh[grid][l]).toBeCloseTo(0, 9);
+      // Solar is fully self-renewable (== its renewable leg, since renewable fraction is 1).
+      expect(acc.selfRenewableKwh[solar][l]).toBeCloseTo(
+        acc.renewableKwh[solar][l],
+        9,
+      );
+      // The battery blend's self-renewable can never exceed its renewable leg (Qsr ≤ Qr).
+      expect(acc.selfRenewableKwh[battery][l]).toBeLessThanOrEqual(
+        acc.renewableKwh[battery][l] + 1e-9,
+      );
+    }
+    // The battery charged from solar+grid, so its discharge to the EV carries SOME (but not all) of its
+    // energy as self-renewable — the solar share only.
+    const evL = inputs.loads.findIndex((x) => x.path === "load.ev");
+    expect(acc.selfRenewableKwh[battery][evL]).toBeGreaterThan(0);
+    expect(acc.selfRenewableKwh[battery][evL]).toBeLessThan(
+      acc.energyKwh[battery][evL],
+    );
+  });
+
   it("battery renewable fraction stays in [0,1] under η<1 (golden guard)", () => {
     const result = computeBatteryProvenance(scenario(), { efficiency: 0.9 });
     for (const s of result.steps) {

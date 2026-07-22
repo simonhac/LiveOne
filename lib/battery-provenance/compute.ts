@@ -57,6 +57,7 @@ export type BatterySourceStep = Pick<
   FoldStep,
   | "batteryEmissionsIntensity"
   | "batteryRenewableFraction"
+  | "batterySelfRenewableFraction"
   | "batteryPrice"
   | "estimatedFraction"
 >;
@@ -99,6 +100,8 @@ export function buildSourceIntensities({
       return {
         emissions: timeline.map(() => 0),
         renewable: timeline.map(() => 1),
+        // Our own solar is BOTH behind-the-meter and renewable → self-renewable 1.0.
+        selfRenewable: timeline.map(() => 1),
         price: timeline.map(() => solarCost),
         estimated: timeline.map(() => false),
       };
@@ -107,6 +110,10 @@ export function buildSourceIntensities({
       return {
         emissions: gridEmissions,
         renewable: gridRenewable,
+        // Grid energy is never behind-the-meter — self-renewable 0.0 even when its `renewable` fraction
+        // is nonzero (grid mix) OR when this `source.grid` is actually an off-grid generator (self-origin
+        // but not renewable). This 0 is what excludes generator/grid energy from renewable autarky.
+        selfRenewable: timeline.map(() => 0),
         price: gridPrice,
         estimated: timeline.map(
           (_, i) => gridEmissionsEstimated[i] || gridPriceEstimated[i],
@@ -116,17 +123,21 @@ export function buildSourceIntensities({
     if (src.path === "source.battery") {
       const emissions = new Array<number | null>(timeline.length).fill(null);
       const renewable = new Array<number | null>(timeline.length).fill(null);
+      const selfRenewable = new Array<number | null>(timeline.length).fill(
+        null,
+      );
       const price = new Array<number | null>(timeline.length).fill(null);
       const estimated = new Array<boolean>(timeline.length).fill(false);
       for (let i = 0; i < steps.length; i++) {
         emissions[i] = steps[i].batteryEmissionsIntensity;
         renewable[i] = steps[i].batteryRenewableFraction;
+        selfRenewable[i] = steps[i].batterySelfRenewableFraction;
         price[i] = steps[i].batteryPrice;
         estimated[i] = steps[i].estimatedFraction > 0;
       }
-      return { emissions, renewable, price, estimated };
+      return { emissions, renewable, selfRenewable, price, estimated };
     }
-    return null; // e.g. source.generator — unknown intensity
+    return null; // e.g. source.generator — unknown intensity (selfRenewable null)
   });
 }
 

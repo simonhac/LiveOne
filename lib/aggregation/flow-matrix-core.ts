@@ -40,11 +40,20 @@ export interface FlowMatrixResult {
 /**
  * Per-source, per-interval intensity series (index-aligned to `sources` and `timestamps`; null = unknown).
  * Solar carries {0, 1, solarCost}; grid the OE/Amber series; the battery the provenance fold's blend.
+ *
+ * `selfRenewable` is the JOINT attribute (behind-the-meter AND renewable) — the single place it is
+ * defined per source: solar = 1.0 (our own renewable generation), grid = 0.0 (grid renewables are not
+ * behind the meter), off-grid/backup generator = 0.0 (carried as `source.grid` — self-origin but NOT
+ * renewable), battery = the fold's self-renewable blend (Qsr/E), other = null (unknown). It is NOT a
+ * product of `renewable` × anything: the two attributes are correlated inside the battery (solar charge
+ * is both, grid charge is renewable-only), so it needs its own stock and column.
  */
 export interface SourceIntensity {
   emissions: (number | null)[]; // gCO2 per kWh
   renewable: (number | null)[]; // renewable fraction 0..1
   price: (number | null)[]; // cents per kWh (may be negative)
+  /** Joint behind-the-meter-AND-renewable fraction 0..1; null = unknown (see interface doc). */
+  selfRenewable: (number | null)[];
   estimated: boolean[]; // true where this source's intensity is provisional/estimated
 }
 
@@ -58,6 +67,10 @@ export interface FlowAccountingResult {
   emissionsG: number[][];
   /** [s][l] attributed renewable energy (kWh), over intervals with a known renewable fraction. */
   renewableKwh: number[][];
+  /** [s][l] attributed SELF-renewable energy (kWh) — behind-the-meter AND renewable — over intervals
+   *  with a known self-renewable fraction. The joint attribute powering renewable-autarky / own-renewable
+   *  self-consumption; never derivable from `renewableKwh`. */
+  selfRenewableKwh: number[][];
   /** [s][l] attributed cost (cents), over intervals with a known price. */
   costC: number[][];
   /** [s][l] energy (kWh) whose source intensity was estimated OR unknown (confidence denominator). */
@@ -66,6 +79,8 @@ export interface FlowAccountingResult {
   emissionsKnownKwh: number[][];
   /** [s][l] energy (kWh) with a known renewable fraction. */
   renewableKnownKwh: number[][];
+  /** [s][l] energy (kWh) with a known self-renewable fraction — the unbiased-average denominator. */
+  selfRenewableKnownKwh: number[][];
   /** [s][l] energy (kWh) with a known price. */
   priceKnownKwh: number[][];
   /** # of intervals that contributed energy (coverage signal). */
@@ -139,10 +154,12 @@ export function computeFlowAccounting(input: {
   const energyKwh = zeros(S, L);
   const emissionsG = zeros(S, L);
   const renewableKwh = zeros(S, L);
+  const selfRenewableKwh = zeros(S, L);
   const costC = zeros(S, L);
   const estimatedKwh = zeros(S, L);
   const emissionsKnownKwh = zeros(S, L);
   const renewableKnownKwh = zeros(S, L);
+  const selfRenewableKnownKwh = zeros(S, L);
   const priceKnownKwh = zeros(S, L);
   let intervalsUsed = 0;
 
@@ -208,6 +225,9 @@ export function computeFlowAccounting(input: {
           const si = sourceIntensities![s] ?? null;
           const ei = si ? si.emissions[i] : null;
           const rf = si ? si.renewable[i] : null;
+          // `selfRenewable` is optional on older SourceIntensity producers; guard so its absence reads
+          // as "unknown" (null) rather than throwing — it never perturbs the energy or other metric legs.
+          const sr = si && si.selfRenewable ? si.selfRenewable[i] : null;
           const pr = si ? si.price[i] : null;
           const est = si ? si.estimated[i] === true : true;
 
@@ -218,6 +238,10 @@ export function computeFlowAccounting(input: {
           if (rf !== null) {
             renewableKwh[s][l] += contribution * rf;
             renewableKnownKwh[s][l] += contribution;
+          }
+          if (sr !== null) {
+            selfRenewableKwh[s][l] += contribution * sr;
+            selfRenewableKnownKwh[s][l] += contribution;
           }
           if (pr !== null) {
             costC[s][l] += contribution * pr;
@@ -238,10 +262,12 @@ export function computeFlowAccounting(input: {
     energyKwh,
     emissionsG,
     renewableKwh,
+    selfRenewableKwh,
     costC,
     estimatedKwh,
     emissionsKnownKwh,
     renewableKnownKwh,
+    selfRenewableKnownKwh,
     priceKnownKwh,
     intervalsUsed,
   };

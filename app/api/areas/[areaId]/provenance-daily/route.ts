@@ -173,6 +173,7 @@ export async function GET(
     fields.foldStoredKwh.push(env ? env.state.storedKwh : null);
     fields.foldEstimatedKwh.push(env ? env.state.estimatedKwh : null);
     fields.foldRenewableKwh.push(env ? env.state.renewableKwh : null);
+    fields.foldSelfRenewableKwh.push(env ? env.state.selfRenewableKwh : null);
     fields.foldCarbonG.push(env ? env.state.carbonG : null);
     fields.foldCostC.push(env ? env.state.costC : null);
     fields.foldForgoneC.push(env ? env.state.forgoneC : null);

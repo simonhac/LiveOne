@@ -1,10 +1,11 @@
 /**
  * Register the derived battery-provenance BLEND points for a system — the HWS/run-tracking derived-point
- * pattern (a normal `point_info` row + its own agg_5m + KV latest; NO new table/API/flag). Five points,
+ * pattern (a normal `point_info` row + its own agg_5m + KV latest; NO new table/API/flag). Six points,
  * all on stem `bidi.battery`, describe "the energy currently in the battery":
- *   bidi.battery/carbon-intensity   (gCO2/kWh)
- *   bidi.battery/renewable-fraction (%)
- *   bidi.battery/price              (c/kWh)  — ACTUAL (out-of-pocket) cost basis
+ *   bidi.battery/carbon-intensity        (gCO2/kWh)
+ *   bidi.battery/renewable-fraction      (%)
+ *   bidi.battery/self-renewable-fraction (%)      — behind-the-meter AND renewable (Qsr/E)
+ *   bidi.battery/price                   (c/kWh)  — ACTUAL (out-of-pocket) cost basis
  *   bidi.battery/price-opportunity  (c/kWh)  — forgone export revenue component (Qf/E, ≥ 0)
  *   bidi.battery/stored-energy      (kWh)    — usable stored energy (E); the totals the Contents card
  *                                              shows are `intensity × stored-energy`, reconstructed exactly.
@@ -36,6 +37,11 @@ export const BLEND_POINTS: BlendPointSpec[] = [
     metricType: "renewable-fraction",
     metricUnit: "%",
     displayName: "Battery Renewable %",
+  },
+  {
+    metricType: "self-renewable-fraction",
+    metricUnit: "%",
+    displayName: "Battery Self-Renewable %",
   },
   {
     metricType: "price",

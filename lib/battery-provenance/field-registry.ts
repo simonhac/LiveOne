@@ -35,6 +35,7 @@ export type FoldDerivedKey =
   | "foldStoredKwh"
   | "foldEstimatedKwh"
   | "foldRenewableKwh"
+  | "foldSelfRenewableKwh"
   | "foldCarbonG"
   | "foldCostC"
   | "foldForgoneC";
@@ -240,6 +241,13 @@ export const FIELD_META = {
     decimals: 2,
     description:
       "Renewable-energy content Qr of the store at day start. The vended renewable fraction is Qr/E.",
+  },
+  foldSelfRenewableKwh: {
+    label: "Self-renewable Qsr",
+    unit: "kWh",
+    decimals: 2,
+    description:
+      "Self-renewable content Qsr of the store at day start — energy that is BOTH behind-the-meter and renewable (only solar charge feeds it). The vended self-renewable fraction is Qsr/E; always ≤ Qr.",
   },
   foldCarbonG: {
     label: "Carbon Qc",
@@ -485,6 +493,17 @@ export const PROVENANCE_CHARTS: ProvenanceChartDef[] = [
         description:
           "Renewable share of the store at day start: Qr/E. What fraction of a kWh vended from the battery at midnight would count as renewable. Null when the store is empty.",
         value: foldRatio("foldRenewableKwh", 100),
+      },
+      {
+        id: "foldSelfRenewablePct",
+        label: "Self-renewable",
+        unit: "%",
+        axis: "y1",
+        color: SERIES_PALETTE.green,
+        decimals: 1,
+        description:
+          "Self-renewable share of the store at day start: Qsr/E — the fraction of a vended kWh that is BOTH our own (behind-the-meter) and renewable. Always ≤ the renewable share (grid renewables lift Qr but not Qsr). Null when the store is empty.",
+        value: foldRatio("foldSelfRenewableKwh", 100),
       },
     ],
   },
