@@ -1,3 +1,5 @@
+import { formatFlowMagnitude } from "@/lib/energy-formatting";
+
 /**
  * Shared spellings for provenance metrics (dollars/cents/grams/percent/kWh) — extracted byte-identical
  * from the inline formatting that used to live in `LoadProvenanceCard.tsx` so the Sankey node tooltip
@@ -29,9 +31,9 @@ export function formatRenewablePct(p: number | null): string {
   return p != null ? `${Math.round(p)}%` : "—";
 }
 
-/** "X.Y" (1dp kWh). */
+/** "X.Y" (1dp kWh), dropping the decimal once the value reaches 100 (see formatFlowMagnitude). */
 export function formatKwh(k: number): string {
-  return k.toFixed(1);
+  return formatFlowMagnitude(k);
 }
 
 /** "X.Y" (1dp kg CO2 — `kgCo2` is already grams/1000, e.g. `LoadProvenanceSummary.kgCo2`). */
