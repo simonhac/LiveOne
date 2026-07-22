@@ -1,5 +1,11 @@
 #!/usr/bin/env tsx
 /**
+ * ⚠️ ABANDONED 2026-07-22 — DO NOT RUN. Superseded by the approved config-v4 clean-sheet redesign
+ * (Option A: eager areas). config-v4 KEEPS and re-mints the implied areas-of-one this script would
+ * delete — they hold the only tz/location and the uuid-keyed flow_attr_1d / battery_provenance_daily
+ * history the cutover preserves. Retained for historical context only. See
+ * docs/plans/config-v4-clean-sheet.md §14 and docs/plans/config-v4-execution-plan.md.
+ *
  * Part A2 of the areas cleanup: retire the implied "area-of-one" rows + the stray "Kuti House"
  * composite. Areas are EXPLICIT now (A1 removed the eager mint + lazy heal + flow-for-devices), so these
  * rows are inert duplicates. DELETES areas {1,2,3,4,5,6,9,10,11,12,14, 1000001} and their orphaned
