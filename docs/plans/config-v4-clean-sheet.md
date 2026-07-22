@@ -1,6 +1,7 @@
 # Config v4 — the clean-sheet config model
 
-> **Status: PROPOSAL** — for review; no implementation, no migrations. Written 2026-07-21.
+> **Status: APPROVED 2026-07-22** — implementation underway; dark-prep phases ship first, behind the
+> unchanged v3 app. Written 2026-07-21 (this doc stays the canonical rationale).
 >
 > **This document supersedes** — they inspired it, they do not constrain it:
 > [identity-address-split-and-labels.md](identity-address-split-and-labels.md) (absorbed: `points.id`
@@ -53,7 +54,7 @@ editor, and agents/scripts) to manipulate via APIs; inspired by Home Assistant's
    (auto-created if needed). One token semantics survives.
 5. **Full rename `systems` → `devices`** — table, types, routes, vocabulary. Old handle-era code
    should fail loudly, not compile quietly.
-6. **Public IDs are prefixed TypeIDs** (`dev_…`, `pt_…`, `area_…`, `dash_…`; UUIDv7 under base32),
+6. **Public IDs are prefixed TypeIDs** (confirmed 2-letter prefixes 2026-07-22: `dv_` device, `pt_` point, `ar_` area, `db_` dashboard, `dx_` derivation, `bn_` binding; UUIDv7 under base32),
    plus owner-scoped human **slugs** for pretty URLs. Not an HA convention (HA uses raw ULIDs +
    slugs); Stripe-style, chosen because typed IDs turn handle-style confusion into a parse error.
 7. **No device grants.** `user_systems` dies with no replacement. Device access = owner
@@ -88,7 +89,7 @@ DDL-style sketches (Drizzle is the real source of truth once implemented). All t
 
 ```
 devices
-  id               uuid PK            -- v7; public form dev_…
+  id               uuid PK            -- v7; public form dv_…
   rid              int  NOT NULL UNIQUE   -- internal recorder key; = legacy systems.id for
                                           -- migrated rows (sessions/outbox migrate by rename)
   owner_user_id    text               -- NULL = platform-public (OE regions); no grants table
@@ -266,7 +267,7 @@ written every poll: never exported, never granted, no public ID, outside the con
 
 ```
 dashboards
-  id           uuid PK               -- public form dash_…
+  id           uuid PK               -- public form db_…
   legacy_id    int UNIQUE            -- frozen: today's serial id, for /dashboard/id/{n} 301s
   owner_user_id text NOT NULL
   name         text NOT NULL
@@ -337,7 +338,9 @@ keyspaces and the `"systemId.pointIndex"` ref grammar · `deviceSystemId` in des
 ## 5. ID strategy — one seam
 
 **Public:** every config row has a UUIDv7 `id`; the wire/URL form is a TypeID
-(`dev_01j9xz…`, 26 chars). One codec module (`lib/ids/`); the DB never stores prefixes.
+(`dv_01j9xz…`, 26 chars). Confirmed 2-letter prefixes: `dv` device, `pt` point, `ar` area, `db`
+dashboard, `dx` derivation, `bn` binding. One codec module (`lib/ids/`, shipped Phase 1); the DB
+never stores prefixes.
 
 **Internal (hot):** a single global integer per registry row, HA-recorder-`metadata_id` style:
 
@@ -395,7 +398,7 @@ Card and tile **unify into one primitive**. The document is a tree of two node k
     "children": [
       {
         "id": "n_c3d4", "kind": "group",
-        "area": "area_01j9xz…",          // context binding — inherited by descendants
+        "area": "ar_01j9xz…",            // context binding — inherited by descendants
         "heading": true,                  // renders the area header (this IS a v3 "section")
         "children": [
           {
@@ -404,14 +407,14 @@ Card and tile **unify into one primitive**. The document is a tree of two node k
               { "id": "n_g7h8", "kind": "card", "type": "solar",  "size": { "columns": 2 } },
               { "id": "n_i9j0", "kind": "card", "type": "battery","size": { "columns": 2 } },
               { "id": "n_k1l2", "kind": "card", "type": "oe-grid",
-                "device": "dev_01j9ab…", "size": { "columns": 2 } }
+                "device": "dv_01j9ab…", "size": { "columns": 2 } }
             ]
           },
           { "id": "n_m3n4", "kind": "card", "type": "chart",
             "config": { "variant": "stacked-areas", "split": "load" } },
           { "id": "n_o5p6", "kind": "card", "type": "sankey" },
           { "id": "n_q7r8", "kind": "card", "type": "generator-runs",
-            "device": "dev_01j9cd…" }
+            "device": "dv_01j9cd…" }
         ]
       }
     ]
@@ -466,12 +469,12 @@ the card 403s on fetch).
 ### 9.1 Primary edit mechanism: whole-doc PUT + optimistic concurrency
 
 ```
-GET  /api/v4/dashboards/dash_…            → 200, ETag:"17", { id, name, slug, revision, doc }
-PUT  /api/v4/dashboards/dash_…  If-Match:"17"  { doc }
+GET  /api/v4/dashboards/db_…            → 200, ETag:"17", { id, name, slug, revision, doc }
+PUT  /api/v4/dashboards/db_…  If-Match:"17"  { doc }
      → 200 { revision: 18, doc: …normalized… }    // canonical doc echoed back
      → 412 { error:"revision-conflict", current:19 }
      → 422 { errors:[{path,code,message}], warnings:[…] }
-POST /api/v4/dashboards/dash_…/validate   → { valid, errors, warnings, normalized }   // dry-run
+POST /api/v4/dashboards/db_…/validate   → { valid, errors, warnings, normalized }   // dry-run
 ```
 
 Why whole-doc PUT: docs are KBs; the editor holds the whole doc anyway (undo = a client-side doc
@@ -495,7 +498,7 @@ invalidation happens **inside** handlers (tools never know KV exists).
 | `/devices` | GET | readable devices: id, name, vendor, status, capabilities |
 | `/devices/{id}` | GET, PATCH | PATCH: name/config meta |
 | `/devices/{id}/points` | GET | points with `pt_` ids + role suggestions |
-| `/areas` | GET, POST | POST `{name, slug?, members:[dev_…], location?, day_offset_min, display_timezone}` |
+| `/areas` | GET, POST | POST `{name, slug?, members:[dv_…], location?, day_offset_min, display_timezone}` |
 | `/areas/{id}` | GET, PATCH, DELETE | GET = meta + members + bindings + capabilities in ONE payload |
 | `/areas/{id}/members` | PUT | full replace (replaces POST/DELETE pair) |
 | `/areas/{id}/bindings` | PUT, GET | full replace, kept from today (already the most tool-friendly shape); re-keyed to `pt_` ids |
@@ -536,7 +539,7 @@ KV/cache awareness.
    area/device its name, layout hints, capabilities, display timezone. Everything the shell needs
    to paint structure/headers instantly; no points, no readings; **cacheable per
    `(dashboard, revision)`** — the revision is a free cache key.
-2. Cards self-fetch live data keyed by public ID: `/api/data?area=area_…` / `?device=dev_…`
+2. Cards self-fetch live data keyed by public ID: `/api/data?area=ar_…` / `?device=dv_…`
    (`?systemId=N` survives as a compat alias via `legacy_handles`), `?access=` appended for
    shared views exactly as today.
 
@@ -576,7 +579,7 @@ whole cutover on a prod snapshot branch · pre-create new tables empty.
    re-pointed at auto-created dashboards) · dashboards get uuids + frozen `legacy_id`, docs
    rewritten v3→v4 · `users.default_dashboard_id` re-pointed.
 6. **KV**: delete `latest:system:*` / `subscriptions:system:*`; rebuild the subscription registry
-   under the new keyspace (`latest:area:{area_…}` / `latest:device:{dev_…}`); warm from PG or
+   under the new keyspace (`latest:area:{ar_…}` / `latest:device:{dv_…}`); warm from PG or
    accept one poll cycle cold.
 7. **Deploy the cutover build**; parity-check (row counts; per-point last value; per-area
    point-set vs a pre-freeze snapshot; agg_1d day boundaries; flow_attr_1d sums untouched);
@@ -618,9 +621,11 @@ slug URLs unchanged · share-token strings unchanged.
 
 ## 14. Interactions with in-flight work
 
-- **areas-cleanup (A2 pending)**: its "delete implied areas / stop minting areas-of-one" leg is
-  **reversed** by locked decision 3 (eager areas). Reconcile before executing either — the
-  deletion script should not run if this proposal proceeds.
+- **areas-cleanup (A2): RESOLVED 2026-07-22 — Option A.** The proposal proceeds, so its "delete
+  implied areas / stop minting areas-of-one" leg is **reversed**: `scripts/cleanup/
+  retire-implied-areas.ts` is abandoned and MUST NOT run. The cutover keeps and re-mints the
+  areas-of-one (they hold the tz/location and the uuid-keyed flow_attr_1d / provenance history). A1
+  ("make area flow explicit only") already landed on `main` (#189).
 - **flow-matrix unification (`simonhac/bullard`, `FLOW_ATTR_UNIFIED`)**: complementary —
   flow_attr_1d is area-uuid-keyed and survives the cutover untouched; land it first.
 - **SSR / perf workspace (perf-test-instrumentation)**: see §10 — educate it with this doc so it
