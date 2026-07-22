@@ -10,6 +10,55 @@
 > branch/PR off `main`; the branch that ships a phase is archived, but this doc lives on `main`, so
 > the next workspace always has the current plan.
 
+## ▶ NEXT ACTION — paste this into a fresh workspace to do the next PR
+
+> **Self-perpetuating handoff (maintenance rule).** This block always holds exactly ONE live prompt: the
+> very next PR to build. Whoever lands that PR **must replace this block** with the following PR's prompt
+> — same structure, same closing "when landed, write the next prompt here" instruction — so the chain
+> keeps itself current. Keep the prose lengths and constraints; only swap the specifics (PR letter,
+> scope, files, verify steps, baseline count, prior-PR/branch references).
+
+```text
+Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
+config-v4-clean-sheet.md for the why. PR-A (the DAO seam foundation + lint ratchet) landed — see PR #214
+/ branch simonhac/config-v4-phase3-dao-seam: lib/registry/registry-cache.ts (RegistryCache),
+lib/readings/dao.ts (ReadingsDao), lib/readings/schema-internal.ts, and the ratchet (.eslintrc.json +
+scripts/check-readings-boundary.mjs + .readings-boundary-baseline.json). Nothing consumes the seam yet.
+
+Do PR-B: adopt the DAO in the observations receiver (receiver-first). This is the FIRST prod-write-path
+change — build and verify it fully, but PAUSE for Simon's explicit go-ahead before committing/merging.
+Phase 3 adds NO migration.
+
+Scope:
+1. Publisher payload v2 — add `pointUid: string` to `Observation` (lib/observations/types.ts), set in
+   `buildObservations` (lib/observations/publisher.ts) from `input.point.pointUid`. To have it available,
+   surface `pointUid` on the served `PointInfoRow` + `pgPointInfoToServed` (lib/point/point-manager.ts) —
+   NOT `rid` (stays below-seam). `RawObservationInput.point` is a `PointInfoRow`, so the uuid is then in
+   hand at publish time. Additive/back-compatible (keep the existing `debug.reference`).
+2. Dual-grammar receiver (app/api/observations/receive/route.ts) — resolve each observation to a `PointId`
+   two ways: (a) new v2 → `Point.encode(obs.pointUid)`; (b) buffered/in-flight old "{systemId}.{index}"
+   refs → `RegistryCache.pointForAddr(systemId, index)`. Route writes through `ReadingsDao.insertRaw` /
+   `insert5m({upsert})` INSIDE the existing `db.transaction` (pass the tx as `exec`; keep session-first
+   ordering — `insertRaw` has the session FK). Device identity stays `systemId` (== future device_rid; no
+   device uuid column). Keep the 5m-recompute skip-missing-meta guard BEFORE any PointId resolution
+   (aggregate-points-pg.ts is best-effort — must not throw UnknownIdError); don't regress it.
+3. Shrink the ratchet — remove app/api/observations/receive/route.ts from BOTH .eslintrc.json's baseline
+   overrides AND .readings-boundary-baseline.json app_lib (the STALE check enforces this). Leave
+   aggregate-points-pg.ts etc. for later reader PRs.
+
+Verify before asking for go-ahead: `npm run build:local && npm run type-check` clean; `node
+scripts/check-readings-boundary.mjs` green with 30 baselined; `npm test` green; and drive a REAL poll →
+receiver → read back via `ReadingsDao` and confirm identical rows (the plan's Phase-3 verification). Then
+stop and report; Simon gives the go-ahead to land.
+
+WHEN PR-B IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
+block at the top with the PR-C prompt (first writer/reader module migrations to ReadingsDao, one module
+per PR: start with the materialization writers aggregate-points-pg.ts 5m/1d recompute + daily-points.ts,
+then readers history/readings-pg.ts, flow-series-pg.ts, battery-provenance/load.ts, coverage/find-gaps.ts,
+the admin/cron raw-SQL routes — each PR migrates one module AND deletes its baseline entry; writer PRs
+pause for go-ahead). Keep this same self-perpetuating closing instruction in the new block.
+```
+
 ## Progress
 
 | Phase | State | Notes |
