@@ -9,6 +9,7 @@
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo } from "@/lib/db/planetscale/schema";
+import { mintPointUid } from "@/lib/point/mint-point-uid";
 
 const HWS_STEM = "load.hws";
 const TEMP_PHYSICAL_PATH = "derived/load.hws/temperature"; // synthetic, unique per system
@@ -92,6 +93,7 @@ export async function ensureHwsTemperaturePoint(
       subsystem: null,
       transform: null,
       active: true,
+      pointUid: await mintPointUid(systemId, TEMP_PHYSICAL_PATH),
       createdAt: new Date(),
     })
     .returning({ index: pointInfo.index });

@@ -20,6 +20,7 @@ import {
 } from "@/lib/point/series-info";
 import { SystemIdentifier, PointReference } from "@/lib/identifiers";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
+import { mintPointUid } from "@/lib/point/mint-point-uid";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
@@ -457,6 +458,10 @@ export class PointManager {
         subsystem: pointData.subsystem ?? null,
         active: pointData.active,
         transform: pointData.transform,
+        pointUid: await mintPointUid(
+          pointData.systemId,
+          pointData.physicalPathTail,
+        ),
         createdAt: new Date(), // PG native timestamp
       });
 
@@ -575,9 +580,9 @@ export class PointManager {
             sys.vendorSiteId,
             metadata.physicalPathTail,
           )
-        : null;
+        : uuidv7(); // no vendor identity to derive from → random uid (point_uid is NOT NULL)
 
-      const insertValues = (pointUid: string | null) => ({
+      const insertValues = (pointUid: string) => ({
         systemId,
         index: nextIndex,
         physicalPathTail: metadata.physicalPathTail,
@@ -602,7 +607,7 @@ export class PointManager {
           // point_uid is identity — deliberately NOT overwritten on conflict.
         },
       };
-      const doInsert = async (pointUid: string | null) => {
+      const doInsert = async (pointUid: string) => {
         const [row] = await pg
           .insert(pgPointInfoTable)
           .values(insertValues(pointUid))
