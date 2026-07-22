@@ -29,4 +29,5 @@ export type TileId =
   | "battery"
   | "house-to-grid"
   | "amber"
-  | "ev";
+  | "ev"
+  | "renewables";

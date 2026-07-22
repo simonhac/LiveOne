@@ -23,6 +23,10 @@ import {
 } from "@/lib/capabilities/catalog";
 
 // ── The original derivers, inlined verbatim as the reference oracle ─────────────────────────────
+// The original P5 tile set PLUS the later-added `renewables` tile. The equivalence oracle is extended
+// with each genuinely-new tile and its intended rule (renewables: any of solar/grid — see below), so
+// this test keeps verifying that the catalog matches the hand-specified reference rather than freezing
+// the tile set at the P5 snapshot.
 const LEGACY_TILE_IDS: readonly TileId[] = [
   "solar",
   "load",
@@ -31,6 +35,7 @@ const LEGACY_TILE_IDS: readonly TileId[] = [
   "house-to-grid",
   "amber",
   "ev",
+  "renewables",
 ];
 const hasVal = (latest: LatestPointValues, path: string): boolean =>
   latest[path]?.value != null;
@@ -57,6 +62,8 @@ function legacyAvailableTiles(latest: LatestPointValues): TileId[] {
     "house-to-grid": hasVal(latest, "bidi.grid/power"),
     amber: hasVal(latest, "bidi.grid.import/rate"),
     ev: hasVal(latest, "ev.battery/soc"),
+    // renewables: solar generation OR a grid connection (grid/power ← bidi.grid/power).
+    renewables: solar || hasVal(latest, "bidi.grid/power"),
   };
   return LEGACY_TILE_IDS.filter((id) => available[id]);
 }

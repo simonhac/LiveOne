@@ -35,7 +35,7 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
       leadWithDeviceMetrics: true,
     },
     want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"battery"},{"view":"house-to-grid"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}},{"type":"generator-runs"}]}]}',
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"battery"},{"view":"house-to-grid"},{"view":"renewables"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}},{"type":"generator-runs"}]}]}',
     ),
   },
   {
@@ -57,7 +57,7 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
       leadWithDeviceMetrics: true,
     },
     want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"oe-grid","deviceSystemId":12}]},{"type":"chart","id":"chart:load","chart":{"variant":"stacked-areas","split":"load"}},{"type":"chart","id":"chart:generation","chart":{"variant":"stacked-areas","split":"generation"}}]}]}',
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"renewables"},{"view":"oe-grid","deviceSystemId":12}]},{"type":"chart","id":"chart:load","chart":{"variant":"stacked-areas","split":"load"}},{"type":"chart","id":"chart:generation","chart":{"variant":"stacked-areas","split":"generation"}}]}]}',
     ),
   },
   {
@@ -123,7 +123,7 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
       aggregate: false,
     },
     want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}}]}]}',
+      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"renewables"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}}]}]}',
     ),
   },
 ];

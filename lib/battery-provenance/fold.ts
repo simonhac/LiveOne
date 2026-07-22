@@ -176,6 +176,14 @@ export interface FoldState {
   carbonG: number;
   /** Qr — renewable-energy content of the store (kWh). */
   renewableKwh: number;
+  /**
+   * Qsr — SELF-renewable content of the store (kWh): energy that is BOTH behind-the-meter (our own
+   * generation) AND renewable. Structurally the twin of `Qr` — a bounded proportion (`Qsr/E ∈ [0,1]`,
+   * loss-invariant, scales with `E` by η) — but ONLY solar charge feeds it (grid renewables are
+   * renewable but not behind-the-meter, so they grow `Qr` and never `Qsr`). Invariant: `Qsr ≤ Qr` and
+   * `Qsr ≤ E` always. Powers the renewables tile's autarky / own-renewable-self-consumption metrics.
+   */
+  selfRenewableKwh: number;
   /** Qm — ACTUAL (out-of-pocket) cost basis of the store (cents, signed). */
   costC: number;
   /**
@@ -216,12 +224,16 @@ export interface FoldState {
   roundtripLossC: number;
   roundtripLossForgoneC: number;
   roundtripLossRenewKwh: number;
+  /** Self-renewable twin of `roundtripLossRenewKwh` (loss decomposition of the delivered Qsr). */
+  roundtripLossSelfRenewKwh: number;
   /** UNATTRIBUTED loss — residual Q discarded at a forced (non-empty) reset (drift / η error). */
   unattribLossKwh: number;
   unattribLossG: number;
   unattribLossC: number;
   unattribLossForgoneC: number;
   unattribLossRenewKwh: number;
+  /** Self-renewable twin of `unattribLossRenewKwh` (Qsr discarded at a forced reset). */
+  unattribLossSelfRenewKwh: number;
   /**
    * IDLE/standby loss — the constant self-discharge drain (three-term model), removed from the store
    * pro-rata at its own blend each interval. A REAL physical loss (unlike `sync*`, a correction):
@@ -232,6 +244,8 @@ export interface FoldState {
   idleLossC: number;
   idleLossForgoneC: number;
   idleLossRenewKwh: number;
+  /** Self-renewable twin of `idleLossRenewKwh` (Qsr drained by the standby loss). */
+  idleLossSelfRenewKwh: number;
   /**
    * SoC-SYNC correction — signed energy/carbon/etc. the SoC overlay injected(+)/removed(−) to pin `E`
    * to physical. A DISTINCT, auditable category from `unattribLoss*`: a down-sync is provenance-neutral
@@ -241,6 +255,8 @@ export interface FoldState {
   syncKwh: number;
   syncG: number;
   syncRenewKwh: number;
+  /** Self-renewable twin of `syncRenewKwh` (Qsr moved by a SoC-anchor correction). */
+  syncSelfRenewKwh: number;
   syncC: number;
   syncForgoneC: number;
   /** Count of intervals a sync correction was applied (diagnostic). */
@@ -266,6 +282,8 @@ export interface FoldStep {
   batteryEmissionsIntensity: number | null;
   /** Vended blend: Qr/E (0..1). */
   batteryRenewableFraction: number | null;
+  /** Vended blend: Qsr/E (0..1) — the SELF-renewable (behind-the-meter AND renewable) fraction. */
+  batterySelfRenewableFraction: number | null;
   /** Vended blend: Qm/E (c/kWh) — ACTUAL (out-of-pocket) cost basis. */
   batteryPrice: number | null;
   /** Vended forgone-revenue component: Qf/E (c/kWh) — what the written `price-opportunity` point carries. */
@@ -292,6 +310,7 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   storedKwh: 0,
   carbonG: 0,
   renewableKwh: 0,
+  selfRenewableKwh: 0,
   costC: 0,
   forgoneC: 0,
   estimatedKwh: 0,
@@ -309,19 +328,23 @@ export const INITIAL_FOLD_STATE: FoldState = Object.freeze({
   roundtripLossC: 0,
   roundtripLossForgoneC: 0,
   roundtripLossRenewKwh: 0,
+  roundtripLossSelfRenewKwh: 0,
   unattribLossKwh: 0,
   unattribLossG: 0,
   unattribLossC: 0,
   unattribLossForgoneC: 0,
   unattribLossRenewKwh: 0,
+  unattribLossSelfRenewKwh: 0,
   idleLossKwh: 0,
   idleLossG: 0,
   idleLossC: 0,
   idleLossForgoneC: 0,
   idleLossRenewKwh: 0,
+  idleLossSelfRenewKwh: 0,
   syncKwh: 0,
   syncG: 0,
   syncRenewKwh: 0,
+  syncSelfRenewKwh: 0,
   syncC: 0,
   syncForgoneC: 0,
   syncEvents: 0,
@@ -366,6 +389,7 @@ export function foldStep(
   // 2. Discharge at the current blend (proportional draw-down; intensities unchanged).
   const iC = s.storedKwh > 0 ? s.carbonG / s.storedKwh : null;
   const iR = s.storedKwh > 0 ? s.renewableKwh / s.storedKwh : null;
+  const iSr = s.storedKwh > 0 ? s.selfRenewableKwh / s.storedKwh : null;
   const iM = s.storedKwh > 0 ? s.costC / s.storedKwh : null;
   const iF = s.storedKwh > 0 ? s.forgoneC / s.storedKwh : null;
   const estFrac = s.storedKwh > 0 ? s.estimatedKwh / s.storedKwh : 0;
@@ -375,6 +399,7 @@ export function foldStep(
     s.storedKwh -= dEff;
     s.carbonG -= s.carbonG * frac;
     s.renewableKwh -= s.renewableKwh * frac;
+    s.selfRenewableKwh -= s.selfRenewableKwh * frac;
     s.costC -= s.costC * frac;
     s.forgoneC -= s.forgoneC * frac;
     s.estimatedKwh -= s.estimatedKwh * frac;
@@ -384,6 +409,7 @@ export function foldStep(
   const step: FoldStep = {
     batteryEmissionsIntensity: iC,
     batteryRenewableFraction: iR,
+    batterySelfRenewableFraction: iSr,
     batteryPrice: iM,
     batteryPriceForgone: iF,
     storedKwh: s.storedKwh,
@@ -403,9 +429,11 @@ export function foldStep(
     s.unattribLossC += s.costC;
     s.unattribLossForgoneC += s.forgoneC;
     s.unattribLossRenewKwh += s.renewableKwh;
+    s.unattribLossSelfRenewKwh += s.selfRenewableKwh;
     s.storedKwh = 0;
     s.carbonG = 0;
     s.renewableKwh = 0;
+    s.selfRenewableKwh = 0;
     s.costC = 0;
     s.forgoneC = 0;
     s.estimatedKwh = 0;
@@ -440,10 +468,12 @@ export function foldStep(
       );
       s.syncG += s.carbonG * (scale - 1);
       s.syncRenewKwh += s.renewableKwh * (scale - 1);
+      s.syncSelfRenewKwh += s.selfRenewableKwh * (scale - 1);
       s.syncC += s.costC * (scale - 1);
       s.syncForgoneC += s.forgoneC * (scale - 1);
       s.carbonG *= scale;
       s.renewableKwh *= scale;
+      s.selfRenewableKwh *= scale;
       s.costC *= scale;
       s.forgoneC *= scale;
       if (delta < 0) s.estimatedKwh *= scale;
@@ -463,6 +493,9 @@ export function foldStep(
         s.renewableKwh += delta * fbR;
         s.syncRenewKwh += delta * fbR;
       }
+      // No self-renewable contribution: the site fallback (grid / generator) is never behind-the-meter
+      // renewable, so Qsr stays 0 on an up-injection — which is also what keeps `Qsr ≤ Qr` (Qr may take
+      // a non-zero grid-renewable fallback here).
       if (fbM !== null) {
         s.costC += delta * fbM;
         s.syncC += delta * fbM;
@@ -519,6 +552,10 @@ export function foldStep(
         ? iv.gridChargeKwh * iv.gridRenewableFraction
         : 0) +
       otherRn;
+    // Self-renewable (behind-the-meter AND renewable): ONLY solar charge qualifies. Grid renewables are
+    // renewable but not behind-the-meter; `otherCharge` (generator / residual) is neither. So `addSr`
+    // takes just the solar term — structurally `addR` minus its grid/other renewable contributions.
+    const addSr = iv.solarChargeKwh * 1;
     // Only solar contributes to the forgone delta (grid/other cost the same on either basis).
     const gridM =
       iv.gridChargeKwh > 0 && iv.gridPrice !== null
@@ -534,6 +571,9 @@ export function foldStep(
     // deliverable content scales with E by η, keeping Qr/E in [0,1]. (100 % renewable in → 100 % out.)
     s.carbonG += addC;
     s.renewableKwh += eta * addR;
+    // Self-renewable is a bounded proportion like renewable — its deliverable content scales with E by η
+    // (never the 1/η intensity inflation), keeping Qsr/E in [0,1].
+    s.selfRenewableKwh += eta * addSr;
     s.costC += addM;
     s.forgoneC += addF;
 
@@ -542,6 +582,7 @@ export function foldStep(
     s.roundtripLossC += (1 - eta) * addM;
     s.roundtripLossForgoneC += (1 - eta) * addF;
     s.roundtripLossRenewKwh += (1 - eta) * addR;
+    s.roundtripLossSelfRenewKwh += (1 - eta) * addSr;
 
     const gridUnknown =
       iv.gridEmissionsIntensity === null ||
@@ -562,11 +603,13 @@ export function foldStep(
     s.idleLossKwh += idle;
     s.idleLossG += s.carbonG * frac;
     s.idleLossRenewKwh += s.renewableKwh * frac;
+    s.idleLossSelfRenewKwh += s.selfRenewableKwh * frac;
     s.idleLossC += s.costC * frac;
     s.idleLossForgoneC += s.forgoneC * frac;
     s.storedKwh -= idle;
     s.carbonG *= 1 - frac;
     s.renewableKwh *= 1 - frac;
+    s.selfRenewableKwh *= 1 - frac;
     s.costC *= 1 - frac;
     s.forgoneC *= 1 - frac;
     s.estimatedKwh *= 1 - frac;

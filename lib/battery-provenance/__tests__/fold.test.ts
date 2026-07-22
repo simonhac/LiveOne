@@ -42,6 +42,20 @@ const vendedRenewable = (
   );
 const vendedCost = (steps: ReturnType<typeof foldBatteryProvenance>["steps"]) =>
   steps.reduce((sum, s) => sum + s.dischargedKwh * (s.batteryPrice ?? 0), 0);
+const vendedRenewableKwh = (
+  steps: ReturnType<typeof foldBatteryProvenance>["steps"],
+) =>
+  steps.reduce(
+    (sum, s) => sum + s.dischargedKwh * (s.batteryRenewableFraction ?? 0),
+    0,
+  );
+const vendedSelfRenewableKwh = (
+  steps: ReturnType<typeof foldBatteryProvenance>["steps"],
+) =>
+  steps.reduce(
+    (sum, s) => sum + s.dischargedKwh * (s.batterySelfRenewableFraction ?? 0),
+    0,
+  );
 
 describe("foldBatteryProvenance", () => {
   describe("basic mixing", () => {
@@ -662,6 +676,172 @@ describe("forgone revenue (delta accumulator)", () => {
       B.finalState.syncC - A.finalState.syncC,
       9,
     );
+  });
+});
+
+describe("self-renewable stock (Qsr — behind-the-meter AND renewable)", () => {
+  const CONFIG: FoldConfig = { reserveFloorPct: 10 };
+
+  it("solar charge is fully self-renewable; grid renewable is not (the joint attribute)", () => {
+    // Acceptance worked example: 5 kWh solar + 5 kWh grid on a 40%-renewable grid.
+    //   renewable blend Qr/E = (5·1 + 5·0.4)/10 = 0.7
+    //   self-renewable   Qsr/E = (5·1 + 5·0)/10 = 0.5   (only solar is behind-the-meter renewable)
+    const { steps, finalState } = foldBatteryProvenance(
+      [
+        iv({ solarChargeKwh: 5, socPct: 40 }),
+        iv({
+          gridChargeKwh: 5,
+          gridEmissionsIntensity: 350,
+          gridRenewableFraction: 0.4,
+          gridPrice: 20,
+          socPct: 70,
+        }),
+        iv({ dischargeKwh: 4, socPct: 50 }), // evening draw
+      ],
+      CONFIG,
+    );
+    expect(steps[2].batteryRenewableFraction).toBeCloseTo(0.7, 9);
+    expect(steps[2].batterySelfRenewableFraction).toBeCloseTo(0.5, 9);
+    // The 4 kWh discharge contributes 2.8 kWh to renewToLoads and 2.0 kWh to selfRenewToLoads.
+    expect(4 * steps[2].batteryRenewableFraction!).toBeCloseTo(2.8, 9);
+    expect(4 * steps[2].batterySelfRenewableFraction!).toBeCloseTo(2.0, 9);
+    // Qsr ≤ Qr and Qsr ≤ E hold throughout.
+    expect(finalState.selfRenewableKwh).toBeLessThanOrEqual(
+      finalState.renewableKwh + 1e-12,
+    );
+    expect(finalState.selfRenewableKwh).toBeLessThanOrEqual(
+      finalState.storedKwh + 1e-12,
+    );
+  });
+
+  it("100% solar vends 100% self-renewable; 100% grid vends 0% self-renewable", () => {
+    const solar = foldBatteryProvenance(
+      [
+        iv({ solarChargeKwh: 8, socPct: 80 }),
+        iv({ dischargeKwh: 2, socPct: 60 }),
+      ],
+      CONFIG,
+    );
+    expect(solar.steps[1].batterySelfRenewableFraction).toBeCloseTo(1, 9);
+    expect(solar.steps[1].batteryRenewableFraction).toBeCloseTo(1, 9);
+
+    const grid = foldBatteryProvenance(
+      [
+        iv({
+          gridChargeKwh: 8,
+          gridEmissionsIntensity: 200,
+          gridRenewableFraction: 0.9, // very green grid...
+          gridPrice: 10,
+          socPct: 80,
+        }),
+        iv({ dischargeKwh: 2, socPct: 60 }),
+      ],
+      CONFIG,
+    );
+    // ...but grid is never behind-the-meter, so self-renewable is 0 while renewable is 0.9.
+    expect(grid.steps[1].batteryRenewableFraction).toBeCloseTo(0.9, 9);
+    expect(grid.steps[1].batterySelfRenewableFraction).toBeCloseTo(0, 9);
+  });
+
+  it("Qsr ≤ Qr ≤ E holds at every step across a mixed trajectory with η<1, idle, sync & resets", () => {
+    const CFG: FoldConfig = {
+      reserveFloorPct: 10,
+      efficiency: 0.9,
+      reanchorEpsKwh: 0.3,
+      socSyncGamma: 0.2,
+      socSyncDeadbandKwh: 0.2,
+    };
+    const site = {
+      otherEmissionsIntensity: 600,
+      otherRenewableFraction: 0.2,
+      otherPrice: 25,
+    };
+    const seq: FoldInterval[] = [
+      iv({
+        solarChargeKwh: 6,
+        gridChargeKwh: 3,
+        otherChargeKwh: 2,
+        gridEmissionsIntensity: 500,
+        gridRenewableFraction: 0.3,
+        gridPrice: 30,
+        socPct: null,
+        ...site,
+      }),
+      iv({ dischargeKwh: 4, socPct: null }),
+      iv({ idleLossKwh: 0.5, socPct: null }),
+      iv({ socPct: 20, capacityKwh: 20 }), // first snap
+      iv({ socPct: 15, capacityKwh: 20 }), // down-sync
+      iv({ socPct: 60, capacityKwh: 20 }), // up-sync (non-empty)
+      iv({ solarChargeKwh: 3, socPct: null }),
+      iv({ socPct: 5 }), // latch soc-floor reset
+      iv({ solarChargeKwh: 1, socPct: null }), // reset fires, then charges clean
+      iv({ dischargeKwh: 99, socPct: null }), // drain to empty
+      iv({ socPct: 40, capacityKwh: 20, ...site }), // empty-store up-inject (fallback → 0 self-renew)
+      iv({ solarChargeKwh: 2, socPct: null }),
+      iv({ dischargeKwh: 1, socPct: null }),
+    ];
+    const { steps, finalState } = foldBatteryProvenance(seq, CFG);
+    // The store-level stocks (recomputed per step from the running state via the vended intensities)
+    // must satisfy Qsr ≤ Qr ≤ E; assert on the vended fractions, both bounded to [0,1] and ordered.
+    for (const s of steps) {
+      if (s.batterySelfRenewableFraction !== null) {
+        expect(s.batterySelfRenewableFraction).toBeGreaterThanOrEqual(-1e-12);
+        expect(s.batterySelfRenewableFraction).toBeLessThanOrEqual(1 + 1e-12);
+        expect(s.batterySelfRenewableFraction).toBeLessThanOrEqual(
+          (s.batteryRenewableFraction ?? 0) + 1e-9,
+        );
+      }
+    }
+    expect(finalState.selfRenewableKwh).toBeLessThanOrEqual(
+      finalState.renewableKwh + 1e-9,
+    );
+    expect(finalState.selfRenewableKwh).toBeLessThanOrEqual(
+      finalState.storedKwh + 1e-9,
+    );
+    expect(finalState.selfRenewableKwh).toBeGreaterThanOrEqual(-1e-9);
+  });
+
+  it("self-renewable conservation: Σcharged(solar·η) == vended + unattrib + idle + sync + stored", () => {
+    const CFG: FoldConfig = {
+      reserveFloorPct: 10,
+      socSyncGamma: 0.2,
+      socSyncDeadbandKwh: 0.2,
+    };
+    const intervals = [
+      iv({
+        solarChargeKwh: 10,
+        gridChargeKwh: 4,
+        gridEmissionsIntensity: 400,
+        gridRenewableFraction: 0.5,
+        gridPrice: 20,
+        socPct: 50,
+        capacityKwh: 40,
+      }),
+      iv({ dischargeKwh: 3, socPct: 45, capacityKwh: 40 }),
+      iv({ idleLossKwh: 0.4, socPct: 44, capacityKwh: 40 }),
+      iv({ solarChargeKwh: 5, socPct: 70, capacityKwh: 40 }),
+      iv({ dischargeKwh: 4, socPct: 40, capacityKwh: 40 }),
+    ];
+    const { steps, finalState: fs } = foldBatteryProvenance(intervals, CFG);
+    // η=1 (no efficiency configured) → charged self-renew == Σ solar charge.
+    const chargedSelfRenew = 10 + 5;
+    const vended = vendedSelfRenewableKwh(steps);
+    expect(
+      vended +
+        fs.unattribLossSelfRenewKwh +
+        fs.idleLossSelfRenewKwh +
+        fs.selfRenewableKwh -
+        fs.syncSelfRenewKwh,
+    ).toBeCloseTo(chargedSelfRenew, 6);
+    // And the renewable leg still reconciles too (regression guard).
+    const chargedRenew = 10 * 1 + 4 * 0.5 + 5 * 1;
+    expect(
+      vendedRenewableKwh(steps) +
+        fs.unattribLossRenewKwh +
+        fs.idleLossRenewKwh +
+        fs.renewableKwh -
+        fs.syncRenewKwh,
+    ).toBeCloseTo(chargedRenew, 6);
   });
 });
 

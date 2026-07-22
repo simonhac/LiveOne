@@ -83,6 +83,10 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
       return step.batteryRenewableFraction === null
         ? null
         : step.batteryRenewableFraction * 100;
+    case "self-renewable-fraction":
+      return step.batterySelfRenewableFraction === null
+        ? null
+        : step.batterySelfRenewableFraction * 100;
     case "price":
       return step.batteryPrice;
     case "price-opportunity":
@@ -99,7 +103,9 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
   }
 }
 
-export const FLOW_ATTR_VERSION = 1;
+// v2: added the `self_renewable_kwh` metric leg (renewables tile). A bumped version marks every
+// historical row stale so a backfill re-materialises it with the new column populated.
+export const FLOW_ATTR_VERSION = 2;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */
@@ -200,6 +206,12 @@ async function writeAttrRollup(
             acc.emissionsKnownKwh[s][l] > 0 ? acc.emissionsG[s][l] : null,
           renewableKwh:
             acc.renewableKnownKwh[s][l] > 0 ? acc.renewableKwh[s][l] : null,
+          // null when NO interval on this edge/day had a known self-renewable intensity — the signal the
+          // renewables route reads to mark metrics 1-2 unavailable for the period (no silent fallback).
+          selfRenewableKwh:
+            acc.selfRenewableKnownKwh[s][l] > 0
+              ? acc.selfRenewableKwh[s][l]
+              : null,
           costC: acc.priceKnownKwh[s][l] > 0 ? acc.costC[s][l] : null,
           estimatedKwh: acc.estimatedKwh[s][l],
           sampleCount: acc.intervalsUsed,
