@@ -506,6 +506,63 @@ async function upsert1d(
   return { written: res.length };
 }
 
+// ── Maintenance / range ops (not point-scoped) ─────────────────────────────────────────────────────
+// Hot-table access WITHOUT a PointId key: a global earliest-interval probe, a distinct-device
+// enumeration, and a whole-day-range delete. They live in the seam (the ONLY hot-table importer) but
+// sit outside the PointId-keyed read/write surface above. `systemIdsWithAgg5mSince` is an ADDITIONAL
+// cutover touch-point beyond the two point-keyed SEAM kinds in the file header — tagged `// SEAM:` so
+// Phase 8 finds it; the other two are cutover-invariant (interval_end / day keys are unchanged).
+
+/** Earliest `agg_5m` interval as epoch-ms UTC, or null when the table is empty. */
+async function earliestAgg5mMs(exec?: ReadingsExec): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  const [row] = await db
+    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
+    .from(pointReadingsAgg5m)
+    .orderBy(pointReadingsAgg5m.intervalEnd)
+    .limit(1);
+  return row ? row.intervalEnd.getTime() : null;
+}
+
+/**
+ * Distinct device (system) ids with `agg_5m` rows at/after `sinceMs`.
+ * // SEAM: reads `system_id` directly today; Phase 8 → DISTINCT device via a `point_rid` join. The
+ * return shape (device ids == system ids == device_rids) is stable across the cutover.
+ */
+async function systemIdsWithAgg5mSince(
+  sinceMs: number,
+  exec?: ReadingsExec,
+): Promise<number[]> {
+  const db = exec ?? requirePlanetscaleDb();
+  const rows = await db
+    .selectDistinct({ systemId: pointReadingsAgg5m.systemId })
+    .from(pointReadingsAgg5m)
+    .where(gte(pointReadingsAgg5m.intervalEnd, new Date(sinceMs)));
+  return rows.map((r) => r.systemId);
+}
+
+/**
+ * Delete every `agg_1d` row in the inclusive `[startDay, endDay]` range across ALL points/systems
+ * (day-keyed maintenance delete, not point-scoped). Returns the number of rows removed. Cutover-invariant:
+ * the `day` text key is unchanged post-cutover (no composite/rid columns in the WHERE).
+ */
+async function delete1dRange(
+  range: DayRange,
+  exec?: ReadingsExec,
+): Promise<{ deleted: number }> {
+  const db = exec ?? requirePlanetscaleDb();
+  const res = await db
+    .delete(pointReadingsAgg1d)
+    .where(
+      and(
+        gte(pointReadingsAgg1d.day, range.startDay),
+        lte(pointReadingsAgg1d.day, range.endDay),
+      ),
+    )
+    .returning({ day: pointReadingsAgg1d.day });
+  return { deleted: res.length };
+}
+
 /** Wrap several writes in ONE transaction (the receiver: session-first, then raw + 5m). */
 function transaction<T>(fn: (tx: ReadingsExec) => Promise<T>): Promise<T> {
   return requirePlanetscaleDb().transaction(fn as (tx: PgTx) => Promise<T>);
@@ -519,5 +576,8 @@ export const ReadingsDao = {
   insertRaw,
   insert5m,
   upsert1d,
+  earliestAgg5mMs,
+  systemIdsWithAgg5mSince,
+  delete1dRange,
   transaction,
 };

@@ -7,13 +7,9 @@
  * `recomputeAgg1dForDay`, and materialises the energy-flow matrix per logical
  * system. Idempotent: re-running a day just heals it.
  */
-import { and, asc, gte, lte } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  pointReadingsAgg5m,
-  pointReadingsAgg1d,
-} from "@/lib/db/planetscale/schema";
+import { ReadingsDao } from "@/lib/readings";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
@@ -28,25 +24,6 @@ import {
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
-
-/** Earliest `point_readings_agg_5m` interval (epoch-ms), or null if empty. */
-async function earliestAgg5mMs(): Promise<number | null> {
-  const [row] = await requirePlanetscaleDb()
-    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
-    .from(pointReadingsAgg5m)
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd))
-    .limit(1);
-  return row ? row.intervalEnd.getTime() : null;
-}
-
-/** Distinct system ids with `agg_5m` data at/after `sinceMs`. */
-async function systemIdsWithAgg5mSince(sinceMs: number): Promise<number[]> {
-  const rows = await requirePlanetscaleDb()
-    .selectDistinct({ systemId: pointReadingsAgg5m.systemId })
-    .from(pointReadingsAgg5m)
-    .where(gte(pointReadingsAgg5m.intervalEnd, new Date(sinceMs)));
-  return rows.map((r) => r.systemId);
-}
 
 /** Resolve the timezone offset of the first active system (for today/yesterday math). */
 async function firstSystemTimezoneOffsetMin(): Promise<number> {
@@ -65,13 +42,12 @@ export async function deleteRange(
   end: CalendarDate | null,
 ) {
   let queryCount = 0;
-  const db = requirePlanetscaleDb();
 
   let startDate: CalendarDate;
   let endDate: CalendarDate;
 
   if (start === null && end === null) {
-    const earliestMs = await earliestAgg5mMs();
+    const earliestMs = await ReadingsDao.earliestAgg5mMs();
     queryCount++;
     if (earliestMs === null) {
       throw new Error("No 5-minute point data found");
@@ -99,26 +75,10 @@ export async function deleteRange(
     `[Daily Points] Deleting aggregations from ${startStr} to ${endStr}`,
   );
 
-  const existingRows = await db
-    .select({ day: pointReadingsAgg1d.day })
-    .from(pointReadingsAgg1d)
-    .where(
-      and(
-        gte(pointReadingsAgg1d.day, startStr),
-        lte(pointReadingsAgg1d.day, endStr),
-      ),
-    );
-  queryCount++;
-  const rowsToDelete = existingRows.length;
-
-  await db
-    .delete(pointReadingsAgg1d)
-    .where(
-      and(
-        gte(pointReadingsAgg1d.day, startStr),
-        lte(pointReadingsAgg1d.day, endStr),
-      ),
-    );
+  const { deleted: rowsToDelete } = await ReadingsDao.delete1dRange({
+    startDay: startStr,
+    endDay: endStr,
+  });
   queryCount++;
 
   console.log(
@@ -149,7 +109,7 @@ export async function aggregateRange(
   let endDate: CalendarDate;
 
   if (start === null && end === null) {
-    const earliestMs = await earliestAgg5mMs();
+    const earliestMs = await ReadingsDao.earliestAgg5mMs();
     queryCount++;
     if (earliestMs === null) {
       throw new Error("No 5-minute point data found");
@@ -178,7 +138,7 @@ export async function aggregateRange(
   );
 
   const rangeStartMs = new Date(startStr).getTime();
-  const systemIds = await systemIdsWithAgg5mSince(rangeStartMs);
+  const systemIds = await ReadingsDao.systemIdsWithAgg5mSince(rangeStartMs);
   queryCount++;
 
   if (systemIds.length === 0) {
