@@ -1,0 +1,239 @@
+import { describe, it, expect, beforeEach } from "@jest/globals";
+import { Point, type PointId } from "@/lib/ids";
+import type { PointAddr } from "@/lib/registry";
+
+// Control point→address resolution: the DAO's SEAM. Tests populate `addrMap`.
+const addrMap = new Map<PointId, PointAddr>();
+jest.mock("@/lib/registry", () => ({
+  RegistryCache: {
+    addrsForPoints: async (ids: PointId[]) =>
+      new Map(ids.map((id) => [id, addrMap.get(id)!])),
+  },
+}));
+// The DAO falls back to requirePlanetscaleDb() only when no `exec` is passed; every test passes a fake.
+jest.mock("@/lib/db/planetscale", () => ({
+  requirePlanetscaleDb() {
+    throw new Error("no exec passed");
+  },
+}));
+
+import { ReadingsDao } from "../dao";
+import {
+  pointReadings,
+  pointReadingsAgg5m,
+  pointReadingsAgg1d,
+} from "../schema-internal";
+
+function tableName(t: unknown): string {
+  if (t === pointReadings) return "point_readings";
+  if (t === pointReadingsAgg5m) return "point_readings_agg_5m";
+  if (t === pointReadingsAgg1d) return "point_readings_agg_1d";
+  return "?";
+}
+
+/** Fake exec: records inserts and the conflict mode; `.select…().where().orderBy()` returns canned rows. */
+function makeFakeExec(selectRows: any[] = []) {
+  const inserts: { table: string; rows: any[]; mode: string }[] = [];
+  const exec: any = {
+    insert(table: unknown) {
+      return {
+        values(rows: any[]) {
+          const rec = { table: tableName(table), rows, mode: "" };
+          const returning = () => Promise.resolve(rows.map(() => ({})));
+          return {
+            onConflictDoNothing() {
+              rec.mode = "nothing";
+              inserts.push(rec);
+              return { returning };
+            },
+            onConflictDoUpdate() {
+              rec.mode = "update";
+              inserts.push(rec);
+              return { returning };
+            },
+          };
+        },
+      };
+    },
+    select() {
+      return {
+        from() {
+          return {
+            where: () => ({ orderBy: () => Promise.resolve(selectRows) }),
+          };
+        },
+      };
+    },
+    selectDistinctOn() {
+      return {
+        from() {
+          return {
+            where: () => ({ orderBy: () => Promise.resolve(selectRows) }),
+          };
+        },
+      };
+    },
+  };
+  return { exec, inserts };
+}
+
+function point(rid: number, systemId: number, index: number) {
+  const id = Point.generate();
+  addrMap.set(id, {
+    pointId: id,
+    uuid: Point.toUuid(id),
+    rid: rid as never,
+    systemId,
+    index,
+  });
+  return id;
+}
+
+beforeEach(() => addrMap.clear());
+
+describe("ReadingsDao writes — composite-key expansion", () => {
+  it("insertRaw builds (systemId, pointId=index) rows with Date times and first-write-wins", async () => {
+    const p = point(11, 1, 3);
+    const { exec, inserts } = makeFakeExec();
+    const res = await ReadingsDao.insertRaw(
+      [
+        {
+          point: p,
+          measurementTimeMs: 1_700_000_000_000,
+          receivedTimeMs: 1_700_000_001_000,
+          value: 42,
+          valueStr: null,
+          sessionId: "s1",
+        },
+      ],
+      exec,
+    );
+    expect(res).toEqual({ inserted: 1 });
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].table).toBe("point_readings");
+    expect(inserts[0].mode).toBe("nothing");
+    expect(inserts[0].rows[0]).toMatchObject({
+      systemId: 1,
+      pointId: 3,
+      value: 42,
+    });
+    expect(inserts[0].rows[0].measurementTime).toBeInstanceOf(Date);
+    expect(inserts[0].rows[0].measurementTime.getTime()).toBe(
+      1_700_000_000_000,
+    );
+  });
+
+  it("insert5m upserts when upsert:true, first-write-wins when false", async () => {
+    const p = point(12, 2, 0);
+    const base = {
+      point: p,
+      intervalEndMs: 1_700_000_000_000,
+      avg: 1,
+      min: 0,
+      max: 2,
+      last: 1,
+      delta: 0,
+      valueStr: null,
+      sampleCount: 5,
+      errorCount: 0,
+      dataQuality: "good",
+      sessionId: null,
+    };
+    const up = makeFakeExec();
+    await ReadingsDao.insert5m([base], { upsert: true }, up.exec);
+    expect(up.inserts[0]).toMatchObject({
+      table: "point_readings_agg_5m",
+      mode: "update",
+    });
+
+    const first = makeFakeExec();
+    await ReadingsDao.insert5m([base], { upsert: false }, first.exec);
+    expect(first.inserts[0].mode).toBe("nothing");
+  });
+
+  it("upsert1d always upserts into agg_1d keyed by day", async () => {
+    const p = point(13, 3, 1);
+    const { exec, inserts } = makeFakeExec();
+    await ReadingsDao.upsert1d(
+      [
+        {
+          point: p,
+          day: "2026-07-22",
+          avg: 1,
+          min: 0,
+          max: 2,
+          last: 1,
+          delta: 0,
+          sampleCount: 288,
+          errorCount: 0,
+        },
+      ],
+      exec,
+    );
+    expect(inserts[0]).toMatchObject({
+      table: "point_readings_agg_1d",
+      mode: "update",
+    });
+    expect(inserts[0].rows[0]).toMatchObject({
+      systemId: 3,
+      pointId: 1,
+      day: "2026-07-22",
+    });
+  });
+
+  it("empty input is a no-op (no DB call)", async () => {
+    const { exec, inserts } = makeFakeExec();
+    expect(await ReadingsDao.insertRaw([], exec)).toEqual({ inserted: 0 });
+    expect(inserts).toHaveLength(0);
+  });
+});
+
+describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-ms", () => {
+  it("read5m returns a per-point ascending series keyed by PointId", async () => {
+    const p = point(21, 7, 4); // systemId 7, index 4
+    const rows = [
+      {
+        pointId: 4,
+        intervalEnd: new Date(1_700_000_300_000),
+        avg: 1,
+        min: 0,
+        max: 2,
+        last: 1,
+        delta: 0,
+        valueStr: null,
+        sampleCount: 5,
+        errorCount: 0,
+        dataQuality: "good",
+        sessionId: null,
+      },
+    ];
+    const { exec } = makeFakeExec(rows);
+    const out = await ReadingsDao.read5m(
+      [p],
+      { fromMs: 0, toMs: 2_000_000_000_000 },
+      exec,
+    );
+    expect(out.get(p)).toEqual([
+      {
+        intervalEndMs: 1_700_000_300_000,
+        avg: 1,
+        min: 0,
+        max: 2,
+        last: 1,
+        delta: 0,
+        valueStr: null,
+        sampleCount: 5,
+        errorCount: 0,
+        dataQuality: "good",
+        sessionId: null,
+      },
+    ]);
+  });
+
+  it("latestForPoints returns null for a point with no rows", async () => {
+    const p = point(22, 8, 0);
+    const { exec } = makeFakeExec([]); // no rows
+    const out = await ReadingsDao.latestForPoints([p], exec);
+    expect(out.get(p)).toBeNull();
+  });
+});

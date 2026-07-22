@@ -10,14 +10,63 @@
 > branch/PR off `main`; the branch that ships a phase is archived, but this doc lives on `main`, so
 > the next workspace always has the current plan.
 
+## ▶ NEXT ACTION — paste this into a fresh workspace to do the next PR
+
+> **Self-perpetuating handoff (maintenance rule).** This block always holds exactly ONE live prompt: the
+> very next PR to build. Whoever lands that PR **must replace this block** with the following PR's prompt
+> — same structure, same closing "when landed, write the next prompt here" instruction — so the chain
+> keeps itself current. Keep the prose lengths and constraints; only swap the specifics (PR letter,
+> scope, files, verify steps, baseline count, prior-PR/branch references).
+
+```text
+Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
+config-v4-clean-sheet.md for the why. PR-A (the DAO seam foundation + lint ratchet) landed — see PR #214
+/ branch simonhac/config-v4-phase3-dao-seam: lib/registry/registry-cache.ts (RegistryCache),
+lib/readings/dao.ts (ReadingsDao), lib/readings/schema-internal.ts, and the ratchet (.eslintrc.json +
+scripts/check-readings-boundary.mjs + .readings-boundary-baseline.json). Nothing consumes the seam yet.
+
+Do PR-B: adopt the DAO in the observations receiver (receiver-first). This is the FIRST prod-write-path
+change — build and verify it fully, but PAUSE for Simon's explicit go-ahead before committing/merging.
+Phase 3 adds NO migration.
+
+Scope:
+1. Publisher payload v2 — add `pointUid: string` to `Observation` (lib/observations/types.ts), set in
+   `buildObservations` (lib/observations/publisher.ts) from `input.point.pointUid`. To have it available,
+   surface `pointUid` on the served `PointInfoRow` + `pgPointInfoToServed` (lib/point/point-manager.ts) —
+   NOT `rid` (stays below-seam). `RawObservationInput.point` is a `PointInfoRow`, so the uuid is then in
+   hand at publish time. Additive/back-compatible (keep the existing `debug.reference`).
+2. Dual-grammar receiver (app/api/observations/receive/route.ts) — resolve each observation to a `PointId`
+   two ways: (a) new v2 → `Point.encode(obs.pointUid)`; (b) buffered/in-flight old "{systemId}.{index}"
+   refs → `RegistryCache.pointForAddr(systemId, index)`. Route writes through `ReadingsDao.insertRaw` /
+   `insert5m({upsert})` INSIDE the existing `db.transaction` (pass the tx as `exec`; keep session-first
+   ordering — `insertRaw` has the session FK). Device identity stays `systemId` (== future device_rid; no
+   device uuid column). Keep the 5m-recompute skip-missing-meta guard BEFORE any PointId resolution
+   (aggregate-points-pg.ts is best-effort — must not throw UnknownIdError); don't regress it.
+3. Shrink the ratchet — remove app/api/observations/receive/route.ts from BOTH .eslintrc.json's baseline
+   overrides AND .readings-boundary-baseline.json app_lib (the STALE check enforces this). Leave
+   aggregate-points-pg.ts etc. for later reader PRs.
+
+Verify before asking for go-ahead: `npm run build:local && npm run type-check` clean; `node
+scripts/check-readings-boundary.mjs` green with 30 baselined; `npm test` green; and drive a REAL poll →
+receiver → read back via `ReadingsDao` and confirm identical rows (the plan's Phase-3 verification). Then
+stop and report; Simon gives the go-ahead to land.
+
+WHEN PR-B IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
+block at the top with the PR-C prompt (first writer/reader module migrations to ReadingsDao, one module
+per PR: start with the materialization writers aggregate-points-pg.ts 5m/1d recompute + daily-points.ts,
+then readers history/readings-pg.ts, flow-series-pg.ts, battery-provenance/load.ts, coverage/find-gaps.ts,
+the admin/cron raw-SQL routes — each PR migrates one module AND deletes its baseline entry; writer PRs
+pause for go-ahead). Keep this same self-perpetuating closing instruction in the new block.
+```
+
 ## Progress
 
 | Phase | State | Notes |
 |---|---|---|
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
-| 2 — `point_uid` NOT NULL + global `points.rid` | ⬜ TODO ← **next** | first schema work; migration must hit prod `sydney` first |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | ⬜ TODO | highest-leverage strangler |
+| 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler; branch `simonhac/config-v4-phase3-dao-seam`. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A = dark foundation + ratchet (no prod writes); PR-B receiver adoption pauses for go-ahead (first prod-write change). |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -138,7 +187,12 @@ Ordering is a hard dependency chain (migrations lead code to prod).
 - **Deferred:** the optional `no-restricted-imports` ban on `uuidv7` outside `lib/ids/**` (cleaner
   once real callers exist).
 
-### Phase 2 — Point identity hardening: `point_uid` NOT NULL + global `rid` (dark, additive)  ⬜ NEXT
+### Phase 2 — Point identity hardening: `point_uid` NOT NULL + global `rid` (dark, additive)  ✅ DONE
+> Shipped as PR #212 (mint `point_uid` in all writers) + PR #213 (migration 0030: `point_uid` NOT NULL +
+> `point_rid_seq` + `point_info.rid`, backfilled 1..130 in `(system_id, id)` order). Applied + verified on
+> prod `sydney` and `liveone-dev`; `point_rid_seq` reassigned to `postgres`. Prod was a migration behind,
+> so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its partial-materialisation guard
+> first required the bindingless synthetic area (Kuti House / legacy `1000001`) present in `flow_attr_1d`.
 - **B1** run `scripts/utils/backfill-point-uid.ts --commit` on prod to 100% (`WHERE point_uid IS
   NULL` count = 0 gates the next step).
 - **B2** `point_uid` → NOT NULL (migration; `ALTER … SET NOT NULL` fails loud if any NULL remains).
@@ -149,21 +203,39 @@ Ordering is a hard dependency chain (migrations lead code to prod).
   `ensurePointInfo` keeps allocating `index` only to satisfy the composite FK until cutover.
 - Reversible: drop constraint/column/sequence. Deps: none (B1 gates B2).
 
-### Phase 3 — Time-series DAO seam + registry cache + lint ratchet (dark strangler — highest leverage)
-- `lib/registry/` — `registry-cache.ts` (the ONLY owner of uuid↔rid, + pre-cutover rid↔addr maps),
-  branded `PointRid`/`DeviceRid`, `UnknownIdError`. Singleton, 60s TTL + `invalidate()` on writes;
-  miss→single-row fill; batch `ridsForPoints`/`pointsForRids`.
+### Phase 3 — Time-series DAO seam + registry cache + lint ratchet (dark strangler — highest leverage)  🔨 IN PROGRESS
+> **No new migration** — reads Phase-2's `point_uid`/`rid` + the existing composite address. Pure code.
+> Landing as a sequence of PRs on `simonhac/config-v4-phase3-dao-seam`; PR-A (below) is dark (no prod
+> writes → mergeable); adoption PRs that touch a prod write path pause for Simon's go-ahead.
+>
+> **PR-A landed** (dark foundation + ratchet): `lib/registry/` + `lib/readings/schema-internal.ts` +
+> `lib/readings/dao.ts` + tests + the two-tool ratchet (`.eslintrc.json` `no-restricted-imports` +
+> `scripts/check-readings-boundary.mjs` + `.readings-boundary-baseline.json`, 21 `app_lib` + 10
+> `scripts`). Build-verified no-op (`build:local` green; both gates fail on a new violator). No adoption.
+> **Next: PR-B receiver adoption — first prod-write change, pauses for go-ahead.**
+- `lib/registry/registry-cache.ts` — the ONLY owner of uuid↔rid↔address, branded `PointRid`/`DeviceRid`
+  (number brands), `UnknownIdError`. `globalThis`-memoized, 60s per-entry TTL, `invalidate()` on writes;
+  batch `addrsForPoints`/`ridsForPoints`/`addrsForRids` + `pointForAddr` (old-grammar / backlog map).
+  **No negative caching** (a miss always hits the DB — a just-minted point must resolve immediately);
+  positive entries are safe stale because rid/address/uuid are write-once (TTL is a memory bound only).
 - `lib/readings/schema-internal.ts` — the ONLY importer of `point_readings`/`agg_5m`/`agg_1d` (and
   post-cutover the `rid` columns); **not** re-exported from the main schema barrel.
 - `lib/readings/dao.ts` — the DAO: **uuids in, rids internal**. `readRaw/read5m/read1d/
-  latestForPoints/insertRaw/insert5m/upsert1d`, all `PointId`. Pre-cutover expands
-  `PointRid→(system_id,index)` and issues today's composite SQL (semantics verbatim); post-cutover
-  issues `point_rid` SQL. **Signatures don't change across the cutover.**
-- Adopt incrementally: (1) land DAO; (2) migrate the **receiver first** — publisher payload **v2**
-  carries point+device uuids; (3) `point-manager` writers; (4) the ~40 readers one module per PR.
-- **Lint ratchet** = physical module boundary + `no-restricted-imports` (ban hot-table symbols
-  outside `lib/readings/**`/`lib/registry/**`), via `next lint`. CI fixture asserts a banned import fails.
-- Deps: Phase 2 (needs `point_uid` NOT NULL + `rid`).
+  latestForPoints/insertRaw/insert5m/upsert1d`, all `PointId`; epoch-ms at the boundary; `SeriesByPoint`
+  per-point results. Pre-cutover expands `PointId→(system_id,index)` via the registry and issues today's
+  composite SQL (semantics verbatim); the two `// SEAM:` sections are what Phase 8 reimplements as
+  `point_rid` SQL. **Public signatures don't change across the cutover** (a design property, not a live
+  dead `rid` branch — those columns don't exist on the hot tables yet).
+- Adopt incrementally: (1) land DAO **[PR-A]**; (2) migrate the **receiver first** — dual-grammar
+  (payload **v2** carries `point_uid`; buffered old `{systemId}.{index}` refs → `pointForAddr`); device
+  identity stays `systemId` (no device uuid column yet) **[PR-B, pauses]**; (3) `point-manager`/materialisation
+  writers; (4) the ~27 reader modules one per PR.
+- **Lint ratchet** = `no-restricted-imports` (`.eslintrc.json`, static/aliased imports — editor + husky
+  feedback) **+** `scripts/check-readings-boundary.mjs` (authoritative `prebuild` gate: also catches
+  dynamic `import()`, raw-SQL strings, and `scripts/`+`packages/`). Installed with a full **baseline**
+  (`.readings-boundary-baseline.json`, 21 `app_lib` + 10 `scripts`) that shrinks one module per adoption
+  PR; NEW and STALE violators both hard-fail (monotonic). Fixture: `scripts/__tests__/check-readings-boundary.test.ts`.
+- Deps: Phase 2 (needs `point_uid` NOT NULL + `rid`) — met.
 
 ### Phase 4 — Additive v4 config schema, empty/nullable + roles→CHECK (dark)
 Create FK targets before referrers:

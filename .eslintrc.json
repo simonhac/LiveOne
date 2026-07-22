@@ -1,3 +1,76 @@
 {
-  "extends": "next/core-web-vitals"
+  "extends": "next/core-web-vitals",
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": [
+          {
+            "name": "@/lib/db/planetscale/schema",
+            "importNames": [
+              "pointReadings",
+              "pointReadingsAgg5m",
+              "pointReadingsAgg1d",
+              "PointReading",
+              "NewPointReading",
+              "PointReadingAgg5m",
+              "NewPointReadingAgg5m",
+              "PointReadingAgg1d",
+              "NewPointReadingAgg1d"
+            ],
+            "message": "Hot time-series tables are behind the readings DAO (config-v4 Phase 3). Import ReadingsDao from '@/lib/readings' instead. Authoritative gate: scripts/check-readings-boundary.mjs."
+          }
+        ],
+        "patterns": [
+          {
+            "group": ["**/db/planetscale/schema", "./schema", "../**/schema"],
+            "importNames": [
+              "pointReadings",
+              "pointReadingsAgg5m",
+              "pointReadingsAgg1d",
+              "PointReading",
+              "NewPointReading",
+              "PointReadingAgg5m",
+              "NewPointReadingAgg5m",
+              "PointReadingAgg1d",
+              "NewPointReadingAgg1d"
+            ],
+            "message": "Hot time-series tables are behind the readings DAO (config-v4 Phase 3). Relative import of a hot-table symbol is banned outside lib/readings/** + lib/registry/**."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "lib/readings/**",
+        "lib/registry/**",
+        "lib/db/planetscale/index.ts",
+        "**/__tests__/**"
+      ],
+      "rules": { "no-restricted-imports": "off" }
+    },
+    {
+      "files": [
+        "app/api/observations/receive/route.ts",
+        "app/labs/kinkora-hws/page.tsx",
+        "lib/aggregation/daily-points.ts",
+        "lib/aggregation/flow-series-pg.ts",
+        "lib/battery-provenance/load.ts",
+        "lib/battery-provenance/recompute.ts",
+        "lib/db/planetscale/aggregate-points-pg.ts",
+        "lib/db/planetscale/battery-provenance-daily-pg.ts",
+        "lib/db/planetscale/battery-provenance-pg.ts",
+        "lib/db/planetscale/run-periods-pg.ts",
+        "lib/history/readings-pg.ts",
+        "lib/hws/recompute.ts",
+        "lib/vendors/amber/client.ts",
+        "lib/vendors/enphase/adapter.ts",
+        "lib/vendors/enphase/enphase-history.ts",
+        "lib/vendors/openelectricity/scheduler.ts"
+      ],
+      "rules": { "no-restricted-imports": "off" }
+    }
+  ]
 }
