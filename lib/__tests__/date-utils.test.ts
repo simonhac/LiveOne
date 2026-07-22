@@ -265,13 +265,13 @@ describe("formatDateTimeRange", () => {
     it("formats same day as single date", () => {
       const start = makeZonedTime("2025-09-03T10:00:00Z");
       const end = makeZonedTime("2025-09-03T10:00:00Z");
-      expect(formatDateTimeRange(start, end, false)).toBe("3 Sept 2025");
+      expect(formatDateTimeRange(start, end, false)).toBe("3 Sep 2025");
     });
 
     it("formats different days in same month with shared month/year", () => {
       const start = makeZonedTime("2025-09-03T00:00:00Z");
       const end = makeZonedTime("2025-09-05T00:00:00Z");
-      expect(formatDateTimeRange(start, end, false)).toBe("3 – 5 Sept 2025");
+      expect(formatDateTimeRange(start, end, false)).toBe("3 – 5 Sep 2025");
     });
 
     it("formats different months in same year with shared year", () => {
@@ -373,7 +373,7 @@ describe("formatDateTimeRange", () => {
     it("handles single day range", () => {
       const start = makeZonedTime("2025-06-15T00:00:00Z");
       const end = makeZonedTime("2025-06-15T23:59:59Z");
-      expect(formatDateTimeRange(start, end, false)).toBe("15 – 16 June 2025"); // Different days due to timezone
+      expect(formatDateTimeRange(start, end, false)).toBe("15 – 16 Jun 2025"); // Different days due to timezone
     });
 
     it("handles full year range", () => {
@@ -387,36 +387,36 @@ describe("formatDateTimeRange", () => {
     });
 
     it("handles same day without time (should show single date)", () => {
-      // Both times on 2 Sept 2025
+      // Both times on 2 Sep 2025
       const start = makeZonedTime("2025-09-02T13:05:00Z"); // 11:05pm Sydney
       const end = makeZonedTime("2025-09-02T13:10:00Z"); // 11:10pm Sydney
-      expect(formatDateTimeRange(start, end, false)).toBe("2 Sept 2025"); // Should NOT be "2 – 2 Sept 2025"
+      expect(formatDateTimeRange(start, end, false)).toBe("2 Sep 2025"); // Should NOT be "2 – 2 Sep 2025"
     });
 
     it("handles same day with time (should collapse date)", () => {
-      // 2 Sept 2025, 11:05pm - 11:10pm Sydney time
+      // 2 Sep 2025, 11:05pm - 11:10pm Sydney time
       const start = makeZonedTime("2025-09-02T13:05:00Z"); // 11:05pm Sydney
       const end = makeZonedTime("2025-09-02T13:10:00Z"); // 11:10pm Sydney
       expect(formatDateTimeRange(start, end, true)).toBe(
-        "11:05pm – 11:10pm, 2 Sept 2025",
+        "11:05pm – 11:10pm, 2 Sep 2025",
       );
     });
 
     it("handles same day different hours with time", () => {
-      // 2 Sept 2025, 9:00am - 5:00pm Sydney time
+      // 2 Sep 2025, 9:00am - 5:00pm Sydney time
       const start = makeZonedTime("2025-09-01T23:00:00Z"); // 9:00am Sydney
       const end = makeZonedTime("2025-09-02T07:00:00Z"); // 5:00pm Sydney
       expect(formatDateTimeRange(start, end, true)).toBe(
-        "9am – 5pm, 2 Sept 2025",
+        "9am – 5pm, 2 Sep 2025",
       );
     });
 
     it("handles different days with time", () => {
-      // 1 Sept 11:00pm - 2 Sept 1:00am Sydney time
+      // 1 Sep 11:00pm - 2 Sep 1:00am Sydney time
       const start = makeZonedTime("2025-09-01T13:00:00Z"); // 11:00pm Sydney
       const end = makeZonedTime("2025-09-01T15:00:00Z"); // 1:00am next day Sydney
       expect(formatDateTimeRange(start, end, true)).toBe(
-        "11pm, 1 Sept – 1am, 2 Sept 2025",
+        "11pm, 1 Sep – 1am, 2 Sep 2025",
       );
     });
   });
