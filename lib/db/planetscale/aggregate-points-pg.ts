@@ -13,20 +13,18 @@
  *
  * The per-point math is shared via `lib/aggregation/point-aggregates.ts`.
  *
- * Every recompute is idempotent (`onConflictDoUpdate`, keyed by the business key) and the
+ * All hot-table access goes through the config-v4 readings seam (`ReadingsDao`, uuids in / rids
+ * internal): raw + 5m + 1d are read/written by `PointId`, never by the composite `(system_id,
+ * point_id)` address. `point_info` (metadata + the uuid↔index map) is not a hot table and is read
+ * directly. Every recompute is idempotent (`onConflictDoUpdate`, keyed by the business key) and the
  * live entry points are best-effort — a failure logs and is swallowed so it can never break
  * ingestion.
  */
 
-import { and, eq, gt, gte, lte, asc, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
-import {
-  pointReadings,
-  pointReadingsAgg5m,
-  pointReadingsAgg1d,
-  pointInfo,
-} from "./schema";
+import { pointInfo } from "./schema";
 import {
   aggregate5mForPoint,
   aggregate1dForPoint,
@@ -35,6 +33,16 @@ import {
   FIVE_MIN_MS,
   type FiveMinRow,
 } from "@/lib/aggregation/point-aggregates";
+import {
+  ReadingsDao,
+  type RawReading,
+  type Agg5mReading,
+  type Agg5mInsert,
+  type Agg1dUpsert,
+  type SeriesByPoint,
+} from "@/lib/readings";
+import { UnknownIdError } from "@/lib/registry";
+import { Point, type PointId } from "@/lib/ids";
 import type { Observation } from "@/lib/observations/types";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -129,170 +137,145 @@ export async function recomputeAgg5mForIntervals(
 }
 
 /**
- * Inner recompute: read raw → group by point → upsert 5m for the given intervals, against a
- * transaction handle so the caller's advisory lock serializes it per system.
+ * Inner recompute: read raw via the DAO → group by point → upsert 5m for the given intervals,
+ * against a transaction handle so the caller's advisory lock serializes it per system.
+ *
+ * The point set is driven from `point_info` (so every point resolves to a `PointId`); the DAO reads
+ * raw by that list. A point present in raw but absent from `point_info` is impossible (the composite
+ * FK forbids it), and the raw→5m recompute only ever writes value-only aggregates (vendor-meta
+ * columns are preserved by `preserveVendorMeta`).
  */
 async function recompute5mIntervalsWithin(
   db: PgExecutor,
   systemId: number,
   intervalEndsMs: number[],
 ): Promise<{ intervalsProcessed: number; rowsUpserted: number }> {
-  // point_info metadata (transform / metric_type) for the system, from the PG mirror.
+  // point_info metadata (transform / metric_type) + identity (point_uid → PointId) for the system.
   const points = await db
     .select({
-      index: pointInfo.index,
+      pointUid: pointInfo.pointUid,
       transform: pointInfo.transform,
       metricType: pointInfo.metricType,
     })
     .from(pointInfo)
     .where(eq(pointInfo.systemId, systemId));
 
-  const meta = new Map<
-    number,
+  const pointIds: PointId[] = [];
+  const metaById = new Map<
+    PointId,
     { transform: string | null; metricType: string | null }
   >();
   for (const p of points) {
-    meta.set(p.index, { transform: p.transform, metricType: p.metricType });
+    // point_uid is NOT NULL + a valid uuid, so encode can't fail — but never let one bad row abort
+    // the whole recompute.
+    let id: PointId;
+    try {
+      id = Point.encode(p.pointUid);
+    } catch {
+      continue;
+    }
+    pointIds.push(id);
+    metaById.set(id, { transform: p.transform, metricType: p.metricType });
   }
 
   const intervals = [...new Set(intervalEndsMs)].sort((a, b) => a - b);
   let rowsUpserted = 0;
-  // Points seen in raw but absent from the PG point_info mirror — skipped (see below).
-  const skippedMissingMeta = new Set<number>();
 
   for (const intervalEndMs of intervals) {
     const intervalStartMs = intervalEndMs - FIVE_MIN_MS;
     const prevStartMs = intervalStartMs - FIVE_MIN_MS;
 
-    // One scan over the previous interval (for transform='d' previousLast) plus the current
-    // interval (the readings we aggregate): (prevStart, intervalEnd].
-    const rows = await db
-      .select({
-        pointId: pointReadings.pointId,
-        measurementTime: pointReadings.measurementTime,
-        value: pointReadings.value,
-      })
-      .from(pointReadings)
-      .where(
-        and(
-          eq(pointReadings.systemId, systemId),
-          gt(pointReadings.measurementTime, new Date(prevStartMs)),
-          lte(pointReadings.measurementTime, new Date(intervalEndMs)),
-        ),
-      )
-      .orderBy(asc(pointReadings.pointId), asc(pointReadings.measurementTime));
+    try {
+      // One read over the previous interval (for transform='d' previousLast) plus the current
+      // interval (the readings we aggregate). readRaw is inclusive-inclusive, so we read from
+      // prevStartMs and drop `tMs === prevStartMs` in the classifier to reproduce the legacy
+      // half-open `(prevStart, intervalEnd]` (byte-identical for ms-granular measurement_time).
+      const byPoint = await ReadingsDao.readRaw(
+        pointIds,
+        { fromMs: prevStartMs, toMs: intervalEndMs },
+        db,
+      );
 
-    // Group by point, splitting the previous-interval slice (for previousLast) from the
-    // current-interval slice (the values aggregated). Rows are time-ordered ascending.
-    interface Group {
-      prevLast: number | null;
-      currValues: number[];
-      currErrors: number;
-      hasCurrent: boolean;
-    }
-    const groups = new Map<number, Group>();
-    for (const r of rows) {
-      const tMs = r.measurementTime.getTime();
-      let g = groups.get(r.pointId);
-      if (!g) {
-        g = {
-          prevLast: null,
-          currValues: [],
-          currErrors: 0,
-          hasCurrent: false,
-        };
-        groups.set(r.pointId, g);
+      const toUpsert: Agg5mInsert[] = [];
+      for (const pointId of pointIds) {
+        const rows: RawReading[] = byPoint.get(pointId)!; // pre-seeded to []
+        // Split the previous-interval slice (for previousLast) from the current-interval slice
+        // (the values aggregated). Rows are time-ordered ascending.
+        let prevLast: number | null = null;
+        const currValues: number[] = [];
+        let currErrors = 0;
+        let hasCurrent = false;
+        for (const r of rows) {
+          const tMs = r.measurementTimeMs;
+          if (tMs <= prevStartMs) continue; // legacy gt(prevStart) lower bound
+          if (tMs <= intervalStartMs) {
+            // Previous interval: track the last non-null value (ascending order → last wins).
+            if (r.value !== null) prevLast = r.value;
+          } else {
+            // Current interval: collect valid values / count errors.
+            hasCurrent = true;
+            if (r.value === null) currErrors++;
+            else currValues.push(r.value);
+          }
+        }
+        // Only points with a reading in the CURRENT interval get a row (matches the legacy writer).
+        if (!hasCurrent) continue;
+        const m = metaById.get(pointId);
+        if (!m) continue; // defensive — pointIds derive from point_info, so this can't happen
+        const result = aggregate5mForPoint({
+          values: currValues,
+          errorCount: currErrors,
+          transform: m.transform,
+          metricType: m.metricType,
+          previousLast:
+            m.transform === "d" && prevLast !== null ? prevLast : undefined,
+        });
+        toUpsert.push({
+          point: pointId,
+          intervalEndMs,
+          avg: result.avg,
+          min: result.min,
+          max: result.max,
+          last: result.last,
+          delta: result.delta,
+          valueStr: null,
+          sampleCount: result.sampleCount,
+          errorCount: result.errorCount,
+          dataQuality: null,
+          sessionId: null,
+        });
       }
-      if (tMs <= intervalStartMs) {
-        // Previous interval: track the last non-null value (ascending order → last wins).
-        if (r.value !== null) g.prevLast = r.value;
-      } else {
-        // Current interval: collect valid values / count errors.
-        g.hasCurrent = true;
-        if (r.value === null) g.currErrors++;
-        else g.currValues.push(r.value);
-      }
-    }
 
-    const toUpsert: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
-    for (const [pointId, g] of groups) {
-      // Only points with a reading in the CURRENT interval get a row (matches the legacy
-      // writer, which queries the current interval and creates a row per point present — incl.
-      // all-error).
-      if (!g.hasCurrent) continue;
-      // If the point isn't in the point_info mirror we can't know its transform/metricType.
-      // Defaulting to null/null would silently mis-compute energy/'d' points, so SKIP it —
-      // leaving the row absent rather than writing a wrong value.
-      // Normal, fully-mirrored systems skip nothing; this only guards a not-yet-mirrored
-      // brand-new point.
-      const m = meta.get(pointId);
-      if (!m) {
-        skippedMissingMeta.add(pointId);
+      if (toUpsert.length > 0) {
+        // preserveVendorMeta: the recompute owns the value columns but must not clobber
+        // session_id/value_str/data_quality a 5m-native queue write may have set on this interval.
+        const { written } = await ReadingsDao.insert5m(
+          toUpsert,
+          { upsert: true, preserveVendorMeta: true },
+          db,
+        );
+        rowsUpserted += written;
+      }
+    } catch (err) {
+      // A point vanishing mid-run (rare TOCTOU) surfaces as UnknownIdError from the DAO's identity
+      // resolution; skip this interval rather than aborting the whole recompute.
+      if (err instanceof UnknownIdError) {
+        console.warn(
+          `[PG-Agg5m] system=${systemId} intervalEnd=${intervalEndMs}: skipped — ${err.message}`,
+        );
         continue;
       }
-      const result = aggregate5mForPoint({
-        values: g.currValues,
-        errorCount: g.currErrors,
-        transform: m.transform,
-        metricType: m.metricType,
-        previousLast:
-          m.transform === "d" && g.prevLast !== null ? g.prevLast : undefined,
-      });
-      toUpsert.push({
-        systemId,
-        pointId,
-        intervalEnd: new Date(intervalEndMs),
-        avg: result.avg,
-        min: result.min,
-        max: result.max,
-        last: result.last,
-        delta: result.delta,
-        sampleCount: result.sampleCount,
-        errorCount: result.errorCount,
-      });
+      throw err;
     }
-
-    if (toUpsert.length > 0) {
-      await db
-        .insert(pointReadingsAgg5m)
-        .values(toUpsert)
-        .onConflictDoUpdate({
-          target: [
-            pointReadingsAgg5m.systemId,
-            pointReadingsAgg5m.pointId,
-            pointReadingsAgg5m.intervalEnd,
-          ],
-          set: {
-            avg: sql`excluded.avg`,
-            min: sql`excluded.min`,
-            max: sql`excluded.max`,
-            last: sql`excluded.last`,
-            delta: sql`excluded.delta`,
-            sampleCount: sql`excluded.sample_count`,
-            errorCount: sql`excluded.error_count`,
-            updatedAt: sql`now()`,
-          },
-        });
-      rowsUpserted += toUpsert.length;
-    }
-  }
-
-  if (skippedMissingMeta.size > 0) {
-    console.warn(
-      `[PG-Agg5m] system=${systemId}: skipped ${skippedMissingMeta.size} point(s) absent ` +
-        `from the PG point_info mirror (${[...skippedMissingMeta].join(", ")}) — their 5m ` +
-        `aggregates are left to land once point_info is mirrored.`,
-    );
   }
 
   return { intervalsProcessed: intervals.length, rowsUpserted };
 }
 
 /**
- * Recompute a system/day's 1d aggregates from PG `point_readings_agg_5m`, upserting into
- * PG `point_readings_agg_1d`. Mirrors the legacy `aggregateDailyPointData` writer: the
- * day spans 00:05..00:00-next-day, and `last` is taken from the previous day's 00:00
- * interval.
+ * Recompute a system/day's 1d aggregates from PG 5m (via the DAO), upserting into 1d. Mirrors the
+ * legacy `aggregateDailyPointData` writer: the day spans 00:05..00:00-next-day, and `last` is taken
+ * from the previous day's 00:00 interval.
  */
 export async function recomputeAgg1dForDay(
   db: PgDb,
@@ -309,59 +292,64 @@ export async function recomputeAgg1dForDay(
   const previousDayEndMs = dayStartMs - FIVE_MIN_MS;
   const dayStr = day.toString();
 
-  const rows = await db
-    .select({
-      pointId: pointReadingsAgg5m.pointId,
-      intervalEnd: pointReadingsAgg5m.intervalEnd,
-      avg: pointReadingsAgg5m.avg,
-      min: pointReadingsAgg5m.min,
-      max: pointReadingsAgg5m.max,
-      last: pointReadingsAgg5m.last,
-      delta: pointReadingsAgg5m.delta,
-      sampleCount: pointReadingsAgg5m.sampleCount,
-      errorCount: pointReadingsAgg5m.errorCount,
-    })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, system.id),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(previousDayEndMs)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(dayEndMs)),
-      ),
-    )
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
-
-  if (rows.length === 0) return { rowsUpserted: 0 };
-
-  // last value per point from the previous day's 00:00 interval.
-  const lastValues = new Map<number, number | null>();
-  const fiveMinByPoint = new Map<number, FiveMinRow[]>();
-  for (const r of rows) {
-    const tMs = r.intervalEnd.getTime();
-    if (tMs === previousDayEndMs) {
-      lastValues.set(r.pointId, r.last);
-    }
-    if (tMs >= dayStartMs && tMs <= dayEndMs) {
-      let arr = fiveMinByPoint.get(r.pointId);
-      if (!arr) {
-        arr = [];
-        fiveMinByPoint.set(r.pointId, arr);
-      }
-      arr.push(r);
+  // Enumerate the system's points as PointIds — the DAO reads 5m by PointId. (This path didn't read
+  // point_info before; 5m FKs to point_info so the point set is identical to the old broad scan.)
+  const points = await db
+    .select({ pointUid: pointInfo.pointUid })
+    .from(pointInfo)
+    .where(eq(pointInfo.systemId, system.id));
+  const pointIds: PointId[] = [];
+  for (const p of points) {
+    try {
+      pointIds.push(Point.encode(p.pointUid));
+    } catch {
+      // unreachable with point_uid NOT NULL; never abort the day for one bad row.
     }
   }
+  if (pointIds.length === 0) return { rowsUpserted: 0 };
 
-  if (fiveMinByPoint.size === 0) return { rowsUpserted: 0 };
+  let byPoint: SeriesByPoint<Agg5mReading>;
+  try {
+    byPoint = await ReadingsDao.read5m(
+      pointIds,
+      { fromMs: previousDayEndMs, toMs: dayEndMs },
+      db,
+    );
+  } catch (err) {
+    if (err instanceof UnknownIdError) {
+      console.warn(
+        `[PG-Agg1d] system=${system.id} day=${dayStr}: skipped — ${err.message}`,
+      );
+      return { rowsUpserted: 0 };
+    }
+    throw err;
+  }
 
-  const toUpsert: (typeof pointReadingsAgg1d.$inferInsert)[] = [];
-  for (const [pointId, recs] of fiveMinByPoint) {
-    const result = aggregate1dForPoint({
-      rows: recs,
-      last: lastValues.get(pointId) ?? null,
-    });
+  const toUpsert: Agg1dUpsert[] = [];
+  for (const pointId of pointIds) {
+    const rows = byPoint.get(pointId)!; // pre-seeded to []
+    // last value from the previous day's 00:00 interval; the day's 5m rows [00:05..00:00-next-day].
+    let last: number | null = null;
+    const inDay: FiveMinRow[] = [];
+    for (const r of rows) {
+      const tMs = r.intervalEndMs;
+      if (tMs === previousDayEndMs) last = r.last;
+      if (tMs >= dayStartMs && tMs <= dayEndMs) {
+        inDay.push({
+          avg: r.avg,
+          min: r.min,
+          max: r.max,
+          delta: r.delta,
+          sampleCount: r.sampleCount,
+          errorCount: r.errorCount,
+        });
+      }
+    }
+    // Only points with ≥1 in-day 5m row produce a 1d row (matches the legacy fiveMinByPoint gate).
+    if (inDay.length === 0) continue;
+    const result = aggregate1dForPoint({ rows: inDay, last });
     toUpsert.push({
-      systemId: system.id,
-      pointId,
+      point: pointId,
       day: dayStr,
       avg: result.avg,
       min: result.min,
@@ -373,28 +361,9 @@ export async function recomputeAgg1dForDay(
     });
   }
 
-  await db
-    .insert(pointReadingsAgg1d)
-    .values(toUpsert)
-    .onConflictDoUpdate({
-      target: [
-        pointReadingsAgg1d.systemId,
-        pointReadingsAgg1d.pointId,
-        pointReadingsAgg1d.day,
-      ],
-      set: {
-        avg: sql`excluded.avg`,
-        min: sql`excluded.min`,
-        max: sql`excluded.max`,
-        last: sql`excluded.last`,
-        delta: sql`excluded.delta`,
-        sampleCount: sql`excluded.sample_count`,
-        errorCount: sql`excluded.error_count`,
-        updatedAt: sql`now()`,
-      },
-    });
-
-  return { rowsUpserted: toUpsert.length };
+  if (toUpsert.length === 0) return { rowsUpserted: 0 };
+  const { written } = await ReadingsDao.upsert1d(toUpsert, db);
+  return { rowsUpserted: written };
 }
 
 // ============================================================================

@@ -389,10 +389,17 @@ async function insertRaw(
  * point_readings_agg_5m. `upsert:true` (5m-native late refinements) overwrites the interval;
  * `upsert:false` (raw-vendor recompute owns the value) is first-write-wins. Mirrors the receiver
  * (`receive/route.ts`) conflict handling verbatim.
+ *
+ * `preserveVendorMeta` (only meaningful with `upsert:true`) narrows the on-conflict SET to the 7
+ * aggregate value columns + `updated_at`, leaving `session_id`/`value_str`/`data_quality` untouched.
+ * This is for the raw→5m recompute (`aggregate-points-pg.ts`), which OWNS the value columns but not
+ * the vendor-meta columns — so a re-run must not clobber meta a 5m-native queue write may have set on
+ * the same interval. Byte-identical to the legacy recompute's upsert. The receiver omits the flag and
+ * gets the full-fidelity SET (it owns all columns).
  */
 async function insert5m(
   rows: Agg5mInsert[],
-  opts: { upsert: boolean },
+  opts: { upsert: boolean; preserveVendorMeta?: boolean },
   exec?: ReadingsExec,
 ): Promise<{ written: number }> {
   if (rows.length === 0) return { written: 0 };
@@ -427,17 +434,23 @@ async function insert5m(
             pointReadingsAgg5m.intervalEnd,
           ],
           set: {
-            sessionId: sql`excluded.session_id`,
             avg: sql`excluded.avg`,
             min: sql`excluded.min`,
             max: sql`excluded.max`,
             last: sql`excluded.last`,
             delta: sql`excluded.delta`,
-            valueStr: sql`excluded.value_str`,
             sampleCount: sql`excluded.sample_count`,
             errorCount: sql`excluded.error_count`,
-            dataQuality: sql`excluded.data_quality`,
             updatedAt: sql`now()`,
+            // Vendor-meta columns: overwritten on a full-fidelity write (receiver), preserved for the
+            // value-only recompute.
+            ...(opts.preserveVendorMeta
+              ? {}
+              : {
+                  sessionId: sql`excluded.session_id`,
+                  valueStr: sql`excluded.value_str`,
+                  dataQuality: sql`excluded.data_quality`,
+                }),
           },
         })
       : insert.onConflictDoNothing()
