@@ -16,7 +16,9 @@
 > very next PR to build. Whoever lands that PR **must replace this block** with the following PR's prompt
 > — same structure, same closing "when landed, write the next prompt here" instruction — so the chain
 > keeps itself current. Keep the prose lengths and constraints; only swap the specifics (PR letter,
-> scope, files, verify steps, baseline count, prior-PR/branch references).
+> scope, files, verify steps, baseline count, prior-PR/branch references). Every adoption PR's prompt
+> **must carry the "append a row to the Readings-seam ratchet ledger" step** (see that section) so the
+> trajectory never falls behind the baseline.
 
 ```text
 Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
@@ -54,7 +56,8 @@ scripts/check-readings-boundary.mjs` green with 28 baselined; `npx next lint --f
 byte-identical (value cols) to the pre-change output + idempotent (a throwaway scripts/temp diff script is
 fine; delete it before committing). Then stop and report; Simon gives the go-ahead to land.
 
-WHEN PR-D IS LANDED: update this doc — flip the Phase 3 progress notes, then REPLACE the "▶ NEXT ACTION"
+WHEN PR-D IS LANDED: update this doc — flip the Phase 3 progress notes, append the PR-D row to the
+Readings-seam ratchet ledger (`daily-points.ts`, 18 / 10 / 28), then REPLACE the "▶ NEXT ACTION"
 block at the top with the PR-E prompt (next the readers history/readings-pg.ts, flow-series-pg.ts,
 battery-provenance/load.ts, coverage/find-gaps.ts, then the admin/cron raw-SQL routes — each PR migrates
 one module AND deletes its baseline entry; writer PRs pause for go-ahead). Keep this same self-perpetuating
@@ -68,7 +71,7 @@ closing instruction in the new block.
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) landed; **29 modules remain** on the baseline. PR-D = next writer `lib/aggregation/daily-points.ts` (needs a DAO delete surface), pauses for go-ahead. |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) landed; **29 modules remain** on the baseline (trajectory in § Readings-seam ratchet ledger). PR-D = next writer `lib/aggregation/daily-points.ts` (needs a DAO delete surface), pauses for go-ahead. |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -77,6 +80,29 @@ closing instruction in the new block.
 | 9 — post-cutover teardown | ⬜ TODO | |
 
 Phases 0–6 all ship **dark**, behind the unchanged v3 app — each independently mergeable and reversible.
+
+## Readings-seam ratchet ledger
+
+Phase 3's boundary gate (`scripts/check-readings-boundary.mjs`, run via `npm run check:readings`;
+`.eslintrc.json` `no-restricted-imports`) is a **monotonic ratchet**: each adoption PR moves one
+module behind `ReadingsDao` and removes its `.readings-boundary-baseline.json` entry, so the baseline
+only shrinks. **Live source of truth for the *remaining* set is `.readings-boundary-baseline.json`** —
+this ledger records the *trajectory* the JSON can't self-record (which PR moved which module), not the
+current list, so it never drifts.
+
+| PR | Module moved behind `ReadingsDao` | `app_lib` | `scripts` | remaining |
+|---|---|---|---|---|
+| A · #214 | — (installed the baseline) | 21 | 10 | 31 |
+| B · #215 | `app/api/observations/receive/route.ts` | 20 | 10 | 30 |
+| C · #218 | `lib/db/planetscale/aggregate-points-pg.ts` | 19 | 10 | 29 |
+
+**Next:** PR-D `lib/aggregation/daily-points.ts` → 18 / 10 / **28**. **End state:** `app_lib` reaches
+**0** → delete `.readings-boundary-baseline.json` + the `.eslintrc.json` override → the seam becomes a
+hard wall. The `scripts` lane is the slower / possibly-permanent-allow track (per the baseline JSON's
+own `_doc`), so the hard-wall milestone keys off `app_lib`, not the combined total.
+
+> **Maintenance:** every adoption PR appends one row here (landed fact only — not the forecast row) and
+> deletes its baseline entry in the same PR; the newest `remaining` must equal `npm run check:readings`.
 
 ## Context
 

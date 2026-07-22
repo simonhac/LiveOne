@@ -31,7 +31,11 @@ function tableName(t: unknown): string {
   return "?";
 }
 
-/** Fake exec: records inserts, the conflict mode, and the on-conflict SET keys; `.select…().where().orderBy()` returns canned rows. */
+/**
+ * Fake exec: records inserts/deletes, the conflict mode, and the on-conflict SET keys.
+ * `.select…().where().orderBy()` (and `.orderBy().limit()`), `.selectDistinct().where()`, and
+ * `.delete().where().returning()` all resolve the canned `selectRows`.
+ */
 function makeFakeExec(selectRows: any[] = []) {
   const inserts: {
     table: string;
@@ -39,6 +43,13 @@ function makeFakeExec(selectRows: any[] = []) {
     mode: string;
     setKeys?: string[];
   }[] = [];
+  const deletes: { table: string }[] = [];
+  // orderBy result is awaitable (reads: `.where().orderBy()`) AND chains `.limit()` (earliestAgg5mMs).
+  const orderByResult = () => {
+    const p: any = Promise.resolve(selectRows);
+    p.limit = () => Promise.resolve(selectRows);
+    return p;
+  };
   const exec: any = {
     insert(table: unknown) {
       return {
@@ -66,12 +77,28 @@ function makeFakeExec(selectRows: any[] = []) {
         },
       };
     },
+    delete(table: unknown) {
+      return {
+        where() {
+          deletes.push({ table: tableName(table) });
+          return { returning: () => Promise.resolve(selectRows) };
+        },
+      };
+    },
     select() {
       return {
         from() {
           return {
-            where: () => ({ orderBy: () => Promise.resolve(selectRows) }),
+            where: () => ({ orderBy: orderByResult }),
+            orderBy: orderByResult,
           };
+        },
+      };
+    },
+    selectDistinct() {
+      return {
+        from() {
+          return { where: () => Promise.resolve(selectRows) };
         },
       };
     },
@@ -85,7 +112,7 @@ function makeFakeExec(selectRows: any[] = []) {
       };
     },
   };
-  return { exec, inserts };
+  return { exec, inserts, deletes };
 }
 
 function point(rid: number, systemId: number, index: number) {
@@ -323,5 +350,39 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     const { exec } = makeFakeExec([]); // no rows
     const out = await ReadingsDao.latestForPoints([p], exec);
     expect(out.get(p)).toBeNull();
+  });
+});
+
+describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
+  it("delete1dRange deletes agg_1d by day range and returns the deleted row count", async () => {
+    // returning() resolves one row per deleted row → deleted === selectRows.length.
+    const { exec, deletes } = makeFakeExec([
+      { day: "2026-07-20" },
+      { day: "2026-07-21" },
+    ]);
+    const res = await ReadingsDao.delete1dRange(
+      { startDay: "2026-07-20", endDay: "2026-07-21" },
+      exec,
+    );
+    expect(res).toEqual({ deleted: 2 });
+    expect(deletes).toEqual([{ table: "point_readings_agg_1d" }]);
+  });
+
+  it("earliestAgg5mMs returns the first row's interval as epoch-ms, null when empty", async () => {
+    const withRow = makeFakeExec([
+      { intervalEnd: new Date(1_700_000_000_000) },
+    ]);
+    expect(await ReadingsDao.earliestAgg5mMs(withRow.exec)).toBe(
+      1_700_000_000_000,
+    );
+    const empty = makeFakeExec([]);
+    expect(await ReadingsDao.earliestAgg5mMs(empty.exec)).toBeNull();
+  });
+
+  it("systemIdsWithAgg5mSince maps distinct system ids", async () => {
+    const { exec } = makeFakeExec([{ systemId: 1 }, { systemId: 14 }]);
+    expect(
+      await ReadingsDao.systemIdsWithAgg5mSince(1_700_000_000_000, exec),
+    ).toEqual([1, 14]);
   });
 });
