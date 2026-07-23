@@ -13,7 +13,6 @@
     "lib/db/planetscale/battery-provenance-pg.ts",
     "lib/db/planetscale/readings-read-pg.ts",
     "lib/db/planetscale/run-periods-pg.ts",
-    "lib/history/readings-pg.ts",
     "lib/hws/recompute.ts",
     "lib/vendors/amber/client.ts",
     "lib/vendors/enphase/adapter.ts",

@@ -24,45 +24,48 @@
 ```text
 Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
 config-v4-clean-sheet.md for the why. PR-A (DAO seam + ratchet, #214), PR-B (receiver, #215), PR-C (first
-materialization writer aggregate-points-pg.ts, #218), and PR-D (daily 1d aggregation
-lib/aggregation/daily-points.ts, #221) have LANDED. lib/readings/dao.ts is the seam: PointId-keyed
-readRaw/read5m/read1d/latestForPoints + insertRaw/insert5m/upsert1d, PLUS a non-point-keyed maintenance
-surface delete1dRange(range)/earliestAgg5mMs()/systemIdsWithAgg5mSince(sinceMs) (the last tagged // SEAM:;
-the other two cutover-invariant). 28 modules remain on the baseline (18 app_lib + 10 scripts). Phase 3 adds
-NO migration (reads Phase-2's point_uid/rid).
+materialization writer aggregate-points-pg.ts, #218), PR-D (daily 1d aggregation
+lib/aggregation/daily-points.ts, #221), and PR-E (serving-path reader lib/history/readings-pg.ts, #224)
+have LANDED. lib/readings/dao.ts is the seam: PointId-keyed readRaw/read5m/read1d/latestForPoints +
+insertRaw/insert5m/upsert1d, PLUS a non-point-keyed maintenance surface
+delete1dRange(range)/earliestAgg5mMs()/systemIdsWithAgg5mSince(sinceMs). 27 modules remain on the baseline
+(17 app_lib + 10 scripts). Phase 3 adds NO migration (reads Phase-2's point_uid/rid).
 
-Do PR-E: migrate lib/history/readings-pg.ts onto ReadingsDao. It's in the app_lib baseline — a serving-path
-READER (`fetchAggRowsPg`, only `.select(...)` over point_readings_agg_5m / point_readings_agg_1d; no
-writes). Because it only reads, it is NOT a prod-write-path change and does NOT need a go-ahead pause (still
-verify fully). CONFIRM the read-only claim first with a grep; if it turns out to write a hot table, treat it
-like PR-C/D and PAUSE for Simon's explicit go-ahead before committing/merging.
+Do PR-F: migrate lib/aggregation/flow-series-pg.ts onto ReadingsDao. It's in the app_lib baseline — the
+sankey/attr flow-series READER that consumes the avgCache PR-E reconstructs (Agg5mAvgCache.slice) and
+issues its OWN point_readings_agg_5m reads for the cache-uncovered / lead-in points. Because it only reads,
+it is NOT a prod-write-path change and does NOT need a go-ahead pause (still verify fully). CONFIRM the
+read-only claim first with a grep; if it turns out to write a hot table, treat it like PR-C/D and PAUSE for
+Simon's explicit go-ahead before committing/merging.
 
 Scope:
-1. Replace its direct agg_5m/agg_1d `.select` reads with the DAO (read5m/read1d, both PointId; epoch-ms at
-   the boundary; agg_1d day key stays 'YYYY-MM-DD'). Resolve identity via point_info point_uid →
-   Point.encode; catch UnknownIdError to skip-and-continue where the old code was point_info-agnostic. Reuse
-   the EXISTING read methods — readers should need NO new DAO surface; add one only if a read shape is
-   genuinely missing, following PR-C's // SEAM: + exec? + dao.test.ts pattern. Semantics VERBATIM
-   (byte-identical served values, incl. the null-data_quality quirk the module already notes).
-2. Shrink the ratchet — remove lib/history/readings-pg.ts from BOTH .eslintrc.json's override AND
-   .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 27 baselined (17 app_lib). Don't
+1. Replace its direct agg_5m `.select` reads with ReadingsDao.read5m (PointId; epoch-ms at the boundary).
+   Resolve identity via RegistryCache.pointForAddr (systemId,pointId)->PointId, catching UnknownIdError to
+   skip-and-continue (exactly as PR-E did). WATCH THE UPPER BOUND: flow-series-pg queries agg_5m with a MIXED
+   bound (`hiInclusive ? lte(intervalEnd, hi) : lt(intervalEnd, hi)`), but read5m's ReadWindow is
+   INCLUSIVE-inclusive {fromMs,toMs} — the half-open (`lt`) case has NO exact DAO equivalent. This is the one
+   place a reader may legitimately need a GENUINELY-missing read shape: if so, add a half-open option to
+   read5m (e.g. {fromMs,toMs,toInclusive?:boolean}) following PR-C's // SEAM: + exec? + dao.test.ts pattern
+   (still a reader — no go-ahead pause). Reconcile the avgCache covered/lead-in/full-query split against the
+   DAO reads. Semantics VERBATIM (byte-identical served sankey/flow matrix + fold timeline).
+2. Shrink the ratchet — remove lib/aggregation/flow-series-pg.ts from BOTH .eslintrc.json's override AND
+   .readings-boundary-baseline.json app_lib (the STALE check enforces it) → 26 baselined (16 app_lib). Don't
    put a raw hot-table name in any string literal (the boundary script greps those; comments/JSDoc stripped).
 
 Verify: `npm run build:local && npm run type-check` clean; `node scripts/check-readings-boundary.mjs` green
-with 27 baselined; `npx next lint --file <changed files>` clean (the module passes WITHOUT the override);
-`npm test` green; then drive the real serving read path that calls fetchAggRowsPg (the history route/pages)
-against liveone-dev and confirm the served values are byte-identical to pre-change (a throwaway scripts/temp
-diff script is fine; delete it before committing).
+with 26 baselined; `npx next lint --file <changed files>` clean (the module passes WITHOUT the override);
+`npm test` green; then drive the real sankey serving path (/api/history?include=sankey, 5m/30m) against
+liveone-dev and confirm the served flow matrix + series are byte-identical to pre-change (a throwaway
+scripts/temp diff script is fine; delete it before committing).
 
 IMMEDIATELY BEFORE OPENING THE PR — in the SAME commit, NOT a post-merge chore: update this doc —
-(1) flip the Phase-3 progress-table note (PR-E landed / N modules remain / name the next reader);
-(2) append the PR-E landed row to the § Readings-seam ratchet ledger (module | app_lib | scripts | remaining;
+(1) flip the Phase-3 progress-table note (PR-F landed / N modules remain / name the next reader);
+(2) append the PR-F landed row to the § Readings-seam ratchet ledger (module | app_lib | scripts | remaining;
 the new `remaining` MUST equal `npm run check:readings`); (3) REPLACE this "▶ NEXT ACTION" block with the
-PR-F prompt (next reader lib/aggregation/flow-series-pg.ts, then battery-provenance/load.ts,
-coverage/find-gaps.ts, the battery-provenance/*-pg writers + run-periods-pg, then the admin/cron raw-SQL
-routes — each PR migrates one module AND deletes its baseline entry; writer PRs pause for go-ahead). Keep
-this same self-perpetuating closing instruction — including this "immediately before the PR" timing — in the
-new block.
+PR-G prompt (next reader lib/battery-provenance/load.ts, then coverage/find-gaps.ts, the
+battery-provenance/*-pg writers + run-periods-pg, then the admin/cron raw-SQL routes — each PR migrates one
+module AND deletes its baseline entry; writer PRs pause for go-ahead). Keep this same self-perpetuating
+closing instruction — including this "immediately before the PR" timing — in the new block.
 ```
 
 ## Progress
@@ -72,7 +75,7 @@ new block.
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) landed; **28 modules remain** on the baseline (trajectory in § Readings-seam ratchet ledger). PR-E = next reader `lib/history/readings-pg.ts` (pure reader, no go-ahead pause). |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) + PR-E (serving-path reader `lib/history/readings-pg.ts` → DAO `read5m`/`read1d`; identity via `RegistryCache.pointForAddr` with `UnknownIdError` skip-and-continue; `avgCache` reconstructed byte-identical; NO new DAO surface; pure reader, no pause) landed; **27 modules remain** on the baseline (trajectory in § Readings-seam ratchet ledger). PR-F = next reader `lib/aggregation/flow-series-pg.ts` (the `avgCache` consumer; pure reader, no go-ahead pause). |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -97,8 +100,9 @@ current list, so it never drifts.
 | B · #215 | `app/api/observations/receive/route.ts` | 20 | 10 | 30 |
 | C · #218 | `lib/db/planetscale/aggregate-points-pg.ts` | 19 | 10 | 29 |
 | D · #221 | `lib/aggregation/daily-points.ts` | 18 | 10 | 28 |
+| E · #224 | `lib/history/readings-pg.ts` | 17 | 10 | 27 |
 
-**Next:** PR-E `lib/history/readings-pg.ts` → 17 / 10 / **27**. **End state:** `app_lib` reaches
+**Next:** PR-F `lib/aggregation/flow-series-pg.ts` → 16 / 10 / **26**. **End state:** `app_lib` reaches
 **0** → delete `.readings-boundary-baseline.json` + the `.eslintrc.json` override → the seam becomes a
 hard wall. The `scripts` lane is the slower / possibly-permanent-allow track (per the baseline JSON's
 own `_doc`), so the hard-wall milestone keys off `app_lib`, not the combined total.
