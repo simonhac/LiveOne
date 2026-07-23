@@ -19,10 +19,12 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   batteryProvenanceDaily,
-  pointReadingsAgg1d,
   systems,
   type BatteryProvenanceDailyRow,
 } from "@/lib/db/planetscale/schema";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { ReadingsDao } from "@/lib/readings";
+import type { PointId } from "@/lib/ids";
 import {
   boundPoints,
   loadBatteryThroughput,
@@ -232,21 +234,27 @@ async function readAgg1dBaselines(
     { charge: number | null; discharge: number | null }
   >();
   if (!chargeBind || !dischargeBind) return out;
+  // `9999-12-31` is an open-ended upper bound: agg_1d `day` is a past/current local day (never future)
+  // and the TEXT column sorts lexically == chronologically, so `<= 9999-12-31` == the old `day >= fromDay`
+  // with no upper bound — byte-identical.
+  const OPEN_END_DAY = "9999-12-31";
   for (const [bind, key] of [
     [chargeBind, "charge"],
     [dischargeBind, "discharge"],
   ] as const) {
-    const rows = await db
-      .select({ day: pointReadingsAgg1d.day, delta: pointReadingsAgg1d.delta })
-      .from(pointReadingsAgg1d)
-      .where(
-        and(
-          eq(pointReadingsAgg1d.systemId, bind.systemId),
-          eq(pointReadingsAgg1d.pointId, bind.pointId),
-          gte(pointReadingsAgg1d.day, fromDay),
-        ),
-      );
-    for (const r of rows) {
+    let id: PointId;
+    try {
+      id = await RegistryCache.pointForAddr(bind.systemId, bind.pointId);
+    } catch (err) {
+      if (err instanceof UnknownIdError) continue; // no identity → no baseline rows
+      throw err;
+    }
+    const series = await ReadingsDao.read1d(
+      [id],
+      { startDay: fromDay, endDay: OPEN_END_DAY },
+      db,
+    );
+    for (const r of series.get(id)!) {
       const cur = out.get(r.day) ?? { charge: null, discharge: null };
       cur[key] = toKwh(r.delta, bind.unit);
       out.set(r.day, cur);

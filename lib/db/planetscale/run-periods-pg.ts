@@ -14,9 +14,12 @@
  * we reinsert. So whatever the samples now imply is what lands, with no orphans/dupes, and periods
  * outside the window (later, for a historical backfill) are untouched.
  */
-import { and, asc, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { planetscaleDb } from "./index";
-import { deviceRunPeriods, pointReadings } from "./schema";
+import { deviceRunPeriods } from "./schema";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { ReadingsDao } from "@/lib/readings";
+import type { PointId } from "@/lib/ids";
 import { detectRunPeriods, type Sample } from "@/lib/run-tracking/detect";
 import { assignEnergyToPeriods } from "@/lib/run-tracking/energy";
 import type { PointRef, ResolvedTracker } from "@/lib/run-tracking/resolve";
@@ -40,23 +43,19 @@ async function readPointSeries(
   fromMs: number,
   toMs: number,
 ): Promise<Sample[]> {
-  const rows = await db
-    .select({
-      measurementTime: pointReadings.measurementTime,
-      value: pointReadings.value,
-    })
-    .from(pointReadings)
-    .where(
-      and(
-        eq(pointReadings.systemId, ref.systemId),
-        eq(pointReadings.pointId, ref.pointId),
-        gte(pointReadings.measurementTime, new Date(fromMs)),
-        lte(pointReadings.measurementTime, new Date(toMs)),
-      ),
-    )
-    .orderBy(asc(pointReadings.measurementTime));
-  return rows.map((r) => ({
-    tMs: r.measurementTime.getTime(),
+  // Resolve (systemId, pointId) → PointId and read raw via the seam, passing the caller's tx as `exec`
+  // so the read stays inside the same advisory-lock transaction. A point with no registry identity
+  // (UnknownIdError) has no rows → return empty, exactly as the old composite-FK'd query did.
+  let id: PointId;
+  try {
+    id = await RegistryCache.pointForAddr(ref.systemId, ref.pointId);
+  } catch (err) {
+    if (err instanceof UnknownIdError) return [];
+    throw err;
+  }
+  const series = await ReadingsDao.readRaw([id], { fromMs, toMs }, db);
+  return series.get(id)!.map((r) => ({
+    tMs: r.measurementTimeMs,
     value: r.value,
   }));
 }

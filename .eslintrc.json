@@ -53,17 +53,11 @@
     },
     {
       "files": [
-        "app/labs/kinkora-hws/page.tsx",
-        "lib/aggregation/flow-series-pg.ts",
-        "lib/battery-provenance/load.ts",
         "lib/battery-provenance/recompute.ts",
-        "lib/db/planetscale/battery-provenance-daily-pg.ts",
         "lib/db/planetscale/battery-provenance-pg.ts",
-        "lib/db/planetscale/run-periods-pg.ts",
         "lib/hws/recompute.ts",
         "lib/vendors/amber/client.ts",
         "lib/vendors/enphase/adapter.ts",
-        "lib/vendors/enphase/enphase-history.ts",
         "lib/vendors/openelectricity/scheduler.ts"
       ],
       "rules": { "no-restricted-imports": "off" }

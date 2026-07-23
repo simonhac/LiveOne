@@ -16,9 +16,11 @@ import {
   areas,
   batteryProvenanceDaily,
   pointInfo,
-  pointReadingsAgg5m,
   systems,
 } from "@/lib/db/planetscale/schema";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { ReadingsDao } from "@/lib/readings";
+import type { PointId } from "@/lib/ids";
 import { applyPowerTransform } from "@/lib/aggregation/flow-series";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
 import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
@@ -58,25 +60,25 @@ async function readAgg5m(
   endMs: number,
   column: "avg" | "delta" = "avg",
 ): Promise<SeriesPoint[]> {
-  const col =
-    column === "delta" ? pointReadingsAgg5m.delta : pointReadingsAgg5m.avg;
-  const rows = await db
-    .select({
-      t: pointReadingsAgg5m.intervalEnd,
-      v: col,
-      dq: pointReadingsAgg5m.dataQuality,
-    })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, systemId),
-        eq(pointReadingsAgg5m.pointId, pointId),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(startMs)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(endMs)),
-      ),
-    )
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
-  return rows.map((r) => ({ t: r.t.getTime(), v: r.v, dq: r.dq }));
+  // Resolve (systemId, pointId) → PointId and read via the seam. A point with no registry identity
+  // (UnknownIdError) has no rows — return empty, exactly as the old composite-FK'd query did.
+  let id: PointId;
+  try {
+    id = await RegistryCache.pointForAddr(systemId, pointId);
+  } catch (err) {
+    if (err instanceof UnknownIdError) return [];
+    throw err;
+  }
+  const series = await ReadingsDao.read5m(
+    [id],
+    { fromMs: startMs, toMs: endMs },
+    db,
+  );
+  return series.get(id)!.map((r) => ({
+    t: r.intervalEndMs,
+    v: column === "delta" ? r.delta : r.avg,
+    dq: r.dataQuality,
+  }));
 }
 
 /** Raw OE emissions-intensity + renewables series for `region` (unprocessed — caller forward-fills).

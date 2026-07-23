@@ -17,7 +17,8 @@ jest.mock("@/lib/db/planetscale", () => ({
   },
 }));
 
-import { ReadingsDao } from "../dao";
+import { lt, lte } from "drizzle-orm";
+import { ReadingsDao, upperBoundOp } from "../dao";
 import {
   pointReadings,
   pointReadingsAgg5m,
@@ -350,6 +351,16 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     const { exec } = makeFakeExec([]); // no rows
     const out = await ReadingsDao.latestForPoints([p], exec);
     expect(out.get(p)).toBeNull();
+  });
+});
+
+describe("upperBoundOp — read-window upper-bound operator", () => {
+  it("is inclusive (lte) by default and when toInclusive is true", () => {
+    expect(upperBoundOp(undefined)).toBe(lte);
+    expect(upperBoundOp(true)).toBe(lte);
+  });
+  it("is half-open (lt) when toInclusive is false", () => {
+    expect(upperBoundOp(false)).toBe(lt);
   });
 });
 
