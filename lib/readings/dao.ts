@@ -19,7 +19,18 @@
  * DB-internal representation). The `agg_1d` day key stays a `YYYY-MM-DD` string. Writes optionally
  * run inside a caller transaction via the `exec?` param (the receiver: session-first, then raw + 5m).
  */
-import { and, eq, gte, lt, lte, inArray, desc, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  gt,
+  gte,
+  lt,
+  lte,
+  inArray,
+  desc,
+  max,
+  sql,
+} from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { RegistryCache, type PointAddr } from "@/lib/registry";
 import type { PointId } from "@/lib/ids";
@@ -442,6 +453,77 @@ async function latest5mForPoints(
 }
 
 /**
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) PER point, or `null` for a point with no rows — the
+ * battery-provenance blend watermark gate (`blendIsCurrent`). Reproduces the per-point
+ * `MAX(interval_end)` probe verbatim (batched with `GROUP BY point_id`).
+ */
+async function latestAgg5mIntervalMsForPoints(
+  points: PointId[],
+  exec?: ReadingsExec,
+): Promise<Map<PointId, number | null>> {
+  const out = new Map<PointId, number | null>(points.map((p) => [p, null]));
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: composite-key WHERE + per-point MAX(interval_end) (Phase 8 → point_rid).
+  const { bySystem, rev } = groupBySystem(
+    await RegistryCache.addrsForPoints(points),
+  );
+  for (const [systemId, indexes] of bySystem) {
+    const rows = await db
+      .select({
+        pointId: pointReadingsAgg5m.pointId,
+        m: max(pointReadingsAgg5m.intervalEnd),
+      })
+      .from(pointReadingsAgg5m)
+      .where(
+        and(
+          eq(pointReadingsAgg5m.systemId, systemId),
+          inArray(pointReadingsAgg5m.pointId, indexes),
+        ),
+      )
+      .groupBy(pointReadingsAgg5m.pointId);
+    for (const r of rows) {
+      const id = rev.get(addrKey(systemId, r.pointId));
+      if (!id || r.m == null) continue;
+      out.set(id, new Date(r.m as string | number | Date).getTime());
+    }
+  }
+  return out;
+}
+
+/**
+ * Latest `agg_5m` `updated_at` (epoch-ms UTC) for ONE point over an `interval_end` window
+ * (`> afterIntervalEndMs`, `<= throughIntervalEndMs`), or `null` when nothing matches — the
+ * battery-provenance checkpoint staleness probe. Reproduces `MAX(updated_at)` verbatim.
+ */
+async function latestAgg5mUpdatedAtForPoint(
+  point: PointId,
+  opts: { afterIntervalEndMs: number; throughIntervalEndMs: number },
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: composite-key WHERE (Phase 8 → point_rid). MAX(updated_at) over an interval_end window.
+  const a = await RegistryCache.addrForPoint(point);
+  const [row] = await db
+    .select({ m: max(pointReadingsAgg5m.updatedAt) })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        eq(pointReadingsAgg5m.systemId, a.systemId),
+        eq(pointReadingsAgg5m.pointId, a.index),
+        gt(pointReadingsAgg5m.intervalEnd, new Date(opts.afterIntervalEndMs)),
+        lte(
+          pointReadingsAgg5m.intervalEnd,
+          new Date(opts.throughIntervalEndMs),
+        ),
+      ),
+    );
+  return row?.m != null
+    ? new Date(row.m as string | number | Date).getTime()
+    : null;
+}
+
+/**
  * Per-(point, local-day) `agg_5m` row counts within an interval-end window (the coverage gap-finder,
  * `lib/coverage/find-gaps.ts`). `offsetMin` sets the local-day bucket (see {@link localDayExpr}); the
  * window is `[fromMs, toMs)` on `interval_end` (half-open, matching the original scan bounds). Result:
@@ -572,10 +654,20 @@ async function insertRaw(
  * the vendor-meta columns — so a re-run must not clobber meta a 5m-native queue write may have set on
  * the same interval. Byte-identical to the legacy recompute's upsert. The receiver omits the flag and
  * gets the full-fidelity SET (it owns all columns).
+ *
+ * `writeDataQuality` (only meaningful with `preserveVendorMeta:true`) re-adds
+ * `data_quality = excluded.data_quality` to the narrowed SET — the derivation/model writers
+ * (battery-provenance blend, HWS) are the SOLE writer of their derived points and OWN both the value
+ * columns AND `data_quality` (they set `"estimated"`/`"good"`), but never `session_id`/`value_str`
+ * (always NULL for a derived point). Byte-identical to their legacy upsert.
  */
 async function insert5m(
   rows: Agg5mInsert[],
-  opts: { upsert: boolean; preserveVendorMeta?: boolean },
+  opts: {
+    upsert: boolean;
+    preserveVendorMeta?: boolean;
+    writeDataQuality?: boolean;
+  },
   exec?: ReadingsExec,
 ): Promise<{ written: number }> {
   if (rows.length === 0) return { written: 0 };
@@ -618,10 +710,12 @@ async function insert5m(
             sampleCount: sql`excluded.sample_count`,
             errorCount: sql`excluded.error_count`,
             updatedAt: sql`now()`,
-            // Vendor-meta columns: overwritten on a full-fidelity write (receiver), preserved for the
-            // value-only recompute.
+            // Vendor-meta columns: overwritten on a full-fidelity write (receiver); preserved for the
+            // value-only recompute; `data_quality` re-added when a derived writer owns it.
             ...(opts.preserveVendorMeta
-              ? {}
+              ? opts.writeDataQuality
+                ? { dataQuality: sql`excluded.data_quality` }
+                : {}
               : {
                   sessionId: sql`excluded.session_id`,
                   valueStr: sql`excluded.value_str`,
@@ -1170,6 +1264,8 @@ export const ReadingsDao = {
   read1d,
   latestForPoints,
   latest5mForPoints,
+  latestAgg5mIntervalMsForPoints,
+  latestAgg5mUpdatedAtForPoint,
   countAgg5mByLocalDay,
   countAgg5mForLocalDay,
   insertRaw,

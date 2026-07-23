@@ -11,27 +11,18 @@
  * from the SAME accounting, sliced per local day — the source of the "cost/carbon/renewable over a period"
  * questions.
  */
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  gte,
-  isNotNull,
-  lte,
-  max,
-  sql,
-} from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
 import {
   areaBindings,
   areas,
   batteryProvenanceDaily,
-  pointReadingsAgg5m,
   pointReadingsFlowAttr1d,
 } from "./schema";
+import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import type { PointId } from "@/lib/ids";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import type {
@@ -68,6 +59,20 @@ import type { FoldStep, FoldState } from "@/lib/battery-provenance/fold";
 import type { LogicalSystem } from "@/lib/aggregation/logical-system";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
+
+/** Resolve a legacy (system_id, index) address to its PointId, or null if the point is unknown — a
+ *  nonexistent address returned 0 agg_5m rows pre-seam, so the staleness probe treats it as "no data". */
+async function pointForAddrOrNull(
+  systemId: number,
+  index: number,
+): Promise<PointId | null> {
+  try {
+    return await RegistryCache.pointForAddr(systemId, index);
+  } catch (e) {
+    if (e instanceof UnknownIdError) return null;
+    throw e;
+  }
+}
 
 /** Fold warm-up lead-in: enough to reach a reset (bottom-out) before the target window. */
 export const WARMUP_MS = 7 * 24 * 3600 * 1000;
@@ -431,11 +436,13 @@ async function writeBlendOutputs(
   const { timeline } = inputs;
 
   // Build agg_5m rows for each blend point over the TARGET window only (step i → interval end t[i+1]).
-  const rows: (typeof pointReadingsAgg5m.$inferInsert)[] = [];
+  const rows: Agg5mInsert[] = [];
   const latest = new Map<string, { value: number; tsMs: number }>();
   for (const spec of BLEND_POINTS) {
     const pointId = ensure.pointIds[spec.metricType];
     if (pointId === undefined) continue;
+    // The helper point was just ensured (committed on the pool) → it resolves via the registry.
+    const point = await RegistryCache.pointForAddr(helperSystemId, pointId);
     for (let i = 0; i < result.steps.length; i++) {
       const tsMs = timeline[i + 1];
       if (tsMs < winStartMs || tsMs > winEndMs) continue;
@@ -443,17 +450,18 @@ async function writeBlendOutputs(
       if (value === null) continue;
       const dq = result.steps[i].estimatedFraction > 0 ? "estimated" : "good";
       rows.push({
-        systemId: helperSystemId,
-        pointId,
-        intervalEnd: new Date(tsMs),
+        point,
+        intervalEndMs: tsMs,
         avg: value,
         min: value,
         max: value,
         last: value,
         delta: null,
+        valueStr: null,
         sampleCount: 1,
         errorCount: 0,
         dataQuality: dq,
+        sessionId: null,
       });
       const cur = latest.get(spec.metricType);
       if (!cur || tsMs >= cur.tsMs)
@@ -462,29 +470,15 @@ async function writeBlendOutputs(
   }
 
   // Chunk the upsert — a single multi-thousand-row insert overflows drizzle's recursive query builder.
+  // The derived points are sole-writer here: own the value cols + `data_quality`, never
+  // `session_id`/`value_str`. Byte-identical to the legacy upsert SET.
   const CHUNK = 1000;
   for (let off = 0; off < rows.length; off += CHUNK) {
-    await db
-      .insert(pointReadingsAgg5m)
-      .values(rows.slice(off, off + CHUNK))
-      .onConflictDoUpdate({
-        target: [
-          pointReadingsAgg5m.systemId,
-          pointReadingsAgg5m.pointId,
-          pointReadingsAgg5m.intervalEnd,
-        ],
-        set: {
-          avg: sql`excluded.avg`,
-          min: sql`excluded.min`,
-          max: sql`excluded.max`,
-          last: sql`excluded.last`,
-          delta: sql`excluded.delta`,
-          sampleCount: sql`excluded.sample_count`,
-          errorCount: sql`excluded.error_count`,
-          dataQuality: sql`excluded.data_quality`,
-          updatedAt: sql`now()`,
-        },
-      });
+    await ReadingsDao.insert5m(
+      rows.slice(off, off + CHUNK),
+      { upsert: true, preserveVendorMeta: true, writeDataQuality: true },
+      db,
+    );
   }
 
   if (opts.updateLatest) {
@@ -677,21 +671,18 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
     )
     .limit(1);
   if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
-  const [probe] = await db
-    .select({ maxUpdated: max(pointReadingsAgg5m.updatedAt) })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, powerBind.sys),
-        eq(pointReadingsAgg5m.pointId, powerBind.pid),
-        gt(
-          pointReadingsAgg5m.intervalEnd,
-          new Date(env.anchorMs - PROBE_LOOKBACK_MS),
-        ),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(env.anchorMs)),
-      ),
-    );
-  if (probe?.maxUpdated && probe.maxUpdated > cp.writtenAt)
+  const powerPoint = await pointForAddrOrNull(powerBind.sys, powerBind.pid);
+  const probeMs = powerPoint
+    ? await ReadingsDao.latestAgg5mUpdatedAtForPoint(
+        powerPoint,
+        {
+          afterIntervalEndMs: env.anchorMs - PROBE_LOOKBACK_MS,
+          throughIntervalEndMs: env.anchorMs,
+        },
+        db,
+      )
+    : null;
+  if (probeMs != null && probeMs > cp.writtenAt.getTime())
     return { seeded: false, reason: "pre-anchor-rewrite" };
 
   const inputs = await loadProvenanceInputs(handle, {
@@ -820,21 +811,18 @@ export async function tryLoadSeededProvenanceInputs(
     )
     .limit(1);
   if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
-  const [probe] = await db
-    .select({ maxUpdated: max(pointReadingsAgg5m.updatedAt) })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, powerBind.sys),
-        eq(pointReadingsAgg5m.pointId, powerBind.pid),
-        gt(
-          pointReadingsAgg5m.intervalEnd,
-          new Date(env.anchorMs - PROBE_LOOKBACK_MS),
-        ),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(env.anchorMs)),
-      ),
-    );
-  if (probe?.maxUpdated && probe.maxUpdated > cp.writtenAt)
+  const powerPoint = await pointForAddrOrNull(powerBind.sys, powerBind.pid);
+  const probeMs = powerPoint
+    ? await ReadingsDao.latestAgg5mUpdatedAtForPoint(
+        powerPoint,
+        {
+          afterIntervalEndMs: env.anchorMs - PROBE_LOOKBACK_MS,
+          throughIntervalEndMs: env.anchorMs,
+        },
+        db,
+      )
+    : null;
+  if (probeMs != null && probeMs > cp.writtenAt.getTime())
     return { seeded: false, reason: "pre-anchor-rewrite" };
 
   const inputs = await loadProvenanceInputs(

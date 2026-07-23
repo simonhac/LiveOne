@@ -271,6 +271,48 @@ describe("ReadingsDao writes — composite-key expansion", () => {
     expect(inserts[0].setKeys).not.toContain("dataQuality");
   });
 
+  it("insert5m upsert with preserveVendorMeta + writeDataQuality re-adds data_quality only", async () => {
+    const p = point(16, 2, 0);
+    const base = {
+      point: p,
+      intervalEndMs: 1_700_000_000_000,
+      avg: 1,
+      min: 0,
+      max: 2,
+      last: 1,
+      delta: 0,
+      valueStr: null,
+      sampleCount: 5,
+      errorCount: 0,
+      dataQuality: "estimated",
+      sessionId: null,
+    };
+    const { exec, inserts } = makeFakeExec();
+    await ReadingsDao.insert5m(
+      [base],
+      { upsert: true, preserveVendorMeta: true, writeDataQuality: true },
+      exec,
+    );
+    expect(inserts[0].mode).toBe("update");
+    // Derived-writer SET (battery-provenance / HWS): the 7 aggregate value cols + updated_at +
+    // data_quality, and NEITHER session_id NOR value_str.
+    expect(inserts[0].setKeys!.sort()).toEqual(
+      [
+        "avg",
+        "dataQuality",
+        "delta",
+        "errorCount",
+        "last",
+        "max",
+        "min",
+        "sampleCount",
+        "updatedAt",
+      ].sort(),
+    );
+    expect(inserts[0].setKeys).not.toContain("sessionId");
+    expect(inserts[0].setKeys).not.toContain("valueStr");
+  });
+
   it("upsert1d always upserts into agg_1d keyed by day", async () => {
     const p = point(13, 3, 1);
     const { exec, inserts } = makeFakeExec();
@@ -430,6 +472,40 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     );
     expect(out.get(p)).toBe(288);
     expect(out.get(absent)).toBe(0);
+  });
+
+  it("latestAgg5mIntervalMsForPoints maps per-point MAX(interval_end) to epoch-ms, null when absent", async () => {
+    const p1 = point(41, 7, 4); // systemId 7, index 4 — has a row
+    const p2 = point(42, 7, 5); // same system, index 5 — no matching row → null
+    const { exec } = makeFakeExec([
+      { pointId: 4, m: new Date(1_700_000_300_000) },
+    ]);
+    const out = await ReadingsDao.latestAgg5mIntervalMsForPoints(
+      [p1, p2],
+      exec,
+    );
+    expect(out.get(p1)).toBe(1_700_000_300_000);
+    expect(out.get(p2)).toBeNull();
+  });
+
+  it("latestAgg5mUpdatedAtForPoint returns MAX(updated_at) epoch-ms, null when no rows / null max", async () => {
+    const p = point(43, 7, 4);
+    const window = {
+      afterIntervalEndMs: 0,
+      throughIntervalEndMs: 2_000_000_000_000,
+    };
+    const hit = makeFakeExec([{ m: new Date(1_700_000_900_000) }]);
+    expect(
+      await ReadingsDao.latestAgg5mUpdatedAtForPoint(p, window, hit.exec),
+    ).toBe(1_700_000_900_000);
+    const empty = makeFakeExec([]); // no rows → [row] undefined → null
+    expect(
+      await ReadingsDao.latestAgg5mUpdatedAtForPoint(p, window, empty.exec),
+    ).toBeNull();
+    const nullMax = makeFakeExec([{ m: null }]); // rows exist but MAX null → null
+    expect(
+      await ReadingsDao.latestAgg5mUpdatedAtForPoint(p, window, nullMax.exec),
+    ).toBeNull();
   });
 });
 

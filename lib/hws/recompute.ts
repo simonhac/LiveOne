@@ -17,9 +17,11 @@
  * `[winStart − WARMUP_MS, winEnd]`, model across it, and UPSERT only the window's intervals — so a
  * re-run / late data resolves to the same values with no deletes.
  */
-import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo, pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
+import { pointInfo } from "@/lib/db/planetscale/schema";
+import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
+import { Point, type PointId } from "@/lib/ids";
 import {
   modelHws,
   DEFAULT_HWS_MODEL_OPTIONS,
@@ -38,8 +40,9 @@ const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // backfill chunk (≫ warmup)
 /** A system's HWS point pair: the power signal and the derived temperature output. */
 interface HwsPair {
   systemId: number;
-  powerPointId: number;
-  tempPointId: number;
+  powerPoint: PointId; // power signal — the agg_5m `avg` model input
+  tempPoint: PointId; // derived temperature output — the agg_5m write target
+  tempPointId: number; // integer index — the KV latest cache key
   tempPath: string; // "load.hws/temperature"
   tempUnit: string;
   tempDisplayName: string;
@@ -61,6 +64,7 @@ export async function listHwsPairs(): Promise<HwsPair[]> {
     .select({
       systemId: pointInfo.systemId,
       index: pointInfo.index,
+      pointUid: pointInfo.pointUid,
       metricUnit: pointInfo.metricUnit,
       displayName: pointInfo.displayName,
     })
@@ -76,7 +80,7 @@ export async function listHwsPairs(): Promise<HwsPair[]> {
   const pairs: HwsPair[] = [];
   for (const t of temps) {
     const [power] = await db
-      .select({ index: pointInfo.index })
+      .select({ pointUid: pointInfo.pointUid })
       .from(pointInfo)
       .where(
         and(
@@ -95,7 +99,8 @@ export async function listHwsPairs(): Promise<HwsPair[]> {
     }
     pairs.push({
       systemId: t.systemId,
-      powerPointId: power.index,
+      powerPoint: Point.encode(power.pointUid),
+      tempPoint: Point.encode(t.pointUid),
       tempPointId: t.index,
       tempPath: `${HWS_STEM}/${TEMP_METRIC}`,
       tempUnit: t.metricUnit,
@@ -118,24 +123,14 @@ async function recomputePairWindow(
 ): Promise<number> {
   const db = requirePlanetscaleDb();
 
-  const rows = await db
-    .select({
-      intervalEnd: pointReadingsAgg5m.intervalEnd,
-      avg: pointReadingsAgg5m.avg,
-    })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, pair.systemId),
-        eq(pointReadingsAgg5m.pointId, pair.powerPointId),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(winStartMs - WARMUP_MS)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(winEndMs)),
-      ),
-    )
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
-
-  const samples: HwsSample[] = rows.map((r) => ({
-    tsMs: r.intervalEnd.getTime(),
+  // agg_5m `avg` series for the power point over [winStart − WARMUP_MS, winEnd] (inclusive, ascending).
+  const series = await ReadingsDao.read5m(
+    [pair.powerPoint],
+    { fromMs: winStartMs - WARMUP_MS, toMs: winEndMs },
+    db,
+  );
+  const samples: HwsSample[] = (series.get(pair.powerPoint) ?? []).map((r) => ({
+    tsMs: r.intervalEndMs,
     powerW: r.avg, // null avg → null power; the model carries tank state across the gap
   }));
 
@@ -144,41 +139,28 @@ async function recomputePairWindow(
   );
   if (steps.length === 0) return 0;
 
-  const aggRows = steps.map((s) => ({
-    systemId: pair.systemId,
-    pointId: pair.tempPointId,
-    intervalEnd: new Date(s.tsMs),
+  const aggRows: Agg5mInsert[] = steps.map((s) => ({
+    point: pair.tempPoint,
+    intervalEndMs: s.tsMs,
     avg: s.faucetC,
     min: s.faucetC,
     max: s.faucetC,
     last: s.faucetC,
     delta: null,
+    valueStr: null,
     sampleCount: 1,
     errorCount: 0,
     dataQuality: "good",
+    sessionId: null,
   }));
 
-  await db
-    .insert(pointReadingsAgg5m)
-    .values(aggRows)
-    .onConflictDoUpdate({
-      target: [
-        pointReadingsAgg5m.systemId,
-        pointReadingsAgg5m.pointId,
-        pointReadingsAgg5m.intervalEnd,
-      ],
-      set: {
-        avg: sql`excluded.avg`,
-        min: sql`excluded.min`,
-        max: sql`excluded.max`,
-        last: sql`excluded.last`,
-        delta: sql`excluded.delta`,
-        sampleCount: sql`excluded.sample_count`,
-        errorCount: sql`excluded.error_count`,
-        dataQuality: sql`excluded.data_quality`,
-        updatedAt: sql`now()`,
-      },
-    });
+  // The derived point is sole-writer here: own the value cols + `data_quality`, never
+  // `session_id`/`value_str`. Byte-identical to the legacy upsert SET.
+  await ReadingsDao.insert5m(
+    aggRows,
+    { upsert: true, preserveVendorMeta: true, writeDataQuality: true },
+    db,
+  );
 
   if (updateLatest) {
     const last = steps[steps.length - 1];
