@@ -66,13 +66,21 @@ export default function DashboardClient({
 
   // areaId → Area: the shared view gets them inline (sharedAreas); an authed owner is seeded from SSR
   // (initialReadableAreas) so the query resolves without a client fetch; otherwise it fetches.
-  const { data: areasResp } = useQuery({
+  const areasQuery = useQuery({
     ...readableAreasQuery(!sharedAreas),
     ...(initialReadableAreas
       ? { initialData: { areas: initialReadableAreas } }
       : {}),
   });
-  const readableAreas: ReadableArea[] = sharedAreas ?? areasResp?.areas ?? [];
+  const readableAreas: ReadableArea[] =
+    sharedAreas ?? areasQuery.data?.areas ?? [];
+  // Whether the readable-Area set is KNOWN (not still loading): a shared/grant view has them
+  // inline; the authed owner/admin view is SSR-seeded (initialData ⇒ success on the first render);
+  // otherwise we wait for the fetch to settle. Once resolved, a section whose Area still can't be
+  // found is a genuine unresolved reference (removed, or — common in local dev, where you sign in as
+  // a Clerk *dev* user who may not own/have the synced Areas shared to them — no access). Dashboard
+  // surfaces that instead of spinning a skeleton forever.
+  const areasResolved = sharedAreas != null || areasQuery.isSuccess;
   const areaById = useMemo(
     () => new Map(readableAreas.map((a) => [a.id, a] as const)),
     [readableAreas],
@@ -197,6 +205,7 @@ export default function DashboardClient({
             dashboardId={dashboard.id}
             descriptor={dashboard.descriptor}
             areaById={areaById}
+            areasResolved={areasResolved}
             onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
           />
         </main>

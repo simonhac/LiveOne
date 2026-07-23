@@ -2,7 +2,7 @@
 
 import { type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Layers } from "lucide-react";
+import { Layers, AlertTriangle } from "lucide-react";
 import { CARD_RENDERERS } from "@/components/dashboard/cards/registry";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import { ChartSkeleton } from "@/components/dashboard/cards/shared";
@@ -42,6 +42,9 @@ interface DashboardProps {
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
   areaById: Map<string, ReadableArea>;
+  /** True once the readable-Area set is known (loaded / SSR-seeded / inline). Until then a missing
+   *  Area is "still loading" (skeleton); after, it's an unresolved reference (notice). */
+  areasResolved: boolean;
   /** Owner/editable view: opens the Add-area dialog from the empty state. Omitted on shared views. */
   onAddArea?: () => void;
 }
@@ -50,6 +53,7 @@ export default function Dashboard({
   dashboardId,
   descriptor,
   areaById,
+  areasResolved,
   onAddArea,
 }: DashboardProps) {
   // Render every section straight from the descriptor — its Area (and so the live data) may not have
@@ -101,6 +105,7 @@ export default function Dashboard({
           dashboardId={dashboardId}
           section={section}
           area={areaById.get(section.areaId)}
+          areasResolved={areasResolved}
           showHeader={showHeaders}
         />
       ))}
@@ -113,16 +118,47 @@ function AreaSectionView({
   dashboardId,
   section,
   area,
+  areasResolved,
   showHeader,
 }: {
   dashboardId?: number;
   section: AreaSectionV3;
   /** Undefined while the readable-areas fetch is in flight → the cards draw skeletons. */
   area?: ReadableArea;
+  /** True once the readable-Area set is known — see {@link DashboardProps.areasResolved}. */
+  areasResolved: boolean;
   showHeader: boolean;
 }) {
   const handle = area?.legacySystemId;
   const visible = section.cards.filter((c) => !c.hidden);
+
+  // Once the readable-Area set has resolved (no longer loading) and this section STILL can't map to
+  // a system handle — the Area was removed, or the viewer can't read it (common in local dev, where
+  // you sign in as a Clerk *dev* user who may not own/have the synced Areas shared to them) — surface
+  // a clear notice. Without this the cards below would draw skeletons that spin forever, silently
+  // (the failure mode that made this look like a mysterious blank dashboard).
+  if (handle == null && areasResolved) {
+    return (
+      <section
+        className={
+          showHeader
+            ? "rounded-lg border border-gray-700/70 bg-gray-900/30 p-2 sm:p-3"
+            : ""
+        }
+      >
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+          <div>
+            <p className="font-medium text-amber-200">Area unavailable</p>
+            <p className="mt-0.5 text-amber-200/70">
+              This section points to an area that couldn&rsquo;t be loaded — it
+              may have been removed, or you don&rsquo;t have access to it.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   // Per-sankey persistence key for the Flows options: `sankeyId:areaId:dashboardId`. `normalizeDescriptor`
   // guarantees a persisted sankey card always has an id; the `?? "sankey"` only covers a legacy row not yet
