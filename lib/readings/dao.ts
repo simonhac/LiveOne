@@ -878,6 +878,287 @@ async function delete1dRange(
   return { deleted: res.length };
 }
 
+// ── Admin readings views (config-v4 PR-I) ──────────────────────────────────────────────────────────
+// The admin point-readings pivot + single-point ±window drill-downs, relocated VERBATIM from the former
+// `lib/db/planetscale/readings-read-pg.ts`. They are raw `sql.raw(...)` queries — naming the hot tables
+// is legal only inside `lib/readings/` (the seam's home / the boundary gate's structurally-allowed
+// zone). Keeping the exact SQL keeps the admin routes byte-identical; the `// SEAM:` tags mark the
+// Phase-8 re-key points (system_id → device_rid, point_id → point_rid).
+
+/** A raw admin-view row: dynamic pivot columns, or the rich single-point window fields. */
+type Row = Record<string, unknown>;
+
+/** Which hot store an admin probe/pivot reads. A plain enum so callers never name a hot table. */
+export type ReadingStore = "raw" | "agg5m" | "agg1d";
+const STORE_TABLE: Record<ReadingStore, string> = {
+  raw: "point_readings",
+  agg5m: "point_readings_agg_5m",
+  agg1d: "point_readings_agg_1d",
+};
+const STORE_TIME_COL: Record<ReadingStore, string> = {
+  raw: "measurement_time",
+  agg5m: "interval_end",
+  agg1d: "day",
+};
+
+/** A `timestamp without time zone` literal (UTC) for an epoch-ms value — TZ-independent. */
+function tsLitUTC(ms: number): string {
+  return `(to_timestamp(${Number(ms)} / 1000.0) AT TIME ZONE 'UTC')`;
+}
+
+export interface AdminPivotParams {
+  systemId: number;
+  source: string; // "raw" | "5m" | "daily"
+  cursor: number | string | null;
+  direction: string; // "older" | "newer"
+  limit: number;
+  /**
+   * Caller-built `MAX(CASE …)` pivot projections (e.g. `MAX(CASE WHEN pr.system_id = 1 AND
+   * pr.point_id = 0 THEN pr.value END) as point_0`). Names value columns, NOT a hot table, so the
+   * boundary gate does not flag the caller. // SEAM: the caller addresses points by `pr.point_id =
+   * <index>` here — Phase 8 re-keys that to `pr.point_rid = <rid>` in the caller alongside the
+   * `system_id` filter below.
+   */
+  pivotColumns: string;
+}
+
+/**
+ * Admin point-readings pivot (rows = timestamps × columns = per-point aggregates), with keyset
+ * pagination and a session-label join (raw/5m). `measurement_time` comes back as epoch-ms (raw/5m)
+ * or a YYYY-MM-DD string (daily), matching the route's transform. Verbatim relocation of the former
+ * `fetchAdminPivotRowsPg`. // SEAM: filters `system_id` directly (Phase 8 → device_rid).
+ */
+async function readAdminPivot(
+  p: AdminPivotParams,
+  exec?: ReadingsExec,
+): Promise<Row[]> {
+  const { systemId, source, cursor, direction, limit, pivotColumns } = p;
+  const db = exec ?? requirePlanetscaleDb();
+  const run = async (query: string): Promise<Row[]> => {
+    const res = await db.execute(sql.raw(query));
+    return ((res as { rows?: Row[] }).rows ?? []) as Row[];
+  };
+
+  if (source === "daily") {
+    const cursorFilter = cursor
+      ? direction === "older"
+        ? `AND day < '${cursor}'`
+        : `AND day > '${cursor}'`
+      : "";
+    const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
+    return run(`
+      WITH recent_days AS (
+        SELECT DISTINCT day
+        FROM point_readings_agg_1d pr
+        INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+        WHERE pi.system_id = ${systemId}
+        ${cursorFilter}
+        ORDER BY day ${orderDirection}
+        LIMIT ${limit}
+      )
+      SELECT
+        pr.day as measurement_time,
+        NULL as session_id,
+        NULL as session_label,
+        ${pivotColumns}
+      FROM point_readings_agg_1d pr
+      WHERE pr.system_id = ${systemId}
+        AND pr.day IN (SELECT day FROM recent_days)
+      GROUP BY pr.day
+      ORDER BY pr.day DESC
+    `);
+  }
+
+  // raw / 5m share the timestamp shape; only the table + time column differ.
+  const table = source === "5m" ? "point_readings_agg_5m" : "point_readings";
+  const timeCol = source === "5m" ? "interval_end" : "measurement_time";
+  const tsCursor =
+    cursor != null ? `to_timestamp(${Number(cursor)} / 1000.0)` : null;
+  const cursorFilter = tsCursor
+    ? direction === "older"
+      ? `AND ${timeCol} < ${tsCursor}`
+      : `AND ${timeCol} > ${tsCursor}`
+    : "";
+  const orderDirection = direction === "newer" && cursor ? "ASC" : "DESC";
+
+  const rows = await run(`
+    WITH recent_timestamps AS (
+      SELECT DISTINCT ${timeCol}
+      FROM ${table} pr
+      INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
+      WHERE pi.system_id = ${systemId}
+      ${cursorFilter}
+      ORDER BY ${timeCol} ${orderDirection}
+      LIMIT ${limit}
+    )
+    SELECT
+      (EXTRACT(EPOCH FROM pr.${timeCol} AT TIME ZONE 'UTC') * 1000)::bigint as measurement_time,
+      pr.session_id,
+      s.session_label,
+      ${pivotColumns}
+    FROM ${table} pr
+    LEFT JOIN sessions s ON pr.session_id = s.id
+    WHERE pr.system_id = ${systemId}
+      AND pr.${timeCol} IN (SELECT ${timeCol} FROM recent_timestamps)
+    GROUP BY pr.${timeCol}, pr.session_id, s.session_label
+    ORDER BY pr.${timeCol} DESC, pr.session_id
+  `);
+  // node-postgres returns the epoch-ms bigint as a string; coerce to a number so the route's
+  // `new Date(measurement_time)` + cursor formatting work (raw/5m only — daily stays a YYYY-MM-DD string).
+  return rows.map((r) => ({
+    ...r,
+    measurement_time: Number(r.measurement_time),
+  }));
+}
+
+/**
+ * Does device (system) `systemId` have ANY rows in `store`? (`SELECT 1 … LIMIT 1`, index-friendly —
+ * never `COUNT(*)`). The admin pivot's "is there data in the other store?" probe.
+ * // SEAM: filters `system_id` directly (Phase 8 → device_rid).
+ */
+async function hasReadingsForSystem(
+  systemId: number,
+  store: ReadingStore,
+  exec?: ReadingsExec,
+): Promise<boolean> {
+  const db = exec ?? requirePlanetscaleDb();
+  const res = await db.execute(
+    sql.raw(
+      `SELECT 1 FROM ${STORE_TABLE[store]} WHERE system_id = ${systemId} LIMIT 1`,
+    ),
+  );
+  return (((res as { rows?: unknown[] }).rows ?? []).length ?? 0) > 0;
+}
+
+/**
+ * Does device (system) `systemId` have any `store` row strictly older / newer than `boundary`? (the
+ * admin pivot's hasOlder / hasNewer pagination probes; `SELECT 1 … LIMIT 1`). `boundary` is a
+ * YYYY-MM-DD string for `agg1d` (string compare) or epoch-ms for raw/5m (→ `to_timestamp`).
+ * `direction`: "older" → `<`, "newer" → `>`. // SEAM: filters `system_id` directly (Phase 8 → device_rid).
+ */
+async function hasReadingsForSystemBeyond(
+  systemId: number,
+  store: ReadingStore,
+  boundary: number | string,
+  direction: "older" | "newer",
+  exec?: ReadingsExec,
+): Promise<boolean> {
+  const db = exec ?? requirePlanetscaleDb();
+  const op = direction === "older" ? "<" : ">";
+  const rhs =
+    store === "agg1d"
+      ? `'${boundary}'`
+      : `to_timestamp(${Number(boundary)} / 1000.0)`;
+  const res = await db.execute(
+    sql.raw(
+      `SELECT 1 FROM ${STORE_TABLE[store]} WHERE system_id = ${systemId} AND ${STORE_TIME_COL[store]} ${op} ${rhs} LIMIT 1`,
+    ),
+  );
+  return (((res as { rows?: unknown[] }).rows ?? []).length ?? 0) > 0;
+}
+
+/**
+ * Raw readings in a ±1 hour window around `centerMs` for ONE point (admin single-point drill-down;
+ * LEFT JOIN sessions for the label). Verbatim relocation of the former `fetchSinglePointReadingsPg`
+ * raw branch. Returns rich rows keyed by the SQL aliases (id/systemId/pointId/…); `measurementTime`
+ * and `receivedTime` are epoch-ms. // SEAM: composite-key WHERE (Phase 8 → point_rid).
+ */
+async function readRawWindowAround(
+  point: PointId,
+  centerMs: number,
+  exec?: ReadingsExec,
+): Promise<Row[]> {
+  const db = exec ?? requirePlanetscaleDb();
+  const { systemId, index } = await RegistryCache.addrForPoint(point);
+  const oneHour = 60 * 60 * 1000;
+  const startTime = centerMs - oneHour;
+  const endTime = centerMs + oneHour;
+  const res = await db.execute(
+    sql.raw(`
+    SELECT
+      pr.id,
+      pr.system_id as "systemId",
+      pr.point_id as "pointId",
+      pr.session_id as "sessionId",
+      (EXTRACT(EPOCH FROM pr.measurement_time AT TIME ZONE 'UTC') * 1000)::bigint as "measurementTime",
+      (EXTRACT(EPOCH FROM pr.received_time AT TIME ZONE 'UTC') * 1000)::bigint as "receivedTime",
+      pr.value,
+      pr.value_str as "valueStr",
+      pr.error,
+      pr.data_quality as "dataQuality",
+      s.session_label as "sessionLabel"
+    FROM point_readings pr
+    LEFT JOIN sessions s ON pr.session_id = s.id
+    WHERE pr.system_id = ${systemId}
+      AND pr.point_id = ${index}
+      AND pr.measurement_time >= ${tsLitUTC(startTime)}
+      AND pr.measurement_time <= ${tsLitUTC(endTime)}
+    ORDER BY pr.measurement_time ASC
+  `),
+  );
+  const rows = ((res as { rows?: Row[] }).rows ?? []) as Row[];
+  // Coerce the epoch-ms bigints (returned as strings by node-postgres) to numbers.
+  return rows.map((r) => ({
+    ...r,
+    measurementTime: Number(r.measurementTime),
+    receivedTime: Number(r.receivedTime),
+  }));
+}
+
+/**
+ * 5-minute aggregates in a ROW_NUMBER ±10 window centred on the interval ending at `centerMs`, for ONE
+ * point (admin single-point drill-down; LEFT JOIN sessions). Verbatim relocation of the former
+ * `fetchSinglePointReadingsPg` 5m branch. `intervalEnd` is epoch-ms. // SEAM: composite-key WHERE
+ * (Phase 8 → point_rid).
+ */
+async function read5mRowWindowAround(
+  point: PointId,
+  centerMs: number,
+  exec?: ReadingsExec,
+): Promise<Row[]> {
+  const db = exec ?? requirePlanetscaleDb();
+  const { systemId, index } = await RegistryCache.addrForPoint(point);
+  const res = await db.execute(
+    sql.raw(`
+      WITH all_rows AS (
+        SELECT interval_end, ROW_NUMBER() OVER (ORDER BY interval_end ASC) as row_num
+        FROM point_readings_agg_5m
+        WHERE system_id = ${systemId} AND point_id = ${index}
+      ),
+      target_position AS (
+        SELECT row_num as target_row FROM all_rows
+        WHERE interval_end = ${tsLitUTC(centerMs)}
+      ),
+      ranked AS (
+        SELECT
+          pr.system_id as "systemId",
+          pr.point_id as "pointId",
+          pr.session_id as "sessionId",
+          (EXTRACT(EPOCH FROM pr.interval_end AT TIME ZONE 'UTC') * 1000)::bigint as "intervalEnd",
+          pr.avg,
+          pr.min,
+          pr.max,
+          pr.last,
+          pr.delta,
+          pr.sample_count as "sampleCount",
+          pr.error_count as "errorCount",
+          pr.data_quality as "dataQuality",
+          s.session_label as "sessionLabel",
+          ROW_NUMBER() OVER (ORDER BY pr.interval_end ASC) as row_num
+        FROM point_readings_agg_5m pr
+        LEFT JOIN sessions s ON pr.session_id = s.id
+        WHERE pr.system_id = ${systemId} AND pr.point_id = ${index}
+      )
+      SELECT ranked.* FROM ranked, target_position
+      WHERE ranked.row_num BETWEEN (target_position.target_row - 10) AND (target_position.target_row + 10)
+      ORDER BY "intervalEnd" ASC
+    `),
+  );
+  const rows = ((res as { rows?: Row[] }).rows ?? []) as Row[];
+  // Coerce the epoch-ms bigint (returned as a string by node-postgres) to a number.
+  return rows.map((r) => ({ ...r, intervalEnd: Number(r.intervalEnd) }));
+}
+
 /** Wrap several writes in ONE transaction (the receiver: session-first, then raw + 5m). */
 function transaction<T>(fn: (tx: ReadingsExec) => Promise<T>): Promise<T> {
   return requirePlanetscaleDb().transaction(fn as (tx: PgTx) => Promise<T>);
@@ -903,5 +1184,10 @@ export const ReadingsDao = {
   latestRawCreatedAtMs,
   maxAgg5mIntervalMsForSystems,
   delete1dRange,
+  readAdminPivot,
+  hasReadingsForSystem,
+  hasReadingsForSystemBeyond,
+  readRawWindowAround,
+  read5mRowWindowAround,
   transaction,
 };

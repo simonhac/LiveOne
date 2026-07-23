@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
 import { formatDateYYYYMMDD, parseDateYYYYMMDD } from "@/lib/date-utils";
-import { fetchSinglePointReadingsPg } from "@/lib/db/planetscale/readings-read-pg";
+import { ReadingsDao } from "@/lib/readings/dao";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
 
 export async function GET(
   request: NextRequest,
@@ -130,14 +131,37 @@ export async function GET(
       return allReadings.slice(startIndex, endIndex);
     };
 
-    const all = await fetchSinglePointReadingsPg({
-      systemId,
-      pointId,
-      source,
-      timestamp,
-      startDayStr: dailyStartDayStr,
-      endDayStr: dailyEndDayStr,
-    });
+    // Serve the window from Postgres, addressing the point through the readings seam. The URL
+    // `pointId` is the point's `point_info` index; resolve it to a PointId (UnknownIdError = no such
+    // point → an empty window, matching the legacy 0-row query).
+    let all: any[] = [];
+    try {
+      const point = await RegistryCache.pointForAddr(systemId, pointId);
+      if (source === "daily") {
+        const series = await ReadingsDao.read1d([point], {
+          startDay: dailyStartDayStr!,
+          endDay: dailyEndDayStr!,
+        });
+        all = (series.get(point) ?? []).map((r) => ({
+          systemId,
+          pointId,
+          date: r.day,
+          avg: r.avg,
+          min: r.min,
+          max: r.max,
+          last: r.last,
+          delta: r.delta,
+          sampleCount: r.sampleCount,
+          errorCount: r.errorCount,
+        }));
+      } else if (source === "5m") {
+        all = await ReadingsDao.read5mRowWindowAround(point, timestamp!);
+      } else {
+        all = await ReadingsDao.readRawWindowAround(point, timestamp!);
+      }
+    } catch (e) {
+      if (!(e instanceof UnknownIdError)) throw e;
+    }
     const readings = centerReadings(all);
 
     return NextResponse.json({

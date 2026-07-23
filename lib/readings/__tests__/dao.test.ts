@@ -8,6 +8,7 @@ jest.mock("@/lib/registry", () => ({
   RegistryCache: {
     addrsForPoints: async (ids: PointId[]) =>
       new Map(ids.map((id) => [id, addrMap.get(id)!])),
+    addrForPoint: async (id: PointId) => addrMap.get(id)!,
   },
 }));
 // The DAO falls back to requirePlanetscaleDb() only when no `exec` is passed; every test passes a fake.
@@ -561,5 +562,134 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(
       await ReadingsDao.maxAgg5mIntervalMsForSystems([], noQuery.exec),
     ).toBeNull();
+  });
+});
+
+describe("ReadingsDao admin views — relocated verbatim from readings-read-pg", () => {
+  it.each(["raw", "5m", "daily"])(
+    "readAdminPivot returns pivot rows for source=%s (raw/5m coerce measurement_time to number, daily keeps YYYY-MM-DD)",
+    async (source) => {
+      const isDaily = source === "daily";
+      const canned = [
+        {
+          // node-postgres returns the epoch-ms bigint as a string; daily returns pr.day verbatim.
+          measurement_time: isDaily ? "2026-01-15" : "1700000000000",
+          session_id: null,
+          session_label: null,
+          point_0: 5,
+        },
+      ];
+      const { exec } = makeFakeExec(canned);
+      const out = await ReadingsDao.readAdminPivot(
+        {
+          systemId: 1,
+          source,
+          cursor: isDaily ? "2026-01-15" : 1_700_000_000_000,
+          direction: "older",
+          limit: 100,
+          pivotColumns: "MAX(pr.value) as point_0",
+        },
+        exec,
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0].measurement_time).toBe(
+        isDaily ? "2026-01-15" : 1_700_000_000_000,
+      );
+      expect(out[0].point_0).toBe(5);
+    },
+  );
+
+  it("hasReadingsForSystem is true when SELECT 1 returns a row, false when empty", async () => {
+    const hit = makeFakeExec([{ "?column?": 1 }]);
+    expect(await ReadingsDao.hasReadingsForSystem(1, "agg5m", hit.exec)).toBe(
+      true,
+    );
+    const miss = makeFakeExec([]);
+    expect(await ReadingsDao.hasReadingsForSystem(1, "raw", miss.exec)).toBe(
+      false,
+    );
+  });
+
+  it("hasReadingsForSystemBeyond is true when a row exists beyond the boundary, false when none (both boundary grammars)", async () => {
+    const olderHit = makeFakeExec([{ "?column?": 1 }]);
+    expect(
+      await ReadingsDao.hasReadingsForSystemBeyond(
+        1,
+        "raw",
+        1_700_000_000_000,
+        "older",
+        olderHit.exec,
+      ),
+    ).toBe(true);
+    const dailyMiss = makeFakeExec([]);
+    expect(
+      await ReadingsDao.hasReadingsForSystemBeyond(
+        1,
+        "agg1d",
+        "2026-01-15",
+        "newer",
+        dailyMiss.exec,
+      ),
+    ).toBe(false);
+  });
+
+  it("readRawWindowAround resolves the PointId and coerces measurement/received times, passing other fields through verbatim", async () => {
+    const p = point(41, 1, 3); // systemId 1, index 3
+    const canned = [
+      {
+        id: 100,
+        systemId: 1,
+        pointId: 3,
+        sessionId: null,
+        measurementTime: "1700000000000",
+        receivedTime: "1700000001000",
+        value: 42,
+        valueStr: null,
+        error: null,
+        dataQuality: "good",
+        sessionLabel: null,
+      },
+    ];
+    const { exec } = makeFakeExec(canned);
+    const out = await ReadingsDao.readRawWindowAround(
+      p,
+      1_700_000_000_000,
+      exec,
+    );
+    expect(out[0].measurementTime).toBe(1_700_000_000_000);
+    expect(out[0].receivedTime).toBe(1_700_000_001_000);
+    expect(out[0].id).toBe(100);
+    expect(out[0].value).toBe(42);
+  });
+
+  it("read5mRowWindowAround coerces intervalEnd and preserves row_num from the verbatim SELECT ranked.*", async () => {
+    const p = point(42, 1, 3);
+    const canned = [
+      {
+        systemId: 1,
+        pointId: 3,
+        sessionId: null,
+        intervalEnd: "1700000300000",
+        avg: 1,
+        min: 0,
+        max: 2,
+        last: 1,
+        delta: 0,
+        sampleCount: 5,
+        errorCount: 0,
+        dataQuality: "good",
+        sessionLabel: null,
+        // node-postgres returns ROW_NUMBER()'s int8 as a string; the method must NOT strip it.
+        row_num: "7",
+      },
+    ];
+    const { exec } = makeFakeExec(canned);
+    const out = await ReadingsDao.read5mRowWindowAround(
+      p,
+      1_700_000_300_000,
+      exec,
+    );
+    expect(out[0].intervalEnd).toBe(1_700_000_300_000);
+    expect(out[0].row_num).toBe("7");
   });
 });
