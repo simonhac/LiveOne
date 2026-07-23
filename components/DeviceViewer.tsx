@@ -157,7 +157,7 @@ export default function DeviceViewer({
         ))}
 
       {data?.system && descriptor && (
-        <Dashboard descriptor={descriptor} areaById={areaById} />
+        <Dashboard descriptor={descriptor} areaById={areaById} areasResolved />
       )}
     </main>
   );
