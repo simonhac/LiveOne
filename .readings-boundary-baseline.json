@@ -8,10 +8,7 @@
     "lib/coverage/find-gaps.ts",
     "lib/db/planetscale/battery-provenance-pg.ts",
     "lib/db/planetscale/readings-read-pg.ts",
-    "lib/hws/recompute.ts",
-    "lib/vendors/amber/client.ts",
-    "lib/vendors/enphase/adapter.ts",
-    "lib/vendors/openelectricity/scheduler.ts"
+    "lib/hws/recompute.ts"
   ],
   "scripts": [
     "scripts/audit-pg-fk-orphans.ts",

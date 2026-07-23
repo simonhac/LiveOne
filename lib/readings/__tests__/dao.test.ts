@@ -311,6 +311,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
       {
         pointId: 4,
         intervalEnd: new Date(1_700_000_300_000),
+        createdAt: new Date(1_700_000_301_000),
         avg: 1,
         min: 0,
         max: 2,
@@ -332,6 +333,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     expect(out.get(p)).toEqual([
       {
         intervalEndMs: 1_700_000_300_000,
+        createdAtMs: 1_700_000_301_000,
         avg: 1,
         min: 0,
         max: 2,
@@ -351,6 +353,47 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     const { exec } = makeFakeExec([]); // no rows
     const out = await ReadingsDao.latestForPoints([p], exec);
     expect(out.get(p)).toBeNull();
+  });
+
+  it("latest5mForPoints maps the latest agg_5m row per point (incl. createdAtMs), null when none", async () => {
+    const p = point(23, 9, 2); // systemId 9, index 2
+    const rows = [
+      {
+        pointId: 2,
+        intervalEnd: new Date(1_700_000_600_000),
+        createdAt: new Date(1_700_000_601_000),
+        avg: 3,
+        min: 1,
+        max: 4,
+        last: 3,
+        delta: 2,
+        valueStr: null,
+        sampleCount: 6,
+        errorCount: 0,
+        dataQuality: "good",
+        sessionId: "sess-9",
+      },
+    ];
+    const hit = makeFakeExec(rows);
+    const out = await ReadingsDao.latest5mForPoints([p], hit.exec);
+    expect(out.get(p)).toEqual({
+      intervalEndMs: 1_700_000_600_000,
+      createdAtMs: 1_700_000_601_000,
+      avg: 3,
+      min: 1,
+      max: 4,
+      last: 3,
+      delta: 2,
+      valueStr: null,
+      sampleCount: 6,
+      errorCount: 0,
+      dataQuality: "good",
+      sessionId: "sess-9",
+    });
+
+    const empty = makeFakeExec([]);
+    const none = await ReadingsDao.latest5mForPoints([p], empty.exec);
+    expect(none.get(p)).toBeNull();
   });
 });
 
@@ -395,5 +438,18 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(
       await ReadingsDao.systemIdsWithAgg5mSince(1_700_000_000_000, exec),
     ).toEqual([1, 14]);
+  });
+
+  it("latestAgg5mIntervalMsForSystem returns the newest interval as epoch-ms, null when empty", async () => {
+    const withRow = makeFakeExec([
+      { intervalEnd: new Date(1_700_000_900_000) },
+    ]);
+    expect(
+      await ReadingsDao.latestAgg5mIntervalMsForSystem(9, withRow.exec),
+    ).toBe(1_700_000_900_000);
+    const empty = makeFakeExec([]);
+    expect(
+      await ReadingsDao.latestAgg5mIntervalMsForSystem(9, empty.exec),
+    ).toBeNull();
   });
 });

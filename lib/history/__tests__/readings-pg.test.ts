@@ -60,6 +60,7 @@ function register(systemId: number, index: number): PointId {
 function agg5m(intervalEndMs: number, v: Partial<Agg5mReading>): Agg5mReading {
   return {
     intervalEndMs,
+    createdAtMs: 0,
     avg: null,
     min: null,
     max: null,

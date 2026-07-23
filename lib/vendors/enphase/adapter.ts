@@ -3,9 +3,9 @@ import type { TestConnectionResult, FetchContext, FetchResult } from "../types";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { PointManager } from "@/lib/point/point-manager";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { ReadingsDao } from "@/lib/readings";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import type { PointId } from "@/lib/ids";
 import {
   checkAndFetchYesterdayIfNeeded,
   fetchEnphaseDay,
@@ -51,31 +51,29 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       return null;
     }
 
-    // Get the latest 5-minute aggregate for this point
-    const [latestAgg] = await requirePlanetscaleDb()
-      .select()
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, systemId),
-          eq(pointReadingsAgg5m.pointId, solarPoint.index),
-        ),
-      )
-      .orderBy(desc(pointReadingsAgg5m.intervalEnd))
-      .limit(1);
+    // Get the latest 5-minute aggregate for this point, via the readings seam. A point with no
+    // registry identity (UnknownIdError) has no rows → no reading.
+    let id: PointId;
+    try {
+      id = await RegistryCache.pointForAddr(systemId, solarPoint.index);
+    } catch (err) {
+      if (err instanceof UnknownIdError) return null;
+      throw err;
+    }
+    const latestAgg = (await ReadingsDao.latest5mForPoints([id])).get(id);
 
     if (!latestAgg) {
       return null;
     }
 
-    // Convert Unix milliseconds to Date
-    const timestamp = new Date(latestAgg.intervalEnd);
+    // Convert epoch-ms to Date
+    const timestamp = new Date(latestAgg.intervalEndMs);
 
     return {
       timestamp: timestamp,
-      receivedTime: latestAgg.createdAt
-        ? new Date(latestAgg.createdAt)
-        : timestamp, // Fall back to timestamp if createdAt is null
+      receivedTime: latestAgg.createdAtMs
+        ? new Date(latestAgg.createdAtMs)
+        : timestamp, // Fall back to timestamp if createdAt is null (dead: created_at is NOT NULL)
 
       solar: {
         powerW: latestAgg.avg,

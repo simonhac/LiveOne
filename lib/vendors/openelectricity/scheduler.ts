@@ -12,9 +12,7 @@
  */
 
 import { kv, kvKey } from "@/lib/kv";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
-import { desc, eq } from "drizzle-orm";
+import { ReadingsDao } from "@/lib/readings";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 
@@ -183,15 +181,8 @@ export async function loadState(systemId: number): Promise<OeSchedState> {
 
   let lastSeenIntervalEndMs = 0;
   try {
-    const rows = await requirePlanetscaleDb()
-      .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
-      .from(pointReadingsAgg5m)
-      .where(eq(pointReadingsAgg5m.systemId, systemId))
-      .orderBy(desc(pointReadingsAgg5m.intervalEnd))
-      .limit(1);
-    if (rows[0]?.intervalEnd) {
-      lastSeenIntervalEndMs = new Date(rows[0].intervalEnd).getTime();
-    }
+    const ms = await ReadingsDao.latestAgg5mIntervalMsForSystem(systemId);
+    if (ms != null) lastSeenIntervalEndMs = ms;
   } catch {
     // Best-effort seed; default delay still drives a sane first poll.
   }

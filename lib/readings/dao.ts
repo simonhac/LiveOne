@@ -62,6 +62,8 @@ export interface RawReading {
 }
 export interface Agg5mReading {
   intervalEndMs: number;
+  /** Row ingestion time (agg_5m `created_at`, NOT NULL) as epoch-ms UTC — the vendors' "received time". */
+  createdAtMs: number;
   avg: number | null;
   min: number | null;
   max: number | null;
@@ -217,6 +219,7 @@ async function read5m(
       .select({
         pointId: pointReadingsAgg5m.pointId,
         intervalEnd: pointReadingsAgg5m.intervalEnd,
+        createdAt: pointReadingsAgg5m.createdAt,
         avg: pointReadingsAgg5m.avg,
         min: pointReadingsAgg5m.min,
         max: pointReadingsAgg5m.max,
@@ -243,6 +246,7 @@ async function read5m(
       if (!id) continue;
       out.get(id)!.push({
         intervalEndMs: r.intervalEnd.getTime(),
+        createdAtMs: r.createdAt.getTime(),
         avg: r.avg,
         min: r.min,
         max: r.max,
@@ -356,6 +360,73 @@ async function latestForPoints(
         value: r.value,
         valueStr: r.valueStr,
         error: r.error,
+        dataQuality: r.dataQuality,
+        sessionId: r.sessionId,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Latest 5-minute aggregate per point (the Enphase adapter's last-reading probe). `null` when a point
+ * has no rows. The agg_5m analogue of {@link latestForPoints}.
+ */
+async function latest5mForPoints(
+  points: PointId[],
+  exec?: ReadingsExec,
+): Promise<Map<PointId, Agg5mReading | null>> {
+  const out = new Map<PointId, Agg5mReading | null>(
+    points.map((p) => [p, null]),
+  );
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid; DISTINCT ON (point_rid)).
+  const { bySystem, rev } = groupBySystem(
+    await RegistryCache.addrsForPoints(points),
+  );
+  for (const [systemId, indexes] of bySystem) {
+    const rows = await db
+      .selectDistinctOn([pointReadingsAgg5m.pointId], {
+        pointId: pointReadingsAgg5m.pointId,
+        intervalEnd: pointReadingsAgg5m.intervalEnd,
+        createdAt: pointReadingsAgg5m.createdAt,
+        avg: pointReadingsAgg5m.avg,
+        min: pointReadingsAgg5m.min,
+        max: pointReadingsAgg5m.max,
+        last: pointReadingsAgg5m.last,
+        delta: pointReadingsAgg5m.delta,
+        valueStr: pointReadingsAgg5m.valueStr,
+        sampleCount: pointReadingsAgg5m.sampleCount,
+        errorCount: pointReadingsAgg5m.errorCount,
+        dataQuality: pointReadingsAgg5m.dataQuality,
+        sessionId: pointReadingsAgg5m.sessionId,
+      })
+      .from(pointReadingsAgg5m)
+      .where(
+        and(
+          eq(pointReadingsAgg5m.systemId, systemId),
+          inArray(pointReadingsAgg5m.pointId, indexes),
+        ),
+      )
+      .orderBy(
+        pointReadingsAgg5m.pointId,
+        desc(pointReadingsAgg5m.intervalEnd),
+      );
+    for (const r of rows) {
+      const id = rev.get(addrKey(systemId, r.pointId));
+      if (!id) continue;
+      out.set(id, {
+        intervalEndMs: r.intervalEnd.getTime(),
+        createdAtMs: r.createdAt.getTime(),
+        avg: r.avg,
+        min: r.min,
+        max: r.max,
+        last: r.last,
+        delta: r.delta,
+        valueStr: r.valueStr,
+        sampleCount: r.sampleCount,
+        errorCount: r.errorCount,
         dataQuality: r.dataQuality,
         sessionId: r.sessionId,
       });
@@ -552,6 +623,26 @@ async function systemIdsWithAgg5mSince(
 }
 
 /**
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) for ONE device (system), or null when it has no rows.
+ * Seeds the OE scheduler's KV state (`loadState`).
+ * // SEAM: filters `system_id` directly today; Phase 8 → a device_rid join. The return shape is stable
+ * across the cutover (device ids == system ids == device_rids), like `systemIdsWithAgg5mSince`.
+ */
+async function latestAgg5mIntervalMsForSystem(
+  systemId: number,
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  const [row] = await db
+    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
+    .from(pointReadingsAgg5m)
+    .where(eq(pointReadingsAgg5m.systemId, systemId))
+    .orderBy(desc(pointReadingsAgg5m.intervalEnd))
+    .limit(1);
+  return row ? row.intervalEnd.getTime() : null;
+}
+
+/**
  * Delete every `agg_1d` row in the inclusive `[startDay, endDay]` range across ALL points/systems
  * (day-keyed maintenance delete, not point-scoped). Returns the number of rows removed. Cutover-invariant:
  * the `day` text key is unchanged post-cutover (no composite/rid columns in the WHERE).
@@ -583,11 +674,13 @@ export const ReadingsDao = {
   read5m,
   read1d,
   latestForPoints,
+  latest5mForPoints,
   insertRaw,
   insert5m,
   upsert1d,
   earliestAgg5mMs,
   systemIdsWithAgg5mSince,
+  latestAgg5mIntervalMsForSystem,
   delete1dRange,
   transaction,
 };

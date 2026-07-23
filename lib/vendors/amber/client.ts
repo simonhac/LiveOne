@@ -36,6 +36,7 @@ import {
   getChannelMetadata,
 } from "./point-metadata";
 import type { PointInfo } from "@/lib/point/point-info";
+import type { PointId } from "@/lib/ids";
 
 /**
  * Flag to control whether sampleRecords are included in sync results
@@ -253,9 +254,8 @@ async function loadLocalRecords(
   try {
     const { SystemsManager } = await import("@/lib/systems-manager");
     const { PointManager } = await import("@/lib/point/point-manager");
-    const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
-    const { pointReadingsAgg5m } = await import("@/lib/db/planetscale/schema");
-    const { eq, and, inArray } = await import("drizzle-orm");
+    const { ReadingsDao } = await import("@/lib/readings");
+    const { RegistryCache, UnknownIdError } = await import("@/lib/registry");
 
     // 0. Verify this is an Amber system
     const systemsManager = SystemsManager.getInstance();
@@ -301,28 +301,60 @@ async function loadLocalRecords(
     // 2. Generate expected intervals
     const expectedIntervals = generateIntervalsAEST(firstDay, numberOfDays);
 
-    // 3. Fetch readings for filtered points only. PG stores interval_end as a native
-    // timestamp; query with Date bounds, then map intervalEnd back to epoch-ms so the
-    // downstream batch builder keeps its legacy numeric shape.
-    const pointIds = filteredPoints.map((p: PointInfo) => p.index);
-    const pgReadings = await requirePlanetscaleDb()
-      .select()
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, systemId),
-          inArray(pointReadingsAgg5m.pointId, pointIds),
-          inArray(
-            pointReadingsAgg5m.intervalEnd,
-            expectedIntervals.map((ms) => new Date(ms)),
-          ),
-        ),
-      )
-      .orderBy(pointReadingsAgg5m.intervalEnd);
-    const readings = pgReadings.map((r) => ({
-      ...r,
-      intervalEnd: r.intervalEnd.getTime(),
-    }));
+    // 3. Fetch readings for filtered points via the readings seam. Amber's native query is a discrete
+    // interval IN-list; ReadingsDao.read5m reads a [from,to] range, so we read the enclosing window and
+    // re-filter to the exact expected-interval Set client-side. Amber is 30-min-native so stored 5m rows
+    // align to this grid → byte-identical to the IN-list (the re-filter also drops any stray off-grid row
+    // that happens to fall inside the window). Identity resolves via the (systemId, index) address; a
+    // point with no registry row (UnknownIdError) simply contributes no local readings.
+    const readings: Array<{
+      pointId: number;
+      intervalEnd: number;
+      avg: number | null;
+      last: number | null;
+      delta: number | null;
+      valueStr: string | null;
+      dataQuality: string | null;
+      sessionId: string | null;
+      createdAt: Date;
+    }> = [];
+    if (expectedIntervals.length > 0) {
+      const expectedSet = new Set<number>(expectedIntervals);
+      const fromMs = expectedIntervals[0];
+      const toMs = expectedIntervals[expectedIntervals.length - 1];
+      const indexByPoint = new Map<PointId, number>();
+      const pointIds: PointId[] = [];
+      for (const p of filteredPoints as PointInfo[]) {
+        try {
+          const id = await RegistryCache.pointForAddr(systemId, p.index);
+          indexByPoint.set(id, p.index);
+          pointIds.push(id);
+        } catch (err) {
+          if (err instanceof UnknownIdError) continue;
+          throw err;
+        }
+      }
+      const series = await ReadingsDao.read5m(pointIds, { fromMs, toMs });
+      for (const [id, rows] of series) {
+        const index = indexByPoint.get(id)!;
+        for (const r of rows) {
+          if (!expectedSet.has(r.intervalEndMs)) continue;
+          readings.push({
+            pointId: index,
+            intervalEnd: r.intervalEndMs,
+            avg: r.avg,
+            last: r.last,
+            delta: r.delta,
+            valueStr: r.valueStr,
+            dataQuality: r.dataQuality,
+            sessionId: r.sessionId,
+            // Reconstruct the Date so buildRecordsMapFromLocal's receivedTimeMs stays byte-identical to
+            // the legacy raw-row shape (created_at came through as an unconverted Date).
+            createdAt: new Date(r.createdAtMs),
+          });
+        }
+      }
+    }
 
     // 4. Build AmberReadingsBatch from database readings
     const group = buildRecordsMapFromLocal(
