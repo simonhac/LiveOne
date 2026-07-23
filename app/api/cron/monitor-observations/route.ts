@@ -40,6 +40,7 @@ import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
 import { envLabel } from "@/lib/env";
 import { planetscaleDb } from "@/lib/db/planetscale";
+import { ReadingsDao } from "@/lib/readings";
 import { checkSocMeterDivergence } from "@/lib/battery-provenance/soc-meter-check";
 import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
 
@@ -133,30 +134,31 @@ export async function GET(request: NextRequest) {
 
   // ── 1 + 2: response-presence and raw-landing, from PG ──
   try {
-    const res = await db.execute(sql`
-      SELECT
-        (SELECT count(*)::int FROM sessions
-           WHERE created_at >= now() - interval '1 hour'
-             AND cause = 'CRON' AND successful = true)                       AS cron_sessions_1h,
-        (SELECT count(*)::int FROM sessions
-           WHERE created_at >= now() - interval '1 hour'
-             AND cause = 'CRON' AND successful = true
-             AND response IS NOT NULL)                                       AS cron_sessions_1h_with_response,
-        (SELECT count(*)::int FROM point_readings
-           WHERE created_at >= now() - interval '1 hour')                    AS raw_1h,
-        (SELECT max(created_at) FROM point_readings)                         AS last_raw_at
-    `);
+    // One shared 1h cutoff (sessions in SQL; raw point_readings via the readings DAO).
+    const sinceMs = Date.now() - 60 * 60 * 1000;
+    const since = new Date(sinceMs);
+    const [res, raw1h, lastRawMs] = await Promise.all([
+      db.execute(sql`
+        SELECT
+          (SELECT count(*)::int FROM sessions
+             WHERE created_at >= ${since}
+               AND cause = 'CRON' AND successful = true)                       AS cron_sessions_1h,
+          (SELECT count(*)::int FROM sessions
+             WHERE created_at >= ${since}
+               AND cause = 'CRON' AND successful = true
+               AND response IS NOT NULL)                                       AS cron_sessions_1h_with_response
+      `),
+      ReadingsDao.countByCreatedAtSince("raw", sinceMs),
+      ReadingsDao.latestRawCreatedAtMs(),
+    ]);
     const r = ((res.rows ?? [])[0] ?? {}) as {
       cron_sessions_1h: number;
       cron_sessions_1h_with_response: number;
-      raw_1h: number;
-      last_raw_at: Date | null;
     };
 
     const sessions1h = Number(r.cron_sessions_1h ?? 0);
     const withResp = Number(r.cron_sessions_1h_with_response ?? 0);
-    const raw1h = Number(r.raw_1h ?? 0);
-    const lastRawAt = r.last_raw_at ? new Date(r.last_raw_at) : null;
+    const lastRawAt = lastRawMs != null ? new Date(lastRawMs) : null;
     const presence = sessions1h > 0 ? withResp / sessions1h : null;
     const rawAgeMin = lastRawAt
       ? Math.round((Date.now() - lastRawAt.getTime()) / 60_000)
@@ -190,14 +192,14 @@ export async function GET(request: NextRequest) {
       issues.push({
         severity: "alert",
         code: "no_raw_despite_sessions",
-        message: `${sessions1h} successful CRON sessions in the last hour but 0 raw point_readings landed in PG — the queue is dropping readings.`,
+        message: `${sessions1h} successful CRON sessions in the last hour but 0 raw readings landed in PG — the queue is dropping readings.`,
       });
     }
     if (rawAgeMin !== null && rawAgeMin > RAW_STALE_MINUTES) {
       issues.push({
         severity: "alert",
         code: "raw_landing_stale",
-        message: `No raw point_readings have landed in PG for ${rawAgeMin} min (> ${RAW_STALE_MINUTES}).`,
+        message: `No raw readings have landed in PG for ${rawAgeMin} min (> ${RAW_STALE_MINUTES}).`,
       });
     }
   } catch (err) {
@@ -263,37 +265,42 @@ export async function GET(request: NextRequest) {
   // ── 5: battery-provenance freshness + confidence ──
   // Separate try so the not-everywhere flow_attr_1d table / absent helpers never break the checks above.
   try {
-    const res = await db.execute(sql`
-      WITH blend AS (
-        SELECT a.interval_end, a.data_quality
-        FROM point_readings_agg_5m a
-        JOIN systems s ON s.id = a.system_id
-        WHERE s.vendor_type = 'helper'
-      )
-      SELECT
-        (SELECT count(*)::int FROM systems WHERE vendor_type='helper')          AS helper_count,
-        (SELECT max(interval_end) FROM blend)                                   AS blend_latest,
-        (SELECT max(updated_at) FROM point_readings_flow_attr_1d)               AS rollup_updated,
-        (SELECT max(day) FROM point_readings_flow_attr_1d)                      AS rollup_max_day,
-        (SELECT sum(estimated_kwh) FROM point_readings_flow_attr_1d
-           WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS est_kwh_3d,
-        (SELECT sum(energy_kwh) FROM point_readings_flow_attr_1d
-           WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS energy_kwh_3d
-    `);
+    // Helper-vendor system ids drive both helper_count and the blend-freshness max(interval_end). The
+    // old query JOINed agg_5m to systems inside a CTE; resolving the helper ids first + a DAO
+    // max-over-set is byte-identical (the CTE's data_quality column was selected but never used).
+    const helperIds = (
+      (
+        await db.execute(
+          sql`SELECT id FROM systems WHERE vendor_type = 'helper'`,
+        )
+      ).rows ?? []
+    ).map((h) => Number((h as { id: unknown }).id));
+
+    const [res, blendLatestMs] = await Promise.all([
+      db.execute(sql`
+        SELECT
+          (SELECT max(updated_at) FROM point_readings_flow_attr_1d)               AS rollup_updated,
+          (SELECT max(day) FROM point_readings_flow_attr_1d)                      AS rollup_max_day,
+          (SELECT sum(estimated_kwh) FROM point_readings_flow_attr_1d
+             WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS est_kwh_3d,
+          (SELECT sum(energy_kwh) FROM point_readings_flow_attr_1d
+             WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS energy_kwh_3d
+      `),
+      ReadingsDao.maxAgg5mIntervalMsForSystems(helperIds),
+    ]);
     const r = ((res.rows ?? [])[0] ?? {}) as {
-      helper_count: number;
-      blend_latest: Date | null;
       rollup_updated: Date | null;
       rollup_max_day: string | null;
       est_kwh_3d: number | null;
       energy_kwh_3d: number | null;
     };
-    const helperCount = Number(r.helper_count ?? 0);
+    const helperCount = helperIds.length;
 
     if (helperCount === 0) {
       checks.batteryProvenance = { configured: false };
     } else {
-      const blendLatest = r.blend_latest ? new Date(r.blend_latest) : null;
+      const blendLatest =
+        blendLatestMs != null ? new Date(blendLatestMs) : null;
       const blendAgeMin = blendLatest
         ? Math.round((Date.now() - blendLatest.getTime()) / 60_000)
         : null;

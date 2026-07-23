@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
+import { ReadingsDao } from "@/lib/readings";
 
 interface MinuteBucket {
   minute: string; // ISO 8601, truncated to the minute (UTC)
@@ -29,51 +30,41 @@ export async function GET(request: NextRequest) {
 
   try {
     const db = planetscaleDb;
+    // One shared 24h cutoff for every counter — the readings DAO takes epoch-ms; sessions reuses it.
+    // (The old query evaluated now() per-subquery; a single cutoff is if anything more consistent.)
+    const sinceMs = Date.now() - 24 * 60 * 60 * 1000;
+    const since = new Date(sinceMs);
 
-    // Per-minute ingestion counts over the last 24h, bucketed by insert time.
-    const perMinute = async (
-      table: "point_readings" | "point_readings_agg_5m",
-    ) => {
-      const res = await db.execute(sql`
-        SELECT date_trunc('minute', created_at) AS minute, count(*)::int AS count
-        FROM ${sql.raw(table)}
-        WHERE created_at >= now() - interval '24 hours'
-        GROUP BY 1
-        ORDER BY 1
-      `);
-      const rows = (res.rows ?? []) as Array<{ minute: Date; count: number }>;
-      return rows.map(
-        (r): MinuteBucket => ({
-          minute: new Date(r.minute).toISOString(),
-          count: Number(r.count),
-        }),
-      );
-    };
+    const toBuckets = (
+      rows: { minuteMs: number; count: number }[],
+    ): MinuteBucket[] =>
+      rows.map((r) => ({
+        minute: new Date(r.minuteMs).toISOString(),
+        count: r.count,
+      }));
 
-    const [raw, agg5m, summaryRes] = await Promise.all([
-      perMinute("point_readings"),
-      perMinute("point_readings_agg_5m"),
-      db.execute(sql`
-        SELECT
-          (SELECT count(*)::int FROM point_readings
-             WHERE created_at >= now() - interval '24 hours') AS raw_24h,
-          (SELECT count(*)::int FROM point_readings_agg_5m
-             WHERE created_at >= now() - interval '24 hours') AS agg5m_24h,
-          (SELECT count(*)::int FROM sessions
-             WHERE created_at >= now() - interval '24 hours') AS sessions_24h,
-          (SELECT count(DISTINCT system_id)::int FROM point_readings
-             WHERE created_at >= now() - interval '24 hours') AS systems_24h,
-          (SELECT max(created_at) FROM point_readings) AS last_ingested_at
-      `),
+    const [
+      raw,
+      agg5m,
+      raw24h,
+      agg5m24h,
+      systems24h,
+      lastIngestedMs,
+      sessionsRes,
+    ] = await Promise.all([
+      ReadingsDao.createdAtHistogramSince("raw", sinceMs).then(toBuckets),
+      ReadingsDao.createdAtHistogramSince("agg5m", sinceMs).then(toBuckets),
+      ReadingsDao.countByCreatedAtSince("raw", sinceMs),
+      ReadingsDao.countByCreatedAtSince("agg5m", sinceMs),
+      ReadingsDao.distinctSystemsByRawCreatedAtSince(sinceMs),
+      ReadingsDao.latestRawCreatedAtMs(),
+      db.execute(
+        sql`SELECT count(*)::int AS n FROM sessions WHERE created_at >= ${since}`,
+      ),
     ]);
-
-    const s = ((summaryRes.rows ?? [])[0] ?? {}) as {
-      raw_24h: number;
-      agg5m_24h: number;
-      sessions_24h: number;
-      systems_24h: number;
-      last_ingested_at: Date | null;
-    };
+    const sessions24h = Number(
+      ((sessionsRes.rows ?? [])[0] as { n?: number } | undefined)?.n ?? 0,
+    );
 
     // Outbox relay backlog (Phase 4). Separate query, defaulting on error so a
     // not-yet-migrated outbox table degrades to nulls instead of 500-ing.
@@ -114,13 +105,14 @@ export async function GET(request: NextRequest) {
       windowHours: 24,
       perMinute: { raw, agg5m },
       summary: {
-        raw24h: Number(s.raw_24h ?? 0),
-        agg5m24h: Number(s.agg5m_24h ?? 0),
-        sessions24h: Number(s.sessions_24h ?? 0),
-        systems24h: Number(s.systems_24h ?? 0),
-        lastIngestedAt: s.last_ingested_at
-          ? new Date(s.last_ingested_at).toISOString()
-          : null,
+        raw24h,
+        agg5m24h,
+        sessions24h,
+        systems24h,
+        lastIngestedAt:
+          lastIngestedMs != null
+            ? new Date(lastIngestedMs).toISOString()
+            : null,
       },
       outbox,
     });
