@@ -97,22 +97,19 @@ jobs:
             sleep "$INTERVAL"
           done
 
-      - name: Assign the stable alias to that deployment (REST, reassigns if already in use)
+      - name: Assign the stable alias to that deployment (Vercel CLI — provisions the per-host cert)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
         run: |
           set -euo pipefail
-          RESP="$(curl -sS --max-time 30 -X POST \
-            -H "Authorization: Bearer ${VERCEL_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            "https://api.vercel.com/v2/deployments/${DEPLOY_ID}/aliases?teamId=${VERCEL_ORG_ID}" \
-            -d "{\"alias\":\"${DOMAIN}\"}")"
-          printf '%s' "$RESP" | jq . || printf '%s\n' "$RESP"
-          if printf '%s' "$RESP" | jq -e '.error' >/dev/null 2>&1; then
-            echo "::error::alias set failed: $(printf '%s' "$RESP" | jq -r '.error.message // .error.code')"
-            exit 1
-          fi
+          # Use the CLI, not the REST alias endpoint. POST /v2/deployments/{id}/aliases requires a
+          # PRE-EXISTING SSL cert and fails "cert_missing" for a fresh host; `vercel alias set`
+          # provisions the per-host cert via HTTP-01 (the *.preview.liveone.energy CNAME is DNS-only,
+          # so the host resolves to Vercel) and THEN assigns — reassigning if already in use.
+          # --scope takes the team id; no .vercel link is needed in CI.
+          npx --yes vercel@50 alias set "$DEPLOY_URL" "$DOMAIN" \
+            --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
           echo "Aliased https://${DOMAIN} -> https://${DEPLOY_URL}"
 
   cleanup:
