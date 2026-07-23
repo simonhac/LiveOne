@@ -16,7 +16,7 @@ function formatDuration(seconds: number): string {
 
 /**
  * A dashboard panel listing a device's generator runs WITHIN the temporal-navigator window — the
- * same 1D/7D/30D + prev/next window the charts respect (read via {@link useTemporalRange}). A run
+ * same D/W/M/Y + prev/next window the charts respect (read via {@link useTemporalRange}). A run
  * that overlaps the window is shown in full.
  *
  * The footer totals (run count, run-time, kWh) sum the FULL value of every overlapping run — a run
@@ -25,8 +25,8 @@ function formatDuration(seconds: number): string {
  * table explaining it (only when at least one run is marked).
  *
  * Shown on dashboards whose system has an enabled generator tracker (see lib/dashboard/cards.ts
- * "generator-runs"). In live mode it requests period mode (`1d`/`7d`/`30d`, stable query key);
- * in historical mode it requests the explicit `start`/`end` range from the URL.
+ * "generator-runs"). In live mode (D/W) it requests period mode (`1d`/`7d`, stable query key);
+ * in historical mode (and always for M/Y) it requests the explicit `start`/`end` range from the URL.
  *
  * `runningOverride` carries the live running state from the generic latest map (the derived
  * `source.generator/running` point) so the badge comes from /api/data like every other live value;
@@ -49,7 +49,13 @@ export default function GeneratorRunsCard({
     runPeriodsQuery(
       isHistoricalMode && start && end
         ? { systemId, role: "generator", start, end }
-        : { systemId, role: "generator", period: period.toLowerCase() },
+        : {
+            systemId,
+            role: "generator",
+            // Live D/W → the run-periods API expects an `Nd` string (`parseInt(period.replace("d",""))`).
+            // D→"1d", W→"7d" (M/Y always take the explicit start/end branch above, so never reach here).
+            period: `${Math.round(getPeriodDuration(period) / 86_400_000)}d`,
+          },
     ),
   );
 

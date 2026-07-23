@@ -5,7 +5,8 @@
  * of thing prone to off-by-one bugs) is directly unit-testable without rendering React.
  */
 import { format } from "date-fns";
-import type { ZonedDateTime } from "@internationalized/date";
+import { parseDate, type ZonedDateTime } from "@internationalized/date";
+import { calendarPeriodWindow } from "@/lib/date-utils";
 
 /** Area-local YYYY-MM-DD → a local Date at the given hour (0 = midnight). Day strings are dates,
  *  not instants, so this is plain calendar arithmetic — it never needs the area's real UTC offset. */
@@ -27,19 +28,23 @@ export function zonedDateTimeToYMD(zdt: ZonedDateTime): string {
 }
 
 /**
- * The explicit [start, end] day range for the `olderSteps`-th whole period back from the live
- * window (live = the trailing `dayCount` days ending yesterday). `olderSteps` must be ≥ 1 — the
- * live window itself is expressed by omitting start/end entirely, not by calling this with 0.
- * olderSteps=1 ends the day BEFORE the live window starts (non-overlapping, no gap between steps).
+ * The inclusive [startDay, endDay] (area-local YMD) for the CALENDAR-aligned M/Y window `olderSteps`
+ * whole periods back. `olderSteps = 0` is the live/default window ending end-of-yesterday (M = the
+ * trailing calendar month, Y = the trailing calendar year). Anchored to `todayYMD` via
+ * {@link calendarPeriodWindow} (multiply form) so consecutive windows stay contiguous across
+ * month-ends. Unlike the old day-count `historicalWindow`, this is safe to call with `olderSteps = 0`.
  */
-export function historicalWindow(
+export function calendarHistoricalWindow(
   todayYMD: string,
-  dayCount: number,
+  unit: "month" | "year",
   olderSteps: number,
 ): { startDay: string; endDay: string } {
-  const endDay = addDaysToYMD(todayYMD, -1 - olderSteps * dayCount);
-  const startDay = addDaysToYMD(endDay, -(dayCount - 1));
-  return { startDay, endDay };
+  const { startDay, lastDay } = calendarPeriodWindow(
+    parseDate(todayYMD),
+    unit,
+    olderSteps,
+  );
+  return { startDay: startDay.toString(), endDay: lastDay.toString() };
 }
 
 /**

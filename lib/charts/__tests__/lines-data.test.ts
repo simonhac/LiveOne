@@ -15,16 +15,16 @@ const withInterval = (s: ReturnType<typeof series>, interval: string) => ({
 
 describe("buildChartData", () => {
   it("returns null when the payload has no series data", () => {
-    expect(buildChartData(null, "1D")).toBeNull();
-    expect(buildChartData({}, "1D")).toBeNull();
-    expect(buildChartData({ data: [] }, "1D")).toBeNull();
+    expect(buildChartData(null, "D")).toBeNull();
+    expect(buildChartData({}, "D")).toBeNull();
+    expect(buildChartData({ data: [] }, "D")).toBeNull();
   });
 
-  // The device-page crash regression: a brand-new BATTERY device on 30D. The API returns the
+  // The device-page crash regression: a brand-new BATTERY device on M. The API returns the
   // configured energy series (incl. soc.min/max) but with EMPTY history.data. Before the fix this
   // returned a non-null ChartData with empty timestamps + empty-but-truthy batterySOCMin/Max, which
   // made LinesChartCard's SoC-padding run `timestamps[0].getTime()` on undefined and white-screen.
-  it("returns null for a 30D battery device with empty history (no getTime crash)", () => {
+  it("returns null for an M battery device with empty history (no getTime crash)", () => {
     const payload = {
       data: [
         withInterval(series("13/source.solar/energy.delta", "kWh", []), "1d"),
@@ -34,7 +34,7 @@ describe("buildChartData", () => {
         withInterval(series("13/bidi.battery/soc.max", "%", []), "1d"),
       ],
     };
-    expect(buildChartData(payload, "30D")).toBeNull();
+    expect(buildChartData(payload, "M")).toBeNull();
   });
 
   it("returns null when no data points fall within the requested window", () => {
@@ -47,7 +47,7 @@ describe("buildChartData", () => {
       ],
     };
     // Data is at 2024-08-22; a window years later selects nothing → null (not an empty chart).
-    const cd = buildChartData(payload, "1D", {
+    const cd = buildChartData(payload, "D", {
       start: new Date("2030-01-01T00:00:00Z"),
       end: new Date("2030-01-02T00:00:00Z"),
     });
@@ -68,7 +68,7 @@ describe("buildChartData", () => {
         ),
       ],
     };
-    const cd = buildChartData(payload, "1D", {
+    const cd = buildChartData(payload, "D", {
       start: new Date("2024-08-22T00:00:00Z"),
       end: new Date("2024-08-22T02:00:00Z"),
     });

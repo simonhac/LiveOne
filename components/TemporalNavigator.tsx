@@ -6,7 +6,7 @@ import PeriodSwitcher from "@/components/PeriodSwitcher";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
-import { getPeriodDuration } from "@/lib/charts/temporal";
+import { getPeriodDuration, isDateOnlyPeriod } from "@/lib/charts/temporal";
 import { formatHoverTimestamp } from "@/lib/charts/scaffold";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
 
@@ -17,7 +17,7 @@ interface TemporalNavigatorProps {
 }
 
 /**
- * The shared temporal navigator: a date-range label + prev/next buttons + the 1D/7D/30D switcher.
+ * The shared temporal navigator: a date-range label + prev/next buttons + the D/W/M/Y switcher.
  * Self-wired to the URL via {@link useTemporalRange}, so multiple instances on a page (one per chart)
  * all read and write the same shared period + window. Rendered in each chart's header.
  *
@@ -29,7 +29,7 @@ export default function TemporalNavigator({
   timezoneOffsetMin,
   className = "",
 }: TemporalNavigatorProps) {
-  const { period, start, end, isHistoricalMode, older, newer, setPeriod } =
+  const { period, start, end, isLatest, older, newer, setPeriod } =
     useTemporalRange({ timezoneOffsetMin });
   const { focusedTime } = useChartFocus();
 
@@ -52,7 +52,7 @@ export default function TemporalNavigator({
         e.stopPropagation();
         older();
       } else if (e.key === "ArrowRight") {
-        if (isHistoricalMode) {
+        if (!isLatest) {
           e.preventDefault();
           e.stopPropagation();
           newer();
@@ -61,7 +61,7 @@ export default function TemporalNavigator({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isHistoricalMode, older, newer]);
+  }, [isLatest, older, newer]);
 
   // Range label from the requested window (or the live trailing window ending at now). Computed from
   // the shared range — identical across every navigator instance on the page.
@@ -70,11 +70,13 @@ export default function TemporalNavigator({
     const startMs = start
       ? Date.parse(start)
       : nowMs - getPeriodDuration(period);
+    // M/Y carry an INCLUSIVE last day at UTC-midnight, so the end instant already maps to the last
+    // included day (no adjustment): M reads "22 Jun – 21 Jul 2026".
     const endMs = end ? Date.parse(end) : nowMs;
     const startZdt = fromUnixTimestamp(startMs / 1000, timezoneOffsetMin);
     const endZdt = fromUnixTimestamp(endMs / 1000, timezoneOffsetMin);
     return {
-      desktop: formatDateTimeRange(startZdt, endZdt, period !== "30D"),
+      desktop: formatDateTimeRange(startZdt, endZdt, !isDateOnlyPeriod(period)),
       mobile: formatDateTimeRange(startZdt, endZdt, false),
     };
   })();
@@ -114,7 +116,7 @@ export default function TemporalNavigator({
           </button>
           <button
             onClick={newer}
-            disabled={!isHistoricalMode}
+            disabled={isLatest}
             className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
             title="Newer (Next)"
           >

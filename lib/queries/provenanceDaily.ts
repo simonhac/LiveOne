@@ -9,17 +9,20 @@ export interface ProvenanceDailyQueryParams {
   /** Area-local YYYY-MM-DD inclusive. Omit both for the server default (trailing year → yesterday). */
   startDay?: string;
   endDay?: string;
+  /** True for the newest window — keeps it on the daily-fresh tier even though it carries explicit days. */
+  isLive?: boolean;
   enabled?: boolean;
 }
 
 /**
  * Battery-provenance daily history from `/api/areas/[areaId]/provenance-daily` — the dense columnar
  * {@link ProvenanceDailyResponse} the history panel charts/tables. An explicit start+end window is
- * settled history (immutable, no polling); a LIVE trailing window (either bound omitted) only goes
- * stale on the daily tier — the underlying rows change at most once a day (nightly learn).
+ * settled history (immutable, no polling); the LIVE/newest window (`isLive`) only goes stale on the
+ * daily tier — the underlying rows change at most once a day (nightly learn) — even though the M/Y
+ * calendar windows now always carry explicit start/end days.
  */
 export function provenanceDailyQuery(p: ProvenanceDailyQueryParams) {
-  const isSettled = !!(p.startDay && p.endDay);
+  const isSettled = p.isLive ? false : !!(p.startDay && p.endDay);
   const rangeKey = rangeKeyFor(p.startDay, p.endDay);
 
   const search = new URLSearchParams();

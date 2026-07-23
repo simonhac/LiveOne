@@ -4,6 +4,7 @@ import {
   type ProcessedSiteData,
 } from "@/lib/site-data-processor";
 import { queryKeys, rangeKeyFor, type SystemIdLike } from "./keys";
+import type { ChartTimeRange } from "@/lib/charts/scaffold";
 import {
   boundaryRefetchInterval,
   CHART_STALE,
@@ -11,12 +12,13 @@ import {
   SETTLED_STALE,
 } from "./freshness";
 
-type Period = "1D" | "7D" | "30D";
+type Period = ChartTimeRange;
 
 const PERIOD_INTERVAL_MIN: Record<Period, number> = {
-  "1D": 5,
-  "7D": 30,
-  "30D": 24 * 60,
+  D: 5,
+  W: 30,
+  M: 24 * 60,
+  Y: 24 * 60,
 };
 
 export interface SiteDataQueryParams {
@@ -44,7 +46,7 @@ export function siteDataQuery(p: SiteDataQueryParams) {
   if (!isLive) {
     staleTime = SETTLED_STALE;
     refetchInterval = false;
-  } else if (p.period === "30D") {
+  } else if (p.period === "M" || p.period === "Y") {
     staleTime = DAILY_STALE;
     refetchInterval = false;
   } else {

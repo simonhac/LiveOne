@@ -22,7 +22,7 @@ import {
 } from "chart.js";
 import annotationPlugin from "chartjs-plugin-annotation";
 
-export type ChartTimeRange = "1D" | "7D" | "30D" | "1Y";
+export type ChartTimeRange = "D" | "W" | "M" | "Y";
 
 let registered = false;
 
@@ -50,8 +50,8 @@ export function registerChartScaffold(): void {
 }
 
 /**
- * The background shading boxes shared by both charts: weekday (Mon–Fri) columns for the 30D view,
- * daytime (07:00–22:00) columns for 1D/7D, none for 1Y (weekday columns are noise at year scale).
+ * The background shading boxes shared by both charts: weekday (Mon–Fri) columns for the M view,
+ * daytime (07:00–22:00) columns for D/W, none for Y (weekday columns are noise at year scale).
  * Returns chartjs-plugin-annotation `box` specs, clipped to the [windowStart, now] window. Callers
  * may append their own annotations (e.g. a hover line).
  */
@@ -62,13 +62,13 @@ export function buildShadingAnnotations(
 ): any[] {
   const annotations: any[] = [];
 
-  if (timeRange === "1Y") {
+  if (timeRange === "Y") {
     // No shading at year scale.
     return annotations;
   }
 
-  if (timeRange === "30D") {
-    // For 30D view: shade weekdays (Mon-Fri)
+  if (timeRange === "M") {
+    // For M view: shade weekdays (Mon-Fri)
     const daysToShow = 31;
     for (let i = 0; i < daysToShow; i++) {
       const day = new Date(now);
@@ -95,8 +95,8 @@ export function buildShadingAnnotations(
       }
     }
   } else {
-    // For 1D and 7D views: shade daytime hours (7am-10pm)
-    const daysToShow = timeRange === "1D" ? 2 : 8;
+    // For D and W views: shade daytime hours (7am-10pm)
+    const daysToShow = timeRange === "D" ? 2 : 8;
     for (let i = 0; i < daysToShow; i++) {
       const dayStart = new Date(now);
       dayStart.setDate(dayStart.getDate() - i);
@@ -124,8 +124,8 @@ export function buildShadingAnnotations(
 
 /**
  * The shared time x-axis scale config: a `time` axis spanning [windowStart, now] with the period-
- * dependent tick formatting both charts use (multi-line weekday labels for 7D/30D, HH:mm for 1D,
- * month labels for 1Y, with the same auto-skip/collision rules). Returned as a plain Chart.js scale
+ * dependent tick formatting both charts use (multi-line weekday labels for W/M, HH:mm for D,
+ * month labels for Y, with the same auto-skip/collision rules). Returned as a plain Chart.js scale
  * object so each component can drop it straight into `scales.x`.
  */
 export function buildTimeScale(
@@ -138,11 +138,11 @@ export function buildTimeScale(
     min: windowStart.getTime(), // Show from selected time range
     max: now.getTime(), // To current time
     time: {
-      unit: timeRange === "1D" ? "hour" : timeRange === "1Y" ? "month" : "day",
+      unit: timeRange === "D" ? "hour" : timeRange === "Y" ? "month" : "day",
       displayFormats: {
         hour: "HH:mm",
         day: "MMM d", // Show month and day
-        month: "MMM", // Show month name (1Y)
+        month: "MMM", // Show month name (Y)
       },
     },
     grid: {
@@ -160,13 +160,13 @@ export function buildTimeScale(
       },
       maxRotation: 0, // Keep labels horizontal
       minRotation: 0, // Keep labels horizontal
-      align: timeRange !== "1D" ? "start" : "center", // Align labels to the right of the grid line in 7D/30D mode
-      padding: timeRange === "30D" ? 6 : 4, // More padding for 30D to prevent collision
-      autoSkip: timeRange === "1D" || timeRange === "1Y", // Auto-skip for 1D and 1Y views
+      align: timeRange !== "D" ? "start" : "center", // Align labels to the right of the grid line in W/M mode
+      padding: timeRange === "M" ? 6 : 4, // More padding for M to prevent collision
+      autoSkip: timeRange === "D" || timeRange === "Y", // Auto-skip for D and Y views
       source: "auto", // Let Chart.js generate ticks automatically
       callback: function (value: any, index: any, ticks: any) {
         const date = new Date(value);
-        if (timeRange === "30D") {
+        if (timeRange === "M") {
           // Dynamically adjust based on number of ticks
           // More aggressive skipping for smaller screens
           const totalDays = ticks.length;
@@ -188,19 +188,19 @@ export function buildTimeScale(
             const dayDate = format(date, "d MMM"); // 30 Jun
             return [dayName, dayDate]; // Return array for multi-line label
           }
-        } else if (timeRange === "7D") {
-          // For 7D mode, show day name on first line and date on second line
+        } else if (timeRange === "W") {
+          // For W mode, show day name on first line and date on second line
           const dayName = format(date, "EEE");
           const dayDate = format(date, "d MMM");
           return [dayName, dayDate]; // Return array for multi-line label
-        } else if (timeRange === "1D") {
-          // For 1D mode, skip some labels to prevent collision
+        } else if (timeRange === "D") {
+          // For D mode, skip some labels to prevent collision
           if (index % 2 !== 0) {
             return "​"; // Return zero-width space to keep gridline but hide label
           }
           return format(date, "HH:mm");
-        } else if (timeRange === "1Y") {
-          // For 1Y mode, month labels; add the year on January (or the first tick) to orient.
+        } else if (timeRange === "Y") {
+          // For Y mode, month labels; add the year on January (or the first tick) to orient.
           return format(
             date,
             date.getMonth() === 0 || index === 0 ? "MMM yy" : "MMM",
@@ -212,8 +212,8 @@ export function buildTimeScale(
 }
 
 /**
- * Format a hovered timestamp for the chart header, shared by both charts: date-only for 30D/1Y,
- * date+time for 7D, time-only for 1D; `isMobile` drops the year. Returns "" for a null date.
+ * Format a hovered timestamp for the chart header, shared by both charts: date-only for M/Y,
+ * date+time for W, time-only for D; `isMobile` drops the year. Returns "" for a null date.
  */
 export function formatHoverTimestamp(
   date: Date | null,
@@ -222,17 +222,17 @@ export function formatHoverTimestamp(
 ): string {
   if (!date) return "";
 
-  if (timeRange === "30D" || timeRange === "1Y") {
+  if (timeRange === "M" || timeRange === "Y") {
     // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
     return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
-  } else if (timeRange === "7D") {
+  } else if (timeRange === "W") {
     // Mobile: "Fri, 22 Aug 11:58PM" / Desktop: "Fri, 22 Aug 2024 11:58PM"
     return format(
       date,
       isMobile ? "EEE, d MMM h:mma" : "EEE, d MMM yyyy h:mma",
     );
   } else {
-    // For 1D view, show time only (e.g., "11:58PM")
+    // For D view, show time only (e.g., "11:58PM")
     return format(date, "h:mma");
   }
 }

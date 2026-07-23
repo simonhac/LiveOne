@@ -479,6 +479,109 @@ export function calendarDateToUnixRange(
   return [startUnix, endUnix];
 }
 
+// ---------------------------------------------------------------------------
+// Calendar-window helpers for the temporal navigator (D/W/M/Y) — the single
+// source of the day/week/month/year alignment math, shared by the URL navigator
+// (`lib/charts/temporal.ts`) and the battery-provenance panel
+// (`lib/battery-provenance/panel-dates.ts`). All alignment is done in the area's
+// FIXED-offset local calendar (no DST), so a "day" is `calendarDateToUnixRange`.
+// ---------------------------------------------------------------------------
+
+/** The whole-period step for a navigator period: D=1 day, W=7 days, M=1 month, Y=1 year. */
+export type NavStep = { days: number } | { months: number } | { years: number };
+export function periodStep(period: "D" | "W" | "M" | "Y"): NavStep {
+  if (period === "D") return { days: 1 };
+  if (period === "W") return { days: 7 };
+  if (period === "M") return { months: 1 };
+  return { years: 1 }; // Y
+}
+
+/** A CalendarDate (interpreted as local midnight) → the corresponding UTC instant, as an ISO string. */
+export function midnightISO(
+  date: CalendarDate,
+  timezoneOffsetMin: number,
+): string {
+  return new Date(
+    calendarDateToUnixRange(date, timezoneOffsetMin)[0] * 1000,
+  ).toISOString();
+}
+
+/**
+ * A CalendarDate → the ISO instant `YYYY-MM-DDT00:00:00.000Z` (UTC midnight of that calendar date,
+ * tz-NAIVE). Used for the date-only (M/Y) navigator windows so that a downstream `iso.split("T")[0]`
+ * (the `1d` history encoder) recovers the intended calendar date directly — matching the convention
+ * the retired 30D period used (offset-0 instants).
+ */
+export function utcMidnightISO(date: CalendarDate): string {
+  return `${date.toString()}T00:00:00.000Z`;
+}
+
+/** The UTC calendar date of an instant (exact for `utcMidnightISO` outputs). Inverse of {@link utcMidnightISO}. */
+export function utcDateFromIso(iso: string): CalendarDate {
+  const d = new Date(iso);
+  return new CalendarDate(
+    d.getUTCFullYear(),
+    d.getUTCMonth() + 1,
+    d.getUTCDate(),
+  );
+}
+
+/**
+ * Recover the local CalendarDate from a window-end instant (which is exactly local midnight).
+ * Offset-safe by construction — do NOT use `fromUnixTimestamp` here (it only handles offset 600/0).
+ */
+export function endDateFromIso(
+  iso: string,
+  timezoneOffsetMin: number,
+): CalendarDate {
+  const d = new Date(Date.parse(iso) + timezoneOffsetMin * 60_000);
+  return new CalendarDate(
+    d.getUTCFullYear(),
+    d.getUTCMonth() + 1,
+    d.getUTCDate(),
+  );
+}
+
+/**
+ * The window whose EXCLUSIVE end is local-midnight of `endDate`, one whole period wide. The start is a
+ * single `.subtract(step)` from the end, so consecutive windows produced by stepping the end back by
+ * one period are contiguous (each window's end == the previous window's start). Used by the URL
+ * navigator, which stores the end date in the URL. Returns absolute ISO instants.
+ */
+export function periodWindowEndingAt(
+  period: "D" | "W" | "M" | "Y",
+  endDate: CalendarDate,
+  timezoneOffsetMin: number,
+): { start: string; end: string } {
+  return {
+    start: midnightISO(endDate.subtract(periodStep(period)), timezoneOffsetMin),
+    end: midnightISO(endDate, timezoneOffsetMin),
+  };
+}
+
+/**
+ * The trailing calendar-`unit` window `stepsBack` whole periods back from `anchorToday`, anchored to
+ * `anchorToday` via the MULTIPLY form (`subtract({months: k})`) so consecutive windows stay contiguous
+ * across month-ends (@internationalized/date clamps 31 Mar − 1 month → 28 Feb; iterative single-step
+ * subtraction would drift). `stepsBack = 0` is the live/default window ending end-of-yesterday. Returns
+ * inclusive `[startDay, lastDay]` plus the exclusive `endExclusive` (== local midnight of lastDay + 1).
+ */
+export function calendarPeriodWindow(
+  anchorToday: CalendarDate,
+  unit: "month" | "year",
+  stepsBack: number,
+): {
+  startDay: CalendarDate;
+  lastDay: CalendarDate;
+  endExclusive: CalendarDate;
+} {
+  const amt = (n: number) => (unit === "month" ? { months: n } : { years: n });
+  const endExclusive = anchorToday.subtract(amt(stepsBack));
+  const startDay = anchorToday.subtract(amt(stepsBack + 1));
+  const lastDay = endExclusive.subtract({ days: 1 });
+  return { startDay, lastDay, endExclusive };
+}
+
 /**
  * Convert Unix timestamp to ISO8601 with fixed AEST offset (+10:00)
  * @param unixTimestamp - Unix timestamp (can be in seconds or milliseconds)

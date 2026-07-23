@@ -13,7 +13,7 @@ import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
 
 /**
  * The "Renewables" tile — three labelled percentages over the DASHBOARD's currently-selected period
- * (1D/7D/30D), so it follows the shared temporal navigator like the charts (NOT a fixed window, and NOT
+ * (D/W/M/Y), so it follows the shared temporal navigator like the charts (NOT a fixed window, and NOT
  * an instantaneous value):
  *   1. Renewable autarky              — consumption covered by OUR OWN renewable generation.
  *   2. Own-renewable self-consumption — of the renewable WE generated, the share consumed on site.
@@ -22,8 +22,8 @@ import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
  *
  * NO dedicated route: it reads the SAME period-scoped attributed-flow payload the Sankey uses
  * (`siteDataQuery` → `/api/history?include=sankey` → `attributedFlow`, deduped with the charts) and
- * reduces it client-side via `reduceRenewablesMetrics`. Sub-daily (1D/7D) is computed live, so
- * "today so far" is real; 30D reads the daily rollup.
+ * reduces it client-side via `reduceRenewablesMetrics`. Sub-daily (D/W) is computed live, so
+ * "today so far" is real; M/Y read the daily rollup.
  */
 
 const fmtPct = (x: number | null | undefined): string =>

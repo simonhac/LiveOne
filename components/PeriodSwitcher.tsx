@@ -2,12 +2,12 @@
 
 import type { ChartTimeRange } from "@/lib/charts/scaffold";
 
-const DEFAULT_PERIODS: readonly ChartTimeRange[] = ["1D", "7D", "30D"];
+const DEFAULT_PERIODS: readonly ChartTimeRange[] = ["D", "W", "M", "Y"];
 
 interface PeriodSwitcherProps {
   value: ChartTimeRange;
   onChange: (value: ChartTimeRange) => void;
-  /** Periods to offer, one button each (default the classic 1D/7D/30D trio). */
+  /** Periods to offer, one button each (default the D/W/M/Y set). */
   periods?: readonly ChartTimeRange[];
   className?: string;
 }

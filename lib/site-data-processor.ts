@@ -1,4 +1,5 @@
 import { ChartData, SeriesData } from "@/lib/charts/types";
+import type { ChartTimeRange } from "@/lib/charts/scaffold";
 import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
 import type { DailyFlowMatrices, EnergyFlowMatrix } from "./energy-flow-matrix";
@@ -18,9 +19,9 @@ export interface ProcessedSiteData {
    *  the Sankey node tooltips — served for every interval; absent/null → tooltips degrade to
    *  energy-only (P3), same fallback discipline as `flowMatrix`. */
   attributedFlow?: DailyFlowMatrices | null;
-  /** Hot-water temperature series (`load.hws/temperature.avg`) — only requested/populated for the 1D
-   *  period (see `fetchSiteData`'s `period === "1D"` branch); null/absent otherwise. The hot-water
-   *  tile's sparkline is always a 24h/5m window, which the 1D site fetch already is, so it reads this
+  /** Hot-water temperature series (`load.hws/temperature.avg`) — only requested/populated for the D
+   *  period (see `fetchSiteData`'s `period === "D"` branch); null/absent otherwise. The hot-water
+   *  tile's sparkline is always a 24h/5m window, which the D site fetch already is, so it reads this
    *  instead of firing its own `/api/history` call in that case. */
   hwsTemperature?: { timestamps: Date[]; values: (number | null)[] } | null;
 }
@@ -197,7 +198,7 @@ function splitBatteryPower(powerSeries: ParsedSeries[]): ParsedSeries[] {
  */
 function calculateTimeWindow(
   firstSeries: ParsedSeries,
-  period: "1D" | "7D" | "30D",
+  period: ChartTimeRange,
   startTime?: string,
   endTime?: string,
 ): {
@@ -239,10 +240,12 @@ function calculateTimeWindow(
     let windowHours: number;
     let intervalMinutes: number;
 
-    if (period === "1D") {
+    // Only reached in LIVE mode (no explicit start/end). D/W hit their own branches; M/Y always
+    // arrive with an explicit calendar window, so the `else` (M/Y) is effectively unreachable here.
+    if (period === "D") {
       windowHours = 24;
       intervalMinutes = 5;
-    } else if (period === "7D") {
+    } else if (period === "W") {
       windowHours = 24 * 7;
       intervalMinutes = 30;
     } else {
@@ -289,18 +292,19 @@ function calculateTimeWindow(
  */
 async function fetchSiteData(
   systemId: string,
-  period: "1D" | "7D" | "30D",
+  period: ChartTimeRange,
   startTime?: string,
   endTime?: string,
 ): Promise<FetchedSiteData | null> {
-  // Map period to request parameters
+  // Map period to request parameters. `duration` (the `last=` live window) is only used by D/W —
+  // M/Y always pass an explicit `startTime`/`endTime` calendar window.
   let requestInterval: string;
   let duration: string;
 
-  if (period === "1D") {
+  if (period === "D") {
     requestInterval = "5m";
     duration = "24h";
-  } else if (period === "7D") {
+  } else if (period === "W") {
     requestInterval = "30m";
     duration = "168h";
   } else {
@@ -315,10 +319,10 @@ async function fetchSiteData(
   } else {
     seriesFilter = "*/power.avg,bidi.battery/soc.last";
   }
-  // The hot-water tile's sparkline is always a 24h/5m window — exactly the 1D period's own request
-  // — so piggyback it on this fetch only then; 7D/30D keep the tile's own dedicated fetch (their
+  // The hot-water tile's sparkline is always a 24h/5m window — exactly the D period's own request
+  // — so piggyback it on this fetch only then; W/M/Y keep the tile's own dedicated fetch (their
   // window/resolution doesn't match what the sparkline needs).
-  if (period === "1D") {
+  if (period === "D") {
     seriesFilter += ",load.hws/temperature.avg";
   }
 
@@ -764,7 +768,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
  */
 export async function fetchAndProcessSiteData(
   systemId: string,
-  period: "1D" | "7D" | "30D",
+  period: ChartTimeRange,
   startTime?: string,
   endTime?: string,
 ): Promise<ProcessedSiteData> {

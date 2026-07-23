@@ -13,6 +13,11 @@ import {
   getCalendarDateDaysAgo,
   calendarDateToUnixRange,
   formatTime_fromJSDate,
+  periodStep,
+  midnightISO,
+  endDateFromIso,
+  periodWindowEndingAt,
+  calendarPeriodWindow,
 } from "../date-utils";
 import { formatDateTimeRange } from "../fe-date-format";
 import { parseAbsolute, toZoned, CalendarDate } from "@internationalized/date";
@@ -471,5 +476,52 @@ describe("formatTime_fromJSDate", () => {
       expect(result).toContain(".007-05:00");
       expect(new Date(result).getTime()).toBe(epochMs);
     });
+  });
+});
+
+describe("Calendar-window helpers (D/W/M/Y)", () => {
+  const OFFSET = 600; // +10:00
+
+  it("periodStep maps each period to its whole-period step", () => {
+    expect(periodStep("D")).toEqual({ days: 1 });
+    expect(periodStep("W")).toEqual({ days: 7 });
+    expect(periodStep("M")).toEqual({ months: 1 });
+    expect(periodStep("Y")).toEqual({ years: 1 });
+  });
+
+  it("midnightISO / endDateFromIso round-trip a local date through its midnight instant", () => {
+    const d = new CalendarDate(2026, 7, 22);
+    const iso = midnightISO(d, OFFSET);
+    expect(iso).toBe("2026-07-21T14:00:00.000Z"); // 00:00 +10:00
+    expect(endDateFromIso(iso, OFFSET).toString()).toBe("2026-07-22");
+  });
+
+  it("endDateFromIso is offset-safe (not limited to 600/0 like fromUnixTimestamp)", () => {
+    const d = new CalendarDate(2026, 7, 22);
+    for (const off of [600, 0, -300, 330]) {
+      expect(endDateFromIso(midnightISO(d, off), off).toString()).toBe(
+        "2026-07-22",
+      );
+    }
+  });
+
+  it("periodWindowEndingAt builds a one-step window with a single-subtract start", () => {
+    const w = periodWindowEndingAt("M", new CalendarDate(2026, 7, 22), OFFSET);
+    expect(endDateFromIso(w.start, OFFSET).toString()).toBe("2026-06-22");
+    expect(endDateFromIso(w.end, OFFSET).toString()).toBe("2026-07-22");
+  });
+
+  it("calendarPeriodWindow anchors to today (multiply form) and clamps month-ends", () => {
+    const today = new CalendarDate(2026, 3, 31);
+    const dflt = calendarPeriodWindow(today, "month", 0);
+    expect(dflt.startDay.toString()).toBe("2026-02-28"); // clamped
+    expect(dflt.lastDay.toString()).toBe("2026-03-30");
+    expect(dflt.endExclusive.toString()).toBe("2026-03-31");
+
+    const older1 = calendarPeriodWindow(today, "month", 1);
+    expect(older1.startDay.toString()).toBe("2026-01-31");
+    expect(older1.lastDay.toString()).toBe("2026-02-27");
+    // Contiguous: older-1's exclusive end is the default's start day.
+    expect(older1.endExclusive.toString()).toBe(dflt.startDay.toString());
   });
 });

@@ -43,6 +43,8 @@ import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { formatHoverTimestamp } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import { isDateOnlyPeriod } from "@/lib/charts/temporal";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { CalendarX2 } from "lucide-react";
 
@@ -87,7 +89,7 @@ function coerceSankeyOptions(raw: unknown): SankeyOptions {
 
 interface StackedChartProps {
   mode: "load" | "generation";
-  period: "1D" | "7D" | "30D";
+  period: ChartTimeRange;
   /** Pre-processed data from the parent (null = no data / still loading). */
   data: ChartData | null;
   /** External loading state from the parent. */
@@ -102,7 +104,7 @@ interface StackedChartProps {
 }
 
 /**
- * Presentational stacked-area (or 30D bar) chart for the site load/generation halves.
+ * Presentational stacked-area (or M/Y daily-bar) chart for the site load/generation halves.
  * Inlined from the former SitePowerChart wrapper — the parent (SiteChartsCard) owns the
  * fetch, period, URL nav, cross-chart hover arbitration, and series-visibility state.
  */
@@ -188,12 +190,14 @@ function StackedChart({
     // Otherwise, use current time window (for initial render or live mode)
     const now = new Date();
     let windowHours: number;
-    if (period === "1D") {
+    if (period === "D") {
       windowHours = 24;
-    } else if (period === "7D") {
+    } else if (period === "W") {
       windowHours = 24 * 7;
-    } else {
+    } else if (period === "M") {
       windowHours = 24 * 30;
+    } else {
+      windowHours = 24 * 365;
     }
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
     return { now, windowStart };
@@ -696,16 +700,16 @@ export default function SiteChartsCard({
               const hasAttributed =
                 !!attributedFlow && attributedFlow.days.length > 0;
 
-              // 30D hovered day (also the key into `attributedFlow.days`, which is keyed by local YMD
-              // for every period — the sub-daily builder shapes its window as a single day entry too).
+              // Date-only (M/Y) hovered day (also the key into `attributedFlow.days`, which is keyed by
+              // local YMD for every period — the sub-daily builder shapes its window as a single day too).
               const hoveredYMD =
-                period === "30D" && focusedTime
+                isDateOnlyPeriod(period) && focusedTime
                   ? toLocalYMD(focusedTime.toISOString())
                   : null;
 
               let matrix;
               let focused = false;
-              if (period === "30D" && hasAttributed) {
+              if (isDateOnlyPeriod(period) && hasAttributed) {
                 const dayMatrix = hoveredYMD
                   ? pickDailyFlowMatrix(attributedFlow!, hoveredYMD)
                   : null;
@@ -713,7 +717,7 @@ export default function SiteChartsCard({
                 matrix = dayMatrix ?? sumDailyFlowMatrices(attributedFlow!);
               } else {
                 const instant =
-                  period !== "30D" && hoveredIndex !== null
+                  !isDateOnlyPeriod(period) && hoveredIndex !== null
                     ? calculateInstantFlowMatrix(
                         processedHistoryData,
                         hoveredIndex,
@@ -722,7 +726,7 @@ export default function SiteChartsCard({
                 focused = instant !== null;
                 matrix =
                   instant ??
-                  (hasAttributed && period !== "30D"
+                  (hasAttributed && !isDateOnlyPeriod(period)
                     ? sumDailyFlowMatrices(attributedFlow!)
                     : selectFlowMatrix(processedHistoryData));
               }
@@ -742,10 +746,10 @@ export default function SiteChartsCard({
               const displayMatrix = sankeyOptions.combineSolar
                 ? combineSolarSources(matrix)
                 : matrix;
-              const unit = focused && period !== "30D" ? "kW" : "kWh";
+              const unit = focused && !isDateOnlyPeriod(period) ? "kW" : "kWh";
               const tz = system?.timezoneOffsetMin;
               // Label: the focused instant when hovering, else the window the sankey integrates over
-              // (a TIME range for 1D/7D, a DATE range for 30D).
+              // (a TIME range for D/W, a DATE range for M/Y).
               const cd =
                 processedHistoryData.load ?? processedHistoryData.generation;
               const label = focusedTime
@@ -758,17 +762,17 @@ export default function SiteChartsCard({
                           1000,
                         tz,
                       ),
-                      period !== "30D",
+                      !isDateOnlyPeriod(period),
                     )
                   : null;
 
               // The attributed slice the tooltip reduces over — the SAME data the boxes above were
-              // built from (30D hovered day → just that day; otherwise the whole payload, which for
-              // sub-daily is already a single day entry covering the exact window).
+              // built from (date-only hovered day → just that day; otherwise the whole payload, which
+              // for sub-daily is already a single day entry covering the exact window).
               const daySlice: DailyFlowMatrices | null =
                 unit === "kW" || !hasAttributed
                   ? null
-                  : period === "30D" && hoveredYMD
+                  : isDateOnlyPeriod(period) && hoveredYMD
                     ? (() => {
                         const d = attributedFlow!.days.find(
                           (x) => x.day === hoveredYMD,
@@ -784,18 +788,17 @@ export default function SiteChartsCard({
                     : attributedFlow!;
 
               // Hours the tooltip's "energy" leg is averaged over, for the avg-kW secondary spelling.
-              const windowHours =
-                period === "30D"
-                  ? hoveredYMD
-                    ? 24
-                    : (attributedFlow?.days.length ?? 30) * 24
-                  : cd && cd.timestamps.length > 1
-                    ? (cd.timestamps[cd.timestamps.length - 1].getTime() -
-                        cd.timestamps[0].getTime()) /
-                      3_600_000
-                    : period === "7D"
-                      ? 24 * 7
-                      : 24;
+              const windowHours = isDateOnlyPeriod(period)
+                ? hoveredYMD
+                  ? 24
+                  : (attributedFlow?.days.length ?? 30) * 24
+                : cd && cd.timestamps.length > 1
+                  ? (cd.timestamps[cd.timestamps.length - 1].getTime() -
+                      cd.timestamps[0].getTime()) /
+                    3_600_000
+                  : period === "W"
+                    ? 24 * 7
+                    : 24;
 
               const buildNodeTooltip: SankeyNodeTooltipResolver = (node) => {
                 const avgPower = (energyKwh: number) => {
