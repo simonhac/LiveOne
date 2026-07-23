@@ -4,7 +4,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   sankey as d3Sankey,
-  sankeyLinkHorizontal,
   SankeyGraph,
   SankeyNode,
   SankeyLink,
@@ -590,6 +589,44 @@ export default function EnergyFlowSankey({
       }
     });
 
+    // Re-stack the link endpoints of any BIDIRECTIONAL node — one with BOTH incoming and outgoing
+    // links, i.e. the battery-middle STORAGE node (in classic two-column mode no node has both, so
+    // this loop is a no-op there → pixel-identical). d3-sankey's computeLinkBreadths stacks each side
+    // independently from node.y0 (the top), and the node height is max(Σ charge, Σ discharge)·ky, so
+    // the LIGHTER side (charge ≠ discharge over any real window) fills only the top of its edge and
+    // leaves a lopsided gap at the bottom — the ribbons look like they attach to the node's interior
+    // rather than hugging its left/right edges. Restack each side to span the full node edge: pin the
+    // top ribbon to node.y0 and the bottom ribbon to node.y1, distributing any others with equal gaps
+    // between them (the heavier side's Σ widths ≈ H so its gap ≈ 0 → it stays contiguous as before).
+    // Widths and top-to-bottom order (d3's anti-crossing order) are preserved.
+    for (const node of graph.nodes as any[]) {
+      if (!node.sourceLinks.length || !node.targetLinks.length) continue;
+      const nodeHeight = node.y1 - node.y0;
+      const restackSide = (sideLinks: any[], key: "y0" | "y1") => {
+        const widthSum = sideLinks.reduce((sum, l) => sum + l.width, 0);
+        if (sideLinks.length === 1) {
+          // A single ribbon has no "between" gap to distribute — centre it on the edge.
+          sideLinks[0][key] = node.y0 + nodeHeight / 2;
+          return;
+        }
+        const gap = (nodeHeight - widthSum) / (sideLinks.length - 1);
+        let y = node.y0;
+        for (const l of sideLinks) {
+          l[key] = y + l.width / 2;
+          y += l.width + gap;
+        }
+      };
+      // targetLinks attach to the LEFT edge (their y1); sourceLinks to the RIGHT edge (their y0).
+      restackSide(
+        [...node.targetLinks].sort((a: any, b: any) => a.y1 - b.y1),
+        "y1",
+      );
+      restackSide(
+        [...node.sourceLinks].sort((a: any, b: any) => a.y0 - b.y0),
+        "y0",
+      );
+    }
+
     // Create SVG container
     const svgElement = svg as any;
 
@@ -685,7 +722,23 @@ export default function EnergyFlowSankey({
         "http://www.w3.org/2000/svg",
         "path",
       );
-      path.setAttribute("d", sankeyLinkHorizontal()(extendedLink) || "");
+      // Spline path: a single SMOOTH cubic whose control points sit further apart horizontally than
+      // d3's default (which puts them at the horizontal midpoint). Pushing them out keeps the tangent
+      // horizontal LONGER at each node before the curve rises, so a steep spline (e.g. battery
+      // discharge to a far-above load) leaves the RIGHT edge horizontally and only rises once it's
+      // clear of the node — instead of its top boundary riding up over the node's TOP edge at the
+      // corner. No straight segments, so it stays a smooth ribbon. Near-horizontal splines are
+      // visually unchanged.
+      const sx = extendedLink.source.x1;
+      const sy = link.y0;
+      const tx = extendedLink.target.x0;
+      const ty = link.y1;
+      const hGap = tx - sx;
+      const hold = hGap * 0.66; // horizontal control-point offset (0.5 = d3 default)
+      path.setAttribute(
+        "d",
+        `M${sx},${sy}C${sx + hold},${sy} ${tx - hold},${ty} ${tx},${ty}`,
+      );
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", `url(#gradient-${i})`);
       path.setAttribute("stroke-width", String(Math.max(1, link.width)));
@@ -723,8 +776,8 @@ export default function EnergyFlowSankey({
           const r = svgEl.getBoundingClientRect();
           const sx = r.width / actualWidth;
           const sy = r.height / height;
-          // The spline midpoint: nodeRadius extension cancels in x, and sankeyLinkHorizontal's curve
-          // passes through the endpoint-average y at its horizontal centre (t=0.5).
+          // The spline midpoint: nodeRadius extension cancels in x, and the spline's cubic passes
+          // through the endpoint-average y at its horizontal centre (t=0.5).
           const xMid = (link.source.x1 + link.target.x0) / 2;
           const yMid = (link.y0 + link.y1) / 2;
           setHoveredLink({
