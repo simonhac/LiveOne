@@ -1,20 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
-import { fetchAdminPivotRowsPg } from "@/lib/db/planetscale/readings-read-pg";
+import { ReadingsDao, type ReadingStore } from "@/lib/readings/dao";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo as pgPointInfo } from "@/lib/db/planetscale/schema";
-
-/** Run a raw read against Postgres and return its rows. */
-async function pgRows(query: string): Promise<unknown[]> {
-  const res = await requirePlanetscaleDb().execute(sql.raw(query));
-  return ((res as { rows?: unknown[] }).rows ?? []) as unknown[];
-}
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -202,8 +196,11 @@ export async function GET(
     });
 
     // Build the per-point pivot columns (the MAX(CASE WHEN ...) projections) for the data source.
-    // The surrounding query (cursor/order/limit) is built by fetchAdminPivotRowsPg from the params
-    // below — only these column projections are passed through.
+    // The surrounding query (cursor/order/limit/table) is built by ReadingsDao.readAdminPivot from the
+    // params below — only these column projections are passed through. These name value columns, not a
+    // hot table, so the readings-boundary gate does not flag this route.
+    // SEAM: these projections address points by `pr.point_id = <index>` — the Phase-8 cutover re-keys
+    // that to `pr.point_rid = <rid>` here, in step with readAdminPivot's `system_id` → device_rid.
     let pivotColumns = "";
 
     if (source === "daily") {
@@ -282,9 +279,9 @@ export async function GET(
         return transformed;
       });
 
-    // Serve the pivot from Postgres.
+    // Serve the pivot from Postgres via the readings seam.
     const t0 = Date.now();
-    const result = await fetchAdminPivotRowsPg({
+    const result = await ReadingsDao.readAdminPivot({
       systemId,
       source,
       cursor,
@@ -295,23 +292,17 @@ export async function GET(
     const data = buildPivotData(result);
     dbElapsedMs += Date.now() - t0;
 
-    // If no data, check if the other tables have data
+    // If no data, check whether the OTHER store has data (raw → 5m; 5m/daily → raw). Existence-only:
+    // the seam issues SELECT 1 … LIMIT 1 (index-friendly), never COUNT(*) on the big tables.
     let hasAlternativeData = false;
     if (result.length === 0) {
-      const alternativeTableName =
-        source === "raw"
-          ? "point_readings_agg_5m"
-          : source === "daily"
-            ? "point_readings"
-            : "point_readings";
+      const altStore: ReadingStore = source === "raw" ? "agg5m" : "raw";
       const checkStartTime = Date.now();
-      // Existence check: SELECT 1 … LIMIT 1 stops at the first matching row (index-friendly).
-      // NOT COUNT(*), which scans every matching row — prohibitively slow on the big tables.
-      const checkResult = await pgRows(
-        `SELECT 1 FROM ${alternativeTableName} WHERE system_id = ${systemId} LIMIT 1`,
+      hasAlternativeData = await ReadingsDao.hasReadingsForSystem(
+        systemId,
+        altStore,
       );
       dbElapsedMs += Date.now() - checkStartTime;
-      hasAlternativeData = checkResult.length > 0;
     }
 
     // (`data` is computed above by the shared `buildPivotData`, under the readings shadow.)
@@ -344,49 +335,29 @@ export async function GET(
             ) // ISO8601 string
         : null;
 
-    // Check if there are more records in each direction
+    // Check if there are more records in each direction (existence-only via the seam: SELECT 1 …
+    // LIMIT 1 short-circuits at the first matching row via the (system_id, <time>) index).
     let hasOlder = false;
     let hasNewer = false;
 
     if (result.length > 0) {
-      const tableName =
-        source === "daily"
-          ? "point_readings_agg_1d"
-          : source === "5m"
-            ? "point_readings_agg_5m"
-            : "point_readings";
-      const timeColumn =
-        source === "daily"
-          ? "day"
-          : source === "5m"
-            ? "interval_end"
-            : "measurement_time";
-
+      const store: ReadingStore =
+        source === "daily" ? "agg1d" : source === "5m" ? "agg5m" : "raw";
       const checkStartTime = Date.now();
-
-      // For daily data, use YYYY-MM-DD string comparison; for raw/5m the cursors are epoch-ms,
-      // converted to a PG timestamp literal via to_timestamp().
-      const olderCondition =
-        source === "daily"
-          ? `${timeColumn} < '${lastTimestamp}'`
-          : `${timeColumn} < to_timestamp(${Number(lastTimestamp)} / 1000.0)`;
-      const newerCondition =
-        source === "daily"
-          ? `${timeColumn} > '${firstTimestamp}'`
-          : `${timeColumn} > to_timestamp(${Number(firstTimestamp)} / 1000.0)`;
-
-      // Existence checks: SELECT 1 … LIMIT 1 short-circuits at the first matching row via the
-      // (system_id, <time>) index.
-      const olderCheck = await pgRows(
-        `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${olderCondition} LIMIT 1`,
+      // `lastTimestamp`/`firstTimestamp` are epoch-ms (raw/5m) or YYYY-MM-DD strings (daily); the seam
+      // reproduces the legacy `< to_timestamp(ms/1000.0)` / `< 'YYYY-MM-DD'` comparison per store.
+      hasOlder = await ReadingsDao.hasReadingsForSystemBeyond(
+        systemId,
+        store,
+        lastTimestamp,
+        "older",
       );
-      hasOlder = olderCheck.length > 0;
-
-      const newerCheck = await pgRows(
-        `SELECT 1 FROM ${tableName} WHERE system_id = ${systemId} AND ${newerCondition} LIMIT 1`,
+      hasNewer = await ReadingsDao.hasReadingsForSystemBeyond(
+        systemId,
+        store,
+        firstTimestamp,
+        "newer",
       );
-      hasNewer = newerCheck.length > 0;
-
       dbElapsedMs += Date.now() - checkStartTime;
     }
 
