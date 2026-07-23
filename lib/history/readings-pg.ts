@@ -6,17 +6,18 @@
  * math) rather than via PG `generate_series`, so the grid is identical by construction and never
  * drifts on timestamp/timezone boundary semantics.
  *
- * `compareHistorySeries` is a comparator for the served OpenNEM payload.
+ * Reads flow through the config-v4 readings seam (`ReadingsDao`): the `(systemId, pointId)`
+ * composite address the caller supplies is resolved to a public `PointId` via `RegistryCache`, the
+ * DAO reads by `PointId`, and results are mapped back to the composite address for the served rows.
+ * The transform (densify, `avgCache` reconstruction, `data_quality` mapping) stays byte-identical to
+ * the pre-seam direct-`agg` read.
  */
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  pointReadingsAgg5m as pgAgg5m,
-  pointReadingsAgg1d as pgAgg1d,
-} from "@/lib/db/planetscale/schema";
 import { FIVE_MIN_MS } from "@/lib/aggregation/point-aggregates";
+import { ReadingsDao, type Agg5mReading } from "@/lib/readings";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import type { PointId } from "@/lib/ids";
 import type { AggRow } from "./build-series";
-import type { Agg5mAvgCache } from "./agg5m-cache";
+import type { Agg5mAvgCache, Agg5mAvgRow } from "./agg5m-cache";
 
 export interface AggFetchParams {
   /** Distinct `[systemId, pointId]` pairs to fetch. */
@@ -46,6 +47,36 @@ function groupPointIdsBySystem(
 }
 
 /**
+ * Resolve every `[systemId, pointId]` composite address to its public `PointId`, concurrently.
+ * `RegistryCache.pointForAddr` is a warm-cache synchronous hit in a live serving process; a cold
+ * miss is a single indexed `point_info` lookup that also warms the address the DAO resolves below.
+ * An address with no registry identity is skipped (`UnknownIdError`) rather than aborting the whole
+ * fetch — the pre-seam read queried the `agg` tables directly and had no such identity dependency.
+ */
+async function resolvePairs(pairs: Array<[number, number]>): Promise<{
+  /** `"systemId.pointId"` → PointId, for the resolved subset. */
+  pairToPoint: Map<string, PointId>;
+  /** PointId → integer `pointId` (the reverse used to rebuild the served rows). */
+  pointToInt: Map<PointId, number>;
+}> {
+  const pairToPoint = new Map<string, PointId>();
+  const pointToInt = new Map<PointId, number>();
+  await Promise.all(
+    pairs.map(async ([systemId, pointId]) => {
+      try {
+        const id = await RegistryCache.pointForAddr(systemId, pointId);
+        pairToPoint.set(`${systemId}.${pointId}`, id);
+        pointToInt.set(id, pointId);
+      } catch (err) {
+        if (err instanceof UnknownIdError) return; // skip-and-continue
+        throw err;
+      }
+    }),
+  );
+  return { pairToPoint, pointToInt };
+}
+
+/**
  * Fetch the uniform `AggRow[]` from Postgres for `/api/history`.
  */
 export async function fetchAggRowsPg(
@@ -54,106 +85,104 @@ export async function fetchAggRowsPg(
    *  span's flow-series read can reuse them instead of re-querying `agg_5m` (§1.3a). 5m/30m only. */
   avgCache?: Agg5mAvgCache,
 ): Promise<AggRow[]> {
-  const db = requirePlanetscaleDb();
   const idsBySystem = groupPointIdsBySystem(p.uniquePairs);
+  const { pairToPoint, pointToInt } = await resolvePairs(p.uniquePairs);
+
+  // The resolved PointIds for a system's requested indices, preserving the caller's order (skipping
+  // any unresolved address).
+  const pointsFor = (systemId: number, ids: number[]): PointId[] =>
+    ids
+      .map((i) => pairToPoint.get(`${systemId}.${i}`))
+      .filter((x): x is PointId => x !== undefined);
 
   if (p.interval === "1d") {
-    // One query per system, run CONCURRENTLY (independent systems don't need to serialize on the
-    // pool) — `Promise.all` preserves `idsBySystem`'s insertion order in the result array
-    // regardless of completion order, so the deterministic system/point/day ordering below is
-    // unaffected.
+    // One DAO read per system, run CONCURRENTLY (independent systems don't need to serialize on the
+    // pool) — `Promise.all` preserves `idsBySystem`'s insertion order in the result array regardless
+    // of completion order. Cross-point/cross-system row order is irrelevant downstream: the shared 1d
+    // transform re-densifies each series from a Map keyed by day, and the DAO already returns each
+    // point's days ascending.
     const perSystem = await Promise.all(
       Array.from(idsBySystem, async ([systemId, ids]) => {
-        const res = await db
-          .select({
-            systemId: pgAgg1d.systemId,
-            pointId: pgAgg1d.pointId,
-            day: pgAgg1d.day,
-            avg: pgAgg1d.avg,
-            min: pgAgg1d.min,
-            max: pgAgg1d.max,
-            last: pgAgg1d.last,
-            delta: pgAgg1d.delta,
-          })
-          .from(pgAgg1d)
-          .where(
-            and(
-              eq(pgAgg1d.systemId, systemId),
-              inArray(pgAgg1d.pointId, ids),
-              gte(pgAgg1d.day, p.startDate!),
-              lte(pgAgg1d.day, p.endDate!),
-            ),
-          )
-          // Order by `system_id, point_id, day`. The shared 1d transform
-          // (buildSeriesFromAggRows) maps rows in arrival order without re-sorting, so an unordered
-          // PG scan (e.g. a recomputed/upserted day returned out of heap position) would shift the
-          // served day series by one. Ordering here keeps the output deterministic.
-          .orderBy(pgAgg1d.systemId, pgAgg1d.pointId, pgAgg1d.day);
-        return res.map(
-          (r): AggRow => ({
-            system_id: r.systemId,
-            point_id: r.pointId,
-            day: r.day,
-            avg: r.avg,
-            min: r.min,
-            max: r.max,
-            last: r.last,
-            delta: r.delta,
-            data_quality: null, // PG point_readings_agg_1d has no data_quality column
-          }),
-        );
+        const pointIds = pointsFor(systemId, ids);
+        const byPoint = await ReadingsDao.read1d(pointIds, {
+          startDay: p.startDate!,
+          endDay: p.endDate!,
+        });
+        const rows: AggRow[] = [];
+        for (const pointId of pointIds) {
+          const intId = pointToInt.get(pointId)!;
+          for (const r of byPoint.get(pointId)!) {
+            rows.push({
+              system_id: systemId,
+              point_id: intId,
+              day: r.day,
+              avg: r.avg,
+              min: r.min,
+              max: r.max,
+              last: r.last,
+              delta: r.delta,
+              data_quality: null, // PG point_readings_agg_1d has no data_quality column
+            });
+          }
+        }
+        return rows;
       }),
     );
     return perSystem.flat();
   }
 
-  // 5m / 30m: query the sparse PG rows, then densify to the exact grid. One query per system, run
-  // CONCURRENTLY (see the 1d path's ordering note above — same guarantee applies here).
+  // 5m / 30m: read the sparse rows, then densify to the exact grid. One DAO read per system, run
+  // CONCURRENTLY (see the 1d path's note above — same guarantee applies here).
   const queryFirstEpoch = p.queryFirstEpoch!;
   const lastEpoch = p.lastEpoch!;
 
   const perSystem = await Promise.all(
     Array.from(idsBySystem, async ([systemId, ids]) => {
-      const res = await db
-        .select({
-          pointId: pgAgg5m.pointId,
-          intervalEnd: pgAgg5m.intervalEnd,
-          avg: pgAgg5m.avg,
-          min: pgAgg5m.min,
-          max: pgAgg5m.max,
-          last: pgAgg5m.last,
-          delta: pgAgg5m.delta,
-          dataQuality: pgAgg5m.dataQuality,
-        })
-        .from(pgAgg5m)
-        .where(
-          and(
-            eq(pgAgg5m.systemId, systemId),
-            inArray(pgAgg5m.pointId, ids),
-            gte(pgAgg5m.intervalEnd, new Date(queryFirstEpoch)),
-            lte(pgAgg5m.intervalEnd, new Date(lastEpoch)),
-          ),
+      const pointIds = pointsFor(systemId, ids);
+      const byPoint = await ReadingsDao.read5m(pointIds, {
+        fromMs: queryFirstEpoch,
+        toMs: lastEpoch,
+      });
+
+      // §1.3a: reconstruct the PRE-densify sparse rows the avgCache expects (`{pointId, intervalEnd:
+      // Date, avg}`), byte-identical to the former raw select. Populated per system over the same
+      // [queryFirstEpoch, lastEpoch] window; densify below is unaffected.
+      if (avgCache) {
+        const resolvedInts: number[] = [];
+        const res: Agg5mAvgRow[] = [];
+        for (const pointId of pointIds) {
+          const intId = pointToInt.get(pointId)!;
+          resolvedInts.push(intId);
+          for (const r of byPoint.get(pointId)!) {
+            res.push({
+              pointId: intId,
+              intervalEnd: new Date(r.intervalEndMs),
+              avg: r.avg,
+            });
+          }
+        }
+        avgCache.record(
+          systemId,
+          resolvedInts,
+          queryFirstEpoch,
+          lastEpoch,
+          res,
         );
+      }
 
-      // §1.3a: cache the PRE-densify sparse rows so the attr flow-series read reuses them. Populated
-      // per system over the same [queryFirstEpoch, lastEpoch] window; densify below is unaffected.
-      avgCache?.record(systemId, ids, queryFirstEpoch, lastEpoch, res);
-
-      const byKey = new Map<string, (typeof res)[number]>();
-      for (const r of res)
-        byKey.set(`${r.pointId}:${r.intervalEnd.getTime()}`, r);
-
-      // Densify: emit a dense grid — seed at
-      // queryFirstEpoch, step 5min, and include the first grid point that reaches/passes lastEpoch
-      // (R+5min for every R < lastEpoch, so the largest emitted value is the first
-      // grid point ≥ lastEpoch). Rows ascending per point.
+      // Densify: emit a dense grid — seed at queryFirstEpoch, step 5min, and include the first grid
+      // point that reaches/passes lastEpoch (R+5min for every R < lastEpoch, so the largest emitted
+      // value is the first grid point ≥ lastEpoch). Rows ascending per point.
       const systemRows: AggRow[] = [];
-      for (const pointId of ids) {
+      for (const pointId of pointIds) {
+        const intId = pointToInt.get(pointId)!;
+        const byMs = new Map<number, Agg5mReading>();
+        for (const r of byPoint.get(pointId)!) byMs.set(r.intervalEndMs, r);
         for (let t = queryFirstEpoch; ; t += FIVE_MIN_MS) {
-          const hit = byKey.get(`${pointId}:${t}`);
+          const hit = byMs.get(t);
           systemRows.push({
             system_id: systemId,
-            point_id: pointId,
+            point_id: intId,
             interval_end: t,
             avg: hit?.avg ?? null,
             min: hit?.min ?? null,
