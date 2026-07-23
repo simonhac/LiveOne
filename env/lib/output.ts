@@ -4,7 +4,8 @@
 
 const RESET = "\x1b[0m";
 const RED = "\x1b[31m";
-const YELLOW = "\x1b[33m";
+const BRIGHT_RED = "\x1b[1;91m";
+const BRIGHT_YELLOW = "\x1b[1;93m";
 const GREEN = "\x1b[32m";
 const CYAN = "\x1b[36m";
 const BLUE = "\x1b[34m";
@@ -13,12 +14,14 @@ export function success(msg: string): void {
   console.log(`      ${GREEN}✓${RESET} ${msg}`);
 }
 
+// Problem lines colour the WHOLE message (bold bright red / yellow), not just the
+// glyph, so they're impossible to miss in an otherwise-green setup log.
 export function error(msg: string): void {
-  console.log(`      ${RED}✗${RESET} ${msg}`);
+  console.log(`      ${BRIGHT_RED}✗ ${msg}${RESET}`);
 }
 
 export function warn(msg: string): void {
-  console.log(`      ${YELLOW}!${RESET} ${msg}`);
+  console.log(`      ${BRIGHT_YELLOW}! ${msg}${RESET}`);
 }
 
 export function info(msg: string): void {
