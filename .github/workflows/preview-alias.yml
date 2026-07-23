@@ -1,0 +1,158 @@
+name: Preview alias
+
+# On every push to a non-main branch, find the Vercel PREVIEW deployment that Vercel's Git
+# integration built for THIS exact commit, wait until it is READY, then bind the stable alias
+# <sanitized-branch>.preview.liveone.energy to it (so the prod Clerk session on *.liveone.energy
+# carries over — no login prompt). On branch delete, remove that alias.
+#
+# This workflow sets NO DB env: it only re-points an alias at a build Vercel already made with its
+# Preview-scope env, so it cannot itself aim a preview at prod. The invariant "previews read
+# liveone-dev, never prod Postgres" is enforced OUTSIDE this file by (a) the Preview-scope
+# PLANETSCALE_DATABASE_URL = liveone-dev and (b) the runtime guard assertDbEnvironmentMatches armed
+# by PLANETSCALE_PROD_BRANCH_ID (lib/db/planetscale/index.ts). Both are external prerequisites.
+#
+# NOTE (GitHub quirk): `delete`-event workflows run ONLY from the DEFAULT branch's copy of this file.
+# The cleanup job therefore does nothing until this file is merged to `main`. The alias (push) job
+# runs from the pushed branch's own copy, so it works on a feature branch immediately.
+
+on:
+  push:
+    branches-ignore:
+      - main
+  delete: {}
+
+# Per-branch group: a newer push to the same branch cancels an older in-flight alias run.
+# push  -> github.event.ref = refs/heads/<branch>;  delete -> github.event.ref = <branch>.
+concurrency:
+  group: preview-alias-${{ github.event.ref }}
+  cancel-in-progress: true
+
+jobs:
+  alias:
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12          # polling budget is ~10 min + slack
+    permissions:
+      contents: read
+    steps:
+      - name: Compute alias label + domain (deterministic pure fn of the branch ref)
+        env:
+          BRANCH_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sanitize_label() {
+            local ref="$1" hash s
+            hash="$(printf '%s' "$ref" | sha1sum | cut -c1-6)"
+            s="$(printf '%s' "$ref" \
+                  | tr '[:upper:]' '[:lower:]' \
+                  | tr '/' '-' \
+                  | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//')"
+            if [ -z "$s" ]; then printf 'p-%s' "$hash"; return; fi
+            if [ "${#s}" -gt 63 ]; then
+              s="$(printf '%s' "$s" | cut -c1-56 | sed -E 's/-+$//')-$hash"
+            fi
+            printf '%s' "$s"
+          }
+          LABEL="$(sanitize_label "$BRANCH_REF")"
+          DOMAIN="${LABEL}.preview.liveone.energy"
+          echo "branch='$BRANCH_REF' label='$LABEL' domain='$DOMAIN'"
+          { echo "LABEL=$LABEL"; echo "DOMAIN=$DOMAIN"; } >> "$GITHUB_ENV"
+
+      - name: Discover the preview deployment for this commit and wait until READY
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          API="https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_ORG_ID}&target=preview&limit=50"
+          INTERVAL=15
+          DEADLINE=$(( $(date +%s) + 600 ))
+          while :; do
+            RESP="$(curl -sS --max-time 30 -H "Authorization: Bearer ${VERCEL_TOKEN}" "$API" || true)"
+            # Newest deployment built for THIS exact commit (empty if none / transient error / 429).
+            MATCH="$(printf '%s' "${RESP:-}" | jq -c --arg sha "$GITHUB_SHA" \
+              '[.deployments[]? | select(.meta.githubCommitSha == $sha)] | sort_by(.created) | reverse | .[0] // empty' \
+              2>/dev/null || true)"
+            if [ -n "${MATCH:-}" ] && [ "$MATCH" != "null" ]; then
+              STATE="$(printf '%s' "$MATCH" | jq -r '.state // .readyState // "UNKNOWN"')"
+              case "$STATE" in
+                READY)
+                  DEPLOY_ID="$(printf '%s' "$MATCH" | jq -r '.uid')"
+                  DEPLOY_URL="$(printf '%s' "$MATCH" | jq -r '.url')"
+                  echo "READY: id=$DEPLOY_ID url=$DEPLOY_URL"
+                  { echo "DEPLOY_ID=$DEPLOY_ID"; echo "DEPLOY_URL=$DEPLOY_URL"; } >> "$GITHUB_ENV"
+                  break ;;
+                ERROR|CANCELED)
+                  echo "::error::preview build for $GITHUB_SHA is $STATE — not aliasing."; exit 1 ;;
+                *)
+                  echo "state=$STATE for $GITHUB_SHA — waiting ${INTERVAL}s…" ;;
+              esac
+            else
+              echo "no preview deployment for $GITHUB_SHA yet — waiting ${INTERVAL}s…"
+            fi
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::timed out (~10m) waiting for a READY preview of $GITHUB_SHA."; exit 1
+            fi
+            sleep "$INTERVAL"
+          done
+
+      - name: Assign the stable alias to that deployment (Vercel CLI — provisions the per-host cert)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+        run: |
+          set -euo pipefail
+          # Use the CLI, not the REST alias endpoint. POST /v2/deployments/{id}/aliases requires a
+          # PRE-EXISTING SSL cert and fails "cert_missing" for a fresh host; `vercel alias set`
+          # provisions the per-host cert via HTTP-01 (the *.preview.liveone.energy CNAME is DNS-only,
+          # so the host resolves to Vercel) and THEN assigns — reassigning if already in use.
+          # --scope takes the team id; no .vercel link is needed in CI.
+          npx --yes vercel@50 alias set "$DEPLOY_URL" "$DOMAIN" \
+            --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
+          echo "Aliased https://${DOMAIN} -> https://${DEPLOY_URL}"
+
+  cleanup:
+    if: ${{ github.event_name == 'delete' && github.event.ref_type == 'branch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Remove the branch's preview alias (best-effort — same label fn as the alias job)
+        env:
+          BRANCH_REF: ${{ github.event.ref }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+        run: |
+          set -euo pipefail
+          sanitize_label() {
+            local ref="$1" hash s
+            hash="$(printf '%s' "$ref" | sha1sum | cut -c1-6)"
+            s="$(printf '%s' "$ref" \
+                  | tr '[:upper:]' '[:lower:]' \
+                  | tr '/' '-' \
+                  | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//')"
+            if [ -z "$s" ]; then printf 'p-%s' "$hash"; return; fi
+            if [ "${#s}" -gt 63 ]; then
+              s="$(printf '%s' "$s" | cut -c1-56 | sed -E 's/-+$//')-$hash"
+            fi
+            printf '%s' "$s"
+          }
+          LABEL="$(sanitize_label "$BRANCH_REF")"
+          DOMAIN="${LABEL}.preview.liveone.energy"
+          echo "branch='$BRANCH_REF' label='$LABEL' domain='$DOMAIN'"
+
+          # Resolve the alias UID (GET accepts the hostname). Missing → nothing to do.
+          INFO="$(curl -sS --max-time 30 -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "https://api.vercel.com/v4/aliases/${DOMAIN}?teamId=${VERCEL_ORG_ID}" || true)"
+          AID="$(printf '%s' "${INFO:-}" | jq -r '.uid // empty' 2>/dev/null || true)"
+          if [ -z "${AID:-}" ]; then
+            echo "No alias ${DOMAIN} (already gone) — nothing to remove."; exit 0
+          fi
+
+          # Delete by UID. Best-effort: never fail the job if it races/errors.
+          DEL="$(curl -sS --max-time 30 -X DELETE -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "https://api.vercel.com/v2/aliases/${AID}?teamId=${VERCEL_ORG_ID}" || true)"
+          printf '%s' "${DEL:-}" | jq . || printf '%s\n' "${DEL:-}"
+          echo "Requested removal of alias ${DOMAIN} (uid=${AID})."
