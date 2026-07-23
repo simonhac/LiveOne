@@ -14,8 +14,8 @@
 > `simonhac/config-v4-phase3-pr-g` WITHOUT a per-phase PR** (Simon, 2026-07-23 — re-establishing context
 > after each PR is expensive). The per-commit doc/ledger discipline is unchanged (each phase's commit still
 > flips the progress note, appends its ledger row, and re-points ▶ NEXT ACTION); only the "open a PR per
-> phase" step is deferred — the batch lands as one PR (or merge) later, at which point the ledger's `_batched_`
-> markers get the real PR number.
+> phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
+> be its own PR).
 
 ## ▶ NEXT ACTION — paste this into a fresh workspace to do the next PR
 
@@ -117,8 +117,8 @@ current list, so it never drifts.
 | D · #221 | `lib/aggregation/daily-points.ts` | 18 | 10 | 28 |
 | E · #224 | `lib/history/readings-pg.ts` | 17 | 10 | 27 |
 | F · #226 | **batch of 6 clean readers** (`flow-series-pg`, `kinkora-hws` page, `enphase-history`, `battery-provenance/load`, `battery-provenance-daily-pg`, `run-periods-pg`) | 11 | 10 | 21 |
-| G · _batched_ | **vendor 5m reads** (`amber/client`, `enphase/adapter`, `oe/scheduler`) | 8 | 10 | 18 |
-| H · _batched_ | **observability + coverage** (`coverage/find-gaps`, `admin/observations/stats`, `cron/monitor-observations`) | 5 | 10 | 15 |
+| G · #228 | **vendor 5m reads** (`amber/client`, `enphase/adapter`, `oe/scheduler`) | 8 | 10 | 18 |
+| H · #228 | **observability + coverage** (`coverage/find-gaps`, `admin/observations/stats`, `cron/monitor-observations`) | 5 | 10 | 15 |
 
 **Trajectory (readers batched — DECIDED this session):** the 8 remaining app_lib readers need new DAO
 surface (grouped by shared surface), the 2 writers pause:
