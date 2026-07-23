@@ -11,7 +11,6 @@ import {
   nearestIndex,
   useChartFocus,
 } from "@/lib/charts/ChartFocusContext";
-import { getPeriodDuration } from "@/lib/charts/temporal";
 import type { ChartTimeRange } from "@/lib/charts/scaffold";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { provenanceDailyQuery } from "@/lib/queries";
@@ -22,14 +21,14 @@ import {
 } from "@/lib/battery-provenance/field-registry";
 import {
   formatYMDRange,
-  historicalWindow,
+  calendarHistoricalWindow,
   ymdToLocalDate,
   zonedDateTimeToYMD,
 } from "@/lib/battery-provenance/panel-dates";
 
-/** The panel's periods: the trailing year, with 30D as a month-zoom over the same daily data. */
-const PANEL_PERIODS: readonly ChartTimeRange[] = ["30D", "1Y"];
-const DEFAULT_PERIOD: ChartTimeRange = "1Y";
+/** The panel's periods: the trailing calendar year, with M as a calendar-month zoom over the same daily data. */
+const PANEL_PERIODS: readonly ChartTimeRange[] = ["M", "Y"];
+const DEFAULT_PERIOD: ChartTimeRange = "Y";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -45,11 +44,10 @@ function PanelInner({
 }: BatteryProvenancePanelProps) {
   // Local (non-URL) temporal state — deliberately NOT `useTemporalRange`/`TemporalNavigator`, which
   // share ONE set of `?period`/`start`/`end`/`offset` URL params across every instance on the page.
-  // This panel's periods (30D/1Y) are disjoint from the app-wide default trio (1D/7D/30D); sharing
-  // the URL would let this panel's "1Y" silently reset a co-located chart's period to its fallback
-  // (and vice versa) the moment this card is ever placed alongside one. Self-contained state avoids
-  // that by construction — the tradeoff is no shareable/bookmarkable link to a specific past year,
-  // acceptable for a diagnostic panel.
+  // Sharing the URL would let this panel's period silently reset a co-located chart's window (and vice
+  // versa) the moment this card is ever placed alongside one. Self-contained state avoids that by
+  // construction — the tradeoff is no shareable/bookmarkable link to a specific past window, acceptable
+  // for a diagnostic panel.
   const [period, setPeriodRaw] = useState<ChartTimeRange>(DEFAULT_PERIOD);
   const [olderSteps, setOlderSteps] = useState(0); // 0 = live; N = N whole periods back
   const setPeriod = useCallback((p: ChartTimeRange) => {
@@ -61,20 +59,15 @@ function PanelInner({
 
   const { focusedTime, setFocusedTime } = useChartFocus();
 
-  // Historical windows request their exact day range; live mode (olderSteps===0) omits params and
-  // lets the server default to the trailing period ending yesterday, area-local.
+  // Every window (including live, olderSteps===0) requests its exact calendar day range — the M/Y
+  // windows are calendar-aligned and end end-of-yesterday, so there is no "omit params" live shortcut.
+  // `isLive` keeps the newest window on the daily-fresh tier.
   const { startDay, endDay } = useMemo(() => {
-    if (olderSteps === 0) return { startDay: undefined, endDay: undefined };
-    const dayCount = Math.round(getPeriodDuration(period) / DAY_MS);
     const today = zonedDateTimeToYMD(
       fromUnixTimestamp(Date.now() / 1000, timezoneOffsetMin),
     );
-    const { startDay: start, endDay: end } = historicalWindow(
-      today,
-      dayCount,
-      olderSteps,
-    );
-    return { startDay: start, endDay: end };
+    const unit = period === "M" ? "month" : "year";
+    return calendarHistoricalWindow(today, unit, olderSteps);
   }, [olderSteps, period, timezoneOffsetMin]);
 
   const {
@@ -82,30 +75,24 @@ function PanelInner({
     isPending,
     isFetching,
     isError,
-  } = useQuery(provenanceDailyQuery({ areaId, startDay, endDay }));
+  } = useQuery(
+    provenanceDailyQuery({
+      areaId,
+      startDay,
+      endDay,
+      isLive: olderSteps === 0,
+    }),
+  );
 
   // Window the raw payload to the period, precompute every series' value array once, and build
   // the recal band annotations (repo convention: transform in a useMemo, not in `select`).
   const view = useMemo(() => {
     if (!resp) return null;
-    const dayCount = Math.round(getPeriodDuration(period) / DAY_MS);
-    const from = Math.max(0, resp.days.length - dayCount);
-    const slice = <T,>(arr: T[]): T[] => arr.slice(from);
-
-    const days = slice(resp.days);
-    const fields = Object.fromEntries(
-      Object.entries(resp.fields).map(([k, arr]) => [k, slice(arr)]),
-    ) as ProvenanceDailyResponse["fields"];
-    const windowed: ProvenanceDailyResponse = {
-      ...resp,
-      days,
-      fields,
-      rowMeta: {
-        firstIntervalEnd: slice(resp.rowMeta.firstIntervalEnd),
-        version: slice(resp.rowMeta.version),
-        updatedAt: slice(resp.rowMeta.updatedAt),
-      },
-    };
+    // The server returns exactly the requested calendar window (birthdate-clamped where applicable),
+    // so consume it directly — no client-side day-count slicing.
+    const days = resp.days;
+    const fields = resp.fields;
+    const windowed: ProvenanceDailyResponse = resp;
 
     const timestamps = days.map((d) => ymdToLocalDate(d, 12));
     const seriesValues: Record<string, (number | null)[]> = {};
@@ -155,7 +142,7 @@ function PanelInner({
       windowEnd,
       lastDataIndex,
     };
-  }, [resp, period]);
+  }, [resp]);
 
   // Per-chart visible-series sets, seeded from the registry's hiddenByDefault flags.
   const [visibleByChart, setVisibleByChart] = useState<
@@ -312,7 +299,7 @@ function PanelInner({
 
 /**
  * The battery-provenance history panel: the 7 registry-defined daily charts over a navigable
- * window (1Y default, 30D zoom), a synced crosshair, and a value table tracking the hover. Wrapped
+ * window (Y default, M zoom), a synced crosshair, and a value table tracking the hover. Wrapped
  * in its own ChartFocusProvider so the charts + the navigator label share one focus instant
  * without leaking into other cards on the page.
  */

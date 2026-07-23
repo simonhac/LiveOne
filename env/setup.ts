@@ -124,6 +124,25 @@ function phaseDependencies(errors: string[]): void {
 // Phase 3: 1Password environment
 // ---------------------------------------------------------------------------
 
+// Quick reachability probe to the 1Password API. On an `op` auth failure this is
+// what makes the error legible: a reset/timeout here means op can't phone home —
+// a NETWORK/VPN/firewall problem, not a missing token or a locked vault. curl
+// exits 0 on ANY HTTP response (even 4xx) and non-zero on a connection failure
+// (reset=35, timeout=28, refused=7). Setup is macOS-only (it uses `security`),
+// so curl is always present.
+function onePasswordApiReachable(): boolean {
+  const { code } = run([
+    "curl",
+    "-sS",
+    "-m",
+    "8",
+    "-o",
+    "/dev/null",
+    "https://my.1password.com/",
+  ]);
+  return code === 0;
+}
+
 function phaseOnePasswordEnv(errors: string[]): void {
   phaseHeader(3, TOTAL_PHASES, "1Password environment");
 
@@ -173,20 +192,50 @@ function phaseOnePasswordEnv(errors: string[]): void {
     }
   }
 
+  const target = path.join(ROOT, ".env.local");
+
   const { code: authCode } = run(["op", "whoami"], undefined, opEnv);
   if (authCode !== 0) {
-    error(
-      "1Password auth unavailable — no OP_SERVICE_ACCOUNT_TOKEN in env, no " +
-        `Keychain item '${KEYCHAIN_OP_SA}', and no personal op session. ` +
-        "One-time fix: store the liveone-dev service-account token with\n" +
+    // Conductor runs this non-interactively, so we can't prompt for an unlock —
+    // instead DIAGNOSE precisely (the old message blamed a "missing Keychain item"
+    // even when the item was present and the real cause was the network). This is
+    // ALWAYS a failure: even with an existing .env.local, op couldn't refresh/verify
+    // the env, so it's surfaced loudly (error + non-zero exit), never as success.
+    const reachable = onePasswordApiReachable();
+    const diagnosis = reachable
+      ? // op reached 1Password → genuinely an AUTH problem. Non-interactive setup
+        // needs the headless service-account token; the personal session (unlock +
+        // `op signin`) is the interactive alternative.
+        "1Password auth unavailable (op reached my.1password.com, so this is an " +
+        "AUTH problem, not the network). Setup is non-interactive, so it needs " +
+        "the headless service-account token. Store the liveone-dev token in the " +
+        "Keychain, then re-run —\n" +
         `        security add-generic-password -U -a "$USER" -s ${KEYCHAIN_OP_SA} -w\n` +
-        "      (paste the token at the prompt), then re-run setup.",
+        "      (paste the token, then Ctrl-D). Interactive alternative: unlock " +
+        "the 1Password app (Settings → Developer → 'Integrate with 1Password CLI') " +
+        "and run `op signin`, then re-run."
+      : // op could NOT reach the API → NETWORK, not auth. This is the failure that
+        // the old message mis-reported as a missing token / session.
+        "1Password's API (my.1password.com) is unreachable — the connection is " +
+        "being reset/refused. This is a NETWORK issue (VPN, firewall, or proxy), " +
+        "NOT missing auth: op can't reach 1Password to sign in. Allow " +
+        "`*.1password.com` (and `*.b5local.com`) through your VPN/firewall, or " +
+        "toggle the VPN, then re-run setup.";
+
+    // A pre-existing .env.local means you can keep working, but this step still
+    // FAILED — note it in the message; do NOT downgrade to a passing warn.
+    const kept =
+      fs.existsSync(target) && !isSymlink(target)
+        ? " (An existing .env.local is left in place, so you can keep working, but this step FAILED — fix the above and re-run.)"
+        : "";
+    error(diagnosis + kept);
+    errors.push(
+      reachable
+        ? "op not authenticated"
+        : "1Password API unreachable (network)",
     );
-    errors.push("op not authenticated");
     return;
   }
-
-  const target = path.join(ROOT, ".env.local");
 
   // Legacy worktrees symlink .env.local to a shared home. Remove the symlink
   // before writing — otherwise `op inject -o` writes THROUGH it and clobbers

@@ -14,9 +14,9 @@ import {
 export interface UseTemporalRange extends TemporalRange {
   /** Step back one whole period (prev / ArrowLeft). */
   older: () => void;
-  /** Step forward one whole period, reverting to live near now (next / ArrowRight). No-op in live mode. */
+  /** Step forward one whole period, reverting to the latest window (next / ArrowRight). No-op at latest. */
   newer: () => void;
-  /** Switch period and reset to the live trailing window. */
+  /** Switch period and reset to the latest window (live for D/W; calendar default ending yesterday for M/Y). */
   setPeriod: (period: ChartTimeRange) => void;
 }
 
@@ -26,11 +26,12 @@ export interface UseTemporalRange extends TemporalRange {
  * (each chart + each navigator instance) re-derives the same range and stays in sync; the actions
  * are pure functions of the current URL, so concurrent firings converge on one navigation.
  *
- * `timezoneOffsetMin` is used only to encode the local date/offset when writing prev/next windows;
- * decoding uses the offset stored in the URL, so the absolute window round-trips across timezones.
+ * `timezoneOffsetMin` drives the calendar math when DECODING (M/Y windows are built in the area-local
+ * calendar) as well as when encoding prev/next windows. M/Y are always windowed, but their LATEST
+ * state is a param-free URL (`isLatest`), so a shared latest link auto-advances as days pass.
  *
  * Every instance on a page shares the SAME URL params — a component whose period set differs from
- * the classic 1D/7D/30D trio must NOT use this hook (a foreign `?period=` value collapses to "1D",
+ * the shared D/W/M/Y set must NOT use this hook (a foreign `?period=` value collapses to "D",
  * silently corrupting any co-located consumer's window). Give it self-contained local state instead
  * (see `BatteryProvenancePanel`'s doc comment for the incident this note is based on).
  */
@@ -45,8 +46,8 @@ export function useTemporalRange({
   // every URL change — including our own `window.history.pushState` below, which Next syncs
   // into `useSearchParams()`.
   const range = useMemo(
-    () => decodeRangeFromParams(searchParams),
-    [searchParams],
+    () => decodeRangeFromParams(searchParams, timezoneOffsetMin),
+    [searchParams, timezoneOffsetMin],
   );
 
   // Shallow client-side URL write via the native History API: NO server round-trip (the
@@ -63,8 +64,8 @@ export function useTemporalRange({
   // firings across multiple navigator instances converge on one step.
   const older = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
-    const current = decodeRangeFromParams(params);
-    const next = computeOlder(current);
+    const current = decodeRangeFromParams(params, timezoneOffsetMin);
+    const next = computeOlder(current, timezoneOffsetMin);
     push(
       encodeRangeToParams(params, next, {
         period: current.period,
@@ -75,8 +76,8 @@ export function useTemporalRange({
 
   const newer = useCallback(() => {
     const params = new URLSearchParams(window.location.search);
-    const current = decodeRangeFromParams(params);
-    const next = computeNewer(current);
+    const current = decodeRangeFromParams(params, timezoneOffsetMin);
+    const next = computeNewer(current, timezoneOffsetMin);
     if (!next) return;
     push(
       encodeRangeToParams(params, next, {

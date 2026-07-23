@@ -1,7 +1,8 @@
 import micromatch from "micromatch";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
+import type { ChartTimeRange } from "@/lib/charts/scaffold";
 
-// Series patterns to request for a given period (energy mode = 30D/1d, else power mode).
+// Series patterns to request for a given period (energy mode = M/Y/1d, else power mode).
 export function buildSeriesParam(isEnergyMode: boolean): string {
   if (isEnergyMode) {
     return [
@@ -30,11 +31,11 @@ export function buildSeriesParam(isEnergyMode: boolean): string {
  */
 export function buildChartData(
   rawHistory: any,
-  timeRange: "1D" | "7D" | "30D",
+  timeRange: ChartTimeRange,
   window?: { start: Date; end: Date },
 ): ChartData | null {
   if (!rawHistory || !Array.isArray(rawHistory.data)) return null;
-  const isEnergyMode = timeRange === "30D";
+  const isEnergyMode = timeRange === "M" || timeRange === "Y";
 
   const findSeries = (pattern: string) =>
     rawHistory.data.find((d: any) => {
@@ -101,7 +102,13 @@ export function buildChartData(
   } else {
     windowEnd = new Date();
     const windowHours =
-      timeRange === "1D" ? 24 : timeRange === "7D" ? 24 * 7 : 24 * 30;
+      timeRange === "D"
+        ? 24
+        : timeRange === "W"
+          ? 24 * 7
+          : timeRange === "M"
+            ? 24 * 30
+            : 24 * 365;
     windowStart = new Date(windowEnd.getTime() - windowHours * 60 * 60 * 1000);
   }
 

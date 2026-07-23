@@ -59,8 +59,10 @@ export default function LinesChartCard({
   // unit-conversion transform runs in a useMemo so the derived ChartData stays referentially
   // stable between renders and recomputes only on refetch (boundary-aligned) or period change.
   const requestInterval: "5m" | "30m" | "1d" =
-    period === "1D" ? "5m" : period === "7D" ? "30m" : "1d";
-  const duration = period === "1D" ? "24h" : period === "7D" ? "168h" : "30d";
+    period === "D" ? "5m" : period === "W" ? "30m" : "1d";
+  // `duration` (the `last=` live window) is only used by D/W — M/Y always carry an explicit
+  // `start`/`end` window and take the `encodeHistoryWindow` branch below.
+  const duration = period === "D" ? "24h" : period === "W" ? "168h" : "30d";
 
   // Live (no window) → trailing `last` window with boundary refetch; historical → an explicit
   // settled window, encoded via the shared history-window encoder so it matches the site charts.
@@ -187,7 +189,13 @@ export default function LinesChartCard({
     }
     const now = new Date();
     const windowHours =
-      period === "1D" ? 24 : period === "7D" ? 24 * 7 : 24 * 30;
+      period === "D"
+        ? 24
+        : period === "W"
+          ? 24 * 7
+          : period === "M"
+            ? 24 * 30
+            : 24 * 365;
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
     return { now, windowStart };
   }, [chartData, start, end, period]);

@@ -20,7 +20,7 @@ export default function TestSankeyPage() {
           "@/lib/energy-flow-matrix"
         );
 
-        const processedData = await fetchAndProcessSiteData("6", "1D");
+        const processedData = await fetchAndProcessSiteData("6", "D");
 
         if (!processedData.generation || !processedData.load) {
           throw new Error("No generation or load data available");

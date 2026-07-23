@@ -1,10 +1,14 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   addDaysToYMD,
+  calendarHistoricalWindow,
   formatYMDRange,
-  historicalWindow,
   ymdToLocalDate,
 } from "../panel-dates";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const inclusiveSpan = (startDay: string, endDay: string) =>
+  (new Date(endDay).getTime() - new Date(startDay).getTime()) / DAY_MS + 1;
 
 describe("ymdToLocalDate", () => {
   it("parses YYYY-MM-DD into a local Date at the given hour", () => {
@@ -52,37 +56,69 @@ describe("addDaysToYMD", () => {
   });
 });
 
-describe("historicalWindow", () => {
-  it("olderSteps=1 with a 30-day period ends the day before the live window would start", () => {
-    // Live (olderSteps=0, not exercised by this function) would be [2026-06-15, 2026-07-14] —
-    // the 30 days ending yesterday. Step 1 must end the day BEFORE that window starts.
-    const { startDay, endDay } = historicalWindow("2026-07-15", 30, 1);
-    expect(endDay).toBe("2026-06-14"); // = live window's start (2026-06-15) minus 1 day
-    expect(startDay).toBe("2026-05-16");
-    // Inclusive span is exactly dayCount days.
-    const spanDays =
-      (new Date(endDay).getTime() - new Date(startDay).getTime()) /
-        (24 * 60 * 60 * 1000) +
-      1;
-    expect(spanDays).toBe(30);
+describe("calendarHistoricalWindow", () => {
+  it("default M (olderSteps=0) is the trailing calendar month ending yesterday", () => {
+    // today = 22 Jul 2026 → 22 Jun – 21 Jul inclusive.
+    const { startDay, endDay } = calendarHistoricalWindow(
+      "2026-07-22",
+      "month",
+      0,
+    );
+    expect(startDay).toBe("2026-06-22");
+    expect(endDay).toBe("2026-07-21");
   });
 
-  it("olderSteps=2 steps back a further whole period (non-overlapping with step 1)", () => {
-    const step1 = historicalWindow("2026-07-15", 30, 1);
-    const step2 = historicalWindow("2026-07-15", 30, 2);
-    // step2's end is exactly the day before step1's start — no gap, no overlap.
-    expect(addDaysToYMD(step2.endDay, 1)).toBe(step1.startDay);
+  it("older M steps back one whole calendar month (contiguous with the default)", () => {
+    const dflt = calendarHistoricalWindow("2026-07-22", "month", 0);
+    const older1 = calendarHistoricalWindow("2026-07-22", "month", 1);
+    expect(older1.startDay).toBe("2026-05-22");
+    expect(older1.endDay).toBe("2026-06-21");
+    // No gap / overlap: the day after older1's end is the default's start.
+    expect(addDaysToYMD(older1.endDay, 1)).toBe(dflt.startDay);
   });
 
-  it("365-day period spans exactly 365 days and ends before the live window", () => {
-    const { startDay, endDay } = historicalWindow("2026-07-15", 365, 1);
-    // Live window (not exercised here) would end 2026-07-14 (yesterday) and start 2025-07-15.
-    expect(endDay).toBe("2025-07-14"); // = live window's start minus 1 day
-    const spanDays =
-      (new Date(endDay).getTime() - new Date(startDay).getTime()) /
-        (24 * 60 * 60 * 1000) +
-      1;
-    expect(spanDays).toBe(365);
+  it("default Y (olderSteps=0) is the trailing calendar year ending yesterday", () => {
+    // today = 22 Jul 2026 → 22 Jul 2025 – 21 Jul 2026 inclusive.
+    const { startDay, endDay } = calendarHistoricalWindow(
+      "2026-07-22",
+      "year",
+      0,
+    );
+    expect(startDay).toBe("2025-07-22");
+    expect(endDay).toBe("2026-07-21");
+    expect(inclusiveSpan(startDay, endDay)).toBe(365);
+  });
+
+  it("older Y steps back one whole calendar year (contiguous)", () => {
+    const dflt = calendarHistoricalWindow("2026-07-22", "year", 0);
+    const older1 = calendarHistoricalWindow("2026-07-22", "year", 1);
+    expect(older1.startDay).toBe("2024-07-22");
+    expect(older1.endDay).toBe("2025-07-21");
+    expect(addDaysToYMD(older1.endDay, 1)).toBe(dflt.startDay);
+  });
+
+  it("a Y window spanning a leap February is 366 days", () => {
+    // today = 22 Jul 2024 → 22 Jul 2023 – 21 Jul 2024 (includes 29 Feb 2024).
+    const { startDay, endDay } = calendarHistoricalWindow(
+      "2024-07-22",
+      "year",
+      0,
+    );
+    expect(startDay).toBe("2023-07-22");
+    expect(endDay).toBe("2024-07-21");
+    expect(inclusiveSpan(startDay, endDay)).toBe(366);
+  });
+
+  it("clamps at month-ends and stays contiguous (today = 31 Mar)", () => {
+    // 31 Mar − 1 month clamps to 28 Feb; the default month is 28 Feb – 30 Mar.
+    const dflt = calendarHistoricalWindow("2026-03-31", "month", 0);
+    expect(dflt.startDay).toBe("2026-02-28");
+    expect(dflt.endDay).toBe("2026-03-30");
+    // older-1 anchors to 31 Mar (multiply form): [31 Jan, 27 Feb].
+    const older1 = calendarHistoricalWindow("2026-03-31", "month", 1);
+    expect(older1.startDay).toBe("2026-01-31");
+    expect(older1.endDay).toBe("2026-02-27");
+    expect(addDaysToYMD(older1.endDay, 1)).toBe(dflt.startDay);
   });
 });
 

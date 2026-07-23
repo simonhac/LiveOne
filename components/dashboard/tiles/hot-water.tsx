@@ -15,9 +15,9 @@ import { getPointValue, getMeasurementTime } from "./shared";
  * host systemId is known (the prop-driven card gallery omits it) and there is HWS temperature data.
  *
  * The sparkline is always a 24h/5m window. When the section's shared temporal-navigator period (URL
- * state) is 1D, that's exactly the window the site chart's own history fetch already requests — so
+ * state) is D, that's exactly the window the site chart's own history fetch already requests — so
  * this reads `siteDataQuery`'s cache (same queryKey ⇒ React Query dedupes the two, no second
- * request) instead of firing its own. For 7D/30D the main fetch's window/resolution don't match, so
+ * request) instead of firing its own. For W/M/Y the main fetch's window/resolution don't match, so
  * this keeps its dedicated fetch.
  */
 function HotWaterTile({
@@ -29,7 +29,7 @@ function HotWaterTile({
   const wantData = systemId != null && hwsTemp != null;
 
   const { period, start, end } = useTemporalRange({ timezoneOffsetMin: 0 });
-  const wantShared = period === "1D";
+  const wantShared = period === "D";
 
   const sharedSite = useQuery(
     siteDataQuery({
