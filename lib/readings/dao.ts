@@ -19,7 +19,7 @@
  * DB-internal representation). The `agg_1d` day key stays a `YYYY-MM-DD` string. Writes optionally
  * run inside a caller transaction via the `exec?` param (the receiver: session-first, then raw + 5m).
  */
-import { and, eq, gte, lte, inArray, desc, sql } from "drizzle-orm";
+import { and, eq, gte, lt, lte, inArray, desc, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { RegistryCache, type PointAddr } from "@/lib/registry";
 import type { PointId } from "@/lib/ids";
@@ -38,7 +38,11 @@ export type ReadingsExec = PgDb | PgTx;
 export interface ReadWindow {
   fromMs: number;
   toMs: number;
-} // inclusive, epoch-ms UTC
+  /** Upper bound: inclusive (`<= toMs`) by default; set `false` for a half-open window (`< toMs`).
+   *  The lower bound is always inclusive. Half-open reproduces callers whose native query is
+   *  `interval_end < hi` (e.g. flow-series' cache lead-in) byte-identically. */
+  toInclusive?: boolean;
+} // epoch-ms UTC
 export interface DayRange {
   startDay: string;
   endDay: string;
@@ -118,6 +122,12 @@ export interface Agg1dUpsert {
 // ── Internal helpers ────────────────────────────────────────────────────────────────────────────────
 const addrKey = (systemId: number, index: number) => `${systemId}.${index}`;
 
+/** Pick the read window's upper-bound operator: half-open `lt` when `toInclusive === false`, else
+ *  inclusive `lte`. Extracted pure so the half-open branch is pinned by reference in a unit test — the
+ *  SEAM WHERE below is otherwise only exercised end-to-end. */
+export const upperBoundOp = (toInclusive: boolean | undefined) =>
+  toInclusive === false ? lt : lte;
+
 /** Group resolved addresses by system + build the (systemId.index → PointId) reverse map. */
 function groupBySystem(addrs: Map<PointId, PointAddr>): {
   bySystem: Map<number, number[]>;
@@ -167,7 +177,7 @@ async function readRaw(
           eq(pointReadings.systemId, systemId),
           inArray(pointReadings.pointId, indexes),
           gte(pointReadings.measurementTime, from),
-          lte(pointReadings.measurementTime, to),
+          upperBoundOp(window.toInclusive)(pointReadings.measurementTime, to),
         ),
       )
       .orderBy(pointReadings.measurementTime);
@@ -224,7 +234,7 @@ async function read5m(
           eq(pointReadingsAgg5m.systemId, systemId),
           inArray(pointReadingsAgg5m.pointId, indexes),
           gte(pointReadingsAgg5m.intervalEnd, from),
-          lte(pointReadingsAgg5m.intervalEnd, to),
+          upperBoundOp(window.toInclusive)(pointReadingsAgg5m.intervalEnd, to),
         ),
       )
       .orderBy(pointReadingsAgg5m.intervalEnd);

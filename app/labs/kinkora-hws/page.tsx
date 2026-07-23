@@ -1,8 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
-import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo, pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
+import { pointInfo } from "@/lib/db/planetscale/schema";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { ReadingsDao } from "@/lib/readings";
+import type { PointId } from "@/lib/ids";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
@@ -44,23 +47,16 @@ async function readAgg5m(
   fromMs: number,
   toMs: number,
 ): Promise<Map<number, number | null>> {
-  const rows = await requirePlanetscaleDb()
-    .select({
-      intervalEnd: pointReadingsAgg5m.intervalEnd,
-      avg: pointReadingsAgg5m.avg,
-    })
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, systemId),
-        eq(pointReadingsAgg5m.pointId, pointId),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(fromMs)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(toMs)),
-      ),
-    )
-    .orderBy(asc(pointReadingsAgg5m.intervalEnd));
   const m = new Map<number, number | null>();
-  for (const r of rows) m.set(r.intervalEnd.getTime(), r.avg);
+  let id: PointId;
+  try {
+    id = await RegistryCache.pointForAddr(systemId, pointId);
+  } catch (err) {
+    if (err instanceof UnknownIdError) return m; // no registry identity → no rows
+    throw err;
+  }
+  const series = await ReadingsDao.read5m([id], { fromMs, toMs });
+  for (const r of series.get(id)!) m.set(r.intervalEndMs, r.avg);
   return m;
 }
 

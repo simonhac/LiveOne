@@ -1,6 +1,8 @@
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems, pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
-import { eq, and, gte, lte } from "drizzle-orm";
+import { systems } from "@/lib/db/planetscale/schema";
+import { eq } from "drizzle-orm";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { ReadingsDao } from "@/lib/readings";
 import { fetchWithEnphaseAuth } from "./enphase-auth";
 import { CalendarDate } from "@internationalized/date";
 import {
@@ -234,7 +236,7 @@ export async function fetchEnphaseDay(
       );
 
   console.log(
-    `[Enphase] Prepared ${pointReadings.length} point readings for point_readings_agg_5m`,
+    `[Enphase] Prepared ${pointReadings.length} pre-aggregated 5m point readings`,
   );
 
   // Insert directly to point_readings_agg_5m table (bypassing point_readings since Enphase already provides 5m data)
@@ -298,28 +300,27 @@ export async function hasCompleteEveningData(
   const eveningStartMs = (dayStartUnix + 18 * 3600) * 1000; // 18:00 (6pm)
   const eveningEndMs = (dayEndUnix - 300) * 1000; // 23:55 (5 minutes before midnight)
 
-  // Query for existing data in this range for the solar power point
-  const existingData = await requirePlanetscaleDb()
-    .select()
-    .from(pointReadingsAgg5m)
-    .where(
-      and(
-        eq(pointReadingsAgg5m.systemId, systemId),
-        eq(pointReadingsAgg5m.pointId, solarPoint.index),
-        gte(pointReadingsAgg5m.intervalEnd, new Date(eveningStartMs)),
-        lte(pointReadingsAgg5m.intervalEnd, new Date(eveningEndMs)),
-      ),
-    );
+  // Query for existing data in this range for the solar power point, via the readings seam.
+  // A point with no registry identity (UnknownIdError) has no rows → treat as 0 present.
+  let existingCount = 0;
+  try {
+    const id = await RegistryCache.pointForAddr(systemId, solarPoint.index);
+    const series = await ReadingsDao.read5m([id], {
+      fromMs: eveningStartMs,
+      toMs: eveningEndMs,
+    });
+    existingCount = series.get(id)!.length;
+  } catch (err) {
+    if (!(err instanceof UnknownIdError)) throw err;
+  }
 
   // We expect 72 intervals from 18:00 to 23:55 (6 hours * 12 intervals per hour)
   const expectedIntervals = 72;
-  const percentComplete = Math.round(
-    (existingData.length / expectedIntervals) * 100,
-  );
+  const percentComplete = Math.round((existingCount / expectedIntervals) * 100);
   const hasEnoughData = percentComplete >= 80; // Need at least 80% complete
 
   console.log(
-    `[Enphase] Yesterday evening data is ${percentComplete}% complete (${existingData.length}/${expectedIntervals} intervals)`,
+    `[Enphase] Yesterday evening data is ${percentComplete}% complete (${existingCount}/${expectedIntervals} intervals)`,
   );
 
   return hasEnoughData;

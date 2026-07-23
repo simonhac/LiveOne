@@ -11,9 +11,9 @@
  * (battery/grid direction, solar leaf/residual, rest-of-house).
  */
 
-import { and, eq, gte, lt, lte, or } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { pointReadingsAgg5m } from "@/lib/db/planetscale/schema";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { ReadingsDao } from "@/lib/readings";
 import {
   buildFlowSeries,
   applyPowerTransform,
@@ -21,6 +21,7 @@ import {
 } from "@/lib/aggregation/flow-series";
 import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
 import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
+import type { PointId } from "@/lib/ids";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
@@ -72,7 +73,10 @@ export async function loadFlowSeriesFromAgg5m(
   };
   const merged: NormRow[] = [];
 
-  // Query `batch` over [lo, hi) (hiInclusive=false) or [lo, hi] (true) and append normalized rows.
+  // Read `batch`'s agg_5m over [lo, hi) (hiInclusive=false) or [lo, hi] (true) via the readings seam
+  // and append normalized rows. Identity resolves (systemId, pointId) → PointId; a point with no
+  // registry identity (UnknownIdError) is skipped — it contributes no rows, exactly as the old
+  // composite-FK'd query returned none for it.
   const queryInto = async (
     batch: FlowSeriesPoint[],
     lo: number,
@@ -80,36 +84,42 @@ export async function loadFlowSeriesFromAgg5m(
     hiInclusive: boolean,
   ): Promise<void> => {
     if (batch.length === 0) return;
-    const refConds = batch.map((p) =>
-      and(
-        eq(pointReadingsAgg5m.systemId, p.ref.systemId),
-        eq(pointReadingsAgg5m.pointId, p.ref.pointId),
-      ),
+    const refByPoint = new Map<
+      PointId,
+      { systemId: number; pointId: number }
+    >();
+    const pointIds: PointId[] = [];
+    await Promise.all(
+      batch.map(async (p) => {
+        try {
+          const id = await RegistryCache.pointForAddr(
+            p.ref.systemId,
+            p.ref.pointId,
+          );
+          refByPoint.set(id, p.ref);
+          pointIds.push(id);
+        } catch (err) {
+          if (err instanceof UnknownIdError) return; // skip-and-continue
+          throw err;
+        }
+      }),
     );
-    const rows = await db
-      .select({
-        systemId: pointReadingsAgg5m.systemId,
-        pointId: pointReadingsAgg5m.pointId,
-        intervalEnd: pointReadingsAgg5m.intervalEnd,
-        avg: pointReadingsAgg5m.avg,
-      })
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          or(...refConds),
-          gte(pointReadingsAgg5m.intervalEnd, new Date(lo)),
-          hiInclusive
-            ? lte(pointReadingsAgg5m.intervalEnd, new Date(hi))
-            : lt(pointReadingsAgg5m.intervalEnd, new Date(hi)),
-        ),
-      );
-    for (const r of rows)
-      merged.push({
-        systemId: r.systemId,
-        pointId: r.pointId,
-        t: r.intervalEnd.getTime(),
-        avg: r.avg,
-      });
+    if (pointIds.length === 0) return;
+    const series = await ReadingsDao.read5m(
+      pointIds,
+      { fromMs: lo, toMs: hi, toInclusive: hiInclusive },
+      db,
+    );
+    for (const [id, rows] of series) {
+      const ref = refByPoint.get(id)!;
+      for (const r of rows)
+        merged.push({
+          systemId: ref.systemId,
+          pointId: ref.pointId,
+          t: r.intervalEndMs,
+          avg: r.avg,
+        });
+    }
   };
 
   // Split into cache-covered points (reuse in-window rows + query only the lead-in) and uncovered
