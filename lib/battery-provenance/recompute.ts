@@ -4,16 +4,18 @@
  * (recomputeBatteryProvenanceForWindow*) over a trailing window (minutely) or an explicit range (daily
  * heal / backfill), chunked. Best-effort throughout so a fold hiccup never breaks the aggregation it trails.
  */
-import { and, asc, eq, isNotNull, isNull, lt, max, or } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { parseDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areas,
   systems,
-  pointReadingsAgg5m,
   pointReadingsFlowAttr1d,
 } from "@/lib/db/planetscale/schema";
+import { ReadingsDao } from "@/lib/readings";
+import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import type { PointId } from "@/lib/ids";
 import {
   FLOW_ATTR_VERSION,
   SETTLEMENT_WINDOW_MS,
@@ -146,22 +148,24 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     )
     .limit(1);
   if (!bat || !out) return false; // no battery, or blend never written → recompute
-  const maxEnd = async (sys: number, pid: number): Promise<number | null> => {
-    const [row] = await db
-      .select({ m: max(pointReadingsAgg5m.intervalEnd) })
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, sys),
-          eq(pointReadingsAgg5m.pointId, pid),
-        ),
-      );
-    return row?.m != null
-      ? new Date(row.m as string | number | Date).getTime()
-      : null;
+  // Resolve the two integer addresses to PointIds; an unknown addr → treat as "no data" (the old
+  // MAX over a nonexistent (sys,pid) returned 0 rows → null).
+  const resolve = async (sys: number, pid: number): Promise<PointId | null> => {
+    try {
+      return await RegistryCache.pointForAddr(sys, pid);
+    } catch (e) {
+      if (e instanceof UnknownIdError) return null;
+      throw e;
+    }
   };
-  const inMax = await maxEnd(bat.sys, bat.pid);
-  const outMax = await maxEnd(out.sys, out.pid);
+  const batPoint = await resolve(bat.sys, bat.pid);
+  const outPoint = await resolve(out.sys, out.pid);
+  const maxes = await ReadingsDao.latestAgg5mIntervalMsForPoints(
+    [batPoint, outPoint].filter((p): p is PointId => p !== null),
+    db,
+  );
+  const inMax = batPoint ? (maxes.get(batPoint) ?? null) : null;
+  const outMax = outPoint ? (maxes.get(outPoint) ?? null) : null;
   if (inMax == null) return true; // no input data at all → nothing to do
   if (outMax == null) return false; // blend never written → recompute
   return outMax >= inMax;

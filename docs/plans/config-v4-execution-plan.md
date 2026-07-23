@@ -17,71 +17,25 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — paste this into a fresh workspace to do the next PR
+## ▶ NEXT ACTION — Phase 3 done (app_lib=0); next is Phase 4
 
-> **Self-perpetuating handoff (maintenance rule).** This block always holds exactly ONE live prompt: the
-> very next PR to build. The agent building that PR **must, as the FINAL step BEFORE opening the PR — in
-> the same commit, NOT after merge** — (a) flip the Phase-3 progress note, (b) append the landed row to
-> the § Readings-seam ratchet ledger, and (c) **replace this block** with the next PR's prompt (same
-> structure, same closing instruction). Doing this before-merge is what keeps `main` never behind the
-> baseline even if the merge is delayed — the doc that ships *in* the PR already reflects that PR. Keep the
-> prose lengths and constraints; only swap the specifics (PR letter, scope, files, verify steps, baseline
-> count, prior-PR/branch references).
+> **Phase 3 is COMPLETE on the served-app boundary** (`app_lib` = 0; the seam is a hard wall — see § Progress
+> and § Readings-seam ratchet ledger). There is no next `app_lib` strangler PR, so the self-perpetuating
+> writer-PR handoff that lived here has retired. Two follow-ons remain, in priority order.
 
-```text
-Continue config-v4 Phase 3 in this repo. Read docs/plans/config-v4-execution-plan.md §3 (Phase 3) and
-config-v4-clean-sheet.md for the why. PR-A (DAO seam + ratchet, #214), PR-B (receiver, #215), PR-C
-(aggregate-points-pg.ts writer, #218), PR-D (daily-points.ts, #221), PR-E (readings-pg.ts, #224), PR-F
-(CLEAN-READER BATCH, #226 — 6 pure readers), PR-G+H (vendor 5m reads + observability/coverage, #228), and
-PR-I (admin readings viewers — the pivot route app/api/admin/systems/[systemId]/point-readings AND, via the
-shared lib/db/planetscale/readings-read-pg.ts, the single-point drill-down app/api/admin/point/
-[systemIdDotPointId]/readings; added readAdminPivot + hasReadingsForSystem/hasReadingsForSystemBeyond +
-readRawWindowAround/read5mRowWindowAround, reused read1d for the daily drill-down; readings-read-pg.ts DELETED;
-SQL relocated VERBATIM as sql.raw inside the seam → byte-identical by construction; verified on liveone-dev
-under TZ=UTC; #230) have LANDED. lib/readings/dao.ts is the seam: PointId-keyed readRaw/read5m/read1d/
-latestForPoints/latest5mForPoints/countAgg5mByLocalDay/countAgg5mForLocalDay/readRawWindowAround/
-read5mRowWindowAround + insertRaw/insert5m/upsert1d, PLUS non-point-keyed maintenance delete1dRange/
-earliestAgg5mMs/systemIdsWithAgg5mSince/latestAgg5mIntervalMsForSystem/countByCreatedAtSince/
-createdAtHistogramSince/distinctSystemsByRawCreatedAtSince/latestRawCreatedAtMs/maxAgg5mIntervalMsForSystems/
-readAdminPivot/hasReadingsForSystem/hasReadingsForSystemBeyond. **13 modules remain on the baseline (3 app_lib
-+ 10 scripts).** Phase 3 adds NO migration (reads Phase-2's point_uid/rid). Trajectory to app_lib=0 is in
-§ Readings-seam ratchet ledger. Writer PRs J/K PAUSE for Simon's go-ahead + byte-identical/idempotent
-verification (they WRITE agg_5m).
+**NEXT: Phase 4 — additive v4 config schema + roles→CHECK (dark).** See § "Phase 4" below. This phase
+opens with **schema DDL** (`areas.day_offset_min`/`config`; `systems` dark columns `rid`/`config`/
+`adapter_state`/`primary_area_id`/`slug`; `dashboards` `doc`/`revision`/`slug` + `dashboard_revisions`;
+`derivations` + `derived_intervals`; `legacy_handles`; roles→CHECK from `lib/roles/registry.ts`). 🛑
+**Migrations are MANUAL and need Simon's explicit approval before generating/applying** (per CLAUDE.md) —
+propose each one and wait for a "yes"; apply to prod `sydney` and verify BEFORE the dependent reader PR
+merges. Everything ships dark behind the unchanged v3 app.
 
-Do PR-J: battery-provenance writers. Migrate lib/battery-provenance/recompute.ts and
-lib/db/planetscale/battery-provenance-pg.ts onto ReadingsDao. PROFILE each module's exact hot-table access
-first (expect agg_5m READS for the provenance blend + agg_5m WRITES/upserts in the recompute). CONFIRM the
-write path; because it WRITES agg_5m, PAUSE for Simon's go-ahead before landing.
-
-Scope (design the MINIMAL new DAO surface, additive, // SEAM:-tagged, unit-tested in dao.test.ts — reuse
-groupBySystem + rev so Phase 8 re-keys only these methods; per-point freshness → latestAgg5mIntervalMsForPoints;
-a fleet/updated_at MAX → maxAgg5mUpdatedAt; put system-keyed/fleet-wide queries in the non-point-keyed
-maintenance block // SEAM:-tagged like systemIdsWithAgg5mSince):
-1. battery-provenance-pg.ts: the agg_5m reads (blend inputs) + any agg_5m upsert the recompute performs.
-   Reproduce each query's keys/ordering byte-identically; identity via RegistryCache (skip UnknownIdError).
-2. recompute.ts: whatever hot-table access it does directly.
-3. Shrink the ratchet — remove both from .readings-boundary-baseline.json app_lib AND their .eslintrc.json
-   override entries (they DO statically import the hot Drizzle symbols) → 1 baselined (1 app_lib). No raw
-   hot-table name left in a string literal (comment-stripped; JSDoc/comments fine — reword prose that names a
-   table).
-
-Verify: `npm run build:local && npm run type-check` clean; `node scripts/check-readings-boundary.mjs` green
-at 11; `npx next lint --file <changed files>` clean; `npm test` green (incl. new DAO-method tests); then a
-throwaway scripts/temp diff script on liveone-dev proving each new DAO query == the old direct query
-byte-for-byte AND the recompute is idempotent (re-run yields identical agg_5m) — RUN IT UNDER TZ=UTC (drizzle
-parses timestamp-without-tz tz-invariantly; raw db.execute parses in the machine tz, so a non-UTC dev box
-shows a spurious offset — prod is TZ=UTC). Delete the script before committing. Because PR-J WRITES agg_5m,
-PAUSE for Simon's go-ahead before committing.
-
-IMMEDIATELY BEFORE COMMITTING (its own PAUSED PR) — in the SAME commit, NOT a post-merge chore: update this
-doc — (1) flip the Phase-3 progress-table note (PR-J landed / N modules remain / name PR-K); (2) append the
-PR-J landed row(s) to the § Readings-seam ratchet ledger (module | app_lib | scripts | remaining; the new
-`remaining` MUST equal `npm run check:readings`); (3) REPLACE this "▶ NEXT ACTION" block with PR-K's prompt —
-the last writer lib/hws/recompute.ts → 0/10/10, which reaches app_lib=0 (then delete
-.readings-boundary-baseline.json + the .eslintrc.json override → the seam becomes a hard wall). Keep this same
-self-perpetuating closing instruction — including the "immediately before committing" timing, the
-PAUSE-for-writers rule, and the TZ=UTC verify caveat — in the new block.
-```
+**Optional / possibly-permanent: drain the `scripts` lane.** The 10 `scripts/*` entries still in
+`.readings-boundary-baseline.json` (its `_doc`: "slower / possibly-permanent-allow track") can each move
+behind `ReadingsDao` with the same recipe (add/reuse a `// SEAM:`-tagged method → rewrite the script to speak
+`PointId` → delete its baseline line, same commit). Only once BOTH lanes are empty does the baseline file +
+its `prebuild` guard get deleted. Not required for the cutover.
 
 ## Progress
 
@@ -90,7 +44,7 @@ PAUSE-for-writers rule, and the TZ=UTC verify caveat — in the new block.
 | 0 — Governance (doc) | ✅ DONE | prefixes corrected to `dv/pt/ar/db/dx/bn`; `retire-implied-areas.ts` annotated abandoned |
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
-| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | 🔨 IN PROGRESS ← **next** | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) + PR-E (serving-path reader `lib/history/readings-pg.ts` → DAO `read5m`/`read1d`; identity via `RegistryCache.pointForAddr` with `UnknownIdError` skip-and-continue; `avgCache` reconstructed byte-identical; NO new DAO surface; pure reader, no pause) + PR-F (**CLEAN-READER BATCH** #226 — 6 pure readers `flow-series-pg`/`labs/kinkora-hws`/`enphase-history`/`battery-provenance/load`/`battery-provenance-daily-pg`/`run-periods-pg` → `read5m`/`read1d`/`readRaw`; added `ReadWindow.toInclusive` half-open upper bound + pure `upperBoundOp` helper; byte-identical verified on `liveone-dev` incl. half-open boundary + multi-point batch reverse-map; no pause) landed; **21 modules remain** (11 app_lib + 10 scripts). Readers profiled this session are NOT uniform → **6-PR trajectory** (§ Readings-seam ratchet ledger): 6 clean (done), 8 need new DAO surface (reader PRs G/H/I), 2 agg_5m writers (paused PRs J/K). PR-G (vendor 5m reads `amber/client`/`enphase/adapter`/`oe/scheduler`; added `createdAtMs`/`latest5mForPoints`/`latestAgg5mIntervalMsForSystem`) + PR-H (observability + coverage `coverage/find-gaps`/`admin/observations/stats`/`cron/monitor-observations`; added coverage COUNT-by-local-day `countAgg5mByLocalDay`/`countAgg5mForLocalDay` + created_at fleet counters `countByCreatedAtSince`/`createdAtHistogramSince`/`distinctSystemsByRawCreatedAtSince`/`latestRawCreatedAtMs` + `maxAgg5mIntervalMsForSystems`; both routes' raw `point_readings` counters moved behind the seam too; byte-identical verified on `liveone-dev` under `TZ=UTC`) landed; PR-I (**admin readings viewers** — the pivot route `admin/systems/[systemId]/point-readings` + `readings-read-pg` [which served BOTH that route AND the single-point drill-down `admin/point/[systemIdDotPointId]/readings`]; added `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + reused `read1d`; `readings-read-pg.ts` DELETED; SQL relocated VERBATIM as `sql.raw` inside the seam → byte-identical by construction; verified on `liveone-dev` under `TZ=UTC`; #230) landed; **13 modules remain** (3 app_lib + 10 scripts). PR-J = next (**writer, PAUSES**: `battery-provenance/recompute` + `battery-provenance-pg`). |
+| 3 — uuid↔rid DAO seam + registry cache + lint ratchet | ✅ DONE (`app_lib`=0) | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) + PR-E (serving-path reader `lib/history/readings-pg.ts` → DAO `read5m`/`read1d`; identity via `RegistryCache.pointForAddr` with `UnknownIdError` skip-and-continue; `avgCache` reconstructed byte-identical; NO new DAO surface; pure reader, no pause) + PR-F (**CLEAN-READER BATCH** #226 — 6 pure readers `flow-series-pg`/`labs/kinkora-hws`/`enphase-history`/`battery-provenance/load`/`battery-provenance-daily-pg`/`run-periods-pg` → `read5m`/`read1d`/`readRaw`; added `ReadWindow.toInclusive` half-open upper bound + pure `upperBoundOp` helper; byte-identical verified on `liveone-dev` incl. half-open boundary + multi-point batch reverse-map; no pause) landed; **21 modules remain** (11 app_lib + 10 scripts). Readers profiled this session are NOT uniform → **6-PR trajectory** (§ Readings-seam ratchet ledger): 6 clean (done), 8 need new DAO surface (reader PRs G/H/I), 2 agg_5m writers (paused PRs J/K). PR-G (vendor 5m reads `amber/client`/`enphase/adapter`/`oe/scheduler`; added `createdAtMs`/`latest5mForPoints`/`latestAgg5mIntervalMsForSystem`) + PR-H (observability + coverage `coverage/find-gaps`/`admin/observations/stats`/`cron/monitor-observations`; added coverage COUNT-by-local-day `countAgg5mByLocalDay`/`countAgg5mForLocalDay` + created_at fleet counters `countByCreatedAtSince`/`createdAtHistogramSince`/`distinctSystemsByRawCreatedAtSince`/`latestRawCreatedAtMs` + `maxAgg5mIntervalMsForSystems`; both routes' raw `point_readings` counters moved behind the seam too; byte-identical verified on `liveone-dev` under `TZ=UTC`) landed; PR-I (**admin readings viewers** — the pivot route `admin/systems/[systemId]/point-readings` + `readings-read-pg` [which served BOTH that route AND the single-point drill-down `admin/point/[systemIdDotPointId]/readings`]; added `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + reused `read1d`; `readings-read-pg.ts` DELETED; SQL relocated VERBATIM as `sql.raw` inside the seam → byte-identical by construction; verified on `liveone-dev` under `TZ=UTC`; #230) landed; **13 modules remain** (3 app_lib + 10 scripts). PR-JK (**the two writers, batched** — Simon 2026-07-23: `battery-provenance/recompute` + `battery-provenance-pg` + `hws/recompute`; added DAO `latestAgg5mIntervalMsForPoints` (per-point `MAX(interval_end)`) + `latestAgg5mUpdatedAtForPoint` (per-point windowed `MAX(updated_at)`) + `insert5m` `writeDataQuality` mode (7 agg + `data_quality` + `updated_at`, sole-writer derived points); HWS input reuses `read5m`; byte-identical + idempotent verified on `liveone-dev` under `TZ=UTC`; #232) landed → **`app_lib` = 0, 10 modules remain (0 app_lib + 10 scripts)**. Served-app boundary now lint-enforced (`.eslintrc.json` ratchet override removed); the `scripts` lane (10, possibly permanent) is the only baseline remainder. **Phase-3 app_lib strangler COMPLETE.** |
 | 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
@@ -120,18 +74,22 @@ current list, so it never drifts.
 | G · #228 | **vendor 5m reads** (`amber/client`, `enphase/adapter`, `oe/scheduler`) | 8 | 10 | 18 |
 | H · #228 | **observability + coverage** (`coverage/find-gaps`, `admin/observations/stats`, `cron/monitor-observations`) | 5 | 10 | 15 |
 | I · #230 | **admin readings viewers** (`admin/systems/[systemId]/point-readings` route + `readings-read-pg` [served BOTH that route AND `admin/point/[systemIdDotPointId]/readings`] → `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + `read1d` reuse; `readings-read-pg.ts` deleted) | 3 | 10 | 13 |
+| J · #232 | **battery-provenance writers** (`battery-provenance/recompute` blend watermark → `latestAgg5mIntervalMsForPoints`; `battery-provenance-pg` blend upsert → `insert5m writeDataQuality` + staleness probes → `latestAgg5mUpdatedAtForPoint`) | 1 | 10 | 11 |
+| K · #232 | **HWS writer** (`hws/recompute` model input → `read5m`; output → `insert5m writeDataQuality`) — landed in the SAME PR as J | 0 | 10 | 10 |
 
 **Trajectory (readers batched — DECIDED this session):** the 8 remaining app_lib readers need new DAO
 surface (grouped by shared surface), the 2 writers pause:
 - **PR-G** ✅ vendor 5m reads (`amber/client`, `enphase/adapter`, `oe/scheduler`; +`createdAtMs`/`latest5mForPoints`/`latestAgg5mIntervalMsForSystem`) → 8 / 10 / **18**.
 - **PR-H** ✅ observability + coverage (`coverage/find-gaps`, `admin/observations/stats`, `cron/monitor-observations`; local-day COUNT + `created_at`-axis fleet counters + helper-vendor blend MAX) → 5 / 10 / **15**.
 - **PR-I** ✅ admin readings viewers (`admin/systems/[systemId]/point-readings` route + `readings-read-pg`, which also served the single-point drill-down `admin/point/[systemIdDotPointId]/readings`; wide-pivot + keyset pagination + ±10 window + session-label + existence probes; `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + `read1d` reuse; `readings-read-pg.ts` deleted) → 3 / 10 / **13**.
-- **PR-J** *(writer, PAUSES)* `battery-provenance/recompute` + `battery-provenance-pg` (+per-point `latestAgg5mIntervalMsForPoints`, `maxAgg5mUpdatedAt`) → 1 / 10 / **11**.
-- **PR-K** *(writer, PAUSES)* `hws/recompute` → 0 / 10 / **10**.
+- **PR-J** ✅ *(writer, batched into PR-JK)* `battery-provenance/recompute` + `battery-provenance-pg` (+per-point `latestAgg5mIntervalMsForPoints` + windowed `latestAgg5mUpdatedAtForPoint` + `insert5m writeDataQuality`; NOTE the forecast's fleet `maxAgg5mUpdatedAt` did NOT exist — the real staleness read is per-point + `interval_end`-windowed) → 1 / 10 / **11**.
+- **PR-K** ✅ *(writer, batched into PR-JK)* `hws/recompute` (input reuses `read5m`, output `insert5m writeDataQuality`) → 0 / 10 / **10**.
 
-**End state:** `app_lib` reaches **0** → delete `.readings-boundary-baseline.json` + the `.eslintrc.json`
-override → the seam becomes a hard wall. The `scripts` lane is the slower / possibly-permanent-allow track
-(per the baseline JSON's own `_doc`), so the hard-wall milestone keys off `app_lib`, not the combined total.
+**End state (REACHED in PR-JK):** `app_lib` = **0** → the `.eslintrc.json` ratchet override was deleted, so
+`no-restricted-imports` is now a hard wall for the served app. `.readings-boundary-baseline.json` is NOT
+deleted yet — its `app_lib` array is `[]` but the `scripts` lane (10 entries, the slower /
+possibly-permanent-allow track per the JSON's own `_doc`) still needs it; the file goes only once BOTH arrays
+are empty. The hard-wall milestone keys off `app_lib`, not the combined total.
 
 > **Maintenance:** every adoption PR appends one row here (the row for the PR *itself* — not the forecast
 > row for the next one) and deletes its baseline entry **in the same commit, as the final step before the

@@ -50,14 +50,6 @@
         "**/__tests__/**"
       ],
       "rules": { "no-restricted-imports": "off" }
-    },
-    {
-      "files": [
-        "lib/battery-provenance/recompute.ts",
-        "lib/db/planetscale/battery-provenance-pg.ts",
-        "lib/hws/recompute.ts"
-      ],
-      "rules": { "no-restricted-imports": "off" }
     }
   ]
 }
