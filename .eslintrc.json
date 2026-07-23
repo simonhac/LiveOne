@@ -55,10 +55,7 @@
       "files": [
         "lib/battery-provenance/recompute.ts",
         "lib/db/planetscale/battery-provenance-pg.ts",
-        "lib/hws/recompute.ts",
-        "lib/vendors/amber/client.ts",
-        "lib/vendors/enphase/adapter.ts",
-        "lib/vendors/openelectricity/scheduler.ts"
+        "lib/hws/recompute.ts"
       ],
       "rules": { "no-restricted-imports": "off" }
     }

@@ -62,6 +62,8 @@ export interface RawReading {
 }
 export interface Agg5mReading {
   intervalEndMs: number;
+  /** Row ingestion time (agg_5m `created_at`, NOT NULL) as epoch-ms UTC — the vendors' "received time". */
+  createdAtMs: number;
   avg: number | null;
   min: number | null;
   max: number | null;
@@ -127,6 +129,12 @@ const addrKey = (systemId: number, index: number) => `${systemId}.${index}`;
  *  SEAM WHERE below is otherwise only exercised end-to-end. */
 export const upperBoundOp = (toInclusive: boolean | undefined) =>
   toInclusive === false ? lt : lte;
+
+/** SQL fragment: the local trading-day ('YYYY-MM-DD') of an interval-END, shifted `offsetMin` minutes
+ *  east of UTC. The `- 1 second` puts an interval ending at local 00:00 into the PREVIOUS trading day.
+ *  Mirrors the original `lib/coverage/find-gaps.ts` expression verbatim. */
+const localDayExpr = (offsetMin: number) =>
+  sql<string>`to_char(${pointReadingsAgg5m.intervalEnd} + (${offsetMin} || ' minutes')::interval - interval '1 second', 'YYYY-MM-DD')`;
 
 /** Group resolved addresses by system + build the (systemId.index → PointId) reverse map. */
 function groupBySystem(addrs: Map<PointId, PointAddr>): {
@@ -217,6 +225,7 @@ async function read5m(
       .select({
         pointId: pointReadingsAgg5m.pointId,
         intervalEnd: pointReadingsAgg5m.intervalEnd,
+        createdAt: pointReadingsAgg5m.createdAt,
         avg: pointReadingsAgg5m.avg,
         min: pointReadingsAgg5m.min,
         max: pointReadingsAgg5m.max,
@@ -243,6 +252,7 @@ async function read5m(
       if (!id) continue;
       out.get(id)!.push({
         intervalEndMs: r.intervalEnd.getTime(),
+        createdAtMs: r.createdAt.getTime(),
         avg: r.avg,
         min: r.min,
         max: r.max,
@@ -359,6 +369,162 @@ async function latestForPoints(
         dataQuality: r.dataQuality,
         sessionId: r.sessionId,
       });
+    }
+  }
+  return out;
+}
+
+/**
+ * Latest 5-minute aggregate per point (the Enphase adapter's last-reading probe). `null` when a point
+ * has no rows. The agg_5m analogue of {@link latestForPoints}.
+ */
+async function latest5mForPoints(
+  points: PointId[],
+  exec?: ReadingsExec,
+): Promise<Map<PointId, Agg5mReading | null>> {
+  const out = new Map<PointId, Agg5mReading | null>(
+    points.map((p) => [p, null]),
+  );
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid; DISTINCT ON (point_rid)).
+  const { bySystem, rev } = groupBySystem(
+    await RegistryCache.addrsForPoints(points),
+  );
+  for (const [systemId, indexes] of bySystem) {
+    const rows = await db
+      .selectDistinctOn([pointReadingsAgg5m.pointId], {
+        pointId: pointReadingsAgg5m.pointId,
+        intervalEnd: pointReadingsAgg5m.intervalEnd,
+        createdAt: pointReadingsAgg5m.createdAt,
+        avg: pointReadingsAgg5m.avg,
+        min: pointReadingsAgg5m.min,
+        max: pointReadingsAgg5m.max,
+        last: pointReadingsAgg5m.last,
+        delta: pointReadingsAgg5m.delta,
+        valueStr: pointReadingsAgg5m.valueStr,
+        sampleCount: pointReadingsAgg5m.sampleCount,
+        errorCount: pointReadingsAgg5m.errorCount,
+        dataQuality: pointReadingsAgg5m.dataQuality,
+        sessionId: pointReadingsAgg5m.sessionId,
+      })
+      .from(pointReadingsAgg5m)
+      .where(
+        and(
+          eq(pointReadingsAgg5m.systemId, systemId),
+          inArray(pointReadingsAgg5m.pointId, indexes),
+        ),
+      )
+      .orderBy(
+        pointReadingsAgg5m.pointId,
+        desc(pointReadingsAgg5m.intervalEnd),
+      );
+    for (const r of rows) {
+      const id = rev.get(addrKey(systemId, r.pointId));
+      if (!id) continue;
+      out.set(id, {
+        intervalEndMs: r.intervalEnd.getTime(),
+        createdAtMs: r.createdAt.getTime(),
+        avg: r.avg,
+        min: r.min,
+        max: r.max,
+        last: r.last,
+        delta: r.delta,
+        valueStr: r.valueStr,
+        sampleCount: r.sampleCount,
+        errorCount: r.errorCount,
+        dataQuality: r.dataQuality,
+        sessionId: r.sessionId,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Per-(point, local-day) `agg_5m` row counts within an interval-end window (the coverage gap-finder,
+ * `lib/coverage/find-gaps.ts`). `offsetMin` sets the local-day bucket (see {@link localDayExpr}); the
+ * window is `[fromMs, toMs)` on `interval_end` (half-open, matching the original scan bounds). Result:
+ * per PointId, a Map of localDay → count (points/days with no rows are simply absent).
+ */
+async function countAgg5mByLocalDay(
+  points: PointId[],
+  opts: { fromMs: number; toMs: number; offsetMin: number },
+  exec?: ReadingsExec,
+): Promise<Map<PointId, Map<string, number>>> {
+  const out = new Map<PointId, Map<string, number>>(
+    points.map((p) => [p, new Map()]),
+  );
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  const from = new Date(opts.fromMs);
+  const to = new Date(opts.toMs);
+  const localDay = localDayExpr(opts.offsetMin);
+  const { bySystem, rev } = groupBySystem(
+    await RegistryCache.addrsForPoints(points),
+  );
+  for (const [systemId, indexes] of bySystem) {
+    // SEAM: composite-key WHERE (Phase 8 → point_rid). Raw SQL to reproduce the grouped local-day
+    // aggregate verbatim (the query builder mis-serialises a reused GROUP BY expression).
+    const res = await db.execute(sql`
+      SELECT ${localDay} AS local_day,
+             ${pointReadingsAgg5m.pointId} AS point_id,
+             count(*)::int AS n
+      FROM ${pointReadingsAgg5m}
+      WHERE ${pointReadingsAgg5m.systemId} = ${systemId}
+        AND ${pointReadingsAgg5m.pointId} IN (${sql.join(
+          indexes.map((i) => sql`${i}`),
+          sql`, `,
+        )})
+        AND ${pointReadingsAgg5m.intervalEnd} >= ${from}
+        AND ${pointReadingsAgg5m.intervalEnd} <  ${to}
+      GROUP BY 1, 2
+    `);
+    for (const row of res.rows ?? []) {
+      const pid = Number((row as { point_id: unknown }).point_id);
+      const id = rev.get(addrKey(systemId, pid));
+      if (!id) continue;
+      const day = String((row as { local_day: unknown }).local_day);
+      out.get(id)!.set(day, Number((row as { n: unknown }).n));
+    }
+  }
+  return out;
+}
+
+/**
+ * Per-point `agg_5m` row count for ONE local day (the coverage runner's landing probe,
+ * `countMaxPresent`). `WHERE localDay(offsetMin) = day`. Result: per PointId, its count (0 when absent).
+ */
+async function countAgg5mForLocalDay(
+  points: PointId[],
+  opts: { day: string; offsetMin: number },
+  exec?: ReadingsExec,
+): Promise<Map<PointId, number>> {
+  const out = new Map<PointId, number>(points.map((p) => [p, 0]));
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  const localDay = localDayExpr(opts.offsetMin);
+  const { bySystem, rev } = groupBySystem(
+    await RegistryCache.addrsForPoints(points),
+  );
+  for (const [systemId, indexes] of bySystem) {
+    // SEAM: composite-key WHERE (Phase 8 → point_rid). Raw SQL, verbatim with the original.
+    const res = await db.execute(sql`
+      SELECT ${pointReadingsAgg5m.pointId} AS point_id, count(*)::int AS n
+      FROM ${pointReadingsAgg5m}
+      WHERE ${pointReadingsAgg5m.systemId} = ${systemId}
+        AND ${pointReadingsAgg5m.pointId} IN (${sql.join(
+          indexes.map((i) => sql`${i}`),
+          sql`, `,
+        )})
+        AND ${localDay} = ${opts.day}
+      GROUP BY ${pointReadingsAgg5m.pointId}
+    `);
+    for (const row of res.rows ?? []) {
+      const pid = Number((row as { point_id: unknown }).point_id);
+      const id = rev.get(addrKey(systemId, pid));
+      if (!id) continue;
+      out.set(id, Number((row as { n: unknown }).n));
     }
   }
   return out;
@@ -552,6 +718,145 @@ async function systemIdsWithAgg5mSince(
 }
 
 /**
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) for ONE device (system), or null when it has no rows.
+ * Seeds the OE scheduler's KV state (`loadState`).
+ * // SEAM: filters `system_id` directly today; Phase 8 → a device_rid join. The return shape is stable
+ * across the cutover (device ids == system ids == device_rids), like `systemIdsWithAgg5mSince`.
+ */
+async function latestAgg5mIntervalMsForSystem(
+  systemId: number,
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  const [row] = await db
+    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
+    .from(pointReadingsAgg5m)
+    .where(eq(pointReadingsAgg5m.systemId, systemId))
+    .orderBy(desc(pointReadingsAgg5m.intervalEnd))
+    .limit(1);
+  return row ? row.intervalEnd.getTime() : null;
+}
+
+/** Which hot table's `created_at` axis an observability query reads. Kept inside the seam so callers
+ *  never name a hot table (the boundary gate). Both tables carry `created_at NOT NULL DEFAULT now()`. */
+type CreatedAtSource = "raw" | "agg5m";
+
+/**
+ * Count rows with `created_at >= sinceMs` on the raw or 5m hot table (fleet-wide ingestion counters;
+ * admin/observations/stats + cron/monitor-observations). Cutover-invariant: `created_at` persists on
+ * the rid-keyed twins; no composite/rid key in the WHERE.
+ */
+async function countByCreatedAtSince(
+  which: CreatedAtSource,
+  sinceMs: number,
+  exec?: ReadingsExec,
+): Promise<number> {
+  const db = exec ?? requirePlanetscaleDb();
+  const since = new Date(sinceMs);
+  const n = sql<number>`count(*)::int`;
+  const rows =
+    which === "raw"
+      ? await db
+          .select({ n })
+          .from(pointReadings)
+          .where(gte(pointReadings.createdAt, since))
+      : await db
+          .select({ n })
+          .from(pointReadingsAgg5m)
+          .where(gte(pointReadingsAgg5m.createdAt, since));
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Per-minute `created_at` histogram (`date_trunc('minute', created_at)`, `count(*)`) since `sinceMs`,
+ * ascending, on the raw or 5m hot table (the admin stats sparkline). Cutover-invariant.
+ */
+async function createdAtHistogramSince(
+  which: CreatedAtSource,
+  sinceMs: number,
+  exec?: ReadingsExec,
+): Promise<{ minuteMs: number; count: number }[]> {
+  const db = exec ?? requirePlanetscaleDb();
+  const since = new Date(sinceMs);
+  const n = sql<number>`count(*)::int`;
+  const rows =
+    which === "raw"
+      ? await db
+          .select({
+            minute: sql<Date>`date_trunc('minute', ${pointReadings.createdAt})`,
+            count: n,
+          })
+          .from(pointReadings)
+          .where(gte(pointReadings.createdAt, since))
+          .groupBy(sql`1`)
+          .orderBy(sql`1`)
+      : await db
+          .select({
+            minute: sql<Date>`date_trunc('minute', ${pointReadingsAgg5m.createdAt})`,
+            count: n,
+          })
+          .from(pointReadingsAgg5m)
+          .where(gte(pointReadingsAgg5m.createdAt, since))
+          .groupBy(sql`1`)
+          .orderBy(sql`1`);
+  return rows.map((r) => ({
+    minuteMs: new Date(r.minute).getTime(),
+    count: Number(r.count),
+  }));
+}
+
+/**
+ * Distinct raw-`point_readings` device (system) ids with `created_at >= sinceMs` (stats `systems_24h`).
+ * // SEAM: reads `system_id` directly today; Phase 8 → DISTINCT device via a `point_rid` join. The
+ * return count (device ids == system ids == device_rids) is stable across the cutover.
+ */
+async function distinctSystemsByRawCreatedAtSince(
+  sinceMs: number,
+  exec?: ReadingsExec,
+): Promise<number> {
+  const db = exec ?? requirePlanetscaleDb();
+  const [row] = await db
+    .select({ n: sql<number>`count(distinct ${pointReadings.systemId})::int` })
+    .from(pointReadings)
+    .where(gte(pointReadings.createdAt, new Date(sinceMs)));
+  return Number(row?.n ?? 0);
+}
+
+/** Latest raw-`point_readings` `created_at` (epoch-ms UTC) fleet-wide, or null when empty (the
+ *  "last ingested at" clock). Cutover-invariant. */
+async function latestRawCreatedAtMs(
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  const [row] = await db
+    .select({ createdAt: pointReadings.createdAt })
+    .from(pointReadings)
+    .orderBy(desc(pointReadings.createdAt))
+    .limit(1);
+  return row ? row.createdAt.getTime() : null;
+}
+
+/**
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) across a SET of devices (systems), or null when the set
+ * is empty or has no rows (the battery-provenance blend-freshness probe — caller passes the helper-vendor
+ * system ids). // SEAM: filters `system_id` directly today; Phase 8 → a device_rid `IN`. Stable shape.
+ */
+async function maxAgg5mIntervalMsForSystems(
+  systemIds: number[],
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  if (systemIds.length === 0) return null;
+  const db = exec ?? requirePlanetscaleDb();
+  const [row] = await db
+    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
+    .from(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.systemId, systemIds))
+    .orderBy(desc(pointReadingsAgg5m.intervalEnd))
+    .limit(1);
+  return row ? row.intervalEnd.getTime() : null;
+}
+
+/**
  * Delete every `agg_1d` row in the inclusive `[startDay, endDay]` range across ALL points/systems
  * (day-keyed maintenance delete, not point-scoped). Returns the number of rows removed. Cutover-invariant:
  * the `day` text key is unchanged post-cutover (no composite/rid columns in the WHERE).
@@ -583,11 +888,20 @@ export const ReadingsDao = {
   read5m,
   read1d,
   latestForPoints,
+  latest5mForPoints,
+  countAgg5mByLocalDay,
+  countAgg5mForLocalDay,
   insertRaw,
   insert5m,
   upsert1d,
   earliestAgg5mMs,
   systemIdsWithAgg5mSince,
+  latestAgg5mIntervalMsForSystem,
+  countByCreatedAtSince,
+  createdAtHistogramSince,
+  distinctSystemsByRawCreatedAtSince,
+  latestRawCreatedAtMs,
+  maxAgg5mIntervalMsForSystems,
   delete1dRange,
   transaction,
 };

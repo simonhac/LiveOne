@@ -45,10 +45,14 @@ function makeFakeExec(selectRows: any[] = []) {
     setKeys?: string[];
   }[] = [];
   const deletes: { table: string }[] = [];
-  // orderBy result is awaitable (reads: `.where().orderBy()`) AND chains `.limit()` (earliestAgg5mMs).
-  const orderByResult = () => {
+  // A chainable, awaitable read result: awaiting resolves the canned `selectRows`, and `.orderBy`/
+  // `.groupBy`/`.limit` each re-chain to the same — so `.where()`, `.where().orderBy()`,
+  // `.where().groupBy()`, `.where().groupBy().orderBy()`, `.orderBy().limit()` all resolve `selectRows`.
+  const result = (): any => {
     const p: any = Promise.resolve(selectRows);
-    p.limit = () => Promise.resolve(selectRows);
+    p.orderBy = result;
+    p.groupBy = result;
+    p.limit = result;
     return p;
   };
   const exec: any = {
@@ -89,10 +93,7 @@ function makeFakeExec(selectRows: any[] = []) {
     select() {
       return {
         from() {
-          return {
-            where: () => ({ orderBy: orderByResult }),
-            orderBy: orderByResult,
-          };
+          return { where: result, orderBy: result };
         },
       };
     },
@@ -112,6 +113,8 @@ function makeFakeExec(selectRows: any[] = []) {
         },
       };
     },
+    // Raw SQL path (the coverage COUNT-by-local-day methods) — resolves the canned rows.
+    execute: () => Promise.resolve({ rows: selectRows }),
   };
   return { exec, inserts, deletes };
 }
@@ -311,6 +314,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
       {
         pointId: 4,
         intervalEnd: new Date(1_700_000_300_000),
+        createdAt: new Date(1_700_000_301_000),
         avg: 1,
         min: 0,
         max: 2,
@@ -332,6 +336,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     expect(out.get(p)).toEqual([
       {
         intervalEndMs: 1_700_000_300_000,
+        createdAtMs: 1_700_000_301_000,
         avg: 1,
         min: 0,
         max: 2,
@@ -351,6 +356,79 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     const { exec } = makeFakeExec([]); // no rows
     const out = await ReadingsDao.latestForPoints([p], exec);
     expect(out.get(p)).toBeNull();
+  });
+
+  it("latest5mForPoints maps the latest agg_5m row per point (incl. createdAtMs), null when none", async () => {
+    const p = point(23, 9, 2); // systemId 9, index 2
+    const rows = [
+      {
+        pointId: 2,
+        intervalEnd: new Date(1_700_000_600_000),
+        createdAt: new Date(1_700_000_601_000),
+        avg: 3,
+        min: 1,
+        max: 4,
+        last: 3,
+        delta: 2,
+        valueStr: null,
+        sampleCount: 6,
+        errorCount: 0,
+        dataQuality: "good",
+        sessionId: "sess-9",
+      },
+    ];
+    const hit = makeFakeExec(rows);
+    const out = await ReadingsDao.latest5mForPoints([p], hit.exec);
+    expect(out.get(p)).toEqual({
+      intervalEndMs: 1_700_000_600_000,
+      createdAtMs: 1_700_000_601_000,
+      avg: 3,
+      min: 1,
+      max: 4,
+      last: 3,
+      delta: 2,
+      valueStr: null,
+      sampleCount: 6,
+      errorCount: 0,
+      dataQuality: "good",
+      sessionId: "sess-9",
+    });
+
+    const empty = makeFakeExec([]);
+    const none = await ReadingsDao.latest5mForPoints([p], empty.exec);
+    expect(none.get(p)).toBeNull();
+  });
+
+  it("countAgg5mByLocalDay maps per-point per-local-day counts", async () => {
+    const p = point(31, 9, 2);
+    const { exec } = makeFakeExec([
+      { local_day: "2026-07-20", point_id: 2, n: 48 },
+      { local_day: "2026-07-21", point_id: 2, n: 47 },
+    ]);
+    const out = await ReadingsDao.countAgg5mByLocalDay(
+      [p],
+      { fromMs: 0, toMs: 2_000_000_000_000, offsetMin: 600 },
+      exec,
+    );
+    expect(out.get(p)).toEqual(
+      new Map([
+        ["2026-07-20", 48],
+        ["2026-07-21", 47],
+      ]),
+    );
+  });
+
+  it("countAgg5mForLocalDay maps per-point count for one day (0 when absent)", async () => {
+    const p = point(32, 9, 2);
+    const absent = point(33, 9, 3);
+    const { exec } = makeFakeExec([{ point_id: 2, n: 288 }]);
+    const out = await ReadingsDao.countAgg5mForLocalDay(
+      [p, absent],
+      { day: "2026-07-20", offsetMin: 600 },
+      exec,
+    );
+    expect(out.get(p)).toBe(288);
+    expect(out.get(absent)).toBe(0);
   });
 });
 
@@ -395,5 +473,93 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(
       await ReadingsDao.systemIdsWithAgg5mSince(1_700_000_000_000, exec),
     ).toEqual([1, 14]);
+  });
+
+  it("latestAgg5mIntervalMsForSystem returns the newest interval as epoch-ms, null when empty", async () => {
+    const withRow = makeFakeExec([
+      { intervalEnd: new Date(1_700_000_900_000) },
+    ]);
+    expect(
+      await ReadingsDao.latestAgg5mIntervalMsForSystem(9, withRow.exec),
+    ).toBe(1_700_000_900_000);
+    const empty = makeFakeExec([]);
+    expect(
+      await ReadingsDao.latestAgg5mIntervalMsForSystem(9, empty.exec),
+    ).toBeNull();
+  });
+
+  it("countByCreatedAtSince counts raw and agg5m rows since a cutoff (0 when empty)", async () => {
+    const raw = makeFakeExec([{ n: 123 }]);
+    expect(
+      await ReadingsDao.countByCreatedAtSince(
+        "raw",
+        1_700_000_000_000,
+        raw.exec,
+      ),
+    ).toBe(123);
+    const agg = makeFakeExec([{ n: 45 }]);
+    expect(
+      await ReadingsDao.countByCreatedAtSince(
+        "agg5m",
+        1_700_000_000_000,
+        agg.exec,
+      ),
+    ).toBe(45);
+    const none = makeFakeExec([]);
+    expect(
+      await ReadingsDao.countByCreatedAtSince(
+        "raw",
+        1_700_000_000_000,
+        none.exec,
+      ),
+    ).toBe(0);
+  });
+
+  it("createdAtHistogramSince maps date_trunc minute buckets to epoch-ms", async () => {
+    const { exec } = makeFakeExec([
+      { minute: new Date(1_700_000_040_000), count: 5 },
+      { minute: new Date(1_700_000_100_000), count: 9 },
+    ]);
+    expect(await ReadingsDao.createdAtHistogramSince("raw", 0, exec)).toEqual([
+      { minuteMs: 1_700_000_040_000, count: 5 },
+      { minuteMs: 1_700_000_100_000, count: 9 },
+    ]);
+  });
+
+  it("distinctSystemsByRawCreatedAtSince returns the distinct-system count", async () => {
+    const { exec } = makeFakeExec([{ n: 7 }]);
+    expect(
+      await ReadingsDao.distinctSystemsByRawCreatedAtSince(
+        1_700_000_000_000,
+        exec,
+      ),
+    ).toBe(7);
+  });
+
+  it("latestRawCreatedAtMs returns the newest raw created_at, null when empty", async () => {
+    const withRow = makeFakeExec([{ createdAt: new Date(1_700_000_500_000) }]);
+    expect(await ReadingsDao.latestRawCreatedAtMs(withRow.exec)).toBe(
+      1_700_000_500_000,
+    );
+    const empty = makeFakeExec([]);
+    expect(await ReadingsDao.latestRawCreatedAtMs(empty.exec)).toBeNull();
+  });
+
+  it("maxAgg5mIntervalMsForSystems returns max for a set; null for empty set or no rows", async () => {
+    const withRow = makeFakeExec([
+      { intervalEnd: new Date(1_700_000_900_000) },
+    ]);
+    expect(
+      await ReadingsDao.maxAgg5mIntervalMsForSystems([1, 2], withRow.exec),
+    ).toBe(1_700_000_900_000);
+    const emptyRows = makeFakeExec([]);
+    expect(
+      await ReadingsDao.maxAgg5mIntervalMsForSystems([1], emptyRows.exec),
+    ).toBeNull();
+    // Empty system set short-circuits (no query issued).
+    const noQuery = makeFakeExec([{ intervalEnd: new Date(1) }]);
+    expect(
+      await ReadingsDao.maxAgg5mIntervalMsForSystems([], noQuery.exec),
+    ).toBeNull();
   });
 });
