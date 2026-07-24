@@ -81,6 +81,18 @@ export function isCardNode(n: DashboardNode): n is CardNode {
 }
 
 /**
+ * Cheap runtime guard for a v4 document (mirrors `isDashboardV3`) — used to branch the dual-shape
+ * render window. Full structural validation is `validateDocV4` (v4-validate.ts).
+ */
+export function isDashboardV4(x: unknown): x is DashboardV4 {
+  if (typeof x !== "object" || x === null) return false;
+  const doc = x as { version?: unknown; root?: unknown };
+  if (doc.version !== 4) return false;
+  const root = doc.root as { kind?: unknown } | null;
+  return typeof root === "object" && root !== null && root.kind === "group";
+}
+
+/**
  * Depth-first pre-order walk over every node in a doc (root first). Pure; used by validation,
  * normalization, ref-collection, and the rewriter's structural checks.
  */

@@ -17,18 +17,19 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 4 dark schema applied (0032+0033); next is Phase 5
+## ▶ NEXT ACTION — Phases 4 + 5 landed (dark); next is Phase 6
 
-> **Phase 4 is COMPLETE** — the additive dark v4 schema is live on prod `sydney` + `liveone-dev`
-> (migrations **0032** + **0033**, applied + verified 2026-07-24). See § "Phase 4" for the execution
-> record, the reconciliation (several sketch items were already-present or are cutover-only), and the
-> deferred-to-cutover checklist. Everything shipped dark behind the unchanged v3 app; `schema.ts` + the
-> two migration files are the code change (commit/PR is the only wrap-up).
+> **Phases 4 and 5 are COMPLETE (dark).** Phase 4: the additive schema (migrations **0032**+**0033**)
+> is live on prod `sydney` + `liveone-dev`. Phase 5: the v4 doc model + zod validator + v3→v4 rewriter +
+> `resolve-shell` + the adapter renderer + the dual-shape SSR window all ship behind the unchanged v3
+> app (no dashboard has a `doc`; the v3 render path is byte-identical). See § Phase 4 / § Phase 5 for
+> the execution records + the deferred follow-ons.
 
-**NEXT: Phase 5 — v4 dashboard doc model + dual renderer (dark).** See § "Phase 5" below. Depends only
-on Phase 1 (the TypeID codec); **no new migration** (reads Phase-4's `dashboards.doc`/`revision`). The
-highest-risk cutover step — the v3→v4 doc rewriter — can now run dark against the live `descriptor`
-column, writing into `dashboards.doc` with round-trip validation.
+**NEXT: Phase 6 — `/api/v4/*` route surface (dark; writes go live at cutover).** See § "Phase 6" below.
+This is what actually WRITES v4 docs (whole-doc `PUT` with `If-Match`/412 + `dashboard_revisions` +
+the validate dry-run over `validateDocV4`), so it's the first phase that lets the Phase-5 renderer be
+exercised end-to-end. Depends on Phases 1, 4, 5. **No new migration** (Phase-4's `doc`/`revision` +
+`dashboard_revisions` are already on prod).
 
 **Optional / possibly-permanent: drain the `scripts` lane.** The 10 `scripts/*` entries still in
 `.readings-boundary-baseline.json` (its `_doc`: "slower / possibly-permanent-allow track") can each move
@@ -45,7 +46,7 @@ its `prebuild` guard get deleted. Not required for the cutover.
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
 | 3 — uuid↔rid DAO seam + registry cache + lint ratchet | ✅ DONE (`app_lib`=0) | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) + PR-E (serving-path reader `lib/history/readings-pg.ts` → DAO `read5m`/`read1d`; identity via `RegistryCache.pointForAddr` with `UnknownIdError` skip-and-continue; `avgCache` reconstructed byte-identical; NO new DAO surface; pure reader, no pause) + PR-F (**CLEAN-READER BATCH** #226 — 6 pure readers `flow-series-pg`/`labs/kinkora-hws`/`enphase-history`/`battery-provenance/load`/`battery-provenance-daily-pg`/`run-periods-pg` → `read5m`/`read1d`/`readRaw`; added `ReadWindow.toInclusive` half-open upper bound + pure `upperBoundOp` helper; byte-identical verified on `liveone-dev` incl. half-open boundary + multi-point batch reverse-map; no pause) landed; **21 modules remain** (11 app_lib + 10 scripts). Readers profiled this session are NOT uniform → **6-PR trajectory** (§ Readings-seam ratchet ledger): 6 clean (done), 8 need new DAO surface (reader PRs G/H/I), 2 agg_5m writers (paused PRs J/K). PR-G (vendor 5m reads `amber/client`/`enphase/adapter`/`oe/scheduler`; added `createdAtMs`/`latest5mForPoints`/`latestAgg5mIntervalMsForSystem`) + PR-H (observability + coverage `coverage/find-gaps`/`admin/observations/stats`/`cron/monitor-observations`; added coverage COUNT-by-local-day `countAgg5mByLocalDay`/`countAgg5mForLocalDay` + created_at fleet counters `countByCreatedAtSince`/`createdAtHistogramSince`/`distinctSystemsByRawCreatedAtSince`/`latestRawCreatedAtMs` + `maxAgg5mIntervalMsForSystems`; both routes' raw `point_readings` counters moved behind the seam too; byte-identical verified on `liveone-dev` under `TZ=UTC`) landed; PR-I (**admin readings viewers** — the pivot route `admin/systems/[systemId]/point-readings` + `readings-read-pg` [which served BOTH that route AND the single-point drill-down `admin/point/[systemIdDotPointId]/readings`]; added `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + reused `read1d`; `readings-read-pg.ts` DELETED; SQL relocated VERBATIM as `sql.raw` inside the seam → byte-identical by construction; verified on `liveone-dev` under `TZ=UTC`; #230) landed; **13 modules remain** (3 app_lib + 10 scripts). PR-JK (**the two writers, batched** — Simon 2026-07-23: `battery-provenance/recompute` + `battery-provenance-pg` + `hws/recompute`; added DAO `latestAgg5mIntervalMsForPoints` (per-point `MAX(interval_end)`) + `latestAgg5mUpdatedAtForPoint` (per-point windowed `MAX(updated_at)`) + `insert5m` `writeDataQuality` mode (7 agg + `data_quality` + `updated_at`, sole-writer derived points); HWS input reuses `read5m`; byte-identical + idempotent verified on `liveone-dev` under `TZ=UTC`; #232) landed → **`app_lib` = 0, 10 modules remain (0 app_lib + 10 scripts)**. Served-app boundary now lint-enforced (`.eslintrc.json` ratchet override removed); the `scripts` lane (10, possibly permanent) is the only baseline remainder. **Phase-3 app_lib strangler COMPLETE.** |
 | 4 — additive v4 config schema + roles→CHECK | ✅ DONE | migrations **0032** (dark columns `areas.day_offset_min`(backfilled)/`config`, `dashboards.doc`/`revision`, `area_bindings.role` CHECK) + **0033** (four empty tables `derivations`/`derived_intervals`/`dashboard_revisions`/`legacy_handles`) applied + verified on prod `sydney` + `liveone-dev`. Simon chose "build all 4 tables now". See § Phase 4. |
-| 5 — v4 dashboard doc model + dual renderer | 🔨 IN PROGRESS | **pure core** (`v4.ts` types, `card-types.ts`, `v4-validate.ts` zod validator + `normalizeDocV4` + `collectRefs`, `v3-to-v4.ts` rewriter; adversarially reviewed) + **`resolve-shell.ts`** (§8.1 inheritance + `resolveDashboardShell` behind an injected `ShellResolver`) + **adapter renderer** (`lib/dashboard/v4-adapt.ts` pure v4→v3-props adapter + `components/dashboard/v4/node-view.tsx` recursive `<NodeView>`/`DashboardV4View` reusing the UNCHANGED v3 plugins + the ported `SiteChartsGroup` collapse) — Simon chose the adapter (the ~19 plugins move to v4-native props in Phase 9 teardown, once v3 is dead). 30 tests; zod added. **Remaining in-phase:** the dual-shape SSR window (branch `renderCompositionDashboard` on `dashboards.doc`; wire the real DB `ShellResolver` + v4 data seeding) — dark until a doc exists. |
+| 5 — v4 dashboard doc model + dual renderer | ✅ DONE | **pure core** (`v4.ts` types, `card-types.ts`, `v4-validate.ts` zod validator + `normalizeDocV4` + `collectRefs`, `v3-to-v4.ts` rewriter; adversarially reviewed) + **`resolve-shell.ts`** (§8.1 inheritance + `resolveDashboardShell`) + **adapter renderer** (`v4-adapt.ts` + `components/dashboard/v4/node-view.tsx` recursive `<NodeView>`/`DashboardV4View` reusing the UNCHANGED v3 plugins + ported `SiteChartsGroup` collapse; adapter chosen — the ~19 plugins go v4-native in Phase 9) + **dual-shape SSR window** (`CompositionDashboard` surfaces `doc`/`revision`; `isDashboardV4` guard; `dashboardAreaUuids` shape-aware area resolution at the shared/grantee paths; `renderCompositionDashboard`/`DashboardClient` branch on `doc` → `DashboardV4View`). 34 tests; zod added. Dark — no dashboard has a `doc`, v3 path byte-identical. **Deferred to Phase 6/cutover:** v4 SSR data-seeding perf, `access.ts` v4-scope for shared-v4 data, the v4-native editor + temporal nav. |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
 | 7 — cutover rehearsal harness | ⬜ TODO | prod snapshot branch only |
 | 8 — THE CUTOVER | ⬜ TODO | single windowed op; pauses materialization, not pollers |
@@ -314,7 +315,15 @@ Ordering is a hard dependency chain (migrations lead code to prod).
 
 - Deps: Phase 2/3 (met).
 
-### Phase 5 — v4 dashboard doc model: types, validator, rewriter, dual renderer (dark)
+### Phase 5 — v4 dashboard doc model: types, validator, rewriter, dual renderer (dark)  ✅ DONE
+> Landed across 5 commits (pure core → resolve-shell → adapter renderer → dual-shape SSR window), all
+> dark behind the unchanged v3 app. Files: `lib/dashboard/{v4,card-types,v4-validate,v3-to-v4,
+> resolve-shell,v4-adapt}.ts` + `components/dashboard/v4/node-view.tsx`; wired via `CompositionDashboard`
+> `doc`/`revision`, `isDashboardV4`, `dashboardAreaUuids`, and the `DashboardClient`/`renderComposition
+> Dashboard` branch. **Decision:** adapter over the unchanged v3 plugins (Simon) — the ~19 plugins go
+> v4-native in **Phase 9**. **Deferred (Phase 6/cutover):** v4 SSR data-seeding perf (`resolveDashboard
+> Shell.dataHandles`), `access.ts` v4-scope so a *shared* v4 dashboard's `/api/data` authorizes,
+> the v4-native editor + `temporal-cards` v4-awareness. The sketch below is the design reference.
 - `lib/dashboard/v4.ts` + `card-types.ts` — unified `group`/`card` node tree; branded
   `AreaRef`/`DeviceRef` **only** in the envelope (§8.3 invariant baked into the shape). The v3
   `"tiles"` container disappears (→ row group); every `TileView` becomes a first-class `CardType`.

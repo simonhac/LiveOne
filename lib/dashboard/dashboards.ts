@@ -14,6 +14,7 @@ import {
   isDashboardV3,
   type DashboardV3,
 } from "./v3";
+import type { DashboardV4 } from "./v4";
 import { listGrantsForUser } from "./grants";
 
 export interface CompositionDashboard {
@@ -22,6 +23,11 @@ export interface CompositionDashboard {
   displayName: string | null;
   alias: string | null;
   descriptor: DashboardV3;
+  /** config-v4 dark column: the v4 node-tree document, or null for a v3 dashboard. Drives the
+   *  dual-shape render window (see app/dashboard/[...slug]/page.tsx). */
+  doc: DashboardV4 | null;
+  /** config-v4 dark column: whole-doc revision counter (default 1). */
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -78,6 +84,8 @@ function rowToDashboard(r: {
   displayName: string | null;
   alias: string | null;
   descriptor: unknown;
+  doc: unknown;
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }): CompositionDashboard {
@@ -87,6 +95,8 @@ function rowToDashboard(r: {
     displayName: r.displayName,
     alias: r.alias,
     descriptor: r.descriptor as DashboardV3,
+    doc: (r.doc as DashboardV4 | null) ?? null,
+    revision: r.revision,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -98,6 +108,8 @@ const DASHBOARD_COLUMNS = {
   displayName: dashboards.displayName,
   alias: dashboards.alias,
   descriptor: dashboards.descriptor,
+  doc: dashboards.doc,
+  revision: dashboards.revision,
   createdAt: dashboards.createdAt,
   updatedAt: dashboards.updatedAt,
 } as const;

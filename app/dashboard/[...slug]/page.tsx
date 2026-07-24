@@ -11,8 +11,9 @@ import {
 import DashboardClient from "@/components/DashboardClient";
 import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
+import { isDashboardV4 } from "@/lib/dashboard/v4";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
-import { descriptorAreaIds } from "@/lib/dashboard/composition";
+import { dashboardAreaUuids } from "@/lib/dashboard/composition";
 import { getOrCreateUserPreferences } from "@/lib/user-preferences";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { getQueryClient } from "@/app/get-query-client";
@@ -69,6 +70,11 @@ async function renderCompositionDashboard(
   const descriptor: DashboardV3 = isDashboardV3(raw)
     ? raw
     : { version: 3, sections: [] };
+  // Dual-shape render window (§8, Phase 5): a dashboard carrying a v4 `doc` renders the v4 node tree
+  // (DashboardV4View, branched inside DashboardClient); area resolution + data seeding below stay
+  // shape-aware via `dashboardAreaUuids`. DARK — no dashboard has a `doc` yet, so `v4doc` is null in
+  // production and the v3 path is unchanged.
+  const v4doc = isDashboardV4(dashboard.doc) ? dashboard.doc : null;
 
   // SP1.2: SSR-prefetch each referenced system's /api/data (latest values) in-process and seed a
   // React Query HydrationBoundary, so cards render filled from cache instead of a client round-trip.
@@ -84,7 +90,7 @@ async function renderCompositionDashboard(
   // match and force a client batch refetch.
   const handles = [
     ...new Set(
-      descriptorAreaIds(raw)
+      dashboardAreaUuids(dashboard)
         .map((aid) => areaById.get(aid)?.legacySystemId)
         .filter((h): h is number => h != null),
     ),
@@ -191,6 +197,7 @@ async function renderCompositionDashboard(
             displayName: dashboard.displayName,
             alias: dashboard.alias,
             descriptor,
+            doc: v4doc ?? undefined,
           }}
           canEdit={canEdit}
           sharedAreas={sharedAreas}
@@ -235,7 +242,7 @@ export default async function DashboardPage({
       );
       if (composition && composition.displayName) {
         const sharedAreas = await timer.time("areas", () =>
-          resolveAreasByIds(descriptorAreaIds(composition.descriptor), {
+          resolveAreasByIds(dashboardAreaUuids(composition), {
             withChartCapability: true,
           }),
         );
@@ -278,7 +285,7 @@ export default async function DashboardPage({
     const grant = canEdit ? null : await getGrant(dashboard.id, userId);
     if (!canEdit && !grant) redirect("/dashboard");
     const sharedAreas = grant
-      ? await resolveAreasByIds(descriptorAreaIds(dashboard.descriptor), {
+      ? await resolveAreasByIds(dashboardAreaUuids(dashboard), {
           withChartCapability: true,
         })
       : undefined;
