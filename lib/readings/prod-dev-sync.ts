@@ -35,7 +35,8 @@
  * broken stream) propagates to the top-level handler → `process.exit(1)`. Nothing
  * is swallowed. The per-table transaction paths ROLLBACK before rethrowing.
  *
- * Assumes liveone-dev shares prod's schema (true right after an R2 restore).
+ * Verifies that the synced tables share the same columns, constraints, and
+ * indexes before the first write.
  */
 
 import { Client } from "pg";
@@ -368,6 +369,80 @@ function userOf(url: string): string {
   }
 }
 
+async function schemaSignatures(
+  client: Client,
+  tables: string[],
+): Promise<string[]> {
+  const res = await client.query(
+    `SELECT table_name, signature
+       FROM (
+         SELECT cols.table_name,
+                ('column:' || json_build_array(
+                  cols.ordinal_position,
+                  cols.column_name,
+                  cols.data_type,
+                  cols.udt_schema,
+                  cols.udt_name,
+                  cols.is_nullable,
+                  cols.column_default,
+                  cols.identity_generation,
+                  cols.is_generated,
+                  cols.generation_expression
+                )::text) AS signature
+           FROM information_schema.columns cols
+          WHERE cols.table_schema = 'public'
+            AND cols.table_name = ANY($1)
+         UNION ALL
+         SELECT rel.relname AS table_name,
+                ('constraint:' || json_build_array(
+                  con.conname,
+                  con.contype,
+                  pg_get_constraintdef(con.oid, true)
+                )::text) AS signature
+           FROM pg_constraint con
+           JOIN pg_class rel ON rel.oid = con.conrelid
+           JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+          WHERE ns.nspname = 'public'
+            AND rel.relname = ANY($1)
+         UNION ALL
+         SELECT indexes.tablename AS table_name,
+                ('index:' || json_build_array(
+                  indexes.indexname,
+                  indexes.indexdef
+                )::text) AS signature
+           FROM pg_indexes indexes
+          WHERE indexes.schemaname = 'public'
+            AND indexes.tablename = ANY($1)
+       ) schema_items
+      ORDER BY table_name, signature`,
+    [tables],
+  );
+  return res.rows.map((row) => `${row.table_name}:${row.signature}`);
+}
+
+/** Fail before staging any data when prod and dev do not share the sync schema. */
+export async function assertManifestSchemaParity(
+  prod: Client,
+  dev: Client,
+  tables: string[] = MANIFEST.map((table) => table.name),
+): Promise<void> {
+  const [prodSchema, devSchema] = await Promise.all([
+    schemaSignatures(prod, tables),
+    schemaSignatures(dev, tables),
+  ]);
+  const prodSet = new Set(prodSchema);
+  const devSet = new Set(devSchema);
+  const prodOnly = prodSchema.filter((item) => !devSet.has(item));
+  const devOnly = devSchema.filter((item) => !prodSet.has(item));
+  if (prodOnly.length || devOnly.length) {
+    const summarize = (items: string[]) =>
+      items.length ? items.slice(0, 3).join("; ") : "none";
+    throw new Error(
+      `prod/dev schema mismatch for sync manifest (prod-only: ${summarize(prodOnly)}; dev-only: ${summarize(devOnly)})`,
+    );
+  }
+}
+
 // Column order + PK for every manifest table, in ONE query each, from the DEST
 // (dev) catalog — both DBs share the schema. Batched (not per-table) because even
 // on a persistent connection each round trip is a ~200ms cross-Pacific hop.
@@ -629,6 +704,7 @@ export async function syncProdToDev(options: SyncProdToDevOptions): Promise<{
   try {
     // Columns + PK for every table, batched from the dev catalog (both DBs share the schema).
     const names = MANIFEST.map((t) => t.name);
+    await assertManifestSchemaParity(prod, dev, names);
     const colsByTable = await columnsOf(dev, names);
     const pkByTable = await pkOf(dev, names);
 

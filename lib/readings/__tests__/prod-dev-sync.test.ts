@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import { Readable, Writable } from "node:stream";
 import type { Client } from "pg";
 import {
+  assertManifestSchemaParity,
   prodDevSyncManifest,
   syncProdToDev,
   syncTable,
@@ -42,6 +43,48 @@ function copyClients(options: { failUpsert?: boolean } = {}) {
 }
 
 describe("prod→dev readings transfer", () => {
+  it("fails clearly when prod and dev manifest schemas differ", async () => {
+    const client = (rows: Array<{ table_name: string; signature: string }>) =>
+      ({
+        query: () => Promise.resolve({ rows }),
+      }) as unknown as Client;
+
+    await expect(
+      assertManifestSchemaParity(
+        client([
+          {
+            table_name: "area_bindings",
+            signature: 'index:["area_bindings_unique","prod definition"]',
+          },
+        ]),
+        client([
+          {
+            table_name: "area_bindings",
+            signature: 'index:["area_bindings_unique","dev definition"]',
+          },
+        ]),
+        ["area_bindings"],
+      ),
+    ).rejects.toThrow(
+      "prod/dev schema mismatch for sync manifest (prod-only: area_bindings:index",
+    );
+  });
+
+  it("accepts identical manifest schemas regardless of client timing", async () => {
+    const rows = [
+      {
+        table_name: "point_readings",
+        signature: 'column:[1,"system_id"]',
+      },
+    ];
+    const client = {
+      query: () => Promise.resolve({ rows }),
+    } as unknown as Client;
+    await expect(
+      assertManifestSchemaParity(client, client, ["point_readings"]),
+    ).resolves.toBeUndefined();
+  });
+
   it("pins table order and the three hot-table sync policies", () => {
     const manifest = prodDevSyncManifest();
     expect(manifest.map((table) => table.name)).toEqual([
