@@ -7,13 +7,10 @@
  * issues the composite-key SQL the hot tables use verbatim; at the cutover the SAME methods will
  * resolve `PointId → point_rid` and issue rid-keyed SQL. Callers never change.
  *
- * ┌─ SEAM / CUTOVER TOUCH-POINTS ──────────────────────────────────────────────────────────────────┐
- * │ The ONLY places that know the hot-table key shape are the two `// SEAM:` sections below —        │
- * │  (1) write value-building: `{ systemId, pointId: a.index, … }`                                   │
- * │  (2) read WHERE + result mapping: `and(eq(system_id), inArray(point_id, …))` + `rev` reverse-map │
- * │ Phase 8 reimplements exactly these to use `point_rid` (and drops `schema-internal`'s composite   │
- * │ columns for the rid column). Nothing else in this file changes.                                  │
- * └────────────────────────────────────────────────────────────────────────────────────────────────┘
+ * Cutover seams are deliberately confined to this file and fall into three explicit categories:
+ * point-keyed reads/writes (`PointId` → current composite address), device-keyed fleet/admin probes
+ * (`DeviceId` → current system handle), and keyless maintenance operations. Every occurrence is tagged
+ * `// SEAM:` so the Phase-8 harness must exercise it against both table shapes.
  *
  * Time crosses this boundary as epoch-ms UTC (every existing caller speaks epoch-ms; `Date` is a
  * DB-internal representation). The `agg_1d` day key stays a `YYYY-MM-DD` string. Writes optionally
@@ -32,8 +29,8 @@ import {
   sql,
 } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { RegistryCache, type PointAddr } from "@/lib/registry";
-import type { PointId } from "@/lib/ids";
+import { DeviceRegistry, RegistryCache, type PointAddr } from "@/lib/registry";
+import type { DeviceId, PointId } from "@/lib/ids";
 import {
   pointReadings,
   pointReadingsAgg5m,
@@ -779,7 +776,7 @@ async function upsert1d(
 // ── Maintenance / range ops (not point-scoped) ─────────────────────────────────────────────────────
 // Hot-table access WITHOUT a PointId key: a global earliest-interval probe, a distinct-device
 // enumeration, and a whole-day-range delete. They live in the seam (the ONLY hot-table importer) but
-// sit outside the PointId-keyed read/write surface above. `systemIdsWithAgg5mSince` is an ADDITIONAL
+// sit outside the PointId-keyed read/write surface above. `deviceIdsWithAgg5mSince` is an ADDITIONAL
 // cutover touch-point beyond the two point-keyed SEAM kinds in the file header — tagged `// SEAM:` so
 // Phase 8 finds it; the other two are cutover-invariant (interval_end / day keys are unchanged).
 
@@ -799,29 +796,36 @@ async function earliestAgg5mMs(exec?: ReadingsExec): Promise<number | null> {
  * // SEAM: reads `system_id` directly today; Phase 8 → DISTINCT device via a `point_rid` join. The
  * return shape (device ids == system ids == device_rids) is stable across the cutover.
  */
-async function systemIdsWithAgg5mSince(
+async function deviceIdsWithAgg5mSince(
   sinceMs: number,
   exec?: ReadingsExec,
-): Promise<number[]> {
+): Promise<DeviceId[]> {
   const db = exec ?? requirePlanetscaleDb();
   const rows = await db
     .selectDistinct({ systemId: pointReadingsAgg5m.systemId })
     .from(pointReadingsAgg5m)
     .where(gte(pointReadingsAgg5m.intervalEnd, new Date(sinceMs)));
-  return rows.map((r) => r.systemId);
+  const handles = rows.map((r) => r.systemId);
+  const mapped = await DeviceRegistry.addrsForHandles(handles, db);
+  return handles.map((handle) => {
+    const device = mapped.get(handle);
+    if (!device) throw new Error(`Missing device mapping for system ${handle}`);
+    return device.deviceId;
+  });
 }
 
 /**
  * Latest `agg_5m` `interval_end` (epoch-ms UTC) for ONE device (system), or null when it has no rows.
  * Seeds the OE scheduler's KV state (`loadState`).
  * // SEAM: filters `system_id` directly today; Phase 8 → a device_rid join. The return shape is stable
- * across the cutover (device ids == system ids == device_rids), like `systemIdsWithAgg5mSince`.
+ * across the cutover because the public DeviceId is resolved inside this seam.
  */
-async function latestAgg5mIntervalMsForSystem(
-  systemId: number,
+async function latestAgg5mIntervalMsForDevice(
+  deviceId: DeviceId,
   exec?: ReadingsExec,
 ): Promise<number | null> {
   const db = exec ?? requirePlanetscaleDb();
+  const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId, db);
   const [row] = await db
     .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
     .from(pointReadingsAgg5m)
@@ -935,12 +939,18 @@ async function latestRawCreatedAtMs(
  * is empty or has no rows (the battery-provenance blend-freshness probe — caller passes the helper-vendor
  * system ids). // SEAM: filters `system_id` directly today; Phase 8 → a device_rid `IN`. Stable shape.
  */
-async function maxAgg5mIntervalMsForSystems(
-  systemIds: number[],
+async function maxAgg5mIntervalMsForDevices(
+  deviceIds: DeviceId[],
   exec?: ReadingsExec,
 ): Promise<number | null> {
-  if (systemIds.length === 0) return null;
+  if (deviceIds.length === 0) return null;
   const db = exec ?? requirePlanetscaleDb();
+  const mappings = await DeviceRegistry.addrsForDevices(deviceIds, db);
+  const systemIds = deviceIds.map((id) => {
+    const device = mappings.get(id);
+    if (!device) throw new Error(`Missing device mapping for ${id}`);
+    return device.handle;
+  });
   const [row] = await db
     .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
     .from(pointReadingsAgg5m)
@@ -1000,20 +1010,25 @@ function tsLitUTC(ms: number): string {
   return `(to_timestamp(${Number(ms)} / 1000.0) AT TIME ZONE 'UTC')`;
 }
 
+export type AdminPivotValueColumn =
+  | "value"
+  | "valueStr"
+  | "avg"
+  | "last"
+  | "delta";
+
 export interface AdminPivotParams {
-  systemId: number;
-  source: string; // "raw" | "5m" | "daily"
+  device: DeviceId;
+  source: "raw" | "5m" | "daily";
   cursor: number | string | null;
-  direction: string; // "older" | "newer"
+  direction: "older" | "newer";
   limit: number;
-  /**
-   * Caller-built `MAX(CASE …)` pivot projections (e.g. `MAX(CASE WHEN pr.system_id = 1 AND
-   * pr.point_id = 0 THEN pr.value END) as point_0`). Names value columns, NOT a hot table, so the
-   * boundary gate does not flag the caller. // SEAM: the caller addresses points by `pr.point_id =
-   * <index>` here — Phase 8 re-keys that to `pr.point_rid = <rid>` in the caller alongside the
-   * `system_id` filter below.
-   */
-  pivotColumns: string;
+  points: {
+    point: PointId;
+    /** Stable response key, restricted to the existing `point_<index>` wire grammar. */
+    outputKey: string;
+    valueColumn: AdminPivotValueColumn;
+  }[];
 }
 
 /**
@@ -1026,8 +1041,30 @@ async function readAdminPivot(
   p: AdminPivotParams,
   exec?: ReadingsExec,
 ): Promise<Row[]> {
-  const { systemId, source, cursor, direction, limit, pivotColumns } = p;
+  const { source, cursor, direction } = p;
   const db = exec ?? requirePlanetscaleDb();
+  const { handle: systemId } = await DeviceRegistry.addrForDevice(p.device, db);
+  const pointAddrs = await RegistryCache.addrsForPoints(
+    p.points.map((point) => point.point),
+  );
+  const columns = {
+    value: "value",
+    valueStr: "value_str",
+    avg: "avg",
+    last: "last",
+    delta: "delta",
+  } as const;
+  const pivotColumns = p.points
+    .map((point) => {
+      if (!/^point_\d+$/.test(point.outputKey))
+        throw new Error(`Invalid admin pivot output key: ${point.outputKey}`);
+      const addr = pointAddrs.get(point.point);
+      if (!addr || addr.systemId !== systemId)
+        throw new Error(`Admin pivot point is not on device ${p.device}`);
+      return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${addr.index} THEN pr.${columns[point.valueColumn]} END) as ${point.outputKey}`;
+    })
+    .join(",\n  ");
+  const limit = Math.max(1, Math.min(1000, Math.trunc(p.limit)));
   const run = async (query: string): Promise<Row[]> => {
     const res = await db.execute(sql.raw(query));
     return ((res as { rows?: Row[] }).rows ?? []) as Row[];
@@ -1110,12 +1147,13 @@ async function readAdminPivot(
  * never `COUNT(*)`). The admin pivot's "is there data in the other store?" probe.
  * // SEAM: filters `system_id` directly (Phase 8 → device_rid).
  */
-async function hasReadingsForSystem(
-  systemId: number,
+async function hasReadingsForDevice(
+  deviceId: DeviceId,
   store: ReadingStore,
   exec?: ReadingsExec,
 ): Promise<boolean> {
   const db = exec ?? requirePlanetscaleDb();
+  const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId, db);
   const res = await db.execute(
     sql.raw(
       `SELECT 1 FROM ${STORE_TABLE[store]} WHERE system_id = ${systemId} LIMIT 1`,
@@ -1130,14 +1168,15 @@ async function hasReadingsForSystem(
  * YYYY-MM-DD string for `agg1d` (string compare) or epoch-ms for raw/5m (→ `to_timestamp`).
  * `direction`: "older" → `<`, "newer" → `>`. // SEAM: filters `system_id` directly (Phase 8 → device_rid).
  */
-async function hasReadingsForSystemBeyond(
-  systemId: number,
+async function hasReadingsForDeviceBeyond(
+  deviceId: DeviceId,
   store: ReadingStore,
   boundary: number | string,
   direction: "older" | "newer",
   exec?: ReadingsExec,
 ): Promise<boolean> {
   const db = exec ?? requirePlanetscaleDb();
+  const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId, db);
   const op = direction === "older" ? "<" : ">";
   const rhs =
     store === "agg1d"
@@ -1272,17 +1311,17 @@ export const ReadingsDao = {
   insert5m,
   upsert1d,
   earliestAgg5mMs,
-  systemIdsWithAgg5mSince,
-  latestAgg5mIntervalMsForSystem,
+  deviceIdsWithAgg5mSince,
+  latestAgg5mIntervalMsForDevice,
   countByCreatedAtSince,
   createdAtHistogramSince,
   distinctSystemsByRawCreatedAtSince,
   latestRawCreatedAtMs,
-  maxAgg5mIntervalMsForSystems,
+  maxAgg5mIntervalMsForDevices,
   delete1dRange,
   readAdminPivot,
-  hasReadingsForSystem,
-  hasReadingsForSystemBeyond,
+  hasReadingsForDevice,
+  hasReadingsForDeviceBeyond,
   readRawWindowAround,
   read5mRowWindowAround,
   transaction,

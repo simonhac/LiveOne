@@ -8,16 +8,18 @@
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
-import { and, asc, eq, max } from "drizzle-orm";
+import { and, asc, eq, max, or } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   areaBindings,
   areaDevices,
+  pointInfo,
+  systems,
   userSystems,
 } from "@/lib/db/planetscale/schema";
-import type { AreaLocation } from "@/lib/areas/types";
+import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -25,6 +27,8 @@ import { PointManager } from "@/lib/point/point-manager";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
+import { DeviceRegistry } from "@/lib/registry";
+import { bindingShapeMatches } from "@/lib/areas/slots";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
 
@@ -126,10 +130,12 @@ export async function createArea(
           displayName: input.displayName,
           alias: input.alias ?? null,
           timezoneOffsetMin: input.timezoneOffsetMin,
+          dayOffsetMin: input.timezoneOffsetMin,
           displayTimezone: input.displayTimezone,
           location: input.location ?? null,
           status: "active",
         });
+        await DeviceRegistry.ensureAreaForHandle(handle, id, tx);
         if (members.length > 0) {
           await tx.insert(areaDevices).values(
             members.map((systemId, i) => ({
@@ -168,8 +174,10 @@ export async function updateAreaMeta(
   const set: Record<string, unknown> = { updatedAt: new Date() };
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.alias !== undefined) set.alias = patch.alias;
-  if (patch.timezoneOffsetMin !== undefined)
+  if (patch.timezoneOffsetMin !== undefined) {
     set.timezoneOffsetMin = patch.timezoneOffsetMin;
+    set.dayOffsetMin = patch.timezoneOffsetMin;
+  }
   if (patch.displayTimezone !== undefined)
     set.displayTimezone = patch.displayTimezone;
   if (patch.status !== undefined) set.status = patch.status;
@@ -241,6 +249,7 @@ export interface BindingInput {
   metricType: string;
   pointSystemId: number;
   pointId: number;
+  priority?: number;
   transform?: string | null;
 }
 
@@ -274,6 +283,32 @@ export async function replaceBindings(
 ): Promise<void> {
   const members = new Set(await getAreaDeviceSystemIds(areaId));
   const seen = new Set<string>();
+  const pointRows =
+    bindings.length === 0
+      ? []
+      : await requirePlanetscaleDb()
+          .select({
+            systemId: pointInfo.systemId,
+            index: pointInfo.index,
+            logicalPathStem: pointInfo.logicalPathStem,
+            metricType: pointInfo.metricType,
+          })
+          .from(pointInfo)
+          .where(
+            or(
+              ...bindings.map((binding) =>
+                and(
+                  eq(pointInfo.systemId, binding.pointSystemId),
+                  eq(pointInfo.index, binding.pointId),
+                ),
+              ),
+            ),
+          );
+  const pointByAddr = new Map(
+    pointRows.map((point) => [`${point.systemId}.${point.index}`, point]),
+  );
+  const nextPriority = new Map<string, number>();
+  const seenPriorities = new Set<string>();
   for (const b of bindings) {
     if (!(b.role in ROLES))
       throw new AreaValidationError(`Unknown role: ${b.role}`);
@@ -283,12 +318,47 @@ export async function replaceBindings(
       throw new AreaValidationError(
         `System ${b.pointSystemId} is not a member of this area`,
       );
+    const point = pointByAddr.get(`${b.pointSystemId}.${b.pointId}`);
+    if (!point)
+      throw new AreaValidationError(
+        `Point ${b.pointSystemId}.${b.pointId} not found`,
+      );
+    if (
+      point.metricType !== b.metricType ||
+      !bindingShapeMatches(b.role as RoleId, b.metricType, point)
+    )
+      throw new AreaValidationError(
+        `Point ${b.pointSystemId}.${b.pointId} does not match ${b.role}/${b.metricType}`,
+      );
     const key = `${b.role}|${b.metricType}|${b.pointSystemId}|${b.pointId}`;
     if (seen.has(key))
       throw new AreaValidationError(`Duplicate binding: ${key}`);
     seen.add(key);
+    const slot = `${b.role}|${b.metricType}`;
+    const priority =
+      b.priority ??
+      (() => {
+        const current = nextPriority.get(slot) ?? 0;
+        nextPriority.set(slot, current + 1);
+        return current;
+      })();
+    if (!Number.isInteger(priority) || priority < 0)
+      throw new AreaValidationError(
+        "Binding priority must be a non-negative integer",
+      );
+    const priorityKey = `${slot}|${priority}`;
+    if (seenPriorities.has(priorityKey))
+      throw new AreaValidationError(
+        `Duplicate binding priority: ${priorityKey}`,
+      );
+    seenPriorities.add(priorityKey);
+    b.priority = priority;
   }
   const db = requirePlanetscaleDb();
+  const selectedBatterySystemId = bindings.find(
+    (binding) => binding.role === "battery" && binding.metricType === "power",
+  )?.pointSystemId;
+
   await db.transaction(async (tx) => {
     await tx.delete(areaBindings).where(eq(areaBindings.areaId, areaId));
     if (bindings.length > 0) {
@@ -300,10 +370,38 @@ export async function replaceBindings(
           pointSystemId: b.pointSystemId,
           pointId: b.pointId,
           ordinal: i,
+          priority: b.priority!,
           transform: b.transform ?? null,
         })),
       );
     }
+    const [currentArea] = await tx
+      .select({ config: areas.config })
+      .from(areas)
+      .where(eq(areas.id, areaId))
+      .limit(1);
+    const selectedBattery =
+      selectedBatterySystemId == null
+        ? null
+        : (
+            await tx
+              .select({ config: systems.config })
+              .from(systems)
+              .where(eq(systems.id, selectedBatterySystemId))
+              .limit(1)
+          )[0];
+    const nextAreaConfig: AreaConfig = { ...(currentArea?.config ?? {}) };
+    if (selectedBattery?.config?.batteryProvenance)
+      nextAreaConfig.batteryProvenance =
+        selectedBattery.config.batteryProvenance;
+    else delete nextAreaConfig.batteryProvenance;
+    await tx
+      .update(areas)
+      .set({
+        config: Object.keys(nextAreaConfig).length > 0 ? nextAreaConfig : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(areas.id, areaId));
   });
 }
 

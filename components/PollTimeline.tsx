@@ -16,6 +16,7 @@ const ANIMATION_DURATION = {
   fetch: 200,
   process: 500,
 };
+const EMPTY_STAGES: PollStage[] = [];
 
 /**
  * Gantt chart-style timeline showing poll stages (login, fetch, process)
@@ -25,7 +26,7 @@ const ANIMATION_DURATION = {
 export function PollTimeline({ sessionState, systemId }: PollTimelineProps) {
   // Extract data from session state
   const systemState = sessionState.systems.get(systemId);
-  const stages = systemState?.stages || [];
+  const stages = systemState?.stages ?? EMPTY_STAGES;
   const sessionStartMs = sessionState.sessionStartTime?.getTime() || Date.now();
   const sessionEndMs = sessionState.sessionEndTime?.getTime() || Date.now();
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(

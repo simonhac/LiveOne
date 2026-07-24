@@ -11,3 +11,9 @@ export {
   type PointAddr,
   type UnknownIdKind,
 } from "./registry-cache";
+export {
+  DeviceRegistry,
+  UnknownDeviceIdError,
+  type DeviceAddr,
+  type DeviceRegistryExec,
+} from "./device-registry";

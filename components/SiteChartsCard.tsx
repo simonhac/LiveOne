@@ -536,7 +536,7 @@ export default function SiteChartsCard({
       return () =>
         document.removeEventListener("touchstart", handleTouchOutside);
     }
-  }, []);
+  }, [setFocusedTime]);
 
   // Handle series visibility toggle with special logic
   const handleLoadSeriesToggle = (seriesId: string, shiftKey: boolean) => {

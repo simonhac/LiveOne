@@ -17,6 +17,9 @@
 import { PointManager } from "@/lib/point/point-manager";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { dashboardAreaUuids } from "./composition";
+import { isDashboardV4 } from "./v4";
+import { collectRefs } from "./v4-validate";
+import { DeviceRegistry } from "@/lib/registry";
 
 export interface DashboardReadAccess {
   /** Distinct physical systems the dashboard's points live on (a composite spans children). */
@@ -51,7 +54,7 @@ export function toReadAccess(
  * the scope + point resolvers. Unresolvable Area uuids are dropped (no escalation); a handle whose
  * points can't resolve (deleted/dangling) keeps the handle but contributes no points.
  */
-async function resolveAreas(input: DashboardScopeInput): Promise<{
+async function resolveScope(input: DashboardScopeInput): Promise<{
   handles: number[];
   refs: { systemId: number; pointId: number }[];
 }> {
@@ -72,6 +75,21 @@ async function resolveAreas(input: DashboardScopeInput): Promise<{
       // unresolvable handle → keep the handle, no member points.
     }
   }
+  if (isDashboardV4(input.doc)) {
+    const deviceIds = collectRefs(input.doc).devices;
+    const devices = await DeviceRegistry.addrsForDevices(deviceIds);
+    for (const id of deviceIds) {
+      const device = devices.get(id);
+      if (!device) continue;
+      handles.push(device.handle);
+      try {
+        const pts = await pm.getActivePointsForSystem(device.handle, false);
+        refs.push(...pts.map((p) => p.getReference()));
+      } catch {
+        // Keep the directly referenced device handle even if its points are unavailable.
+      }
+    }
+  }
   return { handles, refs };
 }
 
@@ -86,7 +104,7 @@ async function resolveAreas(input: DashboardScopeInput): Promise<{
 export async function allowedSystemIds(
   input: DashboardScopeInput,
 ): Promise<number[]> {
-  const { handles, refs } = await resolveAreas(input);
+  const { handles, refs } = await resolveScope(input);
   return [...new Set([...handles, ...refs.map((r) => r.systemId)])];
 }
 
@@ -97,6 +115,6 @@ export async function allowedSystemIds(
 export async function resolveDashboardReadPoints(
   input: DashboardScopeInput,
 ): Promise<DashboardReadAccess> {
-  const { refs } = await resolveAreas(input);
+  const { refs } = await resolveScope(input);
   return toReadAccess(refs);
 }

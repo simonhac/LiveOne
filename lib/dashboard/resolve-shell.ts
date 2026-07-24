@@ -12,10 +12,8 @@
  *
  * `collectRefs` (the §8.3 scope walk) is re-exported so callers have one import for doc resolution.
  *
- * PURE + DARK: nothing in the live render/SSR path calls this yet. The real `ShellResolver` (area →
- * `legacy_system_id`/displayName/chartCapable via lib/areas; device → systemId via `legacy_handles`)
- * is viewer-scoped and wired in the SSR slice; devices only resolve post-cutover (until then the
- * device half is stubbed, like the rewriter's `deviceRef`).
+ * The real `ShellResolver` is viewer-scoped: areas resolve to their current handle and stable device
+ * refs resolve through `legacy_handles` to the current system address.
  */
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { DashboardV4, DashboardNode } from "./v4";
@@ -42,7 +40,7 @@ export interface ResolvedArea {
 export interface ResolvedDevice {
   deviceId: DeviceId;
   name: string;
-  /** The legacy `system_id` to fetch this device's data by (via `legacy_handles`). null pre-mint. */
+  /** The current legacy `system_id` to fetch through the pre-cutover data API. */
   systemId: number | null;
 }
 

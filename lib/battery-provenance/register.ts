@@ -239,6 +239,7 @@ export async function ensureHelperBindings(
     pointSystemId: helperSystemId,
     pointId: pointIds[p.metricType],
     ordinal: 100 + i,
+    priority: 100 + i,
     transform: null,
   }));
   if (values.length === 0) return { created: 0 };

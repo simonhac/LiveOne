@@ -21,3 +21,12 @@ export interface AreaLocation {
   lat?: number;
   lng?: number;
 }
+import type { BatteryProvenanceConfig } from "@/lib/capabilities/config";
+
+/**
+ * Area-scoped configuration. During the pre-cutover window the legacy device settings route mirrors
+ * battery-provenance values here; after cutover this is the sole semantic home for site-level knobs.
+ */
+export interface AreaConfig {
+  batteryProvenance?: BatteryProvenanceConfig;
+}

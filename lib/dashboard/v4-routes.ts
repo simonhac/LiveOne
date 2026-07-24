@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { listReadableAreas } from "@/lib/areas/list";
+import { listReadableDevices } from "@/lib/devices/list";
 import { Area } from "@/lib/ids";
 import { getDashboard, type CompositionDashboard } from "./dashboards";
 import { collectRefs } from "./v4-validate";
@@ -46,15 +47,16 @@ export async function loadOwnedDashboard(
 
 /**
  * §8.4 no-escalation check: every AREA ref in the doc must be readable by the owner. Returns a 403
- * `NextResponse` on violation, else null. Device refs are not checked pre-cutover (no devices yet);
- * the §8.3 walk means a future/unknown card type still can't smuggle an area past this.
+ * `NextResponse` on violation, else null. The §8.3 walk means a future/unknown card type cannot
+ * smuggle either an area or a device past this check.
  */
-export async function checkDocAreasReadable(
+export async function checkDocRefsReadable(
   doc: DashboardV4,
   ownerClerkUserId: string,
 ): Promise<NextResponse | null> {
-  const areaUuids = collectRefs(doc)
-    .areas.map((a) => {
+  const refs = collectRefs(doc);
+  const areaUuids = refs.areas
+    .map((a) => {
       try {
         return Area.toUuid(a);
       } catch {
@@ -62,22 +64,37 @@ export async function checkDocAreasReadable(
       }
     })
     .filter((x): x is string => x != null);
-  if (areaUuids.length === 0) return null;
-  const readable = new Set(
-    (await listReadableAreas(ownerClerkUserId)).map((a) => a.id),
-  );
-  if (areaUuids.some((u) => !readable.has(u))) {
+  const [readableAreas, readableDevices] = await Promise.all([
+    listReadableAreas(ownerClerkUserId),
+    listReadableDevices(ownerClerkUserId),
+  ]);
+  const areaSet = new Set(readableAreas.map((a) => a.id));
+  const deviceSet = new Set(readableDevices.map((d) => d.id));
+  if (
+    areaUuids.some((u) => !areaSet.has(u)) ||
+    refs.devices.some((id) => !deviceSet.has(id))
+  ) {
     return NextResponse.json(
-      { error: "The doc references an area you cannot read" },
+      { error: "The doc references an area or device you cannot read" },
       { status: 403 },
     );
   }
   return null;
 }
 
-/** Parse an `If-Match` header value (`"17"` or `17`) → the numeric revision, or undefined. */
-export function parseIfMatch(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const n = parseInt(header.replace(/"/g, "").trim(), 10);
-  return Number.isNaN(n) ? undefined : n;
+export type IfMatch =
+  | { kind: "absent" }
+  | { kind: "revision"; revision: number }
+  | { kind: "invalid" };
+
+/** Accept only an entire positive safe integer, either bare (`17`) or exactly quoted (`"17"`). */
+export function parseIfMatch(header: string | null): IfMatch {
+  if (header === null) return { kind: "absent" };
+  const value = header.trim();
+  const match = /^(?:([1-9]\d*)|"([1-9]\d*)")$/.exec(value);
+  if (!match) return { kind: "invalid" };
+  const revision = Number(match[1] ?? match[2]);
+  return Number.isSafeInteger(revision)
+    ? { kind: "revision", revision }
+    : { kind: "invalid" };
 }

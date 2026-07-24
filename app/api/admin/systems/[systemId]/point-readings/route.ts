@@ -6,9 +6,15 @@ import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
-import { ReadingsDao, type ReadingStore } from "@/lib/readings/dao";
+import {
+  ReadingsDao,
+  type AdminPivotValueColumn,
+  type ReadingStore,
+} from "@/lib/readings/dao";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo as pgPointInfo } from "@/lib/db/planetscale/schema";
+import { DeviceRegistry } from "@/lib/registry";
+import { Point } from "@/lib/ids";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -34,12 +40,25 @@ export async function GET(
     if (authResult instanceof NextResponse) return authResult;
 
     const { systemId: systemIdStr } = await params;
-    const systemId = parseInt(systemIdStr);
+    if (!/^[1-9]\d*$/.test(systemIdStr))
+      return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
+    const systemId = Number(systemIdStr);
+    if (!Number.isSafeInteger(systemId))
+      return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "200"), 1000);
-    const source = searchParams.get("source") || "raw"; // "raw", "5m", or "daily"
+    const limitParam = searchParams.get("limit") || "200";
+    if (!/^[1-9]\d*$/.test(limitParam))
+      return NextResponse.json({ error: "Invalid limit" }, { status: 400 });
+    const limit = Math.min(Number(limitParam), 1000);
+    const sourceParam = searchParams.get("source") || "raw";
+    if (!["raw", "5m", "daily"].includes(sourceParam))
+      return NextResponse.json({ error: "Invalid source" }, { status: 400 });
+    const source = sourceParam as "raw" | "5m" | "daily";
     const cursorParam = searchParams.get("cursor"); // ISO8601 string for raw/5m, YYYY-MM-DD for daily
-    const direction = searchParams.get("direction") || "newer"; // "older" or "newer"
+    const directionParam = searchParams.get("direction") || "newer";
+    if (!["older", "newer"].includes(directionParam))
+      return NextResponse.json({ error: "Invalid direction" }, { status: 400 });
+    const direction = directionParam as "older" | "newer";
 
     // Track database elapsed time
     let dbElapsedMs = 0;
@@ -56,10 +75,20 @@ export async function GET(
     let cursor: number | string | null = null;
     if (cursorParam) {
       if (source === "daily") {
-        cursor = cursorParam; // Already YYYY-MM-DD, use directly
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(cursorParam))
+          return NextResponse.json(
+            { error: "Invalid daily cursor" },
+            { status: 400 },
+          );
+        cursor = cursorParam;
       } else {
         // Parse ISO8601 to Unix timestamp milliseconds
         cursor = new Date(cursorParam).getTime();
+        if (!Number.isFinite(cursor))
+          return NextResponse.json(
+            { error: "Invalid timestamp cursor" },
+            { status: 400 },
+          );
       }
     }
 
@@ -136,9 +165,8 @@ export async function GET(
     // Determine which aggregate column to use for each point (when using 5m or daily data)
     const getAggColumn = (
       metricType: string,
-      transform: string | null,
-      src: string,
-    ) => {
+      src: "5m" | "daily",
+    ): AdminPivotValueColumn => {
       if (src === "daily") {
         // For daily data: delta for energy, avg for everything else
         if (metricType === "energy") return "delta";
@@ -195,44 +223,22 @@ export async function GET(
       headers[`point_${p.index}`] = pointInfoObj;
     });
 
-    // Build the per-point pivot columns (the MAX(CASE WHEN ...) projections) for the data source.
-    // The surrounding query (cursor/order/limit/table) is built by ReadingsDao.readAdminPivot from the
-    // params below — only these column projections are passed through. These name value columns, not a
-    // hot table, so the readings-boundary gate does not flag this route.
-    // SEAM: these projections address points by `pr.point_id = <index>` — the Phase-8 cutover re-keys
-    // that to `pr.point_rid = <rid>` here, in step with readAdminPivot's `system_id` → device_rid.
-    let pivotColumns = "";
-
-    if (source === "daily") {
-      // Daily aggregated data
-      pivotColumns = points
-        .map((p) => {
-          const aggCol = getAggColumn(p.metricType, p.transform, source);
-          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
-        })
-        .join(",\n  ");
-    } else if (source === "5m") {
-      // 5-minute aggregated data
-      pivotColumns = points
-        .map((p) => {
-          // For text fields, use value_str; for numeric fields, use the appropriate aggregate column
-          if (p.metricUnit === "text") {
-            return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.value_str END) as point_${p.index}`;
-          }
-          const aggCol = getAggColumn(p.metricType, p.transform, source);
-          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN pr.${aggCol} END) as point_${p.index}`;
-        })
-        .join(",\n  ");
-    } else {
-      // Raw point readings
-      pivotColumns = points
-        .map((p) => {
-          // For text fields, use value_str; for others, use value
-          const column = p.metricUnit === "text" ? "pr.value_str" : "pr.value";
-          return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${p.index} THEN ${column} END) as point_${p.index}`;
-        })
-        .join(",\n  ");
-    }
+    const device = await DeviceRegistry.addrForHandle(systemId);
+    const pivotPoints = points.map((p) => {
+      const valueColumn: AdminPivotValueColumn =
+        source === "raw"
+          ? p.metricUnit === "text"
+            ? "valueStr"
+            : "value"
+          : source === "5m" && p.metricUnit === "text"
+            ? "valueStr"
+            : getAggColumn(p.metricType, source);
+      return {
+        point: Point.encode(p.pointUid),
+        outputKey: `point_${p.index}`,
+        valueColumn,
+      };
+    });
 
     // Transform raw pivot rows → the served `data` shape.
     const buildPivotData = (rows: any[]) =>
@@ -282,12 +288,12 @@ export async function GET(
     // Serve the pivot from Postgres via the readings seam.
     const t0 = Date.now();
     const result = await ReadingsDao.readAdminPivot({
-      systemId,
+      device: device.deviceId,
       source,
       cursor,
       direction,
       limit,
-      pivotColumns,
+      points: pivotPoints,
     });
     const data = buildPivotData(result);
     dbElapsedMs += Date.now() - t0;
@@ -298,8 +304,8 @@ export async function GET(
     if (result.length === 0) {
       const altStore: ReadingStore = source === "raw" ? "agg5m" : "raw";
       const checkStartTime = Date.now();
-      hasAlternativeData = await ReadingsDao.hasReadingsForSystem(
-        systemId,
+      hasAlternativeData = await ReadingsDao.hasReadingsForDevice(
+        device.deviceId,
         altStore,
       );
       dbElapsedMs += Date.now() - checkStartTime;
@@ -346,14 +352,14 @@ export async function GET(
       const checkStartTime = Date.now();
       // `lastTimestamp`/`firstTimestamp` are epoch-ms (raw/5m) or YYYY-MM-DD strings (daily); the seam
       // reproduces the legacy `< to_timestamp(ms/1000.0)` / `< 'YYYY-MM-DD'` comparison per store.
-      hasOlder = await ReadingsDao.hasReadingsForSystemBeyond(
-        systemId,
+      hasOlder = await ReadingsDao.hasReadingsForDeviceBeyond(
+        device.deviceId,
         store,
         lastTimestamp,
         "older",
       );
-      hasNewer = await ReadingsDao.hasReadingsForSystemBeyond(
-        systemId,
+      hasNewer = await ReadingsDao.hasReadingsForDeviceBeyond(
+        device.deviceId,
         store,
         firstTimestamp,
         "newer",

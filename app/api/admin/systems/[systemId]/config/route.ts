@@ -10,6 +10,7 @@ import type {
   ExportTariffConfig,
   ExportTariffPlan,
 } from "@/lib/capabilities/config";
+import { syncAreaBatteryConfigFromDevice } from "@/lib/areas/config";
 
 // Per-device CONFIG endpoint — reads/writes the typed `systems.config` (DeviceConfig) jsonb blob that
 // data-drives capability on/off overrides + nameplateKw + updateCadenceSeconds (see
@@ -194,6 +195,10 @@ export async function PATCH(
   await SystemsManager.getInstance().updateSystem(systemId, {
     config: parsed.config,
   });
+  await syncAreaBatteryConfigFromDevice(
+    systemId,
+    parsed.config?.batteryProvenance,
+  );
 
   // Capability eligibility is server-rendered (device viewer + dashboard seeds); refresh it.
   revalidatePath("/dashboard", "layout");

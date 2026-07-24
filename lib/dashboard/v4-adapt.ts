@@ -17,6 +17,7 @@ import type {
   TileView,
   DashboardCardType,
 } from "@/lib/dashboard/v3";
+import { isKnownCardType } from "@/lib/dashboard/card-types";
 
 /** The 9 promoted tile views — v4 card types that render via a tile cell (not a v3 CardPlugin). */
 export const TILE_VIEW_TYPES: ReadonlySet<string> = new Set<TileView>([
@@ -37,7 +38,14 @@ export function isTileViewType(type: string): type is TileView {
 
 /** A v4 card type that maps to a v3 `CardPlugin` (everything known that isn't a tile view or `tiles`). */
 export function isV3CardType(type: string): type is DashboardCardType {
-  return !isTileViewType(type) && type !== "tiles";
+  return isKnownCardType(type) && !isTileViewType(type);
+}
+
+/** Closed renderer dispatch. `unknown` is the labelled-placeholder branch, never a plugin lookup. */
+export function v4CardRenderKind(type: string): "tile" | "v3" | "unknown" {
+  if (isTileViewType(type)) return "tile";
+  if (isV3CardType(type)) return "v3";
+  return "unknown";
 }
 
 /**

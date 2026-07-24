@@ -13,6 +13,7 @@
 
 import { kv, kvKey } from "@/lib/kv";
 import { ReadingsDao } from "@/lib/readings";
+import { DeviceRegistry } from "@/lib/registry";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 
@@ -180,8 +181,11 @@ export async function loadState(systemId: number): Promise<OeSchedState> {
   if (existing && typeof existing.delaySec === "number") return existing;
 
   let lastSeenIntervalEndMs = 0;
+  const device = await DeviceRegistry.addrForHandle(systemId);
   try {
-    const ms = await ReadingsDao.latestAgg5mIntervalMsForSystem(systemId);
+    const ms = await ReadingsDao.latestAgg5mIntervalMsForDevice(
+      device.deviceId,
+    );
     if (ms != null) lastSeenIntervalEndMs = ms;
   } catch {
     // Best-effort seed; default delay still drives a sane first poll.

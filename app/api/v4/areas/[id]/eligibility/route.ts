@@ -11,6 +11,7 @@ import {
   CARD_CATALOG,
   TILE_CATALOG,
 } from "@/lib/capabilities/catalog";
+import { DeviceRegistry } from "@/lib/registry";
 
 /**
  * config-v4 area eligibility (§9.2), DARK — the add-card GALLERY data ("which cards/tiles CAN this area
@@ -44,6 +45,13 @@ export async function GET(
   // Per-member device-scoped cards. Best-effort: a per-member failure degrades that member to `cards: []`
   // (same posture as `listReadableAreas`' chartCapable enrichment), never failing the whole route.
   const members = await memberSystemIds(handle);
+  const mappings = await DeviceRegistry.addrsForHandles(members);
+  if (members.some((systemId) => !mappings.has(systemId))) {
+    return NextResponse.json(
+      { error: "device-mapping-incomplete" },
+      { status: 503 },
+    );
+  }
   const deviceCards = await Promise.all(
     members.map(async (systemId) => {
       try {
@@ -58,9 +66,12 @@ export async function GET(
               }
             : { id: cid, label: entry.label };
         });
-        return { systemId, cards };
+        return { deviceId: mappings.get(systemId)!.deviceId, cards };
       } catch {
-        return { systemId, cards: [] as { id: string; label: string }[] };
+        return {
+          deviceId: mappings.get(systemId)!.deviceId,
+          cards: [] as { id: string; label: string }[],
+        };
       }
     }),
   );

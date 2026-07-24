@@ -66,6 +66,10 @@ describe("check-readings-boundary", () => {
         join(dir, "rawsql.ts"),
         "await db.execute(sql`SELECT 1 FROM point_readings_agg_5m LIMIT 1`);\n",
       );
+      writeFileSync(
+        join(dir, "pivot.ts"),
+        "const projection = `MAX(CASE WHEN pr.point_id = 1 THEN pr.value END)`;\n",
+      );
     });
     afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -78,6 +82,7 @@ describe("check-readings-boundary", () => {
         "dynamic.ts",
         "relative.ts",
         "rawsql.ts",
+        "pivot.ts",
       ]) {
         expect(stderr).toContain(f);
       }

@@ -1,18 +1,23 @@
-import { describe, it, expect } from "@jest/globals";
+import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import { Device, newUuidV7, type DeviceId } from "@/lib/ids";
-import { stripDevicePinnedNodes } from "../v4-seed";
-import {
-  rewriteV3ToV4,
-  pureAreaRef,
-  type LegacyRefResolver,
-} from "../v3-to-v4";
-import { collectRefs, validateDocV4 } from "../v4-validate";
 import type { DashboardV3 } from "../v3";
 
-/** A seed-shaped v3 section: a `tiles` card (with a device-pinned `oe-grid`), a chart, an unpinned
- *  generator-runs, a device-pinned device-metrics, and a tiles card whose only tile is device-pinned. */
-function seedLikeV3(): DashboardV3 {
-  const areaId = newUuidV7();
+jest.mock("@/lib/capabilities/server", () => ({
+  buildAreaStrategyForHandle: jest.fn(),
+}));
+jest.mock("@/lib/registry", () => ({
+  DeviceRegistry: { addrsForHandles: jest.fn() },
+}));
+
+import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
+import { DeviceRegistry } from "@/lib/registry";
+import { buildPersistableSeedDoc, buildSeedGroupPreview } from "../v4-seed";
+import { collectRefs, validateDocV4 } from "../v4-validate";
+
+const mockStrategy = jest.mocked(buildAreaStrategyForHandle);
+const mockMappings = jest.mocked(DeviceRegistry.addrsForHandles);
+
+function seedLikeV3(areaId = newUuidV7()): DashboardV3 {
   return {
     version: 3,
     sections: [
@@ -21,110 +26,67 @@ function seedLikeV3(): DashboardV3 {
         cards: [
           {
             type: "tiles",
-            tiles: [
-              { view: "solar" },
-              { view: "load" },
-              { view: "oe-grid", deviceSystemId: 14 },
-            ],
+            tiles: [{ view: "solar" }, { view: "oe-grid", deviceSystemId: 14 }],
           },
-          { type: "chart", chart: { variant: "lines" } },
-          { type: "generator-runs" }, // unpinned in a real seed
-          { type: "device-metrics", deviceSystemId: 1 }, // pinned → dropped
-          { type: "tiles", tiles: [{ view: "oe-grid", deviceSystemId: 9 }] }, // only tile pinned → card dropped
+          { type: "device-metrics", deviceSystemId: 1 },
+          { type: "generator-runs", deviceSystemId: 9 },
         ],
       },
     ],
   };
 }
 
-/** Every deviceSystemId still present anywhere in a v3 descriptor. */
-function devicePins(v3: DashboardV3): number[] {
-  const pins: number[] = [];
-  for (const s of v3.sections) {
-    for (const c of s.cards) {
-      if (c.deviceSystemId != null) pins.push(c.deviceSystemId);
-      for (const t of c.tiles ?? []) {
-        if (t.deviceSystemId != null) pins.push(t.deviceSystemId);
-      }
-    }
-  }
-  return pins;
+function mapped(handles: number[]): Map<number, any> {
+  return new Map(
+    handles.map((handle) => {
+      const deviceId: DeviceId = Device.generate();
+      return [
+        handle,
+        {
+          deviceId,
+          uuid: Device.toUuid(deviceId),
+          rid: handle,
+          handle,
+        },
+      ];
+    }),
+  );
 }
 
-describe("stripDevicePinnedNodes", () => {
-  it("removes every device-pinned tile and card, and drops an emptied tiles card", () => {
-    const stripped = stripDevicePinnedNodes(seedLikeV3());
-    const cards = stripped.sections[0].cards;
+describe("authoritative config-v4 seeds", () => {
+  beforeEach(() => {
+    mockStrategy.mockReset();
+    mockMappings.mockReset();
+  });
 
-    // the pinned device-metrics card and the oe-grid-only tiles card are gone
-    expect(cards.map((c) => c.type)).toEqual([
-      "tiles",
-      "chart",
-      "generator-runs",
+  it("preview and persistence keep the same real device refs", async () => {
+    const areaId = newUuidV7();
+    mockStrategy.mockResolvedValue(seedLikeV3(areaId));
+    const mappings = mapped([14, 1, 9]);
+    mockMappings.mockResolvedValue(mappings);
+
+    const [doc, group] = await Promise.all([
+      buildPersistableSeedDoc(areaId, 1000001),
+      buildSeedGroupPreview(areaId, 1000001),
     ]);
-    // the surviving tiles card kept only its unpinned tiles
-    expect(cards[0].tiles?.map((t) => t.view)).toEqual(["solar", "load"]);
-    // nothing device-pinned remains anywhere
-    expect(devicePins(stripped)).toEqual([]);
-  });
 
-  it("is a no-op for a device-pin-free descriptor", () => {
-    const clean: DashboardV3 = {
-      version: 3,
-      sections: [
-        {
-          areaId: newUuidV7(),
-          cards: [
-            { type: "tiles", tiles: [{ view: "solar" }] },
-            { type: "sankey" },
-          ],
-        },
-      ],
-    };
-    expect(stripDevicePinnedNodes(clean)).toEqual(clean);
-  });
-});
-
-describe("device-pin-free rewrite (buildPersistableSeedDoc contract)", () => {
-  const throwingResolver: LegacyRefResolver = {
-    areaRef: pureAreaRef,
-    deviceRef: (n) => {
-      throw new Error(`unexpected device pin: ${n}`);
-    },
-  };
-
-  it("rewrites a stripped seed with a throwing deviceRef → valid doc, zero device refs", () => {
-    const v3 = seedLikeV3();
-    const stripped = stripDevicePinnedNodes(v3);
-    const doc = rewriteV3ToV4(stripped, throwingResolver); // must not throw
     expect(validateDocV4(doc).valid).toBe(true);
-    expect(collectRefs(doc).devices).toEqual([]);
-    // area scope preserved (§8.3): the one section's area survives
-    expect(collectRefs(doc).areas.length).toBe(1);
+    expect(collectRefs(doc).devices.sort()).toEqual(
+      [...mappings.values()].map((m) => m.deviceId).sort(),
+    );
+    expect(group).toEqual(doc.root.children[0]);
+    expect(mockMappings).toHaveBeenCalledWith([14, 1, 9]);
   });
 
-  it("would throw if the seed were NOT stripped (guard is real)", () => {
-    expect(() => rewriteV3ToV4(seedLikeV3(), throwingResolver)).toThrow();
-  });
-});
-
-describe("lenient preview rewrite (buildSeedGroupPreview contract)", () => {
-  it("keeps device-pinned oe-grid via a mint-per-int deviceRef", () => {
-    const devMap = new Map<number, DeviceId>();
-    const lenient: LegacyRefResolver = {
-      areaRef: pureAreaRef,
-      deviceRef: (n) => {
-        let d = devMap.get(n);
-        if (!d) {
-          d = Device.encode(newUuidV7());
-          devMap.set(n, d);
-        }
-        return d;
-      },
-    };
-    const doc = rewriteV3ToV4(seedLikeV3(), lenient);
-    expect(validateDocV4(doc).valid).toBe(true);
-    // both device pins (14, 1, 9) are carried; dedup by int → 3 distinct
-    expect(collectRefs(doc).devices.length).toBe(3);
+  it("fails explicitly rather than fabricating an unmapped device", async () => {
+    const areaId = newUuidV7();
+    mockStrategy.mockResolvedValue(seedLikeV3(areaId));
+    mockMappings.mockResolvedValue(mapped([14, 1]));
+    await expect(buildPersistableSeedDoc(areaId, 1000001)).rejects.toEqual(
+      expect.objectContaining({
+        name: "MissingDeviceMappingError",
+        handles: [9],
+      }),
+    );
   });
 });

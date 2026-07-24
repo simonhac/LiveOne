@@ -24,6 +24,8 @@ import {
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 import type { ReadableArea } from "@/lib/areas/list";
+import type { ReadableDevice } from "@/lib/devices/list";
+import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
 
 // Shared styling for the header cog menu's action items (mirrors FlowsSettingsMenu's ITEM_CLASS).
 const MENU_ITEM_CLASS =
@@ -51,6 +53,8 @@ interface DashboardClientProps {
    * editor. Distinct from `sharedAreas`, which also flags the read-only shared view.
    */
   initialReadableAreas?: ReadableArea[];
+  /** Device refs already resolved and authorized by the server render path. */
+  resolvedDevices?: ReadableDevice[];
 }
 
 export default function DashboardClient({
@@ -58,6 +62,7 @@ export default function DashboardClient({
   canEdit,
   sharedAreas,
   initialReadableAreas,
+  resolvedDevices = [],
 }: DashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -78,8 +83,10 @@ export default function DashboardClient({
       ? { initialData: { areas: initialReadableAreas } }
       : {}),
   });
-  const readableAreas: ReadableArea[] =
-    sharedAreas ?? areasQuery.data?.areas ?? [];
+  const readableAreas: ReadableArea[] = useMemo(
+    () => sharedAreas ?? areasQuery.data?.areas ?? [],
+    [sharedAreas, areasQuery.data?.areas],
+  );
   // Whether the readable-Area set is KNOWN (not still loading): a shared/grant view has them
   // inline; the authed owner/admin view is SSR-seeded (initialData ⇒ success on the first render);
   // otherwise we wait for the fetch to settle. Once resolved, a section whose Area still can't be
@@ -90,6 +97,20 @@ export default function DashboardClient({
   const areaById = useMemo(
     () => new Map(readableAreas.map((a) => [a.id, a] as const)),
     [readableAreas],
+  );
+  const deviceById = useMemo(
+    () =>
+      new Map<string, ResolvedDevice>(
+        resolvedDevices.map((device) => [
+          device.id,
+          {
+            deviceId: device.id,
+            name: device.name,
+            systemId: device.systemId,
+          },
+        ]),
+      ),
+    [resolvedDevices],
   );
 
   // The single page-header temporal navigator: shown only when this dashboard actually hosts a
@@ -213,6 +234,7 @@ export default function DashboardClient({
               areaById={areaById}
               dashboardId={dashboard.id}
               areasResolved={areasResolved}
+              deviceById={deviceById}
             />
           ) : (
             <Dashboard

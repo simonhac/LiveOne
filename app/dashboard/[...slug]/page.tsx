@@ -21,6 +21,12 @@ import { queryKeys } from "@/lib/queries/keys";
 import { MY_DASHBOARDS_KEY, USER_PREFERENCES_KEY } from "@/lib/queries";
 import { getSystemDataForCache } from "@/lib/dashboard/serve-data";
 import { makeTimer, type ServerTimer } from "@/lib/server-timing";
+import {
+  listReadableDevices,
+  resolveDevicesByIds,
+  type ReadableDevice,
+} from "@/lib/devices/list";
+import { collectRefs } from "@/lib/dashboard/v4-validate";
 
 interface PageProps {
   params: Promise<{
@@ -75,6 +81,18 @@ async function renderCompositionDashboard(
   // shape-aware via `dashboardAreaUuids`. DARK — no dashboard has a `doc` yet, so `v4doc` is null in
   // production and the v3 path is unchanged.
   const v4doc = isDashboardV4(dashboard.doc) ? dashboard.doc : null;
+  const v4DeviceIds = v4doc ? collectRefs(v4doc).devices : [];
+  const readableDevices: ReadableDevice[] =
+    v4DeviceIds.length === 0
+      ? []
+      : sharedAreas
+        ? await resolveDevicesByIds(v4DeviceIds)
+        : dashboard.ownerClerkUserId
+          ? (await listReadableDevices(dashboard.ownerClerkUserId)).filter(
+              (d) => v4DeviceIds.includes(d.id),
+            )
+          : await resolveDevicesByIds(v4DeviceIds);
+  const deviceById = new Map(readableDevices.map((d) => [d.id, d] as const));
 
   // SP1.2: SSR-prefetch each referenced system's /api/data (latest values) in-process and seed a
   // React Query HydrationBoundary, so cards render filled from cache instead of a client round-trip.
@@ -110,6 +128,13 @@ async function renderCompositionDashboard(
       }
     }
   }
+  for (const id of v4DeviceIds) {
+    const device = deviceById.get(id);
+    if (device) pins.add(device.systemId);
+  }
+  const authorizedV4Pins = new Set(
+    readableDevices.map((device) => device.systemId),
+  );
   const prefetch = async () => {
     // SP1.2b: seed section handles (already authorized) unconditionally, plus device pins — but a pin
     // is seeded only if the payload we ALREADY fetch shows it's authorization-safe WITHOUT any extra
@@ -131,7 +156,10 @@ async function renderCompositionDashboard(
             const owner = (
               value as { system?: { ownerClerkUserId?: string | null } }
             ).system?.ownerClerkUserId;
-            const safe = owner === null || (userId != null && owner === userId);
+            const safe =
+              authorizedV4Pins.has(id) ||
+              owner === null ||
+              (userId != null && owner === userId);
             if (!safe) return; // private pin we can't cheaply authorize → let the card self-fetch
           }
           queryClient.setQueryData(queryKeys.data(id), value);
@@ -202,6 +230,7 @@ async function renderCompositionDashboard(
           canEdit={canEdit}
           sharedAreas={sharedAreas}
           initialReadableAreas={initialReadableAreas}
+          resolvedDevices={readableDevices}
         />
       </HydrationBoundary>
     </>
