@@ -19,3 +19,5 @@ export {
   type Agg5mCoverage,
   type ReadingStore,
 } from "./dao";
+
+export type { SeedPreviewDatabaseOptions } from "./preview-seed";

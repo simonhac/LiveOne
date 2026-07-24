@@ -36,6 +36,7 @@ import {
   pointReadingsAgg5m,
   pointReadingsAgg1d,
 } from "./schema-internal";
+import type { SeedPreviewDatabaseOptions } from "./preview-seed";
 
 type PgDb = ReturnType<typeof requirePlanetscaleDb>;
 type PgTx = Parameters<Parameters<PgDb["transaction"]>[0]>[0];
@@ -1475,6 +1476,12 @@ function transaction<T>(fn: (tx: ReadingsExec) => Promise<T>): Promise<T> {
   return requirePlanetscaleDb().transaction(fn as (tx: PgTx) => Promise<T>);
 }
 
+/** Node-only preview transfer, lazy so application request paths never load child-process code. */
+async function seedPreviewDatabase(options: SeedPreviewDatabaseOptions) {
+  const { seedPreviewDatabase: run } = await import("./preview-seed");
+  return run(options);
+}
+
 export const ReadingsDao = {
   readRaw,
   read5m,
@@ -1507,4 +1514,5 @@ export const ReadingsDao = {
   readRawWindowAround,
   read5mRowWindowAround,
   transaction,
+  seedPreviewDatabase,
 };
