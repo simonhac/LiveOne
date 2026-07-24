@@ -44,6 +44,7 @@ import type {
   OeInterval,
 } from "@/lib/vendors/openelectricity/types";
 import { parseDateISO, calendarDateToUnixRange } from "@/lib/date-utils";
+import { toAgg5mInsert } from "./bulk-ingest-helpers";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -294,38 +295,6 @@ async function main() {
   const endMs = opts.dateEnd.getTime();
 
   // --- Value→column routing (mirrors PointManager.insertPointReadingsAgg5m) ---
-  function rowFor(reading: {
-    pointMetadata: { physicalPathTail: string };
-    rawValue: unknown;
-    intervalEndMs: number;
-  }): Agg5mInsert | null {
-    const point = indexByTail.get(reading.pointMetadata.physicalPathTail);
-    if (!point) return null;
-    const num = reading.rawValue == null ? null : Number(reading.rawValue);
-    const isError = num == null || Number.isNaN(num);
-    const value = isError ? null : (num as number);
-    const isEnergyCounter =
-      point.metricType === "energy" && point.transform === "d";
-    const isEnergyDelta =
-      point.metricType === "energy" && point.transform !== "d";
-    const scalar =
-      !isError && !isEnergyCounter && !isEnergyDelta ? value : null;
-    return {
-      point: point.point,
-      intervalEndMs: reading.intervalEndMs,
-      sessionId: null,
-      avg: scalar,
-      min: scalar,
-      max: scalar,
-      last: isEnergyCounter ? value : isEnergyDelta ? null : scalar,
-      delta: isEnergyDelta ? value : null,
-      valueStr: null,
-      sampleCount: isError ? 0 : 1,
-      errorCount: isError ? 1 : 0,
-      dataQuality: "actual",
-    };
-  }
-
   async function flush(rows: Agg5mInsert[]): Promise<number> {
     if (rows.length === 0 || opts.dryRun) return rows.length;
     const res = await ReadingsDao.insert5m(rows, {
@@ -425,7 +394,7 @@ async function main() {
   for (const readings of perWindow) {
     totalMapped += readings.length;
     for (const r of readings) {
-      const row = rowFor(r);
+      const row = toAgg5mInsert(r, indexByTail);
       if (row) buffer.push(row);
     }
   }

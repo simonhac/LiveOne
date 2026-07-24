@@ -40,6 +40,7 @@ import {
   updateSystemSummary,
   updateSubscriberSummaries,
 } from "@/lib/system-summary-store";
+import { groupLatestBySystem } from "./rebuild-dev-kv-helpers";
 
 // Bounded-concurrency runner. The KV writes below are independent per point, but Upstash is a
 // REST/HTTP store so each is a round trip — sequential awaits made the whole leg ~77s. Rejects (fails
@@ -106,13 +107,7 @@ async function main(): Promise<void> {
   );
 
   // Group by system so we can write each system's summary once after its points.
-  const bySystem = new Map<number, typeof rows>();
-  for (const row of rows) {
-    const address = addresses.get(row.point)!;
-    const list = bySystem.get(address.systemId) ?? [];
-    list.push(row);
-    bySystem.set(address.systemId, list);
-  }
+  const bySystem = groupLatestBySystem(rows, addresses);
 
   // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
   // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
