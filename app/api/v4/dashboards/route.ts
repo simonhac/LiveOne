@@ -7,16 +7,23 @@ import {
   DashboardAliasTakenError,
 } from "@/lib/dashboard/dashboards";
 import { emptyDashboardV3 } from "@/lib/dashboard/v3";
+import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { validateDocV4 } from "@/lib/dashboard/v4-validate";
 import { checkDocAreasReadable } from "@/lib/dashboard/v4-routes";
+import { buildPersistableSeedDoc } from "@/lib/dashboard/v4-seed";
+import { findReadableArea } from "@/lib/areas/http";
 
 /**
  * config-v4 dashboards collection (§9.2), DARK. Owner-scoped.
  *   GET  → { dashboards: [...] }
- *   POST { name, slug?, doc? } → 201 { id, revision }
- *        · 422 (doc invalid) · 403 (doc refs an unreadable area) · 409 (slug taken)
- * An optional `doc` is validated + written through the same DAO the PUT uses; omit for an empty
- * (v3-shaped) dashboard the owner fills later.
+ *   POST { name?, slug?, doc? | seedArea? } → 201 { id, revision }
+ *        · `seedArea` (an `ar_` id) seeds the doc from that area's capability strategy (device-pin-free,
+ *          cutover-safe — omits `oe-grid` until §15); mutually exclusive with `doc`. `name` defaults to
+ *          the seed area's display name.
+ *        · 400 (no name and no seedArea / both seedArea and doc / malformed seedArea)
+ *        · 422 (doc invalid) · 403 (doc/seedArea refs an unreadable area) · 409 (slug taken)
+ * An explicit/seeded `doc` is validated + written through the same DAO the PUT uses; omit both for an
+ * empty (v3-shaped) dashboard the owner fills later.
  */
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
@@ -30,17 +37,46 @@ export async function POST(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   const body = await request.json().catch(() => null);
-  const name = typeof body?.name === "string" ? body.name.trim() : "";
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
-  }
-  const slug =
-    typeof body?.slug === "string" && body.slug.trim()
-      ? body.slug.trim()
+  const seedArea =
+    typeof body?.seedArea === "string" && body.seedArea.trim()
+      ? body.seedArea.trim()
       : null;
+  const hasDoc = body?.doc !== undefined;
+  if (seedArea && hasDoc) {
+    return NextResponse.json(
+      { error: "seedArea and doc are mutually exclusive" },
+      { status: 400 },
+    );
+  }
 
-  let normalized = null;
-  if (body?.doc !== undefined) {
+  // Resolve the doc to persist (from a seed area, or an explicit body doc) before touching the DB.
+  let normalized: DashboardV4 | null = null;
+  let seededName: string | null = null;
+  if (seedArea) {
+    const found = await findReadableArea(auth.userId, seedArea);
+    if (!found.ok) {
+      return NextResponse.json(
+        { error: found.message },
+        { status: found.status },
+      );
+    }
+    const doc = await buildPersistableSeedDoc(
+      found.area.id,
+      found.area.legacySystemId,
+    );
+    // The seed is machine-built + device-pin-free, so validation should always pass; keep the guard.
+    const result = validateDocV4(doc);
+    if (!result.valid || !result.normalized) {
+      return NextResponse.json(
+        { errors: result.errors, warnings: result.warnings },
+        { status: 422 },
+      );
+    }
+    const refErr = await checkDocAreasReadable(result.normalized, auth.userId);
+    if (refErr) return refErr;
+    normalized = result.normalized;
+    seededName = found.area.displayName;
+  } else if (hasDoc) {
     const result = validateDocV4(body.doc);
     if (!result.valid || !result.normalized) {
       return NextResponse.json(
@@ -52,6 +88,18 @@ export async function POST(request: NextRequest) {
     if (refErr) return refErr;
     normalized = result.normalized;
   }
+
+  const name =
+    typeof body?.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : (seededName ?? "");
+  if (!name) {
+    return NextResponse.json({ error: "name is required" }, { status: 400 });
+  }
+  const slug =
+    typeof body?.slug === "string" && body.slug.trim()
+      ? body.slug.trim()
+      : null;
 
   let id: number;
   try {
