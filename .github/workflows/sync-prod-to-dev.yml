@@ -101,6 +101,12 @@ jobs:
               -d "{\"text\":\"$1\"}" "$ALERT_WEBHOOK_URL" || true
           }
           echo "sync took ${MIN}m ${SEC}s (${ELAPSED}s)"
+          # Recovered connection drops are still operationally significant. The
+          # wrapped steps count retry events without copying arbitrary logs or secrets.
+          DROPOUTS="${SYNC_CONNECTION_DROPOUT_COUNT:-0}"
+          if [ "$DROPOUTS" -gt 0 ]; then
+            post "⚠️ sync-prod-to-dev recovered from ${DROPOUTS} database connection dropout(s) during ${SYNC_CONNECTION_DROPOUT_STAGES:-unknown stage}; completed in ${MIN}m ${SEC}s. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
           # (1) Over the 5-minute (300s) target → warn, with the time.
           if [ "$ELAPSED" -gt 300 ]; then
             post "⚠️ sync-prod-to-dev took ${MIN}m ${SEC}s — over the 5-min target. See GitHub Actions."

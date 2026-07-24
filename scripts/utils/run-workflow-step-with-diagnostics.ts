@@ -71,6 +71,14 @@ export function classifyWorkflowFailure(output: string): FailureDiagnostic {
   };
 }
 
+export function countRecoveredConnectionDropouts(output: string): number {
+  return (
+    output.match(
+      /transient connection failure; (?:restarting|retrying)(?: the idempotent sync)?/gi,
+    )?.length ?? 0
+  );
+}
+
 function writeGithubEnv(name: string, value: string): void {
   const envFile = process.env.GITHUB_ENV;
   if (!envFile) return;
@@ -108,7 +116,26 @@ export async function runWorkflowStep(
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
   });
-  if (result.code === 0) return 0;
+  if (result.code === 0) {
+    const recoveredDropouts = countRecoveredConnectionDropouts(output);
+    if (recoveredDropouts > 0) {
+      const previousCount = Number(
+        process.env.SYNC_CONNECTION_DROPOUT_COUNT ?? 0,
+      );
+      const previousStages = process.env.SYNC_CONNECTION_DROPOUT_STAGES;
+      writeGithubEnv(
+        "SYNC_CONNECTION_DROPOUT_COUNT",
+        String(previousCount + recoveredDropouts),
+      );
+      writeGithubEnv(
+        "SYNC_CONNECTION_DROPOUT_STAGES",
+        [previousStages, `${stage} (${recoveredDropouts})`]
+          .filter(Boolean)
+          .join(", "),
+      );
+    }
+    return 0;
+  }
 
   const diagnostic = classifyWorkflowFailure(output);
   let detail = result.signal

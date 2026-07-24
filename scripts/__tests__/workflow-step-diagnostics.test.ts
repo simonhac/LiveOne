@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   classifyWorkflowFailure,
+  countRecoveredConnectionDropouts,
   runWorkflowStep,
 } from "../utils/run-workflow-step-with-diagnostics";
 
@@ -46,6 +47,39 @@ describe("sync workflow failure diagnostics", () => {
       mode: "unclassified command failure",
       detail: "inspect the linked Actions log",
     });
+  });
+
+  it("counts retry events rather than duplicate client error lines", () => {
+    expect(
+      countRecoveredConnectionDropouts(
+        "[sync] connection error: Connection terminated unexpectedly\n" +
+          "[sync] transient connection failure; restarting the idempotent sync (attempt 2/3)\n" +
+          "[sync] connection error: Connection terminated unexpectedly\n" +
+          "[sync] transient connection failure; restarting the idempotent sync (attempt 3/3)\n",
+      ),
+    ).toBe(2);
+  });
+
+  it("exports recovered dropout counts for successful-run monitoring", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sync-diagnostics-"));
+    const envFile = join(dir, "github-env");
+    const previousEnvFile = process.env.GITHUB_ENV;
+    process.env.GITHUB_ENV = envFile;
+    try {
+      const code = await runWorkflowStep("prod→dev DB sync", process.execPath, [
+        "-e",
+        'console.log("[sync] transient connection failure; restarting the idempotent sync (attempt 2/3)");',
+      ]);
+      expect(code).toBe(0);
+      expect(readFileSync(envFile, "utf8")).toBe(
+        "SYNC_CONNECTION_DROPOUT_COUNT=1\n" +
+          "SYNC_CONNECTION_DROPOUT_STAGES=prod→dev DB sync (1)\n",
+      );
+    } finally {
+      if (previousEnvFile === undefined) delete process.env.GITHUB_ENV;
+      else process.env.GITHUB_ENV = previousEnvFile;
+      rmSync(dir, { recursive: true });
+    }
   });
 
   it("exports sanitized diagnostics for the Slack alert step", async () => {
