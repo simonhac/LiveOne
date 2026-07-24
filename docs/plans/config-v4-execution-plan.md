@@ -46,14 +46,13 @@
 **NEXT — Phase 7: cutover rehearsal harness** (§ "Phase 7"): the full cutover transform + parity checks on a
 throwaway prod-snapshot branch, iterated until all checks pass AND the 13M/3M rewrite fits the window. Phases
 1–6 are merged. Apply 0034 and run the dry-run/commit foundation backfill twice on `liveone-dev`;
-after its mapping/API/share/SSR rehearsal is green, begin Phase 7. The optional `scripts`-lane drain
-(below) remains non-blocking.
+after its mapping/API/share/SSR rehearsal is green, begin Phase 7.
 
-**Optional / possibly-permanent: drain the `scripts` lane.** The 10 `scripts/*` entries still in
-`.readings-boundary-baseline.json` (its `_doc`: "slower / possibly-permanent-allow track") can each move
-behind `ReadingsDao` with the same recipe (add/reuse a `// SEAM:`-tagged method → rewrite the script to speak
-`PointId` → delete its baseline line, same commit). Only once BOTH lanes are empty does the baseline file +
-its `prebuild` guard get deleted. Not required for the cutover.
+**Readings `scripts` lane: COMPLETE.** Five active operational tools now run behind `ReadingsDao`
+(OpenElectricity bulk ingest, QStash health, preview seeding, dev-KV rebuilding, and the two-connection
+prod→dev COPY sync); five completed one-shot migration/cleanup scripts were retired. Both lanes are zero,
+so `.readings-boundary-baseline.json` is deleted. The baseline-free checker, its tests, `check:readings`,
+and prebuild wiring remain as the permanent hard wall across `app`/`lib`/`scripts`/`packages`.
 
 ## Progress
 
@@ -94,6 +93,7 @@ current list, so it never drifts.
 | I · #230 | **admin readings viewers** (`admin/systems/[systemId]/point-readings` route + `readings-read-pg` [served BOTH that route AND `admin/point/[systemIdDotPointId]/readings`] → `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + `read1d` reuse; `readings-read-pg.ts` deleted) | 3         | 10        | 13        |
 | J · #232 | **battery-provenance writers** (`battery-provenance/recompute` blend watermark → `latestAgg5mIntervalMsForPoints`; `battery-provenance-pg` blend upsert → `insert5m writeDataQuality` + staleness probes → `latestAgg5mUpdatedAtForPoint`)                                                                                                      | 1         | 10        | 11        |
 | K · #232 | **HWS writer** (`hws/recompute` model input → `read5m`; output → `insert5m writeDataQuality`) — landed in the SAME PR as J                                                                                                                                                                                                                      | 0         | 10        | 10        |
+| L · this PR | **scripts lane drain** — 5 active tools behind DAO maintenance/PointId surfaces; 5 completed one-shot scripts retired                                                                                                                                                                                                                                  | 0         | 0         | 0         |
 
 **Trajectory (readers batched — DECIDED this session):** the 8 remaining app_lib readers need new DAO
 surface (grouped by shared surface), the 2 writers pause:
@@ -104,11 +104,9 @@ surface (grouped by shared surface), the 2 writers pause:
 - **PR-J** ✅ _(writer, batched into PR-JK)_ `battery-provenance/recompute` + `battery-provenance-pg` (+per-point `latestAgg5mIntervalMsForPoints` + windowed `latestAgg5mUpdatedAtForPoint` + `insert5m writeDataQuality`; NOTE the forecast's fleet `maxAgg5mUpdatedAt` did NOT exist — the real staleness read is per-point + `interval_end`-windowed) → 1 / 10 / **11**.
 - **PR-K** ✅ _(writer, batched into PR-JK)_ `hws/recompute` (input reuses `read5m`, output `insert5m writeDataQuality`) → 0 / 10 / **10**.
 
-**End state (REACHED in PR-JK):** `app_lib` = **0** → the `.eslintrc.json` ratchet override was deleted, so
-`no-restricted-imports` is now a hard wall for the served app. `.readings-boundary-baseline.json` is NOT
-deleted yet — its `app_lib` array is `[]` but the `scripts` lane (10 entries, the slower /
-possibly-permanent-allow track per the JSON's own `_doc`) still needs it; the file goes only once BOTH arrays
-are empty. The hard-wall milestone keys off `app_lib`, not the combined total.
+**Final end state (REACHED in PR-L):** `app_lib` = **0**, `scripts` = **0**. The baseline file is deleted.
+`no-restricted-imports` remains the editor/app feedback wall and the baseline-free prebuild checker remains
+the authoritative whole-repository wall, including dynamic imports and raw SQL in scripts/packages.
 
 > **Maintenance:** every adoption PR appends one row here (the row for the PR _itself_ — not the forecast
 > row for the next one) and deletes its baseline entry **in the same commit, as the final step before the

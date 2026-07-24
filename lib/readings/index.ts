@@ -21,3 +21,4 @@ export {
 } from "./dao";
 
 export type { SeedPreviewDatabaseOptions } from "./preview-seed";
+export type { SyncProdToDevOptions } from "./prod-dev-sync";

@@ -37,6 +37,7 @@ import {
   pointReadingsAgg1d,
 } from "./schema-internal";
 import type { SeedPreviewDatabaseOptions } from "./preview-seed";
+import type { SyncProdToDevOptions } from "./prod-dev-sync";
 
 type PgDb = ReturnType<typeof requirePlanetscaleDb>;
 type PgTx = Parameters<Parameters<PgDb["transaction"]>[0]>[0];
@@ -1482,6 +1483,12 @@ async function seedPreviewDatabase(options: SeedPreviewDatabaseOptions) {
   return run(options);
 }
 
+/** Node-only two-connection COPY sync, lazy so request paths never load pg-copy-streams. */
+async function syncProdToDev(options: SyncProdToDevOptions) {
+  const { syncProdToDev: run } = await import("./prod-dev-sync");
+  return run(options);
+}
+
 export const ReadingsDao = {
   readRaw,
   read5m,
@@ -1515,4 +1522,5 @@ export const ReadingsDao = {
   read5mRowWindowAround,
   transaction,
   seedPreviewDatabase,
+  syncProdToDev,
 };
