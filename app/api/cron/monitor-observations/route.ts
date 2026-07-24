@@ -41,6 +41,7 @@ import { cronSkipReason } from "@/lib/cron/guard";
 import { envLabel } from "@/lib/env";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
+import { DeviceRegistry } from "@/lib/registry";
 import { checkSocMeterDivergence } from "@/lib/battery-provenance/soc-meter-check";
 import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
 
@@ -276,6 +277,13 @@ export async function GET(request: NextRequest) {
       ).rows ?? []
     ).map((h) => Number((h as { id: unknown }).id));
 
+    const helperMappings = await DeviceRegistry.addrsForHandles(helperIds);
+    const helperDeviceIds = helperIds.map((id) => {
+      const mapping = helperMappings.get(id);
+      if (!mapping)
+        throw new Error(`Missing device mapping for helper system ${id}`);
+      return mapping.deviceId;
+    });
     const [res, blendLatestMs] = await Promise.all([
       db.execute(sql`
         SELECT
@@ -286,7 +294,7 @@ export async function GET(request: NextRequest) {
           (SELECT sum(energy_kwh) FROM point_readings_flow_attr_1d
              WHERE day >= to_char((now() AT TIME ZONE 'UTC') - interval '3 days','YYYY-MM-DD')) AS energy_kwh_3d
       `),
-      ReadingsDao.maxAgg5mIntervalMsForSystems(helperIds),
+      ReadingsDao.maxAgg5mIntervalMsForDevices(helperDeviceIds),
     ]);
     const r = ((res.rows ?? [])[0] ?? {}) as {
       rollup_updated: Date | null;

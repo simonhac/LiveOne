@@ -30,6 +30,7 @@ const REGION_NAMES: Record<string, string> = {
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
   const { systems } = await import("@/lib/db/planetscale/schema");
+  const { DeviceRegistry } = await import("@/lib/registry");
 
   if (!planetscaleDb) {
     console.error(
@@ -69,19 +70,23 @@ async function main() {
       continue;
     }
 
-    const [row] = await planetscaleDb
-      .insert(systems)
-      .values({
-        ownerClerkUserId: null,
-        vendorType: "openelectricity",
-        vendorSiteId: region,
-        status: "active",
-        displayName: `OpenElectricity NEM — ${name}`,
-        timezoneOffsetMin: 600, // AEST (UTC+10), no DST
-        displayTimezone: "Australia/Brisbane",
-        metadata: { network: "NEM" },
-      })
-      .returning({ id: systems.id });
+    const row = await planetscaleDb.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(systems)
+        .values({
+          ownerClerkUserId: null,
+          vendorType: "openelectricity",
+          vendorSiteId: region,
+          status: "active",
+          displayName: `OpenElectricity NEM — ${name}`,
+          timezoneOffsetMin: 600, // AEST (UTC+10), no DST
+          displayTimezone: "Australia/Brisbane",
+          metadata: { network: "NEM" },
+        })
+        .returning({ id: systems.id });
+      await DeviceRegistry.ensureDeviceForHandle(inserted.id, tx);
+      return inserted;
+    });
 
     console.log(`✓ ${region}: created system ${row.id}`);
   }

@@ -4,6 +4,7 @@ import {
   isV3CardType,
   synthCardV3,
   synthSectionV3,
+  v4CardRenderKind,
 } from "../v4-adapt";
 import type { CardNode } from "../v4";
 
@@ -38,9 +39,15 @@ describe("v4→v3 adapter classification", () => {
     ]) {
       expect(isV3CardType(t)).toBe(true);
     }
-    for (const t of ["solar", "oe-grid", "tiles"]) {
+    for (const t of ["solar", "oe-grid", "tiles", "future-card"]) {
       expect(isV3CardType(t)).toBe(false);
     }
+  });
+
+  it("routes an unknown string to the labelled-placeholder branch", () => {
+    expect(v4CardRenderKind("solar")).toBe("tile");
+    expect(v4CardRenderKind("chart")).toBe("v3");
+    expect(v4CardRenderKind("future-card")).toBe("unknown");
   });
 });
 

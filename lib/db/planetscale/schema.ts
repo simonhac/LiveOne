@@ -57,6 +57,7 @@ import {
 import { sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { DeviceConfig } from "@/lib/capabilities/config";
+import type { AreaConfig } from "@/lib/areas/types";
 
 // ============================================================================
 // Systems table - stores inverter system information
@@ -792,9 +793,8 @@ export const areas = pgTable(
     // immutable after cutover except via an explicit re-bucket op. Nullable now (v3 `createArea`
     // omits it); the cutover re-backfills residual NULLs and flips SET NOT NULL.
     dayOffsetMin: integer("day_offset_min"),
-    // Typed AreaConfig (site-level knobs: exportTariff, generatorSource, provenance). Left untyped
-    // for now — no AreaConfig type exists yet; add $type<AreaConfig>() later (type-only, no migration).
-    config: jsonb("config"),
+    // Site-level configuration (export tariff, generator source, provenance).
+    config: jsonb("config").$type<AreaConfig>(),
     // Per-Area physical location (the semantic layer's equivalent of HA's home-location
     // object; `timezoneOffsetMin`/`displayTimezone` above are its time_zone slice). Typed as
     // `AreaLocation` (lib/areas/types.ts). Used to DERIVE the NEM grid region — never stores the
@@ -844,6 +844,9 @@ export const areaBindings = pgTable(
     pointSystemId: integer("point_system_id").notNull(), // the CHILD physical system
     pointId: integer("point_id").notNull(), // (point_system_id, point_id) → point_info(system_id, id)
     ordinal: integer("ordinal").notNull(),
+    // Config-v4 selection order. Unlike ordinal (which stabilizes the legacy KV subscriber index),
+    // priority is scoped to one (area, role, metric) slot and survives cutover. Lowest wins.
+    priority: integer("priority").notNull().default(0),
     transform: text("transform"), // per-binding override; null = inherit point_info.transform
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
@@ -854,6 +857,12 @@ export const areaBindings = pgTable(
       table.metricType,
       table.pointSystemId,
       table.pointId,
+    ),
+    slotPriorityUnique: uniqueIndex("area_bindings_slot_priority_unique").on(
+      table.areaId,
+      table.role,
+      table.metricType,
+      table.priority,
     ),
     pointIdx: index("area_bindings_point_idx").on(
       table.pointSystemId,
@@ -1115,11 +1124,22 @@ export const dashboardRevisions = pgTable(
 // areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (area first, else device).
 // Frozen at cutover. device_id is bare uuid (FK → devices(id) DEFERRED — devices not minted yet);
 // area_id → areas(id) IS wired (areas is already uuid).
-export const legacyHandles = pgTable("legacy_handles", {
-  handle: integer("handle").primaryKey(), // old systems.id or areas.legacy_system_id
-  deviceId: uuid("device_id"), // FK → devices(id) DEFERRED to cutover
-  areaId: uuid("area_id").references(() => areas.id),
-});
+export const legacyHandles = pgTable(
+  "legacy_handles",
+  {
+    handle: integer("handle").primaryKey(), // old systems.id or areas.legacy_system_id
+    deviceId: uuid("device_id"), // FK → devices(id) DEFERRED to cutover
+    areaId: uuid("area_id").references(() => areas.id),
+  },
+  (table) => ({
+    deviceUnique: uniqueIndex("legacy_handles_device_unique")
+      .on(table.deviceId)
+      .where(sql`${table.deviceId} IS NOT NULL`),
+    areaUnique: uniqueIndex("legacy_handles_area_unique")
+      .on(table.areaId)
+      .where(sql`${table.areaId} IS NOT NULL`),
+  }),
+);
 
 // ============================================================================
 // Type exports

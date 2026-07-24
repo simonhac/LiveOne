@@ -21,6 +21,7 @@ import {
   learnForAllHandles,
   REHEAL_TRAILING_MS,
 } from "@/lib/battery-provenance/recompute";
+import { DeviceRegistry } from "@/lib/registry";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
@@ -138,10 +139,10 @@ export async function aggregateRange(
   );
 
   const rangeStartMs = new Date(startStr).getTime();
-  const systemIds = await ReadingsDao.systemIdsWithAgg5mSince(rangeStartMs);
+  const deviceIds = await ReadingsDao.deviceIdsWithAgg5mSince(rangeStartMs);
   queryCount++;
 
-  if (systemIds.length === 0) {
+  if (deviceIds.length === 0) {
     console.log("[Daily Points] No systems with data in the specified range");
     return {
       startDate: startStr,
@@ -155,7 +156,7 @@ export async function aggregateRange(
     };
   }
 
-  console.log(`[Daily Points] Found ${systemIds.length} systems to process`);
+  console.log(`[Daily Points] Found ${deviceIds.length} systems to process`);
 
   // Generate list of all days in range
   const allDays: CalendarDate[] = [];
@@ -173,7 +174,8 @@ export async function aggregateRange(
   let totalPoints = 0;
   let totalRowsCreated = 0;
 
-  for (const systemId of systemIds) {
+  for (const deviceId of deviceIds) {
+    const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId);
     const system = await systemsManager.getSystem(systemId);
     if (!system) {
       console.warn(

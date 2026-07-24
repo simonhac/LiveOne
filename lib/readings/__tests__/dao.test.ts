@@ -1,14 +1,24 @@
 import { describe, it, expect, beforeEach } from "@jest/globals";
-import { Point, type PointId } from "@/lib/ids";
-import type { PointAddr } from "@/lib/registry";
+import { Device, Point, type DeviceId, type PointId } from "@/lib/ids";
+import type { DeviceAddr, PointAddr } from "@/lib/registry";
 
 // Control point→address resolution: the DAO's SEAM. Tests populate `addrMap`.
 const addrMap = new Map<PointId, PointAddr>();
+const deviceById = new Map<DeviceId, DeviceAddr>();
+const deviceByHandle = new Map<number, DeviceAddr>();
 jest.mock("@/lib/registry", () => ({
   RegistryCache: {
     addrsForPoints: async (ids: PointId[]) =>
       new Map(ids.map((id) => [id, addrMap.get(id)!])),
     addrForPoint: async (id: PointId) => addrMap.get(id)!,
+  },
+  DeviceRegistry: {
+    addrsForHandles: async (handles: number[]) =>
+      new Map(handles.map((handle) => [handle, deviceByHandle.get(handle)!])),
+    addrForHandle: async (handle: number) => deviceByHandle.get(handle)!,
+    addrsForDevices: async (ids: DeviceId[]) =>
+      new Map(ids.map((id) => [id, deviceById.get(id)!])),
+    addrForDevice: async (id: DeviceId) => deviceById.get(id)!,
   },
 }));
 // The DAO falls back to requirePlanetscaleDb() only when no `exec` is passed; every test passes a fake.
@@ -132,7 +142,24 @@ function point(rid: number, systemId: number, index: number) {
   return id;
 }
 
-beforeEach(() => addrMap.clear());
+function device(handle: number): DeviceId {
+  const id = Device.generate();
+  const addr: DeviceAddr = {
+    deviceId: id,
+    uuid: Device.toUuid(id),
+    rid: handle as never,
+    handle,
+  };
+  deviceById.set(id, addr);
+  deviceByHandle.set(handle, addr);
+  return id;
+}
+
+beforeEach(() => {
+  addrMap.clear();
+  deviceById.clear();
+  deviceByHandle.clear();
+});
 
 describe("ReadingsDao writes — composite-key expansion", () => {
   it("insertRaw builds (systemId, pointId=index) rows with Date times and first-write-wins", async () => {
@@ -545,23 +572,26 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(await ReadingsDao.earliestAgg5mMs(empty.exec)).toBeNull();
   });
 
-  it("systemIdsWithAgg5mSince maps distinct system ids", async () => {
+  it("deviceIdsWithAgg5mSince maps distinct system handles to stable ids", async () => {
+    const d1 = device(1);
+    const d14 = device(14);
     const { exec } = makeFakeExec([{ systemId: 1 }, { systemId: 14 }]);
     expect(
-      await ReadingsDao.systemIdsWithAgg5mSince(1_700_000_000_000, exec),
-    ).toEqual([1, 14]);
+      await ReadingsDao.deviceIdsWithAgg5mSince(1_700_000_000_000, exec),
+    ).toEqual([d1, d14]);
   });
 
-  it("latestAgg5mIntervalMsForSystem returns the newest interval as epoch-ms, null when empty", async () => {
+  it("latestAgg5mIntervalMsForDevice returns the newest interval as epoch-ms, null when empty", async () => {
+    const d9 = device(9);
     const withRow = makeFakeExec([
       { intervalEnd: new Date(1_700_000_900_000) },
     ]);
     expect(
-      await ReadingsDao.latestAgg5mIntervalMsForSystem(9, withRow.exec),
+      await ReadingsDao.latestAgg5mIntervalMsForDevice(d9, withRow.exec),
     ).toBe(1_700_000_900_000);
     const empty = makeFakeExec([]);
     expect(
-      await ReadingsDao.latestAgg5mIntervalMsForSystem(9, empty.exec),
+      await ReadingsDao.latestAgg5mIntervalMsForDevice(d9, empty.exec),
     ).toBeNull();
   });
 
@@ -622,27 +652,29 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(await ReadingsDao.latestRawCreatedAtMs(empty.exec)).toBeNull();
   });
 
-  it("maxAgg5mIntervalMsForSystems returns max for a set; null for empty set or no rows", async () => {
+  it("maxAgg5mIntervalMsForDevices returns max for a set; null for empty set or no rows", async () => {
+    const d1 = device(1);
+    const d2 = device(2);
     const withRow = makeFakeExec([
       { intervalEnd: new Date(1_700_000_900_000) },
     ]);
     expect(
-      await ReadingsDao.maxAgg5mIntervalMsForSystems([1, 2], withRow.exec),
+      await ReadingsDao.maxAgg5mIntervalMsForDevices([d1, d2], withRow.exec),
     ).toBe(1_700_000_900_000);
     const emptyRows = makeFakeExec([]);
     expect(
-      await ReadingsDao.maxAgg5mIntervalMsForSystems([1], emptyRows.exec),
+      await ReadingsDao.maxAgg5mIntervalMsForDevices([d1], emptyRows.exec),
     ).toBeNull();
     // Empty system set short-circuits (no query issued).
     const noQuery = makeFakeExec([{ intervalEnd: new Date(1) }]);
     expect(
-      await ReadingsDao.maxAgg5mIntervalMsForSystems([], noQuery.exec),
+      await ReadingsDao.maxAgg5mIntervalMsForDevices([], noQuery.exec),
     ).toBeNull();
   });
 });
 
 describe("ReadingsDao admin views — relocated verbatim from readings-read-pg", () => {
-  it.each(["raw", "5m", "daily"])(
+  it.each(["raw", "5m", "daily"] as const)(
     "readAdminPivot returns pivot rows for source=%s (raw/5m coerce measurement_time to number, daily keeps YYYY-MM-DD)",
     async (source) => {
       const isDaily = source === "daily";
@@ -656,14 +688,22 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
         },
       ];
       const { exec } = makeFakeExec(canned);
+      const d1 = device(1);
+      const p0 = point(1, 1, 0);
       const out = await ReadingsDao.readAdminPivot(
         {
-          systemId: 1,
+          device: d1,
           source,
           cursor: isDaily ? "2026-01-15" : 1_700_000_000_000,
           direction: "older",
           limit: 100,
-          pivotColumns: "MAX(pr.value) as point_0",
+          points: [
+            {
+              point: p0,
+              outputKey: "point_0",
+              valueColumn: source === "raw" ? "value" : "avg",
+            },
+          ],
         },
         exec,
       );
@@ -675,22 +715,24 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
     },
   );
 
-  it("hasReadingsForSystem is true when SELECT 1 returns a row, false when empty", async () => {
+  it("hasReadingsForDevice is true when SELECT 1 returns a row, false when empty", async () => {
+    const d1 = device(1);
     const hit = makeFakeExec([{ "?column?": 1 }]);
-    expect(await ReadingsDao.hasReadingsForSystem(1, "agg5m", hit.exec)).toBe(
+    expect(await ReadingsDao.hasReadingsForDevice(d1, "agg5m", hit.exec)).toBe(
       true,
     );
     const miss = makeFakeExec([]);
-    expect(await ReadingsDao.hasReadingsForSystem(1, "raw", miss.exec)).toBe(
+    expect(await ReadingsDao.hasReadingsForDevice(d1, "raw", miss.exec)).toBe(
       false,
     );
   });
 
-  it("hasReadingsForSystemBeyond is true when a row exists beyond the boundary, false when none (both boundary grammars)", async () => {
+  it("hasReadingsForDeviceBeyond is true when a row exists beyond the boundary, false when none (both boundary grammars)", async () => {
+    const d1 = device(1);
     const olderHit = makeFakeExec([{ "?column?": 1 }]);
     expect(
-      await ReadingsDao.hasReadingsForSystemBeyond(
-        1,
+      await ReadingsDao.hasReadingsForDeviceBeyond(
+        d1,
         "raw",
         1_700_000_000_000,
         "older",
@@ -699,8 +741,8 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
     ).toBe(true);
     const dailyMiss = makeFakeExec([]);
     expect(
-      await ReadingsDao.hasReadingsForSystemBeyond(
-        1,
+      await ReadingsDao.hasReadingsForDeviceBeyond(
+        d1,
         "agg1d",
         "2026-01-15",
         "newer",

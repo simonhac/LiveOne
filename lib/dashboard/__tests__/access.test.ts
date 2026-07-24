@@ -1,4 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { Device, type DeviceId } from "@/lib/ids";
+import type { DeviceAddr, DeviceRid } from "@/lib/registry";
 
 // allowedSystemIds maps Area uuids → legacy_system_id, and resolveDashboardReadPoints fans out to the
 // point layer. Mock both so the set logic / union is driven deterministically (no DB).
@@ -7,6 +9,11 @@ jest.mock("@/lib/areas/resolve", () => ({
 }));
 jest.mock("@/lib/point/point-manager", () => ({
   PointManager: { getInstance: jest.fn() },
+}));
+const mockAddrsForDevices =
+  jest.fn<(ids: DeviceId[]) => Promise<Map<DeviceId, DeviceAddr>>>();
+jest.mock("@/lib/registry", () => ({
+  DeviceRegistry: { addrsForDevices: mockAddrsForDevices },
 }));
 
 import {
@@ -73,6 +80,8 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
   beforeEach(() => {
     mockGetLegacy.mockReset();
     mockGetInstance.mockReset();
+    mockAddrsForDevices.mockReset();
+    mockAddrsForDevices.mockResolvedValue(new Map());
   });
 
   /** Wire getActivePointsForSystem(handle) → the given points, keyed by handle. */
@@ -150,6 +159,35 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
       descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
     });
     expect(out).toEqual([1000002]);
+  });
+
+  it("includes a directly referenced v4 device and its points", async () => {
+    const device = Device.generate();
+    mockAddrsForDevices.mockResolvedValue(
+      new Map([
+        [
+          device,
+          {
+            deviceId: device,
+            uuid: Device.toUuid(device),
+            rid: 14 as DeviceRid,
+            handle: 14,
+          },
+        ],
+      ]),
+    );
+    withPoints({ 14: [pt(14, 0), pt(14, 1)] });
+    const out = await allowedSystemIds({
+      descriptor: descriptor([]),
+      doc: {
+        version: 4,
+        root: {
+          kind: "group",
+          children: [{ kind: "card", type: "oe-grid", device }],
+        },
+      },
+    });
+    expect(out).toEqual([14]);
   });
 });
 

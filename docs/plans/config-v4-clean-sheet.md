@@ -5,7 +5,7 @@
 >
 > **This document supersedes** — they inspired it, they do not constrain it:
 > [identity-address-split-and-labels.md](identity-address-split-and-labels.md) (absorbed: `points.id`
-> *is* the identity; labels stay a deferred seam), [info-producers-consumers.md](info-producers-consumers.md)
+> _is_ the identity; labels stay a deferred seam), [info-producers-consumers.md](info-producers-consumers.md)
 > (absorbed: per-slot deterministic resolution with priority, bind-time shape validation, config
 > producers, availability — see §4.3–4.4), and
 > [home-assistant-comparison.md](../architecture/home-assistant-comparison.md) (the HA-relationship
@@ -59,7 +59,7 @@ editor, and agents/scripts) to manipulate via APIs; inspired by Home Assistant's
    slugs); Stripe-style, chosen because typed IDs turn handle-style confusion into a parse error.
 7. **No device grants.** `user_systems` dies with no replacement. Device access = owner
    (nullable `owner_user_id`; NULL = platform-public, e.g. the OpenElectricity region devices)
-   + platform admin. **All sharing is dashboard sharing.**
+   - platform admin. **All sharing is dashboard sharing.**
 8. **Trackers generalize to `derivations`** — config that turns source points into derived output:
    samples (a derived point — the HWS-model precedent) or intervals (run periods).
 9. **Fixed-offset day-bucketing is canonical and endorsed** (§7). IANA zone is display-only.
@@ -70,11 +70,11 @@ editor, and agents/scripts) to manipulate via APIs; inspired by Home Assistant's
 Unchanged in spirit from areas-and-dashboards.md — the redesign cleans the layers, it doesn't
 re-litigate them:
 
-| Layer | Nouns | Owns |
-|---|---|---|
-| **Physical** | `devices`, `points`, `device_state` | what exists and what it measures |
-| **Semantic** | `areas`, `area_members`, `area_bindings`, `derivations` | what things mean (roles) and where they are |
-| **Presentation** | `dashboards`, `dashboard_grants`, `share_tokens` | what people see and share |
+| Layer            | Nouns                                                   | Owns                                        |
+| ---------------- | ------------------------------------------------------- | ------------------------------------------- |
+| **Physical**     | `devices`, `points`, `device_state`                     | what exists and what it measures            |
+| **Semantic**     | `areas`, `area_members`, `area_bindings`, `derivations` | what things mean (roles) and where they are |
+| **Presentation** | `dashboards`, `dashboard_grants`, `share_tokens`        | what people see and share                   |
 
 Capabilities remain **derived at runtime, never stored**. The roles registry remains **code**
 (`lib/roles/registry.ts`); its SQL projection dies, replaced by `CHECK` constraints regenerated on
@@ -143,7 +143,7 @@ points
 
 The per-device sequential `index` (the `(system_id, point_id)` address) **dies**, and with it the
 per-device index allocator and its concurrency care. The `point_uid` identity/address split plan
-is absorbed: the registry row *is* the address; the deterministic uuid *is* the identity; one
+is absorbed: the registry row _is_ the address; the deterministic uuid _is_ the identity; one
 column.
 
 ### 4.3 areas, members, bindings
@@ -192,8 +192,8 @@ area_bindings
 
 **Binding semantics become explicit and per-role** (removing today's all-or-nothing cliff):
 
-1. An area's *visible point set* is **always** the union of its members' points.
-2. An area's *role resolution* is per-role: if bindings exist for role R, they define R;
+1. An area's _visible point set_ is **always** the union of its members' points.
+2. An area's _role resolution_ is per-role: if bindings exist for role R, they define R;
    otherwise R derives from members' points by stem match (`stemMatchesRole`).
 
 This subsumes both current behaviours (fully-curated Kinkora; binding-less area-of-one) without
@@ -255,7 +255,7 @@ derived_intervals (data layer, was device_run_periods)
 
 This kills the `(logical-system-int, role)` pun in run-periods keys and gives pump runs, EV charge
 sessions, and outage detection a home without new tables. It is the structural cousin of the
-info-producers plan: producers/consumers negotiate *which* points feed a derivation; the
+info-producers plan: producers/consumers negotiate _which_ points feed a derivation; the
 derivation row is the persisted wiring.
 
 ### 4.5 device_state (was `polling_status`) — state, not config
@@ -315,7 +315,7 @@ share_tokens
 
 One semantics: **a token = read access to one dashboard's live-derived scope.** Scope is
 recomputed from the doc on every read (never snapshotted), by the type-agnostic envelope walk
-(§8.3). Legacy owner-scoped tokens: the cutover re-points each *live* token at a dashboard
+(§8.3). Legacy owner-scoped tokens: the cutover re-points each _live_ token at a dashboard
 (auto-created from the owner's area default group if none exists); dead/expired tokens drop.
 Token strings embed no IDs, so no shared URL breaks.
 
@@ -374,12 +374,12 @@ Day-bucketing keeps the deliberate fixed-offset scheme — **every day of the ye
 - DST-aware days are 23/25h twice a year; 5m→1d rollups need transition-aware bucketing;
   re-aggregation stops being idempotent; every "daily" comparison carries an asterisk.
 - The domain agrees: **AEMO settles the NEM in fixed AEST (+10) year-round** — market time has no
-  DST. Grid-aligned energy accounting argues *for* the fixed offset.
+  DST. Grid-aligned energy accounting argues _for_ the fixed offset.
 - What DST-awareness buys (wall-clock alignment of the day boundary at 2am twice a year) is worth
   nearly nothing for energy data.
 
 So: `areas.day_offset_min` is the canonical bucketing key; `areas.display_timezone` (IANA) is for
-formatting only. The wart being fixed is *duplication* (tz on both device and area), not the
+formatting only. The wart being fixed is _duplication_ (tz on both device and area), not the
 scheme. **Change policy:** `day_offset_min` is immutable after creation except via an explicit
 re-bucket operation that regenerates `agg_1d` / `flow_attr_1d` / provenance-daily for that area
 (the recompute machinery already exists); `display_timezone` is freely editable.
@@ -394,48 +394,77 @@ Card and tile **unify into one primitive**. The document is a tree of two node k
 {
   "version": 4,
   "root": {
-    "id": "n_a1b2", "kind": "group",
+    "id": "n_a1b2",
+    "kind": "group",
     "children": [
       {
-        "id": "n_c3d4", "kind": "group",
-        "area": "ar_01j9xz…",            // context binding — inherited by descendants
-        "heading": true,                  // renders the area header (this IS a v3 "section")
+        "id": "n_c3d4",
+        "kind": "group",
+        "area": "ar_01j9xz…", // context binding — inherited by descendants
+        "heading": true, // renders the area header (this IS a v3 "section")
         "children": [
           {
-            "id": "n_e5f6", "kind": "group", "direction": "row", "wrap": true,
-            "children": [                 // this row group IS a v3 "tiles" card
-              { "id": "n_g7h8", "kind": "card", "type": "solar",  "size": { "columns": 2 } },
-              { "id": "n_i9j0", "kind": "card", "type": "battery","size": { "columns": 2 } },
-              { "id": "n_k1l2", "kind": "card", "type": "oe-grid",
-                "device": "dv_01j9ab…", "size": { "columns": 2 } }
-            ]
+            "id": "n_e5f6",
+            "kind": "group",
+            "direction": "row",
+            "wrap": true,
+            "children": [
+              // this row group IS a v3 "tiles" card
+              {
+                "id": "n_g7h8",
+                "kind": "card",
+                "type": "solar",
+                "size": { "columns": 2 },
+              },
+              {
+                "id": "n_i9j0",
+                "kind": "card",
+                "type": "battery",
+                "size": { "columns": 2 },
+              },
+              {
+                "id": "n_k1l2",
+                "kind": "card",
+                "type": "oe-grid",
+                "device": "dv_01j9ab…",
+                "size": { "columns": 2 },
+              },
+            ],
           },
-          { "id": "n_m3n4", "kind": "card", "type": "chart",
-            "config": { "variant": "stacked-areas", "split": "load" } },
+          {
+            "id": "n_m3n4",
+            "kind": "card",
+            "type": "chart",
+            "config": { "variant": "stacked-areas", "split": "load" },
+          },
           { "id": "n_o5p6", "kind": "card", "type": "sankey" },
-          { "id": "n_q7r8", "kind": "card", "type": "generator-runs",
-            "device": "dv_01j9cd…" }
-        ]
-      }
-    ]
-  }
+          {
+            "id": "n_q7r8",
+            "kind": "card",
+            "type": "generator-runs",
+            "device": "dv_01j9cd…",
+          },
+        ],
+      },
+    ],
+  },
 }
 ```
 
 - **`group`**: `{id, kind:'group', area?, device?, direction?:'row'|'column', wrap?, heading?,
-  hidden?, size?, children: Node[]}` — a first-class flex layout node.
+hidden?, size?, children: Node[]}` — a first-class flex layout node.
 - **`card`**: `{id, kind:'card', type, area?, device?, hidden?, size?, config?}` — the leaf.
   A "tile" is simply a small card (`size.columns` low); the tile/card registries merge.
 - **Context inheritance:** `area`/`device` on any node is inherited downward; a card consumes the
   nearest binding (generalizing v3's `deviceSystemId ?? section-handle`). "Sections" stop being
-  special — a group bound to an area *is* a section, and renders the area header by default.
+  special — a group bound to an area _is_ a section, and renders the area header by default.
   Mixed-area composition falls out for free at any depth.
 - **Layout** = child order + optional `size: {columns: 1–12}` on a 12-column grid + group flex
   semantics. **No (x,y) coordinates** — absolute coords rot across breakpoints; order+size is
   where HA's sections view landed after years of grid-layout pain, and it makes agent edits
   trivial ("move the chart above the sankey" = one splice).
 - **Depth cap (~4) in validation.** HA's lesson: arbitrary nesting (vertical-stack/
-  horizontal-stack *cards*) is what broke their visual editor. Our groups are first-class layout
+  horizontal-stack _cards_) is what broke their visual editor. Our groups are first-class layout
   nodes with simple semantics, not cards-as-containers — but the editor should still encourage
   shallow trees; the format being recursive doesn't oblige the UX to expose infinite depth.
 
@@ -493,27 +522,27 @@ All under `/api/v4/`. Conventions: plural nouns; TypeIDs in paths; `PATCH` = par
 refreshes derived state, returns the new state — one mental model for every list); all KV/cache
 invalidation happens **inside** handlers (tools never know KV exists).
 
-| Route | Methods | Notes |
-|---|---|---|
-| `/devices` | GET | readable devices: id, name, vendor, status, capabilities |
-| `/devices/{id}` | GET, PATCH | PATCH: name/config meta |
-| `/devices/{id}/points` | GET | points with `pt_` ids + role suggestions |
-| `/areas` | GET, POST | POST `{name, slug?, members:[dv_…], location?, day_offset_min, display_timezone}` |
-| `/areas/{id}` | GET, PATCH, DELETE | GET = meta + members + bindings + capabilities in ONE payload |
-| `/areas/{id}/members` | PUT | full replace (replaces POST/DELETE pair) |
-| `/areas/{id}/bindings` | PUT, GET | full replace, kept from today (already the most tool-friendly shape); re-keyed to `pt_` ids |
-| `/areas/{id}/eligibility` | GET | unified card catalog + capabilities for the add-card gallery; **grey-out only, never render authority** |
-| `/areas/{id}/resolution` | GET | read-only per-slot resolution report: which producer fills each (role, metric), by which mode (`explicit\|auto\|config\|absent`), availability — the "what auto-connected" discoverability view (§4.3) |
-| `/areas/{id}/default-group` | GET | capability-derived starter group (was default-section) |
-| `/areas/{id}/derivations` | GET, PUT | the derivations list, full-replace |
-| `/dashboards` | GET, POST | POST `{name, slug?, seedArea?}` |
-| `/dashboards/{id}` | GET, PUT, PATCH, DELETE | §9.1; PATCH = `{name?, slug?}`; GET supports `?include=resolved` |
-| `/dashboards/{id}/validate` | POST | dry-run |
-| `/dashboards/{id}/revisions` | GET (+ restore) | cross-session undo |
-| `/dashboards/{id}/shares` | GET, POST, PATCH, DELETE | unified tokens; PATCH relabel, DELETE revoke |
-| `/dashboards/{id}/grants` | GET, PUT | full replace |
-| `/export` | GET | §9.3 |
-| `/import` | POST | `?dry_run=1` default-on |
+| Route                        | Methods                  | Notes                                                                                                                                                                                                  |
+| ---------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/devices`                   | GET                      | readable devices: id, name, vendor, status, capabilities                                                                                                                                               |
+| `/devices/{id}`              | GET, PATCH               | PATCH: name/config meta                                                                                                                                                                                |
+| `/devices/{id}/points`       | GET                      | points with `pt_` ids + role suggestions                                                                                                                                                               |
+| `/areas`                     | GET, POST                | POST `{name, slug?, members:[dv_…], location?, day_offset_min, display_timezone}`                                                                                                                      |
+| `/areas/{id}`                | GET, PATCH, DELETE       | GET = meta + members + bindings + capabilities in ONE payload                                                                                                                                          |
+| `/areas/{id}/members`        | PUT                      | full replace (replaces POST/DELETE pair)                                                                                                                                                               |
+| `/areas/{id}/bindings`       | PUT, GET                 | full replace, kept from today (already the most tool-friendly shape); re-keyed to `pt_` ids                                                                                                            |
+| `/areas/{id}/eligibility`    | GET                      | unified card catalog + capabilities for the add-card gallery; **grey-out only, never render authority**                                                                                                |
+| `/areas/{id}/resolution`     | GET                      | read-only per-slot resolution report: which producer fills each (role, metric), by which mode (`explicit\|auto\|config\|absent`), availability — the "what auto-connected" discoverability view (§4.3) |
+| `/areas/{id}/default-group`  | GET                      | capability-derived starter group (was default-section)                                                                                                                                                 |
+| `/areas/{id}/derivations`    | GET, PUT                 | the derivations list, full-replace                                                                                                                                                                     |
+| `/dashboards`                | GET, POST                | POST `{name, slug?, seedArea?}`                                                                                                                                                                        |
+| `/dashboards/{id}`           | GET, PUT, PATCH, DELETE  | §9.1; PATCH = `{name?, slug?}`; GET supports `?include=resolved`                                                                                                                                       |
+| `/dashboards/{id}/validate`  | POST                     | dry-run                                                                                                                                                                                                |
+| `/dashboards/{id}/revisions` | GET (+ restore)          | cross-session undo                                                                                                                                                                                     |
+| `/dashboards/{id}/shares`    | GET, POST, PATCH, DELETE | unified tokens; PATCH relabel, DELETE revoke                                                                                                                                                           |
+| `/dashboards/{id}/grants`    | GET, PUT                 | full replace                                                                                                                                                                                           |
+| `/export`                    | GET                      | §9.3                                                                                                                                                                                                   |
+| `/import`                    | POST                     | `?dry_run=1` default-on                                                                                                                                                                                |
 
 ### 9.3 Whole-home export/import
 
@@ -563,14 +592,17 @@ whole cutover on a prod snapshot branch · pre-create new tables empty.
 
 **Cutover window (ordered):**
 
-1. **Freeze ingest**: pause pollers/crons; drain outbox + QStash to zero (no in-flight int-keyed
-   messages).
-2. **Mint registries**: `devices` from `systems` (rid = old id); eager area-of-one for any device
-   without an area (tz/location copied up verbatim); `points` from `point_info` (id = point_uid,
+1. **Pause materialization only**: pause QStash delivery to the receiver so hot tables become static.
+   Keep pollers, crons, and the outbox relay running; they continue buffering into the outbox and
+   paused queue. Do not drain to zero.
+2. **Materialize registries**: `devices` from `systems` using the already pre-minted
+   `legacy_handles.device_id` verbatim (rid = old id; never mint a replacement); eager area-of-one
+   for any device without an area (tz/location copied up verbatim); `points` from `point_info` (id = point_uid,
    rid = new sequence); `areas` carried over with ids preserved, `day_offset_min` = old
    `timezone_offset_min`.
-3. **Freeze `legacy_handles`**: `(handle int PK, device_id uuid NULL, area_id uuid NULL)` —
-   every old `systems.id` and every `areas.legacy_system_id`. ~Hundreds of rows, permanent.
+3. **Freeze `legacy_handles`**: verify its pre-cutover coverage/uniqueness, close the writer race with
+   one final idempotent backfill, then make `(handle int PK, device_id uuid NULL, area_id uuid NULL)`
+   immutable. It covers every old `systems.id` and `areas.legacy_system_id` and remains permanent.
 4. **Rewrite hot tables**: JOIN-insert `point_readings` (~13M), agg_5m (~3M), agg_1d into
    `(point_rid, time)`-keyed twins; rename-swap; keep `_old` until validated. Sessions/outbox:
    column rename only.
@@ -582,8 +614,8 @@ whole cutover on a prod snapshot branch · pre-create new tables empty.
    under the new keyspace (`latest:area:{ar_…}` / `latest:device:{dv_…}`); warm from PG or
    accept one poll cycle cold.
 7. **Deploy the cutover build**; parity-check (row counts; per-point last value; per-area
-   point-set vs a pre-freeze snapshot; agg_1d day boundaries; flow_attr_1d sums untouched);
-   unpause pollers.
+   point-set vs a pre-pause snapshot; agg_1d day boundaries; flow_attr_1d sums untouched); resume
+   materialization so the buffered backlog replays against the rid-keyed tables.
 
 **Permanent thin shims:** `?systemId=N` resolved via `legacy_handles` (area first, else device) ·
 `/dashboard/id/{int}` 301 via `dashboards.legacy_id` · `/dashboard/{user}/{slug}` and `/device/*`
@@ -592,7 +624,7 @@ slug URLs unchanged · share-token strings unchanged.
 ## 12. Deliberate deviations from full clean-sheet (argued)
 
 1. **sessions/outbox keep an int `device_rid`.** Rewriting ~870K rows buys 12 bytes/row of
-   cosmetics on tables no API addresses. The rid *is* the sanctioned internal key — the boundary
+   cosmetics on tables no API addresses. The rid _is_ the sanctioned internal key — the boundary
    working as designed.
 2. **The doc stays one JSONB blob.** Cards are layout-coupled presentation; nothing queries them
    in SQL; normalization = two sources of truth. Granular editing is solved by revisions + PUT.
@@ -608,22 +640,22 @@ slug URLs unchanged · share-token strings unchanged.
 
 ## 13. Risks
 
-| Risk | Sev | Mitigation |
-|---|---|---|
-| Hot-table rewrite exceeds the window (13M+3M rows) | M | rehearse on snapshot; pre-copy + delta-catchup if needed; ingest freeze makes it deterministic |
-| v3→v4 doc rewrite bug breaks a live dashboard | M | round-trip validator; renderer accepts both shapes for one release; old descriptor retained until validated |
-| Wrong `primary_area_id` mis-buckets daily aggregation | M | migration copies tz verbatim into minted areas; agg_1d boundary parity check |
-| Recursive docs let users build unmaintainable trees | M | depth cap in validation; editor encourages shallow; HA's nesting lesson documented |
-| KV cold start after re-key | L | warm from PG or accept ≤1 poll cycle |
-| Binding-order changes alter sankey/series enumeration | L | assert per-area series-set equality pre/post |
-| In-flight int-keyed queue messages | L | drain-to-zero in step 1; payload schema v2 carries device uuid |
-| uuidv5 point-id collision on duplicate sites | L | v7 fallback, as today, now documented on `points.id` |
+| Risk                                                  | Sev | Mitigation                                                                                                      |
+| ----------------------------------------------------- | --- | --------------------------------------------------------------------------------------------------------------- |
+| Hot-table rewrite exceeds the window (13M+3M rows)    | M   | rehearse on snapshot; pre-copy + delta-catchup if needed; materialization pause makes it deterministic          |
+| v3→v4 doc rewrite bug breaks a live dashboard         | M   | round-trip validator; renderer accepts both shapes for one release; old descriptor retained until validated     |
+| Wrong `primary_area_id` mis-buckets daily aggregation | M   | migration copies tz verbatim into minted areas; agg_1d boundary parity check                                    |
+| Recursive docs let users build unmaintainable trees   | M   | depth cap in validation; editor encourages shallow; HA's nesting lesson documented                              |
+| KV cold start after re-key                            | L   | warm from PG or accept ≤1 poll cycle                                                                            |
+| Binding-order changes alter sankey/series enumeration | L   | assert per-area series-set equality pre/post                                                                    |
+| In-flight int-keyed queue messages                    | L   | dual-grammar receiver + frozen address map translate buffered v1 messages; payload v2 carries stable public ids |
+| uuidv5 point-id collision on duplicate sites          | L   | v7 fallback, as today, now documented on `points.id`                                                            |
 
 ## 14. Interactions with in-flight work
 
 - **areas-cleanup (A2): RESOLVED 2026-07-22 — Option A.** The proposal proceeds, so its "delete
   implied areas / stop minting areas-of-one" leg is **reversed**: `scripts/cleanup/
-  retire-implied-areas.ts` is abandoned and MUST NOT run. The cutover keeps and re-mints the
+retire-implied-areas.ts` is abandoned and MUST NOT run. The cutover keeps and re-mints the
   areas-of-one (they hold the tz/location and the uuid-keyed flow_attr_1d / provenance history). A1
   ("make area flow explicit only") already landed on `main` (#189).
 - **flow-matrix unification (`simonhac/bullard`, `FLOW_ATTR_UNIFIED`)**: complementary —

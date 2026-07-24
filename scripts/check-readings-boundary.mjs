@@ -39,6 +39,10 @@ export const HOT_SYMBOLS = new Set([
 // char, so `point_readings_flow_attr_1d` / `point_readings_flow_1d` NEVER match (base "point_readings"
 // is followed by "_flow", failing the lookahead) — those are different, out-of-scope tables.
 export const HOT_TABLE = /\bpoint_readings(_agg_5m|_agg_1d)?(?![_A-Za-z0-9])/;
+// Admin routes must pass typed PointIds/value-column enums to ReadingsDao, never construct hot-key
+// pivot SQL themselves. This catches the historical escape hatch even when it doesn't name a table.
+export const CALLER_PIVOT_SQL =
+  /\bMAX\s*\(\s*CASE\s+WHEN\s+\w+\.(?:system_id|point_id|device_rid|point_rid)\b/i;
 
 const SCAN_EXT = new Set([".ts", ".tsx", ".mjs", ".js", ".cjs", ".sql"]);
 const SKIP_DIRS = new Set([
@@ -95,7 +99,12 @@ function isSchemaModule(mod) {
 function bracesHaveHotSymbol(braces) {
   return braces
     .split(",")
-    .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
+    .map((s) =>
+      s
+        .trim()
+        .split(/\s+as\s+/)[0]
+        .trim(),
+    )
     .some((name) => HOT_SYMBOLS.has(name));
 }
 
@@ -129,11 +138,17 @@ export function fileViolations(rel, src, { labelAllow = LABEL_ALLOW } = {}) {
     const codeLines = code.split("\n");
     const srcLines = src.split("\n");
     for (let i = 0; i < codeLines.length; i++) {
-      if (HOT_TABLE.test(codeLines[i]) && !(srcLines[i] ?? "").includes(PRAGMA)) {
+      if (
+        HOT_TABLE.test(codeLines[i]) &&
+        !(srcLines[i] ?? "").includes(PRAGMA)
+      ) {
         reasons.push("references a hot table by raw-SQL name");
         break;
       }
     }
+  }
+  if (CALLER_PIVOT_SQL.test(code)) {
+    reasons.push("constructs a readings pivot projection outside the seam");
   }
 
   return reasons;
@@ -193,7 +208,10 @@ if (invokedDirectly) {
   }
 
   const repoRoot = process.cwd();
-  const offenders = findOffenders(repoRoot, roots.length ? roots : DEFAULT_ROOTS);
+  const offenders = findOffenders(
+    repoRoot,
+    roots.length ? roots : DEFAULT_ROOTS,
+  );
   const baseline = loadBaseline(baselinePath);
 
   const isNew = [...offenders.keys()].filter((p) => !baseline.has(p)).sort();

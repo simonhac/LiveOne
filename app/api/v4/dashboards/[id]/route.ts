@@ -8,7 +8,7 @@ import {
 import { validateDocV4 } from "@/lib/dashboard/v4-validate";
 import {
   loadOwnedDashboard,
-  checkDocAreasReadable,
+  checkDocRefsReadable,
   parseIfMatch,
 } from "@/lib/dashboard/v4-routes";
 
@@ -62,16 +62,20 @@ export async function PUT(
   }
   const normalized = result.normalized;
 
-  const refErr = await checkDocAreasReadable(
+  const refErr = await checkDocRefsReadable(
     normalized,
     r.dashboard.ownerClerkUserId,
   );
   if (refErr) return refErr;
 
+  const ifMatch = parseIfMatch(request.headers.get("if-match"));
+  if (ifMatch.kind === "invalid") {
+    return NextResponse.json({ error: "invalid-if-match" }, { status: 400 });
+  }
   const upd = await updateDashboardDoc(
     r.dashboard.id,
     normalized,
-    parseIfMatch(request.headers.get("if-match")),
+    ifMatch.kind === "revision" ? ifMatch.revision : undefined,
   );
   if (!upd.ok) {
     return NextResponse.json(

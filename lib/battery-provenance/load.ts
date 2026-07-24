@@ -227,7 +227,8 @@ export async function boundPoints(
         eq(pointInfo.index, areaBindings.pointId),
       ),
     )
-    .where(eq(areaBindings.areaId, areaId));
+    .where(eq(areaBindings.areaId, areaId))
+    .orderBy(asc(areaBindings.ordinal));
   return rows.map((r) => ({
     systemId: r.systemId,
     pointId: r.pointId,

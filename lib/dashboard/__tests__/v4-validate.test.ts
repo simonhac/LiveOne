@@ -78,6 +78,10 @@ describe("validateDocV4 — type layering (§8.4)", () => {
     });
     expect(r.valid).toBe(true);
     expect(r.warnings.some((w) => w.code === "unknown-card-type")).toBe(true);
+    expect(r.normalized?.root.children[0]).toMatchObject({
+      type: "future-widget",
+      config: { x: 1 },
+    });
   });
 
   it("rejects bad config on a known type (chart missing variant)", () => {

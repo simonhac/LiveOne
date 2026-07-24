@@ -10,6 +10,7 @@ import {
   userSystems as pgUserSystems,
   areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
+import { DeviceRegistry } from "@/lib/registry";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof pgSystems>;
@@ -403,29 +404,34 @@ export class SystemsManager {
     }
 
     try {
-      const [newSystem] = await pg
-        .insert(pgSystems)
-        .values({
-          ...(systemId !== undefined ? { id: systemId } : {}),
-          ownerClerkUserId: systemData.ownerClerkUserId,
-          vendorType: systemData.vendorType,
-          vendorSiteId: systemData.vendorSiteId,
-          status: systemData.status || "active",
-          displayName: systemData.displayName,
-          alias: systemData.alias,
-          model: systemData.model,
-          serial: systemData.serial,
-          ratings: systemData.ratings,
-          solarSize: systemData.solarSize,
-          batterySize: systemData.batterySize,
-          location: systemData.location,
-          metadata: systemData.metadata,
-          timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
-          displayTimezone: systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
+      const newSystem = await pg.transaction(async (tx) => {
+        const [inserted] = await tx
+          .insert(pgSystems)
+          .values({
+            ...(systemId !== undefined ? { id: systemId } : {}),
+            ownerClerkUserId: systemData.ownerClerkUserId,
+            vendorType: systemData.vendorType,
+            vendorSiteId: systemData.vendorSiteId,
+            status: systemData.status || "active",
+            displayName: systemData.displayName,
+            alias: systemData.alias,
+            model: systemData.model,
+            serial: systemData.serial,
+            ratings: systemData.ratings,
+            solarSize: systemData.solarSize,
+            batterySize: systemData.batterySize,
+            location: systemData.location,
+            metadata: systemData.metadata,
+            timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
+            displayTimezone:
+              systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .returning();
+        await DeviceRegistry.ensureDeviceForHandle(inserted.id, tx);
+        return inserted;
+      });
 
       // PG createdAt/updatedAt are Date-typed; the row is structurally the System
       // shape the caller expects.

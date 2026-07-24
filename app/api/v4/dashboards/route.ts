@@ -9,17 +9,19 @@ import {
 import { emptyDashboardV3 } from "@/lib/dashboard/v3";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { validateDocV4 } from "@/lib/dashboard/v4-validate";
-import { checkDocAreasReadable } from "@/lib/dashboard/v4-routes";
-import { buildPersistableSeedDoc } from "@/lib/dashboard/v4-seed";
+import { checkDocRefsReadable } from "@/lib/dashboard/v4-routes";
+import {
+  buildPersistableSeedDoc,
+  MissingDeviceMappingError,
+} from "@/lib/dashboard/v4-seed";
 import { findReadableArea } from "@/lib/areas/http";
 
 /**
  * config-v4 dashboards collection (§9.2), DARK. Owner-scoped.
  *   GET  → { dashboards: [...] }
  *   POST { name?, slug?, doc? | seedArea? } → 201 { id, revision }
- *        · `seedArea` (an `ar_` id) seeds the doc from that area's capability strategy (device-pin-free,
- *          cutover-safe — omits `oe-grid` until §15); mutually exclusive with `doc`. `name` defaults to
- *          the seed area's display name.
+ *        · `seedArea` (an `ar_` id) seeds the doc from that area's capability strategy using stable
+ *          pre-minted device refs; mutually exclusive with `doc`. `name` defaults to the area name.
  *        · 400 (no name and no seedArea / both seedArea and doc / malformed seedArea)
  *        · 422 (doc invalid) · 403 (doc/seedArea refs an unreadable area) · 409 (slug taken)
  * An explicit/seeded `doc` is validated + written through the same DAO the PUT uses; omit both for an
@@ -60,11 +62,22 @@ export async function POST(request: NextRequest) {
         { status: found.status },
       );
     }
-    const doc = await buildPersistableSeedDoc(
-      found.area.id,
-      found.area.legacySystemId,
-    );
-    // The seed is machine-built + device-pin-free, so validation should always pass; keep the guard.
+    let doc: DashboardV4;
+    try {
+      doc = await buildPersistableSeedDoc(
+        found.area.id,
+        found.area.legacySystemId,
+      );
+    } catch (error) {
+      if (error instanceof MissingDeviceMappingError) {
+        return NextResponse.json(
+          { error: "device-mapping-incomplete" },
+          { status: 503 },
+        );
+      }
+      throw error;
+    }
+    // The seed is machine-built from authoritative mappings, so validation should always pass.
     const result = validateDocV4(doc);
     if (!result.valid || !result.normalized) {
       return NextResponse.json(
@@ -72,7 +85,7 @@ export async function POST(request: NextRequest) {
         { status: 422 },
       );
     }
-    const refErr = await checkDocAreasReadable(result.normalized, auth.userId);
+    const refErr = await checkDocRefsReadable(result.normalized, auth.userId);
     if (refErr) return refErr;
     normalized = result.normalized;
     seededName = found.area.displayName;
@@ -84,7 +97,7 @@ export async function POST(request: NextRequest) {
         { status: 422 },
       );
     }
-    const refErr = await checkDocAreasReadable(result.normalized, auth.userId);
+    const refErr = await checkDocRefsReadable(result.normalized, auth.userId);
     if (refErr) return refErr;
     normalized = result.normalized;
   }

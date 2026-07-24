@@ -45,10 +45,10 @@ import {
 } from "@/components/dashboard/cards/shared";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import {
-  isTileViewType,
   isV3CardType,
   synthCardV3,
   synthSectionV3,
+  v4CardRenderKind,
 } from "@/lib/dashboard/v4-adapt";
 
 function areaUuidOf(id: AreaId): string | null {
@@ -59,8 +59,7 @@ function areaUuidOf(id: AreaId): string | null {
   }
 }
 
-/** Build a client-side ShellResolver from the readable-areas map + an optional device map (stubbed
- *  null until devices are minted at cutover, like the rewriter's deviceRef). */
+/** Build a client-side ShellResolver from the SSR-authorized area and stable-device maps. */
 export function clientShellResolver(
   areaById: Map<string, ReadableArea>,
   deviceById?: Map<string, ResolvedDevice>,
@@ -143,17 +142,19 @@ function CardNodeView({
   const device: ResolvedDevice | null = context.device
     ? resolver.device(context.device)
     : null;
+  if (context.device && device == null) return <DeviceUnavailable />;
   const handle = area?.handle ?? null;
-  const systemId = device?.systemId ?? handle;
+  const systemId = context.device ? (device?.systemId ?? null) : handle;
+  const renderKind = v4CardRenderKind(node.type);
 
   // Promoted tile view → a self-fetching tile cell.
-  if (isTileViewType(node.type)) {
+  if (renderKind === "tile") {
     if (systemId == null) return <TileSkeleton />;
     return <V4TileCell view={node.type} systemId={systemId} />;
   }
 
   // Known v3 card type → the unchanged v3 CardPlugin, via the v4→v3 adapter.
-  if (isV3CardType(node.type)) {
+  if (renderKind === "v3") {
     const plugin = CARD_RENDERERS[node.type as DashboardCardType];
     if (!plugin) return null;
     if (plugin.pending !== "self" && handle == null) {
@@ -197,7 +198,12 @@ function GroupNodeView({
   const area: ResolvedArea | null = nodeContext.area
     ? resolver.area(nodeContext.area)
     : null;
+  const device: ResolvedDevice | null = nodeContext.device
+    ? resolver.device(nodeContext.device)
+    : null;
   const handle = area?.handle ?? null;
+
+  if (nodeContext.device && device == null) return <DeviceUnavailable />;
 
   // A heading group bound to an area that can't be resolved (removed / not readable) → clear notice
   // (matches the v3 "Area unavailable" behaviour), but only once areas are known.
@@ -290,6 +296,21 @@ function GroupNodeView({
     );
   }
   return inner;
+}
+
+function DeviceUnavailable() {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm">
+      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
+      <div>
+        <p className="font-medium text-amber-200">Device unavailable</p>
+        <p className="mt-0.5 text-amber-200/70">
+          This item points to a device that couldn&rsquo;t be loaded — it may
+          have been removed, or you don&rsquo;t have access to it.
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function NodeView({
