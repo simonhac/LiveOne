@@ -1,7 +1,8 @@
 # Capability-cleanup — PROD rollout runbook
 
-> Branch: `simonhac/areas-dashboards-cleanup`. Status: code (P3/P4/P5 + P6 SP-0/SP-1) committed +
-> dev-verified; **nothing applied to prod yet.** This is the ordered, prod-touching runbook.
+> Historical rollout record. The capability cleanup was applied to prod in July 2026; its one-shot
+> data-hygiene scripts have since been retired. The steps below document the rollout that occurred,
+> not commands that should be run again.
 >
 > **Golden rules** (from `CLAUDE.md`): PG migrations are manual and must be applied to prod **before**
 > the dependent code deploys. `pscale backup create` before any data op / drop. For a column DROP,
@@ -48,9 +49,8 @@ from dev; the scripts' pre-flight guards will refuse if reality doesn't match, s
 (dashboard ids, area handles, test-system ids) in the scripts to prod before `--apply`.
 
 1. `pscale backup create liveone sydney`.
-2. **`scripts/cleanup/p1-data-hygiene.ts`** — un-break the multi-device site area (members + location),
-   dedup duplicate dashboards, migrate any v2 descriptors → v3, drop test systems. (Adjust the `AREA_UUID`
-   / dashboard-id / test-system constants to prod's values; keep the guards.)
+2. Run the now-retired P1 data-hygiene operation — un-break the multi-device site area (members +
+   location), dedup duplicate dashboards, migrate any v2 descriptors → v3, and drop test systems.
 3. **`scripts/cleanup/p2-backfill-membership.ts`** — area_devices = source ∪ bindings for 0-member areas.
 4. **`scripts/cleanup/p6-eager-area-of-one-backfill.ts`** — an area-of-one for every system lacking one.
 5. **Verify:** the once-broken site area renders whole-area tiles/chart/sankey; no duplicate dashboards;

@@ -29,9 +29,9 @@
  *   npx tsx --env-file=.env.local scripts/utils/rebuild-dev-kv-from-db.ts
  *   # CI: PLANETSCALE_DATABASE_URL=$LIVEONE_DEV_DATABASE_URL npx tsx scripts/utils/rebuild-dev-kv-from-db.ts
  */
-import { sql } from "drizzle-orm";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { getEnvironment } from "@/lib/env";
+import { ReadingsDao } from "@/lib/readings";
+import { RegistryCache } from "@/lib/registry";
 import {
   buildSubscriptionRegistry,
   updateLatestPointValue,
@@ -40,71 +40,7 @@ import {
   updateSystemSummary,
   updateSubscriberSummaries,
 } from "@/lib/system-summary-store";
-
-interface LatestRow {
-  system_id: number;
-  point_id: number;
-  logical_path_stem: string;
-  metric_type: string;
-  metric_unit: string;
-  display_name: string;
-  value: number | null;
-  value_str: string | null;
-  measurement_time_ms: number | string;
-  received_time_ms: number | string;
-  session_id: string | null;
-  session_label: string | null;
-}
-
-/**
- * Latest reading per active, typed point, from BOTH raw point_readings AND the 5-minute
- * aggregate — then prefer raw, falling back to agg. 5m-native sources (OpenElectricity, etc.)
- * never write raw point_readings; their "current" value lives only in point_readings_agg_5m
- * (`last` = the most recent sample in the interval, `interval_end` = its time), so a
- * point_readings-only query silently drops those whole systems. Each side is a LATERAL LIMIT 1
- * over a (system_id, point_id, time) index → one index probe per point per source, no big scans.
- */
-const LATEST_SQL = `
-  WITH candidates AS (
-    -- Raw readings (src_rank 0 → preferred when present)
-    SELECT pi.system_id, pi.id AS point_id, pi.logical_path_stem, pi.metric_type,
-           pi.metric_unit, pi.display_name,
-           r.value, r.value_str, r.measurement_time AS mt, r.received_time AS rt,
-           r.session_id, 0 AS src_rank
-    FROM point_info pi
-    JOIN LATERAL (
-      SELECT value, value_str, measurement_time, received_time, session_id
-      FROM point_readings pr
-      WHERE pr.system_id = pi.system_id AND pr.point_id = pi.id
-      ORDER BY measurement_time DESC LIMIT 1
-    ) r ON true
-    WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
-    UNION ALL
-    -- 5-minute aggregate fallback (src_rank 1 → used only when there's no raw reading)
-    SELECT pi.system_id, pi.id AS point_id, pi.logical_path_stem, pi.metric_type,
-           pi.metric_unit, pi.display_name,
-           a.last AS value, a.value_str, a.interval_end AS mt, a.interval_end AS rt,
-           a.session_id, 1 AS src_rank
-    FROM point_info pi
-    JOIN LATERAL (
-      SELECT last, value_str, interval_end, session_id
-      FROM point_readings_agg_5m ag
-      WHERE ag.system_id = pi.system_id AND ag.point_id = pi.id
-      ORDER BY interval_end DESC LIMIT 1
-    ) a ON true
-    WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
-  )
-  SELECT DISTINCT ON (c.system_id, c.point_id)
-    c.system_id, c.point_id, c.logical_path_stem, c.metric_type, c.metric_unit, c.display_name,
-    c.value, c.value_str,
-    EXTRACT(EPOCH FROM c.mt AT TIME ZONE 'UTC') * 1000 AS measurement_time_ms,
-    EXTRACT(EPOCH FROM c.rt AT TIME ZONE 'UTC') * 1000 AS received_time_ms,
-    c.session_id, s.session_label
-  FROM candidates c
-  LEFT JOIN sessions s ON s.id = c.session_id
-  WHERE c.value IS NOT NULL OR c.value_str IS NOT NULL
-  ORDER BY c.system_id, c.point_id, c.src_rank, c.mt DESC
-`;
+import { groupLatestBySystem } from "./rebuild-dev-kv-helpers";
 
 // Bounded-concurrency runner. The KV writes below are independent per point, but Upstash is a
 // REST/HTTP store so each is a round trip — sequential awaits made the whole leg ~77s. Rejects (fails
@@ -158,8 +94,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const db = requirePlanetscaleDb();
-
   // 1) Subscription registry first, so updateLatestPointValue can propagate each source
   //    point to the composite systems that subscribe to it (same as live ingest).
   console.log("Building subscription registry from area_bindings…");
@@ -167,16 +101,13 @@ async function main(): Promise<void> {
 
   // 2) Pull the latest reading per active point and rebuild the latest-value hashes.
   console.log("Reading latest values from liveone-dev…");
-  const res = await db.execute(sql.raw(LATEST_SQL));
-  const rows = ((res as { rows?: LatestRow[] }).rows ?? []) as LatestRow[];
+  const rows = await ReadingsDao.latestForActivePoints();
+  const addresses = await RegistryCache.addrsForPoints(
+    rows.map((row) => row.point),
+  );
 
   // Group by system so we can write each system's summary once after its points.
-  const bySystem = new Map<number, LatestRow[]>();
-  for (const row of rows) {
-    const list = bySystem.get(row.system_id) ?? [];
-    list.push(row);
-    bySystem.set(row.system_id, list);
-  }
+  const bySystem = groupLatestBySystem(rows, addresses);
 
   // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
   // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
@@ -193,27 +124,28 @@ async function main(): Promise<void> {
     let maxMeasurementTimeMs = 0;
 
     for (const row of systemRows) {
-      const logicalPath = `${row.logical_path_stem}/${row.metric_type}`;
+      const address = addresses.get(row.point)!;
+      const logicalPath = `${row.logicalPathStem}/${row.metricType}`;
       const cacheValue: number | string | null =
-        row.value ?? row.value_str ?? null;
+        row.value ?? row.valueStr ?? null;
       if (cacheValue === null) continue;
 
-      const measurementTimeMs = Number(row.measurement_time_ms);
-      const receivedTimeMs = Number(row.received_time_ms);
+      const measurementTimeMs = row.measurementTimeMs;
+      const receivedTimeMs = row.receivedTimeMs;
 
       pointTasks.push(() =>
         updateLatestPointValue(
           systemId,
-          row.point_id,
+          address.index,
           logicalPath,
           cacheValue,
           measurementTimeMs,
           receivedTimeMs,
-          row.metric_unit,
-          row.display_name,
+          row.metricUnit,
+          row.displayName,
           undefined, // sourceSystemName (deprecated / unused)
-          row.session_id ?? undefined,
-          row.session_label ?? undefined,
+          row.sessionId ?? undefined,
+          row.sessionLabel ?? undefined,
         ),
       );
 

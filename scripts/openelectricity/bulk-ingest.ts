@@ -24,7 +24,8 @@
 import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
-import { and, eq, sql } from "drizzle-orm";
+import { Point, type PointId } from "@/lib/ids";
+import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
 import {
   OpenElectricityApiError,
   fetchMarketData,
@@ -43,27 +44,12 @@ import type {
   OeInterval,
 } from "@/lib/vendors/openelectricity/types";
 import { parseDateISO, calendarDateToUnixRange } from "@/lib/date-utils";
+import { toAgg5mInsert } from "./bulk-ingest-helpers";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AEST_OFFSET_MIN = 600;
 const MAX_FETCH_ATTEMPTS = 5;
-
-interface Agg5mRow {
-  systemId: number;
-  pointId: number;
-  intervalEnd: Date;
-  sessionId: string | null;
-  avg: number | null;
-  min: number | null;
-  max: number | null;
-  last: number | null;
-  delta: number | null;
-  valueStr: string | null;
-  sampleCount: number;
-  errorCount: number;
-  dataQuality: string | null;
-}
 
 interface Options {
   systemId: number;
@@ -213,7 +199,6 @@ async function main() {
     process.exit(1);
   }
   const db = planetscaleDb;
-  const { pointReadingsAgg5m } = await import("@/lib/db/planetscale/schema");
   const { PointManager } = await import("@/lib/point/point-manager");
   const { aggregateRange } = await import("@/lib/aggregation/daily-points");
 
@@ -253,7 +238,12 @@ async function main() {
   );
   const indexByTail = new Map<
     string,
-    { index: number; metricType: string; transform: string | null }
+    {
+      point: PointId;
+      index: number;
+      metricType: string;
+      transform: string | null;
+    }
   >();
   for (const meta of OPENELECTRICITY_POINTS) {
     let p = pointByTail.get(meta.physicalPathTail);
@@ -273,28 +263,21 @@ async function main() {
       process.exit(1);
     }
     indexByTail.set(meta.physicalPathTail, {
+      point: Point.encode(p.pointUid),
       index: p.index,
       metricType: p.metricType,
       transform: p.transform,
     });
   }
-  const pointIndices = [...indexByTail.values()].map((p) => p.index);
+  const pointIds = [...indexByTail.values()].map((p) => p.point);
 
   // --- Resume: start from the min(max(interval_end)) across the 3 points ---
   let effectiveStartMs = floor5(opts.dateStart.getTime());
   if (opts.resume === "auto") {
+    const latest = await ReadingsDao.latestAgg5mIntervalMsForPoints(pointIds);
     let resumeFloor: number | null = null;
-    for (const idx of pointIndices) {
-      const rows = await db
-        .select({ m: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})` })
-        .from(pointReadingsAgg5m)
-        .where(
-          and(
-            eq(pointReadingsAgg5m.systemId, opts.systemId),
-            eq(pointReadingsAgg5m.pointId, idx),
-          ),
-        );
-      const maxMs = rows[0]?.m ? new Date(rows[0].m).getTime() : null;
+    for (const point of pointIds) {
+      const maxMs = latest.get(point) ?? null;
       resumeFloor =
         maxMs == null
           ? resumeFloor
@@ -312,72 +295,18 @@ async function main() {
   const endMs = opts.dateEnd.getTime();
 
   // --- Value→column routing (mirrors PointManager.insertPointReadingsAgg5m) ---
-  function rowFor(reading: {
-    pointMetadata: { physicalPathTail: string };
-    rawValue: unknown;
-    intervalEndMs: number;
-  }): Agg5mRow | null {
-    const point = indexByTail.get(reading.pointMetadata.physicalPathTail);
-    if (!point) return null;
-    const num = reading.rawValue == null ? null : Number(reading.rawValue);
-    const isError = num == null || Number.isNaN(num);
-    const value = isError ? null : (num as number);
-    const isEnergyCounter =
-      point.metricType === "energy" && point.transform === "d";
-    const isEnergyDelta =
-      point.metricType === "energy" && point.transform !== "d";
-    const scalar =
-      !isError && !isEnergyCounter && !isEnergyDelta ? value : null;
-    return {
-      systemId: opts.systemId,
-      pointId: point.index,
-      intervalEnd: new Date(reading.intervalEndMs),
-      sessionId: null,
-      avg: scalar,
-      min: scalar,
-      max: scalar,
-      last: isEnergyCounter ? value : isEnergyDelta ? null : scalar,
-      delta: isEnergyDelta ? value : null,
-      valueStr: null,
-      sampleCount: isError ? 0 : 1,
-      errorCount: isError ? 1 : 0,
-      dataQuality: "actual",
-    };
-  }
-
-  async function flush(rows: Agg5mRow[]): Promise<number> {
+  async function flush(rows: Agg5mInsert[]): Promise<number> {
     if (rows.length === 0 || opts.dryRun) return rows.length;
-    const ins = db.insert(pointReadingsAgg5m).values(rows);
-    const res = await (
-      opts.overwrite
-        ? ins.onConflictDoUpdate({
-            target: [
-              pointReadingsAgg5m.systemId,
-              pointReadingsAgg5m.pointId,
-              pointReadingsAgg5m.intervalEnd,
-            ],
-            set: {
-              avg: sql`excluded.avg`,
-              min: sql`excluded.min`,
-              max: sql`excluded.max`,
-              last: sql`excluded.last`,
-              delta: sql`excluded.delta`,
-              valueStr: sql`excluded.value_str`,
-              sampleCount: sql`excluded.sample_count`,
-              errorCount: sql`excluded.error_count`,
-              dataQuality: sql`excluded.data_quality`,
-              updatedAt: sql`now()`,
-            },
-          })
-        : ins.onConflictDoNothing()
-    ).returning({ systemId: pointReadingsAgg5m.systemId });
-    return res.length;
+    const res = await ReadingsDao.insert5m(rows, {
+      upsert: opts.overwrite,
+    });
+    return res.written;
   }
 
   // --- Walk windows, fetch both endpoints, map, batch-upsert ---
   const basis = getBasisMetric(opts.interval);
   const stepMs = opts.interval === "5m" ? FIVE_MIN_MS : DAY_MS;
-  let buffer: Agg5mRow[] = [];
+  let buffer: Agg5mInsert[] = [];
   let totalMapped = 0;
   let totalWritten = 0;
   let windows = 0;
@@ -465,7 +394,7 @@ async function main() {
   for (const readings of perWindow) {
     totalMapped += readings.length;
     for (const r of readings) {
-      const row = rowFor(r);
+      const row = toAgg5mInsert(r, indexByTail);
       if (row) buffer.push(row);
     }
   }
@@ -490,32 +419,16 @@ async function main() {
 
   // --- Verify (indexed MIN/MAX, never COUNT(*)) ---
   if (opts.verify) {
-    console.log("\nCoverage (point_readings_agg_5m):");
+    console.log("\nCoverage (agg5m):");
+    const coverage = await ReadingsDao.agg5mCoverageForPoints(pointIds);
     for (const [tail, point] of indexByTail) {
-      const rows = await db
-        .select({
-          mn: sql<Date | null>`min(${pointReadingsAgg5m.intervalEnd})`,
-          mx: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})`,
-        })
-        .from(pointReadingsAgg5m)
-        .where(
-          and(
-            eq(pointReadingsAgg5m.systemId, opts.systemId),
-            eq(pointReadingsAgg5m.pointId, point.index),
-          ),
-        );
-      const mn = rows[0]?.mn ? new Date(rows[0].mn).toISOString() : "—";
-      const mx = rows[0]?.mx ? new Date(rows[0].mx).toISOString() : "—";
+      const bounds = coverage.get(point.point);
+      const mn = bounds ? new Date(bounds.firstMs).toISOString() : "—";
+      const mx = bounds ? new Date(bounds.lastMs).toISOString() : "—";
       console.log(`  ${tail.padEnd(26)} idx=${point.index}  ${mn} … ${mx}`);
     }
-    const est: any = await db.execute(
-      sql.raw(
-        "SELECT n_live_tup FROM pg_stat_user_tables WHERE relname='point_readings_agg_5m'",
-      ),
-    );
-    const n = (est.rows ?? est)[0]?.n_live_tup;
-    if (n != null)
-      console.log(`  ~rows in point_readings_agg_5m (planner est): ${n}`);
+    const n = await ReadingsDao.approximateRowCount("agg5m");
+    if (n != null) console.log(`  ~rows in agg5m (planner est): ${n}`);
   }
 
   process.exit(0);

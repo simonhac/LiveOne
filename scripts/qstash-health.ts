@@ -8,6 +8,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 process.env.TZ = "UTC";
 import { Pool } from "pg";
+import { ReadingsDao } from "@/lib/readings";
 
 async function main() {
   const { qstash, OBSERVATIONS_QUEUE_NAME } = await import("@/lib/qstash");
@@ -60,18 +61,22 @@ async function main() {
     max: 2,
   });
   pool.on("error", () => {});
-  const res = await pool.query(`
-    SELECT
-      (SELECT count(*)::int FROM sessions WHERE created_at >= now() - interval '1 hour' AND cause='CRON' AND successful=true) AS sessions_1h,
-      (SELECT count(*)::int FROM sessions WHERE created_at >= now() - interval '1 hour' AND cause='CRON' AND successful=true AND response IS NOT NULL) AS with_response_1h,
-      (SELECT count(*)::int FROM point_readings WHERE created_at >= now() - interval '1 hour') AS raw_1h,
-      (SELECT max(created_at) FROM point_readings) AS last_raw_at
-  `);
+  const [res, raw] = await Promise.all([
+    pool.query(`
+      SELECT
+        count(*)::int AS sessions_1h,
+        count(*) FILTER (WHERE response IS NOT NULL)::int AS with_response_1h
+      FROM sessions
+      WHERE created_at >= now() - interval '1 hour'
+        AND cause='CRON' AND successful=true
+    `),
+    ReadingsDao.rawLandingHealth(60 * 60 * 1000),
+  ]);
   const r = res.rows[0];
   const presence =
     r.sessions_1h > 0 ? r.with_response_1h / r.sessions_1h : null;
-  const ageMin = r.last_raw_at
-    ? Math.round((Date.now() - new Date(r.last_raw_at).getTime()) / 60000)
+  const ageMin = raw.latestCreatedAtMs
+    ? Math.round((Date.now() - raw.latestCreatedAtMs) / 60000)
     : null;
   console.log(line);
   console.log("PG mirror health (last hour):");
@@ -79,7 +84,7 @@ async function main() {
     `  CRON sessions=${r.sessions_1h}  with response=${r.with_response_1h}  presence=${presence == null ? "n/a" : (presence * 100).toFixed(0) + "%"} (alert if <80%)`,
   );
   console.log(
-    `  raw rows last 1h=${r.raw_1h}  last raw at=${r.last_raw_at ? new Date(r.last_raw_at).toISOString() : "—"}  age=${ageMin == null ? "n/a" : ageMin + " min"} (alert if >15)`,
+    `  raw rows last 1h=${raw.count}  last raw at=${raw.latestCreatedAtMs ? new Date(raw.latestCreatedAtMs).toISOString() : "—"}  age=${ageMin == null ? "n/a" : ageMin + " min"} (alert if >15)`,
   );
 
   // Outbox relay backlog/age (Phase 4). Separate query so a not-yet-migrated

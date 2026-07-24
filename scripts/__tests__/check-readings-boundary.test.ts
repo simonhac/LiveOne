@@ -33,13 +33,13 @@ function run(roots: string[]) {
 }
 
 describe("check-readings-boundary", () => {
-  it("passes over the live tree against the committed baseline (the real prebuild gate)", () => {
-    // Default roots + real baseline (no --no-baseline): must exit 0.
+  it("passes over the live tree with zero exceptions (the real prebuild gate)", () => {
+    // Default roots, no baseline file: every offender would be new and must fail.
     const out = execFileSync("node", [script], {
       cwd: repoRoot,
       stdio: "pipe",
     }).toString();
-    expect(out).toMatch(/readings boundary green/);
+    expect(out).toMatch(/readings boundary green — zero exceptions/);
   });
 
   describe("detection (temp fixtures, empty baseline)", () => {
