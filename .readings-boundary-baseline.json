@@ -2,10 +2,7 @@
   "_doc": "config-v4 Phase 3 readings-seam ratchet (scripts/check-readings-boundary.mjs). Files here MAY touch point_readings/_agg_5m/_agg_1d because they predate the DAO. Remove entries as callers migrate or retire (the STALE check forces it); a NEW file is hard-failed. End state: delete this file while retaining the baseline-free hard guard.",
   "app_lib": [],
   "scripts": [
-    "scripts/openelectricity/bulk-ingest.ts",
-    "scripts/qstash-health.ts",
     "scripts/seed-preview-db.ts",
-    "scripts/utils/rebuild-dev-kv-from-db.ts",
     "scripts/utils/sync-prod-to-dev-db.ts"
   ]
 }

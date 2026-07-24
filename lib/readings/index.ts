@@ -15,4 +15,7 @@ export {
   type RawInsert,
   type Agg5mInsert,
   type Agg1dUpsert,
+  type ActivePointLatest,
+  type Agg5mCoverage,
+  type ReadingStore,
 } from "./dao";

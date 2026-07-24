@@ -30,7 +30,7 @@ import {
 } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { DeviceRegistry, RegistryCache, type PointAddr } from "@/lib/registry";
-import type { DeviceId, PointId } from "@/lib/ids";
+import { Point, type DeviceId, type PointId } from "@/lib/ids";
 import {
   pointReadings,
   pointReadingsAgg5m,
@@ -127,6 +127,26 @@ export interface Agg1dUpsert {
   delta: number | null;
   sampleCount: number;
   errorCount: number;
+}
+
+/** Latest cache-worthy value for one active, typed point. Raw wins when both stores have data. */
+export interface ActivePointLatest {
+  point: PointId;
+  logicalPathStem: string;
+  metricType: string;
+  metricUnit: string;
+  displayName: string;
+  value: number | null;
+  valueStr: string | null;
+  measurementTimeMs: number;
+  receivedTimeMs: number;
+  sessionId: string | null;
+  sessionLabel: string | null;
+}
+
+export interface Agg5mCoverage {
+  firstMs: number;
+  lastMs: number;
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────────────────────────────
@@ -447,6 +467,140 @@ async function latest5mForPoints(
     }
   }
   return out;
+}
+
+/**
+ * Latest cache-worthy value for every active point with a logical path. Raw is preferred whenever
+ * present; agg5m is the fallback for 5m-native vendors. The LATERAL probes reproduce the former
+ * dev-KV rebuild query exactly while returning the public PointId.
+ */
+async function latestForActivePoints(
+  exec?: ReadingsExec,
+): Promise<ActivePointLatest[]> {
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: both composite-key LATERAL probes become point_rid probes in Phase 8.
+  const res = await db.execute(
+    sql.raw(`
+    WITH candidates AS (
+      SELECT pi.point_uid, pi.logical_path_stem, pi.metric_type, pi.metric_unit, pi.display_name,
+             r.value, r.value_str, r.measurement_time AS mt, r.received_time AS rt,
+             r.session_id, 0 AS src_rank
+      FROM point_info pi
+      JOIN LATERAL (
+        SELECT value, value_str, measurement_time, received_time, session_id
+        FROM point_readings pr
+        WHERE pr.system_id = pi.system_id AND pr.point_id = pi.id
+        ORDER BY measurement_time DESC LIMIT 1
+      ) r ON true
+      WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
+      UNION ALL
+      SELECT pi.point_uid, pi.logical_path_stem, pi.metric_type, pi.metric_unit, pi.display_name,
+             a.last AS value, a.value_str, a.interval_end AS mt, a.interval_end AS rt,
+             a.session_id, 1 AS src_rank
+      FROM point_info pi
+      JOIN LATERAL (
+        SELECT last, value_str, interval_end, session_id
+        FROM point_readings_agg_5m ag
+        WHERE ag.system_id = pi.system_id AND ag.point_id = pi.id
+        ORDER BY interval_end DESC LIMIT 1
+      ) a ON true
+      WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
+    )
+    SELECT DISTINCT ON (c.point_uid)
+      c.point_uid, c.logical_path_stem, c.metric_type, c.metric_unit, c.display_name,
+      c.value, c.value_str,
+      EXTRACT(EPOCH FROM c.mt AT TIME ZONE 'UTC') * 1000 AS measurement_time_ms,
+      EXTRACT(EPOCH FROM c.rt AT TIME ZONE 'UTC') * 1000 AS received_time_ms,
+      c.session_id, s.session_label
+    FROM candidates c
+    LEFT JOIN sessions s ON s.id = c.session_id
+    WHERE c.value IS NOT NULL OR c.value_str IS NOT NULL
+    ORDER BY c.point_uid, c.src_rank, c.mt DESC
+  `),
+  );
+  type Row = {
+    point_uid: string;
+    logical_path_stem: string;
+    metric_type: string;
+    metric_unit: string;
+    display_name: string;
+    value: number | null;
+    value_str: string | null;
+    measurement_time_ms: number | string;
+    received_time_ms: number | string;
+    session_id: string | null;
+    session_label: string | null;
+  };
+  return ((res as unknown as { rows?: Row[] }).rows ?? []).map((r) => ({
+    point: Point.encode(r.point_uid),
+    logicalPathStem: r.logical_path_stem,
+    metricType: r.metric_type,
+    metricUnit: r.metric_unit,
+    displayName: r.display_name,
+    value: r.value,
+    valueStr: r.value_str,
+    measurementTimeMs: Number(r.measurement_time_ms),
+    receivedTimeMs: Number(r.received_time_ms),
+    sessionId: r.session_id,
+    sessionLabel: r.session_label,
+  }));
+}
+
+/** Indexed MIN/MAX coverage for a set of agg5m points. Missing points map to null. */
+async function agg5mCoverageForPoints(
+  points: PointId[],
+  exec?: ReadingsExec,
+): Promise<Map<PointId, Agg5mCoverage | null>> {
+  const out = new Map<PointId, Agg5mCoverage | null>(
+    points.map((point) => [point, null]),
+  );
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  const { bySystem, rev } = groupBySystem(
+    await RegistryCache.addrsForPoints(points),
+  );
+  for (const [systemId, indexes] of bySystem) {
+    // SEAM: composite-key WHERE/GROUP BY becomes point_rid in Phase 8.
+    const rows = await db
+      .select({
+        pointId: pointReadingsAgg5m.pointId,
+        first: sql<Date | null>`min(${pointReadingsAgg5m.intervalEnd})`,
+        last: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})`,
+      })
+      .from(pointReadingsAgg5m)
+      .where(
+        and(
+          eq(pointReadingsAgg5m.systemId, systemId),
+          inArray(pointReadingsAgg5m.pointId, indexes),
+        ),
+      )
+      .groupBy(pointReadingsAgg5m.pointId);
+    for (const row of rows) {
+      const point = rev.get(addrKey(systemId, row.pointId));
+      if (!point || row.first == null || row.last == null) continue;
+      out.set(point, {
+        firstMs: new Date(row.first as string | number | Date).getTime(),
+        lastMs: new Date(row.last as string | number | Date).getTime(),
+      });
+    }
+  }
+  return out;
+}
+
+/** PostgreSQL planner estimate for one hot store; operational display only. */
+async function approximateRowCount(
+  store: ReadingStore,
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  const table = STORE_TABLE[store];
+  const res = await db.execute(sql`
+    SELECT n_live_tup
+    FROM pg_stat_user_tables
+    WHERE schemaname = 'public' AND relname = ${table}
+  `);
+  const row = (res.rows?.[0] ?? null) as { n_live_tup?: unknown } | null;
+  return row?.n_live_tup == null ? null : Number(row.n_live_tup);
 }
 
 /**
@@ -934,6 +1088,30 @@ async function latestRawCreatedAtMs(
   return row ? row.createdAt.getTime() : null;
 }
 
+/** Fleet raw landing count over a DB-clock-relative lookback plus the all-time latest arrival. */
+async function rawLandingHealth(
+  lookbackMs: number,
+  exec?: ReadingsExec,
+): Promise<{ count: number; latestCreatedAtMs: number | null }> {
+  const db = exec ?? requirePlanetscaleDb();
+  const res = await db.execute(sql`
+    SELECT
+      count(*) FILTER (
+        WHERE created_at >= now() - (${lookbackMs} || ' milliseconds')::interval
+      )::int AS n,
+      max(created_at) AS latest
+    FROM ${pointReadings}
+  `);
+  const row = (res.rows?.[0] ?? {}) as { n?: unknown; latest?: unknown };
+  return {
+    count: Number(row.n ?? 0),
+    latestCreatedAtMs:
+      row.latest == null
+        ? null
+        : new Date(row.latest as string | number | Date).getTime(),
+  };
+}
+
 /**
  * Latest `agg_5m` `interval_end` (epoch-ms UTC) across a SET of devices (systems), or null when the set
  * is empty or has no rows (the battery-provenance blend-freshness probe — caller passes the helper-vendor
@@ -1303,6 +1481,9 @@ export const ReadingsDao = {
   read1d,
   latestForPoints,
   latest5mForPoints,
+  latestForActivePoints,
+  agg5mCoverageForPoints,
+  approximateRowCount,
   latestAgg5mIntervalMsForPoints,
   latestAgg5mUpdatedAtForPoint,
   countAgg5mByLocalDay,
@@ -1317,6 +1498,7 @@ export const ReadingsDao = {
   createdAtHistogramSince,
   distinctSystemsByRawCreatedAtSince,
   latestRawCreatedAtMs,
+  rawLandingHealth,
   maxAgg5mIntervalMsForDevices,
   delete1dRange,
   readAdminPivot,

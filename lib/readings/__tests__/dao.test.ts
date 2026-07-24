@@ -546,6 +546,82 @@ describe("upperBoundOp — read-window upper-bound operator", () => {
   });
 });
 
+describe("ReadingsDao operational readers", () => {
+  it("maps active latest rows to PointIds and epoch-ms", async () => {
+    const id = Point.generate();
+    const { exec } = makeFakeExec([
+      {
+        point_uid: Point.toUuid(id),
+        logical_path_stem: "source.grid",
+        metric_type: "power",
+        metric_unit: "W",
+        display_name: "Grid",
+        value: 42,
+        value_str: null,
+        measurement_time_ms: "1700000000000",
+        received_time_ms: "1700000001000",
+        session_id: "session-1",
+        session_label: "poll",
+      },
+    ]);
+
+    await expect(ReadingsDao.latestForActivePoints(exec)).resolves.toEqual([
+      {
+        point: id,
+        logicalPathStem: "source.grid",
+        metricType: "power",
+        metricUnit: "W",
+        displayName: "Grid",
+        value: 42,
+        valueStr: null,
+        measurementTimeMs: 1_700_000_000_000,
+        receivedTimeMs: 1_700_000_001_000,
+        sessionId: "session-1",
+        sessionLabel: "poll",
+      },
+    ]);
+  });
+
+  it("returns per-point agg5m coverage and null for missing points", async () => {
+    const p1 = point(11, 1, 3);
+    const p2 = point(12, 1, 4);
+    const { exec } = makeFakeExec([
+      {
+        pointId: 3,
+        first: new Date("2026-01-01T00:00:00Z"),
+        last: new Date("2026-01-02T00:00:00Z"),
+      },
+    ]);
+
+    const out = await ReadingsDao.agg5mCoverageForPoints([p1, p2], exec);
+    expect(out.get(p1)).toEqual({
+      firstMs: Date.parse("2026-01-01T00:00:00Z"),
+      lastMs: Date.parse("2026-01-02T00:00:00Z"),
+    });
+    expect(out.get(p2)).toBeNull();
+    await expect(ReadingsDao.agg5mCoverageForPoints([], exec)).resolves.toEqual(
+      new Map(),
+    );
+  });
+
+  it("returns planner estimates and DB-relative raw landing health", async () => {
+    const estimate = makeFakeExec([{ n_live_tup: "3000000" }]);
+    await expect(
+      ReadingsDao.approximateRowCount("agg5m", estimate.exec),
+    ).resolves.toBe(3_000_000);
+
+    const health = makeFakeExec([
+      { n: "17", latest: new Date("2026-01-02T03:04:05Z") },
+    ]);
+    await expect(
+      ReadingsDao.rawLandingHealth(3_600_000, health.exec),
+    ).resolves.toEqual({
+      count: 17,
+      latestCreatedAtMs: Date.parse("2026-01-02T03:04:05Z"),
+    });
+  });
+});
+
 describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
   it("delete1dRange deletes agg_1d by day range and returns the deleted row count", async () => {
     // returning() resolves one row per deleted row → deleted === selectRows.length.
