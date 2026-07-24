@@ -72,6 +72,9 @@ type FullTable = {
   mode: "full";
   onConflict: "update" | "nothing";
   conflictCols?: string[]; // natural unique key when the PK is a divergent surrogate
+  // Additional unique keys that can identify a different dev row than conflictCols.
+  // Delete only those colliding rows before the upsert so staged prod config wins.
+  replaceConflicts?: string[][];
   excludeCols?: string[]; // drop the surrogate id so dev keeps/assigns its own
   // Exact by-PK mirror: copy the prod serial `id` (restore-aligned), upsert on the PK, and DELETE
   // dev rows whose id is absent from prod. The ONLY correct keying when no single unique index is a
@@ -187,6 +190,10 @@ const FULL: FullTable[] = [
       "point_system_id",
       "point_id",
     ],
+    // Phase 4 added a second identity for a binding's ordered slot. A point can
+    // move priority while dev still has another point in that slot; ON CONFLICT
+    // can nominate only one unique index, so clear the other collision first.
+    replaceConflicts: [["area_id", "role", "metric_type", "priority"]],
     excludeCols: ["id"],
   },
   // Run-tracking config. Upsert by the natural (system_id, role) key and exclude the surrogate
@@ -487,6 +494,7 @@ export async function syncTable(
        ON CONFLICT (${conflictCols.join(", ")}) ${action};`;
 
   const idDrift = t.mode === "full" ? t.idDrift : undefined;
+  const replaceConflicts = t.mode === "full" ? t.replaceConflicts : undefined;
 
   // 3. Upsert into dev. The transaction paths ROLLBACK before rethrowing so a failure
   // never leaves the persistent dev connection stuck in an aborted transaction.
@@ -542,6 +550,26 @@ export async function syncTable(
        ${childDeletes}
        DELETE FROM public.${t.name} d USING _drift b
          WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};
+       ${upsert}
+       COMMIT;
+       DROP TABLE sync_staging.${t.name};`,
+      );
+    } else if (replaceConflicts?.length) {
+      const match = replaceConflicts
+        .map(
+          (key) => "(" + key.map((c) => `d.${c} = s.${c}`).join(" AND ") + ")",
+        )
+        .join(" OR ");
+      const sameConflict = conflictCols
+        .map((c) => `d.${c} = s.${c}`)
+        .join(" AND ");
+      // Keep dev-only config generally, but an incoming prod row must own every
+      // unique key it carries. Do the collision cleanup and upsert atomically.
+      await dev.query(
+        `BEGIN;
+       DELETE FROM public.${t.name} d
+         USING sync_staging.${t.name} s
+         WHERE (${match}) AND NOT (${sameConflict});
        ${upsert}
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,

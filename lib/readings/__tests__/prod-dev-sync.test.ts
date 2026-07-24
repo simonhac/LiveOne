@@ -137,6 +137,55 @@ describe("prod→dev readings transfer", () => {
     );
   });
 
+  it("reconciles area-binding slot collisions atomically before upsert", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "area_bindings",
+    )!;
+    expect(table).toMatchObject({
+      conflictCols: [
+        "area_id",
+        "role",
+        "metric_type",
+        "point_system_id",
+        "point_id",
+      ],
+      replaceConflicts: [["area_id", "role", "metric_type", "priority"]],
+    });
+
+    const { prod, dev, devSql } = copyClients();
+    await syncTable(
+      prod,
+      dev,
+      table,
+      new Map([
+        [
+          "area_bindings",
+          [
+            "id",
+            "area_id",
+            "role",
+            "metric_type",
+            "point_system_id",
+            "point_id",
+            "priority",
+          ],
+        ],
+      ]),
+      new Map([["area_bindings", ["id"]]]),
+    );
+
+    const reconciliation = devSql.at(-1)!;
+    expect(reconciliation).toContain("BEGIN;");
+    expect(reconciliation).toContain("DELETE FROM public.area_bindings d");
+    expect(reconciliation).toContain(
+      "d.area_id = s.area_id AND d.role = s.role AND d.metric_type = s.metric_type AND d.priority = s.priority",
+    );
+    expect(reconciliation).toContain(
+      "ON CONFLICT (area_id, role, metric_type, point_system_id, point_id) DO UPDATE",
+    );
+    expect(reconciliation).toContain("COMMIT;");
+  });
+
   it("rolls back a failed upsert and keeps hot child deletes in point-info drift handling", async () => {
     const raw = prodDevSyncManifest().find(
       (entry) => entry.name === "point_readings",
