@@ -52,6 +52,7 @@ import {
   timestamp,
   date,
   pgSequence,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -661,6 +662,14 @@ export const dashboards = pgTable(
     displayName: text("display_name"),
     alias: text("alias"), // owner-unique shortname for /dashboard/{user}/{alias}; null = unnamed
     descriptor: jsonb("descriptor").notNull(),
+    // --- config-v4 dark columns (Phase 4, migration 0032; unread by the v3 app) ---
+    // The v4 node-tree document (clean-sheet §8). Coexists with `descriptor` (v3) through the
+    // dual-render window; `descriptor` is dropped at cutover. Nullable now (v3 dashboard creation
+    // omits it); populated by the dark v3→v4 rewriter, SET NOT NULL at cutover.
+    doc: jsonb("doc"),
+    // Whole-doc revision counter; bumped by the Phase-6 /api/v4 PUT. DEFAULT 1 so the untouched v3
+    // insert path keeps working.
+    revision: integer("revision").notNull().default(1),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
@@ -778,6 +787,14 @@ export const areas = pgTable(
     alias: text("alias"),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
     displayTimezone: text("display_timezone").notNull(),
+    // --- config-v4 dark columns (Phase 4, migration 0032; nullable/unread by the v3 app) ---
+    // Canonical fixed-offset day-bucketing key (clean-sheet §7). Backfilled = timezone_offset_min;
+    // immutable after cutover except via an explicit re-bucket op. Nullable now (v3 `createArea`
+    // omits it); the cutover re-backfills residual NULLs and flips SET NOT NULL.
+    dayOffsetMin: integer("day_offset_min"),
+    // Typed AreaConfig (site-level knobs: exportTariff, generatorSource, provenance). Left untyped
+    // for now — no AreaConfig type exists yet; add $type<AreaConfig>() later (type-only, no migration).
+    config: jsonb("config"),
     // Per-Area physical location (the semantic layer's equivalent of HA's home-location
     // object; `timezoneOffsetMin`/`displayTimezone` above are its time_zone slice). Typed as
     // `AreaLocation` (lib/areas/types.ts). Used to DERIVE the NEM grid region — never stores the
@@ -848,6 +865,14 @@ export const areaBindings = pgTable(
       foreignColumns: [pointInfo.systemId, pointInfo.index],
       name: "area_bindings_point_info_fk",
     }),
+    // config-v4 (Phase 4, migration 0032): enumerate the 6-role registry (lib/roles/registry.ts)
+    // as a CHECK alongside the existing roles FK, so dropping the `roles` table at cutover leaves
+    // enforcement intact. All 6 incl. 'generator' (ROLE_IDS omits it, but the roles table + this
+    // CHECK need it). Cannot fail on apply — every live role already comes from the registry via the FK.
+    roleCheck: check(
+      "area_bindings_role_check",
+      sql`${table.role} IN ('solar','battery','load','grid','ev','generator')`,
+    ),
   }),
 );
 
@@ -992,6 +1017,111 @@ export const deviceRunPeriods = pgTable(
 );
 
 // ============================================================================
+// config-v4 Phase 4 — DARK, empty v4 tables (migration 0033).
+//
+// Pre-created behind the UNCHANGED v3 app so the cutover window's DDL shrinks to data transforms +
+// a few FK-adds. Nothing reads or writes them until the cutover-era migrations/routes land. FKs are
+// wired ONLY where the target already exists in its FINAL form (`areas.id` uuid; sibling new tables);
+// FKs to points/devices/dashboards-as-uuid are DEFERRED to cutover (those tables / uuid PKs don't
+// exist yet) and left as bare `uuid` columns. See docs/plans/config-v4-clean-sheet.md §4.4/§4.6/§11.
+// ============================================================================
+
+// derivations (generalizes device_trackers + absorbs the HWS model): config that computes a new
+// signal from existing points. output='point' → a derived point in the readings pipeline (the shipped
+// HWS model); output='intervals' → run/event periods in derived_intervals (today's run-tracking).
+export const derivations = pgTable(
+  "derivations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id),
+    kind: text("kind").notNull(), // 'run-detector' | 'hws-model' | future kinds
+    role: text("role"), // nullable; CHECK below (6 roles). NULL passes the CHECK (UNKNOWN ≠ FALSE).
+    name: text("name").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    output: text("output").notNull(), // CHECK ('point'|'intervals') below
+    outputPointId: uuid("output_point_id"), // FK → points(id) DEFERRED to cutover (points not minted yet)
+    params: jsonb("params").notNull(), // typed per kind: thresholds/hysteresis/delays | model constants
+    sourcePoints: jsonb("source_points").notNull(), // typed point refs (signal, energy, …) by uuid
+    detectorVersion: integer("detector_version").notNull().default(1),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    roleCheck: check(
+      "derivations_role_check",
+      sql`${table.role} IN ('solar','battery','load','grid','ev','generator')`,
+    ),
+    outputCheck: check(
+      "derivations_output_check",
+      sql`${table.output} IN ('point','intervals')`,
+    ),
+    // One derivation per (area, role) when role is set; role-less derivations are unconstrained.
+    areaRoleUnique: uniqueIndex("derivations_area_role_unique")
+      .on(table.areaId, table.role)
+      .where(sql`role IS NOT NULL`),
+    areaIdx: index("derivations_area_idx").on(table.areaId),
+  }),
+);
+
+// derived_intervals (was device_run_periods): the output store for output='intervals' derivations.
+// One row per coalesced run; end_time NULL = open (running now). Only FK is derivation_id (sibling).
+export const derivedIntervals = pgTable(
+  "derived_intervals",
+  {
+    derivationId: uuid("derivation_id")
+      .notNull()
+      .references(() => derivations.id),
+    startTime: timestamp("start_time").notNull(), // UTC; immutable identity
+    endTime: timestamp("end_time"), // UTC; NULL = OPEN (running now)
+    durationSeconds: integer("duration_seconds"), // null while open
+    energyKwh: doublePrecision("energy_kwh"),
+    maxPowerW: doublePrecision("max_power_w"),
+    minPowerW: doublePrecision("min_power_w"),
+    avgPowerW: doublePrecision("avg_power_w"),
+    sampleCount: integer("sample_count").notNull().default(0),
+    detectorVersion: integer("detector_version").notNull().default(1),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.derivationId, table.startTime] }),
+    // At most ONE open interval per derivation (cf. drp_open_unique).
+    openUnique: uniqueIndex("derived_intervals_open_unique")
+      .on(table.derivationId)
+      .where(sql`end_time IS NULL`),
+  }),
+);
+
+// dashboard_revisions: cross-session undo — each whole-doc PUT (Phase-6 /api/v4) inserts a revision +
+// bumps dashboards.revision. dashboard_id is bare uuid: the FK → dashboards(id) is DEFERRED to cutover
+// (dashboards.id is serial int today; becomes uuid at cutover).
+export const dashboardRevisions = pgTable(
+  "dashboard_revisions",
+  {
+    dashboardId: uuid("dashboard_id").notNull(), // FK → dashboards(id) DEFERRED to cutover
+    revision: integer("revision").notNull(),
+    doc: jsonb("doc").notNull(),
+    savedBy: text("saved_by").notNull(), // clerk user id
+    savedAt: timestamp("saved_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.dashboardId, table.revision] }),
+  }),
+);
+
+// legacy_handles: permanent compat shim mapping every old integer handle (systems.id AND
+// areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (area first, else device).
+// Frozen at cutover. device_id is bare uuid (FK → devices(id) DEFERRED — devices not minted yet);
+// area_id → areas(id) IS wired (areas is already uuid).
+export const legacyHandles = pgTable("legacy_handles", {
+  handle: integer("handle").primaryKey(), // old systems.id or areas.legacy_system_id
+  deviceId: uuid("device_id"), // FK → devices(id) DEFERRED to cutover
+  areaId: uuid("area_id").references(() => areas.id),
+});
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
@@ -1032,3 +1162,11 @@ export type DeviceTracker = typeof deviceTrackers.$inferSelect;
 export type NewDeviceTracker = typeof deviceTrackers.$inferInsert;
 export type DeviceRunPeriod = typeof deviceRunPeriods.$inferSelect;
 export type NewDeviceRunPeriod = typeof deviceRunPeriods.$inferInsert;
+export type Derivation = typeof derivations.$inferSelect;
+export type NewDerivation = typeof derivations.$inferInsert;
+export type DerivedInterval = typeof derivedIntervals.$inferSelect;
+export type NewDerivedInterval = typeof derivedIntervals.$inferInsert;
+export type DashboardRevision = typeof dashboardRevisions.$inferSelect;
+export type NewDashboardRevision = typeof dashboardRevisions.$inferInsert;
+export type LegacyHandle = typeof legacyHandles.$inferSelect;
+export type NewLegacyHandle = typeof legacyHandles.$inferInsert;

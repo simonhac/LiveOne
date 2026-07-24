@@ -17,19 +17,18 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 3 done (app_lib=0); next is Phase 4
+## ▶ NEXT ACTION — Phase 4 dark schema applied (0032+0033); next is Phase 5
 
-> **Phase 3 is COMPLETE on the served-app boundary** (`app_lib` = 0; the seam is a hard wall — see § Progress
-> and § Readings-seam ratchet ledger). There is no next `app_lib` strangler PR, so the self-perpetuating
-> writer-PR handoff that lived here has retired. Two follow-ons remain, in priority order.
+> **Phase 4 is COMPLETE** — the additive dark v4 schema is live on prod `sydney` + `liveone-dev`
+> (migrations **0032** + **0033**, applied + verified 2026-07-24). See § "Phase 4" for the execution
+> record, the reconciliation (several sketch items were already-present or are cutover-only), and the
+> deferred-to-cutover checklist. Everything shipped dark behind the unchanged v3 app; `schema.ts` + the
+> two migration files are the code change (commit/PR is the only wrap-up).
 
-**NEXT: Phase 4 — additive v4 config schema + roles→CHECK (dark).** See § "Phase 4" below. This phase
-opens with **schema DDL** (`areas.day_offset_min`/`config`; `systems` dark columns `rid`/`config`/
-`adapter_state`/`primary_area_id`/`slug`; `dashboards` `doc`/`revision`/`slug` + `dashboard_revisions`;
-`derivations` + `derived_intervals`; `legacy_handles`; roles→CHECK from `lib/roles/registry.ts`). 🛑
-**Migrations are MANUAL and need Simon's explicit approval before generating/applying** (per CLAUDE.md) —
-propose each one and wait for a "yes"; apply to prod `sydney` and verify BEFORE the dependent reader PR
-merges. Everything ships dark behind the unchanged v3 app.
+**NEXT: Phase 5 — v4 dashboard doc model + dual renderer (dark).** See § "Phase 5" below. Depends only
+on Phase 1 (the TypeID codec); **no new migration** (reads Phase-4's `dashboards.doc`/`revision`). The
+highest-risk cutover step — the v3→v4 doc rewriter — can now run dark against the live `descriptor`
+column, writing into `dashboards.doc` with round-trip validation.
 
 **Optional / possibly-permanent: drain the `scripts` lane.** The 10 `scripts/*` entries still in
 `.readings-boundary-baseline.json` (its `_doc`: "slower / possibly-permanent-allow track") can each move
@@ -45,7 +44,7 @@ its `prebuild` guard get deleted. Not required for the cutover.
 | 1 — `lib/ids/` TypeID codec | ✅ DONE | 33 tests incl. TypeID-spec base32 vectors + compile-time brand checks |
 | 2 — `point_uid` NOT NULL + global `points.rid` | ✅ DONE | PRs #212/#213 (migration 0030) applied + verified on prod `sydney` + `liveone-dev`; `rid` backfilled 1..130 in `(system_id, id)` order, `point_rid_seq` reassigned to `postgres`. Prod was a migration behind, so 0029 (drop `point_readings_flow_1d`) was applied in the same pass — its guard required the bindingless synthetic area Kuti House / legacy `1000001` materialised in `flow_attr_1d` first. |
 | 3 — uuid↔rid DAO seam + registry cache + lint ratchet | ✅ DONE (`app_lib`=0) | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) + PR-E (serving-path reader `lib/history/readings-pg.ts` → DAO `read5m`/`read1d`; identity via `RegistryCache.pointForAddr` with `UnknownIdError` skip-and-continue; `avgCache` reconstructed byte-identical; NO new DAO surface; pure reader, no pause) + PR-F (**CLEAN-READER BATCH** #226 — 6 pure readers `flow-series-pg`/`labs/kinkora-hws`/`enphase-history`/`battery-provenance/load`/`battery-provenance-daily-pg`/`run-periods-pg` → `read5m`/`read1d`/`readRaw`; added `ReadWindow.toInclusive` half-open upper bound + pure `upperBoundOp` helper; byte-identical verified on `liveone-dev` incl. half-open boundary + multi-point batch reverse-map; no pause) landed; **21 modules remain** (11 app_lib + 10 scripts). Readers profiled this session are NOT uniform → **6-PR trajectory** (§ Readings-seam ratchet ledger): 6 clean (done), 8 need new DAO surface (reader PRs G/H/I), 2 agg_5m writers (paused PRs J/K). PR-G (vendor 5m reads `amber/client`/`enphase/adapter`/`oe/scheduler`; added `createdAtMs`/`latest5mForPoints`/`latestAgg5mIntervalMsForSystem`) + PR-H (observability + coverage `coverage/find-gaps`/`admin/observations/stats`/`cron/monitor-observations`; added coverage COUNT-by-local-day `countAgg5mByLocalDay`/`countAgg5mForLocalDay` + created_at fleet counters `countByCreatedAtSince`/`createdAtHistogramSince`/`distinctSystemsByRawCreatedAtSince`/`latestRawCreatedAtMs` + `maxAgg5mIntervalMsForSystems`; both routes' raw `point_readings` counters moved behind the seam too; byte-identical verified on `liveone-dev` under `TZ=UTC`) landed; PR-I (**admin readings viewers** — the pivot route `admin/systems/[systemId]/point-readings` + `readings-read-pg` [which served BOTH that route AND the single-point drill-down `admin/point/[systemIdDotPointId]/readings`]; added `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + reused `read1d`; `readings-read-pg.ts` DELETED; SQL relocated VERBATIM as `sql.raw` inside the seam → byte-identical by construction; verified on `liveone-dev` under `TZ=UTC`; #230) landed; **13 modules remain** (3 app_lib + 10 scripts). PR-JK (**the two writers, batched** — Simon 2026-07-23: `battery-provenance/recompute` + `battery-provenance-pg` + `hws/recompute`; added DAO `latestAgg5mIntervalMsForPoints` (per-point `MAX(interval_end)`) + `latestAgg5mUpdatedAtForPoint` (per-point windowed `MAX(updated_at)`) + `insert5m` `writeDataQuality` mode (7 agg + `data_quality` + `updated_at`, sole-writer derived points); HWS input reuses `read5m`; byte-identical + idempotent verified on `liveone-dev` under `TZ=UTC`; #232) landed → **`app_lib` = 0, 10 modules remain (0 app_lib + 10 scripts)**. Served-app boundary now lint-enforced (`.eslintrc.json` ratchet override removed); the `scripts` lane (10, possibly permanent) is the only baseline remainder. **Phase-3 app_lib strangler COMPLETE.** |
-| 4 — additive v4 config schema + roles→CHECK | ⬜ TODO | all dark/nullable |
+| 4 — additive v4 config schema + roles→CHECK | ✅ DONE | migrations **0032** (dark columns `areas.day_offset_min`(backfilled)/`config`, `dashboards.doc`/`revision`, `area_bindings.role` CHECK) + **0033** (four empty tables `derivations`/`derived_intervals`/`dashboard_revisions`/`legacy_handles`) applied + verified on prod `sydney` + `liveone-dev`. Simon chose "build all 4 tables now". See § Phase 4. |
 | 5 — v4 dashboard doc model + dual renderer | ⬜ TODO | |
 | 6 — `/api/v4/*` route surface | ⬜ TODO | writes go live at cutover |
 | 7 — cutover rehearsal harness | ⬜ TODO | prod snapshot branch only |
@@ -277,17 +276,43 @@ Ordering is a hard dependency chain (migrations lead code to prod).
   PR; NEW and STALE violators both hard-fail (monotonic). Fixture: `scripts/__tests__/check-readings-boundary.test.ts`.
 - Deps: Phase 2 (needs `point_uid` NOT NULL + `rid`) — met.
 
-### Phase 4 — Additive v4 config schema, empty/nullable + roles→CHECK (dark)
-Create FK targets before referrers:
-- `areas.day_offset_min` (backfill = `timezone_offset_min`), `areas.config` jsonb.
-- `systems` dark columns: `rid UNIQUE` (= `id`), `config`, `adapter_state`, `primary_area_id`
-  (nullable for now), `slug`.
-- `dashboards`: `doc jsonb`, `revision int`, `slug`; `dashboard_revisions` table; `legacy_id` (frozen).
-- `derivations` + `derived_intervals`; unified `share_tokens` twin; `dashboard_grants`;
-  `legacy_handles (handle int PK, device_id uuid NULL, area_id uuid NULL)`.
-- **roles → CHECK** generated from `lib/roles/registry.ts` (all 6); add to `area_bindings.role` /
-  `derivations.role` alongside the FK; drop the `roles` table only at cutover (grep every FK first).
-- Deps: Phase 2/3. Each migration applied to prod ahead of any reader.
+### Phase 4 — Additive v4 config schema, empty/nullable + roles→CHECK (dark)  ✅ DONE
+> Shipped as migrations **0032** (dark columns + `area_bindings.role` CHECK) + **0033** (four empty v4
+> tables), applied + verified on prod `sydney` and `liveone-dev` (2026-07-24), all dark behind the
+> unchanged v3 app. Simon decided (2026-07-24) to **build all four new tables now**, not defer to cutover.
+> `0033`'s tables were minted via a temp `pscale role` then **reassigned to `postgres`** (ownership trap).
+
+**What shipped — 0032 (touches live `areas`/`dashboards`, one atomic tx):**
+- `areas.day_offset_min int` NULLABLE, backfilled `= timezone_offset_min` (in-migration UPDATE + a
+  `DO/RAISE EXCEPTION` coverage guard). Stays nullable — v3 `createArea` omits it; NOT-NULL flip = cutover.
+- `areas.config jsonb` (nullable; untyped — no `AreaConfig` type yet, add `$type<>` later, no migration).
+- `dashboards.doc jsonb` (nullable; the v4 node-tree home, coexists with `descriptor`) + `dashboards.revision int NOT NULL DEFAULT 1` (the default keeps v3 inserts working).
+- `area_bindings.role` CHECK over the 6 registry roles (incl. `generator`), alongside the surviving `roles` FK.
+
+**What shipped — 0033 (four empty v4 tables):**
+- `derivations` (generalizes `device_trackers` + absorbs HWS): CHECK `role`∈6 / `output`∈(point,intervals);
+  UNIQUE `(area_id, role) WHERE role IS NOT NULL`; FK `area_id`→areas.
+- `derived_intervals` (was `device_run_periods`): PK `(derivation_id, start_time)`; UNIQUE
+  `(derivation_id) WHERE end_time IS NULL`; FK `derivation_id`→derivations.
+- `dashboard_revisions`: PK `(dashboard_id, revision)`.
+- `legacy_handles`: `handle int PK`; FK `area_id`→areas.
+
+**Reconciliation — NOT in Phase 4 (already present, or cutover-only):**
+- **Already existed:** `systems.config`; `dashboard_grants` + `dashboard_share_tokens` (the "P4" shims);
+  `area_bindings.role` (+`roles` FK).
+- **Cutover-only** (renames / uuid re-keys / reshapes): `systems`→`devices` + `rid` / `adapter_state`
+  (←`metadata`) / `primary_area_id` / `slug`(←`alias`); `dashboards.slug`(←`alias`) / `legacy_id`;
+  `area_bindings` uuid `point_id` + `priority` (`ordinal` dies); unified `share_tokens`; `dashboard_grants`
+  uuid+CHECK reshape; drop `roles` / `device_trackers` / `device_run_periods`.
+
+**Cutover checklist inherited from Phase 4** — bare uuid columns whose FK targets don't exist yet:
+- Add FKs: `derivations.output_point_id`→`points`, `dashboard_revisions.dashboard_id`→`dashboards`,
+  `legacy_handles.device_id`→`devices`.
+- `SET NOT NULL`: `areas.day_offset_min` (re-backfill residual NULLs from any v3-created areas first).
+- The `device_trackers`→`derivations` **data** migration is now unblocked (tables exist) and may be
+  built/rehearsed dark in a later phase.
+
+- Deps: Phase 2/3 (met).
 
 ### Phase 5 — v4 dashboard doc model: types, validator, rewriter, dual renderer (dark)
 - `lib/dashboard/v4.ts` + `card-types.ts` — unified `group`/`card` node tree; branded
