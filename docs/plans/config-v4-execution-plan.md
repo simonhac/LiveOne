@@ -17,19 +17,26 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phases 4 + 5 landed (dark); next is Phase 6
+## ▶ NEXT ACTION — Phases 4–6 landed (dark), PR #233 open; next is Phase 7
 
-> **Phases 4 and 5 are COMPLETE (dark).** Phase 4: the additive schema (migrations **0032**+**0033**)
-> is live on prod `sydney` + `liveone-dev`. Phase 5: the v4 doc model + zod validator + v3→v4 rewriter +
-> `resolve-shell` + the adapter renderer + the dual-shape SSR window all ship behind the unchanged v3
-> app (no dashboard has a `doc`; the v3 render path is byte-identical). See § Phase 4 / § Phase 5 for
-> the execution records + the deferred follow-ons.
+> **Phases 4, 5, and 6 (dashboards) are COMPLETE (dark).** Phase 4: schema (migrations **0032**+**0033**)
+> live on prod `sydney` + `liveone-dev`. Phase 5: v4 doc model + zod validator + v3→v4 rewriter +
+> `resolve-shell` + adapter renderer + dual-shape SSR window. Phase 6: the `/api/v4/dashboards` resource
+> (GET/POST/PUT/PATCH/DELETE + validate; `If-Match`/412 concurrency; `updateDashboardDoc`) + v4-aware
+> share/grant access scope (`access.ts` reads the doc); **true e2e verified on the dev server** (real
+> area → v4 doc → SSR renders live v4 cards). All dark behind the unchanged v3 app (no dashboard has a
+> `doc`; the v3 path is byte-identical). **The whole Phases 4–6 dark batch is up as [PR #233](https://github.com/simonhac/LiveOne/pull/233)**
+> (`simonhac/config-v4-next-phase-v1` → `main`) — merging deploys it dark to prod, which is safe because
+> prod already has 0032/0033 (the reader code won't 500). See § Phase 4/5/6 for the execution records.
 
-**NEXT: Phase 6 — `/api/v4/*` route surface (dark; writes go live at cutover).** See § "Phase 6" below.
-This is what actually WRITES v4 docs (whole-doc `PUT` with `If-Match`/412 + `dashboard_revisions` +
-the validate dry-run over `validateDocV4`), so it's the first phase that lets the Phase-5 renderer be
-exercised end-to-end. Depends on Phases 1, 4, 5. **No new migration** (Phase-4's `doc`/`revision` +
-`dashboard_revisions` are already on prod).
+**NEXT: Phase 7 — cutover rehearsal harness (prod snapshot branch only).** See § "Phase 7" below. The
+full cutover transform + parity checks, end-to-end on a throwaway snapshot branch, iterated until all
+parity checks pass AND the 13M/3M hot-table rewrite fits the window. Depends on Phases 1–6 being live +
+burned-in — i.e. do this once PR #233 is merged and deployed.
+
+> **Remaining Phase-6 surface is CUTOVER-ERA, not the next action:** devices/points/areas-bindings/
+> members/derivations/eligibility/shares/grants/export-import — all addressed by `dv_`/`pt_`/uuid
+> entities the cutover mints, so they can't be built or tested pre-cutover. Build them with/after Phase 8.
 
 **Optional / possibly-permanent: drain the `scripts` lane.** The 10 `scripts/*` entries still in
 `.readings-boundary-baseline.json` (its `_doc`: "slower / possibly-permanent-allow track") can each move
