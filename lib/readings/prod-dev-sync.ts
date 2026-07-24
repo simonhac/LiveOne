@@ -378,7 +378,6 @@ async function schemaSignatures(
        FROM (
          SELECT cols.table_name,
                 ('column:' || json_build_array(
-                  cols.ordinal_position,
                   cols.column_name,
                   cols.data_type,
                   cols.udt_schema,
