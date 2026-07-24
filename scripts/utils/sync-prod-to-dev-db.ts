@@ -5,6 +5,7 @@
  * Env, safety checks, table order, and output are intentionally unchanged.
  */
 import { ReadingsDao } from "@/lib/readings";
+import { withTransientPostgresRetry } from "@/lib/db/planetscale/transient-retry";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -12,11 +13,23 @@ const required = (name: string): string => {
   return value;
 };
 
-ReadingsDao.syncProdToDev({
+const syncOptions = {
   prodUrl: required("PG_PROD_RO_DATABASE_URL"),
   devUrl: required("LIVEONE_DEV_DATABASE_URL"),
   prodBranchId: process.env.PLANETSCALE_PROD_BRANCH_ID,
-})
+};
+
+withTransientPostgresRetry(
+  () => ReadingsDao.syncProdToDev(syncOptions),
+  { maxAttempts: 3, retryDelayMs: 500 },
+  (error, nextAttempt, delayMs) => {
+    console.warn(
+      `[sync] transient connection failure; restarting the idempotent sync ` +
+        `(attempt ${nextAttempt}/3 in ${delayMs}ms): ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  },
+)
   .then(() => process.exit(0))
   .catch((error) => {
     console.error(

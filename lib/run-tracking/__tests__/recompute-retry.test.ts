@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 import {
   isTransientPostgresError,
   withTransientPostgresRetry,
-} from "../recompute";
+} from "@/lib/db/planetscale/transient-retry";
 
 describe("run-period database retry", () => {
   it.each([
