@@ -1,7 +1,7 @@
 -- 0006 — PG foreign-key rebuild (decommission-time hardening).
 --
 -- ⚠️ STAGED / NOT YET APPLIED. Apply attended, AFTER re-running the read-only
--- orphan pre-flight (scripts/audit-pg-fk-orphans.ts) immediately beforehand
+-- orphan pre-flight immediately beforehand (the one-shot audit script is now retired)
 -- (0-orphan is a point-in-time fact) and confirming PG PITR + a fresh base backup.
 -- Adding a constraint never fires a cascade, so this mutates no rows.
 --

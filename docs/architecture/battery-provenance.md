@@ -315,9 +315,9 @@ true floor is unidentifiable from SoC, so it pins to the prior `reserveFloorMaxP
 
 **History**: the params were previously four helper POINTS (`bidi.battery/round-trip-efficiency`,
 `/usable-capacity`, `/charge-efficiency`, `/idle-loss`, ordinals 110–113, η/η_c stored ×100). The
-legacy points/bindings/step-rows are deleted by `scripts/delete-battery-param-points.ts` — run ONLY
-after `scripts/verify-daily-learn-equivalence.ts` passes against the same DB (the step rows are the
-equivalence baseline).
+legacy points/bindings/step-rows were equivalence-checked and deleted during the July 2026 rollout.
+The one-shot verifier and deletion scripts were retired after the prod state propagated through the
+full `point_info` prod→dev sync.
 
 ### The conservation invariant
 

@@ -66,7 +66,7 @@ export const BLEND_POINTS: BlendPointSpec[] = [
  * `battery_provenance_daily` (natural units — ratios, not the points' ×100 percent) and the loader /
  * soc-meter monitor read the table, so these points are never created or written anymore. The specs are
  * kept ONLY as the canonical record of the legacy surface — the cleanup script
- * (scripts/delete-battery-param-points.ts) keys its deletions on these metricTypes.
+ * The completed legacy-param cleanup keyed its deletions on these metricTypes.
  */
 export const EFFICIENCY_POINT: BlendPointSpec = {
   metricType: "round-trip-efficiency",
