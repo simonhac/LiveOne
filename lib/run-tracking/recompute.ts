@@ -26,6 +26,92 @@ export interface RecomputeSummary {
   openPeriods: number;
 }
 
+export interface RecomputeRetryOptions {
+  /** Total attempts for one atomic tracker/window transaction. */
+  maxAttempts?: number;
+  /** Initial retry delay; subsequent delays use linear backoff. */
+  retryDelayMs?: number;
+  /** Surface exhausted tracker failures after processing the remaining trackers. */
+  failOnError?: boolean;
+  /** Test seam; production defaults to a real timer. */
+  sleep?: (delayMs: number) => Promise<void>;
+}
+
+const TRANSIENT_CONNECTION_CODES = new Set([
+  "ECONNRESET",
+  "EPIPE",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "ENETRESET",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "57P03", // cannot_connect_now
+]);
+
+/** Whether retrying a whole atomic transaction is appropriate. */
+export function isTransientPostgresError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    code?: unknown;
+    message?: unknown;
+    cause?: unknown;
+  };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  if (code.startsWith("08") || TRANSIENT_CONNECTION_CODES.has(code))
+    return true;
+  const message =
+    typeof candidate.message === "string"
+      ? candidate.message.toLowerCase()
+      : "";
+  if (
+    message.includes("connection terminated") ||
+    message.includes("connection reset") ||
+    message.includes("client has encountered a connection error") ||
+    message.includes("socket hang up") ||
+    message.includes("broken pipe")
+  ) {
+    return true;
+  }
+  return candidate.cause ? isTransientPostgresError(candidate.cause) : false;
+}
+
+export async function withTransientPostgresRetry<T>(
+  operation: () => Promise<T>,
+  options: RecomputeRetryOptions = {},
+  onRetry: (error: unknown, nextAttempt: number, delayMs: number) => void = (
+    error,
+    nextAttempt,
+    delayMs,
+  ) => {
+    console.warn(
+      `[RunTracking] transient DB failure; retrying attempt ${nextAttempt} in ${delayMs}ms:`,
+      error,
+    );
+  },
+): Promise<T> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 500);
+  const sleep =
+    options.sleep ??
+    ((delayMs: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= maxAttempts || !isTransientPostgresError(error)) {
+        throw error;
+      }
+      const delayMs = retryDelayMs * attempt;
+      onRetry(error, attempt + 1, delayMs);
+      await sleep(delayMs);
+    }
+  }
+}
+
 /** Recompute every enabled tracker over [winStartMs, winEndMs], "as of" nowMs. */
 async function recomputeWindowAllTrackers(
   winStartMs: number,
@@ -33,19 +119,17 @@ async function recomputeWindowAllTrackers(
   nowMs: number,
 ): Promise<RecomputeSummary> {
   const db = requirePlanetscaleDb();
-  const trackers = await listEnabledTrackers();
+  const trackers = await withTransientPostgresRetry(() =>
+    listEnabledTrackers(),
+  );
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
 
   for (const tracker of trackers) {
     try {
-      const res = await recomputeRunPeriodsForWindow(
-        db,
-        tracker,
-        winStartMs,
-        winEndMs,
-        nowMs,
+      const res = await withTransientPostgresRetry(() =>
+        recomputeRunPeriodsForWindow(db, tracker, winStartMs, winEndMs, nowMs),
       );
       rowsDeleted += res.deleted;
       rowsInserted += res.inserted;
@@ -104,12 +188,17 @@ export async function recomputeRange(
     chunkEndMs: number;
     inserted: number;
   }) => void,
+  retryOptions: RecomputeRetryOptions = {},
 ): Promise<RecomputeSummary> {
   const db = requirePlanetscaleDb();
-  const trackers = await listEnabledTrackers();
+  const trackers = await withTransientPostgresRetry(
+    () => listEnabledTrackers(),
+    retryOptions,
+  );
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
+  const failures: Error[] = [];
 
   for (const tracker of trackers) {
     let trackerOpen = false;
@@ -117,12 +206,9 @@ export async function recomputeRange(
     while (cs <= endMs) {
       const ce = Math.min(cs + CHUNK_MS, endMs);
       try {
-        const res = await recomputeRunPeriodsForWindow(
-          db,
-          tracker,
-          cs,
-          ce,
-          nowMs,
+        const res = await withTransientPostgresRetry(
+          () => recomputeRunPeriodsForWindow(db, tracker, cs, ce, nowMs),
+          retryOptions,
         );
         rowsDeleted += res.deleted;
         rowsInserted += res.inserted;
@@ -139,6 +225,7 @@ export async function recomputeRange(
             `${new Date(cs).toISOString()}..${new Date(ce).toISOString()}:`,
           err,
         );
+        failures.push(err instanceof Error ? err : new Error(String(err)));
       }
       if (ce >= endMs) break;
       cs = ce;
@@ -156,6 +243,12 @@ export async function recomputeRange(
     `[RunTracking] recompute range ${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}: ` +
       `${summary.trackersProcessed} trackers, ${summary.rowsInserted} periods`,
   );
+  if (retryOptions.failOnError && failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `run-period recompute failed for ${failures.length} tracker window(s) after retries`,
+    );
+  }
   return summary;
 }
 

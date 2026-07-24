@@ -39,25 +39,26 @@ export interface RecomputeResult {
 /** Bounded read of one point's raw readings over [fromMs, toMs], ascending. */
 async function readPointSeries(
   db: PgExecutor,
-  ref: PointRef,
+  id: PointId | null,
   fromMs: number,
   toMs: number,
 ): Promise<Sample[]> {
-  // Resolve (systemId, pointId) → PointId and read raw via the seam, passing the caller's tx as `exec`
-  // so the read stays inside the same advisory-lock transaction. A point with no registry identity
-  // (UnknownIdError) has no rows → return empty, exactly as the old composite-FK'd query did.
-  let id: PointId;
-  try {
-    id = await RegistryCache.pointForAddr(ref.systemId, ref.pointId);
-  } catch (err) {
-    if (err instanceof UnknownIdError) return [];
-    throw err;
-  }
+  if (id === null) return [];
   const series = await ReadingsDao.readRaw([id], { fromMs, toMs }, db);
   return series.get(id)!.map((r) => ({
     tMs: r.measurementTimeMs,
     value: r.value,
   }));
+}
+
+/** Resolve immutable legacy addresses before checking a transaction client out. */
+async function resolvePoint(ref: PointRef): Promise<PointId | null> {
+  try {
+    return await RegistryCache.pointForAddr(ref.systemId, ref.pointId);
+  } catch (err) {
+    if (err instanceof UnknownIdError) return null;
+    throw err;
+  }
 }
 
 /**
@@ -72,6 +73,15 @@ export async function recomputeRunPeriodsForWindow(
   winEndMs: number,
   nowMs: number,
 ): Promise<RecomputeResult> {
+  // Registry misses use the shared pool. Resolve them before `db.transaction`
+  // checks out and locks a client, rather than leaving that transaction idle
+  // while a second pooled connection performs the lookup. Point mappings are
+  // immutable, so moving these reads outside the transaction is safe.
+  const signalId = await resolvePoint(tracker.signalRef);
+  const energyId = tracker.energyRef
+    ? await resolvePoint(tracker.energyRef)
+    : null;
+
   return db.transaction(async (tx) => {
     // Serialize recomputes for THIS system so a concurrent run can't interleave delete/insert.
     await tx.execute(
@@ -106,12 +116,7 @@ export async function recomputeRunPeriodsForWindow(
 
     const readStartMs = anchorMs - tracker.detect.delayOffMs; // margin for the straddler's lead-in
 
-    const samples = await readPointSeries(
-      tx,
-      tracker.signalRef,
-      readStartMs,
-      winEndMs,
-    );
+    const samples = await readPointSeries(tx, signalId, readStartMs, winEndMs);
 
     const periods = detectRunPeriods(samples, {
       lowerW: tracker.detect.lowerW,
@@ -128,7 +133,7 @@ export async function recomputeRunPeriodsForWindow(
     if (tracker.energyRef && periods.length > 0) {
       const readings = await readPointSeries(
         tx,
-        tracker.energyRef,
+        energyId,
         readStartMs,
         winEndMs,
       );
