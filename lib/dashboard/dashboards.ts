@@ -125,6 +125,43 @@ export async function getDashboard(
   return row ? rowToDashboard(row) : null;
 }
 
+export type DocUpdateResult =
+  | { ok: true; revision: number; doc: DashboardV4 }
+  | { ok: false; conflict: number };
+
+/**
+ * config-v4 whole-doc write (§9.1). One tx: `SELECT … FOR UPDATE`, optimistic-concurrency check
+ * against `expectedRevision` (the `If-Match` value), then set `doc` + bump `revision`. Returns the new
+ * revision + doc, or a conflict carrying the current revision. `doc` MUST already be validated +
+ * normalized by the caller (`validateDocV4`). Revision-history (`dashboard_revisions`) is keyed by the
+ * FUTURE uuid dashboard id (bare uuid column, FK deferred to cutover), so it is NOT written for a
+ * serial-id dashboard pre-cutover — history starts at cutover.
+ */
+export async function updateDashboardDoc(
+  id: number,
+  doc: DashboardV4,
+  expectedRevision?: number,
+): Promise<DocUpdateResult> {
+  return requirePlanetscaleDb().transaction(async (tx) => {
+    const [row] = await tx
+      .select({ revision: dashboards.revision })
+      .from(dashboards)
+      .where(eq(dashboards.id, id))
+      .for("update")
+      .limit(1);
+    if (!row) throw new Error(`dashboard ${id} not found`);
+    if (expectedRevision != null && row.revision !== expectedRevision) {
+      return { ok: false, conflict: row.revision };
+    }
+    const revision = row.revision + 1;
+    await tx
+      .update(dashboards)
+      .set({ doc, revision, updatedAt: new Date() })
+      .where(eq(dashboards.id, id));
+    return { ok: true, revision, doc };
+  });
+}
+
 export async function getDashboardByOwnerAlias(
   ownerClerkUserId: string,
   alias: string,
