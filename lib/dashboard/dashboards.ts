@@ -14,6 +14,7 @@ import {
   isDashboardV3,
   type DashboardV3,
 } from "./v3";
+import type { DashboardV4 } from "./v4";
 import { listGrantsForUser } from "./grants";
 
 export interface CompositionDashboard {
@@ -22,6 +23,11 @@ export interface CompositionDashboard {
   displayName: string | null;
   alias: string | null;
   descriptor: DashboardV3;
+  /** config-v4 dark column: the v4 node-tree document, or null for a v3 dashboard. Drives the
+   *  dual-shape render window (see app/dashboard/[...slug]/page.tsx). */
+  doc: DashboardV4 | null;
+  /** config-v4 dark column: whole-doc revision counter (default 1). */
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -78,6 +84,8 @@ function rowToDashboard(r: {
   displayName: string | null;
   alias: string | null;
   descriptor: unknown;
+  doc: unknown;
+  revision: number;
   createdAt: Date;
   updatedAt: Date;
 }): CompositionDashboard {
@@ -87,6 +95,8 @@ function rowToDashboard(r: {
     displayName: r.displayName,
     alias: r.alias,
     descriptor: r.descriptor as DashboardV3,
+    doc: (r.doc as DashboardV4 | null) ?? null,
+    revision: r.revision,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -98,6 +108,8 @@ const DASHBOARD_COLUMNS = {
   displayName: dashboards.displayName,
   alias: dashboards.alias,
   descriptor: dashboards.descriptor,
+  doc: dashboards.doc,
+  revision: dashboards.revision,
   createdAt: dashboards.createdAt,
   updatedAt: dashboards.updatedAt,
 } as const;
@@ -111,6 +123,43 @@ export async function getDashboard(
     .where(eq(dashboards.id, id))
     .limit(1);
   return row ? rowToDashboard(row) : null;
+}
+
+export type DocUpdateResult =
+  | { ok: true; revision: number; doc: DashboardV4 }
+  | { ok: false; conflict: number };
+
+/**
+ * config-v4 whole-doc write (§9.1). One tx: `SELECT … FOR UPDATE`, optimistic-concurrency check
+ * against `expectedRevision` (the `If-Match` value), then set `doc` + bump `revision`. Returns the new
+ * revision + doc, or a conflict carrying the current revision. `doc` MUST already be validated +
+ * normalized by the caller (`validateDocV4`). Revision-history (`dashboard_revisions`) is keyed by the
+ * FUTURE uuid dashboard id (bare uuid column, FK deferred to cutover), so it is NOT written for a
+ * serial-id dashboard pre-cutover — history starts at cutover.
+ */
+export async function updateDashboardDoc(
+  id: number,
+  doc: DashboardV4,
+  expectedRevision?: number,
+): Promise<DocUpdateResult> {
+  return requirePlanetscaleDb().transaction(async (tx) => {
+    const [row] = await tx
+      .select({ revision: dashboards.revision })
+      .from(dashboards)
+      .where(eq(dashboards.id, id))
+      .for("update")
+      .limit(1);
+    if (!row) throw new Error(`dashboard ${id} not found`);
+    if (expectedRevision != null && row.revision !== expectedRevision) {
+      return { ok: false, conflict: row.revision };
+    }
+    const revision = row.revision + 1;
+    await tx
+      .update(dashboards)
+      .set({ doc, revision, updatedAt: new Date() })
+      .where(eq(dashboards.id, id));
+    return { ok: true, revision, doc };
+  });
 }
 
 export async function getDashboardByOwnerAlias(

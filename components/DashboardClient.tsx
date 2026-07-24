@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Settings, Plus, Layers, ChevronDown } from "lucide-react";
 import Dashboard from "@/components/Dashboard";
+import { DashboardV4View } from "@/components/dashboard/v4/node-view";
+import type { DashboardV4 } from "@/lib/dashboard/v4";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
 import DashboardsMenu, {
   usePrefetchDashboardsMenu,
@@ -34,6 +36,10 @@ interface DashboardClientProps {
     displayName: string | null;
     alias: string | null;
     descriptor: DashboardV3;
+    /** config-v4 dual-shape window: when present, the v4 node tree renders instead of the v3
+     *  descriptor (DARK — no dashboard has a doc yet). The page shell (header/switcher/editor)
+     *  stays v3-driven; the v4-native editor + temporal nav land with Phase 6. */
+    doc?: DashboardV4;
   };
   /** Owner or admin → may rename/delete/switch. */
   canEdit: boolean;
@@ -201,13 +207,22 @@ export default function DashboardClient({
         </header>
 
         <main className="mx-auto max-w-7xl px-1 py-4">
-          <Dashboard
-            dashboardId={dashboard.id}
-            descriptor={dashboard.descriptor}
-            areaById={areaById}
-            areasResolved={areasResolved}
-            onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
-          />
+          {dashboard.doc ? (
+            <DashboardV4View
+              doc={dashboard.doc}
+              areaById={areaById}
+              dashboardId={dashboard.id}
+              areasResolved={areasResolved}
+            />
+          ) : (
+            <Dashboard
+              dashboardId={dashboard.id}
+              descriptor={dashboard.descriptor}
+              areaById={areaById}
+              areasResolved={areasResolved}
+              onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
+            />
+          )}
         </main>
 
         {canEdit && (

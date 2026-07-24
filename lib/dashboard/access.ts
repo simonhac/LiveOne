@@ -16,7 +16,7 @@
  */
 import { PointManager } from "@/lib/point/point-manager";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
-import { descriptorAreaIds } from "./composition";
+import { dashboardAreaUuids } from "./composition";
 
 export interface DashboardReadAccess {
   /** Distinct physical systems the dashboard's points live on (a composite spans children). */
@@ -25,10 +25,12 @@ export interface DashboardReadAccess {
   points: { systemId: number; pointId: number }[];
 }
 
-/** A dashboard's scope inputs: just its descriptor. Scope = the union of its sections' Areas. */
+/** A dashboard's scope inputs. Scope = the union of its Areas, shape-aware (v3 descriptor OR v4 doc). */
 export interface DashboardScopeInput {
-  /** The dashboard descriptor (v3 composition; sections carry real Area uuids). */
+  /** The v3 dashboard descriptor (sections carry real Area uuids). */
   descriptor: unknown;
+  /** config-v4: the v4 doc, if the dashboard has one. Its §8.3 envelope area refs take precedence. */
+  doc?: unknown;
 }
 
 /** Pure shaping of point refs → the dedup'd read-access set. Extracted for unit testing. */
@@ -56,7 +58,10 @@ async function resolveAreas(input: DashboardScopeInput): Promise<{
   const pm = PointManager.getInstance();
   const handles: number[] = [];
   const refs: { systemId: number; pointId: number }[] = [];
-  for (const areaId of descriptorAreaIds(input.descriptor)) {
+  for (const areaId of dashboardAreaUuids({
+    descriptor: input.descriptor,
+    doc: input.doc,
+  })) {
     const handle = await getLegacySystemIdForArea(areaId);
     if (handle == null) continue; // dangling/deleted Area uuid → dropped.
     handles.push(handle);

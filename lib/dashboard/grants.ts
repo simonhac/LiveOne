@@ -105,7 +105,10 @@ export async function grantedSystemScopeForUser(
   for (const id of dashboardIds) {
     const dash = await getDashboard(id);
     if (!dash) continue;
-    const allowed = await allowedSystemIds({ descriptor: dash.descriptor });
+    const allowed = await allowedSystemIds({
+      descriptor: dash.descriptor,
+      doc: dash.doc,
+    });
     for (const sid of allowed) scope.add(sid);
   }
   return scope;

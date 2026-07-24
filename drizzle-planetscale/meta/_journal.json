@@ -225,6 +225,20 @@
       "when": 1784735233487,
       "tag": "0031_bright_ben_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784877766199,
+      "tag": "0032_lonely_sunspot",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784877913839,
+      "tag": "0033_friendly_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

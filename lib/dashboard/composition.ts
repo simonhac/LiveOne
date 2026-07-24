@@ -7,6 +7,9 @@
  * flat ordered list, not a vendor template).
  */
 import { emptyDashboardV3, isDashboardV3, type DashboardV3 } from "./v3";
+import { isDashboardV4 } from "./v4";
+import { collectRefs } from "./v4-validate";
+import { Area } from "@/lib/ids";
 
 /** An empty composition dashboard — no sections yet (the user adds them in the configurator). */
 export function emptyCompositionDescriptor(): DashboardV3 {
@@ -35,4 +38,32 @@ export function descriptorAreaIds(descriptor: unknown): string[] {
         .filter((x): x is string => typeof x === "string"),
     ),
   ];
+}
+
+/**
+ * The distinct Area uuids a dashboard references, SHAPE-AWARE: a v4 `doc` (via the §8.3 envelope walk,
+ * decoded to uuids) else the v3 `descriptor`. Use this wherever the render path resolves a dashboard's
+ * areas, so a v4 doc's sections resolve on the shared/grantee paths too (the owner path already lists
+ * all readable areas). For a v3 dashboard it is identical to `descriptorAreaIds(descriptor)`.
+ */
+export function dashboardAreaUuids(d: {
+  descriptor?: unknown;
+  doc?: unknown;
+}): string[] {
+  if (isDashboardV4(d.doc)) {
+    return [
+      ...new Set(
+        collectRefs(d.doc)
+          .areas.map((a) => {
+            try {
+              return Area.toUuid(a);
+            } catch {
+              return null;
+            }
+          })
+          .filter((x): x is string => x != null),
+      ),
+    ];
+  }
+  return descriptorAreaIds(d.descriptor);
 }
