@@ -225,6 +225,7 @@ export async function requireDashboardAccess(
       if (dash) {
         const allowed = await allowedSystemIds({
           descriptor: dash.descriptor,
+          doc: dash.doc,
         });
         if (allowed.includes(systemId)) {
           const system =

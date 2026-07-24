@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateDashboardDoc } from "@/lib/dashboard/dashboards";
+import {
+  updateDashboardDoc,
+  updateDashboard,
+  deleteDashboard,
+  DashboardAliasTakenError,
+} from "@/lib/dashboard/dashboards";
 import { validateDocV4 } from "@/lib/dashboard/v4-validate";
 import {
   loadOwnedDashboard,
@@ -78,4 +83,56 @@ export async function PUT(
     { revision: upd.revision, doc: upd.doc, warnings: result.warnings },
     { headers: { ETag: `"${upd.revision}"` } },
   );
+}
+
+/** PATCH — meta only (name / slug); the doc is written via PUT. */
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const r = await loadOwnedDashboard(request, id);
+  if ("error" in r) return r.error;
+
+  const body = await request.json().catch(() => null);
+  const patch: { displayName?: string; alias?: string | null } = {};
+  if (typeof body?.name === "string") {
+    const n = body.name.trim();
+    if (!n) {
+      return NextResponse.json(
+        { error: "name cannot be empty" },
+        { status: 400 },
+      );
+    }
+    patch.displayName = n;
+  }
+  if (body?.slug !== undefined) {
+    patch.alias =
+      typeof body.slug === "string" && body.slug.trim()
+        ? body.slug.trim()
+        : null;
+  }
+  try {
+    await updateDashboard(r.dashboard.id, patch);
+  } catch (err) {
+    if (err instanceof DashboardAliasTakenError) {
+      return NextResponse.json(
+        { error: "That shortname is already in use" },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
+  return NextResponse.json({ success: true });
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const r = await loadOwnedDashboard(request, id);
+  if ("error" in r) return r.error;
+  await deleteDashboard(r.dashboard.id);
+  return NextResponse.json({ success: true });
 }
