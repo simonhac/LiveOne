@@ -17,34 +17,38 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phases 4–5 done; Phase 6 PARTIAL (dashboards only); PR #233 open
+## ▶ NEXT ACTION — Phases 4–6 done (Phase 6 pre-cutover surface COMPLETE); next is Phase 7
 
-> **Phases 4 and 5 are COMPLETE (dark); Phase 6 is PARTIAL — NOT complete.** Phase 4: schema (migrations
-> **0032**+**0033**) live on prod `sydney` + `liveone-dev`. Phase 5: v4 doc model + zod validator + v3→v4
-> rewriter + `resolve-shell` + adapter renderer + dual-shape SSR window. **Phase 6: ONLY the
-> `/api/v4/dashboards` resource is built** (GET/POST/PUT/PATCH/DELETE + validate; `If-Match`/412;
-> `updateDashboardDoc`) + v4-aware share/grant access scope (`access.ts` reads the doc); true e2e verified
-> on the dev server (real area → v4 doc → SSR renders live v4). All dark behind the unchanged v3 app.
-> **[PR #233](https://github.com/simonhac/LiveOne/pull/233)** (`simonhac/config-v4-next-phase-v1` → `main`)
-> carries Phases 4–6-so-far; merging deploys it dark to prod (safe — prod already has 0032/0033).
+> **Phases 4, 5, and Phase 6's pre-cutover surface are COMPLETE (dark).** [PR #233](https://github.com/simonhac/LiveOne/pull/233)
+> (Phases 4–6-so-far) is **MERGED** (`c31d7573`, now HEAD of `main`, deployed dark to prod). Phase 4: schema
+> (migrations **0032**+**0033**) live on prod `sydney` + `liveone-dev`. Phase 5: v4 doc model + zod validator
+> + v3→v4 rewriter + `resolve-shell` + adapter renderer + dual-shape SSR window. **Phase 6: the
+> `/api/v4/dashboards` resource** (GET/POST/PUT/PATCH/DELETE + validate; `If-Match`/412; `updateDashboardDoc`)
+> + v4-aware share/grant access scope (#233) **plus the pre-cutover area surface** (this branch). All dark.
 
-**Phase 6 is NOT complete — two remainders:**
-1. **Pre-cutover-viable, still TODO** (buildable now against existing uuid/serial entities; do before any
-   v4-editor work): `GET /api/v4/areas/{id}/default-group` — the capability-derived v4 seed group (=
-   `rewriteV3ToV4` of the v3 default-section; the logic exists, just isn't a route) — **and** wire
-   `POST /api/v4/dashboards` to accept `{seedArea}` (today it only takes an explicit `{doc}`), which
-   completes the one-call create-and-seed loop; plus the read-only `GET /api/v4/areas`, `/areas/{id}`,
-   `/areas/{id}/eligibility`, `/areas/{id}/resolution` (add-area / add-card gallery data for a v4 editor).
+**Phase 6's pre-cutover surface is COMPLETE; only the cutover-era routes remain (correctly deferred):**
+1. ✅ **Done (this branch, TypeID-native):** read-only `GET /api/v4/areas` (list), `/areas/{id}` (detail:
+   effective members + bindings + placement), `/areas/{id}/eligibility` (add-card gallery — `capabilitiesForSystem`
+   + `lib/capabilities/catalog`), `/areas/{id}/resolution` (per-role `pt_` points — `resolveLogicalSystem` +
+   `RegistryCache`), `/areas/{id}/default-group` (capability seed → `rewriteV3ToV4`; lenient preview incl.
+   `oe-grid`), and `POST /api/v4/dashboards {seedArea}` (device-pin-free persist via `stripDevicePinnedNodes`
+   + a throwing `deviceRef` → cutover-safe; omits `oe-grid` until §15 makes it area-level). Wire IDs are `ar_`
+   / `pt_`; device members stay integer until the cutover mints `dv_`. Shared loaders `loadReadableArea`
+   /`findReadableArea` (`lib/areas/http.ts`); seed builders `lib/dashboard/v4-seed.ts`. Shipped as
+   **[PR #234](https://github.com/simonhac/LiveOne/pull/234)** (open). Verified end-to-end — unit tests +
+   live HTTP e2e on the dev server (list/detail/eligibility/resolution/default-group + `{seedArea}` create →
+   persisted doc device-free on grid-signal area Kutis; malformed→400, cross-owner→403, `{seedArea,doc}`→400).
 2. **Cutover-era, correctly deferred:** `/devices`, `/devices/{id}/points`,
    `/areas/{id}/members|bindings|derivations` (PUT), `/dashboards/{id}/shares|grants|revisions`,
    `/export`, `/import` — all addressed by `dv_`/`pt_`/uuid entities the cutover mints (and `revisions`
    is uuid-keyed), so they can't be built or tested pre-cutover.
 
-**NEXT (agent's choice):** either **(a) finish the pre-cutover Phase-6 remainder** in list 1 above (small,
-on-brand; enables create-and-seed + a v4 editor), **or (b) start Phase 7 — cutover rehearsal harness**
-(§ "Phase 7"): the full cutover transform + parity checks on a throwaway prod-snapshot branch, iterated
-until all checks pass AND the 13M/3M rewrite fits the window. Phase 7 depends on Phases 1–6 being live +
-burned-in — do it once PR #233 is merged and deployed.
+**NEXT — Phase 7: cutover rehearsal harness** (§ "Phase 7"): the full cutover transform + parity checks on a
+throwaway prod-snapshot branch, iterated until all checks pass AND the 13M/3M rewrite fits the window. Phases
+1–5 + the Phase-6 dashboards resource are live via #233 (merged + deployed); the Phase-6 area surface is
+**PR #234 (open)** — merge it before treating Phase 6 as fully burned-in. A **§15 follow-up** (make `oe-grid` area-level
+so seeded dashboards regain the Local Grid card — touches the live v3 renderer + `/api/data` seeding, NOT
+dark) and the optional `scripts`-lane drain (below) are non-blocking cleanups.
 
 **Optional / possibly-permanent: drain the `scripts` lane.** The 10 `scripts/*` entries still in
 `.readings-boundary-baseline.json` (its `_doc`: "slower / possibly-permanent-allow track") can each move
@@ -62,7 +66,7 @@ its `prebuild` guard get deleted. Not required for the cutover.
 | 3 — uuid↔rid DAO seam + registry cache + lint ratchet | ✅ DONE (`app_lib`=0) | highest-leverage strangler. **No new migration** (reads Phase-2's `point_uid`/`rid`). PR-A (dark foundation + ratchet, #214) + PR-B (receiver adoption — dual-grammar + publisher payload v2) + PR-C (first materialization writer `aggregate-points-pg.ts`; added DAO `insert5m` `preserveVendorMeta` value-only-upsert mode; byte-identical + idempotent verified on `liveone-dev`, prod `measurement_time` confirmed ms-granular) + PR-D (daily 1d agg `lib/aggregation/daily-points.ts` → DAO `delete1dRange`/`earliestAgg5mMs`/`systemIdsWithAgg5mSince`; byte-identical + idempotent verified on `liveone-dev`; #221) + PR-E (serving-path reader `lib/history/readings-pg.ts` → DAO `read5m`/`read1d`; identity via `RegistryCache.pointForAddr` with `UnknownIdError` skip-and-continue; `avgCache` reconstructed byte-identical; NO new DAO surface; pure reader, no pause) + PR-F (**CLEAN-READER BATCH** #226 — 6 pure readers `flow-series-pg`/`labs/kinkora-hws`/`enphase-history`/`battery-provenance/load`/`battery-provenance-daily-pg`/`run-periods-pg` → `read5m`/`read1d`/`readRaw`; added `ReadWindow.toInclusive` half-open upper bound + pure `upperBoundOp` helper; byte-identical verified on `liveone-dev` incl. half-open boundary + multi-point batch reverse-map; no pause) landed; **21 modules remain** (11 app_lib + 10 scripts). Readers profiled this session are NOT uniform → **6-PR trajectory** (§ Readings-seam ratchet ledger): 6 clean (done), 8 need new DAO surface (reader PRs G/H/I), 2 agg_5m writers (paused PRs J/K). PR-G (vendor 5m reads `amber/client`/`enphase/adapter`/`oe/scheduler`; added `createdAtMs`/`latest5mForPoints`/`latestAgg5mIntervalMsForSystem`) + PR-H (observability + coverage `coverage/find-gaps`/`admin/observations/stats`/`cron/monitor-observations`; added coverage COUNT-by-local-day `countAgg5mByLocalDay`/`countAgg5mForLocalDay` + created_at fleet counters `countByCreatedAtSince`/`createdAtHistogramSince`/`distinctSystemsByRawCreatedAtSince`/`latestRawCreatedAtMs` + `maxAgg5mIntervalMsForSystems`; both routes' raw `point_readings` counters moved behind the seam too; byte-identical verified on `liveone-dev` under `TZ=UTC`) landed; PR-I (**admin readings viewers** — the pivot route `admin/systems/[systemId]/point-readings` + `readings-read-pg` [which served BOTH that route AND the single-point drill-down `admin/point/[systemIdDotPointId]/readings`]; added `readAdminPivot`/`hasReadingsForSystem`/`hasReadingsForSystemBeyond`/`readRawWindowAround`/`read5mRowWindowAround` + reused `read1d`; `readings-read-pg.ts` DELETED; SQL relocated VERBATIM as `sql.raw` inside the seam → byte-identical by construction; verified on `liveone-dev` under `TZ=UTC`; #230) landed; **13 modules remain** (3 app_lib + 10 scripts). PR-JK (**the two writers, batched** — Simon 2026-07-23: `battery-provenance/recompute` + `battery-provenance-pg` + `hws/recompute`; added DAO `latestAgg5mIntervalMsForPoints` (per-point `MAX(interval_end)`) + `latestAgg5mUpdatedAtForPoint` (per-point windowed `MAX(updated_at)`) + `insert5m` `writeDataQuality` mode (7 agg + `data_quality` + `updated_at`, sole-writer derived points); HWS input reuses `read5m`; byte-identical + idempotent verified on `liveone-dev` under `TZ=UTC`; #232) landed → **`app_lib` = 0, 10 modules remain (0 app_lib + 10 scripts)**. Served-app boundary now lint-enforced (`.eslintrc.json` ratchet override removed); the `scripts` lane (10, possibly permanent) is the only baseline remainder. **Phase-3 app_lib strangler COMPLETE.** |
 | 4 — additive v4 config schema + roles→CHECK | ✅ DONE | migrations **0032** (dark columns `areas.day_offset_min`(backfilled)/`config`, `dashboards.doc`/`revision`, `area_bindings.role` CHECK) + **0033** (four empty tables `derivations`/`derived_intervals`/`dashboard_revisions`/`legacy_handles`) applied + verified on prod `sydney` + `liveone-dev`. Simon chose "build all 4 tables now". See § Phase 4. |
 | 5 — v4 dashboard doc model + dual renderer | ✅ DONE | **pure core** (`v4.ts` types, `card-types.ts`, `v4-validate.ts` zod validator + `normalizeDocV4` + `collectRefs`, `v3-to-v4.ts` rewriter; adversarially reviewed) + **`resolve-shell.ts`** (§8.1 inheritance + `resolveDashboardShell`) + **adapter renderer** (`v4-adapt.ts` + `components/dashboard/v4/node-view.tsx` recursive `<NodeView>`/`DashboardV4View` reusing the UNCHANGED v3 plugins + ported `SiteChartsGroup` collapse; adapter chosen — the ~19 plugins go v4-native in Phase 9) + **dual-shape SSR window** (`CompositionDashboard` surfaces `doc`/`revision`; `isDashboardV4` guard; `dashboardAreaUuids` shape-aware area resolution at the shared/grantee paths; `renderCompositionDashboard`/`DashboardClient` branch on `doc` → `DashboardV4View`). 34 tests; zod added. Dark — no dashboard has a `doc`, v3 path byte-identical. **Deferred to Phase 6/cutover:** v4 SSR data-seeding perf, `access.ts` v4-scope for shared-v4 data, the v4-native editor + temporal nav. |
-| 6 — `/api/v4/*` route surface | 🔨 IN PROGRESS — dashboards only (NOT complete) | **Dashboards resource done** (dark): `app/api/v4/dashboards` GET(list)/POST(create `{name,slug?,doc?}`) + `[id]` GET/PUT/PATCH/DELETE + `[id]/validate`. Whole-doc `PUT` = `validateDocV4`→422, §8.4 area-readability→403, `updateDashboardDoc` (SELECT FOR UPDATE + `If-Match`→412 + revision bump)→200+ETag. Serial-id addressed (db_ TypeID + `dashboard_revisions` history at cutover). **`access.ts` now v4-scope-aware** (`allowedSystemIds`/read-points read the doc via `dashboardAreaUuids`; callers `api-auth`/`grants` pass `doc`) so a SHARED v4 dashboard's `/api/data` authorizes. **TRUE E2E verified on the running dev server:** real area 1 → capability seed → `rewriteV3ToV4` → valid doc → `updateDashboardDoc`(dash 6) → share token → `/api/data?systemId=1` returns real data → the page SSRs `DashboardV4View` (area header + Solar/Load/Battery/Grid/Renewables cards; 0 "Area unavailable", 0 unknown-type). **Remaining (Phase 6 NOT complete):** (a) PRE-CUTOVER-VIABLE, still TODO → `GET /areas/{id}/default-group` + wire `POST /dashboards {seedArea}` + read-only `/areas`, `/areas/{id}`, `/areas/{id}/eligibility`, `/areas/{id}/resolution`; (b) cutover-era → devices/points, `/areas/{id}/members\|bindings\|derivations`, `/dashboards/{id}/shares\|grants\|revisions`, export/import (`dv_`/`pt_`/uuid entities the cutover mints). |
+| 6 — `/api/v4/*` route surface | ✅ DONE (pre-cutover surface) | **Dashboards resource** (dark): `app/api/v4/dashboards` GET(list)/POST(create `{name,slug?,doc?}`) + `[id]` GET/PUT/PATCH/DELETE + `[id]/validate`. Whole-doc `PUT` = `validateDocV4`→422, §8.4 area-readability→403, `updateDashboardDoc` (SELECT FOR UPDATE + `If-Match`→412 + revision bump)→200+ETag. Serial-id addressed (db_ TypeID + `dashboard_revisions` history at cutover). **`access.ts` now v4-scope-aware** (`allowedSystemIds`/read-points read the doc via `dashboardAreaUuids`; callers `api-auth`/`grants` pass `doc`) so a SHARED v4 dashboard's `/api/data` authorizes. **TRUE E2E verified on the running dev server:** real area 1 → capability seed → `rewriteV3ToV4` → valid doc → `updateDashboardDoc`(dash 6) → share token → `/api/data?systemId=1` returns real data → the page SSRs `DashboardV4View` (area header + Solar/Load/Battery/Grid/Renewables cards; 0 "Area unavailable", 0 unknown-type). **Pre-cutover area surface DONE** (this branch, TypeID-native `ar_`/`pt_`): read-only `/areas`, `/areas/{id}` (effective members + bindings + placement), `/areas/{id}/eligibility` (add-card gallery), `/areas/{id}/resolution` (per-role `pt_` points), `/areas/{id}/default-group`, + `POST /dashboards {seedArea}` (device-pin-free via `stripDevicePinnedNodes` + throwing `deviceRef` → cutover-safe; omits `oe-grid` until §15). Shared `loadReadableArea`/`findReadableArea` (`lib/areas/http.ts`) + seed builders (`lib/dashboard/v4-seed.ts`); **[PR #234](https://github.com/simonhac/LiveOne/pull/234)** (open); verified via unit tests + live HTTP e2e on the dev server. **Cutover-era deferred:** devices/points, `/areas/{id}/members\|bindings\|derivations`, `/dashboards/{id}/shares\|grants\|revisions`, export/import (`dv_`/`pt_`/uuid entities the cutover mints). |
 | 7 — cutover rehearsal harness | ⬜ TODO | prod snapshot branch only |
 | 8 — THE CUTOVER | ⬜ TODO | single windowed op; pauses materialization, not pollers |
 | 9 — post-cutover teardown | ⬜ TODO | |
@@ -358,13 +362,20 @@ Ordering is a hard dependency chain (migrations lead code to prod).
   them; cache key `(dashboard_id, revision)`.
 - Deps: Phase 1.
 
-### Phase 6 — `/api/v4/*` route surface (dark; writes go live at cutover)  🔨 PARTIAL — NOT complete
-> **Done:** only the `/api/v4/dashboards` resource (GET/POST/PUT/PATCH/DELETE + validate; `If-Match`/412;
-> `updateDashboardDoc`) + v4-aware share/grant access scope; true e2e verified on dev. `dashboard_revisions`
-> history is deferred (uuid-keyed). **Still TODO pre-cutover:** `GET /areas/{id}/default-group` + `POST
-> /dashboards {seedArea}` wiring + read-only `/areas`, `/areas/{id}`, `/areas/{id}/eligibility`,
-> `/areas/{id}/resolution`. **Cutover-era:** the rest of §9.2 (devices/points/bindings/members/derivations/
-> shares/grants/revisions/export/import). See ▶ NEXT ACTION for the buildable-now vs deferred split.
+### Phase 6 — `/api/v4/*` route surface (dark; writes go live at cutover)  ✅ DONE (pre-cutover surface)
+> **Done:** the `/api/v4/dashboards` resource (GET/POST/PUT/PATCH/DELETE + validate; `If-Match`/412;
+> `updateDashboardDoc`) + v4-aware share/grant access scope (#233), **plus the pre-cutover area surface**
+> ([PR #234](https://github.com/simonhac/LiveOne/pull/234), open; TypeID-native `ar_`/`pt_`): read-only
+> `GET /api/v4/areas`, `/areas/{id}`,
+> `/areas/{id}/eligibility`, `/areas/{id}/resolution`, `/areas/{id}/default-group` (capability seed →
+> `rewriteV3ToV4`; lenient preview incl. `oe-grid`), and `POST /api/v4/dashboards {seedArea}` (device-pin-free
+> persist via `stripDevicePinnedNodes` + a throwing `deviceRef`; `collectRefs(doc).devices` is empty → the
+> persisted doc is cutover-safe; omits the Local Grid card until the §15 follow-up makes `oe-grid` area-level).
+> New: `loadReadableArea`/`findReadableArea` (`lib/areas/http.ts`, the single `ar_`→uuid decode + readable-set
+> gate), seed builders (`lib/dashboard/v4-seed.ts`), tests (`lib/dashboard/__tests__/v4-seed.test.ts`). Device
+> members stay integer until the cutover mints `dv_`. `dashboard_revisions` history stays deferred (uuid-keyed).
+> **Cutover-era (deferred, need cutover-minted entities):** the rest of §9.2 —
+> devices/points/bindings/members/derivations/shares/grants/revisions/export/import.
 - Full route table (proposal §9.2). Whole-doc `PUT` in one txn: `SELECT … FOR UPDATE`; `If-Match`
   mismatch → **412**; validate+normalize → **422** (nothing persisted); else insert
   `dashboard_revisions`, bump `revision`, invalidate the `(dashboard_id, revision)` shell cache, echo

@@ -2,10 +2,18 @@
  * Small shared HTTP-layer helpers for the `/api/areas` mutation routes: coercing an untyped JSON body
  * into a typed location patch (same shape as the location route's `toPatch`), and loading the
  * ownership/handle facts a route needs to authorize an area edit.
+ *
+ * Plus the config-v4 read-side loaders (`findReadableArea` / `loadReadableArea`): parse an `ar_` TypeID
+ * and resolve it within the caller's READABLE set (owner ∪ visible-system areas). The `/api/v4/areas/*`
+ * routes are TypeID-native, so the `ar_`→uuid decode lives here in one place.
  */
 import { eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
+import { Area } from "@/lib/ids";
+import { listReadableAreas, type ReadableArea } from "@/lib/areas/list";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { AreaLocationPatch } from "@/lib/areas/location";
 
@@ -51,4 +59,58 @@ export async function loadAreaForAuth(
     .where(eq(areas.id, areaId))
     .limit(1);
   return row ?? null;
+}
+
+/** `findReadableArea` outcome: the resolved readable area, or a status+message the caller maps to a 4xx. */
+export type ReadableAreaResult =
+  | { ok: true; area: ReadableArea }
+  | { ok: false; status: 400 | 403; message: string };
+
+/**
+ * Parse an `ar_` TypeID and resolve it within `userId`'s readable set. AUTH-FREE (the caller has already
+ * authenticated) so it can back both the `/api/v4/areas/{id}` route loader and the `POST /dashboards
+ * {seedArea}` branch without a second Clerk round-trip. A malformed id → 400; a well-formed id outside the
+ * readable set → 403 (the §8.4 no-escalation collapse: "unknown" and "not yours" are indistinguishable).
+ */
+export async function findReadableArea(
+  userId: string,
+  arId: string,
+): Promise<ReadableAreaResult> {
+  const parsed = Area.parse(arId);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      status: 400,
+      message: `Invalid area id: ${parsed.message}`,
+    };
+  }
+  const uuid = Area.toUuid(parsed.id);
+  const area = (await listReadableAreas(userId)).find((a) => a.id === uuid);
+  if (!area) {
+    return {
+      ok: false,
+      status: 403,
+      message: "Area not found or not readable",
+    };
+  }
+  return { ok: true, area };
+}
+
+/**
+ * Authenticate + resolve a readable area — the loader every `GET /api/v4/areas/{id}[/…]` route uses.
+ * Mirrors `loadOwnedDashboard` (dashboard side): returns `{ area, userId }` or `{ error }` to short-circuit.
+ */
+export async function loadReadableArea(
+  request: NextRequest,
+  arId: string,
+): Promise<{ area: ReadableArea; userId: string } | { error: NextResponse }> {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return { error: auth };
+  const r = await findReadableArea(auth.userId, arId);
+  if (!r.ok) {
+    return {
+      error: NextResponse.json({ error: r.message }, { status: r.status }),
+    };
+  }
+  return { area: r.area, userId: auth.userId };
 }
