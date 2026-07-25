@@ -1,0 +1,14 @@
+# Python virtualenv — never commit
+.venv/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Generated artifacts (regenerate via extract.py / report.py)
+data/*.parquet
+out/*.png
+out/*.csv
+out/*.npz
+out/*.pt
+out/*.parquet
