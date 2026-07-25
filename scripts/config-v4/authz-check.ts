@@ -38,9 +38,30 @@
  *     still 11/11. Covering that needs the serving-path smoke set (see the Phase-8 plan of record), not
  *     another SQL check here.
  *
- * Usage (on the branch, AFTER config-transform.ts --commit):
+ * ⚠️  AC1 NEEDS A PRE-TRANSFORM SNAPSHOT — `--snapshot` is NOT optional. Run 5 (2026-07-26) proved that
+ *     resolving the v3 `descriptor` leg AFTER the transform is structurally incapable of proving anything:
+ *     stage 2 renames `areas.display_name` → `name`, `schema.ts` still declares `displayName`, so every
+ *     drizzle read of `areas` raises 42703 and `access.ts`'s per-area `catch {}` swallows it — the descriptor
+ *     scope resolves to ZERO points. Both legs then narrow together and every set comparison passes
+ *     vacuously. (That is exactly how Run 4's "authz 9/9" reported a green AC1 over an empty set.) So the
+ *     descriptor leg is CAPTURED BEFORE the transform, while the v3 code can still read the v3 database, and
+ *     the post-transform run compares that snapshot against the live v4 `doc` scope.
+ *
+ *     The snapshot is keyed on `dashboards.legacy_id`, NOT the PK: the cutover replaces the serial int id
+ *     with a uuid, so the pre-transform id is only recoverable through `legacy_id` (unique, frozen at 5c).
+ *     A dashboard the TRANSFORM created (the owner-token auto-create) has no `legacy_id` and therefore no
+ *     pre-cutover scope to compare — it is reported informationally and covered by AC2d instead.
+ *
+ * Usage — TWO invocations, in this order:
+ *   # 1. BEFORE config-transform.ts (captures the descriptor leg while v3 code still works)
+ *   PLANETSCALE_DATABASE_URL="<branch url>" REHEARSAL_BRANCH_ID="<branch id>" \
+ *     npx tsx scripts/config-v4/authz-check.ts --snapshot
+ *   # 2. AFTER config-transform.ts --commit
  *   PLANETSCALE_DATABASE_URL="<branch url>" REHEARSAL_BRANCH_ID="<branch id>" \
  *     npx tsx scripts/config-v4/authz-check.ts
+ *
+ * Snapshot file: $CONFIG_V4_AUTHZ_SNAPSHOT_FILE, default .context/config-v4-authz-snapshot.json.
+ * A missing/incomplete snapshot is a FAILURE, never a silent skip (fail-closed).
  *
  * TARGET MODES (guard.ts). `CONFIG_V4_TARGET` defaults to `rehearsal`; the branch-id var is the positive
  * proof of the mode. `PLANETSCALE_PROD_BRANCH_ID` is required in ALL modes (it is the only way to
@@ -53,9 +74,21 @@
 import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { sql, type SQL } from "drizzle-orm";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { assertRehearsalTarget } from "./guard";
+
+/** Capture mode: resolve + persist the v3 descriptor scope BEFORE the transform renames it out of reach. */
+const snapshotMode = process.argv.includes("--snapshot");
+const SNAPSHOT_FILE =
+  process.env.CONFIG_V4_AUTHZ_SNAPSHOT_FILE ??
+  join(process.cwd(), ".context", "config-v4-authz-snapshot.json");
+
+/** One dashboard's pre-cutover descriptor scope, keyed by the frozen `legacy_id`. */
+type SnapshotEntry = { legacyId: number; rids: number[]; areas: string[] };
+type Snapshot = { capturedAt: string; dashboards: SnapshotEntry[] };
 
 type Status = "PASS" | "FAIL";
 const results: { name: string; status: Status; detail: string }[] = [];
@@ -111,7 +144,73 @@ async function main() {
     return ridsForRefs(points);
   };
 
+  // ── SNAPSHOT (capture) MODE — run BEFORE config-transform.ts ────────────────────────────────────────
+  // Resolves the v3 descriptor leg while the v3 resolver can still read the v3 `areas` columns, and keys
+  // each result on the int PK, which stage 5c freezes into `dashboards.legacy_id`. After the transform this
+  // resolution is impossible (see the header), so this file is the ONLY evidence of pre-cutover scope.
+  if (snapshotMode) {
+    const dash = (await rowsOf(
+      "SELECT id, descriptor FROM dashboards ORDER BY id",
+    )) as Array<{ id: number; descriptor: unknown }>;
+    const entries: SnapshotEntry[] = [];
+    for (const d of dash) {
+      const rids = await scopeRids({ descriptor: d.descriptor });
+      entries.push({
+        legacyId: Number(d.id),
+        rids: [...rids].sort((a, b) => a - b),
+        areas: [...descriptorAreaIds(d.descriptor)].sort(),
+      });
+    }
+    const empty = entries.filter((e) => e.rids.length === 0);
+    mkdirSync(dirname(SNAPSHOT_FILE), { recursive: true });
+    writeFileSync(
+      SNAPSHOT_FILE,
+      JSON.stringify(
+        {
+          capturedAt: new Date().toISOString(),
+          dashboards: entries,
+        } satisfies Snapshot,
+        null,
+        2,
+      ),
+    );
+    console.log(`\n=== config-v4 authz snapshot (PRE-transform) ===`);
+    console.log(`  dashboards captured : ${entries.length}`);
+    console.log(
+      `  total points        : ${entries.reduce((a, e) => a + e.rids.length, 0)}`,
+    );
+    console.log(`  → ${SNAPSHOT_FILE}`);
+    // Capturing zeros would bake the very vacuity this snapshot exists to prevent into the baseline.
+    if (entries.length === 0 || empty.length) {
+      console.error(
+        `\n❌ REFUSING to accept this snapshot: ${entries.length} dashboards, ${empty.length} resolved to ZERO points.` +
+          `\n   The descriptor resolver must work at capture time — fix it BEFORE running the transform.` +
+          (empty.length
+            ? `\n   empty: ${empty.map((e) => e.legacyId).join(",")}`
+            : ""),
+      );
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  // ── VERIFY MODE — the descriptor leg comes from the snapshot, the doc leg is resolved live ──────────
+  const snapshot: Snapshot | null = existsSync(SNAPSHOT_FILE)
+    ? (JSON.parse(readFileSync(SNAPSHOT_FILE, "utf8")) as Snapshot)
+    : null;
+  const snapByLegacy = new Map<number, SnapshotEntry>(
+    (snapshot?.dashboards ?? []).map((e) => [e.legacyId, e]),
+  );
+  record(
+    "AC1 pre-transform snapshot present",
+    snapshot != null && snapByLegacy.size > 0,
+    snapshot
+      ? `${snapByLegacy.size} dashboards captured ${snapshot.capturedAt}`
+      : `MISSING ${SNAPSHOT_FILE} — run --snapshot BEFORE config-transform (AC1 cannot be evaluated post-hoc)`,
+  );
+
   // Cache each dashboard's descriptor- and doc-resolved scope (points + areas), computed once.
+  // `descriptor*` is READ FROM THE SNAPSHOT (via legacy_id); only `doc*` is resolved live.
   const scopeCache = new Map<
     string,
     {
@@ -119,14 +218,16 @@ async function main() {
       docRids: Set<number>;
       descAreas: Set<string>;
       docAreas: Set<string>;
+      legacyId: number | null;
+      snapshotFound: boolean;
     }
   >();
   const dashboardScopes = async (id: string) => {
     let s = scopeCache.get(id);
     if (!s) {
       const [d] = (await rowsOf(
-        sql`SELECT descriptor, doc FROM dashboards WHERE id = ${id}`,
-      )) as Array<{ descriptor: unknown; doc: DashboardV4 }>;
+        sql`SELECT legacy_id, doc FROM dashboards WHERE id = ${id}`,
+      )) as Array<{ legacy_id: number | null; doc: DashboardV4 }>;
       const docAreas = new Set(
         d
           ? (collectRefs(d.doc)
@@ -140,15 +241,17 @@ async function main() {
               .filter((x): x is string => x != null) as string[])
           : [],
       );
+      const legacyId = d?.legacy_id == null ? null : Number(d.legacy_id);
+      const snap = legacyId == null ? undefined : snapByLegacy.get(legacyId);
       s = {
-        descriptorRids: d
-          ? await scopeRids({ descriptor: d.descriptor })
-          : new Set(),
+        descriptorRids: new Set(snap?.rids ?? []),
         docRids: d
           ? await scopeRids({ descriptor: null, doc: d.doc })
           : new Set(),
-        descAreas: new Set(d ? descriptorAreaIds(d.descriptor) : []),
+        descAreas: new Set(snap?.areas ?? []),
         docAreas,
+        legacyId,
+        snapshotFound: snap != null,
       };
       scopeCache.set(id, s);
     }
@@ -175,22 +278,53 @@ async function main() {
   let widenPoints = 0;
   let widenDashboards = 0;
   let emptyDescriptor = 0;
+  let mintedAtCutover = 0;
+  let comparable = 0;
   for (const { id } of targeted) {
-    const { descriptorRids, docRids, descAreas, docAreas } =
-      await dashboardScopes(id);
-    // NON-VACUITY. AC1 resolves BOTH worlds through the same `resolveDashboardReadPoints`, and
-    // `lib/dashboard/access.ts` wraps each per-area resolution in a bare `catch {}` that keeps the handle
-    // and drops the points. So any regression that breaks point resolution narrows both legs identically:
-    // `lost` is empty, `sameSet` holds, and AC1 passes while every dashboard resolves to nothing. An
-    // empty descriptor scope on a dashboard someone actually shares is never a legitimate state.
+    const {
+      descriptorRids,
+      docRids,
+      descAreas,
+      docAreas,
+      legacyId,
+      snapshotFound,
+    } = await dashboardScopes(id);
+    // A dashboard the TRANSFORM minted (owner-token auto-create) has no legacy_id and so no pre-cutover
+    // scope: there is nothing to compare, and counting it as vacuous would be a false red. AC2d is what
+    // proves that token's scope survived.
+    if (legacyId == null) {
+      mintedAtCutover++;
+      record(
+        `AC1 new-at-cutover ${id.slice(0, 8)}`,
+        true,
+        "minted by the transform (no legacy_id) — pre-cutover scope N/A; covered by AC2d",
+      );
+      continue;
+    }
+    // Fail-closed: a targeted dashboard that existed before the window MUST be in the snapshot. Silently
+    // treating it as empty is what turned AC1 green over nothing in Run 4.
+    if (!snapshotFound) {
+      emptyDescriptor++;
+      record(
+        `AC1 NO SNAPSHOT ${id.slice(0, 8)}`,
+        false,
+        `legacy_id=${legacyId} absent from the snapshot — captured after the transform, or against a different database`,
+      );
+      continue;
+    }
+    // NON-VACUITY. The snapshot is captured with a working v3 resolver and refuses to persist zeros, so an
+    // empty scope here means the capture itself was degraded. An empty descriptor scope on a dashboard
+    // someone actually shares is never a legitimate state.
     if (descriptorRids.size === 0) {
       emptyDescriptor++;
       record(
         `AC1 VACUOUS ${id.slice(0, 8)}`,
         false,
-        "descriptor scope resolved to ZERO points — the resolver is broken, not the data",
+        `legacy_id=${legacyId} snapshot scope is EMPTY — the descriptor resolver was broken at capture time`,
       );
+      continue;
     }
+    comparable++;
     const lost = difference(descriptorRids, docRids); // LOCKOUT — the dangerous direction
     const gained = difference(docRids, descriptorRids); // device-pin widening — intended (§8.3)
     if (lost.size) {
@@ -214,9 +348,9 @@ async function main() {
   // nothing and pass. Prod has share tokens and grants, so an empty target set means the query (or the
   // fold that populates it) is wrong, not that there is nothing to check.
   record(
-    "AC1 non-vacuous (targeted dashboards > 0, all scopes non-empty)",
-    targeted.length > 0 && emptyDescriptor === 0,
-    `${targeted.length} targeted, ${emptyDescriptor} resolving to zero points`,
+    "AC1 non-vacuous (comparable dashboards > 0, all scopes non-empty)",
+    targeted.length > 0 && emptyDescriptor === 0 && comparable > 0,
+    `${targeted.length} targeted = ${comparable} compared vs snapshot + ${mintedAtCutover} minted at cutover; ${emptyDescriptor} unusable`,
   );
   record(
     "AC1 no lockout (descriptor ⊆ doc, all targeted)",

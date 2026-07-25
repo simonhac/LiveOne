@@ -350,6 +350,25 @@ Consequences:
    post-transform doc scope.** Resolving both legs afterwards through code that cannot read the renamed
    columns proves nothing. Until that lands, treat AC1 as INCONCLUSIVE, not as a pass.
 
+**AC1 snapshot fix — LANDED + VERIFIED (2026-07-26).** `authz-check.ts --snapshot` captures the descriptor
+leg pre-transform, keyed on the int PK that 5c freezes into `legacy_id` (the PK itself becomes a uuid, so it
+cannot be the join key). Fail-closed throughout: the capture refuses to persist a zero-point scope, a missing
+snapshot is a FAIL not a skip, a targeted dashboard absent from the snapshot is a FAIL, and a dashboard the
+transform minted (owner-token auto-create, no `legacy_id`) is reported as `new-at-cutover` and deferred to AC2d
+rather than counted vacuous. Verified end-to-end on branch `rehearse-6` (same backup, `--skip-hot`):
+capture → 3 dashboards / **62 points** (the identical resolver that returned **0** post-transform), then
+transform, then verify → **AC1 non-vacuity PASSES** (`2 compared vs snapshot + 1 minted at cutover, 0 unusable`).
+Step **0** of the ordered cutover steps now runs the capture; it is not optional.
+
+The de-vacuumed AC1 immediately surfaced real signal that the vacuous version could never have shown: an
+**AC1 LOCKOUT of 41 points across the 2 dashboards that reference MULTI-DEVICE areas**, while the dashboard
+whose area is an area-of-one reconciles exactly (12 snapshot = 12 doc). Per-dashboard, post-transform:
+`legacy_id=5` 35 pre → 4 live; `legacy_id=6` 15 pre → 21 live; `legacy_id=7` 12 pre → 12 live; the
+transform-minted owner dashboard resolves 102 points across 13 areas. Area-of-one expansion works, multi-member
+area expansion returns zero — precisely defect D-i's predicted symptom ("first render of a multi-device area
+post-cutover"). Whether that is a pre-Group-B artifact (v3 synthesis code reading v4 `areas`) or a genuine
+data-level lockout is under investigation; **it must be resolved before the window either way.**
+
 `AC2a–d` and `AC3` are unaffected and green (token fold 1:1, no revive, every surviving token resolves ≥1
 point, owner-token re-point preserves the kinkora `load.hws` scope, no widening, narrowing == intended).
 

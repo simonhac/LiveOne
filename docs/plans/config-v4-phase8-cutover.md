@@ -149,6 +149,17 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
   (Cloudflare-dispatched — `_old` retention roughly doubles hot-table counts, so durable-verify's row-count
   reference will alert) and `sync-prod-to-dev.yml` (`20 */2 * * *`).
 
+0. **Capture the authz baseline — BEFORE anything else writes.** `authz-check.ts --snapshot` records each
+   dashboard's v3 `descriptor` point-scope while the v3 resolver can still read the v3 `areas` columns,
+   keyed on the int PK that stage 5c freezes into `legacy_id`. **After stage 2 renames `areas.display_name`
+   this resolution is impossible**, so skipping this step permanently forfeits AC1 — and, worse, AC1 then
+   passes vacuously (Run 4's false green). The capture refuses to persist a zero-point scope.
+
+   ```bash
+   CONFIG_V4_TARGET=prod ALLOW_PROD_DB_IN_DEV=true PLANETSCALE_DATABASE_URL="<prod url>" \
+     npx tsx scripts/config-v4/authz-check.ts --snapshot --i-understand-this-is-prod
+   ```
+
 1. **Pause materialization** — `cutover-pause.ts set --env=prod --i-understand-this-is-prod`, which does
    BOTH halves: the `cutover:paused` KV flag (crons + the receiver) and the QStash **queue** pause
    (delivery). Neither alone is a pause — see defect D-h. Keep `CRONS_ENABLED=true` so pollers + the
