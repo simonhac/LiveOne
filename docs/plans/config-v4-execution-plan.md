@@ -17,7 +17,20 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 8: Group B0 pre-flight landed → **Run 5 rehearsal** → Group B build → Group C window
+## ▶ NEXT ACTION — Phase 8: **Run 5 DONE** → fix authz AC1 vacuity → Group B build → Group C window
+
+> **Run 5 is complete (2026-07-26): `parity 48/52` · `authz 10/13` · `window-report` ✅ GO · transform `rc=0`**,
+> on branch `rehearse-5` restored from a freshly-dispatched prod backup (`0846o64bc1a7`, 2026-07-25 13:46 UTC).
+> The config-first reorder is verified in the timing ledger, `T_window` = 5.4 min × 3 = 16.1 min ≤ the 30-min
+> target, and **D-f was exercised for the first time** (held reader → 2 bounded `55P03` retries with the blocker
+> pid logged → swap won on attempt 3). The 7 reds are all *v3 code reading a v4 database*, not transform
+> defects: 4 W-series writability reds that **are** Group B's `schema.ts` work list (must reach 52/52 when the
+> model + writers flip), and 3 AC1 vacuity reds. **The AC1 finding is the significant one — it retroactively
+> invalidates Run 4's "authz 9/9"** (the floor didn't exist then, so `descriptor ⊆ doc` passed over an empty
+> set). **Do before the window: give `authz-check.ts` a pre-transform descriptor-scope snapshot** — resolving
+> both legs post-transform through code that can't read the renamed `areas` columns proves nothing. Detail:
+> [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md) § Run 5. Branch `rehearse-5`
+> is **retained** as the Group B build/preview target (twin tables reassigned to `postgres`).
 
 > **Next concrete step: stand up the `v4shape` branch and run the gate (Run 5).** Restore a CURRENT prod
 > backup (`pscale backup list liveone sydney` → newest, NOT `avtprjx1cmde`) into a PS-5 branch, then

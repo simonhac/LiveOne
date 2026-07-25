@@ -240,7 +240,23 @@ the **first** point of no return; the hot rename-swap (stage 4, run last) is the
 
 ## Verification
 
-**Group A acceptance gate — PASSED (Run 4: parity 36/36 · authz 9/9 · window GO).** Recorded in
+**Run 5 — DONE (2026-07-26): parity 48/52 · authz 10/13 · window ✅ GO · D-f finally exercised.** Full
+detail in [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md). The config-first
+reorder is verified (`stage5` completes before `stage4` begins) and `T_window` = 5.4 min × 3 = 16.1 min.
+The reds are **not** transform defects — all seven are the same root cause, *v3 code reading a v4 database*:
+
+- **4 parity W-series reds** = `areas.name`, `dashboards.owner_user_id`, `dashboard_grants.created_at`+`user_id`,
+  `share_tokens.dashboard_id`. All in the FORCED column of the scope audit. **This is Group B's `schema.ts`
+  definition-of-done: the suite must read 52/52 once the model + writers are flipped.**
+- **3 authz AC1 reds (vacuity)** = AC1 resolves the v3 `descriptor` leg through live code *after* the
+  transform renamed `areas.display_name`→`name`; drizzle 42703s and `access.ts`'s per-area `catch {}` swallows
+  it, so the scope is empty. **This retroactively invalidates Run 4's AC1 "9/9"** — without the Group-B0
+  non-vacuity floor, "descriptor ⊆ doc" passed trivially over an empty set. **Required harness fix (do before
+  the window): snapshot the descriptor scope BEFORE the transform and compare against the post-transform doc
+  scope.** Until then AC1 is INCONCLUSIVE, not a pass. AC2a–d and AC3 are green and unaffected.
+
+**Group A acceptance gate — PASSED (Run 4: parity 36/36 · authz 9/9 · window GO)** *(AC1 now known vacuous —
+see Run 5).* Recorded in
 [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md). Group B0 changes what the
 transform does and what the suite can catch, so **Run 5 re-runs the whole gate against a CURRENT prod
 backup** on a fresh PS-5 branch: `backfill-foundation` → `config-transform` → `parity-check` →

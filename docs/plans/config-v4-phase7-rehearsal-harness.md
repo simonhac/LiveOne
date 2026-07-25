@@ -301,6 +301,61 @@ the tightened/added parity + authz assertions). Those change what the transform 
 can catch, so **Run 5 must re-run the whole gate against a CURRENT prod backup** before the cutover build
 starts. Run 4 remains the evidence that the transform mechanism itself is sound.
 
+### Run 5 (2026-07-26) — config-first reorder + D-f first exercised; AC1 exposed as a prior false-green
+
+Branch `rehearse-5` (`fq7uult9pcir`), restored from a **freshly dispatched** prod backup `0846o64bc1a7`
+(2026-07-25 13:46 UTC) — deliberately not Run 4's `avtprjx1cmde`. All 36 migrations already applied, so
+`db:pg:migrate` was skipped (which also sidesteps the ownership trap). `backfill-foundation --commit` was a
+clean no-op (16/16 devices, 16/16 areas, 0 missing).
+
+**Result: `parity 48/52` · `authz 10/13` · `window-report` ✅ GO · transform `rc=0`.**
+
+- **The config-first reorder works as intended.** The timing ledger shows `stage5:config` (0.6s) and
+  `stage5:dash-swap` (1.0s) completing *before* `stage4:*` begins. `T_window` = **322.3s (5.4 min)** × 3 =
+  16.1 min ≤ the 30-min target → **GO**. (`copy-raw` 129.7s · `indexes` 129.7s · `copy-5m` 36.6s ·
+  `analyze` 10.7s · `swap` 12.4s.)
+- **D-f exercised for the FIRST time.** A deliberately-held `ACCESS SHARE` reader on `point_readings`
+  (taken after 5d, held across the copy) blocked the swap: two bounded `55P03` retries, each logging the
+  blocking pid + full query text, then **won on attempt 3** after a server-side `pg_terminate_backend`
+  release. The bounded-retry path is now rehearsed rather than assumed. Releasing must be **server-side** —
+  killing the client leaves the backend parked in `pg_sleep` still holding the lock.
+
+**The 4 parity reds are expected pre-Group-B and are exactly Group B's `schema.ts` work list.** The W-series
+(writability) checks whether the *deployed* drizzle model can still INSERT into each transform-touched table.
+The forced in-window renames make four columns required-but-undeclared: `areas.name` (←`display_name`),
+`dashboards.owner_user_id` (←`clerk_user_id`), `dashboard_grants.created_at` + `user_id` (←`clerk_user_id`),
+`share_tokens.dashboard_id` (flipped NOT NULL). Each is in the scope audit's FORCED column. **The W-series
+therefore doubles as Group B's definition-of-done: it must read 52/52 once `schema.ts` + the writers are
+flipped in the same deploy.**
+
+**AC1's red is the important one — it retroactively invalidates part of Run 4.** AC1 resolves BOTH legs
+(v3 `descriptor` and v4 `doc`) through the live resolver *after* the transform has renamed
+`areas.display_name` → `name`. The v3 `schema.ts` still declares `displayName: text("display_name")`, so every
+drizzle read of `areas` raises 42703, which `lib/dashboard/access.ts` swallows in its per-area `catch {}` —
+the area silently contributes **zero points**. Verified directly on the branch
+(`select id, display_name from areas` → `ERROR: column "display_name" does not exist`; `display_name exists: 0`).
+Two of three targeted dashboards resolve to an empty scope; the third survives only because its scope comes
+from device pins, and `systems`/`point_info` are untouched (elective, deferred to Phase 9).
+
+Consequences:
+
+1. **This is not a data defect and not a transform bug** — it is v3 code reading a v4 database, the same root
+   cause as the four W-series reds.
+2. **Run 4's "authz 9/9" included a VACUOUS AC1 pass.** The non-vacuity floors did not exist then, so
+   "no lockout (descriptor ⊆ doc)" was trivially true over an empty set. The Group-B0 floor caught it on its
+   very first run — precisely the false-green class this project has already paid for twice.
+3. **AC1 is structurally incapable of being non-vacuous post-transform / pre-Group-B**, because it has no
+   pre-transform baseline (`grep -E 'snapshot|baseline' authz-check.ts` → nothing). **Harness fix required:
+   capture the descriptor scope BEFORE the transform runs and compare that snapshot against the
+   post-transform doc scope.** Resolving both legs afterwards through code that cannot read the renamed
+   columns proves nothing. Until that lands, treat AC1 as INCONCLUSIVE, not as a pass.
+
+`AC2a–d` and `AC3` are unaffected and green (token fold 1:1, no revive, every surviving token resolves ≥1
+point, owner-token re-point preserves the kinkora `load.hws` scope, no widening, narrowing == intended).
+
+Ownership trap fired as documented: the 3 twin tables were owned by the temp role until
+`pscale role reassign … --successor postgres`. Branch retained as the Group B build target.
+
 ## 6. Iterate-to-green & done
 
 Loop: fresh branch → C1 target-assert + version/FK-orphan gates → transform → `parity-check.ts` →
