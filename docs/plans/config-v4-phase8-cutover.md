@@ -33,6 +33,12 @@ unless noted; the verifying check is named where one exists.
 | **D-k** | **the first fix for D-i was itself a defect.** `point_uid` was added `NOT NULL` with no default — but `schema.ts` does not declare the column, so neither drizzle INSERT site (`lib/areas/create.ts`, reached from four `/api/areas` routes; `lib/battery-provenance/register.ts` `ensureHelperBindings`) emits it. Every binding write after resume would 23502, on the irreversible side. `.onConflictDoNothing()` does not help: NOT NULL is checked before conflict arbitration. Found by review, not by any check — **no check in the suite had ever attempted a write**. | first area create / binding edit / provenance-helper registration after resume | column left NULLABLE until Phase 9 tightens it alongside the writers (cf. `lib/point/mint-point-uid.ts`, which exists for exactly this reason on `point_info.point_uid`) | `parity-check.ts` **W-series**: for every transform-touched table, no column is NOT-NULL-without-a-default unless `schema.ts` declares it |
 | **D-j** | **a false-green inside the anti-false-green suite.** `parity-check`'s *"5d grants created_at is timestamptz"* asserted `data_type LIKE 'timestamp%'` — which matches both types, so it could not fail on the thing it was named after. Separately, the epoch-ms backfill used `to_timestamp(ms/1000.0)` (a `timestamptz`) assigned to a naive `timestamp` column: an implicit cast that reads the SESSION `TimeZone`, never pinned. | a non-UTC session ⇒ every folded token expiry / grant timestamp shifts by the offset, silently | `msToTs()` in `config-transform.ts` spells the conversion as `… AT TIME ZONE 'UTC'`; `parity-check.ts` asserts `data_type = 'timestamp without time zone'` exactly, plus a value-level re-derivation from the surviving `_ms` column | `parity-check.ts` "created_at == created_at_ms (UTC, no offset drift)" |
 
+| **D-l** | **`resolveHandle` is area-FIRST, and handle 13 is BOTH a real device and a multi-member area** — so deleting virtual-system synthesis silently RE-POINTS it. Today `getViewableSystem(13)` finds `systems.id=13` first and returns the device's 12 own points (all on system 13). After the deletion, `legacy_handles` row 13 (which carries **both** `area_id` and `device_id`) resolves area-first and expands the area's 12 bindings — **6 points on system 13 + 6 on system 16** (the derived helper). Net: 6 system-13 points DROP OUT of dashboard `legacy_id=7`'s scope and 6 system-16 points enter. A silent scope change on a shared dashboard, in the direction that removes access. | first resolution of handle 13 after the synthesis deletion (Group B), not at the transform | Group B: decide the precedence deliberately — device-first for handles that are both, or accept the area expansion and re-baseline. NOT yet fixed. | `authz-check` AC1 will fail "descriptor ⊆ doc" by exactly 6 points on dashboard `legacy_id=7`; verified on rehearse-6: `systems row: 1 · area members: 2 · bindings: 12 (6→sys13, 6→sys16)`, `legacy_handles.handle=13` has both ids |
+
+D-l is the one entry in this table that is **not yet fixed** and does not fire at the transform — it fires when
+Group B deletes the synthesis. It is listed here because it is the only handle in the fleet that is
+simultaneously a real device and a multi-member area, so no amount of testing the other 19 handles finds it.
+
 D-h, D-i and D-j were found by the Group-B pre-flight pass (2026-07-25) and are fixed in that batch. All
 three share the shape that makes this table worth keeping: **each was invisible to a green suite**, and two
 of them landed on the irreversible side of the window.
@@ -123,6 +129,12 @@ system_id` numerically, the rename buys nothing in the window; it is deferred to
 
 ## Ordered cutover steps (window)
 
+> **Execution order inside `config-transform.ts`:** the single `--commit` run executes **config (step 5)
+> BEFORE the hot swap (step 4)** — `1 → 2 → 5 → 5d → 4`. The step NUMBERS below name the v4 role (4 = hot,
+> 5 = config), not the run position. Running the cheap, idempotent config half first means a config failure
+> aborts while the hot tables are still pristine, and makes the irreversible rename-swap the transform's
+> terminal act (nothing destructive-autocommit runs after it). See the abort matrix.
+
 Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mint `dv_` ids +
 `legacy_handles`; already run — P0), then `registry-sync.ts --commit` (populate `devices`/`points`/
 `area_members`/`device_state` + areas-of-one, arming the C7 `/api/health?v4mirror=1` invariant early).
@@ -142,6 +154,17 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
 - **Silence the off-repo jobs** for the window: `pg-backup`, `pg-staleness-check`, `pg-durable-verify`
   (Cloudflare-dispatched — `_old` retention roughly doubles hot-table counts, so durable-verify's row-count
   reference will alert) and `sync-prod-to-dev.yml` (`20 */2 * * *`).
+
+0. **Capture the authz baseline — BEFORE anything else writes.** `authz-check.ts --snapshot` records each
+   dashboard's v3 `descriptor` point-scope while the v3 resolver can still read the v3 `areas` columns,
+   keyed on the int PK that stage 5c freezes into `legacy_id`. **After stage 2 renames `areas.display_name`
+   this resolution is impossible**, so skipping this step permanently forfeits AC1 — and, worse, AC1 then
+   passes vacuously (Run 4's false green). The capture refuses to persist a zero-point scope.
+
+   ```bash
+   CONFIG_V4_TARGET=prod ALLOW_PROD_DB_IN_DEV=true PLANETSCALE_DATABASE_URL="<prod url>" \
+     npx tsx scripts/config-v4/authz-check.ts --snapshot --i-understand-this-is-prod
+   ```
 
 1. **Pause materialization** — `cutover-pause.ts set --env=prod --i-understand-this-is-prod`, which does
    BOTH halves: the `cutover:paused` KV flag (crons + the receiver) and the QStash **queue** pause
@@ -182,11 +205,15 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
 
 ### Abort matrix — what to do when a check goes red
 
+Reflects the config-first execution order (`1 → 2 → 5 → 5d → 4`): the config half's destructive DDL (5d) is
+the **first** point of no return; the hot rename-swap (stage 4, run last) is the **terminal** one.
+
 | Red at | Recovery |
 | --- | --- |
-| before stage 4's swap | abort freely — `cutover-pause.ts clear`, drop the twins; nothing is committed |
-| after the swap, before stage 5 | reverse-rename `_old` → live, drop the twins, clear the pause |
-| mid-stage-5/5d | **forward-only or restore from backup** — 5d is destructive and autocommit, and 5c cannot be re-run once `new_id` is dropped |
+| through stage 5c (registries / `areas` renames / additive `point_uid`, derivations, dashboard `doc`) | abort freely — `cutover-pause.ts clear`, drop the new tables/columns, rename the `areas` columns back; hot tables are still untouched |
+| mid-stage-5d (destructive config DDL) | **forward-only or restore config from backup** — 5d is destructive + autocommit (and 5c cannot be re-run once `new_id` is dropped). The **hot tables are still old-shape**, so the data-serving path is unaffected |
+| during the stage-4 copy, before the swap | the swap has not committed — drop the twins and re-run stage 4 (idempotent); config (5d) is already reshaped, so aborting the whole cutover means restore-from-backup |
+| after the swap commits | transform complete — deploy the new build; aborting now is forward-fix only |
 | after resume | forward-fix only |
 
 ## Work split (Group A / B / C)
@@ -222,15 +249,43 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
   so each needs an `EXPLAIN (ANALYZE, BUFFERS)` on the 15.5M-row twin. Then: the `areas` 3 column renames;
   dashboards uuid-native incl. the client surface (decision 4); unify `lib/dashboard/sharing.ts` onto
   `share_tokens` + narrow `lib/dashboard/grants.ts` to admin/viewer; delete virtual-system synthesis
-  (`synthesizeAreaView`/`getViewableSystem`/`isAreaHandle`/`AREA_HANDLE_BASE`) via `resolveHandle`; extend
+  (`synthesizeAreaView`/`getViewableSystem`/`isAreaHandle`/`AREA_HANDLE_BASE`) via `resolveHandle` — **decide
+  D-l's handle-13 precedence here; it is a silent 6-point scope change, not a refactor**; extend
   the area-of-one parity test; DAO-equivalence sweep.
   **Explicitly OUT (→ Phase 9):** the `systems`→`devices` code rename, the KV keyspace move, the
   `user_systems`/`isViewer` drop, the `sessions`/`outbox` column renames.
+
+  **Progress — branch `simonhac/config-v4-group-b`.** The `areas` renames are **DONE and verified**
+  (`c4f2e8e0`: schema.ts + 15 call-site files; on rehearse-6 `authz-check` 13/13 **non-vacuously**, parity
+  `W areas insertable` green, 0 tsc errors, 114 tests). That commit is also the fix for Run 5's AC1
+  "lockout" — `fetchAreaByHandle` (`lib/systems-manager.ts:116`) used a projection-less `.select()`, so
+  drizzle expanded the stale column list, raised 42703, and `access.ts`'s per-area `catch {}` swallowed it;
+  no data was ever lost. Dashboards-uuid-native is **started and stashed** (29 → 20 errors; the remainder are
+  `parseInt`/`isNaN` id-parse sites that need uuid validation — list in
+  `.context/groupb-dashboards-worklist.txt`). DAO rid-flip, sharing/grants unification and the synthesis
+  deletion are untouched. ⚠️ **This branch must not reach `main` before the window** — `schema.ts` now names
+  post-transform columns that untransformed prod does not have.
 - **Group C — the WINDOW (ops).** Schedule; run the ordered steps above; `liveone-dev` first, prod next day.
 
 ## Verification
 
-**Group A acceptance gate — PASSED (Run 4: parity 36/36 · authz 9/9 · window GO).** Recorded in
+**Run 5 — DONE (2026-07-26): parity 48/52 · authz 10/13 · window ✅ GO · D-f finally exercised.** Full
+detail in [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md). The config-first
+reorder is verified (`stage5` completes before `stage4` begins) and `T_window` = 5.4 min × 3 = 16.1 min.
+The reds are **not** transform defects — all seven are the same root cause, *v3 code reading a v4 database*:
+
+- **4 parity W-series reds** = `areas.name`, `dashboards.owner_user_id`, `dashboard_grants.created_at`+`user_id`,
+  `share_tokens.dashboard_id`. All in the FORCED column of the scope audit. **This is Group B's `schema.ts`
+  definition-of-done: the suite must read 52/52 once the model + writers are flipped.**
+- **3 authz AC1 reds (vacuity)** = AC1 resolves the v3 `descriptor` leg through live code *after* the
+  transform renamed `areas.display_name`→`name`; drizzle 42703s and `access.ts`'s per-area `catch {}` swallows
+  it, so the scope is empty. **This retroactively invalidates Run 4's AC1 "9/9"** — without the Group-B0
+  non-vacuity floor, "descriptor ⊆ doc" passed trivially over an empty set. **Required harness fix (do before
+  the window): snapshot the descriptor scope BEFORE the transform and compare against the post-transform doc
+  scope.** Until then AC1 is INCONCLUSIVE, not a pass. AC2a–d and AC3 are green and unaffected.
+
+**Group A acceptance gate — PASSED (Run 4: parity 36/36 · authz 9/9 · window GO)** *(AC1 now known vacuous —
+see Run 5).* Recorded in
 [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md). Group B0 changes what the
 transform does and what the suite can catch, so **Run 5 re-runs the whole gate against a CURRENT prod
 backup** on a fresh PS-5 branch: `backfill-foundation` → `config-transform` → `parity-check` →

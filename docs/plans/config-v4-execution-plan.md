@@ -17,14 +17,37 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 8: Group B0 pre-flight landed → **Run 5 rehearsal** → Group B build → Group C window
+## ▶ NEXT ACTION — Phase 8: **Run 5 DONE** → fix authz AC1 vacuity → Group B build → Group C window
+
+> **Run 5 is complete (2026-07-26): `parity 48/52` · `authz 10/13` · `window-report` ✅ GO · transform `rc=0`**,
+> on branch `rehearse-5` restored from a freshly-dispatched prod backup (`0846o64bc1a7`, 2026-07-25 13:46 UTC).
+> The config-first reorder is verified in the timing ledger, `T_window` = 5.4 min × 3 = 16.1 min ≤ the 30-min
+> target, and **D-f was exercised for the first time** (held reader → 2 bounded `55P03` retries with the blocker
+> pid logged → swap won on attempt 3). The 7 reds are all *v3 code reading a v4 database*, not transform
+> defects: 4 W-series writability reds that **are** Group B's `schema.ts` work list (must reach 52/52 when the
+> model + writers flip), and 3 AC1 vacuity reds. **The AC1 finding is the significant one — it retroactively
+> invalidates Run 4's "authz 9/9"** (the floor didn't exist then, so `descriptor ⊆ doc` passed over an empty
+> set). **Do before the window: give `authz-check.ts` a pre-transform descriptor-scope snapshot** — resolving
+> both legs post-transform through code that can't read the renamed `areas` columns proves nothing. Detail:
+> [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md) § Run 5. Branch `rehearse-5`
+> is **retained** as the Group B build/preview target (twin tables reassigned to `postgres`).
 
 > **Next concrete step: stand up the `v4shape` branch and run the gate (Run 5).** Restore a CURRENT prod
 > backup (`pscale backup list liveone sydney` → newest, NOT `avtprjx1cmde`) into a PS-5 branch, then
 > `backfill-foundation --commit` → `config-transform --commit` → `parity-check` → `authz-check` →
-> `window-report`, holding an open reader across the stage-4 swap to exercise D-f for the first time. It
-> must run AFTER the B0 pre-flight (below) because B0 changes the transform. Keep the branch — it is the
-> Group B build target, and binding the build branch's preview to it is what makes the smoke set possible.
+> `window-report`, holding an open reader across the **whole** `config-transform` run to exercise D-f for the
+> first time (the stage-4 swap now runs LAST — see the reorder note below — so keep the reader open through
+> the config half too). It must run AFTER the B0 pre-flight (below) because B0 changes the transform. Keep the
+> branch — it is the Group B build target, and binding the build branch's preview to it is what makes the
+> smoke set possible.
+>
+> **Pre-Run-5 hardening — config-transform now runs config BEFORE the hot swap (2026-07-25).** The
+> `config-transform.ts` stages are numbered by v4 role (4 = hot, 5 = config) but now EXECUTE `1 → 2 → 5 → 5d
+> → 4`, so the irreversible hot rename-swap is the transform's terminal act rather than sitting in front of
+> ~35 destructive-autocommit config statements. Stage 4 and stage 5 are independent siblings of stage 2, so
+> the reorder is data-safe; it shrinks the blast radius of a config-half failure (hot tables stay pristine)
+> and the v3-on-v4 serving outage. The abort matrix in
+> [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md) is rewritten for the new order.
 >
 > **Group B0 — pre-flight (dark) — landed.** Found and closed three more defects that no green check could
 > catch, two of them on the irreversible side: **D-h** step 1 did not actually pause materialization (the
@@ -513,6 +536,9 @@ Shell.dataHandles`), `access.ts` v4-scope so a _shared_ v4 dashboard's `/api/dat
    empty synthetic composites (`1000001`).
 3. Run the idempotent foundation backfill once more to close the writer-deployment race, verify full
    coverage/uniqueness, then freeze `legacy_handles` (every old `systems.id` + `areas.legacy_system_id`).
+   (Within `config-transform.ts` these are run **config-first** — step 5 before step 4 — so the
+   irreversible hot swap is the transform's terminal act; the numbers below name the v4 role, not the run
+   order. See the plan of record's ordered steps + abort matrix.)
 4. Rewrite hot tables: JOIN-insert `(point_rid, time)`-keyed twins → rename-swap (keep `_old`);
    `sessions`/`outbox` column rename `system_id`→`device_rid` (no rewrite); the DAO's internal SQL
    flips to rid-keyed, but the `(system_id,index)→point_rid` addr map is **retained** for the
