@@ -23,17 +23,18 @@ unless noted; the verifying check is named where one exists.
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | **D-a** | promoted dashboards uuid PK inherits no default → `createDashboard` id-less insert = 23502 on the first POST after the window                                                                                                  | first dashboard created post-cutover                                      | `config-transform.ts` stage 5d (`ALTER … SET DEFAULT gen_random_uuid()`)                                                        | `parity-check.ts` "D-a dashboards.id DEFAULT gen_random_uuid()"  |
 | **D-b** | `DROP COLUMN` silently drops the indexes that column participated in — `users_default_dashboard_idx` (0016) + `dashboard_grants_dashboard_user_unique` (0012, the `createGrant` onConflict arbiter → 42P10 + duplicate grants) | first grant create post-cutover                                           | `config-transform.ts` stage 5d (recreate both; the unique is then promoted into the composite PK)                               | `parity-check.ts` D-b index + "grant uniqueness preserved as PK" |
-| **D-c** | _(no code anchor — the execution plan cites "7 defects" but only a,b,d,e,f,g exist in source)_                                                                                                                                 | —                                                                         | —                                                                                                                               | **OPEN: confirm/transcribe from the planning record (below)**    |
+| **C7** | a point minted during the window (pollers never stop) gets a `point_info` row + rid but no `points` row → the hot tables' `NOT VALID` FK (still enforced on new inserts) rejects the first reading = QStash poison pill | first mid-window mint of a new point | `lib/registry/v4-mirror.ts` — `ensurePointInfo`/`createSystem` mirror `points`/`devices`/`area_members` at mint time (one txn); `/api/health?v4mirror=1` arms the standing invariant | the standing C7 mirror invariant + a real mid-window-mint drain test |
 | **D-d** | stage-2i composite-delete gate tested only 4 of 8 `areas` FK children, non-transactional, ran AFTER the `areas` renames → an abort strands prod half-migrated                                                                  | a synthetic composite with an unchecked FK child                          | removed outright → `scripts/config-v4/retire-empty-composites.ts` (daylight cleanup; blocker list derived from `pg_constraint`) | it is a prerequisite for nothing                                 |
 | **D-e** | no `ANALYZE` before the swap → serving resumes with zero planner stats on a 15.5M-row table = seq scans ("cutover worked but the site is dead")                                                                                | resume, on the first served query                                         | `config-transform.ts` stage 4 (`ANALYZE` the twins before swap)                                                                 | invisible on an idle rehearsal branch                            |
 | **D-f** | the `ACCESS EXCLUSIVE` swap had `lock_timeout` but a bare rethrow → one lost lock race discarded the whole ~6-min copy                                                                                                         | a live reader (serving / run-periods) holding `ACCESS SHARE` at swap time | `config-transform.ts` stage 4 (bounded 10×3s retry logging blocking pids; `synchronous_commit=on` for the swap commit)          | rehearse with a deliberately-held long reader                    |
 | **D-g** | twin index/constraint names keep the `_new` suffix (can't be canonicalised in-txn: 42P07)                                                                                                                                      | cosmetic; a later `_new`-named index                                      | left `_new`; renamed in Phase 9                                                                                                 | —                                                                |
 
-**D-c (open):** the 7th defect has no code anchor. Candidates from the planning record: the authz-narrowing
-gap (`user_systems` dies with no replacement — now covered by `authz-check.ts`), or one of PR#242's
-hardening items (the `run-periods` cron had no kill-switch; the relay converting durable outbox rows into
-paused-queue-only rows). **Do not invent it — confirm its definition with Simon before this table is
-authoritative.**
+**On the count (resolved):** the planning's "7 defects" = the six D-lettered rows above (the D-lettering
+skips `c` — there was never a distinct "D-c" defect; an earlier draft of this table wrongly assumed a
+contiguous a–g) **plus C7**, the mint-time-mirror race, which was found by the same pass but tracked under
+the rehearsal doc's C1–C9 correctness-guardrail scheme (not the D-scheme) and closed in PR#242's
+`v4-mirror.ts` commit. Distinct from the "live prod incident" the execution plan mentions separately (the
+P0 empty-`legacy_handles` outage, fixed by running `backfill-foundation.ts --commit` on prod).
 
 ## Locked Phase-8 decisions (Simon)
 
@@ -47,8 +48,10 @@ authoritative.**
   restart. Keep the modest `maintenance_work_mem`.
 - **Drop the `point_readings.id` surrogate** — the natural `(point_rid, measurement_time)` PK stands (no
   off-repo consumer, confirmed).
-- **Retire the legacy owner-scoped `share_token`** — re-point it at an auto-created dashboard; unify
-  `lib/dashboard/sharing.ts` onto `share_tokens` (the code half is Group B).
+- **Retire the legacy owner-scoped `share_token`** — re-point it at an auto-created dashboard covering
+  **all the owner's areas** (the token is owner-scoped, so this preserves the grant and never narrows it;
+  narrowing to one consumer's view would risk a lockout — authz-check AC2d asserts the kinkora scope
+  survives). Unify `lib/dashboard/sharing.ts` onto `share_tokens` (the code half is Group B).
 - **Grant `owner` role → `admin`** at reshape (no access loss).
 - **Deploy by merging the cutover build to `main`** at the final step (S7).
 - **Cron gate** = KV flag `cutover:paused` (PR#242, `lib/cron/guard.ts`, fail-closed), separate from

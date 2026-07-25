@@ -452,9 +452,11 @@ async function main() {
     // auto-created dashboard whose sections are the owner's areas (every device now has an area-of-one), so
     // the token's owner-wide scope is preserved. Runs AFTER the PK swap so dashboards.id is uuid.
     // Idempotent: the predicate + deterministic slug + ON CONFLICT converge on a re-run.
-    // NOTE (open — confirm with Simon): the only live consumer of the 1 such token is the owner-scoped
-    // /labs/kinkora-hws page (reads the retained legacy row), so this dashboard matters only for the unified
-    // model + the NOT NULL. "All owner areas" preserves (never narrows) the token's grant.
+    // SCOPE (decided): the token is OWNER-scoped ("all the owner's systems"), so the faithful re-point is a
+    // dashboard over ALL the owner's areas — this preserves (never narrows) the grant. Narrowing to what the
+    // sole live consumer (the owner-scoped /labs/kinkora-hws page, which reads the retained legacy row until
+    // Group B) happens to show would conflate the token's grant with one consumer's use, and risk a lockout.
+    // authz-check AC2d asserts the kinkora load.hws scope survives. To narrow instead, filter `areas` here.
     const { rewriteV3ToV4, pureAreaRef } = await import(
       "@/lib/dashboard/v3-to-v4"
     );
