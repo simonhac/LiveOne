@@ -35,12 +35,12 @@ function synthesizeAreaView(area: Area): SystemWithPolling | null {
   if (area.legacySystemId == null) return null;
   return {
     id: area.legacySystemId,
-    ownerClerkUserId: area.ownerClerkUserId,
+    ownerClerkUserId: area.ownerUserId,
     vendorType: "area",
     vendorSiteId: `area:${area.legacySystemId}`,
     status: area.status,
-    displayName: area.displayName,
-    alias: area.alias,
+    displayName: area.name,
+    alias: area.slug,
     model: null,
     serial: null,
     ratings: null,

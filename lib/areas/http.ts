@@ -49,10 +49,10 @@ export async function loadAreaForAuth(
   const [row] = await requirePlanetscaleDb()
     .select({
       id: areas.id,
-      ownerClerkUserId: areas.ownerClerkUserId,
+      ownerClerkUserId: areas.ownerUserId,
       legacySystemId: areas.legacySystemId,
       status: areas.status,
-      displayName: areas.displayName,
+      displayName: areas.name,
       location: areas.location,
     })
     .from(areas)

@@ -124,11 +124,13 @@ export async function createArea(
     try {
       await db.transaction(async (tx) => {
         await tx.insert(areas).values({
+          // config-v4: the KEYS are the renamed `areas` columns; the VALUES still come from the
+          // unchanged CreateAreaInput (renaming that input shape is elective → Phase 9).
           id,
-          ownerClerkUserId: input.ownerClerkUserId,
+          ownerUserId: input.ownerClerkUserId,
           legacySystemId: handle,
-          displayName: input.displayName,
-          alias: input.alias ?? null,
+          name: input.displayName,
+          slug: input.alias ?? null,
           timezoneOffsetMin: input.timezoneOffsetMin,
           dayOffsetMin: input.timezoneOffsetMin,
           displayTimezone: input.displayTimezone,

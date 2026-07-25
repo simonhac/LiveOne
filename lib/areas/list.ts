@@ -61,15 +61,15 @@ export async function listReadableAreas(
   const accessCond =
     systemIds.length > 0
       ? or(
-          eq(areas.ownerClerkUserId, userId),
+          eq(areas.ownerUserId, userId),
           inArray(areas.legacySystemId, systemIds),
         )
-      : eq(areas.ownerClerkUserId, userId);
+      : eq(areas.ownerUserId, userId);
 
   const rows = await requirePlanetscaleDb()
     .select({
       id: areas.id,
-      displayName: areas.displayName,
+      displayName: areas.name,
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
@@ -106,7 +106,7 @@ export async function resolveAreasByIds(
   const rows = await requirePlanetscaleDb()
     .select({
       id: areas.id,
-      displayName: areas.displayName,
+      displayName: areas.name,
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)

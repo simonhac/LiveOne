@@ -37,10 +37,10 @@ export async function GET(
   const [area] = await planetscaleDb
     .select({
       id: areas.id,
-      ownerClerkUserId: areas.ownerClerkUserId,
+      ownerClerkUserId: areas.ownerUserId,
       legacySystemId: areas.legacySystemId,
-      displayName: areas.displayName,
-      alias: areas.alias,
+      displayName: areas.name,
+      alias: areas.slug,
     })
     .from(areas)
     .where(eq(areas.legacySystemId, handle))

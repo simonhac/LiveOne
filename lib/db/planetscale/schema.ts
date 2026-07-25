@@ -777,15 +777,23 @@ export const areas = pgTable(
   "areas",
   {
     id: uuid("id").primaryKey().defaultRandom(), // app supplies uuidv7(); default is a safety net
-    ownerClerkUserId: text("owner_clerk_user_id"),
+    // ⚠️ config-v4 CUTOVER NAMES. `config-transform.ts` stage 2e renames owner_clerk_user_id→owner_user_id,
+    // display_name→name, alias→slug IN-WINDOW, so this build only works against a TRANSFORMED database.
+    // This is the all-or-nothing cutover build (deployed at step 7) — it must not reach `main` before the
+    // window. Why a stale name here is dangerous rather than merely wrong: a projection-less `.select()`
+    // on this table (`fetchAreaByHandle`, lib/systems-manager.ts:116) makes drizzle expand EVERY column
+    // below, so a mismatch is not a type error — it is a runtime 42703 that `lib/dashboard/access.ts`'s
+    // per-area `catch {}` swallows, silently resolving the area to ZERO points. That is exactly the Run-5
+    // AC1 "lockout": 35 area_bindings present and correct, 0 points served.
+    ownerUserId: text("owner_user_id"),
     // The 1:1 migration seam + the stable integer ADDRESSING HANDLE. For a multi-device area it is
     // the old composite shim's systems.id; no FK to systems, since that area outlives its `systems`
     // row (deleted in migration 0014), and `getSystem(legacy_system_id)` then resolves to the
     // synthesized virtual system. The unique index below stays as the addressing invariant (one Area
-    // per handle).
+    // per handle). RETAINED through the cutover (mapping key + backlog drain); dropped in Phase 9.
     legacySystemId: integer("legacy_system_id"),
-    displayName: text("display_name").notNull(),
-    alias: text("alias"),
+    name: text("name").notNull(),
+    slug: text("slug"),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
     displayTimezone: text("display_timezone").notNull(),
     // --- config-v4 dark columns (Phase 4, migration 0032; nullable/unread by the v3 app) ---
@@ -805,9 +813,11 @@ export const areas = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
+    // The INDEX NAME stays `areas_owner_alias_unique`: a column rename carries its indexes along
+    // untouched, and the transform never renames the index. Only the TS field refs move.
     aliasUnique: uniqueIndex("areas_owner_alias_unique").on(
-      table.ownerClerkUserId,
-      table.alias,
+      table.ownerUserId,
+      table.slug,
     ),
     legacySystemUnique: uniqueIndex("areas_legacy_system_unique").on(
       table.legacySystemId,

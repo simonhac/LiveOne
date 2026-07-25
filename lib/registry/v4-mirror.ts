@@ -99,11 +99,12 @@ async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
   await exec
     .insert(areas)
     .values({
+      // config-v4: KEYS are the renamed `areas` columns; VALUES come from the untouched `systems` row.
       id: areaId,
-      ownerClerkUserId: sys.owner,
+      ownerUserId: sys.owner,
       legacySystemId: systemId,
-      displayName: sys.name,
-      alias: null,
+      name: sys.name,
+      slug: null,
       timezoneOffsetMin: sys.tzOffset,
       displayTimezone: sys.tz,
       dayOffsetMin: sys.tzOffset, // canonical fixed-offset day key == the device's offset

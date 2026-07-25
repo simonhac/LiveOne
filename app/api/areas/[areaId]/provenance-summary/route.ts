@@ -40,7 +40,7 @@ export async function GET(
   const { areaId } = await params;
   const [area] = await db
     .select({
-      ownerClerkUserId: areas.ownerClerkUserId,
+      ownerClerkUserId: areas.ownerUserId,
       legacySystemId: areas.legacySystemId,
       tz: areas.timezoneOffsetMin,
     })
