@@ -58,6 +58,10 @@ function isStructurallyAllowed(rel) {
     rel === "scripts/check-readings-boundary.mjs" || // this guard (contains the literals)
     rel.startsWith("lib/readings/") || // the seam
     rel.startsWith("lib/registry/") ||
+    // config-v4 cutover tooling: it REWRITES the hot tables (rid-keyed twin build + rename-swap) — a
+    // table swap can't go through the DAO seam by definition. Runs only on throwaway rehearsal branches
+    // and the one cutover, then is deleted in Phase 9. See docs/plans/config-v4-phase7-rehearsal-harness.md.
+    rel.startsWith("scripts/config-v4/") ||
     rel.startsWith("drizzle/") || // migrations (raw SQL DDL)
     rel.startsWith("drizzle-planetscale/")
   );
