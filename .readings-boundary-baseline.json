@@ -4,6 +4,8 @@
   "scripts": [
     "scripts/audit-pg-fk-orphans.ts",
     "scripts/cleanup/p1-data-hygiene.ts",
+    "scripts/config-v4/config-transform.ts",
+    "scripts/config-v4/parity-check.ts",
     "scripts/delete-battery-param-points.ts",
     "scripts/openelectricity/bulk-ingest.ts",
     "scripts/qstash-health.ts",
