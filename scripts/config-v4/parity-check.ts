@@ -188,10 +188,12 @@ async function main() {
     "SELECT coalesce((SELECT data_type='uuid' FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='dashboard_id'), false)::text",
     "true",
   );
+  // Folded subset only — since owner-scoped tokens now ALSO carry a dashboard_id (auto-created), the RHS
+  // must count just the tokens that came from dashboard_share_tokens, not every non-null dashboard_id.
   await cmp(
     "5d dashboard_share_tokens folded 1:1",
     "SELECT count(*)::text FROM dashboard_share_tokens",
-    "SELECT count(*)::text FROM share_tokens WHERE dashboard_id IS NOT NULL",
+    "SELECT count(*)::text FROM share_tokens st WHERE EXISTS (SELECT 1 FROM dashboard_share_tokens dst WHERE dst.token = st.token)",
   );
   // P6: the ordinal→priority swap must NOT reorder any (area, role, metric) slot's series.
   await expect(
@@ -214,6 +216,102 @@ async function main() {
     "5b derived_intervals == run_periods(mapped)",
     "SELECT count(*)::text FROM device_run_periods rp JOIN areas a ON a.legacy_system_id=rp.system_id JOIN derivations d ON d.area_id=a.id AND d.role=rp.role",
     "SELECT count(*)::text FROM derived_intervals",
+  );
+
+  // ── device_state CONTENT (not just count) — catches the 2g DO NOTHING/staleness class the count is
+  //    blind to. device_state is a verbatim per-device copy of polling_status, so the row-hash multisets
+  //    must match. (Order of columns inside ROW() is identical on both sides so the hashes align.) ────────
+  {
+    const dsCols =
+      "last_poll_time, last_success_time, last_error_time, last_error, last_response, consecutive_errors, total_polls, successful_polls, updated_at";
+    const dsColsPs = dsCols
+      .split(", ")
+      .map((c) => `ps.${c}`)
+      .join(", ");
+    const dsColsDs = dsCols
+      .split(", ")
+      .map((c) => `ds.${c}`)
+      .join(", ");
+    await cmp(
+      "device_state content == polling_status",
+      `SELECT ${CK(dsColsPs)} FROM polling_status ps JOIN legacy_handles lh ON lh.handle=ps.system_id AND lh.device_id IS NOT NULL`,
+      `SELECT ${CK(dsColsDs)} FROM device_state ds`,
+    );
+  }
+
+  // ── share_tokens unification finished (owner-token auto-create + NOT NULL) ──────
+  await expect(
+    "5d share_tokens all mapped (dashboard_id NOT NULL)",
+    "SELECT count(*)::text FROM share_tokens WHERE dashboard_id IS NULL",
+    "0",
+  );
+  await expect(
+    "5d share_tokens.dashboard_id is NOT NULL (schema)",
+    "SELECT coalesce((SELECT is_nullable='NO' FROM information_schema.columns WHERE table_name='share_tokens' AND column_name='dashboard_id'), false)::text",
+    "true",
+  );
+
+  // ── grant reshape (role CHECK / user_id / timestamptz / composite PK) ──────────
+  await expect(
+    "5d grants role ∈ {admin,viewer}",
+    "SELECT count(*)::text FROM dashboard_grants WHERE role NOT IN ('admin','viewer')",
+    "0",
+  );
+  await expect(
+    "5d grants role CHECK exists",
+    "SELECT (count(*)>0)::text FROM pg_constraint WHERE conrelid='dashboard_grants'::regclass AND contype='c' AND conname='dashboard_grants_role_check'",
+    "true",
+  );
+  await expect(
+    "5d grants user_id column present",
+    "SELECT coalesce((SELECT true FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='user_id'), false)::text",
+    "true",
+  );
+  await expect(
+    "5d grants created_at is timestamptz",
+    "SELECT coalesce((SELECT data_type LIKE 'timestamp%' FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='created_at'), false)::text",
+    "true",
+  );
+  await expect(
+    "5d grants legacy int id dropped",
+    "SELECT coalesce((SELECT false FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='id'), true)::text",
+    "true",
+  );
+  await expect(
+    "5d grants PK == (dashboard_id, user_id)",
+    `SELECT coalesce(string_agg(a.attname, ',' ORDER BY k.ord), '∅')
+       FROM pg_constraint c
+       JOIN unnest(c.conkey) WITH ORDINALITY k(attnum, ord) ON true
+       JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.attnum
+      WHERE c.conrelid='dashboard_grants'::regclass AND c.contype='p'`,
+    "dashboard_id,user_id",
+  );
+
+  // ── DDL-correctness (D-a / D-b) — the defect class the content checksums are blind to ──────────────────
+  await expect(
+    "D-a dashboards.id DEFAULT gen_random_uuid()",
+    `SELECT coalesce(pg_get_expr(ad.adbin, ad.adrelid), '∅')
+       FROM pg_attribute a LEFT JOIN pg_attrdef ad ON ad.adrelid=a.attrelid AND ad.adnum=a.attnum
+      WHERE a.attrelid='dashboards'::regclass AND a.attname='id'`,
+    "gen_random_uuid()",
+  );
+  await expect(
+    "D-b users_default_dashboard_idx recreated",
+    "SELECT (count(*)>0)::text FROM pg_indexes WHERE indexname='users_default_dashboard_idx'",
+    "true",
+  );
+  await expect(
+    "D-b dashboard_grants_user_idx recreated",
+    "SELECT (count(*)>0)::text FROM pg_indexes WHERE indexname='dashboard_grants_user_idx'",
+    "true",
+  );
+  // The 0012 unique index (createGrant's onConflict arbiter) was promoted into the composite PK by the
+  // reshape (ADD CONSTRAINT … USING INDEX renames it to dashboard_grants_pk) — assert the PK, which is
+  // itself unique, so the arbiter survives.
+  await expect(
+    "D-b grant uniqueness preserved as PK",
+    "SELECT (count(*)>0)::text FROM pg_constraint WHERE conname='dashboard_grants_pk' AND contype='p'",
+    "true",
   );
 
   // ── report ─────────────────────────────────────────────────────────────────────

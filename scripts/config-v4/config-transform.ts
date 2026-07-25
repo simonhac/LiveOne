@@ -31,8 +31,9 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { Pool } from "pg";
 import { sql } from "drizzle-orm";
-import { Area, Dashboard } from "@/lib/ids";
+import { Dashboard } from "@/lib/ids";
 import { assertRehearsalTarget, copyPoolConfig } from "./guard";
+import { populateRegistries, type RowsExec } from "./registry-populate";
 
 const BATCH = Number(process.env.CONFIG_V4_COPY_BATCH ?? 1_000_000);
 const commit = process.argv.includes("--commit");
@@ -113,166 +114,36 @@ async function main() {
 
   // ── STAGE 2: registries ──────────────────────────────────────────────────────
   await timed("stage2:registries", async () => {
-    // Pre-flight: every systems.status must satisfy the devices CHECK, or the INSERT aborts mid-stage.
-    const badStatus = await scalar(
-      "SELECT count(*) FROM systems WHERE status NOT IN ('active','disabled','removed')",
-    );
-    if (badStatus > 0)
-      throw new Error(
-        `${badStatus} systems have a status outside ('active','disabled','removed') — extend the devices CHECK or map them first.`,
-      );
-
-    // 2a. mint an area-of-one for every area-less device FIRST, so devices can carry a non-null
-    // primary_area_id directly. (NULL-then-fill trips NOT NULL on re-run: ON CONFLICT suppresses only
-    // UNIQUE violations, not NOT NULL, which is checked before conflict resolution.) tz/location copied
-    // up — the area is the SOLE home for placement. Uses CURRENT areas columns (before the 2d rename).
-    const areaLess = (
-      await db.execute(
-        sql.raw(`
-      SELECT s.id AS handle, s.owner_clerk_user_id AS owner, s.display_name AS name,
-             s.timezone_offset_min AS tzoff, s.display_timezone AS tz, s.location AS loc
-      FROM systems s WHERE NOT EXISTS (SELECT 1 FROM areas a WHERE a.legacy_system_id = s.id)`),
-      )
-    ).rows as Array<{
-      handle: number;
-      owner: string | null;
-      name: string;
-      tzoff: number;
-      tz: string;
-      loc: unknown;
-    }>;
-    for (const r of areaLess) {
-      const areaId = Area.toUuid(Area.generate());
-      await db.execute(sql`
-        INSERT INTO areas (id, owner_clerk_user_id, legacy_system_id, display_name, alias,
-                           timezone_offset_min, display_timezone, day_offset_min, location, status, created_at, updated_at)
-        VALUES (${areaId}, ${r.owner}, ${r.handle}, ${r.name}, NULL,
-                ${r.tzoff}, ${r.tz}, ${r.tzoff}, ${r.loc as object}, 'active', now(), now())
-        ON CONFLICT (id) DO NOTHING`);
-      await db.execute(
-        sql`INSERT INTO area_devices (area_id, system_id, ordinal) VALUES (${areaId}, ${r.handle}, 0) ON CONFLICT DO NOTHING`,
-      );
-      await db.execute(
-        sql`UPDATE legacy_handles SET area_id = ${areaId} WHERE handle = ${r.handle}`,
-      );
-    }
-    if (areaLess.length)
-      console.log(`     minted ${areaLess.length} area(s)-of-one`);
-
-    // 2b. devices ← systems, primary_area_id = the device's area-of-one (every system now has one, so
-    // it's non-null from the start → idempotent). Free-text ratings/solar/battery are stashed under
-    // config.legacy* for now; the structured DeviceConfig fold (nameplateKw…) is a follow-up (Q).
-    await exec(`
-      INSERT INTO devices (id, rid, owner_user_id, vendor, vendor_site_id, status, name, slug, model, serial,
-                           primary_area_id, config, adapter_state, commissioned_on, created_at, updated_at)
-      SELECT lh.device_id, s.id, s.owner_clerk_user_id, s.vendor_type, s.vendor_site_id, s.status,
-             s.display_name, s.alias, s.model, s.serial,
-             (SELECT a.id FROM areas a WHERE a.legacy_system_id = s.id),
-             coalesce(s.config, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
-               'legacyRatings', s.ratings, 'legacySolarSize', s.solar_size, 'legacyBatterySize', s.battery_size)),
-             s.metadata, s.commissioned_on, s.created_at, s.updated_at
-      FROM systems s JOIN legacy_handles lh ON lh.handle = s.id
-      ON CONFLICT (id) DO NOTHING`);
-    await guardEqual(
-      scalar,
-      "devices vs systems",
-      "SELECT count(*) FROM devices",
-      "SELECT count(*) FROM systems",
-    );
-
-    // 2c. seed device_rid_seq at max(rid); guard no-null primary_area_id; tighten NOT NULL; wire FK.
-    await exec(
-      "SELECT setval('device_rid_seq', (SELECT coalesce(max(rid),0) FROM devices), true)",
-    );
-    const orphanDevices = await scalar(
-      "SELECT count(*) FROM devices WHERE primary_area_id IS NULL",
-    );
-    if (orphanDevices > 0)
-      throw new Error(`${orphanDevices} devices have no area-of-one`);
-    await exec("ALTER TABLE devices ALTER COLUMN primary_area_id SET NOT NULL");
-    await exec(`DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'legacy_handles_device_id_devices_fk') THEN
-        ALTER TABLE legacy_handles ADD CONSTRAINT legacy_handles_device_id_devices_fk
-          FOREIGN KEY (device_id) REFERENCES devices(id);
-      END IF; END $$`);
-
-    // 2e. areas carryover — backfill day_offset_min, NOT NULL, rename to the v4 column names. legacy_system_id
-    // + timezone_offset_min are RETAINED through the drain (used as mapping keys); dropped in Phase 9.
-    await exec(
-      "UPDATE areas SET day_offset_min = timezone_offset_min WHERE day_offset_min IS NULL",
-    );
-    if (
-      (await scalar(
-        "SELECT count(*) FROM areas WHERE day_offset_min IS NULL",
-      )) > 0
-    )
-      throw new Error("areas.day_offset_min still NULL after backfill");
-    await exec("ALTER TABLE areas ALTER COLUMN day_offset_min SET NOT NULL");
-    await renameColumnIfExists(
-      exec,
-      "areas",
-      "owner_clerk_user_id",
-      "owner_user_id",
-    );
-    await renameColumnIfExists(exec, "areas", "display_name", "name");
-    await renameColumnIfExists(exec, "areas", "alias", "slug");
-
-    // 2f. area_members ← area_devices (re-key system_id int → device uuid).
-    await exec(`
-      INSERT INTO area_members (area_id, device_id, ordinal)
-      SELECT ad.area_id, lh.device_id, ad.ordinal
-      FROM area_devices ad JOIN legacy_handles lh ON lh.handle = ad.system_id AND lh.device_id IS NOT NULL
-      ON CONFLICT DO NOTHING`);
-    await guardEqual(
-      scalar,
-      "area_members vs area_devices(with device)",
-      "SELECT count(*) FROM area_members",
-      "SELECT count(*) FROM area_devices ad JOIN legacy_handles lh ON lh.handle = ad.system_id AND lh.device_id IS NOT NULL",
-    );
-
-    // 2g. device_state ← polling_status.
-    await exec(`
-      INSERT INTO device_state (device_id, last_poll_time, last_success_time, last_error_time, last_error,
-                                last_response, consecutive_errors, total_polls, successful_polls, updated_at)
-      SELECT lh.device_id, ps.last_poll_time, ps.last_success_time, ps.last_error_time, ps.last_error,
-             ps.last_response, ps.consecutive_errors, ps.total_polls, ps.successful_polls, ps.updated_at
-      FROM polling_status ps JOIN legacy_handles lh ON lh.handle = ps.system_id
-      ON CONFLICT (device_id) DO NOTHING`);
-
-    // 2h. points ← point_info (id = point_uid, rid = point_info.rid — BOTH verbatim; the seam invariant).
-    // NB DB column point_info."id" is the TS field `index` (per-device address); do NOT confuse with a uuid.
-    await exec(`
-      INSERT INTO points (id, rid, device_id, physical_path, logical_path, metric_type, unit, name,
-                          default_name, subsystem, transform, active, created_at, updated_at)
-      SELECT pi.point_uid, pi.rid, lh.device_id, pi.physical_path_tail, pi.logical_path_stem, pi.metric_type,
-             pi.metric_unit, pi.display_name, pi.point_name, pi.subsystem, pi.transform, pi.active,
-             pi.created_at, pi.updated_at
-      FROM point_info pi JOIN legacy_handles lh ON lh.handle = pi.system_id
-      ON CONFLICT (id) DO NOTHING`);
-    await guardEqual(
-      scalar,
-      "points vs point_info",
-      "SELECT count(*) FROM points",
-      "SELECT count(*) FROM point_info",
-    );
-
-    // 2i REMOVED from the cutover path (defect D-d).
+    // The additive population (2a–2c, 2f–2h + areas-of-one + day_offset_min) is single-sourced in
+    // registry-populate.ts, shared VERBATIM with registry-sync.ts (which runs it dark at T-7d and as a
+    // window top-up). Single-sourcing is what stops the two from drifting again — the live proof of past
+    // drift was device_state's DO NOTHING here vs the DO UPDATE refresh in registry-sync.
     //
-    // The gate tested only 4 of the 8 FK children of `areas`. `legacy_handles.area_id` is
-    // `ON DELETE no action` and — after `backfill-foundation.ts` ran on prod — is non-null for EVERY
-    // synthetic composite, so any row the gate actually selected would raise 23503 and abort the stage.
-    // `device_trackers.area_id`, `device_run_periods.area_id` and `derivations.area_id` were unchecked too.
-    // All three rehearsals passed only because the DELETE selected nothing on those snapshots — the branch
-    // has never executed against a real row.
-    //
-    // Aggravating: stage 2 was not transactional and 2i ran AFTER the `areas` renames, so an abort here
-    // left prod with renamed columns and the deployed build 500ing on every areas-backed read.
-    //
-    // It is a prerequisite for nothing — no parity check depends on it — so it now lives in
-    // `scripts/config-v4/retire-empty-composites.ts`, a daylight pre-window cleanup that derives its
-    // blocker list from `pg_constraint` (so a 9th child can never be missed) rather than hand-maintaining
-    // one. This repo already set that precedent: `scripts/cleanup/retire-implied-areas.ts` checks a
-    // strictly larger set and hard-aborts.
+    // Wrapped in ONE transaction (stage 2 used to be a run of autocommitting statements): a mid-stage abort
+    // can no longer strand prod with the areas renames applied but the registries half-populated.
+    await db.transaction(async (tx) => {
+      const exec2: RowsExec = async (q) =>
+        (
+          (await tx.execute(q)) as unknown as {
+            rows: Record<string, unknown>[];
+          }
+        ).rows;
+      const txRaw = (t: string) => tx.execute(sql.raw(t));
+      await populateRegistries(exec2);
+
+      // 2e. areas carryover RENAMES — IN-WINDOW ONLY (they break the deployed build), so they stay OUT of
+      // the shared additive function. legacy_system_id + timezone_offset_min are RETAINED through the drain
+      // (used as mapping keys); dropped in Phase 9. (2i's composite-delete was defect D-d → moved to
+      // scripts/config-v4/retire-empty-composites.ts, a daylight cleanup; it is a prerequisite for nothing.)
+      await renameColumnIfExists(
+        txRaw,
+        "areas",
+        "owner_clerk_user_id",
+        "owner_user_id",
+      );
+      await renameColumnIfExists(txRaw, "areas", "display_name", "name");
+      await renameColumnIfExists(txRaw, "areas", "alias", "slug");
+    });
   });
 
   // ── STAGE 4: hot-table rewrite ────────────────────────────────────────────────
@@ -440,8 +311,9 @@ async function main() {
     );
 
     // Unify share_tokens: fold dashboard_share_tokens 1:1 (dashboard_id uuid + epoch-ms→timestamptz). Legacy
-    // owner-scoped tokens stay dashboard_id NULL for now — the auto-create-a-dashboard re-point is deferred
-    // (so is the NOT NULL flip + dropping the *_ms columns), Phase 8/9.
+    // owner-scoped tokens stay dashboard_id NULL through the fold; they are re-pointed at an auto-created
+    // dashboard AFTER the PK swap below (which needs dashboards.id to be uuid first), then dashboard_id is
+    // flipped NOT NULL. (Dropping owner_clerk_user_id + the *_ms columns is still Phase 9.)
     for (const c of [
       "dashboard_id uuid",
       "created_at timestamp",
@@ -467,13 +339,6 @@ async function main() {
              to_timestamp(dst.expires_at_ms/1000.0), to_timestamp(dst.revoked_at_ms/1000.0), to_timestamp(dst.last_used_at_ms/1000.0)
       FROM dashboard_share_tokens dst JOIN dashboards d ON d.legacy_id = dst.dashboard_id
       ON CONFLICT (token) DO NOTHING`);
-    const ownerTokens = await scalar(
-      "SELECT count(*) FROM share_tokens WHERE dashboard_id IS NULL",
-    );
-    if (ownerTokens)
-      console.log(
-        `     ⚠ ${ownerTokens} legacy owner-scoped share_token(s) unmapped (auto-create deferred)`,
-      );
 
     // Drop every FK referencing dashboards (drizzle-generated names vary) → swap the PK int→uuid → re-wire.
     await exec(`DO $$ DECLARE r record; BEGIN
@@ -538,8 +403,126 @@ async function main() {
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='share_tokens_dashboard_id_dashboards_fk') THEN
         ALTER TABLE share_tokens ADD CONSTRAINT share_tokens_dashboard_id_dashboards_fk FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE;
       END IF; END $$`);
-    // NOTE deferred (Phase 8/9): grant role CHECK/PK reshape + user_id rename + timestamptz; owner-token
-    // auto-create + share_tokens.dashboard_id NOT NULL; dropping descriptor + the legacy *_ms columns.
+    // ── Grant reshape (clean-sheet §4.6): role CHECK(admin/viewer) + user_id + timestamptz + composite PK. ──
+    // owner→admin FIRST (Simon's decision — no access loss), so the CHECK below can't fail on a legacy row.
+    // Idempotent: 0 owner rows on a re-run.
+    await exec(
+      "UPDATE dashboard_grants SET role = 'admin' WHERE role = 'owner'",
+    );
+    await exec(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'dashboard_grants_role_check') THEN
+        ALTER TABLE dashboard_grants ADD CONSTRAINT dashboard_grants_role_check CHECK (role IN ('admin','viewer'));
+      END IF; END $$`);
+    // clerk_user_id → user_id (the unique + user indexes recreated above auto-track the column rename).
+    await renameColumnIfExists(
+      exec,
+      "dashboard_grants",
+      "clerk_user_id",
+      "user_id",
+    );
+    // created_at_ms (bigint) → created_at (timestamptz), mirroring the share_tokens fold. The _ms column
+    // dies in Phase 9; drop its NOT NULL so the timestamptz is the source of truth.
+    await exec(
+      "ALTER TABLE dashboard_grants ADD COLUMN IF NOT EXISTS created_at timestamp",
+    );
+    await exec(`UPDATE dashboard_grants SET created_at = to_timestamp(created_at_ms/1000.0)
+      WHERE created_at IS NULL AND created_at_ms IS NOT NULL`);
+    await exec(
+      "ALTER TABLE dashboard_grants ALTER COLUMN created_at SET NOT NULL",
+    );
+    await exec(
+      "ALTER TABLE dashboard_grants ALTER COLUMN created_at_ms DROP NOT NULL",
+    );
+    // PK reshape → (dashboard_id, user_id): promote the recreated unique index (now on the renamed columns)
+    // straight into the PK — no rebuild, and it stays the arbiter of createGrant's onConflictDoUpdate.
+    // (ADD CONSTRAINT … USING INDEX renames the index to the constraint name dashboard_grants_pk.)
+    await exec(`DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='id') THEN
+        ALTER TABLE dashboard_grants ALTER COLUMN dashboard_id SET NOT NULL;
+        ALTER TABLE dashboard_grants ALTER COLUMN user_id SET NOT NULL;
+        ALTER TABLE dashboard_grants DROP CONSTRAINT dashboard_grants_pkey;
+        ALTER TABLE dashboard_grants DROP COLUMN id;
+        ALTER TABLE dashboard_grants
+          ADD CONSTRAINT dashboard_grants_pk PRIMARY KEY USING INDEX dashboard_grants_dashboard_user_unique;
+      END IF; END $$`);
+
+    // ── Owner-token auto-create: unify the last legacy owner-scoped share_token onto a dashboard. ──
+    // The fold above re-pointed every dashboard-scoped token 1:1; a legacy OWNER-scoped token (owner_clerk_
+    // user_id set, dashboard_id still NULL) granted read of ALL the owner's systems. Re-point it at an
+    // auto-created dashboard whose sections are the owner's areas (every device now has an area-of-one), so
+    // the token's owner-wide scope is preserved. Runs AFTER the PK swap so dashboards.id is uuid.
+    // Idempotent: the predicate + deterministic slug + ON CONFLICT converge on a re-run.
+    // NOTE (open — confirm with Simon): the only live consumer of the 1 such token is the owner-scoped
+    // /labs/kinkora-hws page (reads the retained legacy row), so this dashboard matters only for the unified
+    // model + the NOT NULL. "All owner areas" preserves (never narrows) the token's grant.
+    const { rewriteV3ToV4, pureAreaRef } = await import(
+      "@/lib/dashboard/v3-to-v4"
+    );
+    const ownerTokenRows = (
+      await db.execute(
+        sql.raw(
+          "SELECT token, owner_clerk_user_id AS owner FROM share_tokens WHERE dashboard_id IS NULL AND owner_clerk_user_id IS NOT NULL",
+        ),
+      )
+    ).rows as Array<{ token: string; owner: string }>;
+    for (const t of ownerTokenRows) {
+      await db.transaction(async (tx) => {
+        const areas = (
+          await tx.execute(
+            sql`SELECT id FROM areas WHERE owner_user_id = ${t.owner} ORDER BY id`,
+          )
+        ).rows as Array<{ id: string }>;
+        const v3 = {
+          version: 3 as const,
+          sections: areas.map((a) => ({ areaId: a.id, cards: [] })),
+        };
+        const doc = rewriteV3ToV4(v3, {
+          areaRef: pureAreaRef,
+          deviceRef: () => {
+            throw new Error(
+              "owner-token dashboard has no device-pinned cards — deviceRef must not be called",
+            );
+          },
+        });
+        const slug = `legacy-share-${t.token}`;
+        await tx.execute(sql`
+          INSERT INTO dashboards (owner_user_id, name, slug, descriptor, doc, revision, created_at, updated_at)
+          VALUES (${t.owner}, 'Shared view', ${slug}, ${v3 as object}, ${doc as object}, 1, now(), now())
+          ON CONFLICT (owner_user_id, slug) DO NOTHING`);
+        const dash = (
+          await tx.execute(
+            sql`SELECT id FROM dashboards WHERE owner_user_id = ${t.owner} AND slug = ${slug}`,
+          )
+        ).rows as Array<{ id: string }>;
+        const dashId = dash[0].id;
+        await tx.execute(sql`
+          INSERT INTO dashboard_revisions (dashboard_id, revision, doc, saved_by, saved_at)
+          VALUES (${dashId}, 1, ${doc as object}, ${t.owner}, now()) ON CONFLICT DO NOTHING`);
+        await tx.execute(
+          sql`UPDATE share_tokens SET dashboard_id = ${dashId} WHERE token = ${t.token} AND dashboard_id IS NULL`,
+        );
+      });
+    }
+    if (ownerTokenRows.length)
+      console.log(
+        `     re-pointed ${ownerTokenRows.length} legacy owner-scoped share_token(s) at auto-created dashboard(s)`,
+      );
+
+    // Every token now maps to a dashboard → flip NOT NULL. The explicit guard names the cause (like the
+    // 0030/0032 RAISE-EXCEPTION pre-checks) rather than surfacing a raw 23502.
+    const stillNull = await scalar(
+      "SELECT count(*) FROM share_tokens WHERE dashboard_id IS NULL",
+    );
+    if (stillNull > 0)
+      throw new Error(
+        `${stillNull} share_token(s) still have NULL dashboard_id — owner-token auto-create incomplete`,
+      );
+    await exec(
+      "ALTER TABLE share_tokens ALTER COLUMN dashboard_id SET NOT NULL",
+    );
+
+    // NOTE deferred (Phase 9 teardown): drop descriptor + the legacy *_ms / owner_clerk_user_id columns
+    // + the _old hot tables + the backlog-drain address map.
   });
 
   console.log("\n=== timing summary ===");
@@ -757,17 +740,8 @@ async function main() {
 }
 
 // ── guards / helpers ───────────────────────────────────────────────────────────
-async function guardEqual(
-  scalar: (t: string) => Promise<number>,
-  label: string,
-  aSql: string,
-  bSql: string,
-) {
-  const [a, b] = [await scalar(aSql), await scalar(bSql)];
-  if (a !== b)
-    throw new Error(`row-count guard failed (${label}): ${a} != ${b}`);
-}
-
+// (row-count guards now live inside populateRegistries — registry-populate.ts — single-sourced with
+// registry-sync.ts.)
 async function renameColumnIfExists(
   exec: (t: string) => Promise<unknown>,
   table: string,

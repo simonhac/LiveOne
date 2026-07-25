@@ -291,4 +291,5 @@ window (with the Q7 cron-gate list as an operational precondition).
 - ~~**Q4:** confirm no *off-repo* consumer keys on `point_readings.id`.~~ **CLOSED (Simon, 2026-07-25): no
   off-repo consumers — drop the surrogate; the natural `(point_rid, measurement_time)` PK stands as rehearsed.**
 - Everything else is decided above. Phase-8 execution decisions (incl. no dual-shape DAO, D1–D5 kept in the
-  window, `liveone-dev` cut over first, parity-before-deploy) are recorded in the Phase 8 plan of record.
+  window, `liveone-dev` cut over first, parity-before-deploy) are recorded in the Phase 8 plan of record
+  ([config-v4-phase8-cutover.md](config-v4-phase8-cutover.md)).
