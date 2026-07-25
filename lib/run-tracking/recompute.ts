@@ -9,6 +9,10 @@
 import { and, gte, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { deviceRunPeriods } from "@/lib/db/planetscale/schema";
+import {
+  withTransientPostgresRetry,
+  type TransientPostgresRetryOptions,
+} from "@/lib/db/planetscale/transient-retry";
 import { recomputeRunPeriodsForWindow } from "@/lib/db/planetscale/run-periods-pg";
 import { listEnabledTrackers } from "./resolve";
 
@@ -26,6 +30,11 @@ export interface RecomputeSummary {
   openPeriods: number;
 }
 
+export interface RecomputeRetryOptions extends TransientPostgresRetryOptions {
+  /** Surface exhausted tracker failures after processing the remaining trackers. */
+  failOnError?: boolean;
+}
+
 /** Recompute every enabled tracker over [winStartMs, winEndMs], "as of" nowMs. */
 async function recomputeWindowAllTrackers(
   winStartMs: number,
@@ -33,19 +42,17 @@ async function recomputeWindowAllTrackers(
   nowMs: number,
 ): Promise<RecomputeSummary> {
   const db = requirePlanetscaleDb();
-  const trackers = await listEnabledTrackers();
+  const trackers = await withTransientPostgresRetry(() =>
+    listEnabledTrackers(),
+  );
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
 
   for (const tracker of trackers) {
     try {
-      const res = await recomputeRunPeriodsForWindow(
-        db,
-        tracker,
-        winStartMs,
-        winEndMs,
-        nowMs,
+      const res = await withTransientPostgresRetry(() =>
+        recomputeRunPeriodsForWindow(db, tracker, winStartMs, winEndMs, nowMs),
       );
       rowsDeleted += res.deleted;
       rowsInserted += res.inserted;
@@ -104,12 +111,17 @@ export async function recomputeRange(
     chunkEndMs: number;
     inserted: number;
   }) => void,
+  retryOptions: RecomputeRetryOptions = {},
 ): Promise<RecomputeSummary> {
   const db = requirePlanetscaleDb();
-  const trackers = await listEnabledTrackers();
+  const trackers = await withTransientPostgresRetry(
+    () => listEnabledTrackers(),
+    retryOptions,
+  );
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
+  const failures: Error[] = [];
 
   for (const tracker of trackers) {
     let trackerOpen = false;
@@ -117,12 +129,9 @@ export async function recomputeRange(
     while (cs <= endMs) {
       const ce = Math.min(cs + CHUNK_MS, endMs);
       try {
-        const res = await recomputeRunPeriodsForWindow(
-          db,
-          tracker,
-          cs,
-          ce,
-          nowMs,
+        const res = await withTransientPostgresRetry(
+          () => recomputeRunPeriodsForWindow(db, tracker, cs, ce, nowMs),
+          retryOptions,
         );
         rowsDeleted += res.deleted;
         rowsInserted += res.inserted;
@@ -139,6 +148,7 @@ export async function recomputeRange(
             `${new Date(cs).toISOString()}..${new Date(ce).toISOString()}:`,
           err,
         );
+        failures.push(err instanceof Error ? err : new Error(String(err)));
       }
       if (ce >= endMs) break;
       cs = ce;
@@ -156,6 +166,12 @@ export async function recomputeRange(
     `[RunTracking] recompute range ${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}: ` +
       `${summary.trackersProcessed} trackers, ${summary.rowsInserted} periods`,
   );
+  if (retryOptions.failOnError && failures.length > 0) {
+    throw new AggregateError(
+      failures,
+      `run-period recompute failed for ${failures.length} tracker window(s) after retries`,
+    );
+  }
   return summary;
 }
 

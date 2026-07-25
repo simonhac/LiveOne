@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 /**
- * Readings-seam boundary guard (config-v4 Phase 3 lint ratchet).
+ * Readings-seam boundary guard (config-v4 Phase 3 hard wall).
  *
  * Enforces that ONLY `lib/readings/**` + `lib/registry/**` touch the three hot time-series tables
- * `point_readings` / `point_readings_agg_5m` / `point_readings_agg_1d`. Because ~29 modules touch
- * them today, it is a RATCHET: green now against `.readings-boundary-baseline.json`, and the baseline
- * shrinks by one module per migration PR. A NEW violator (not in the baseline) hard-fails; a STALE
- * baseline entry (a migrated/removed file no longer touching the tables) ALSO hard-fails — so the
- * ratchet is monotonic and can only shrink. End state: baseline empty → delete it + the `.eslintrc`
- * override → hard boundary.
+ * `point_readings` / `point_readings_agg_5m` / `point_readings_agg_1d`. The migration baseline reached
+ * zero in July 2026 and was deleted; every violation now hard-fails. Optional `--baseline` support is
+ * retained for historical fixtures only, including the stale-entry monotonicity check.
  *
  * Catches all three evasion modes ESLint's `no-restricted-imports` misses — dynamic `import()`, raw
  * SQL table strings, and `scripts/`+`packages/` (outside `next lint`'s dirs). Wired as `prebuild` /
@@ -61,6 +58,10 @@ function isStructurallyAllowed(rel) {
     rel === "scripts/check-readings-boundary.mjs" || // this guard (contains the literals)
     rel.startsWith("lib/readings/") || // the seam
     rel.startsWith("lib/registry/") ||
+    // config-v4 cutover tooling: it REWRITES the hot tables (rid-keyed twin build + rename-swap) — a
+    // table swap can't go through the DAO seam by definition. Runs only on throwaway rehearsal branches
+    // and the one cutover, then is deleted in Phase 9. See docs/plans/config-v4-phase7-rehearsal-harness.md.
+    rel.startsWith("scripts/config-v4/") ||
     rel.startsWith("drizzle/") || // migrations (raw SQL DDL)
     rel.startsWith("drizzle-planetscale/")
   );
@@ -232,7 +233,7 @@ if (invokedDirectly) {
   if (stale.length) {
     console.error(
       "\n✗ These files no longer touch the hot tables — remove them from\n" +
-        "  .readings-boundary-baseline.json (the ratchet only shrinks):\n",
+        "  the configured readings boundary baseline (the ratchet only shrinks):\n",
     );
     for (const p of stale) console.error(`    ${p}`);
     console.error("");
@@ -240,6 +241,8 @@ if (invokedDirectly) {
   }
 
   console.log(
-    `✓ readings boundary green — ${baseline.size} module(s) still on the baseline.`,
+    baseline.size === 0
+      ? "✓ readings boundary green — zero exceptions."
+      : `✓ readings boundary green — ${baseline.size} module(s) still on the baseline.`,
   );
 }

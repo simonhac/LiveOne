@@ -15,4 +15,10 @@ export {
   type RawInsert,
   type Agg5mInsert,
   type Agg1dUpsert,
+  type ActivePointLatest,
+  type Agg5mCoverage,
+  type ReadingStore,
 } from "./dao";
+
+export type { SeedPreviewDatabaseOptions } from "./preview-seed";
+export type { SyncProdToDevOptions } from "./prod-dev-sync";

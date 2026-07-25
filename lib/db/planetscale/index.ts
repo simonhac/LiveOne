@@ -188,6 +188,18 @@ function getPool(): Pool | null {
     connectionTimeoutMillis: 10000,
   });
 
+  // A pool-level error listener only receives errors from clients that are idle
+  // *inside the pool*. Drizzle transactions hold a checked-out PoolClient, and a
+  // network drop while that client is between queries otherwise becomes an
+  // unhandled EventEmitter error that crashes Node before transaction retry code
+  // can see it. Keep a listener on every physical client for its whole lifetime;
+  // the next/active query still rejects normally and the pool discards the client.
+  pool.on("connect", (client) => {
+    client.on("error", (err) => {
+      console.error("[PlanetScale] Client connection error:", err);
+    });
+  });
+
   // Log connection errors
   pool.on("error", (err) => {
     console.error("[PlanetScale] Pool error:", err);

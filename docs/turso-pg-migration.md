@@ -373,7 +373,7 @@ today, but write-time lag is the risk). **Keep** the existing session FK. **GOTC
 per-system key is DB column **`id`** (the Drizzle TS field is named `index` → `integer("id")`); the
 composite PK is `(system_id, id)`. FK target is `point_info(system_id, id)`, never `(…, index)`.
 
-**Pre-flight audit (`scripts/audit-pg-fk-orphans.ts`, read-only, 2026-06-06 vs prod):** all 8 proposed
+**Pre-flight audit (retired read-only script, 2026-06-06 vs prod):** all 8 proposed
 constraints are **0-orphan → add + validate cleanly**. Row counts: `point_readings` 13.4M, `agg_5m`
 3.3M, `sessions` 870K, `agg_1d` 11.9K, `point_info` 73, `systems` 9. So #4/#6/#7 (large) use `ADD … NOT
 VALID` + a separate `VALIDATE` (validating scan under non-blocking `SHARE UPDATE EXCLUSIVE`); the rest
@@ -610,7 +610,7 @@ confirmed during the relevant PR.
   - recompute 1d, over `--from/--to` (optional `--system`); dry-run default, `--apply` to write. Idempotent.
 - `scripts/seed-planetscale-refs.ts` — re-seed `systems` + `point_info` if metadata changes.
 - `scripts/reconcile-agg-values.ts` — read Turso, compare aggregate values against PG (the gate).
-- `scripts/audit-pg-fk-orphans.ts` — READ-ONLY FK pre-flight (existing constraints + row + orphan counts).
+- The one-shot FK pre-flight audit was retired after all eight constraints were validated in prod.
 - `scripts/parity-config-turso-vs-pg.ts` — READ-ONLY config row-by-row parity (✅/⚠️ verdict).
 - `scripts/purge-observations-queue.ts` — purge + recreate the QStash queue (paused).
 - `scripts/qstash-health.ts` — READ-ONLY live mirror-health snapshot (queue lag/DLQ/paused/parallelism +

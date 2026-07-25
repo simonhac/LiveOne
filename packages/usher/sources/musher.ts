@@ -5,8 +5,11 @@
  * Everything else (build reading set, push with retry, schedule) lives in ../core.
  */
 
-import { DseClient } from "../clients/dse-client";
+import path from "node:path";
+import { DseClient, sentinelReason } from "../clients/dse-client";
+import type { DumpResult } from "../clients/dse-client";
 import type { Manifest, Source, Values } from "../core/source";
+import { DiagJournal } from "../core/diag-journal";
 
 /**
  * The curated set musher pushes to gusher — the live-proven Page-4 engine points. `key` matches a
@@ -94,6 +97,8 @@ export interface MusherOptions {
   port?: number;
   unitId?: number;
   log?: (m: string) => void;
+  /** store root for the diagnostic journal (MUSHER_DIAGNOSTICS mode); no journal if omitted */
+  dataDir?: string;
 }
 
 export function createMusher(opts: MusherOptions): Source {
@@ -106,6 +111,61 @@ export function createMusher(opts: MusherOptions): Source {
   // Retain the last read for the inspector (the generic all-values table).
   let lastValues: Values | null = null;
   let lastReadAt: string | null = null;
+
+  // ── Diagnostics (temporary, env-gated) ──────────────────────────────────────
+  // MUSHER_DIAGNOSTICS=1 durably captures the FULL register dump (all ~94 regs: raw words + decoded
+  // value + sentinel reason) while the genset is running AND for the next MUSHER_DIAG_POSTRUN_TICKS
+  // polls (a fine-resolution cool-down baseline). In diag mode isRunning() reports the whole window,
+  // so the loop holds its fast (1-min) cadence across the post-run tail, then reverts to idle.
+  const DIAG = process.env.MUSHER_DIAGNOSTICS === "1";
+  const POSTRUN = Math.max(
+    0,
+    Number(process.env.MUSHER_DIAG_POSTRUN_TICKS) || 6,
+  );
+  const log = opts.log ?? (() => {});
+  let holdRemaining = 0;
+  let lastActive = false;
+  // Kick off the durable journal (async); appends are fire-and-forget so a slow disk never delays a
+  // tick's push. Missing the first tick or two before it resolves is fine — a run isn't imminent then.
+  let journal: DiagJournal | null = null;
+  if (DIAG && opts.dataDir) {
+    void DiagJournal.create(path.join(opts.dataDir, "diag"), { log }).then(
+      (j) => {
+        journal = j;
+      },
+    );
+  }
+
+  /** Build the full-dump record, log a greppable live-tail line, and durably journal it. */
+  function emitDiag(dump: DumpResult, running: boolean, hold: number): void {
+    const fields: Record<string, unknown> = {};
+    for (const r of dump.readings) {
+      const e: Record<string, unknown> = {
+        v: r.value,
+        raw: r.rawWords,
+        i: r.rawInt,
+      };
+      // value null + a raw code present = the device answered with a sentinel → say WHY.
+      if (r.value == null && r.rawWords.length > 0) {
+        const na = sentinelReason(r.field, r.rawInt);
+        if (na) e.na = na;
+      }
+      if (r.error) e.e = r.error; // value null + no raw words = a read error (≠ a sentinel)
+      fields[r.field.key] = e;
+    }
+    const record = {
+      t: new Date().toISOString(),
+      site: opts.siteId,
+      unit: dump.unitId,
+      running,
+      hold,
+      fields,
+      pageErrors: dump.pageErrors,
+    };
+    log(`[musher-diag] ${JSON.stringify(record)}`); // secondary: ephemeral live-tail
+    void journal?.append(record); // primary: durable /data/usher/diag/*.jsonl
+  }
+
   return {
     name: "musher",
     siteId: opts.siteId,
@@ -118,6 +178,26 @@ export function createMusher(opts: MusherOptions): Source {
         for (const r of dump.readings) values[r.field.key] = r.value;
         lastValues = values;
         lastReadAt = new Date().toISOString();
+
+        if (DIAG) {
+          // Diagnostic window = running OR within POSTRUN polls of the run ending. Evaluated once per
+          // tick (read() runs once per tick, before isRunning) so the post-run counter is exact.
+          const running =
+            Number(values.engineRpm ?? 0) > 0 ||
+            Number(values.genFreqHz ?? 0) > 0;
+          let inWindow: boolean;
+          if (running) {
+            holdRemaining = POSTRUN;
+            inWindow = true;
+          } else if (holdRemaining > 0) {
+            inWindow = true;
+            holdRemaining--; // consume one post-run slot
+          } else {
+            inWindow = false;
+          }
+          lastActive = inWindow;
+          if (inWindow) emitDiag(dump, running, holdRemaining);
+        }
         return values;
       } finally {
         // Reconnect fresh every tick. A persistent Modbus/TCP connection left idle across the poll
@@ -128,8 +208,11 @@ export function createMusher(opts: MusherOptions): Source {
         await dse.close().catch(() => {});
       }
     },
-    // Running when the engine is turning / producing — drives the loop's faster (1-min) cadence.
+    // Running when the engine is turning / producing — drives the loop's faster (1-min) cadence. In
+    // diag mode this reports the whole capture window (run + post-run hold) so the fast cadence — and
+    // thus the 1-min cool-down dump — extends across the post-run tail before reverting to idle.
     isRunning(values: Values): boolean {
+      if (DIAG) return lastActive;
       return (
         Number(values.engineRpm ?? 0) > 0 || Number(values.genFreqHz ?? 0) > 0
       );
