@@ -24,6 +24,7 @@ export interface UsherStore {
 export function createSource(
   sc: SourceConfig,
   log: (m: string) => void,
+  dataDir?: string,
 ): Source {
   switch (sc.type) {
     case "deepsea":
@@ -33,6 +34,7 @@ export function createSource(
         port: sc.port,
         unitId: sc.unitId,
         log: (m) => log(`[${sc.siteId}/musher] ${m}`),
+        dataDir,
       });
     case "fronius":
       return createFusher({
@@ -74,7 +76,7 @@ export function buildEntries(
   store?: UsherStore,
 ): ScheduledEntry[] {
   return config.sources.map((sc) => {
-    const source = createSource(sc, log);
+    const source = createSource(sc, log, store?.dataDir);
     const pusher = new Pusher({
       endpoint: config.gushEndpoint,
       siteId: sc.siteId,
