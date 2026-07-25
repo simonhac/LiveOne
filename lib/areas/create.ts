@@ -173,9 +173,14 @@ export async function updateAreaMeta(
     location?: AreaLocation | null;
   },
 ): Promise<void> {
-  const set: Record<string, unknown> = { updatedAt: new Date() };
-  if (patch.displayName !== undefined) set.displayName = patch.displayName;
-  if (patch.alias !== undefined) set.alias = patch.alias;
+  // config-v4: the KEYS are drizzle FIELD names on `areas` (displayName→name, alias→slug); the `patch`
+  // shape is the unchanged caller-facing API. NOTE this object is deliberately typed against the table
+  // rather than `Record<string, unknown>`: an untyped record made the rename invisible to tsc, so a stale
+  // `set.displayName` would have compiled and then silently not renamed the area post-cutover — the
+  // W-series cannot catch it either, because that check only models INSERTs.
+  const set: Partial<typeof areas.$inferInsert> = { updatedAt: new Date() };
+  if (patch.displayName !== undefined) set.name = patch.displayName;
+  if (patch.alias !== undefined) set.slug = patch.alias;
   if (patch.timezoneOffsetMin !== undefined) {
     set.timezoneOffsetMin = patch.timezoneOffsetMin;
     set.dayOffsetMin = patch.timezoneOffsetMin;
