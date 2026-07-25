@@ -14,7 +14,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { cronSkipReason } from "@/lib/cron/guard";
+import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { runCoverageRepair } from "@/lib/coverage/runner";
 
@@ -42,6 +42,10 @@ export async function GET(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   const skip = cronSkipReason(request, auth);
   if (skip) return NextResponse.json(skip);
+
+  // Cutover: coverage repair backfills readings (a hot-table writer) — gate it for the window.
+  const cutover = await cutoverSkipReason(request, auth);
+  if (cutover) return NextResponse.json(cutover);
   if (!planetscaleDb) return NextResponse.json({ configured: false });
 
   const dryRun =

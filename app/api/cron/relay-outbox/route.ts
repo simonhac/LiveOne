@@ -16,7 +16,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { cronSkipReason } from "@/lib/cron/guard";
+import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { drainOutbox } from "@/lib/observations/outbox";
 
@@ -28,6 +28,13 @@ export async function GET(request: NextRequest) {
 
   const skip = cronSkipReason(request, auth);
   if (skip) return NextResponse.json(skip);
+
+  // Cutover: the relay MUST be gated for the window. `drainOutbox` marks a row published as soon as
+  // QStash *accepts* it, and a paused queue still accepts — so a running relay would convert durable
+  // Postgres rows into rows whose only copy sits in the paused queue. Gated, every row stays
+  // `published_at IS NULL`, PG remains the authoritative buffer, and the post-resume revert stays viable.
+  const cutover = await cutoverSkipReason(request, auth);
+  if (cutover) return NextResponse.json(cutover);
 
   if (!planetscaleDb) {
     return NextResponse.json({ configured: false });
