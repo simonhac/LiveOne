@@ -42,6 +42,12 @@
 import { Client } from "pg";
 import { pipeline } from "node:stream/promises";
 import { to as copyTo, from as copyFrom } from "pg-copy-streams";
+import {
+  armSocketForensics,
+  formatConnectionPath,
+  probeConnectionPath,
+  reportBackendDrift,
+} from "@/lib/db/planetscale/connection-forensics";
 
 // ── Manifest ────────────────────────────────────────────────────────────────
 
@@ -698,17 +704,33 @@ export async function syncProdToDev(options: SyncProdToDevOptions): Promise<{
   await prod.connect();
   await dev.connect();
 
+  // Dropout forensics (docs/incidents/2026-07-25-prod-dev-sync-connection-dropouts.md).
+  // Arm AFTER connect — pg only creates the socket then. Both are fail-safe.
+  const prodProbe = armSocketForensics(prod, "sync:prod", log);
+  const devProbe = armSocketForensics(dev, "sync:dev", log);
+  const prodPath = await probeConnectionPath(prod, prodUrl);
+  const devPath = await probeConnectionPath(dev, devUrl);
+  if (prodPath) log(`[sync:prod] conn-path ${formatConnectionPath(prodPath)}`);
+  if (devPath) log(`[sync:dev] conn-path ${formatConnectionPath(devPath)}`);
+
   const started = Date.now();
   const tables: Array<{ table: string; rows: number; elapsedMs: number }> = [];
   try {
     // Columns + PK for every table, batched from the dev catalog (both DBs share the schema).
     const names = MANIFEST.map((t) => t.name);
+    prodProbe.setPhase("schema parity read");
+    devProbe.setPhase("schema parity + catalog read");
     await assertManifestSchemaParity(prod, dev, names);
     const colsByTable = await columnsOf(dev, names);
     const pkByTable = await pkOf(dev, names);
 
     for (const t of MANIFEST) {
       const t0 = Date.now();
+      // Phase granularity is per-table, not per-statement: the point is to separate a
+      // death DURING a table's work from one while the client sat idle waiting for the
+      // other side (prod idles through every dev-side upsert, and vice-versa).
+      prodProbe.setPhase(`${t.name}: COPY OUT, then idle`);
+      devProbe.setPhase(`${t.name}: stage + upsert`);
       const { table, rows } = await syncTable(
         prod,
         dev,
@@ -716,6 +738,8 @@ export async function syncProdToDev(options: SyncProdToDevOptions): Promise<{
         colsByTable,
         pkByTable,
       );
+      prodProbe.setPhase(`idle after ${t.name}`);
+      devProbe.setPhase(`idle after ${t.name}`);
       const elapsedMs = Date.now() - t0;
       tables.push({ table, rows, elapsedMs });
       const secs = (elapsedMs / 1000).toFixed(1);
@@ -726,9 +750,15 @@ export async function syncProdToDev(options: SyncProdToDevOptions): Promise<{
       );
     }
     const elapsedMs = Date.now() - started;
+    // Success path only: on failure the connection is usually already gone.
+    await reportBackendDrift(prod, "sync:prod", prodPath, log);
+    await reportBackendDrift(dev, "sync:dev", devPath, log);
     log(`✓ Sync complete in ${(elapsedMs / 1000).toFixed(1)}s`);
     return { tables, elapsedMs };
   } finally {
+    // No "expected close" flag here on purpose: on a real dropout the query rejects a
+    // tick before this runs, so setting one would suppress the very report we need.
+    // armSocketForensics reads pg's own `_ending` at distress time instead.
     await prod.end().catch(() => {});
     await dev.end().catch(() => {});
   }

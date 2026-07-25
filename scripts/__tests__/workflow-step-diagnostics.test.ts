@@ -104,4 +104,35 @@ describe("sync workflow failure diagnostics", () => {
       rmSync(dir, { recursive: true });
     }
   });
+
+  // The classifier keyword-scans the WHOLE step log, and its last-resort branch matches
+  // a bare /timeout/i. The connection-forensics probe prints PG's timeout settings on
+  // every run, so naming those JSON fields `statementTimeout`/`idleSessionTimeout` would
+  // silently re-bucket every unclassified failure as "operation timeout". This pins the
+  // field names (see lib/db/planetscale/connection-forensics.ts).
+  it("does not let the conn-path diagnostic line mask an unclassified failure", () => {
+    const connPath =
+      '[sync:prod] conn-path {"clientPort":"5432","serverPort":5432,' +
+      '"portMismatch":false,"verdict":"inconclusive","backendPid":2771807,' +
+      '"statementLimit":"0","idleTxnLimit":"0","idleSessionLimit":"0",' +
+      '"keepalivesIdle":"7200","serverVersion":"17.10"}';
+
+    expect(connPath).not.toMatch(/timed? ?out|timeout/i);
+    expect(classifyWorkflowFailure(connPath).mode).toBe(
+      "unclassified command failure",
+    );
+
+    // A real dropout must still classify correctly with the probe line present.
+    expect(
+      classifyWorkflowFailure(
+        `${connPath}\nError: Connection terminated unexpectedly`,
+      ).mode,
+    ).toBe("database connection dropout");
+  });
+
+  it("still classifies a genuine timeout", () => {
+    expect(classifyWorkflowFailure("the operation timed out").mode).toBe(
+      "operation timeout",
+    );
+  });
 });
