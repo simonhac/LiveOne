@@ -13,7 +13,8 @@
  *                     device_state, points; seed device_rid_seq; wire deferred FKs; row-count guards
  *   4. Hot rewrite  — the window-critical step: (point_rid, time) twins → batched copy via point_info.rid →
  *                     indexes/PK/NOT-VALID FKs AFTER load → bounded rename-swap keeping _old (timed per stage)
- *   5. Config       — bindings→pt_ uuid, derivations, dashboards doc v3→v4, share_tokens, grants  [SCAFFOLD]
+ *   5. Config       — bindings→pt_ uuid, derivations (run-detector + HWS), dashboards doc v3→v4 + int→uuid
+ *                     PK swap (users/grants/tokens re-keyed). Validated; deferred items in the Phase-7 doc.
  *
  * Usage (on a rehearsal branch — see the runbook in the Phase-7 doc):
  *   PLANETSCALE_DATABASE_URL="<branch url>" REHEARSAL_BRANCH_ID="<branch id in the conn username>" \
