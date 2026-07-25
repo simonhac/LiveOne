@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
+import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
 import { parseDate } from "@internationalized/date";
 import { getNowFormattedAEST } from "@/lib/date-utils";
 import {
@@ -78,6 +79,16 @@ async function handle(request: NextRequest) {
   try {
     const authResult = await requireCronOrAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
+
+    // This route previously had NO kill-switch at all — the only `vercel.json` cron without one. It runs
+    // EVERY MINUTE and reads agg_5m through the DAO, which makes it the most likely holder of an
+    // ACCESS SHARE lock when the cutover tries to take ACCESS EXCLUSIVE for the rename-swap. It gets both
+    // guards: the standing CRONS_ENABLED switch and the cutover window gate.
+    const skip = cronSkipReason(request, authResult);
+    if (skip) return NextResponse.json(skip);
+
+    const cutover = await cutoverSkipReason(request, authResult);
+    if (cutover) return NextResponse.json(cutover);
 
     const { searchParams } = new URL(request.url);
     const body =

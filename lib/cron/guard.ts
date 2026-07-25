@@ -15,10 +15,76 @@
 
 import { NextRequest } from "next/server";
 import type { AuthContext } from "@/lib/api-auth";
+import { kv, kvKey } from "@/lib/kv";
 
 /** Scheduled cron work runs only when explicitly enabled. */
 export function cronsEnabled(): boolean {
   return process.env.CRONS_ENABLED === "true";
+}
+
+/**
+ * KV flag that quiesces cron writers for the config-v4 cutover window.
+ *
+ * Set (`prod:cutover:paused`) at the start of the window, cleared at resume. This is deliberately
+ * SEPARATE from `CRONS_ENABLED`: the cutover must keep the pollers running (collection is buffered
+ * through `observations_outbox`, never interrupted) while stopping everything that WRITES the hot
+ * tables or drains the outbox. Flipping `CRONS_ENABLED=false` would stop the pollers too.
+ */
+export const CUTOVER_PAUSED_KEY = "cutover:paused";
+
+/**
+ * Is the cutover pause flag set?
+ *
+ * **Fails CLOSED**: if the KV read throws, we report paused. During an irreversible window a cron that
+ * wrongly runs (writing to a half-transformed database) is far worse than a cron that wrongly skips —
+ * a skipped run is picked up by the next tick.
+ *
+ * NB an UNCONFIGURED KV is not an error: `lib/kv.ts` proxies every method to `() => Promise.resolve(null)`
+ * without throwing, so this returns false (not paused). That only happens where KV is absent — local dev,
+ * where `CRONS_ENABLED` is already unset — never in production, which always has KV configured.
+ */
+export async function cutoverPaused(): Promise<boolean> {
+  try {
+    const value = await kv.get(kvKey(CUTOVER_PAUSED_KEY));
+    // Treat any set, non-falsey value as paused ("1", 1, true, "yes", …).
+    return !(
+      value === null ||
+      value === undefined ||
+      value === 0 ||
+      value === "0" ||
+      value === false
+    );
+  } catch (error) {
+    console.error(
+      `[CutoverGate] KV read failed for ${kvKey(CUTOVER_PAUSED_KEY)} — failing CLOSED (treating as paused)`,
+      error,
+    );
+    return true;
+  }
+}
+
+/**
+ * Decide whether a cron should skip because the cutover window is in progress.
+ *
+ * Same override semantics as {@link cronSkipReason}: a Clerk admin session, the dev `x-claude` header,
+ * or `?force=true` proceed anyway (the operator's escape hatch during the window). A `CRON_SECRET`
+ * bearer call is the scheduled run we mean to suppress, so it is NOT an override.
+ *
+ * @returns `null` to proceed, or a `{ skipped, reason }` payload the caller returns as a 200 no-op.
+ */
+export async function cutoverSkipReason(
+  request: NextRequest,
+  ctx: AuthContext,
+): Promise<{ skipped: true; reason: string } | null> {
+  if (!(await cutoverPaused())) return null;
+
+  const forced = request.nextUrl.searchParams.get("force") === "true";
+  if (ctx.isAdmin || ctx.isClaudeDev || forced) return null;
+
+  return {
+    skipped: true,
+    reason: `config-v4 cutover in progress (${kvKey(CUTOVER_PAUSED_KEY)} set)`,
+  };
 }
 
 /**

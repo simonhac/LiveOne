@@ -70,6 +70,21 @@ describe("check-readings-boundary", () => {
         join(dir, "pivot.ts"),
         "const projection = `MAX(CASE WHEN pr.point_id = 1 THEN pr.value END)`;\n",
       );
+      // config-v4 cutover suffixes. The transform renames the live tables to `_old` and promotes the
+      // rid-keyed `_new` twins, so the guard must keep covering BOTH spellings — otherwise it goes blind
+      // exactly when the codebase is most tempted to reach around the seam.
+      writeFileSync(
+        join(dir, "old-suffix.ts"),
+        "await db.execute(sql`SELECT count(*) FROM point_readings_old`);\n",
+      );
+      writeFileSync(
+        join(dir, "new-suffix.ts"),
+        "await db.execute(sql`INSERT INTO point_readings_agg_5m_new VALUES (1)`);\n",
+      );
+      writeFileSync(
+        join(dir, "v-suffix.ts"),
+        "await db.execute(sql`SELECT * FROM point_readings_agg_1d_v4`);\n",
+      );
     });
     afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -83,6 +98,9 @@ describe("check-readings-boundary", () => {
         "relative.ts",
         "rawsql.ts",
         "pivot.ts",
+        "old-suffix.ts",
+        "new-suffix.ts",
+        "v-suffix.ts",
       ]) {
         expect(stderr).toContain(f);
       }
@@ -112,6 +130,12 @@ describe("check-readings-boundary", () => {
       writeFileSync(
         join(dir, "localvar.ts"),
         "const pointReadings = [];\nexport const n = pointReadings.length;\n",
+      );
+      // The cutover-suffix group must not over-reach: `_oldest` is a longer word, not the `_old` twin,
+      // so the lookahead has to reject it the same way it rejects `_flow_attr_1d`.
+      writeFileSync(
+        join(dir, "suffix-overreach.ts"),
+        "await db.execute(sql`SELECT * FROM point_readings_oldest_archive`);\n",
       );
     });
     afterAll(() => rmSync(dir, { recursive: true, force: true }));

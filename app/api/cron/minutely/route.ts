@@ -6,7 +6,7 @@ import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import type { PollingResult, PollStage } from "@/lib/vendors/types";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { cronSkipReason } from "@/lib/cron/guard";
+import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
 import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
@@ -510,13 +510,21 @@ export async function GET(request: NextRequest) {
       sessionCause,
     });
 
+    // Cutover gate — DERIVED WRITERS ONLY, deliberately placed here rather than at the top of the
+    // handler. The poll above must keep running through the window: collection is buffered through
+    // `observations_outbox` and is never interrupted. What must stop is everything that WRITES the hot
+    // tables, and the two reconcilers below are exactly that (both call `insert5m writeDataQuality`).
+    const derivedPaused = await cutoverSkipReason(request, authResult);
+
     // Derived hot-water temperature: reconcile the trailing window so the modelled faucet temp
     // stays fresh. Reads the just-(soon-)materialised load.hws/power agg_5m, writes the derived
     // load.hws/temperature point. Best-effort; a no-op for systems without an HWS temperature point.
-    try {
-      await reconcileHwsTemperature(Date.now());
-    } catch (error) {
-      console.error("[Cron] HWS temperature reconcile failed:", error);
+    if (!derivedPaused) {
+      try {
+        await reconcileHwsTemperature(Date.now());
+      } catch (error) {
+        console.error("[Cron] HWS temperature reconcile failed:", error);
+      }
     }
 
     // Derived battery-provenance blend: reconcile the trailing window so the battery's blended
@@ -532,7 +540,7 @@ export async function GET(request: NextRequest) {
     const batProvNowMs = Date.now();
     const batProvDue =
       !authResult.isCron || new Date(batProvNowMs).getUTCMinutes() % 5 === 2;
-    if (batProvDue) {
+    if (batProvDue && !derivedPaused) {
       try {
         await reconcileBatteryProvenance(batProvNowMs);
       } catch (error) {

@@ -35,7 +35,14 @@ export const HOT_SYMBOLS = new Set([
 // Matches exactly the three snake_case hot tables. The negative lookahead rejects a trailing word
 // char, so `point_readings_flow_attr_1d` / `point_readings_flow_1d` NEVER match (base "point_readings"
 // is followed by "_flow", failing the lookahead) — those are different, out-of-scope tables.
-export const HOT_TABLE = /\bpoint_readings(_agg_5m|_agg_1d)?(?![_A-Za-z0-9])/;
+//
+// The `(_old|_new|_v\d+)?` group keeps the guard honest ACROSS the config-v4 cutover, which transiently
+// creates `point_readings_new` (the rid-keyed twin) and leaves `point_readings_old` behind until Phase 9.
+// Without it the guard silently stops covering the very tables it exists to protect, at exactly the moment
+// the codebase is most likely to reach around the seam. `_flow_attr_1d` is still rejected: `_flow` matches
+// neither optional group, so the lookahead sees `_` and fails.
+export const HOT_TABLE =
+  /\bpoint_readings(_agg_5m|_agg_1d)?(_old|_new|_v\d+)?(?![_A-Za-z0-9])/;
 // Admin routes must pass typed PointIds/value-column enums to ReadingsDao, never construct hot-key
 // pivot SQL themselves. This catches the historical escape hatch even when it doesn't name a table.
 export const CALLER_PIVOT_SQL =
@@ -49,7 +56,19 @@ const SKIP_DIRS = new Set([
   ".git",
   "__tests__",
 ]);
-const DEFAULT_ROOTS = ["app", "lib", "scripts", "packages"];
+// Every source root. `components`/`contexts`/`hooks`/`tools`/`types` are clean today but were previously
+// UNGUARDED — a hot-table reference added there would not have been caught.
+const DEFAULT_ROOTS = [
+  "app",
+  "lib",
+  "scripts",
+  "packages",
+  "components",
+  "contexts",
+  "hooks",
+  "tools",
+  "types",
+];
 
 // Structurally allowed — legitimately reference the tables; never counted.
 function isStructurallyAllowed(rel) {

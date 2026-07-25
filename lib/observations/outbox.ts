@@ -31,8 +31,15 @@ import { QueueMessage } from "./types";
 
 /** Max rows a single relay run drains. A backlog spills to the next minute. */
 const DEFAULT_BATCH = Number(process.env.OUTBOX_RELAY_BATCH ?? 200);
-/** Retention for published rows (audit/replay) before GC. */
-const GC_DAYS = Number(process.env.OUTBOX_GC_DAYS ?? 7);
+/**
+ * Retention for published rows (audit/replay) before GC.
+ *
+ * 30 days (was 7) so the config-v4 cutover's post-resume revert stays viable for the whole period the
+ * `_old` hot tables are retained. Reverting means renaming `_old` back and re-driving the outbox
+ * (`UPDATE observations_outbox SET published_at = NULL WHERE published_at >= <resume>`), which only works
+ * while those rows still exist — 7 days was tighter than the validation window.
+ */
+const GC_DAYS = Number(process.env.OUTBOX_GC_DAYS ?? 30);
 
 /**
  * Map built QueueMessage(s) to outbox rows. One row per message (chunk); `seq`
