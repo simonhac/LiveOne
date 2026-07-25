@@ -1,9 +1,14 @@
--- config-v4 cutover — structural DDL (the "0035" schema delta)
+-- config-v4 cutover — structural DDL.
 --
--- ⚠️  NOT a journalled drizzle migration (deliberately). It creates the destructive cutover schema
---     (devices/points/…) and must NEVER be applied by a routine `db:pg:migrate`. It is applied ONLY:
---       • by scripts/config-v4/config-transform.ts, on a throwaway prod-snapshot branch (Phase 7); and
---       • at the real Phase 8 cutover, promoted to a journalled migration alongside the schema.ts overhaul.
+-- ⚠️  SUPERSEDED by the journalled migration `drizzle-planetscale/0035_brown_terrax.sql`, which is now
+--     the canonical source for this DDL (and is reflected in lib/db/planetscale/schema.ts + the drizzle
+--     snapshot). This file is retained ONLY as the self-provisioning path for a rehearsal branch restored
+--     from a backup taken BEFORE 0035 was applied; every statement is `IF NOT EXISTS`, so on a branch that
+--     already has 0035 it is a clean no-op.
+--
+--     Object names/kinds here are kept BYTE-IDENTICAL in effect to 0035 (drizzle's `*_<reftable>_id_fk`
+--     FK naming; rid uniqueness as a plain UNIQUE INDEX, not a table constraint). If you change one, change
+--     both — otherwise a rehearsal branch diverges from prod and the parity checks compare different shapes.
 --     Applying it never touches the live serving tables — it only ADDS new empty tables + a sequence.
 --
 -- Idempotent (IF NOT EXISTS) so a fresh-branch rehearsal that half-ran can re-drive. FK order:
@@ -34,10 +39,11 @@ CREATE TABLE IF NOT EXISTS "devices" (
 	"commissioned_on" date,
 	"created_at"      timestamp DEFAULT now() NOT NULL,
 	"updated_at"      timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "devices_rid_unique" UNIQUE("rid"),
 	CONSTRAINT "devices_status_check" CHECK ("devices"."status" IN ('active','disabled','removed')),
-	CONSTRAINT "devices_primary_area_id_areas_fk" FOREIGN KEY ("primary_area_id") REFERENCES "areas"("id")
+	CONSTRAINT "devices_primary_area_id_areas_id_fk" FOREIGN KEY ("primary_area_id") REFERENCES "areas"("id")
 );--> statement-breakpoint
+-- rid uniqueness is a plain UNIQUE INDEX (not a table constraint) to match migration 0035 / schema.ts.
+CREATE UNIQUE INDEX IF NOT EXISTS "devices_rid_unique" ON "devices" ("rid");--> statement-breakpoint
 -- owner-scoped pretty-URL slug (NULLs distinct); mirrors areas_owner_alias_unique.
 CREATE UNIQUE INDEX IF NOT EXISTS "devices_owner_slug_unique" ON "devices" ("owner_user_id","slug");--> statement-breakpoint
 
@@ -56,9 +62,9 @@ CREATE TABLE IF NOT EXISTS "points" (
 	"active"        boolean DEFAULT true NOT NULL,
 	"created_at"    timestamp DEFAULT now() NOT NULL,
 	"updated_at"    timestamp,
-	CONSTRAINT "points_rid_unique" UNIQUE("rid"),
-	CONSTRAINT "points_device_id_devices_fk" FOREIGN KEY ("device_id") REFERENCES "devices"("id")
+	CONSTRAINT "points_device_id_devices_id_fk" FOREIGN KEY ("device_id") REFERENCES "devices"("id")
 );--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "points_rid_unique" ON "points" ("rid");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "points_device_physical_path_unique" ON "points" ("device_id","physical_path");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "points_device_logical_metric_unique" ON "points" ("device_id","logical_path","metric_type");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "points_device_idx" ON "points" ("device_id");--> statement-breakpoint
@@ -68,8 +74,8 @@ CREATE TABLE IF NOT EXISTS "area_members" (
 	"device_id" uuid NOT NULL,
 	"ordinal"   integer DEFAULT 0 NOT NULL,
 	CONSTRAINT "area_members_pk" PRIMARY KEY("area_id","device_id"),
-	CONSTRAINT "area_members_area_id_areas_fk"     FOREIGN KEY ("area_id")   REFERENCES "areas"("id")   ON DELETE CASCADE,
-	CONSTRAINT "area_members_device_id_devices_fk" FOREIGN KEY ("device_id") REFERENCES "devices"("id") ON DELETE CASCADE
+	CONSTRAINT "area_members_area_id_areas_id_fk"     FOREIGN KEY ("area_id")   REFERENCES "areas"("id")   ON DELETE CASCADE,
+	CONSTRAINT "area_members_device_id_devices_id_fk" FOREIGN KEY ("device_id") REFERENCES "devices"("id") ON DELETE CASCADE
 );--> statement-breakpoint
 
 -- 1:1 operational-state satellite of devices (was polling_status). Written every poll; never exported.
@@ -84,5 +90,5 @@ CREATE TABLE IF NOT EXISTS "device_state" (
 	"total_polls"        integer DEFAULT 0 NOT NULL,
 	"successful_polls"   integer DEFAULT 0 NOT NULL,
 	"updated_at"         timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "device_state_device_id_devices_fk" FOREIGN KEY ("device_id") REFERENCES "devices"("id") ON DELETE CASCADE
+	CONSTRAINT "device_state_device_id_devices_id_fk" FOREIGN KEY ("device_id") REFERENCES "devices"("id") ON DELETE CASCADE
 );
