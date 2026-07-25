@@ -136,6 +136,7 @@ function f(
 
 const HI = "high" as const;
 const MED = "medium" as const;
+const LO = "low" as const;
 
 // Page 154 named-alarm block: register 39424 = count (a live DSE7410 reported 80 named
 // alarms → 20 words, 4 alarms packed per register). 39425.. pack 4 alarms/register.
@@ -955,6 +956,101 @@ export const REGISTERS: RegField[] = [
     "kWh",
     MED,
   ),
+
+  // ── Diagnostic (UNQUALIFIED) — added 2026-07-25 for the temporary MUSHER_DIAGNOSTICS capture. ──
+  // Logged raw (rawWords/rawInt) to qualify addressing/scaling against a live run; do NOT promote to
+  // DEEPSEA_MANIFEST until qualified. readAll() is resilient (an unsupported addr → null + a captured
+  // pageError, via per-field fallback), so anything here can't disturb the proven Page-4 reads/push.
+  f(
+    "Diagnostic",
+    3,
+    6,
+    "controlStatusFlags",
+    "Control status / alarm-summary bitfield",
+    1,
+    false,
+    1,
+    "",
+    LO,
+    {
+      note: "16-bit bitfield (DSE bit1=LSB..bit16=MSB) — decode from rawInt (e.g. 0x8000 not-configured, 0x1000 shutdown)",
+    },
+  ),
+  f(
+    "Diagnostic",
+    5,
+    74,
+    "engineLoadPct",
+    "Engine %-load at rated speed",
+    1,
+    false,
+    1,
+    "%",
+    LO,
+    {
+      note: "scale unverified (×1 vs ×0.1) — confirm from rawInt live",
+    },
+  ),
+  f(
+    "Diagnostic",
+    7,
+    92,
+    "plantBatterySoc",
+    "Plant battery charge state",
+    1,
+    false,
+    1,
+    "%",
+    LO,
+    {
+      note: "hybrid/ESS — expect n/a on a plain 7410 (a useful negative)",
+    },
+  ),
+  f(
+    "Diagnostic",
+    7,
+    94,
+    "loadKwh",
+    "Load energy (hybrid)",
+    2,
+    false,
+    0.1,
+    "kWh",
+    LO,
+    {
+      note: "hybrid/ESS — expect n/a; ×0.1 unverified",
+    },
+  ),
+  f(
+    "Diagnostic",
+    7,
+    96,
+    "batteryChargeKwh",
+    "Battery charging energy (hybrid)",
+    2,
+    false,
+    0.1,
+    "kWh",
+    LO,
+    {
+      note: "hybrid/ESS — expect n/a; ×0.1 unverified",
+    },
+  ),
+  f(
+    "Diagnostic",
+    7,
+    98,
+    "batteryDischargeKwh",
+    "Battery discharging energy (hybrid)",
+    2,
+    false,
+    0.1,
+    "kWh",
+    LO,
+    {
+      note: "hybrid/ESS — expect n/a; ×0.1 unverified",
+    },
+  ),
 ];
 
 // ── decode primitives ───────────────────────────────────────────────────────
@@ -993,6 +1089,44 @@ export function decodeField(field: RegField, words: number[]): number | null {
   if (words.length < field.words) return null;
   if (isSentinel(field, words)) return null;
   return toEngineering(field, words);
+}
+
+/**
+ * Diagnostic only: when a field decoded to `null` because its raw pattern sits in the GenComm
+ * sentinel band, classify WHY from the code's offset below the band top. GenComm orders the reserved
+ * top-8 codes from the top: offset 0 = the max code = "value not available / channel not configured /
+ * not fitted"; 1 = over-range; 2 = under-range (corroborated — a live PF read 0x7FFD = offset 2);
+ * 3 = open-circuit; 4+ = sender-fault/reserved (best-effort — the raw hex is always appended so an
+ * uncorroborated label can still be looked up). Returns `null` when `rawInt` is not a sentinel (a
+ * live value) or is missing (a read error — distinguished by empty rawWords upstream).
+ */
+const SENTINEL_REASONS = [
+  "not-available/not-configured/not-fitted",
+  "over-range",
+  "under-range",
+  "open-circuit",
+  "sender-fault",
+  "reserved-5",
+  "reserved-6",
+  "reserved-7",
+];
+export function sentinelReason(
+  field: RegField,
+  rawInt: number | null,
+): string | null {
+  if (rawInt == null) return null;
+  const [min, top] =
+    field.words === 2
+      ? field.signed
+        ? [S32_SENTINEL_MIN, 0x7fffffff]
+        : [U32_SENTINEL_MIN, 0xffffffff]
+      : field.signed
+        ? [S16_SENTINEL_MIN, 0x7fff]
+        : [U16_SENTINEL_MIN, 0xffff];
+  if (rawInt < min || rawInt > top) return null; // not a sentinel
+  const offset = top - rawInt; // 0..7 within the reserved band
+  const label = SENTINEL_REASONS[offset] ?? `reserved-${offset}`;
+  return `${label} (0x${rawInt.toString(16).toUpperCase()})`;
 }
 
 export interface FieldReading {
