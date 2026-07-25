@@ -330,7 +330,24 @@ async function main() {
       JOIN areas a ON a.legacy_system_id = rp.system_id
       JOIN derivations d ON d.area_id = a.id AND d.role = rp.role
       ON CONFLICT DO NOTHING`);
-    // NOTE: the HWS-model derivation (output='point') is bespoke (lib/hws/register) — deferred (Phase-7 doc).
+    // HWS-model derivation (output='point'): the modelled `load.hws/temperature` point is a normal
+    // point_info row (already in `points`), produced from its sibling `load.hws/power`. One derivation per
+    // temperature point, output_point_id = that point; source_points.power = the power point.
+    await exec(`
+      INSERT INTO derivations (id, area_id, kind, role, name, enabled, output, output_point_id, params, source_points, detector_version, created_at, updated_at)
+      SELECT gen_random_uuid(), (SELECT a.id FROM areas a WHERE a.legacy_system_id = temp.system_id),
+             'hws-model', NULL, 'Hot Water', true, 'point', temp.point_uid, '{}'::jsonb,
+             jsonb_build_object('power', (SELECT p.point_uid FROM point_info p
+               WHERE p.system_id=temp.system_id AND p.logical_path_stem='load.hws' AND p.metric_type='power' AND p.active LIMIT 1)),
+             1, now(), now()
+      FROM point_info temp
+      WHERE temp.logical_path_stem='load.hws' AND temp.metric_type='temperature'
+        AND NOT EXISTS (SELECT 1 FROM derivations d WHERE d.output_point_id = temp.point_uid)`);
+    // wire the deferred derivations.output_point_id FK now that points + derivations rows exist (null-ok).
+    await exec(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='derivations_output_point_id_points_fk') THEN
+        ALTER TABLE derivations ADD CONSTRAINT derivations_output_point_id_points_fk FOREIGN KEY (output_point_id) REFERENCES points(id);
+      END IF; END $$`);
 
     // 5c. dashboards: capture legacy_id, mint uuid, rewrite descriptor → v4 doc (TS rewriteV3ToV4), snapshot
     // revision 1. The int→uuid PK swap across users/grants/tokens is mechanical DDL — deferred to the next
@@ -401,6 +418,106 @@ async function main() {
     );
     if (failures.length)
       throw new Error(`dashboard rewrite failures:\n${failures.join("\n")}`);
+  });
+
+  // ── STAGE 5d: dashboards int→uuid PK swap + re-key dependents (mechanical DDL) ─────────────────────
+  await timed("stage5:dash-swap", async () => {
+    // Re-key each dependent's dashboard ref to the new uuid (via dashboards.legacy_id → new_id).
+    await exec(
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS default_dashboard_id_uuid uuid",
+    );
+    await exec(
+      "UPDATE users u SET default_dashboard_id_uuid = d.new_id FROM dashboards d WHERE d.legacy_id = u.default_dashboard_id",
+    );
+    await exec(
+      "ALTER TABLE dashboard_grants ADD COLUMN IF NOT EXISTS dashboard_id_uuid uuid",
+    );
+    await exec(
+      "UPDATE dashboard_grants g SET dashboard_id_uuid = d.new_id FROM dashboards d WHERE d.legacy_id = g.dashboard_id",
+    );
+
+    // Unify share_tokens: fold dashboard_share_tokens 1:1 (dashboard_id uuid + epoch-ms→timestamptz). Legacy
+    // owner-scoped tokens stay dashboard_id NULL for now — the auto-create-a-dashboard re-point is deferred
+    // (so is the NOT NULL flip + dropping the *_ms columns), Phase 8/9.
+    for (const c of [
+      "dashboard_id uuid",
+      "created_at timestamp",
+      "expires_at timestamp",
+      "revoked_at timestamp",
+      "last_used_at timestamp",
+    ])
+      await exec(`ALTER TABLE share_tokens ADD COLUMN IF NOT EXISTS ${c}`);
+    await exec(`UPDATE share_tokens SET created_at=to_timestamp(created_at_ms/1000.0),
+      expires_at=to_timestamp(expires_at_ms/1000.0), revoked_at=to_timestamp(revoked_at_ms/1000.0),
+      last_used_at=to_timestamp(last_used_at_ms/1000.0) WHERE created_at IS NULL AND created_at_ms IS NOT NULL`);
+    // The unified table drops owner_clerk_user_id + the epoch-ms columns; the legacy table still marks
+    // owner_clerk_user_id + created_at_ms NOT NULL, which the owner-less/timestamptz fold can't satisfy.
+    // Retire those NOT NULLs (the columns themselves die in Phase 9).
+    await exec(
+      "ALTER TABLE share_tokens ALTER COLUMN owner_clerk_user_id DROP NOT NULL",
+    );
+    await exec(
+      "ALTER TABLE share_tokens ALTER COLUMN created_at_ms DROP NOT NULL",
+    );
+    await exec(`INSERT INTO share_tokens (token, dashboard_id, label, created_at, expires_at, revoked_at, last_used_at)
+      SELECT dst.token, d.new_id, dst.label, to_timestamp(dst.created_at_ms/1000.0),
+             to_timestamp(dst.expires_at_ms/1000.0), to_timestamp(dst.revoked_at_ms/1000.0), to_timestamp(dst.last_used_at_ms/1000.0)
+      FROM dashboard_share_tokens dst JOIN dashboards d ON d.legacy_id = dst.dashboard_id
+      ON CONFLICT (token) DO NOTHING`);
+    const ownerTokens = await scalar(
+      "SELECT count(*) FROM share_tokens WHERE dashboard_id IS NULL",
+    );
+    if (ownerTokens)
+      console.log(
+        `     ⚠ ${ownerTokens} legacy owner-scoped share_token(s) unmapped (auto-create deferred)`,
+      );
+
+    // Drop every FK referencing dashboards (drizzle-generated names vary) → swap the PK int→uuid → re-wire.
+    await exec(`DO $$ DECLARE r record; BEGIN
+      FOR r IN SELECT conname, conrelid::regclass AS tbl FROM pg_constraint WHERE contype='f' AND confrelid='dashboards'::regclass LOOP
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
+      END LOOP; END $$`);
+    await exec(`DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboards' AND column_name='id' AND data_type='integer') THEN
+        ALTER TABLE dashboards DROP CONSTRAINT dashboards_pkey;
+        ALTER TABLE dashboards DROP COLUMN id;
+        ALTER TABLE dashboards RENAME COLUMN new_id TO id;
+        ALTER TABLE dashboards ADD PRIMARY KEY (id);
+        ALTER TABLE dashboards ADD CONSTRAINT dashboards_legacy_id_unique UNIQUE (legacy_id);
+        ALTER TABLE dashboards ALTER COLUMN doc SET NOT NULL;
+      END IF; END $$`);
+    await renameColumnIfExists(
+      exec,
+      "dashboards",
+      "clerk_user_id",
+      "owner_user_id",
+    );
+    await renameColumnIfExists(exec, "dashboards", "display_name", "name");
+    await renameColumnIfExists(exec, "dashboards", "alias", "slug");
+
+    // Finalize dependents: swap the uuid column in + re-add the FK → dashboards(id).
+    await exec(`DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='default_dashboard_id' AND data_type='integer') THEN
+        ALTER TABLE users DROP COLUMN default_dashboard_id;
+        ALTER TABLE users RENAME COLUMN default_dashboard_id_uuid TO default_dashboard_id;
+        ALTER TABLE users ADD CONSTRAINT users_default_dashboard_id_dashboards_fk FOREIGN KEY (default_dashboard_id) REFERENCES dashboards(id) ON DELETE SET NULL;
+      END IF; END $$`);
+    await exec(`DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='dashboard_id' AND data_type='integer') THEN
+        ALTER TABLE dashboard_grants DROP COLUMN dashboard_id;
+        ALTER TABLE dashboard_grants RENAME COLUMN dashboard_id_uuid TO dashboard_id;
+        ALTER TABLE dashboard_grants ADD CONSTRAINT dashboard_grants_dashboard_id_dashboards_fk FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE;
+      END IF; END $$`);
+    // dashboard_revisions.dashboard_id is already uuid (0033) — wire its deferred FK; and share_tokens'.
+    await exec(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='dashboard_revisions_dashboard_id_dashboards_fk') THEN
+        ALTER TABLE dashboard_revisions ADD CONSTRAINT dashboard_revisions_dashboard_id_dashboards_fk FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='share_tokens_dashboard_id_dashboards_fk') THEN
+        ALTER TABLE share_tokens ADD CONSTRAINT share_tokens_dashboard_id_dashboards_fk FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE;
+      END IF; END $$`);
+    // NOTE deferred (Phase 8/9): grant role CHECK/PK reshape + user_id rename + timestamptz; owner-token
+    // auto-create + share_tokens.dashboard_id NOT NULL; dropping descriptor + the legacy *_ms columns.
   });
 
   console.log("\n=== timing summary ===");

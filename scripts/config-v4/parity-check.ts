@@ -173,6 +173,48 @@ async function main() {
     "SELECT count(*)::text FROM dashboards WHERE doc IS NULL",
     "0",
   );
+  await expect(
+    "5d dashboards.id is uuid",
+    "SELECT coalesce((SELECT data_type='uuid' FROM information_schema.columns WHERE table_name='dashboards' AND column_name='id'), false)::text",
+    "true",
+  );
+  await expect(
+    "5d users.default_dashboard_id is uuid",
+    "SELECT coalesce((SELECT data_type='uuid' FROM information_schema.columns WHERE table_name='users' AND column_name='default_dashboard_id'), false)::text",
+    "true",
+  );
+  await expect(
+    "5d dashboard_grants.dashboard_id is uuid",
+    "SELECT coalesce((SELECT data_type='uuid' FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='dashboard_id'), false)::text",
+    "true",
+  );
+  await cmp(
+    "5d dashboard_share_tokens folded 1:1",
+    "SELECT count(*)::text FROM dashboard_share_tokens",
+    "SELECT count(*)::text FROM share_tokens WHERE dashboard_id IS NOT NULL",
+  );
+  // P6: the ordinal→priority swap must NOT reorder any (area, role, metric) slot's series.
+  await expect(
+    "P6 series order: priority == ordinal",
+    "SELECT count(*)::text FROM (SELECT row_number() OVER (PARTITION BY area_id, role, metric_type ORDER BY ordinal, id) AS o, row_number() OVER (PARTITION BY area_id, role, metric_type ORDER BY priority, id) AS p FROM area_bindings) t WHERE o <> p",
+    "0",
+  );
+
+  await cmp(
+    "5b run-detector derivations == trackers",
+    "SELECT count(*)::text FROM device_trackers",
+    "SELECT count(*)::text FROM derivations WHERE kind='run-detector'",
+  );
+  await cmp(
+    "5b hws-model derivations == hws temp points",
+    "SELECT count(*)::text FROM point_info WHERE logical_path_stem='load.hws' AND metric_type='temperature'",
+    "SELECT count(*)::text FROM derivations WHERE kind='hws-model'",
+  );
+  await cmp(
+    "5b derived_intervals == run_periods(mapped)",
+    "SELECT count(*)::text FROM device_run_periods rp JOIN areas a ON a.legacy_system_id=rp.system_id JOIN derivations d ON d.area_id=a.id AND d.role=rp.role",
+    "SELECT count(*)::text FROM derived_intervals",
+  );
 
   // ── report ─────────────────────────────────────────────────────────────────────
   const pad = (s: string, n: number) => s.padEnd(n);

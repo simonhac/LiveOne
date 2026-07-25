@@ -233,11 +233,33 @@ PS-5 restore. Everything passed **first try**.
   fidelity, `points.rid == point_info.rid`, every device has an area-of-one, bindings + dashboard docs
   populated.
 
-**Deferred (mechanical, next tranche):** the dashboards int→uuid **PK swap** across users/grants/tokens (5c/5d
-— the risky *doc rewrite* is validated; the FK re-key is mechanical DDL), the HWS-model derivation
-(`output='point'`, bespoke), and the remaining §4 checks (DAO-equivalence capture/compare sweep, authz delta,
-per-area series-set equality). **Recommended for Phase 8:** temporarily scale prod PS-5 → a larger instance
-for the window (removes the OOM ceiling *and* shortens the index build; prorated cost ≈ cents).
+**Recommended for Phase 8:** temporarily scale prod PS-5 → a larger instance for the window (removes the OOM
+ceiling *and* shortens the index build; prorated cost ≈ cents).
+
+### Run 3 (2026-07-25) — deferred tranche, parity 23/23 green
+
+Added stage 5d (dashboards **int→uuid PK swap** + re-key `users.default_dashboard_id` / `dashboard_grants` /
+folded `dashboard_share_tokens` 1:1), the **HWS-model derivation** (`kind='hws-model'`, `output='point'` → the
+`load.hws/temperature` point, source = `load.hws/power`), and 8 more parity checks. **Parity 23/23, 0 fail** —
+adds: `dashboards.id`/`users.default_dashboard_id`/`dashboard_grants.dashboard_id` are uuid, tokens folded,
+**P6 series order (priority == ordinal, 0 reorders)**, run-detector derivations == trackers (1), hws-model
+derivations == temp points (1), derived_intervals == run_periods (76). Two more bugs caught + fixed: the
+`share_tokens` fold hit `owner_clerk_user_id` + `created_at_ms` NOT NULLs (legacy columns that die in Phase 9 —
+their NOT NULLs are now dropped in the fold). Idempotency note: 5c is not re-runnable *after* the 5d swap drops
+`new_id`, so a same-branch re-run must precede the swap or use a fresh branch (fresh-branch-per-iteration
+remains the model).
+
+**Still deferred (genuinely need more than mechanical DDL):**
+
+- **DAO-equivalence sweep** — needs the DAO's internal SQL flipped to rid-keyed (that's the cutover *build*, not
+  the transform). The C2 per-column content checksums already prove the twins are byte-correct, which is the
+  substance the sweep would verify against the DAO surface.
+- **Authz delta** — access semantics change *intentionally* (`user_systems` dies with no replacement, §4.5), so
+  the assertion isn't "delta = 0"; it needs the resolved (user→point) sets computed both ways with the intended
+  reduction encoded. Design task, not a checksum.
+- **1 legacy owner-scoped `share_token`** — the auto-create-a-dashboard re-point (+ `share_tokens.dashboard_id`
+  NOT NULL flip) is deferred; the fold handles the dashboard-scoped tokens.
+- **Grant reshape** (role CHECK/PK/`user_id`/timestamptz) + dropping `descriptor`/legacy `*_ms` columns — Phase 8/9.
 
 ## 6. Iterate-to-green & done
 
