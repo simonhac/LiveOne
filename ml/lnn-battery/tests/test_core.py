@@ -64,6 +64,15 @@ class BatteryPhysicsTest(unittest.TestCase):
         self.assertLess(solution["grid"][0], -0.9)
         self.assertGreaterEqual(solution["grid"][0], -1.0 - 1e-6)
 
+    def test_exclusive_mode_prevents_simultaneous_charge_and_discharge(self):
+        p = BatteryParams(10.0, 0.9, 0.0, 0.0, p_max_kw=5.0)
+        solution = solve_dispatch(
+            np.zeros(2), np.array([-20.0, -20.0]), np.zeros(2),
+            p, 10.0, 0.5, terminal_soc=10.0, solar_kwh=np.zeros(2),
+            exclusive_battery=True,
+        )
+        self.assertFalse(np.any((solution["chg"] > 1e-6) & (solution["dis"] > 1e-6)))
+
 
 class ForecastTest(unittest.TestCase):
     def test_seasonal_baseline_is_causal(self):

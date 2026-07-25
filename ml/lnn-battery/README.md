@@ -5,8 +5,10 @@ day-ahead forecaster driving a battery **dispatch cost-optimiser**, scored again
 recorded behaviour. Objective: minimise realised **cost ($)**. Site: **Kinkora, Area 8**. No live control,
 no schema changes, no writes — it reads the `liveone-dev` mirror and emits charts.
 
-See [`PAPER.md`](PAPER.md) for the academic case-study paper and [`RESULTS.md`](RESULTS.md) for the
-measured result. This README is the **confirmed data map**
+See [`PAPER.md`](PAPER.md) for the academic case-study paper, [`RESULTS.md`](RESULTS.md) for the
+measured result, and [`PRICE_FORECAST_SCENARIO.md`](PRICE_FORECAST_SCENARIO.md) for the perfect
+24-hour Amber-price counterfactual and historical solar-forecast options. This README is the
+**confirmed data map**
 (verified against the dev DB on 2026-07-25).
 See [`NETWORK.md`](NETWORK.md) for the complete Mermaid connectivity diagram and parameter accounting.
 

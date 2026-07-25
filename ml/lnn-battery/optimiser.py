@@ -33,7 +33,8 @@ def solve_dispatch(netload_kwh: np.ndarray, import_c: np.ndarray, export_c: np.n
                    p: BatteryParams, soc0: float, dt_h: float,
                    terminal_soc: float | None = None,
                    solar_kwh: np.ndarray | None = None,
-                   export_cap_kw: float = SITE_EXPORT_CAP_KW) -> dict:
+                   export_cap_kw: float = SITE_EXPORT_CAP_KW,
+                   exclusive_battery: bool = False) -> dict:
     K = len(netload_kwh)
     chg = cp.Variable(K, nonneg=True)
     dis = cp.Variable(K, nonneg=True)
@@ -50,9 +51,18 @@ def solve_dispatch(netload_kwh: np.ndarray, import_c: np.ndarray, export_c: np.n
     exp_c = np.minimum(export_c, import_c)
     cost = cp.sum(cp.maximum(cp.multiply(import_c, grid), cp.multiply(exp_c, grid)))
 
-    cons = [soc[0] == soc0, chg + dis <= emax,
+    cons = [soc[0] == soc0,
             soc[1:] == soc[:-1] + p.charge_eff * chg - dis - idle,
             soc >= p.floor_kwh, soc <= p.capacity_kwh]
+    if exclusive_battery:
+        # Negative import prices can otherwise make simultaneous charging/discharging profitable:
+        # the battery dissipates energy through charge loss while being paid for the small net import.
+        # A binary inverter mode makes the alternative scenario physical and still permits deliberate
+        # discharge/export before a forecast negative-price interval to create charging headroom.
+        charging_mode = cp.Variable(K, boolean=True)
+        cons.extend([chg <= emax * charging_mode, dis <= emax * (1 - charging_mode)])
+    else:
+        cons.append(chg + dis <= emax)
     if curtail is not None:
         available_solar = np.maximum(np.asarray(solar_kwh, dtype=float), 0.0)
         if len(available_solar) != K:
@@ -68,7 +78,7 @@ def solve_dispatch(netload_kwh: np.ndarray, import_c: np.ndarray, export_c: np.n
     if terminal_soc is not None:               # day-neutral: end at least where we started (no scoring distortion)
         cons.append(soc[K] >= terminal_soc)
     prob = cp.Problem(cp.Minimize(cost), cons)
-    prob.solve(solver=cp.CLARABEL)
+    prob.solve(solver=cp.HIGHS if exclusive_battery else cp.CLARABEL)
     if prob.status not in ("optimal", "optimal_inaccurate"):
         raise RuntimeError(f"LP status {prob.status}")
     g = np.asarray(grid.value).ravel()

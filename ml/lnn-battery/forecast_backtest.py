@@ -27,7 +27,12 @@ def daily_cost(grid: np.ndarray, imp: np.ndarray, exp: np.ndarray,
 
 
 def simulate(name: str, pred: np.ndarray | None, origins: np.ndarray,
-             frame: pd.DataFrame, pbd, bounds: tuple[np.ndarray, np.ndarray]) -> dict:
+             frame: pd.DataFrame, pbd, bounds: tuple[np.ndarray, np.ndarray],
+             perfect_price_steps: int = 0,
+             exclusive_battery: bool = False,
+             planning_steps: int = HORIZON) -> dict:
+    if not 1 <= planning_steps <= HORIZON:
+        raise ValueError(f"planning_steps must be in [1, {HORIZON}]")
     raw = frame.loc[:, TARGETS].to_numpy(dtype=float)
     nl_actual = frame["netload_kwh"].to_numpy(dtype=float)
     imp_actual = frame["import_c"].to_numpy(dtype=float)
@@ -56,6 +61,13 @@ def simulate(name: str, pred: np.ndarray | None, origins: np.ndarray,
             # net-load and known tariff are observed at i. Forecast skill affects the lookahead.
             future = np.vstack([raw[i], pred[row, :HORIZON - 1]])
         future = np.clip(future, low, high)
+        if perfect_price_steps:
+            # The historical Amber forecast vintages are unavailable. This deliberately heroic
+            # scenario substitutes settled prices for the first N planning intervals while leaving
+            # the model's solar/load forecasts and later price forecasts untouched.
+            known = min(perfect_price_steps, planning_steps, len(frame) - i)
+            future[:known, 2:4] = raw[i:i + known, 2:4]
+        future = future[:planning_steps]
         net_h = future[:, 1] - future[:, 0]
         imp_h, exp_h = future[:, 2], future[:, 3]
         net_h[0] = nl_actual[i]
@@ -64,9 +76,11 @@ def simulate(name: str, pred: np.ndarray | None, origins: np.ndarray,
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
+                warnings.simplefilter("ignore", RuntimeWarning)
                 solution = solve_dispatch(
                     net_h, imp_h, exp_h, p, soc, DT_H,
                     terminal_soc=soc, solar_kwh=future[:, 0],
+                    exclusive_battery=exclusive_battery,
                 )
             chg0, dis0 = float(solution["chg"][0]), float(solution["dis"][0])
             curtail0 = float(solution["curtail"][0])
