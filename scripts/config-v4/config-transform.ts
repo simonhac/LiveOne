@@ -7,14 +7,20 @@
  * Phase 8 transform verbatim. It NEVER runs against prod or the shared liveone-dev DB — see the target
  * guard below (fail-closed).
  *
- * Stages (mirror docs/plans/config-v4-execution-plan.md Phase 8; docs/plans/config-v4-phase7-rehearsal-harness.md):
+ * Stages (mirror docs/plans/config-v4-execution-plan.md Phase 8; docs/plans/config-v4-phase7-rehearsal-harness.md).
+ * They are NUMBERED by their v4 role (4 = hot, 5 = config) but EXECUTED config-first — 1 → 2 → 5 → 5d → 4 —
+ * so the irreversible hot rename-swap is the transform's TERMINAL act. Everything above the swap is either
+ * reversible (additive tables/columns, areas renames) or the destructive-but-idempotent config half, and
+ * that half now runs while the hot tables are still pristine. See the abort matrix in
+ * docs/plans/config-v4-phase8-cutover.md. (Every doc / parity check / log-scrape references stages by their
+ * NUMBER, not their run position, so the numbers below stay 1/2/4/5 — only the execution order changed.)
  *   1. DDL          — apply scripts/config-v4/cutover.sql (devices/points/area_members/device_state + device_rid_seq)
  *   2. Registries   — populate devices, mint areas-of-one, primary_area_id, areas carryover, area_members,
  *                     device_state, points; seed device_rid_seq; wire deferred FKs; row-count guards
- *   4. Hot rewrite  — the window-critical step: (point_rid, time) twins → batched copy via point_info.rid →
- *                     indexes/PK/NOT-VALID FKs AFTER load → bounded rename-swap keeping _old (timed per stage)
  *   5. Config       — bindings gain a dark point_uid, derivations (run-detector + HWS), dashboards doc v3→v4 + int→uuid
  *                     PK swap (users/grants/tokens re-keyed). Validated; deferred items in the Phase-7 doc.
+ *   4. Hot rewrite  — the window-critical step, run LAST: (point_rid, time) twins → batched copy via point_info.rid →
+ *                     indexes/PK/NOT-VALID FKs AFTER load → bounded rename-swap keeping _old (timed per stage)
  *
  * Usage (on a rehearsal branch — see the runbook in the Phase-7 doc):
  *   PLANETSCALE_DATABASE_URL="<branch url>" REHEARSAL_BRANCH_ID="<branch id in the conn username>" \
@@ -165,14 +171,12 @@ async function main() {
     });
   });
 
-  // ── STAGE 4: hot-table rewrite ────────────────────────────────────────────────
-  if (skipHot) {
-    console.log("stage4:hot — SKIPPED (--skip-hot)");
-  } else {
-    await runHotRewrite();
-  }
-
   // ── STAGE 5: config transform ────────────────────────────────────────────────
+  // Config (stage 5/5d) runs BEFORE the hot swap (stage 4) so the irreversible rename-swap is the
+  // transform's terminal act — see the header note and the abort matrix in
+  // docs/plans/config-v4-phase8-cutover.md. Stage 5/5d and stage 4 are independent siblings of stage 2
+  // (stage 5 never touches the hot tables; stage 4 only reads point_info.rid / points(rid)), so
+  // running config first is data-safe.
   await timed("stage5:config", async () => {
     // 5a. area_bindings gains the point UUID as a NEW, DARK, NULLABLE column `point_uid` (FK → points).
     //
@@ -563,6 +567,18 @@ async function main() {
     // NOTE deferred (Phase 9 teardown): drop descriptor + the legacy *_ms / owner_clerk_user_id columns
     // + the _old hot tables + the backlog-drain address map.
   });
+
+  // ── STAGE 4: hot-table rewrite ─ runs LAST so the irreversible rename-swap is the TERMINAL act ──────
+  // Config (stage 5/5d) above is cheap, fast and idempotent but destructive-autocommit; running it first
+  // means a config failure aborts BEFORE the ~6-min, OOM-/lock-race-prone 21M-row copy is paid for, and
+  // while the hot tables are still pristine (the data-serving path stays intact). After this block nothing
+  // autocommitting runs — the swap is the single terminal point of no return. Independent of stage 5
+  // (see the header + the abort matrix); depends only on stage 2's point_info.rid / points(rid).
+  if (skipHot) {
+    console.log("stage4:hot — SKIPPED (--skip-hot)");
+  } else {
+    await runHotRewrite();
+  }
 
   console.log("\n=== timing summary ===");
   for (const t of timings)

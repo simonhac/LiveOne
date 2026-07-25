@@ -123,6 +123,12 @@ system_id` numerically, the rename buys nothing in the window; it is deferred to
 
 ## Ordered cutover steps (window)
 
+> **Execution order inside `config-transform.ts`:** the single `--commit` run executes **config (step 5)
+> BEFORE the hot swap (step 4)** — `1 → 2 → 5 → 5d → 4`. The step NUMBERS below name the v4 role (4 = hot,
+> 5 = config), not the run position. Running the cheap, idempotent config half first means a config failure
+> aborts while the hot tables are still pristine, and makes the irreversible rename-swap the transform's
+> terminal act (nothing destructive-autocommit runs after it). See the abort matrix.
+
 Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mint `dv_` ids +
 `legacy_handles`; already run — P0), then `registry-sync.ts --commit` (populate `devices`/`points`/
 `area_members`/`device_state` + areas-of-one, arming the C7 `/api/health?v4mirror=1` invariant early).
@@ -182,11 +188,15 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
 
 ### Abort matrix — what to do when a check goes red
 
+Reflects the config-first execution order (`1 → 2 → 5 → 5d → 4`): the config half's destructive DDL (5d) is
+the **first** point of no return; the hot rename-swap (stage 4, run last) is the **terminal** one.
+
 | Red at | Recovery |
 | --- | --- |
-| before stage 4's swap | abort freely — `cutover-pause.ts clear`, drop the twins; nothing is committed |
-| after the swap, before stage 5 | reverse-rename `_old` → live, drop the twins, clear the pause |
-| mid-stage-5/5d | **forward-only or restore from backup** — 5d is destructive and autocommit, and 5c cannot be re-run once `new_id` is dropped |
+| through stage 5c (registries / `areas` renames / additive `point_uid`, derivations, dashboard `doc`) | abort freely — `cutover-pause.ts clear`, drop the new tables/columns, rename the `areas` columns back; hot tables are still untouched |
+| mid-stage-5d (destructive config DDL) | **forward-only or restore config from backup** — 5d is destructive + autocommit (and 5c cannot be re-run once `new_id` is dropped). The **hot tables are still old-shape**, so the data-serving path is unaffected |
+| during the stage-4 copy, before the swap | the swap has not committed — drop the twins and re-run stage 4 (idempotent); config (5d) is already reshaped, so aborting the whole cutover means restore-from-backup |
+| after the swap commits | transform complete — deploy the new build; aborting now is forward-fix only |
 | after resume | forward-fix only |
 
 ## Work split (Group A / B / C)
