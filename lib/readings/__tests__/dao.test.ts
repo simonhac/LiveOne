@@ -827,13 +827,15 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
     ).toBe(false);
   });
 
+  // ⚠️  `makeFakeExec` ignores the emitted SQL entirely — `execute` returns canned rows without reading
+  // its argument. So the two window-around tests below pin the epoch-ms coercion and the passthrough,
+  // NOT the projection or the WHERE clause: any change to the SQL (including the Phase-8 rid flip) is
+  // invisible here. Do not read a green as "the query is right". Pinning the SQL text needs a real
+  // driver — see the Group-B SQL-capture harness.
   it("readRawWindowAround resolves the PointId and coerces measurement/received times, passing other fields through verbatim", async () => {
     const p = point(41, 1, 3); // systemId 1, index 3
     const canned = [
       {
-        id: 100,
-        systemId: 1,
-        pointId: 3,
         sessionId: null,
         measurementTime: "1700000000000",
         receivedTime: "1700000001000",
@@ -852,16 +854,14 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
     );
     expect(out[0].measurementTime).toBe(1_700_000_000_000);
     expect(out[0].receivedTime).toBe(1_700_000_001_000);
-    expect(out[0].id).toBe(100);
     expect(out[0].value).toBe(42);
+    expect(out[0].dataQuality).toBe("good");
   });
 
   it("read5mRowWindowAround coerces intervalEnd and preserves row_num from the verbatim SELECT ranked.*", async () => {
     const p = point(42, 1, 3);
     const canned = [
       {
-        systemId: 1,
-        pointId: 3,
         sessionId: null,
         intervalEnd: "1700000300000",
         avg: 1,

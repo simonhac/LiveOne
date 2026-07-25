@@ -63,6 +63,67 @@ export async function cutoverPaused(): Promise<boolean> {
   }
 }
 
+/** How long a successful {@link cutoverPausedForIngest} read is reused. */
+const INGEST_GATE_TTL_MS = 10_000;
+/** How long a cached NEGATIVE survives a KV outage before the gate reverts to failing closed. */
+const INGEST_GATE_GRACE_MS = 60_000;
+
+let ingestGate: { paused: boolean; atMs: number } | null = null;
+
+/** Test seam — the receiver gate memoizes across invocations within a warm serverless instance. */
+export function __resetCutoverIngestGateForTests(): void {
+  ingestGate = null;
+}
+
+/**
+ * The cutover gate as the OBSERVATIONS RECEIVER needs it — same flag, different failure economics.
+ *
+ * The receiver is the single writer of the serving store and runs on the ingest hot path, so the plain
+ * {@link cutoverPaused} is the wrong shape here in two ways:
+ *
+ *  - **Cost.** An uncached Upstash round-trip on every message, forever, to guard a once-ever 30-minute
+ *    window. A short TTL collapses that to at most one read per {@link INGEST_GATE_TTL_MS}, and the flag
+ *    is set minutes before stage 4 begins — the quiescence gate holds for far longer than the TTL — so
+ *    the staleness is free.
+ *  - **Availability.** Failing closed is right for a cron (a skipped tick is picked up by the next one)
+ *    and wrong as an unconditional rule here: a KV incident would 500 every observation batch, halting
+ *    ingest and burning QStash's retry budget toward the DLQ, months away from any cutover. So a KV
+ *    error falls back to the last SUCCESSFUL read while it is fresh ({@link INGEST_GATE_GRACE_MS}); only
+ *    once that is stale — or if we have never had a successful read — does it fail closed. Inside a real
+ *    window the flag has been set and observed, so the fallback says "paused" and the safety holds; in a
+ *    steady-state blip it says "not paused" and ingest continues.
+ */
+export async function cutoverPausedForIngest(): Promise<boolean> {
+  const now = Date.now();
+  if (ingestGate && now - ingestGate.atMs < INGEST_GATE_TTL_MS)
+    return ingestGate.paused;
+  try {
+    const value = await kv.get(kvKey(CUTOVER_PAUSED_KEY));
+    const paused = !(
+      value === null ||
+      value === undefined ||
+      value === 0 ||
+      value === "0" ||
+      value === false
+    );
+    ingestGate = { paused, atMs: now };
+    return paused;
+  } catch (error) {
+    if (ingestGate && now - ingestGate.atMs < INGEST_GATE_GRACE_MS) {
+      console.error(
+        `[CutoverGate] KV read failed for ${kvKey(CUTOVER_PAUSED_KEY)} — reusing the last good value (paused=${ingestGate.paused})`,
+        error,
+      );
+      return ingestGate.paused;
+    }
+    console.error(
+      `[CutoverGate] KV read failed for ${kvKey(CUTOVER_PAUSED_KEY)} with no fresh cached value — failing CLOSED`,
+      error,
+    );
+    return true;
+  }
+}
+
 /**
  * Decide whether a cron should skip because the cutover window is in progress.
  *

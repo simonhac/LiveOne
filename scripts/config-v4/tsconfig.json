@@ -1,0 +1,12 @@
+{
+  // The root tsconfig excludes `scripts`, so nothing in this directory was ever type-checked — the
+  // config-v4 suite gates an IRREVERSIBLE prod cutover and had two live type errors sitting in
+  // authz-check.ts, invisible to `npm run type-check` and to the Vercel build alike.
+  //
+  // `npm run type-check:config-v4` checks just this directory against the app's own compiler options
+  // and path aliases. Kept narrow rather than un-excluding all of `scripts/`: the wider directory has
+  // its own long tail of one-shot tooling, and widening the gate is not this batch's job.
+  "extends": "../../tsconfig.json",
+  "include": ["./**/*.ts"],
+  "exclude": []
+}

@@ -24,14 +24,37 @@
  *     by design. Assert zero widening (leak) and that the narrowing equals exactly that intended reduction.
  *     LiveOne is effectively single-user, so AC3 is nearly vacuous and AC2 is the load-bearing leg.
  *
+ * ⚠️  AC1 and AC3 are SET-ALGEBRA checks, and set algebra passes trivially on empty sets. Worse, both
+ *     worlds are resolved by the SAME `resolveDashboardReadPoints`, and `lib/dashboard/access.ts` wraps
+ *     each per-area resolution in a bare `catch {}` that keeps the handle and drops the points — so a
+ *     Group-B regression that breaks point resolution narrows both legs identically and every comparison
+ *     still passes. Each leg therefore carries an explicit NON-VACUITY assertion (targets > 0, users > 0,
+ *     no resolved scope empty). Those are what make the other assertions evidence rather than ceremony.
+ *
+ *     Known remaining gap, deliberately NOT papered over: this script reads `dashboard_grants`,
+ *     `user_systems` and `share_tokens` with raw SQL and never imports `lib/dashboard/grants.ts` or
+ *     `lib/dashboard/sharing.ts`. It therefore certifies the DATA FOLD, not the access PATH — the grant
+ *     reshape and the share-token unification can be wired wrong in the drizzle layer with this script
+ *     still 11/11. Covering that needs the serving-path smoke set (see the Phase-8 plan of record), not
+ *     another SQL check here.
+ *
  * Usage (on the branch, AFTER config-transform.ts --commit):
  *   PLANETSCALE_DATABASE_URL="<branch url>" REHEARSAL_BRANCH_ID="<branch id>" \
  *     npx tsx scripts/config-v4/authz-check.ts
+ *
+ * TARGET MODES (guard.ts). `CONFIG_V4_TARGET` defaults to `rehearsal`; the branch-id var is the positive
+ * proof of the mode. `PLANETSCALE_PROD_BRANCH_ID` is required in ALL modes (it is the only way to
+ * recognise prod). Prod additionally needs `ALLOW_PROD_DB_IN_DEV=true`, because `@/lib/db/planetscale`
+ * refuses a prod connection outside production BEFORE the guard ever runs:
+ *   rehearsal:  REHEARSAL_BRANCH_ID="<branch id>"
+ *   dev:        CONFIG_V4_TARGET=dev LIVEONE_DEV_BRANCH_ID="<branch id>"
+ *   prod:       CONFIG_V4_TARGET=prod ALLOW_PROD_DB_IN_DEV=true   … --i-understand-this-is-prod
  */
 import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 import { sql, type SQL } from "drizzle-orm";
+import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { assertRehearsalTarget } from "./guard";
 
 type Status = "PASS" | "FAIL";
@@ -78,8 +101,10 @@ async function main() {
       `SELECT rid FROM point_info WHERE (system_id, id) IN (${values})`,
     );
   };
+  // `descriptor` is required by DashboardScopeInput (a v3 dashboard always has one); the doc-only leg
+  // passes `descriptor: null` deliberately, so that `dashboardAreaUuids` takes the v4 envelope path.
   const scopeRids = async (input: {
-    descriptor?: unknown;
+    descriptor: unknown;
     doc?: unknown;
   }): Promise<Set<number>> => {
     const { points } = await resolveDashboardReadPoints(input);
@@ -101,7 +126,7 @@ async function main() {
     if (!s) {
       const [d] = (await rowsOf(
         sql`SELECT descriptor, doc FROM dashboards WHERE id = ${id}`,
-      )) as Array<{ descriptor: unknown; doc: unknown }>;
+      )) as Array<{ descriptor: unknown; doc: DashboardV4 }>;
       const docAreas = new Set(
         d
           ? (collectRefs(d.doc)
@@ -119,7 +144,9 @@ async function main() {
         descriptorRids: d
           ? await scopeRids({ descriptor: d.descriptor })
           : new Set(),
-        docRids: d ? await scopeRids({ doc: d.doc }) : new Set(),
+        docRids: d
+          ? await scopeRids({ descriptor: null, doc: d.doc })
+          : new Set(),
         descAreas: new Set(d ? descriptorAreaIds(d.descriptor) : []),
         docAreas,
       };
@@ -147,9 +174,23 @@ async function main() {
   let areaMismatch = 0;
   let widenPoints = 0;
   let widenDashboards = 0;
+  let emptyDescriptor = 0;
   for (const { id } of targeted) {
     const { descriptorRids, docRids, descAreas, docAreas } =
       await dashboardScopes(id);
+    // NON-VACUITY. AC1 resolves BOTH worlds through the same `resolveDashboardReadPoints`, and
+    // `lib/dashboard/access.ts` wraps each per-area resolution in a bare `catch {}` that keeps the handle
+    // and drops the points. So any regression that breaks point resolution narrows both legs identically:
+    // `lost` is empty, `sameSet` holds, and AC1 passes while every dashboard resolves to nothing. An
+    // empty descriptor scope on a dashboard someone actually shares is never a legitimate state.
+    if (descriptorRids.size === 0) {
+      emptyDescriptor++;
+      record(
+        `AC1 VACUOUS ${id.slice(0, 8)}`,
+        false,
+        "descriptor scope resolved to ZERO points — the resolver is broken, not the data",
+      );
+    }
     const lost = difference(descriptorRids, docRids); // LOCKOUT — the dangerous direction
     const gained = difference(docRids, descriptorRids); // device-pin widening — intended (§8.3)
     if (lost.size) {
@@ -169,6 +210,14 @@ async function main() {
       widenPoints += gained.size;
     }
   }
+  // The floor under the two set-comparison checks below: with zero targeted dashboards they compare
+  // nothing and pass. Prod has share tokens and grants, so an empty target set means the query (or the
+  // fold that populates it) is wrong, not that there is nothing to check.
+  record(
+    "AC1 non-vacuous (targeted dashboards > 0, all scopes non-empty)",
+    targeted.length > 0 && emptyDescriptor === 0,
+    `${targeted.length} targeted, ${emptyDescriptor} resolving to zero points`,
+  );
   record(
     "AC1 no lockout (descriptor ⊆ doc, all targeted)",
     lockout === 0,
@@ -295,6 +344,7 @@ async function main() {
   let widen = 0;
   let narrowMismatch = 0;
   let intendedLoss = 0;
+  let emptyPre = 0;
   for (const { uid } of users) {
     const ownPre = await ridSet(
       sql`SELECT pi.rid FROM point_info pi JOIN systems s ON s.id=pi.system_id WHERE s.owner_clerk_user_id = ${uid}`,
@@ -315,8 +365,17 @@ async function main() {
     const narrowed = difference(pre, post); // must equal `intended` exactly
     if (widened.size) widen++;
     if (!sameSet(narrowed, intended)) narrowMismatch++;
+    if (pre.size === 0) emptyPre++;
     intendedLoss += intended.size;
   }
+  // NON-VACUITY, same reasoning as AC1: `∅ ⊆ ∅` and `∅ == ∅` both pass, so a resolver that returns
+  // nothing satisfies every AC3 assertion. A user with no pre-cutover access at all cannot appear in the
+  // `users` query (it is built from owners/viewers/grantees), so an empty `pre` means broken resolution.
+  record(
+    "AC3 non-vacuous (users > 0, all pre-scopes non-empty)",
+    users.length > 0 && emptyPre === 0,
+    `${users.length} users, ${emptyPre} with an empty pre-cutover scope`,
+  );
   record(
     "AC3 no widening (post ⊆ pre) per user",
     widen === 0,

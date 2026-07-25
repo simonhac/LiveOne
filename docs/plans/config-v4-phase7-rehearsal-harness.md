@@ -279,6 +279,28 @@ remains the model).
   NOT NULL flip) is deferred; the fold handles the dashboard-scoped tokens.
 - **Grant reshape** (role CHECK/PK/`user_id`/timestamptz) + dropping `descriptor`/legacy `*_ms` columns — Phase 8/9.
 
+### Run 4 (2026-07-25) — Group A acceptance gate: parity 36/36, authz 9/9, window GO
+
+The gate the Phase-8 Group A batch was required to pass, on a fresh PS-5 branch restored from prod backup
+`avtprjx1cmde`. **`parity-check` 36/36 · `authz-check` 9/9 · `window-report` GO** (`T_window` 5.4 min × 3 =
+16.3 min ≤ the 30-min target). It also forced a real correction: AC1's exact `descriptor == doc` point-set
+equality was too strict — the v3→v4 rewriter guarantees AREA-scope equivalence, not point equality, because
+it carries v3 `deviceSystemId` pins forward as device refs that the v4 resolver expands into scope (which
+`access.ts` intends: a device-pinned card would otherwise 401 for a share viewer). AC1 now asserts the real
+invariants — **no lockout** (descriptor ⊆ doc) + **area-scope preserved** — and reports the intended
+device-pin widening informationally.
+
+> This result previously existed **only in the body of commit `851d7ae8`**, while this doc stopped at Run 3
+> and both plan docs still advertised "parity 23/23". A gate you have to `git log` to find is not a gate.
+> Recording it here is the fix; the standing rule is that a rehearsal result lands in this file in the same
+> commit that produces it.
+
+**Superseded by design, not by failure:** Run 4 predates the Group-B pre-flight corrections (additive
+`area_bindings.point_uid` instead of the silent int→uuid flip; TimeZone-independent epoch-ms conversion;
+the tightened/added parity + authz assertions). Those change what the transform does and what the suite
+can catch, so **Run 5 must re-run the whole gate against a CURRENT prod backup** before the cutover build
+starts. Run 4 remains the evidence that the transform mechanism itself is sound.
+
 ## 6. Iterate-to-green & done
 
 Loop: fresh branch → C1 target-assert + version/FK-orphan gates → transform → `parity-check.ts` →
