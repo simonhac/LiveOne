@@ -256,21 +256,23 @@ async function main() {
       "SELECT count(*) FROM point_info",
     );
 
-    // 2i. Gated-drop empty synthetic composites (e.g. 1000001 is NOT empty — it retains flow_attr_1d history —
-    // so this deletes nothing for it; never destroys uuid-keyed history).
-    const dropped = await scalar(`
-      WITH empties AS (
-        SELECT a.id FROM areas a
-        WHERE a.legacy_system_id >= 1000000
-          AND NOT EXISTS (SELECT 1 FROM area_devices ad WHERE ad.area_id = a.id)
-          AND NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = a.id)
-          AND NOT EXISTS (SELECT 1 FROM point_readings_flow_attr_1d f WHERE f.area_id = a.id)
-          AND NOT EXISTS (SELECT 1 FROM battery_provenance_daily b WHERE b.area_id = a.id)
-      )
-      , del AS (DELETE FROM areas WHERE id IN (SELECT id FROM empties) RETURNING 1)
-      SELECT count(*) FROM del`);
-    if (dropped)
-      console.log(`     dropped ${dropped} empty synthetic composite area(s)`);
+    // 2i REMOVED from the cutover path (defect D-d).
+    //
+    // The gate tested only 4 of the 8 FK children of `areas`. `legacy_handles.area_id` is
+    // `ON DELETE no action` and — after `backfill-foundation.ts` ran on prod — is non-null for EVERY
+    // synthetic composite, so any row the gate actually selected would raise 23503 and abort the stage.
+    // `device_trackers.area_id`, `device_run_periods.area_id` and `derivations.area_id` were unchecked too.
+    // All three rehearsals passed only because the DELETE selected nothing on those snapshots — the branch
+    // has never executed against a real row.
+    //
+    // Aggravating: stage 2 was not transactional and 2i ran AFTER the `areas` renames, so an abort here
+    // left prod with renamed columns and the deployed build 500ing on every areas-backed read.
+    //
+    // It is a prerequisite for nothing — no parity check depends on it — so it now lives in
+    // `scripts/config-v4/retire-empty-composites.ts`, a daylight pre-window cleanup that derives its
+    // blocker list from `pg_constraint` (so a 9th child can never be missed) rather than hand-maintaining
+    // one. This repo already set that precedent: `scripts/cleanup/retire-implied-areas.ts` checks a
+    // strictly larger set and hard-aborts.
   });
 
   // ── STAGE 4: hot-table rewrite ────────────────────────────────────────────────
@@ -484,6 +486,10 @@ async function main() {
         ALTER TABLE dashboards DROP COLUMN id;
         ALTER TABLE dashboards RENAME COLUMN new_id TO id;
         ALTER TABLE dashboards ADD PRIMARY KEY (id);
+        -- D-a: new_id is a plain uuid column, so the promoted PK inherits NO default. createDashboard
+        -- (lib/dashboard/dashboards.ts) inserts without an id, which would be 23502 on the first POST
+        -- after the window. No parity check covered this.
+        ALTER TABLE dashboards ALTER COLUMN id SET DEFAULT gen_random_uuid();
         ALTER TABLE dashboards ADD CONSTRAINT dashboards_legacy_id_unique UNIQUE (legacy_id);
         ALTER TABLE dashboards ALTER COLUMN doc SET NOT NULL;
       END IF; END $$`);
@@ -497,18 +503,33 @@ async function main() {
     await renameColumnIfExists(exec, "dashboards", "alias", "slug");
 
     // Finalize dependents: swap the uuid column in + re-add the FK → dashboards(id).
+    // D-b: `DROP COLUMN` silently takes the indexes that column participated in with it.
+    // `users_default_dashboard_idx` (0016) and `dashboard_grants_dashboard_user_unique` (0012) both die
+    // here and MUST be recreated — the latter is the arbiter of createGrant's onConflictDoUpdate, so
+    // without it grant creation is 42P10 and duplicate grants become insertable. No parity check covered
+    // this either; both are recreated below against the new uuid column.
     await exec(`DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='default_dashboard_id' AND data_type='integer') THEN
         ALTER TABLE users DROP COLUMN default_dashboard_id;
         ALTER TABLE users RENAME COLUMN default_dashboard_id_uuid TO default_dashboard_id;
         ALTER TABLE users ADD CONSTRAINT users_default_dashboard_id_dashboards_fk FOREIGN KEY (default_dashboard_id) REFERENCES dashboards(id) ON DELETE SET NULL;
       END IF; END $$`);
+    await exec(
+      `CREATE INDEX IF NOT EXISTS users_default_dashboard_idx ON users (default_dashboard_id)`,
+    );
     await exec(`DO $$ BEGIN
       IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_grants' AND column_name='dashboard_id' AND data_type='integer') THEN
         ALTER TABLE dashboard_grants DROP COLUMN dashboard_id;
         ALTER TABLE dashboard_grants RENAME COLUMN dashboard_id_uuid TO dashboard_id;
         ALTER TABLE dashboard_grants ADD CONSTRAINT dashboard_grants_dashboard_id_dashboards_fk FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE;
       END IF; END $$`);
+    await exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS dashboard_grants_dashboard_user_unique
+         ON dashboard_grants (dashboard_id, clerk_user_id)`,
+    );
+    await exec(
+      `CREATE INDEX IF NOT EXISTS dashboard_grants_user_idx ON dashboard_grants (clerk_user_id)`,
+    );
     // dashboard_revisions.dashboard_id is already uuid (0033) — wire its deferred FK; and share_tokens'.
     await exec(`DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='dashboard_revisions_dashboard_id_dashboards_fk') THEN
@@ -650,34 +671,82 @@ async function main() {
         );
       });
 
+      // D-e: ANALYZE BEFORE the swap, while nothing reads the twins. Without it the serving path resumes
+      // against ~21M rows of brand-new heap with ZERO planner statistics and will happily choose seq
+      // scans — the most likely cause of a "the cutover worked but the site is dead" outcome. Invisible on
+      // an idle rehearsal branch, which is exactly why it was missed. Also restores the `n_live_tup` that
+      // the pg-backup restore drill's `min-row-ratio` compares against.
+      await timed("stage4:analyze", async () => {
+        await c.query(
+          "ANALYZE point_readings_new, point_readings_agg_5m_new, point_readings_agg_1d_new",
+        );
+      });
+
       // rename-swap: bounded ACCESS EXCLUSIVE. lock_timeout so a long reader can't stall it into a read pile-up
       // (reads are NOT paused at the real cutover). Keep _old as the abort path + until parity is green (Phase 9 drops).
+      //
+      // D-f: bounded RETRY, not a bare rethrow. C8 asked for retry; the original aborted the whole run on
+      // the first lock timeout, discarding the ~6-minute copy. On prod there ARE live readers (serving,
+      // plus `/api/cron/run-periods` every minute), so losing the race once is likely, not exotic.
+      // synchronous_commit is restored to `on` for THIS commit: it is off from the copy above, and this is
+      // the one commit in the cutover we must not lose to an HA failover.
+      //
+      // NB the twins keep their `_new` index/constraint names (D-g). They CANNOT be renamed to canonical
+      // here: `_old` is retained through Phase 8 and still owns `pr_point_time_unique`,
+      // `pr_measurement_time_idx`, … — index names are schema-unique, so renaming inside this txn is 42P07
+      // and would roll the swap back after the full copy. Phase 9 renames them once `_old` is dropped.
       await timed("stage4:swap", async () => {
-        await c.query("SET lock_timeout = '5s'");
-        await c.query("BEGIN");
-        try {
-          await c.query(
-            "ALTER TABLE point_readings RENAME TO point_readings_old",
-          );
-          await c.query(
-            "ALTER TABLE point_readings_new RENAME TO point_readings",
-          );
-          await c.query(
-            "ALTER TABLE point_readings_agg_5m RENAME TO point_readings_agg_5m_old",
-          );
-          await c.query(
-            "ALTER TABLE point_readings_agg_5m_new RENAME TO point_readings_agg_5m",
-          );
-          await c.query(
-            "ALTER TABLE point_readings_agg_1d RENAME TO point_readings_agg_1d_old",
-          );
-          await c.query(
-            "ALTER TABLE point_readings_agg_1d_new RENAME TO point_readings_agg_1d",
-          );
-          await c.query("COMMIT");
-        } catch (e) {
-          await c.query("ROLLBACK");
-          throw e;
+        await c.query("SET synchronous_commit = on");
+        await c.query("SET lock_timeout = '3s'");
+        const MAX_ATTEMPTS = 10;
+        for (let attempt = 1; ; attempt++) {
+          await c.query("BEGIN");
+          try {
+            await c.query(
+              "ALTER TABLE point_readings RENAME TO point_readings_old",
+            );
+            await c.query(
+              "ALTER TABLE point_readings_new RENAME TO point_readings",
+            );
+            await c.query(
+              "ALTER TABLE point_readings_agg_5m RENAME TO point_readings_agg_5m_old",
+            );
+            await c.query(
+              "ALTER TABLE point_readings_agg_5m_new RENAME TO point_readings_agg_5m",
+            );
+            await c.query(
+              "ALTER TABLE point_readings_agg_1d RENAME TO point_readings_agg_1d_old",
+            );
+            await c.query(
+              "ALTER TABLE point_readings_agg_1d_new RENAME TO point_readings_agg_1d",
+            );
+            await c.query("COMMIT");
+            if (attempt > 1) console.log(`     swap won on attempt ${attempt}`);
+            return;
+          } catch (e) {
+            await c.query("ROLLBACK").catch(() => {});
+            const code = (e as { code?: string }).code;
+            // 55P03 lock_not_available / 40P01 deadlock_detected — both mean "someone else held it".
+            const retryable = code === "55P03" || code === "40P01";
+            if (!retryable || attempt >= MAX_ATTEMPTS) throw e;
+            // Name the blocker so the operator can decide whether to terminate it.
+            try {
+              const { rows } = await c.query(
+                `SELECT a.pid, a.state, now() - a.xact_start AS age, left(a.query, 120) AS query
+                   FROM pg_stat_activity a JOIN pg_locks l ON l.pid = a.pid
+                  WHERE l.relation IN ('point_readings'::regclass, 'point_readings_agg_5m'::regclass,
+                                       'point_readings_agg_1d'::regclass)
+                    AND a.pid <> pg_backend_pid()`,
+              );
+              console.warn(
+                `     swap attempt ${attempt}/${MAX_ATTEMPTS} blocked (${code}); holders:`,
+                rows,
+              );
+            } catch {
+              console.warn(`     swap attempt ${attempt} blocked (${code})`);
+            }
+            await new Promise((r) => setTimeout(r, 3000));
+          }
         }
       });
     } finally {
