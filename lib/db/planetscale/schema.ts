@@ -1142,10 +1142,139 @@ export const legacyHandles = pgTable(
 );
 
 // ============================================================================
+// config-v4 registries (migration 0035, additive + DARK)
+//
+// These are the v4 successors to systems/point_info/area_devices/polling_status. Created EMPTY by
+// 0035 and populated (idempotently) by scripts/config-v4/registry-sync.ts as a separate dark step.
+// The predecessors are COPIED, not renamed, so both sets coexist until Phase 9 drops the old ones —
+// which is what lets the pre-cutover build keep running unchanged.
+// ============================================================================
+
+// Global device rid allocator. Seeded at max(systems.id)+1 by registry-sync so devices.rid preserves
+// today's systems.id verbatim (sessions/observations_outbox keep an int device_rid == old system_id).
+export const deviceRidSeq = pgSequence("device_rid_seq");
+
+// devices ← systems. `id` is the pre-minted legacy_handles.device_id; `rid` is the old systems.id.
+export const devices = pgTable(
+  "devices",
+  {
+    id: uuid("id").primaryKey(),
+    rid: integer("rid").notNull(),
+    ownerUserId: text("owner_user_id"),
+    vendor: text("vendor").notNull(), // ← systems.vendor_type
+    vendorSiteId: text("vendor_site_id").notNull(),
+    status: text("status").notNull().default("active"),
+    name: text("name").notNull(), // ← systems.display_name
+    slug: text("slug"), // ← systems.alias
+    model: text("model"),
+    serial: text("serial"),
+    // Eager area: tz/location resolve HERE, not on the device. Nullable until registry-sync mints the
+    // areas-of-one and tightens it to NOT NULL.
+    primaryAreaId: uuid("primary_area_id").references(() => areas.id),
+    config: jsonb("config").$type<DeviceConfig>(),
+    adapterState: jsonb("adapter_state"), // ← systems.metadata
+    commissionedOn: date("commissioned_on"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    ridUnique: uniqueIndex("devices_rid_unique").on(table.rid),
+    statusCheck: check(
+      "devices_status_check",
+      sql`${table.status} IN ('active','disabled','removed')`,
+    ),
+    ownerSlugUnique: uniqueIndex("devices_owner_slug_unique").on(
+      table.ownerUserId,
+      table.slug,
+    ),
+  }),
+);
+
+// points ← point_info. `id` = point_info.point_uid and `rid` = point_info.rid, BOTH verbatim — the
+// seam invariant the hot-table rid rewrite depends on.
+export const points = pgTable(
+  "points",
+  {
+    id: uuid("id").primaryKey(), // = point_info.point_uid
+    rid: integer("rid").notNull(), // = point_info.rid
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id),
+    physicalPath: text("physical_path").notNull(), // ← point_info.physical_path_tail
+    logicalPath: text("logical_path"), // ← point_info.logical_path_stem
+    metricType: text("metric_type").notNull(),
+    unit: text("unit").notNull(), // ← point_info.metric_unit
+    name: text("name").notNull(), // ← point_info.display_name
+    defaultName: text("default_name").notNull(), // ← point_info.point_name
+    subsystem: text("subsystem"),
+    transform: text("transform"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at"),
+  },
+  (table) => ({
+    ridUnique: uniqueIndex("points_rid_unique").on(table.rid),
+    devicePhysicalPathUnique: uniqueIndex(
+      "points_device_physical_path_unique",
+    ).on(table.deviceId, table.physicalPath),
+    deviceLogicalMetricUnique: uniqueIndex(
+      "points_device_logical_metric_unique",
+    ).on(table.deviceId, table.logicalPath, table.metricType),
+    deviceIdx: index("points_device_idx").on(table.deviceId),
+  }),
+);
+
+// area_members ← area_devices (system_id int → device uuid).
+export const areaMembers = pgTable(
+  "area_members",
+  {
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id, { onDelete: "cascade" }),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull().default(0),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.areaId, table.deviceId],
+      name: "area_members_pk",
+    }),
+  }),
+);
+
+// device_state ← polling_status. 1:1 operational satellite of devices; written every poll.
+export const deviceState = pgTable("device_state", {
+  deviceId: uuid("device_id")
+    .primaryKey()
+    .references(() => devices.id, { onDelete: "cascade" }),
+  lastPollTime: timestamp("last_poll_time"),
+  lastSuccessTime: timestamp("last_success_time"),
+  lastErrorTime: timestamp("last_error_time"),
+  lastError: text("last_error"),
+  lastResponse: jsonb("last_response"),
+  consecutiveErrors: integer("consecutive_errors").notNull().default(0),
+  totalPolls: integer("total_polls").notNull().default(0),
+  successfulPolls: integer("successful_polls").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ============================================================================
 // Type exports
 // ============================================================================
 export type System = typeof systems.$inferSelect;
 export type NewSystem = typeof systems.$inferInsert;
+// NB `DeviceRow`/`PointRow`, not `Device`/`Point`: `lib/ids` already exports `Device` and `Point` as
+// the TypeID codecs (`Device.encode(...)`), and the seam/registry modules import both.
+export type DeviceRow = typeof devices.$inferSelect;
+export type NewDeviceRow = typeof devices.$inferInsert;
+export type PointRow = typeof points.$inferSelect;
+export type NewPointRow = typeof points.$inferInsert;
+export type AreaMember = typeof areaMembers.$inferSelect;
+export type NewAreaMember = typeof areaMembers.$inferInsert;
+export type DeviceState = typeof deviceState.$inferSelect;
+export type NewDeviceState = typeof deviceState.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;
 export type NewPollingStatus = typeof pollingStatus.$inferInsert;
 export type UserSystem = typeof userSystems.$inferSelect;

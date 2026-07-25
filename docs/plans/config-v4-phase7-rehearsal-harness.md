@@ -213,9 +213,22 @@ per-point last value preserved, swap landed (rid-keyed), all stage-2 row-count g
 **Infra notes for the runbook:** PlanetScale PG **branch-from-parent (even `--seed-data`) is empty** — get
 prod data via `--restore <backup-id>`. The latest backup predates a just-applied migration, and
 `db:pg:migrate` **skips** it (journal-timestamp drift), so apply the trailing migration with `psql -f`.
-Prod's `legacy_handles` is empty (foundation pre-mint deferred to Phase 8), so run
-`backfill-foundation.ts --commit` before the transform. Run cost: **~$0.02** (short-lived PS-5 branches,
-server-side ops, torn down).
+~~Prod's `legacy_handles` is empty~~ — **SUPERSEDED 2026-07-25: the foundation pre-mint has now been run on
+prod** (16/16 device + 16/16 area mappings; see the P0 note below). A branch restored from a backup taken
+*before* that still needs `backfill-foundation.ts --commit`. Run cost: **~$0.02** (short-lived PS-5
+branches, server-side ops, torn down).
+
+> **P0 (2026-07-25) — prod `legacy_handles` was empty and that had become a live outage.** `aede359b`
+> (#235) made `ReadingsDao.deviceIdsWithAgg5mSince` throw on an unmapped handle
+> (`lib/readings/dao.ts:965-968`), and `lib/aggregation/daily-points.ts:142` calls it unguarded, so
+> `/api/cron/daily` (14:05 UTC) would have failed from its first post-deploy run.
+> `backfill-foundation.ts --commit` was run against prod `sydney` — `validationErrors: []`, 16 devices +
+> 16 areas mapped, 0 systems unmapped, and 0 of the 15 handles carrying `agg_5m` data left unmapped. Caught
+> ~9.5 h before the first affected run, so **no aggregation was missed** (`agg_1d` complete through
+> 2026-07-24). Side effect: 2 areas gained `config.batteryProvenance` (Daylesford ← sys 1, Kinkora Unified
+> ← sys 6), copied from their own battery-power source device — inert for materialisation (the live path
+> reads the *system's* config, `lib/battery-provenance/load.ts:470-471`) and consistent with what
+> `lib/areas/create.ts:394` already does at area creation.
 
 ### Run 2 (2026-07-25) — complete transform + parity, all green
 
@@ -233,8 +246,13 @@ PS-5 restore. Everything passed **first try**.
   fidelity, `points.rid == point_info.rid`, every device has an area-of-one, bindings + dashboard docs
   populated.
 
-**Recommended for Phase 8:** temporarily scale prod PS-5 → a larger instance for the window (removes the OOM
-ceiling *and* shortens the index build; prorated cost ≈ cents).
+~~**Recommended for Phase 8:** temporarily scale prod PS-5 → a larger instance for the window.~~
+**REVERSED (Simon, 2026-07-25): do NOT scale up.** The saving is ~1–2 min off a 128–145 s index build while
+`T_window` (5.1 min) already sits against a 30-min target; the OOM is already solved and validated 3× by the
+96 MB `maintenance_work_mem` cap; the resize mechanics (online? restart? failover?) are undocumented; and
+stage 4 pins a *single* connection carrying session-level `synchronous_commit`/`statement_timeout`/
+`maintenance_work_mem` across the whole copy (`config-transform.ts:546-555`), so a mid-copy restart forces a
+full stage-4 restart. Keep `CONFIG_V4_MAINT_WORK_MEM=96MB`. If you scale anyway, scale ≥24 h before.
 
 ### Run 3 (2026-07-25) — deferred tranche, parity 23/23 green
 
@@ -270,5 +288,7 @@ window (with the Q7 cron-gate list as an operational precondition).
 
 ## 7. Still-open for Simon
 
-- **Q4:** confirm no *off-repo* consumer keys on `point_readings.id` before we drop the surrogate.
-- Everything else is decided above.
+- ~~**Q4:** confirm no *off-repo* consumer keys on `point_readings.id`.~~ **CLOSED (Simon, 2026-07-25): no
+  off-repo consumers — drop the surrogate; the natural `(point_rid, measurement_time)` PK stands as rehearsed.**
+- Everything else is decided above. Phase-8 execution decisions (incl. no dual-shape DAO, D1–D5 kept in the
+  window, `liveone-dev` cut over first, parity-before-deploy) are recorded in the Phase 8 plan of record.

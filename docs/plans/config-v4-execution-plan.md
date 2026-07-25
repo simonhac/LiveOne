@@ -17,7 +17,27 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 8: the cutover build + window (Phase 7 harness COMPLETE, PR #237)
+## ▶ NEXT ACTION — Phase 8 IN PROGRESS (P0 + migration 0035 landed; next: PR-1 cron gate, PR-3 dual-write)
+
+> **Phase 8 started 2026-07-25.** Planning ran as a 14-agent workflow (analyse → 3 rival strategies →
+> 3-lens judge panel → 3-lens adversarial refutation). It found **7 defects in the "23/23 green" transform**
+> — none covered by any parity check — plus a live prod incident. Decisions locked with Simon: **no
+> dual-shape DAO** (one cutover build, deployed in-window, de-risked by rehearsal); **D1–D5 config changes
+> stay in the window**; **`liveone-dev` cuts over FIRST** as the dress rehearsal, prod the next day;
+> **parity before deploy**; **no PS-5 scale-up**; **drop the `point_readings.id` surrogate**; **retire the
+> legacy owner-scoped share token**; **unify `sharing.ts` onto `share_tokens`**; **deploy by merging to
+> `main`** at S7. Full plan of record + the defect table: see the Phase 8 plan file.
+>
+> **Done so far:**
+> - **P0 (prod)** — `legacy_handles` was EMPTY while `aede359b` had already shipped a hard throw through
+>   `/api/cron/daily`. `backfill-foundation.ts --commit` run on prod: 16/16 devices + 16/16 areas mapped,
+>   0 unmapped handles among the 15 carrying `agg_5m` data. Caught ~9.5 h before the first affected run —
+>   no aggregation lost.
+> - **Migration 0035** (`0035_brown_terrax`, additive: `devices`/`points`/`area_members`/`device_state` +
+>   `device_rid_seq`) applied + verified on **`liveone-dev` and prod `sydney`**, reassigned to `postgres`
+>   (ownership trap fired as documented). `schema.ts` ↔ snapshot ↔ DB proven in agreement (a second
+>   `drizzle-kit generate` reports *"No schema changes"*). `scripts/config-v4/cutover.sql` realigned to the
+>   same object names/kinds and verified a clean no-op on a 0035-applied branch.
 
 > **Phases 4, 5, and Phase 6's pre-cutover surface are COMPLETE (dark).** [PR #233](https://github.com/simonhac/LiveOne/pull/233)
 > (Phases 4–6-so-far) is **MERGED** (`c31d7573`, now HEAD of `main`, deployed dark to prod). Phase 4: schema
