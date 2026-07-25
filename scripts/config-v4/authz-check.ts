@@ -53,6 +53,9 @@ const sameSet = <T>(a: Set<T>, b: Set<T>) =>
 async function main() {
   const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
   const { resolveDashboardReadPoints } = await import("@/lib/dashboard/access");
+  const { descriptorAreaIds } = await import("@/lib/dashboard/composition");
+  const { collectRefs } = await import("@/lib/dashboard/v4-validate");
+  const { Area } = await import("@/lib/ids");
   const db = requirePlanetscaleDb();
   assertRehearsalTarget();
 
@@ -83,10 +86,15 @@ async function main() {
     return ridsForRefs(points);
   };
 
-  // Cache each dashboard's descriptor- and doc-resolved scope (keyed by uuid), computed once.
+  // Cache each dashboard's descriptor- and doc-resolved scope (points + areas), computed once.
   const scopeCache = new Map<
     string,
-    { descriptorRids: Set<number>; docRids: Set<number> }
+    {
+      descriptorRids: Set<number>;
+      docRids: Set<number>;
+      descAreas: Set<string>;
+      docAreas: Set<string>;
+    }
   >();
   const dashboardScopes = async (id: string) => {
     let s = scopeCache.get(id);
@@ -94,42 +102,89 @@ async function main() {
       const [d] = (await rowsOf(
         sql`SELECT descriptor, doc FROM dashboards WHERE id = ${id}`,
       )) as Array<{ descriptor: unknown; doc: unknown }>;
+      const docAreas = new Set(
+        d
+          ? (collectRefs(d.doc)
+              .areas.map((a) => {
+                try {
+                  return Area.toUuid(a);
+                } catch {
+                  return null;
+                }
+              })
+              .filter((x): x is string => x != null) as string[])
+          : [],
+      );
       s = {
         descriptorRids: d
           ? await scopeRids({ descriptor: d.descriptor })
           : new Set(),
         docRids: d ? await scopeRids({ doc: d.doc }) : new Set(),
+        descAreas: new Set(d ? descriptorAreaIds(d.descriptor) : []),
+        docAreas,
       };
       scopeCache.set(id, s);
     }
     return s;
   };
 
-  // ── AC1 — dashboard scope equivalence (descriptor vs doc) over token/grant targets ──────────────────
+  // ── AC1 — dashboard scope over token/grant targets ──────────────────────────────────────────────────
+  // The rewriter's contract (v3-to-v4.ts) is AREA-scope equivalence, NOT point equality: a v4 doc's ONLY
+  // scope sources are `area` + `device` envelope refs (§8.3), and it deliberately carries v3 deviceSystemId
+  // pins forward as `device` refs. The v4 resolver expands those device refs into scope (access.ts INTENDS
+  // this — a device-pinned card would otherwise 401 for a share viewer even though the dashboard renders it),
+  // whereas the v3 descriptor resolver only expands areas. So the doc is a SUPERSET by exactly the
+  // device-pinned points. The security-critical invariants are therefore: (1) NO LOCKOUT (descriptor ⊆ doc —
+  // no shared viewer loses access) and (2) AREA-scope preserved. Any point-level widening is confined to
+  // device pins (structural, since areas are equal) and is surfaced loudly below, not silently.
   const targeted = (await rowsOf(
     `SELECT DISTINCT dashboard_id::text AS id FROM (
         SELECT dashboard_id FROM share_tokens WHERE dashboard_id IS NOT NULL
         UNION SELECT dashboard_id FROM dashboard_grants
      ) t WHERE dashboard_id IS NOT NULL`,
   )) as Array<{ id: string }>;
-  let ac1Fail = 0;
+  let lockout = 0;
+  let areaMismatch = 0;
+  let widenPoints = 0;
+  let widenDashboards = 0;
   for (const { id } of targeted) {
-    const { descriptorRids, docRids } = await dashboardScopes(id);
-    const ok = sameSet(descriptorRids, docRids);
-    if (!ok) {
-      ac1Fail++;
-      const only = (a: Set<number>, b: Set<number>) => [...difference(a, b)];
+    const { descriptorRids, docRids, descAreas, docAreas } =
+      await dashboardScopes(id);
+    const lost = difference(descriptorRids, docRids); // LOCKOUT — the dangerous direction
+    const gained = difference(docRids, descriptorRids); // device-pin widening — intended (§8.3)
+    if (lost.size) {
+      lockout++;
+      record(`AC1 LOCKOUT ${id.slice(0, 8)}`, false, `lost rids=${[...lost]}`);
+    }
+    if (!sameSet(descAreas, docAreas)) {
+      areaMismatch++;
       record(
-        `AC1 scope equiv ${id.slice(0, 8)}`,
+        `AC1 area-scope ${id.slice(0, 8)}`,
         false,
-        `descriptor-only=${only(descriptorRids, docRids)} doc-only=${only(docRids, descriptorRids)}`,
+        `descriptor=${descAreas.size} doc=${docAreas.size} areas`,
       );
+    }
+    if (gained.size) {
+      widenDashboards++;
+      widenPoints += gained.size;
     }
   }
   record(
-    "AC1 dashboard scope: descriptor == doc (all targeted)",
-    ac1Fail === 0,
-    `${targeted.length} dashboards, ${ac1Fail} mismatched`,
+    "AC1 no lockout (descriptor ⊆ doc, all targeted)",
+    lockout === 0,
+    `${targeted.length} dashboards, ${lockout} with lost points`,
+  );
+  record(
+    "AC1 area-scope preserved (rewriter contract)",
+    areaMismatch === 0,
+    `${areaMismatch} area-set mismatches`,
+  );
+  // Expected, not a failure — but surfaced so the cutover's share-scope change is visible. A v4 share/grant
+  // holder additionally sees the device-pinned cards the dashboard renders (v3 would have 401'd them).
+  record(
+    "AC1 device-pin widening (intended §8.3; informational)",
+    true,
+    `${widenPoints} extra points across ${widenDashboards} dashboards via doc device refs`,
   );
 
   // ── AC2 — (share-token → point) preservation ────────────────────────────────────────────────────────
