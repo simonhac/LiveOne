@@ -21,6 +21,7 @@ import {
 import { SystemIdentifier, PointReference } from "@/lib/identifiers";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
 import { mintPointUid } from "@/lib/point/mint-point-uid";
+import { mirrorPoint } from "@/lib/registry/v4-mirror";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
@@ -611,13 +612,39 @@ export class PointManager {
           // point_uid is identity — deliberately NOT overwritten on conflict.
         },
       };
+      // config-v4 (C7): the `point_info` upsert and its `points` mirror are ONE transaction, so there is
+      // never an instant where a point has a `rid` but no `points` row. The cutover's hot tables carry
+      // `FK point_rid → points(rid) NOT VALID`, which still enforces on new inserts — a gap here becomes a
+      // QStash poison pill retried forever. `rid` is taken from the `point_info` write (which owns the
+      // `point_rid_seq` default); a second nextval would desynchronise the two tables.
       const doInsert = async (pointUid: string) => {
-        const [row] = await pg
-          .insert(pgPointInfoTable)
-          .values(insertValues(pointUid))
-          .onConflictDoUpdate(onConflict)
-          .returning();
-        return row;
+        return pg.transaction(async (tx) => {
+          const [row] = await tx
+            .insert(pgPointInfoTable)
+            .values(insertValues(pointUid))
+            .onConflictDoUpdate(onConflict)
+            .returning();
+          await mirrorPoint(
+            {
+              systemId: row.systemId,
+              pointUid: row.pointUid,
+              rid: row.rid,
+              physicalPathTail: row.physicalPathTail,
+              logicalPathStem: row.logicalPathStem,
+              metricType: row.metricType,
+              metricUnit: row.metricUnit,
+              displayName: row.displayName,
+              defaultName: row.defaultName,
+              subsystem: row.subsystem,
+              transform: row.transform,
+              active: row.active,
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+            },
+            tx,
+          );
+          return row;
+        });
       };
 
       const pgRow = await (async () => {

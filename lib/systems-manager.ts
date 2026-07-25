@@ -11,6 +11,7 @@ import {
   areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
+import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof pgSystems>;
@@ -321,6 +322,21 @@ export class SystemsManager {
     // /device view straight from `point_info` + capabilities (no backing Area), and flow is an
     // area-only concept — a device gets a flow matrix only once a user groups it into an Area
     // (createArea). No cache to invalidate: config is read per-request.
+    //
+    // config-v4: mirror into `devices` immediately so the standing C7 invariant
+    // (`systems` with no `devices` row == 0) can never be disarmed by a newly created system. Note this
+    // DOES mint the v4 area-of-one — post-cutover the area is the sole home for tz/location and
+    // `devices.primary_area_id` is NOT NULL, so it is a structural requirement of the v4 shape, not a
+    // reversal of the explicit-areas model above (which governs the v3 rendering path).
+    // Best-effort: the v4 registries are dark until cutover, so a mirror failure must not fail creation.
+    try {
+      await ensureDeviceRow(newSystem.id);
+    } catch (error) {
+      console.error(
+        `[SystemsManager] v4 device mirror failed for system ${newSystem.id} — registry-sync will heal it`,
+        error,
+      );
+    }
     return newSystem;
   }
 
