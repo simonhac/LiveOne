@@ -257,7 +257,18 @@ export async function updateDashboard(
     descriptor?: DashboardV3;
   },
 ): Promise<void> {
-  const set: Record<string, unknown> = { updatedAt: new Date() };
+  // Typed against the table ON PURPOSE — do not "simplify" this back to Record<string, unknown>.
+  // drizzle's `buildUpdateSet` keeps only payload keys that match a declared column and SILENTLY DISCARDS
+  // the rest, and an index-signature payload satisfies `PgUpdateSetSource` without ever consulting the
+  // table type. So with an untyped record, the config-v4 rename (dashboards display_name→name,
+  // alias→slug) would compile clean and then emit `update "dashboards" set "updated_at" = $1 …` — the
+  // PATCH returns 200 while the rename is not persisted. Parity's W-series cannot catch it either: it
+  // models INSERT-ability (NOT-NULL-without-default columns), never an UPDATE's SET clause.
+  // Same defect class as `updateAreaMeta` (lib/areas/create.ts). Typing it here means the schema flip
+  // becomes a compile error at these lines rather than a silent no-op in production.
+  const set: Partial<typeof dashboards.$inferInsert> = {
+    updatedAt: new Date(),
+  };
   if (patch.displayName !== undefined) set.displayName = patch.displayName;
   if (patch.alias !== undefined) set.alias = patch.alias;
   if (patch.descriptor !== undefined)

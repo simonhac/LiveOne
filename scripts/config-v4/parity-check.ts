@@ -443,16 +443,46 @@ async function main() {
           getTableColumns(model as Parameters<typeof getTableColumns>[0]),
         ).map((c) => (c as { name: string }).name),
       );
-      await expect(
-        `W ${table} insertable by the app`,
-        `SELECT coalesce(string_agg(a.attname, ',' ORDER BY a.attname), '∅')
+      const requiredSql = `SELECT coalesce(string_agg(a.attname, ',' ORDER BY a.attname), '∅')
            FROM pg_attribute a
            LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
           WHERE a.attrelid = '${table}'::regclass AND a.attnum > 0 AND NOT a.attisdropped
-            AND a.attnotnull AND ad.adbin IS NULL AND a.attidentity = '' AND a.attgenerated = ''
+            AND a.attnotnull AND ad.adbin IS NULL AND a.attidentity = '' AND a.attgenerated = ''`;
+      await expect(
+        `W ${table} insertable by the app`,
+        `${requiredSql}
             AND a.attname NOT IN (${[...known].map((c) => `'${c}'`).join(",") || "''"})`,
         "∅",
       );
+
+      // ── NAME-known is NOT enough: the model must also declare the column NOT NULL. ──────────────
+      // The check above only asks "does schema.ts mention this column?". A column the model mentions but
+      // declares OPTIONAL is just as fatal: drizzle happily omits it from the INSERT and Postgres answers
+      // 23502 — on the irreversible side, with the check green. `dashboards.doc` is exactly that shape
+      // (stage 5d runs `ALTER COLUMN doc SET NOT NULL`, while schema.ts declares a nullable `jsonb("doc")`),
+      // and it is the same class as D-k, which no check caught because none had ever modelled a WRITE.
+      const cols = getTableColumns(
+        model as Parameters<typeof getTableColumns>[0],
+      );
+      const byName = new Map(
+        Object.values(cols).map((c) => [
+          (c as { name: string }).name,
+          c as { name: string; notNull?: boolean },
+        ]),
+      );
+      const requiredCsv = await scalar(requiredSql);
+      const required =
+        requiredCsv === "∅" ? [] : String(requiredCsv).split(",");
+      const declaredOptional = required.filter(
+        (n) => byName.has(n) && !byName.get(n)!.notNull,
+      );
+      results.push({
+        name: `W ${table} required cols declared NOT NULL`,
+        status: declaredOptional.length ? "FAIL" : "PASS",
+        detail: declaredOptional.length
+          ? `${declaredOptional.join(",")} — DB requires a value, schema.ts declares it optional → 23502 on first insert`
+          : "∅",
+      });
     }
   }
 
