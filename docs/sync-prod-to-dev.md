@@ -74,6 +74,40 @@ role) as GitHub secrets.
 > but not prod, or out-of-band experimentation), the copy aborts on that table. Fix by realigning
 > dev's schema to prod (or applying the missing migration to prod) — see the "full reset" below.
 
+### Connection forensics in the log
+
+Both connections are instrumented (`lib/db/planetscale/connection-forensics.ts`) for the dropout
+investigation in
+[`docs/incidents/2026-07-25-…`](incidents/2026-07-25-prod-dev-sync-connection-dropouts.md). Two
+line shapes show up in the Actions log; both are diagnostic only and can never fail the run.
+
+- `[sync:prod] conn-path {…}` / `[sync:dev] conn-path {…}` — once per connection, at connect.
+  `verdict` is deliberately **one-sided**: **`pooled`** (i.e. `portMismatch: true`) is positive proof
+  that a PgBouncer re-originated the connection — we dial 6432, the backend reports 5432. Anything
+  else is **`inconclusive`**, never "direct", because `inet_server_port()` only sees the last hop and
+  a transparent same-port proxy would be invisible. Also snapshots the _server-side_ limits, which
+  client config can't show: `statementLimit`, `idleTxnLimit`, `idleSessionLimit`, `keepalivesIdle`
+  (PG's `statement_timeout`, `idle_in_transaction_session_timeout`, `idle_session_timeout`,
+  `tcp_keepalives_idle` — renamed to keep the word "timeout" out of the log, which would otherwise
+  mis-bucket unrelated failures in `classifyWorkflowFailure`).
+- `[sync:prod] socket-death {…}` — only on a close we did **not** initiate (judged from pg's own
+  `_ending` flag at the moment distress arrives, so a genuine drop is still reported even though the
+  `finally` block ends the client straight afterwards). `shape` is the discriminator, one of exactly:
+  - `FIN (graceful close by peer — deliberate)` → something closed the session on purpose — a
+    pooler, gateway or load balancer. Postgres itself would have sent an ErrorResponse (`57P01`, …)
+    first, which `pg` surfaces _with_ a SQLSTATE.
+  - `RST (hard reset — network-shaped)` → a transport-level abort.
+  - `closed with neither FIN nor error` → the socket vanished without either signal.
+  - `phase` says whether the client died mid-table or while **idle** (the prod client idles through
+    every dev-side upsert), which separates an idle-reap from a mid-stream failure. It reads
+    `(not tracked)` on the pooled paths, which don't set phases.
+- `[sync:prod] backend-drift {…}` — emitted on the success path only, if the backend PID or address
+  changed mid-run. That would disprove the "two persistent connections" premise (a transaction-mode
+  pooler swapping backends, or a failover).
+
+The recompute leg logs the same `conn-path` line under `[recompute]`; the shared app pool logs
+`socket-death` under `[PlanetScale]`.
+
 ## KV rebuild — reconstructed from the DB
 
 KV is **shared across environments** and separated by an env key prefix (`kvKey()` in `lib/kv.ts`

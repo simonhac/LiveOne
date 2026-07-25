@@ -60,4 +60,4 @@
 ## Records (append-only; never "stale")
 
 - [project-history.md](project-history.md) — feature/architecture timeline
-- incidents/ — [2025-11-11 migration 0035](incidents/2025-11-11-migration-0035-point-readings-corruption.md) · [2025-11-17 migration 0016](incidents/2025-11-17-migration-0016-point-info-corruption.md)
+- incidents/ — [2025-11-11 migration 0035](incidents/2025-11-11-migration-0035-point-readings-corruption.md) · [2025-11-17 migration 0016](incidents/2025-11-17-migration-0016-point-info-corruption.md) · [2025-11-26 Amber import channel collision](incidents/2025-11-26-amber-import-channel-collision.md) · [2026-06-16 prod down — migration not applied](incidents/2026-06-16-prod-down-default-dashboard-migration-not-applied.md) · [2026-07-25 prod→dev sync connection dropouts](incidents/2026-07-25-prod-dev-sync-connection-dropouts.md)

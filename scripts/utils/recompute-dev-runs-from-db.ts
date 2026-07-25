@@ -14,7 +14,7 @@
  *   PLANETSCALE_DATABASE_URL=<dev write url> npx tsx --env-file=.env.local \
  *     scripts/utils/recompute-dev-runs-from-db.ts [days=7]
  */
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { logConnectionPath, requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { recomputeRange } from "@/lib/run-tracking/recompute";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,6 +39,9 @@ async function main() {
 
   // Touch the pool early so a misconfigured/empty URL fails loudly before we claim to do work.
   requirePlanetscaleDb();
+  // 3 of the 8 dropouts in the 2026-07-25 incident hit this leg ~4s in. Record which path
+  // this connection actually takes (pooler vs direct) and the server-side timeouts.
+  await logConnectionPath("recompute");
 
   console.log(
     `Recomputing dev run periods, last ${days}d ` +

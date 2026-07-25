@@ -11,6 +11,11 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
 import * as schema from "./schema";
 import { isProduction, envLabel } from "@/lib/env";
+import {
+  armSocketForensics,
+  formatConnectionPath,
+  probeConnectionPath,
+} from "./connection-forensics";
 
 // Global singleton to persist across hot reloads
 declare global {
@@ -198,6 +203,13 @@ function getPool(): Pool | null {
     client.on("error", (err) => {
       console.error("[PlanetScale] Client connection error:", err);
     });
+    // Dropout forensics: report HOW a connection died (graceful FIN vs RST, socket age,
+    // bytes) — 3 of the 8 events in the 2026-07-25 incident were on this pooled path and
+    // the error alone couldn't distinguish a deliberate close from a network reset.
+    // Passive listeners only: no query is injected into a client the app is about to use.
+    armSocketForensics(client, "PlanetScale", (message) =>
+      console.warn(message),
+    );
   });
 
   // Log connection errors
@@ -249,6 +261,36 @@ export function requirePlanetscaleDb(): NonNullable<typeof planetscaleDb> {
     );
   }
   return planetscaleDb;
+}
+
+/**
+ * One-shot connection-path probe for the dropout investigation
+ * (docs/incidents/2026-07-25-prod-dev-sync-connection-dropouts.md): detects a pooler in
+ * the path and snapshots the SERVER-side timeouts. Checks out a pooled client, probes,
+ * releases. Diagnostic only — never throws, so a caller can fire it unguarded.
+ *
+ * Not wired into `pool.on("connect")` on purpose: that would inject a query into every
+ * client the app is about to use. Call it explicitly from batch jobs.
+ */
+export async function logConnectionPath(label = "PlanetScale"): Promise<void> {
+  try {
+    const pool = getPool();
+    if (!pool) return;
+    const client = await pool.connect();
+    try {
+      const info = await probeConnectionPath(
+        client,
+        process.env.PLANETSCALE_DATABASE_URL ?? "",
+      );
+      if (info) {
+        console.log(`[${label}] conn-path ${formatConnectionPath(info)}`);
+      }
+    } finally {
+      client.release();
+    }
+  } catch {
+    // Diagnostic only — never let it break the job it is observing.
+  }
 }
 
 /**
