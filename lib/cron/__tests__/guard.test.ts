@@ -16,7 +16,13 @@ jest.mock("@/lib/kv", () => ({
   kvKey: (pattern: string) => `test:${pattern}`,
 }));
 
-import { cutoverPaused, cutoverSkipReason, CUTOVER_PAUSED_KEY } from "../guard";
+import {
+  cutoverPaused,
+  cutoverPausedForIngest,
+  cutoverSkipReason,
+  CUTOVER_PAUSED_KEY,
+  __resetCutoverIngestGateForTests,
+} from "../guard";
 
 type Ctx = { isAdmin: boolean; isClaudeDev: boolean };
 const ctx = (over: Partial<Ctx> = {}): any => ({
@@ -99,6 +105,72 @@ describe("cutover gate", () => {
       expect(await cutoverSkipReason(req(), ctx())).toMatchObject({
         skipped: true,
       });
+      spy.mockRestore();
+    });
+  });
+
+  /**
+   * The receiver variant trades a little staleness for two things the cron variant does not need: it is
+   * on the ingest hot path (so an uncached KV round-trip per message is real, permanent cost for a
+   * once-ever window), and it is the SINGLE WRITER of the serving store (so an unconditional fail-closed
+   * turns any Upstash blip into a total ingest outage). Both properties are asserted here.
+   */
+  describe("cutoverPausedForIngest", () => {
+    beforeEach(() => {
+      __resetCutoverIngestGateForTests();
+    });
+
+    it("memoizes, so a burst of messages costs ONE KV read", async () => {
+      mockGet.mockResolvedValue(null);
+      for (let i = 0; i < 25; i++)
+        expect(await cutoverPausedForIngest()).toBe(false);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports paused once the flag is set", async () => {
+      mockGet.mockResolvedValue("1");
+      expect(await cutoverPausedForIngest()).toBe(true);
+    });
+
+    it("rides out a KV outage on the last good NEGATIVE — ingest must not stop", async () => {
+      const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+      mockGet.mockResolvedValue(null);
+      expect(await cutoverPausedForIngest()).toBe(false);
+      // Expire the TTL but stay inside the grace window.
+      jest.spyOn(Date, "now").mockReturnValue(Date.now() + 30_000);
+      mockGet.mockRejectedValue(new Error("Upstash 503"));
+      expect(await cutoverPausedForIngest()).toBe(false);
+      jest.restoreAllMocks();
+      spy.mockRestore();
+    });
+
+    it("rides out a KV outage on the last good POSITIVE — a live window stays safe", async () => {
+      const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+      mockGet.mockResolvedValue("1");
+      expect(await cutoverPausedForIngest()).toBe(true);
+      jest.spyOn(Date, "now").mockReturnValue(Date.now() + 30_000);
+      mockGet.mockRejectedValue(new Error("Upstash 503"));
+      expect(await cutoverPausedForIngest()).toBe(true);
+      jest.restoreAllMocks();
+      spy.mockRestore();
+    });
+
+    it("fails CLOSED when KV is down and there is no successful read to fall back on", async () => {
+      const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+      mockGet.mockRejectedValue(new Error("KV unreachable"));
+      expect(await cutoverPausedForIngest()).toBe(true);
+      spy.mockRestore();
+    });
+
+    it("fails CLOSED once the cached value is older than the grace window", async () => {
+      const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const t0 = Date.now();
+      mockGet.mockResolvedValue(null);
+      expect(await cutoverPausedForIngest()).toBe(false);
+      jest.spyOn(Date, "now").mockReturnValue(t0 + 120_000); // > grace
+      mockGet.mockRejectedValue(new Error("Upstash 503"));
+      expect(await cutoverPausedForIngest()).toBe(true);
+      jest.restoreAllMocks();
       spy.mockRestore();
     });
   });

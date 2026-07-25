@@ -792,7 +792,11 @@ async function insertRaw(
     .insert(pointReadings)
     .values(values)
     .onConflictDoNothing()
-    .returning({ id: pointReadings.id });
+    // Project a CUTOVER-INVARIANT column. Only `res.length` is ever read (every caller destructures
+    // `{ inserted }`), so the column choice is arbitrary — but `point_readings.id`, the surrogate this
+    // used to name, is DROPPED by the cutover in favour of the natural `(point_rid, measurement_time)`
+    // PK. Naming it would 42703 on the receiver's hot path at resume, i.e. on the irreversible side.
+    .returning({ k: pointReadings.measurementTime });
   return { inserted: res.length };
 }
 
@@ -877,7 +881,10 @@ async function insert5m(
           },
         })
       : insert.onConflictDoNothing()
-  ).returning({ systemId: pointReadingsAgg5m.systemId });
+  )
+    // Cutover-invariant projection — `system_id` does not exist on the rid-keyed twin. Only
+    // `res.length` is read. See insertRaw.
+    .returning({ k: pointReadingsAgg5m.intervalEnd });
   return { written: res.length };
 }
 
@@ -925,7 +932,8 @@ async function upsert1d(
         updatedAt: sql`now()`,
       },
     })
-    .returning({ systemId: pointReadingsAgg1d.systemId });
+    // Cutover-invariant projection — `system_id` does not exist on the rid-keyed twin. See insertRaw.
+    .returning({ k: pointReadingsAgg1d.day });
   return { written: res.length };
 }
 
@@ -1372,9 +1380,14 @@ async function hasReadingsForDeviceBeyond(
 
 /**
  * Raw readings in a ±1 hour window around `centerMs` for ONE point (admin single-point drill-down;
- * LEFT JOIN sessions for the label). Verbatim relocation of the former `fetchSinglePointReadingsPg`
- * raw branch. Returns rich rows keyed by the SQL aliases (id/systemId/pointId/…); `measurementTime`
- * and `receivedTime` are epoch-ms. // SEAM: composite-key WHERE (Phase 8 → point_rid).
+ * LEFT JOIN sessions for the label). Relocated from the former `fetchSinglePointReadingsPg` raw branch.
+ * Returns rich rows keyed by the SQL aliases; `measurementTime` and `receivedTime` are epoch-ms.
+ * // SEAM: composite-key WHERE (Phase 8 → point_rid).
+ *
+ * The projection deliberately omits `pr.id` / `pr.system_id` / `pr.point_id`: all three cease to exist
+ * at the cutover (the surrogate id is dropped for the natural `(point_rid, measurement_time)` PK), and
+ * no consumer reads them — the route supplies `metadata.systemId`/`pointId` from its own params and
+ * `PointReadingInspectorModal` renders its own props. Dropping them now keeps the rid flip mechanical.
  */
 async function readRawWindowAround(
   point: PointId,
@@ -1389,9 +1402,6 @@ async function readRawWindowAround(
   const res = await db.execute(
     sql.raw(`
     SELECT
-      pr.id,
-      pr.system_id as "systemId",
-      pr.point_id as "pointId",
       pr.session_id as "sessionId",
       (EXTRACT(EPOCH FROM pr.measurement_time AT TIME ZONE 'UTC') * 1000)::bigint as "measurementTime",
       (EXTRACT(EPOCH FROM pr.received_time AT TIME ZONE 'UTC') * 1000)::bigint as "receivedTime",
@@ -1420,9 +1430,10 @@ async function readRawWindowAround(
 
 /**
  * 5-minute aggregates in a ROW_NUMBER ±10 window centred on the interval ending at `centerMs`, for ONE
- * point (admin single-point drill-down; LEFT JOIN sessions). Verbatim relocation of the former
+ * point (admin single-point drill-down; LEFT JOIN sessions). Relocated from the former
  * `fetchSinglePointReadingsPg` 5m branch. `intervalEnd` is epoch-ms. // SEAM: composite-key WHERE
- * (Phase 8 → point_rid).
+ * (Phase 8 → point_rid). The `system_id`/`point_id` passthroughs are omitted for the same reason as in
+ * `readRawWindowAround` — they vanish at the cutover and nothing reads them.
  */
 async function read5mRowWindowAround(
   point: PointId,
@@ -1444,8 +1455,6 @@ async function read5mRowWindowAround(
       ),
       ranked AS (
         SELECT
-          pr.system_id as "systemId",
-          pr.point_id as "pointId",
           pr.session_id as "sessionId",
           (EXTRACT(EPOCH FROM pr.interval_end AT TIME ZONE 'UTC') * 1000)::bigint as "intervalEnd",
           pr.avg,

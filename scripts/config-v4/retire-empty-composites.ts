@@ -23,6 +23,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 import { sql } from "drizzle-orm";
+import { assertRehearsalTarget } from "./guard";
 
 /** Areas whose synthetic handles we consider; matches `lib/areas/handles.ts` AREA_HANDLE_BASE. */
 const AREA_HANDLE_BASE = 1_000_000;
@@ -53,6 +54,13 @@ async function fkChildren(
 
 async function main() {
   const commit = process.argv.includes("--commit");
+  // Same target guard as the rest of the config-v4 suite (guard.ts). These three scripts WRITE and are
+  // invoked by the cutover runbook, but used to carry no target assertion at all — so the mode/branch-id
+  // proof that protects config-transform did not protect them. `CONFIG_V4_TARGET` selects the mode; prod
+  // needs `--i-understand-this-is-prod` (+ `ALLOW_PROD_DB_IN_DEV=true`, which these already document).
+  // Called BEFORE requirePlanetscaleDb() so a wrong target is reported as a wrong target, rather than as
+  // the pool's own prod refusal, which names a different fix.
+  assertRehearsalTarget();
   const { requirePlanetscaleDb } = await import("@/lib/db/planetscale");
   const db = requirePlanetscaleDb();
   const exec = async (q: string) =>

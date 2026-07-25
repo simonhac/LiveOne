@@ -20,6 +20,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { withQstashSignatureVerification } from "@/lib/observations/qstash-receiver";
+import { cutoverPausedForIngest, CUTOVER_PAUSED_KEY } from "@/lib/cron/guard";
+import { kvKey } from "@/lib/kv";
 import { eq } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { sessions, systems } from "@/lib/db/planetscale/schema";
@@ -387,6 +389,35 @@ async function processQueueMessage(
 }
 
 async function handler(request: NextRequest) {
+  // config-v4 cutover gate. The window's step 1 pauses the QStash QUEUE (delivery stops) — but that is
+  // an operator action against a third-party console, and messages already in flight when it lands are
+  // not covered by it. The `cutover:paused` KV flag on its own does NOT help: it gates only the six cron
+  // routes that call `cutoverSkipReason`, never this route, and pollers keep publishing throughout
+  // (collection is buffered, never interrupted — see lib/cron/guard.ts).
+  //
+  // Without this check a single in-flight message writes `point_readings` during stage 4's ~6-minute
+  // copy. That copy runs over a `[min(id), max(id)]` range captured once at the start, so the row is
+  // silently NOT copied: it lands in what becomes `point_readings_old` and is gone, detected only by a
+  // row-count compare that runs AFTER the irreversible swap.
+  //
+  // 500, not 200: QStash must RETRY, not ack. The outbox row for this message is already marked
+  // published, so acking it here would drop the data permanently — precisely the loss this prevents.
+  //
+  // `cutoverPausedForIngest()`, not `cutoverPaused()`: this is the ingest hot path, so the read is
+  // memoized (~one KV round-trip per 10s instead of one per message) and a KV outage falls back to the
+  // last good value rather than failing closed unconditionally — which would otherwise halt ALL ingest
+  // during an unrelated Upstash incident, months from any cutover. See lib/cron/guard.ts.
+  if (await cutoverPausedForIngest()) {
+    console.warn(
+      `[ObservationsReceiver] ${kvKey(CUTOVER_PAUSED_KEY)} is set — refusing the write so QStash retries ` +
+        "after the cutover window (materialization is paused; collection keeps buffering)",
+    );
+    return NextResponse.json(
+      { status: "error", error: "cutover_paused" },
+      { status: 500 },
+    );
+  }
+
   // Fail loud (retry) rather than silently dropping when Postgres isn't configured.
   if (!planetscaleDb) {
     console.error(

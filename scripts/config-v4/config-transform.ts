@@ -13,7 +13,7 @@
  *                     device_state, points; seed device_rid_seq; wire deferred FKs; row-count guards
  *   4. Hot rewrite  — the window-critical step: (point_rid, time) twins → batched copy via point_info.rid →
  *                     indexes/PK/NOT-VALID FKs AFTER load → bounded rename-swap keeping _old (timed per stage)
- *   5. Config       — bindings→pt_ uuid, derivations (run-detector + HWS), dashboards doc v3→v4 + int→uuid
+ *   5. Config       — bindings gain a dark point_uid, derivations (run-detector + HWS), dashboards doc v3→v4 + int→uuid
  *                     PK swap (users/grants/tokens re-keyed). Validated; deferred items in the Phase-7 doc.
  *
  * Usage (on a rehearsal branch — see the runbook in the Phase-7 doc):
@@ -21,6 +21,14 @@
  *     npx tsx scripts/config-v4/config-transform.ts            # dry-run: plan + guards only
  *   PLANETSCALE_DATABASE_URL="<branch url>" REHEARSAL_BRANCH_ID="<branch id>" \
  *     npx tsx scripts/config-v4/config-transform.ts --commit   # execute
+ *
+ * TARGET MODES (guard.ts). `CONFIG_V4_TARGET` defaults to `rehearsal`; the branch-id var is the positive
+ * proof of the mode. `PLANETSCALE_PROD_BRANCH_ID` is required in ALL modes (it is the only way to
+ * recognise prod). Prod additionally needs `ALLOW_PROD_DB_IN_DEV=true`, because `@/lib/db/planetscale`
+ * refuses a prod connection outside production BEFORE the guard ever runs:
+ *   rehearsal:  REHEARSAL_BRANCH_ID="<branch id>"
+ *   dev:        CONFIG_V4_TARGET=dev LIVEONE_DEV_BRANCH_ID="<branch id>"
+ *   prod:       CONFIG_V4_TARGET=prod ALLOW_PROD_DB_IN_DEV=true   … --i-understand-this-is-prod
  *
  * Flags: --commit (write; default dry-run) · --skip-hot (skip stage 4's 15M copy for fast structural iteration)
  */
@@ -38,6 +46,17 @@ import { populateRegistries, type RowsExec } from "./registry-populate";
 const BATCH = Number(process.env.CONFIG_V4_COPY_BATCH ?? 1_000_000);
 const commit = process.argv.includes("--commit");
 const skipHot = process.argv.includes("--skip-hot");
+
+/**
+ * epoch-ms bigint → a UTC `timestamp` WITHOUT time zone (the repo-wide storage convention; see the
+ * schema.ts header). Spelled out rather than left to an implicit cast: `to_timestamp()` returns a
+ * `timestamptz`, and assigning that to a naive `timestamp` column converts it using the SESSION
+ * `TimeZone`. On a non-UTC session every folded share-token expiry and grant `created_at` would shift by
+ * the offset — silently, irreversibly, past the one-way door, and green under a `data_type LIKE
+ * 'timestamp%'` check. `AT TIME ZONE 'UTC'` makes the conversion session-independent.
+ */
+const msToTs = (col: string) =>
+  `(to_timestamp(${col}/1000.0) AT TIME ZONE 'UTC')`;
 
 // ── timing ledger ────────────────────────────────────────────────────────────
 const timings: { stage: string; ms: number }[] = [];
@@ -155,30 +174,45 @@ async function main() {
 
   // ── STAGE 5: config transform ────────────────────────────────────────────────
   await timed("stage5:config", async () => {
-    // 5a. area_bindings → point_id uuid (FK → points). Rename the legacy int point_id → point_id_legacy,
-    // add the uuid, backfill from (point_system_id, point_id_legacy) → point_info.point_uid. priority + role
-    // CHECK already exist (0034/0032). The int pair + old FK die in Phase 9.
-    await renameColumnIfExists(
-      exec,
-      "area_bindings",
-      "point_id",
-      "point_id_legacy",
-    );
+    // 5a. area_bindings gains the point UUID as a NEW, DARK, NULLABLE column `point_uid` (FK → points).
+    //
+    // ADDITIVE, deliberately. An earlier draft renamed the live int `point_id` → `point_id_legacy` and put
+    // the uuid in `point_id`. That is a SILENT TYPE FLIP: `schema.ts` declares `pointId: integer("point_id")`,
+    // so post-transform every drizzle reader keeps compiling and keeps returning a value — just the wrong
+    // kind, with no 42703 to trip over. Eight modules read the column (`lib/areas/bindings.ts`,
+    // `lib/areas/resolution.ts`, `lib/areas/create.ts`, `app/api/areas/route.ts`,
+    // `app/api/v4/areas/[id]/route.ts`, `lib/battery-provenance/load.ts`,
+    // `lib/battery-provenance/recompute.ts`, `lib/db/planetscale/battery-provenance-pg.ts`) and the failures
+    // are invisible: `PointManager._resolvePointsForViewable` builds `(system_id, id)` addresses from it
+    // (22P02, swallowed by `lib/dashboard/access.ts`'s per-area `catch {}` → the area silently contributes
+    // no points), and `buildSubscriptionsFromBindings` does `b.pointId.toString()` → a KV subscription
+    // registry keyed by uuid strings that no `updateLatestPointValue` will ever match.
+    //
+    // NULLABLE is the other half of "additive", and it is not optional. `point_uid` is absent from
+    // `areaBindings` in schema.ts, so neither INSERT site emits it — `lib/areas/create.ts` (area create /
+    // binding edit, reached from four /api/areas routes) and `lib/battery-provenance/register.ts`
+    // `ensureHelperBindings`. A NOT NULL with no default would therefore 23502 on the FIRST binding write
+    // after resume, on the irreversible side of the window (and `.onConflictDoNothing()` does not save the
+    // provenance path: NOT NULL is checked before conflict arbitration). Phase 9 tightens it in the same
+    // change that teaches the writers — cf. `lib/point/mint-point-uid.ts`, which exists precisely because
+    // migration 0030 made `point_info.point_uid` NOT NULL.
     await exec(
-      "ALTER TABLE area_bindings ADD COLUMN IF NOT EXISTS point_id uuid",
+      "ALTER TABLE area_bindings ADD COLUMN IF NOT EXISTS point_uid uuid",
     );
-    await exec(`UPDATE area_bindings ab SET point_id = pi.point_uid
-      FROM point_info pi WHERE pi.system_id = ab.point_system_id AND pi.id = ab.point_id_legacy AND ab.point_id IS NULL`);
+    await exec(`UPDATE area_bindings ab SET point_uid = pi.point_uid
+      FROM point_info pi WHERE pi.system_id = ab.point_system_id AND pi.id = ab.point_id AND ab.point_uid IS NULL`);
+    // Coverage guard only — every row that exists NOW must have resolved. Not a constraint (see above);
+    // rows inserted after resume legitimately carry NULL until Phase 9.
     if (
       (await scalar(
-        "SELECT count(*) FROM area_bindings WHERE point_id IS NULL",
+        "SELECT count(*) FROM area_bindings WHERE point_uid IS NULL",
       )) > 0
     )
-      throw new Error("area_bindings.point_id NULL after backfill");
-    await exec("ALTER TABLE area_bindings ALTER COLUMN point_id SET NOT NULL");
+      throw new Error("area_bindings.point_uid NULL after backfill");
+    // FK is safe on a nullable column — NULL always satisfies a foreign key.
     await exec(`DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='area_bindings_point_id_points_fk') THEN
-        ALTER TABLE area_bindings ADD CONSTRAINT area_bindings_point_id_points_fk FOREIGN KEY (point_id) REFERENCES points(id);
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='area_bindings_point_uid_points_fk') THEN
+        ALTER TABLE area_bindings ADD CONSTRAINT area_bindings_point_uid_points_fk FOREIGN KEY (point_uid) REFERENCES points(id);
       END IF; END $$`);
 
     // 5b. device_trackers → derivations (run-detector, output=intervals; source points by uuid); then
@@ -310,10 +344,13 @@ async function main() {
       "UPDATE dashboard_grants g SET dashboard_id_uuid = d.new_id FROM dashboards d WHERE d.legacy_id = g.dashboard_id",
     );
 
-    // Unify share_tokens: fold dashboard_share_tokens 1:1 (dashboard_id uuid + epoch-ms→timestamptz). Legacy
-    // owner-scoped tokens stay dashboard_id NULL through the fold; they are re-pointed at an auto-created
-    // dashboard AFTER the PK swap below (which needs dashboards.id to be uuid first), then dashboard_id is
-    // flipped NOT NULL. (Dropping owner_clerk_user_id + the *_ms columns is still Phase 9.)
+    // Unify share_tokens: fold dashboard_share_tokens 1:1 (dashboard_id uuid + epoch-ms→UTC `timestamp`).
+    // Legacy owner-scoped tokens stay dashboard_id NULL through the fold; they are re-pointed at an
+    // auto-created dashboard AFTER the PK swap below (which needs dashboards.id to be uuid first), then
+    // dashboard_id is flipped NOT NULL. (Dropping owner_clerk_user_id + the *_ms columns is still Phase 9.)
+    //
+    // The columns are `timestamp` WITHOUT time zone, per the repo-wide invariant (schema.ts header: all
+    // timestamps are naive, storing UTC) — see `msToTs` for why the conversion is spelled out.
     for (const c of [
       "dashboard_id uuid",
       "created_at timestamp",
@@ -322,9 +359,9 @@ async function main() {
       "last_used_at timestamp",
     ])
       await exec(`ALTER TABLE share_tokens ADD COLUMN IF NOT EXISTS ${c}`);
-    await exec(`UPDATE share_tokens SET created_at=to_timestamp(created_at_ms/1000.0),
-      expires_at=to_timestamp(expires_at_ms/1000.0), revoked_at=to_timestamp(revoked_at_ms/1000.0),
-      last_used_at=to_timestamp(last_used_at_ms/1000.0) WHERE created_at IS NULL AND created_at_ms IS NOT NULL`);
+    await exec(`UPDATE share_tokens SET created_at=${msToTs("created_at_ms")},
+      expires_at=${msToTs("expires_at_ms")}, revoked_at=${msToTs("revoked_at_ms")},
+      last_used_at=${msToTs("last_used_at_ms")} WHERE created_at IS NULL AND created_at_ms IS NOT NULL`);
     // The unified table drops owner_clerk_user_id + the epoch-ms columns; the legacy table still marks
     // owner_clerk_user_id + created_at_ms NOT NULL, which the owner-less/timestamptz fold can't satisfy.
     // Retire those NOT NULLs (the columns themselves die in Phase 9).
@@ -335,8 +372,8 @@ async function main() {
       "ALTER TABLE share_tokens ALTER COLUMN created_at_ms DROP NOT NULL",
     );
     await exec(`INSERT INTO share_tokens (token, dashboard_id, label, created_at, expires_at, revoked_at, last_used_at)
-      SELECT dst.token, d.new_id, dst.label, to_timestamp(dst.created_at_ms/1000.0),
-             to_timestamp(dst.expires_at_ms/1000.0), to_timestamp(dst.revoked_at_ms/1000.0), to_timestamp(dst.last_used_at_ms/1000.0)
+      SELECT dst.token, d.new_id, dst.label, ${msToTs("dst.created_at_ms")},
+             ${msToTs("dst.expires_at_ms")}, ${msToTs("dst.revoked_at_ms")}, ${msToTs("dst.last_used_at_ms")}
       FROM dashboard_share_tokens dst JOIN dashboards d ON d.legacy_id = dst.dashboard_id
       ON CONFLICT (token) DO NOTHING`);
 
@@ -420,12 +457,12 @@ async function main() {
       "clerk_user_id",
       "user_id",
     );
-    // created_at_ms (bigint) → created_at (timestamptz), mirroring the share_tokens fold. The _ms column
-    // dies in Phase 9; drop its NOT NULL so the timestamptz is the source of truth.
+    // created_at_ms (bigint) → created_at (UTC `timestamp`), mirroring the share_tokens fold. The _ms
+    // column dies in Phase 9; drop its NOT NULL so the timestamp is the source of truth.
     await exec(
       "ALTER TABLE dashboard_grants ADD COLUMN IF NOT EXISTS created_at timestamp",
     );
-    await exec(`UPDATE dashboard_grants SET created_at = to_timestamp(created_at_ms/1000.0)
+    await exec(`UPDATE dashboard_grants SET created_at = ${msToTs("created_at_ms")}
       WHERE created_at IS NULL AND created_at_ms IS NOT NULL`);
     await exec(
       "ALTER TABLE dashboard_grants ALTER COLUMN created_at SET NOT NULL",

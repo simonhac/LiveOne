@@ -133,6 +133,45 @@ async function ensureDeviceForHandle(
   return addrForHandle(handle, exec);
 }
 
+/** What an old integer handle names — either or both columns may be filled. */
+export interface HandleTargets {
+  /** `areas.id`, when this handle addresses an Area. */
+  areaId?: string;
+  /** The pre-minted device identity, when this handle addresses a physical device. */
+  deviceId?: DeviceId;
+}
+
+/**
+ * Resolve an old integer handle to whatever it names, WITHOUT the structural `isAreaHandle` DB probe.
+ *
+ * Today the polymorphic handle is disambiguated by `SystemsManager.isAreaHandle` — a lookup against
+ * `areas.legacy_system_id` — and an area handle is then rendered through the fabricated virtual system
+ * `synthesizeAreaView`. Phase 8 deletes both: `legacy_handles` already carries the authoritative mapping
+ * (backfilled by `backfill-foundation.ts`, kept current by `registry-populate.ts`), so the handle
+ * resolves in one indexed read and every device renders through its real area-of-one.
+ *
+ * Area-first, matching today's dispatch order: a handle that names BOTH (an area-of-one whose legacy id
+ * equals its device's) must resolve as the area, or a `?systemId=N` request would narrow from the area's
+ * bindings to the bare device. Callers land in Phase 8 — this is dark until then, and is also what backs
+ * the permanently-retained `?systemId=N` compatibility alias.
+ */
+async function resolveHandle(
+  handle: number,
+  exec: DeviceRegistryExec = requirePlanetscaleDb(),
+): Promise<HandleTargets | null> {
+  const [row] = await exec
+    .select({ areaId: legacyHandles.areaId, deviceId: legacyHandles.deviceId })
+    .from(legacyHandles)
+    .where(eq(legacyHandles.handle, handle))
+    .limit(1);
+  if (!row) return null;
+  if (row.areaId == null && row.deviceId == null) return null;
+  return {
+    ...(row.areaId != null ? { areaId: row.areaId } : {}),
+    ...(row.deviceId != null ? { deviceId: Device.encode(row.deviceId) } : {}),
+  };
+}
+
 /** Fill only the area column, preserving a colliding device mapping on the same handle. */
 async function ensureAreaForHandle(
   handle: number,
@@ -153,6 +192,7 @@ export const DeviceRegistry = {
   addrsForHandles,
   addrForDevice,
   addrsForDevices,
+  resolveHandle,
   ensureDeviceForHandle,
   ensureAreaForHandle,
 };
