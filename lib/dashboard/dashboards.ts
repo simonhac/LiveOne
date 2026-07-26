@@ -22,6 +22,7 @@ import {
   type DashboardV3,
 } from "./v3";
 import type { DashboardV4 } from "./v4";
+import { rewriteV3ToV4, pureAreaRef } from "./v3-to-v4";
 import { listGrantsForUser } from "./grants";
 
 export interface CompositionDashboard {
@@ -69,6 +70,18 @@ export async function createDashboard(args: {
   descriptor: DashboardV3;
 }): Promise<string> {
   try {
+    // config-v4: `doc` is NOT NULL (cutover shape) — build the v4 node tree from the descriptor. These
+    // create-path descriptors are empty or area-only (device-pinned cards arrive via the /api/v4 doc PUT),
+    // so `deviceRef` is never reached; it throws to catch a device card slipping in through this path.
+    const descriptor = normalizeDescriptor(args.descriptor);
+    const doc = rewriteV3ToV4(descriptor, {
+      areaRef: pureAreaRef,
+      deviceRef: () => {
+        throw new Error(
+          "createDashboard: device-pinned cards must be set via the v4 doc PUT, not the create descriptor",
+        );
+      },
+    });
     const [row] = await requirePlanetscaleDb()
       .insert(dashboards)
       .values({
@@ -78,7 +91,8 @@ export async function createDashboard(args: {
         ownerUserId: args.ownerClerkUserId,
         name: args.displayName,
         slug: args.alias ?? null,
-        descriptor: normalizeDescriptor(args.descriptor),
+        descriptor,
+        doc,
       })
       .returning({ id: dashboards.id });
     return Dashboard.encode(row.id);

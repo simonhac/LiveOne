@@ -660,11 +660,9 @@ export const dashboards = pgTable(
     name: text("name"),
     slug: text("slug"), // owner-unique shortname for /dashboard/{user}/{slug}; null = unnamed
     descriptor: jsonb("descriptor").notNull(),
-    // --- config-v4 dark columns (Phase 4, migration 0032; unread by the v3 app) ---
-    // The v4 node-tree document (clean-sheet §8). Coexists with `descriptor` (v3) through the
-    // dual-render window; `descriptor` is dropped at cutover. Nullable now (v3 dashboard creation
-    // omits it); populated by the dark v3→v4 rewriter, SET NOT NULL at cutover.
-    doc: jsonb("doc"),
+    // The v4 node-tree document (clean-sheet §8). ⚠️ config-v4 CUTOVER SHAPE — NOT NULL (transform stage 5d
+    // `ALTER COLUMN doc SET NOT NULL`); `createDashboard` builds it from the descriptor via rewriteV3ToV4.
+    doc: jsonb("doc").notNull(),
     // Whole-doc revision counter; bumped by the Phase-6 /api/v4 PUT. DEFAULT 1 so the untouched v3
     // insert path keeps working.
     revision: integer("revision").notNull().default(1),
@@ -810,9 +808,9 @@ export const areas = pgTable(
     displayTimezone: text("display_timezone").notNull(),
     // --- config-v4 dark columns (Phase 4, migration 0032; nullable/unread by the v3 app) ---
     // Canonical fixed-offset day-bucketing key (clean-sheet §7). Backfilled = timezone_offset_min;
-    // immutable after cutover except via an explicit re-bucket op. Nullable now (v3 `createArea`
-    // omits it); the cutover re-backfills residual NULLs and flips SET NOT NULL.
-    dayOffsetMin: integer("day_offset_min"),
+    // immutable after cutover except via an explicit re-bucket op. ⚠️ config-v4 CUTOVER SHAPE — NOT NULL
+    // (transform + backfill); `createArea` and the mint mirror (v4-mirror.ts) both supply it = tzOffset.
+    dayOffsetMin: integer("day_offset_min").notNull(),
     // Site-level configuration (export tariff, generator source, provenance).
     config: jsonb("config").$type<AreaConfig>(),
     // Per-Area physical location (the semantic layer's equivalent of HA's home-location
@@ -1193,9 +1191,11 @@ export const devices = pgTable(
     slug: text("slug"), // ← systems.alias
     model: text("model"),
     serial: text("serial"),
-    // Eager area: tz/location resolve HERE, not on the device. Nullable until registry-sync mints the
-    // areas-of-one and tightens it to NOT NULL.
-    primaryAreaId: uuid("primary_area_id").references(() => areas.id),
+    // Eager area: tz/location resolve HERE, not on the device. ⚠️ config-v4 CUTOVER SHAPE — NOT NULL
+    // (registry-sync mints the area-of-one; the mint mirror ensureDeviceRow supplies it on every insert).
+    primaryAreaId: uuid("primary_area_id")
+      .notNull()
+      .references(() => areas.id),
     config: jsonb("config").$type<DeviceConfig>(),
     adapterState: jsonb("adapter_state"), // ← systems.metadata
     commissionedOn: date("commissioned_on"),
