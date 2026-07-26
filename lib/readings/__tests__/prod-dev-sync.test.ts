@@ -87,8 +87,10 @@ describe("prod→dev readings transfer", () => {
 
   it("pins table order and the three hot-table sync policies", () => {
     const manifest = prodDevSyncManifest();
-    expect(manifest.map((table) => table.name)).toEqual([
+    const names = manifest.map((table) => table.name);
+    expect(names).toEqual([
       "systems",
+      "dashboards",
       "users",
       "user_systems",
       "polling_status",
@@ -99,7 +101,6 @@ describe("prod→dev readings transfer", () => {
       "area_devices",
       "area_bindings",
       "device_trackers",
-      "dashboards",
       "sessions",
       "point_readings",
       "point_readings_agg_5m",
@@ -107,6 +108,13 @@ describe("prod→dev readings transfer", () => {
       "point_readings_flow_attr_1d",
       "battery_provenance_daily",
     ]);
+    // dashboards' uuid PK is minted independently per environment (only legacy_id is stable), so it
+    // must sync BEFORE any table with an FK to dashboards.id — otherwise users.default_dashboard_id /
+    // share_tokens.dashboard_id copy a prod uuid that doesn't yet exist in dev.
+    expect(names.indexOf("dashboards")).toBeLessThan(names.indexOf("users"));
+    expect(names.indexOf("dashboards")).toBeLessThan(
+      names.indexOf("share_tokens"),
+    );
     expect(
       manifest
         .filter((table) => table.name.startsWith("point_readings"))
@@ -135,6 +143,63 @@ describe("prod→dev readings transfer", () => {
         onConflict: "update",
       },
     ]);
+  });
+
+  it("syncs dashboards via a legacy_id-keyed idDrift, not the retired serial mirror", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "dashboards",
+    )!;
+    expect(table).toMatchObject({
+      mode: "full",
+      onConflict: "update",
+      idDrift: {
+        uniqueKeys: [["legacy_id"], ["owner_user_id", "slug"]],
+        children: [],
+      },
+    });
+    expect(table).not.toHaveProperty("mirror");
+
+    const { prod, dev, devSql } = copyClients();
+    await syncTable(
+      prod,
+      dev,
+      table,
+      new Map([
+        [
+          "dashboards",
+          [
+            "id",
+            "legacy_id",
+            "owner_user_id",
+            "name",
+            "slug",
+            "descriptor",
+            "doc",
+            "revision",
+            "created_at",
+            "updated_at",
+          ],
+        ],
+      ]),
+      new Map([["dashboards", ["id"]]]),
+    );
+
+    const sql = devSql.at(-1)!;
+    expect(sql).toContain("CREATE TEMP TABLE _drift");
+    expect(sql).toContain("ANALYZE _drift");
+    expect(sql).toContain("d.legacy_id = s.legacy_id");
+    expect(sql).toContain(
+      "d.owner_user_id = s.owner_user_id AND d.slug = s.slug",
+    );
+    expect(sql).toContain("DELETE FROM public.dashboards d USING _drift");
+    expect(sql).toContain("ON CONFLICT (id) DO UPDATE");
+    expect(sql).toContain("COMMIT;");
+    // Regression guards: the retired serial-PK mirror mode must not resurface, and dashboards' own
+    // idDrift must never delete its FK children directly (they're all CASCADE/SET NULL already).
+    expect(sql).not.toContain("setval");
+    expect(sql).not.toContain("pg_get_serial_sequence");
+    expect(sql).not.toContain("DELETE FROM public.users");
+    expect(sql).not.toContain("DELETE FROM public.share_tokens");
   });
 
   it("fails closed before connecting when the write target is prod", async () => {

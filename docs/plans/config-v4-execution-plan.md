@@ -17,7 +17,13 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 8 ✅ DONE (2026-07-26) → Phase 9: post-cutover teardown
+## ▶ NEXT ACTION — Phase 9: PR 1 (sync FK fix) then PR 2 (areas TypeID uniformity)
+
+> **PHASE 8 IS COMPLETE.** Scoped by Simon 2026-07-26: Phase 9 splits into **PR 1** (the
+> sync-prod-to-dev FK fix, urgent — failing every 2h), **PR 2** (`areas` TypeID id-uniformity, full
+> flip incl. a descriptor data migration), and a separate **PR 3** (aesthetic changes, TBD). Everything
+> else from the original Phase 9 list moves to a new **Phase 10**. Full detail in the "Phase 9 —
+> Post-cutover teardown" section below. **Currently implementing PR 1.**
 
 > **PHASE 8 IS COMPLETE.** Prod is live on the config-v4 shape. `liveone-dev` cut over first (dress
 > rehearsal, Run 8), prod the same day (Run 9), via PR
@@ -195,7 +201,8 @@ and prebuild wiring remain as the permanent hard wall across `app`/`lib`/`script
 | 6 — `/api/v4/*` route surface                          | ✅ DONE (pre-cutover surface) | Dashboard CRUD/validation plus final TypeID-only area detail, eligibility, deterministic resolution, and authoritative default-group seeding. Migration 0034 + `db:backfill-config-v4` pre-mint stable device ids; refs are validated across areas/devices, share scope includes direct devices, SSR resolves/prefetches them, and missing devices render explicitly. `If-Match` is strict (malformed present values → 400). PR #234 is merged; cutover-era collection mutation routes/revisions/export/import remain deferred.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 7 — cutover rehearsal harness                          | ✅ DONE (PR #237)             | transform + parity/window harness validated on prod-restore PS-5 branches: T_window ~5min → single-window GO; parity 23/23 at Phase-7 close (Run 3; Group A's Run 4 = 36/36 + authz 9/9) — per-column checksums across ~21M rows + full stage-5 config transform incl. dashboards int→uuid PK swap + HWS. Run log → `config-v4-phase7-rehearsal-harness.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 8 — THE CUTOVER                                        | 🔄 IN PROGRESS (build done)  | #242 + Group A #243 + Group B0 dark-landed. **Group B BUILD DONE + validated** (branch `simonhac/config-v4-group-b-v2`): dashboards + sharing/grants uuid-native, DAO rid-flip, parity NOT-NULL alignment (on the areas renames). **Run 7 (prod restore): parity 61/61 · authz 13/13 · DAO-equivalence 215/215 · window GO.** Synthesis deletion (Item D) DEFERRED to Phase 9 (current code is already device-first, so D-l is a non-issue). Remaining: doc-reconcile + Group C window (dev first, prod next day). See [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md). Single windowed op; pauses materialization, not pollers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 9 — post-cutover teardown                              | ⬜ TODO                       |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 9 — post-cutover: sync fix + areas TypeID uniformity   | 🔄 IN PROGRESS                | Scoped 2026-07-26: PR 1 (sync-prod-to-dev FK fix, Option A2) + PR 2 (`areas` TypeID uniformity, Plan B full flip) + PR 3 (aesthetic, TBD); rest deferred to Phase 10. See § Phase 9.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 10 — deferred teardown                                  | ⬜ TODO                       | destructive teardown, Item D synthesis deletion, systems→devices rename, KV move, v4-native cards. See § Phase 10.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 Phases 0–6 all ship **dark**, behind the unchanged v3 app — each independently mergeable and reversible.
 
@@ -587,6 +594,125 @@ Shell.dataHandles`), `access.ts` v4-scope so a _shared_ v4 dashboard's `/api/dat
 
 ### Phase 9 — Post-cutover teardown
 
+**Scoped by Simon (2026-07-26): do #1 then #5 now, each its own PR; aesthetic changes are a separate
+PR3 (content TBD); everything else in the original Phase 9 list moves to a new Phase 10 (below).**
+
+#### PR 1 — sync-prod-to-dev FK fix (#1, urgent — actively failing every 2h)
+
+**Problem** (found live in the Group C window, 2026-07-26): re-enabling `sync-prod-to-dev.yml` post-cutover,
+its small-config-table leg fails: `insert or update on table "users" violates foreign key constraint
+"users_default_dashboard_id_dashboards_fk"`. Root cause: pre-cutover `dashboards.id` was a stable serial
+int; Group B made it `gen_random_uuid()`, minted independently by each environment's own `config-transform`
+run — prod's and dev's uuids for "the same" dashboard are unrelated values (only `dashboards.legacy_id` is
+stable cross-environment). The sync copies `users.default_dashboard_id` (a uuid FK) verbatim from prod,
+which doesn't exist in dev's `dashboards`. `share_tokens.dashboard_id` (NOT NULL) is the identical bug,
+one step behind. Not caught by any rehearsal (single-environment; this is a two-environment interaction).
+
+**Decided approach — Option A2, not a `legacy_id` FK-remap.** Rather than keep dev's own dashboard uuids
+and remap the FK columns via a `legacy_id` bridge (A1 — the originally-sketched fix), make dev **adopt**
+prod's dashboard uuids via a `legacy_id`-keyed `idDrift` (the existing, tested mode already used for
+`areas`/`point_info`): reorder `dashboards` ahead of `users`/`share_tokens` in the sync manifest, sync it
+with `idDrift: { uniqueKeys: [["legacy_id"], ["owner_user_id","slug"]], children: [] }` (children empty —
+every FK to `dashboards.id` is CASCADE/SET NULL), and delete the now-broken serial `mirror` leg (its
+`setval(pg_get_serial_sequence(...), ...)` errors on a uuid PK). Then `users.default_dashboard_id` and
+`share_tokens.dashboard_id` copy verbatim — no per-column remap needed, and `legacy_id = NULL`
+(post-cutover) dashboards fall through to a clean insert instead of being unbridgeable (A1's fatal gap
+for `share_tokens`, which is NOT NULL). Self-quiescing: once dev converges onto prod's uuids the drift
+filter is empty and later syncs are a plain upsert.
+- Changes in `lib/readings/prod-dev-sync.ts`: reorder `FULL` (`dashboards` to position 2, ahead of
+  `users`/`share_tokens`); replace the `dashboards` manifest entry as above; delete the dead `mirror`
+  mode entirely (field, narrowing, and branch — `dashboards` is its only user).
+- Companion fix (same PR): `scripts/utils/reown-dev-data.ts` still references `dashboards.clerk_user_id`
+  (renamed `owner_user_id` at cutover) — masked today because the sync fails first; once fixed the
+  `db:reown-dev` leg would red one step later. Rename it in this PR.
+- Tests in `lib/readings/__tests__/prod-dev-sync.test.ts`: updated manifest-order assertion; new shape
+  assertion for the `dashboards` entry (`idDrift`, no `mirror`); an ordering invariant
+  (`dashboards` before `users`/`share_tokens`); a leg-SQL test asserting the drift/upsert SQL and the
+  *absence* of `setval`/`pg_get_serial_sequence` (regression guard).
+- Verification (writes to dev only — prod role is `pg_read_all_data`; `syncProdToDev` fails closed if
+  the write target resolves to prod): `npm run db:sync-dev-db` exits 0; on dev all four orphan-FK checks
+  (`users`, `share_tokens`, `dashboard_grants`, `dashboard_revisions` → `dashboards`) return 0;
+  `legacy_id ↔ id` matches row-for-row across prod/dev; a second sync run is a stable no-op.
+
+**✅ Landed + verified live (2026-07-26/27).** Ran `npm run db:sync-dev-db` against a short-TTL
+`pg_read_all_data` prod role and `liveone-dev` (revoked after). Confirmed **the reported bug is fixed
+and durably committed**: `systems`/`dashboards`/`users`/`user_systems`/`polling_status`/`share_tokens`/
+`roles` all synced cleanly (0 orphan FKs on `users.default_dashboard_id` / `share_tokens.dashboard_id`;
+dev's `dashboards.legacy_id ↔ id` matches prod row-for-row). Two more masked bugs found and fixed the
+same way (both were dead code paths — never reached because the sync failed at `users` before this
+point): the `areas` `idDrift` step still referenced pre-cutover column names
+(`owner_clerk_user_id`/`alias`, renamed to `owner_user_id`/`slug`) that no longer exist, and its
+`children` list predates migration 0033's `legacy_handles` (an `area_id` FK with no `ON DELETE`, so an
+uncleared row now blocks a drifted area's delete) — both fixed in `prod-dev-sync.ts`.
+`reown-dev-data.ts` had the equivalent stale-rename bugs on `areas.owner_clerk_user_id` and
+`dashboards.clerk_user_id`, plus `dashboard_grants`' own cutover reshape (`clerk_user_id→user_id`,
+`created_at` now NOT NULL, PK-based conflict target) — all fixed.
+
+**Found but deliberately NOT fixed — flagged for a follow-up, not blocking this PR:** running the sync
+against real data surfaced a materially deeper, separate issue. 4 areas (handles 15, 16, 10000, 10001)
+have drifted uuids (same independent-mint pattern as dashboards) and now own real `devices` rows
+(config-v4's dark v4-registry mirror, populated on dev by a *different* script, `registry-sync.ts`, not
+this sync). `devices.primary_area_id`/`derivations.area_id` are NOT NULL/RESTRICT, so the drifted
+area's delete is blocked — but naively adding them as `idDrift` children is unsafe: `area_bindings`
+(area 7/8/13/1000002's real, currently-used bindings) cross-references those same devices' `points` via
+the dark, unconsumed `point_uid` column, so deleting `points`/`devices` would cascade into deleting
+*other, unrelated* areas' live binding rows. Needs its own considered design (e.g. null-out-not-delete
+the dark `point_uid` column, or a coordinated `registry-sync.ts` re-run after the realignment) — tracked
+under Phase 10 (the dark v4-registry mirror is Phase-10-owned territory already). Net effect today:
+those 4 areas' rows on dev remain un-realigned (their divergent local uuids persist); every other table
+in the manifest, including the originally-reported bug's tables, syncs cleanly.
+
+#### PR 2 — Full TypeID id-uniformity for `areas` (#5, Plan B — full flip incl. data migration)
+
+Flip `areas`' internal representation from the raw uuid to the opaque `ar_` (raw uuid confined to the
+areas data layer, matching point/device/dashboard) across **all ~11** legacy `/api/areas/*` routes,
+including the two that were previously going to be excluded as "impure": the persisted v3 dashboard
+descriptor (`AreaSectionV3.areaId`, raw uuid today) is data-migrated to `ar_`, and the client/server
+consumers of it move in lockstep. **Correction to the original claim below** ("pure code change… no
+doc/data migration"): that's only true for the self-contained area-builder routes
+(`POST/GET /api/areas`, `[areaId]` GET/PATCH/DELETE, `bindings`, `devices`); the dashboard-composition
+routes (`readable`, `default-section`, `provenance-summary`, `provenance-daily`, `recompute-provenance`,
+`by-handle`) are joined against the persisted descriptor and do require the migration below. Simon chose
+the full flip (Plan B) over scoping to the pure-code subset. See memory `config-v4-id-typeid-seam`.
+
+**Decoupling lever:** a read-normalize in the descriptor loader (`rowToDashboard`,
+`lib/dashboard/dashboards.ts`) rewrites `section.areaId` → `ar_` on read, and dual-accept decode
+(`areaRefToUuid`, new `lib/areas/ref.ts`) is used at every route/scope seam. So the code deploy and the
+one-off data migration need no simultaneity and produce no broken window — the code is correct against
+both descriptor forms from the moment it deploys; the migration is a cleanup that can run after.
+
+- **Commit 1** — shared primitives: `lib/areas/ref.ts` (`areaRefToUuid`, `areaRefToArId`,
+  `encodeDescriptorAreaRefs`); make `pureAreaRef` (`lib/dashboard/v3-to-v4.ts`) dual-accept.
+- **Commit 2** — decode seam + area-builder flip: `loadAreaForOwner` in `lib/areas/http.ts` (400
+  malformed / 404 unknown / 403 not-owner); encode `ar_` on output in the builder routes + admin SSR
+  feed (`lib/admin/get-areas-data.ts`); `ReadableArea.id` stays raw uuid below the seam.
+- **Commit 3** — dashboard-composition route flip (decode input, encode output, incl. the raw-SQL
+  `WHERE area_id = ${uuid}` cases) + `dashboardAreaUuids` (`lib/dashboard/composition.ts`) decode + the
+  `rowToDashboard` read-normalize + SSR prop encoding (`app/dashboard/[...slug]/page.tsx`) + the one
+  DARK `node-view.tsx` line + the battery-provenance-history card normalizing to `ar_` at its boundary.
+  Helper device `vendorSiteId = helper:area:<raw uuid>` stays raw (below the seam; device identity, not
+  a public area id) — only its wire-adjacent card consumer normalizes.
+- **Commit 4** — the persisted descriptor migration: `scripts/config-v4/rewrite-descriptor-area-refs.ts`
+  (a `tsx` one-off modeled on `scripts/config-v4/backfill-foundation.ts` — data, not schema, so not a
+  drizzle migration), idempotent, dry-run default, row/section-count validation before any write, run on
+  dev then (after a prod backup) on prod.
+- **Commit 5 (deferred to Phase 10)** — once prod is confirmed 100% `ar_`, drop the dual-accept/
+  read-normalize and tighten route decode to strict.
+- Tests: `lib/areas/__tests__/ref.test.ts` and `http.test.ts` (new — the biggest existing coverage gap
+  is no test for `lib/areas/http.ts` or any `/api/areas/*` route); `dashboard-area-uuids.test.ts` fixtures
+  flipped to `Area.encode`; route round-trip tests (`ar_` in → raw uuid predicate → `ar_` out; malformed
+  → 400; no raw uuid in any response body).
+- Verification (dev, JWT auth via `scripts/utils/get-test-token.ts` — `x-claude` is insufficient for
+  Clerk-gated routes): run the migration; load a dashboard with areas + the battery-provenance-history
+  card; exercise "Add existing area", Recompute, and dashboard creation seeded from an area; DevTools
+  wire audit confirms no raw uuid on any `/api/areas/*` or `/api/dashboards/*` response.
+
+#### PR 3 — aesthetic changes
+
+Separate PR; content TBD by Simon.
+
+#### Phase 10 — deferred teardown (moved from the original Phase 9 list)
+
 - After the backlog drains and a validation window passes: drop `_old` hot tables; drop the
   `(system_id,index)→point_rid` backlog-drain map; drop `systems`/`point_info`/`roles`/
   `user_systems`/legacy token tables; delete dead handle-era code. Keep **permanently**:
@@ -598,30 +724,29 @@ Shell.dataHandles`), `access.ts` v4-scope so a _shared_ v4 dashboard's `/api/dat
   precedence = device-first (locked)** — and since today's `getViewableSystem`/`isAreaHandle` are already
   real-row-first (= device-first), this is behaviour-preserving; keep the area-of-one + handle-13
   parity test as the gate. Deferred out of Group B because it is net-zero on auth and `systems`-bound.
-- **Full TypeID id-uniformity for `areas`.** Flip `areas`' internal representation from the raw uuid to
-  the opaque `ar_` (raw uuid confined to the areas data layer, matching point/device/dashboard); migrate
-  the ~11 legacy `/api/areas/*` routes off raw-uuid URLs. Pure code change — dashboard docs already store
-  `ar_`/`dv_` refs, so no doc/data migration. See memory `config-v4-id-typeid-seam`.
+- **`systems`→`devices` code rename + KV keyspace move + `user_systems`/`isViewer` drop** — the elective
+  renames deferred from Group B.
 - **Queued v4-native card work (build here, once the registries are unified — NOT before):** port
   the standalone HWS 7-day stripe timeline (`/labs/kinkora-hws`) into a generic `daily-stripe` card
   and the selectable-series heatmap (`/device/{id}/heatmap`) into a `heatmap` card, so both can be
-  dropped into any area. Deferred to Phase 9 deliberately — building them in the v3 idiom now would
+  dropped into any area. Deferred deliberately — building them in the v3 idiom now would
   need throwaway `CardV3`/`synthCardV3` scaffolding AND a `v3-to-v4.ts rewriteCard` config-forwarding
   edit (it forwards config per-type, so a v3-placed new card's config is dropped at cutover). See
   [hws-stripe-and-heatmap-cards.md](hws-stripe-and-heatmap-cards.md).
-- **Fix `sync-prod-to-dev-db.ts`'s `users.default_dashboard_id` FK violation (found live in the Group
-  C window, 2026-07-26).** Re-enabling the sync workflow post-cutover, its small-config-table leg
-  failed: `insert or update on table "users" violates foreign key constraint
-  "users_default_dashboard_id_dashboards_fk"`. Root cause: pre-cutover `dashboards.id` was a stable
-  serial int; Group B made it `gen_random_uuid()`, minted independently by each environment's own
-  `config-transform` run — prod's and dev's uuids for "the same" dashboard are unrelated values (only
-  `dashboards.legacy_id` is stable cross-environment). The sync copies `users.default_dashboard_id`
-  (a uuid FK) verbatim from prod, which doesn't exist in dev's `dashboards`. Not caught by any
-  rehearsal (single-environment; this is a two-environment interaction). Fix likely resolves
-  `default_dashboard_id` via a `legacy_id` lookup into the target environment's own dashboard row,
-  mirroring the `/dashboard/id/{n}` redirect's existing pattern. Prod itself is unaffected; only the
-  dev-mirror config-table sync is blocked (data-plane reading sync is unaffected) until fixed —
-  `sync-prod-to-dev.yml` will keep alerting red every 2h in the meantime.
+- **From PR2 (#5):** the optional Commit-5 tightening (drop dual-accept/read-normalize once prod is
+  confirmed 100% `ar_`), and the separate `/api/data` `system.vendorSiteId` raw-uuid wire leak (a
+  different surface — device field, not an area id — noticed but out of scope for PR2).
+- **From PR1 (#1), found live 2026-07-26/27, deliberately not fixed there:** the `areas` `idDrift`
+  step in `prod-dev-sync.ts` can't safely realign a drifted area that owns real `devices`/`points`
+  (config-v4's dark v4-registry mirror, populated on dev by the separate `registry-sync.ts`, not this
+  sync) — `devices.primary_area_id`/`derivations.area_id` are NOT NULL/RESTRICT, and
+  `area_bindings.point_uid` (dark, unconsumed by the app) can cross-reference a point owned by a device
+  under a DIFFERENT, unrelated area, so a naive clear-and-delete would destroy live bindings belonging
+  to other areas. Needs a considered fix (e.g. null-out-not-delete the dark `point_uid` column before
+  clearing `points`/`devices`, or a coordinated `registry-sync.ts` re-run against dev after the
+  realignment) — squarely in the same dark-v4-registry territory as the rest of this phase. Currently
+  4 areas (handles 15, 16, 10000, 10001) sit un-realigned on dev as a result; every other manifest
+  table (incl. `dashboards`/`users`/`share_tokens`, the originally-reported bug) syncs cleanly.
 
 ## Collection continuity (no ingest freeze — verified)
 

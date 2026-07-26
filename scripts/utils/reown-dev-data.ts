@@ -31,13 +31,14 @@ import { Client } from "pg";
 // below (copy prefs, don't rename) to avoid a collision when both the prod and dev user rows exist.
 //
 // GRANT tables (`user_systems`, `dashboard_grants`) are deliberately NOT here. They are access grants
-// with a COMPOSITE UNIQUE key — `(clerk_user_id, system_id)` / `(dashboard_id, clerk_user_id)` — not
-// ownership. Two reasons they must stay out of the ownership remap:
+// with a COMPOSITE key — `(clerk_user_id, system_id)` unique / `(dashboard_id, user_id)` PK (config-v4
+// renamed dashboard_grants.clerk_user_id -> user_id and promoted its unique index to the table PK) —
+// not ownership. Two reasons they must stay out of the ownership remap:
 //   1. Redundant: dev-you already sees the data by OWNING it (the systems/dashboards/areas owner
 //      columns below remap to the dev id); an extra grant for the dev id buys nothing.
 //   2. Harmful: `UPDATE ... SET clerk_user_id = <dev>` collides with the row a previous run's
 //      grant-back already created for that (user, system/dashboard) pair → a duplicate-key abort
-//      (`user_system_unique` / `dashboard_grants_dashboard_user_unique`) that failed the sync every
+//      (`user_system_unique` / the `dashboard_grants_pk` composite PK) that failed the sync every
 //      steady-state run, drifting `liveone-dev`.
 // The PROD id's read-back access is handled purely additively by the ON CONFLICT DO NOTHING
 // grant-back below — which is the ONLY thing that should touch these two tables.
@@ -47,7 +48,8 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     { table: "share_tokens", col: "owner_clerk_user_id" },
     // Legacy per-system dashboards (and their `system_id` column) were dropped in the P6 demolition
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
-    { table: "dashboards", col: "clerk_user_id" },
+    // config-v4 cutover renamed clerk_user_id -> owner_user_id.
+    { table: "dashboards", col: "owner_user_id" },
     // Only reown areas whose handle IS a real `systems` row. An orphan/composite handle (a multi-device
     // area with no `systems` row, e.g. a "Unified" area) is readable ONLY via ownership —
     // `getSystemsVisibleByUser` excludes area views and `user_systems` grants inner-join `systems`, so
@@ -57,7 +59,8 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // systems grant-back below.
     {
       table: "areas",
-      col: "owner_clerk_user_id",
+      // config-v4 cutover renamed owner_clerk_user_id -> owner_user_id.
+      col: "owner_user_id",
       where: "legacy_system_id IN (SELECT id FROM systems)",
     },
   ];
@@ -160,11 +163,14 @@ async function main() {
         );
       }
       try {
+        // config-v4 cutover reshaped dashboard_grants: clerk_user_id -> user_id, created_at_ms ->
+        // created_at (NOT NULL, naive UTC), and (dashboard_id, clerk_user_id) is now the table's
+        // composite PK `dashboard_grants_pk` (dashboard_id, user_id) rather than a separate unique index.
         const dashGrant = await c.query(
-          `INSERT INTO dashboard_grants (dashboard_id, clerk_user_id, role, created_at_ms)
-             SELECT id, $1, 'viewer', (extract(epoch from now()) * 1000)::bigint
-               FROM dashboards WHERE clerk_user_id = $2
-             ON CONFLICT (dashboard_id, clerk_user_id) DO NOTHING`,
+          `INSERT INTO dashboard_grants (dashboard_id, user_id, role, created_at)
+             SELECT id, $1, 'viewer', now()
+               FROM dashboards WHERE owner_user_id = $2
+             ON CONFLICT (dashboard_id, user_id) DO NOTHING`,
           [from, to],
         );
         if (dashGrant.rowCount)
