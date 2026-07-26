@@ -33,11 +33,14 @@ unless noted; the verifying check is named where one exists.
 | **D-k** | **the first fix for D-i was itself a defect.** `point_uid` was added `NOT NULL` with no default — but `schema.ts` does not declare the column, so neither drizzle INSERT site (`lib/areas/create.ts`, reached from four `/api/areas` routes; `lib/battery-provenance/register.ts` `ensureHelperBindings`) emits it. Every binding write after resume would 23502, on the irreversible side. `.onConflictDoNothing()` does not help: NOT NULL is checked before conflict arbitration. Found by review, not by any check — **no check in the suite had ever attempted a write**. | first area create / binding edit / provenance-helper registration after resume | column left NULLABLE until Phase 9 tightens it alongside the writers (cf. `lib/point/mint-point-uid.ts`, which exists for exactly this reason on `point_info.point_uid`) | `parity-check.ts` **W-series**: for every transform-touched table, no column is NOT-NULL-without-a-default unless `schema.ts` declares it |
 | **D-j** | **a false-green inside the anti-false-green suite.** `parity-check`'s *"5d grants created_at is timestamptz"* asserted `data_type LIKE 'timestamp%'` — which matches both types, so it could not fail on the thing it was named after. Separately, the epoch-ms backfill used `to_timestamp(ms/1000.0)` (a `timestamptz`) assigned to a naive `timestamp` column: an implicit cast that reads the SESSION `TimeZone`, never pinned. | a non-UTC session ⇒ every folded token expiry / grant timestamp shifts by the offset, silently | `msToTs()` in `config-transform.ts` spells the conversion as `… AT TIME ZONE 'UTC'`; `parity-check.ts` asserts `data_type = 'timestamp without time zone'` exactly, plus a value-level re-derivation from the surviving `_ms` column | `parity-check.ts` "created_at == created_at_ms (UTC, no offset drift)" |
 
-| **D-l** | **`resolveHandle` is area-FIRST, and handle 13 is BOTH a real device and a multi-member area** — so deleting virtual-system synthesis silently RE-POINTS it. Today `getViewableSystem(13)` finds `systems.id=13` first and returns the device's 12 own points (all on system 13). After the deletion, `legacy_handles` row 13 (which carries **both** `area_id` and `device_id`) resolves area-first and expands the area's 12 bindings — **6 points on system 13 + 6 on system 16** (the derived helper). Net: 6 system-13 points DROP OUT of dashboard `legacy_id=7`'s scope and 6 system-16 points enter. A silent scope change on a shared dashboard, in the direction that removes access. | first resolution of handle 13 after the synthesis deletion (Group B), not at the transform | Group B: decide the precedence deliberately — device-first for handles that are both, or accept the area expansion and re-baseline. NOT yet fixed. | `authz-check` AC1 will fail "descriptor ⊆ doc" by exactly 6 points on dashboard `legacy_id=7`; verified on rehearse-6: `systems row: 1 · area members: 2 · bindings: 12 (6→sys13, 6→sys16)`, `legacy_handles.handle=13` has both ids |
+| **D-l** | **`resolveHandle` is area-FIRST, and handle 13 is BOTH a real device and a multi-member area** — so deleting virtual-system synthesis silently RE-POINTS it. Today `getViewableSystem(13)` finds `systems.id=13` first and returns the device's 12 own points (all on system 13). After the deletion, `legacy_handles` row 13 (which carries **both** `area_id` and `device_id`) resolves area-first and expands the area's 12 bindings — **6 points on system 13 + 6 on system 16** (the derived helper). Net: 6 system-13 points DROP OUT of dashboard `legacy_id=7`'s scope and 6 system-16 points enter. A silent scope change on a shared dashboard, in the direction that removes access. | first resolution of handle 13 after the synthesis deletion (Group B), not at the transform | **RESOLVED (2026-07-26): Item D deferred to Phase 9, so D-l never fires.** Today's `getViewableSystem`/`isAreaHandle` are already real-row-FIRST (= device-first), so handle 13 already resolves to the device (12 sys13 pts) — the locked device-first behaviour. The `resolveHandle` area-first switch only happens WHEN synthesis is deleted; deferring that to Phase 9 (it reads `systems`, dropped there) keeps device-first with nothing to re-point or re-baseline. Run 7 confirmed authz-check AC1 green (0 lost points). | ~~`authz-check` AC1 will fail "descriptor ⊆ doc" by exactly 6 points on dashboard `legacy_id=7`~~ (would only fire post-deletion; deferred); verified on rehearse-6: `systems row: 1 · area members: 2 · bindings: 12 (6→sys13, 6→sys16)`, `legacy_handles.handle=13` has both ids |
 
-D-l is the one entry in this table that is **not yet fixed** and does not fire at the transform — it fires when
-Group B deletes the synthesis. It is listed here because it is the only handle in the fleet that is
-simultaneously a real device and a multi-member area, so no amount of testing the other 19 handles finds it.
+D-l does not fire at the transform — it fires ONLY when the synthesis is deleted. **It is now resolved by
+deferring that deletion (Item D) to Phase 9** (2026-07-26): today's dispatch is already device-first, so
+handle 13 already resolves to the device — exactly the locked D-l precedence, with nothing to re-point.
+It is listed here because it is the only handle in the fleet that is simultaneously a real device and a
+multi-member area, so no amount of testing the other 19 handles finds it. Run 7 verified AC1 green
+(`descriptor ⊆ doc`, 0 lost points) with synthesis intact.
 
 D-h, D-i and D-j were found by the Group-B pre-flight pass (2026-07-25) and are fixed in that batch. All
 three share the shape that makes this table worth keeping: **each was invisible to a green suite**, and two
@@ -155,11 +158,16 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
   (Cloudflare-dispatched — `_old` retention roughly doubles hot-table counts, so durable-verify's row-count
   reference will alert) and `sync-prod-to-dev.yml` (`20 */2 * * *`).
 
-0. **Capture the authz baseline — BEFORE anything else writes.** `authz-check.ts --snapshot` records each
-   dashboard's v3 `descriptor` point-scope while the v3 resolver can still read the v3 `areas` columns,
-   keyed on the int PK that stage 5c freezes into `legacy_id`. **After stage 2 renames `areas.display_name`
-   this resolution is impossible**, so skipping this step permanently forfeits AC1 — and, worse, AC1 then
-   passes vacuously (Run 4's false green). The capture refuses to persist a zero-point scope.
+0. **Capture the authz baseline — BEFORE anything else writes, ON THE STILL-DEPLOYED PRE-CUTOVER BUILD.**
+   `authz-check.ts --snapshot` records each dashboard's v3 `descriptor` point-scope while the v3 resolver
+   can still read the v3 `areas` columns, keyed on the int PK that stage 5c freezes into `legacy_id`.
+   ⚠️ **Run it with the CURRENTLY-DEPLOYED (pre-cutover) code, not the cutover build** — the resolver reads
+   the RENAMED `areas` columns, so the cutover build 42703s against the pre-transform DB and the per-area
+   `catch{}` vacates the scope (Run 7 finding). In prod the cutover build is not deployed until S7, so this
+   is automatic; a single-branch rehearsal must `git checkout origin/main` for this step, then transform +
+   verify with the cutover branch. **After stage 2 renames `areas.display_name` this resolution is
+   impossible**, so skipping this step permanently forfeits AC1 — and, worse, AC1 then passes vacuously
+   (Run 4's false green). The capture refuses to persist a zero-point scope.
 
    ```bash
    CONFIG_V4_TARGET=prod ALLOW_PROD_DB_IN_DEV=true PLANETSCALE_DATABASE_URL="<prod url>" \
@@ -255,19 +263,44 @@ the **first** point of no return; the hot rename-swap (stage 4, run last) is the
   **Explicitly OUT (→ Phase 9):** the `systems`→`devices` code rename, the KV keyspace move, the
   `user_systems`/`isViewer` drop, the `sessions`/`outbox` column renames.
 
-  **Progress — branch `simonhac/config-v4-group-b`.** The `areas` renames are **DONE and verified**
-  (`c4f2e8e0`: schema.ts + 15 call-site files; on rehearse-6 `authz-check` 13/13 **non-vacuously**, parity
-  `W areas insertable` green, 0 tsc errors, 114 tests). That commit is also the fix for Run 5's AC1
-  "lockout" — `fetchAreaByHandle` (`lib/systems-manager.ts:116`) used a projection-less `.select()`, so
-  drizzle expanded the stale column list, raised 42703, and `access.ts`'s per-area `catch {}` swallowed it;
-  no data was ever lost. Dashboards-uuid-native is **started and stashed** (29 → 20 errors; the remainder are
-  `parseInt`/`isNaN` id-parse sites that need uuid validation — list in
-  `.context/groupb-dashboards-worklist.txt`). DAO rid-flip, sharing/grants unification and the synthesis
-  deletion are untouched. ⚠️ **This branch must not reach `main` before the window** — `schema.ts` now names
-  post-transform columns that untransformed prod does not have.
+  **Progress — branch `simonhac/config-v4-group-b-v2` — BUILD DONE + VALIDATED (2026-07-26).** All of
+  Group B is built and green, on top of the `areas` renames (`c4f2e8e0`, also the fix for Run 5's AC1
+  "lockout": `fetchAreaByHandle` used a projection-less `.select()`):
+  - **`09838094` dashboards + sharing/grants uuid-native** — all `db_↔uuid` translation confined to the
+    DAO seam via a new codec primitive `EntityCodec.toUuidOrNull` (routes/pages/components pass an opaque
+    handle, never touch `lib/ids`); legacy owner-scoped share tokens retired; `/dashboard/id/{n}` → 308.
+  - **`45cc9e2f` DAO rid-flip** — 23 `// SEAM:` sites + the 6 external → `point_rid` twins.
+  - **`c5b8b626` parity NOT-NULL alignment** — `dashboards.doc`/`areas.day_offset_min`/
+    `devices.primary_area_id` (the mint mirror already supplies the latter two; `createDashboard` now
+    builds the doc via `rewriteV3ToV4`).
+  - **Synthesis deletion (Item D) — DEFERRED to Phase 9** (device-first is already the status quo; see
+    the D-l row) — so the "decide D-l precedence" work above is moot for Group B.
+  - **Run 7 (today's prod restore): parity 61/61 · authz-check 13/13 · DAO-equivalence 215/215 · window
+    ✅ GO.** A new `dao-equivalence` sweep (the sweep noted above) validated the rid-flip point- and
+    device-keyed. Each `type-check` + full unit suite (1224) + `build:local` green.
+  - ⚠️ **This branch must not reach `main` before the window** — `schema.ts` names post-transform columns.
+  - **Pending before the window:** device-keyed `EXPLAIN (ANALYZE,BUFFERS)` on the twin (Run 7's ad-hoc
+    equivalence sweep was slow due to sequential round-trips, not a bad plan — confirm during the dev
+    dress-rehearsal); rebase onto current `main` (drops the #246-duplicate commits).
 - **Group C — the WINDOW (ops).** Schedule; run the ordered steps above; `liveone-dev` first, prod next day.
 
 ## Verification
+
+**Run 7 — DONE (2026-07-26), full Group-B build in: parity 61/61 · authz-check 13/13 · DAO-equivalence
+215/215 · window ✅ GO (5.3 min × 3 = 15.9 min).** Every Run-5 red is now green: the 4 W-series
+(schema.ts flipped) + the 3 AC1-vacuity reds. The rid-flip is validated by a new `dao-equivalence` sweep
+(`scripts/temp/dao-equivalence.ts`, gitignored): the flipped DAO's point- and device-keyed reads ==
+independent twin reads keyed on each point's real rid (which, with parity's twin==`_old` checksums, proves
+the flip preserves the pre-flip semantics). Item D (synthesis deletion) is deferred, so D-l does not fire.
+
+> **Run-7 RUNBOOK FINDING — capture the AC1 snapshot on the PRE-CUTOVER build.** `authz-check --snapshot`
+> resolves the v3 descriptor leg through `resolveDashboardReadPoints` → `getViewableSystem` → the AREA path,
+> which reads the RENAMED `areas` columns. Run from the CUTOVER branch against a pre-transform DB, those
+> columns don't exist → 42703 → `access.ts`'s per-area `catch{}` vacates the scope (the area-path dashboards
+> resolve to 0 → the non-vacuity guard refuses). The real window is immune because **step 0 runs on the
+> still-deployed prod (pre-cutover) build**, before the cutover build deploys at S7. A single-branch
+> rehearsal must therefore `git checkout origin/main` for step 0 (main-code snapshot = 62 points,
+> non-vacuous), then transform + verify with the cutover branch. Add this to the ordered steps' step 0.
 
 **Run 5 — DONE (2026-07-26): parity 48/52 · authz 10/13 · window ✅ GO · D-f finally exercised.** Full
 detail in [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md). The config-first

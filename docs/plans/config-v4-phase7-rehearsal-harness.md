@@ -375,6 +375,28 @@ point, owner-token re-point preserves the kinkora `load.hws` scope, no widening,
 Ownership trap fired as documented: the 3 twin tables were owned by the temp role until
 `pscale role reassign … --successor postgres`. Branch retained as the Group B build target.
 
+### Run 7 (2026-07-26) — full Group-B build in: parity 61/61 · authz 13/13 · DAO-equivalence 215/215 · GO
+
+First run with the complete Group-B build (dashboards + sharing/grants uuid-native, DAO rid-flip, parity
+NOT-NULL alignment) on branch `simonhac/config-v4-group-b-v2`, against a fresh PS-5 restore of the current
+prod backup (`7g3zpwycgh8a`). Every Run-5 red is now green:
+
+- **parity 61/61** — the 4 W-series schema.ts reds cleared (model + writers flipped) and the 3 NOT-NULL
+  reds cleared (`doc`/`day_offset_min`/`primary_area_id`). All C2 content checksums byte-identical.
+- **authz-check 13/13** — AC1 non-vacuous (62-point pre-transform baseline) + no lockout
+  (`descriptor ⊆ doc`, 0 lost points), AC2a–d, AC3. Item D (synthesis deletion) deferred → D-l never fires.
+- **DAO-equivalence 215/215** — a new sweep (`scripts/temp/dao-equivalence.ts`, gitignored): the flipped DAO's
+  point- and device-keyed reads == independent twin reads keyed on each point's real rid. With parity's
+  twin==`_old`, this proves the rid-flip preserves the pre-flip semantics.
+- **window GO** — `T_window` 5.3 min × 3 = 15.9 min ≤ 30.
+
+**Runbook finding (added to the Phase-8 ordered steps' step 0):** `authz-check --snapshot` must be captured
+on the still-deployed **pre-cutover** build — its resolver reads the renamed `areas` columns, so from the
+cutover branch against a pre-transform DB it 42703s and vacates the scope. A single-branch rehearsal must
+`git checkout origin/main` for step 0, then transform + verify with the cutover branch. (Deferred to the dev
+dress-rehearsal: `EXPLAIN (ANALYZE,BUFFERS)` on the device-keyed twin queries — correct in Run 7, but the
+`*_system_*` indexes aren't recreated, so confirm the plans.)
+
 ## 6. Iterate-to-green & done
 
 Loop: fresh branch → C1 target-assert + version/FK-orphan gates → transform → `parity-check.ts` →
