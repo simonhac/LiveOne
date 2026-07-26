@@ -1,11 +1,14 @@
 # Config v4 — Phase 8 cutover (plan of record)
 
-> **Status: ACTIVE.** The _rationale_ is [config-v4-clean-sheet.md](config-v4-clean-sheet.md); the
-> _phasing / current-state_ is [config-v4-execution-plan.md](config-v4-execution-plan.md); the
-> _rehearsal run log_ is [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md).
-> This file is the durable home for the Phase-8 defect table + locked decisions + the ordered cutover
-> steps + the Group A/B/C work split. (It was referenced by the other two docs before it existed; those
-> links now resolve here.)
+> **Status: DONE.** Phase 8 shipped 2026-07-26 — `liveone-dev` cut over first (dress rehearsal), prod
+> the same day via PR [#248](https://github.com/simonhac/LiveOne/pull/248) (`faa6f007`). Prod is live
+> on the config-v4 shape; the backlog buffered during the pause drained cleanly on resume. The
+> _rationale_ is [config-v4-clean-sheet.md](config-v4-clean-sheet.md); the _phasing / current-state_ is
+> [config-v4-execution-plan.md](config-v4-execution-plan.md); the _rehearsal + real-window run log_ is
+> [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md) (Run 8 = dev, Run 9 =
+> prod). This file is the durable home for the Phase-8 defect table + locked decisions + the ordered
+> cutover steps + the Group A/B/C work split — kept as the historical record; **Phase 9** (post-cutover
+> teardown) is tracked in the execution plan.
 
 Phase 8 is THE CUTOVER: one irreversible window that flips the app from the integer-handle / composite
 hot-key world to the config-v4 world (`devices`/`points`/`area_members` registries, `(point_rid, time)`
@@ -156,7 +159,18 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
   A failed merge build strands prod v3-code-on-v4-data.
 - **Silence the off-repo jobs** for the window: `pg-backup`, `pg-staleness-check`, `pg-durable-verify`
   (Cloudflare-dispatched — `_old` retention roughly doubles hot-table counts, so durable-verify's row-count
-  reference will alert) and `sync-prod-to-dev.yml` (`20 */2 * * *`).
+  reference will alert), `pg-dashboard` (a `workflow_run` child of `pg-backup`, silenced as a side effect),
+  and `sync-prod-to-dev.yml` (`20 */2 * * *` — the only one with a GitHub-native cron; **must stay
+  disabled through BOTH the dev and prod cutovers**, not just prod's, or it writes v3-shaped rows into a
+  v4 `liveone-dev` between the two). Take the backup FIRST, then silence — `pg-staleness-check` self-heals
+  a missed `pg-backup` tick by re-triggering it (and Slack-alerting), so disabling `pg-backup` alone just
+  gets it silently re-enabled. Concretely (all five are `workflow_dispatch`-only once disabled, so a
+  `gh workflow run` on a disabled one 422s — this is by design, it proves silencing took):
+  ```bash
+  for w in sync-prod-to-dev.yml pg-backup.yml pg-staleness-check.yml pg-durable-verify.yml pg-dashboard.yml; do
+    gh workflow disable "$w"   # ... window runs ...   gh workflow enable "$w" after
+  done
+  ```
 
 0. **Capture the authz baseline — BEFORE anything else writes, ON THE STILL-DEPLOYED PRE-CUTOVER BUILD.**
    `authz-check.ts --snapshot` records each dashboard's v3 `descriptor` point-scope while the v3 resolver
@@ -206,10 +220,11 @@ Pre-window (dark, on prod days ahead): `backfill-foundation.ts --commit` (pre-mi
    handles, which stay correct because `legacy_handles` and the `?systemId=N` alias are permanent. Note the
    deferral is safe for key NAMES; the registry CONTENT is protected by D-i's decision (bindings stay
    int-keyed), not by the deferral itself.
-7. **Deploy the cutover build** (DAO SQL flipped rid-keyed; virtual-system synthesis deleted; dashboards
-   uuid-native; dual-grammar receiver) by merging to `main`; run `parity-check.ts` + `authz-check.ts` **+
-   the named smoke set**; then `cutover-pause.ts clear` → the buffered backlog drains into the rid-keyed
-   tables. **This resume is the one-way door.**
+7. **Deploy the cutover build** (DAO SQL flipped rid-keyed; dashboards uuid-native; dual-grammar
+   receiver — virtual-system synthesis deletion is DEFERRED to Phase 9, see the Group B note below,
+   not part of this deploy) by merging to `main`; run `parity-check.ts` + `authz-check.ts` **+ the named
+   smoke set**; then `cutover-pause.ts clear` → the buffered backlog drains into the rid-keyed tables.
+   **This resume is the one-way door.**
 
 ### Abort matrix — what to do when a check goes red
 
@@ -286,6 +301,51 @@ the **first** point of no return; the hot rename-swap (stage 4, run last) is the
 
 ## Verification
 
+**Runs 8 (dev) and 9 (prod) — THE REAL WINDOW, DONE (2026-07-26).** Group C executed both cutovers
+in one session (dev dress rehearsal, then prod the same day). Full detail in
+[config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md) §§ Run 8/9. Headline:
+
+- **Run 8 (dev):** transform 246.0s · parity 61/61 · authz-check 13/13 · window GO. Found and fixed a
+  **29s device-keyed query regression** the rid-flip introduced (`lib/readings/dao.ts`, commit
+  `bb58dbe5`) — the twins don't recreate `pr5m_system_time_idx`, so the two `ORDER BY interval_end DESC
+  LIMIT 1` device-keyed seams walked the global time index backwards for a stale device (29.5s /
+  3.08M rows). Rewritten as a per-rid `LATERAL` against the existing PK: 66ms (~39,000×), no new index
+  needed. Also fixed a latent bug in `lib/kv.ts` (commit `2d304dab`) where KV credentials were resolved
+  at import time — before `dotenv.config()` runs in every `scripts/config-v4/*` driver's body — so
+  `cutover-pause.ts clear` could silently no-op and report `✅ LIVE` while the cutover flag stayed set.
+  Named smoke set (6/6) all green, run locally (`npm run dev` against transformed `liveone-dev` — the
+  Vercel preview sits behind SSO deployment protection with no bypass secret).
+- **Run 9 (prod):** transform 263.1s · authz-check 13/13 (both pre- and post-deploy) · window GO
+  (13.2 min ≤ 30). **Parity 60/61** — one deviation, root-caused and reproduced: `device_state content
+  == polling_status` cannot pass in a LIVE window, because the pause deliberately gates only
+  materialization crons, not pollers (by design), so `polling_status` keeps ticking while
+  `device_state` is a periodic batch snapshot with zero live readers/writers in the deployed code.
+  Every rehearsal ran on an idle DB (no pollers), so this never surfaced before Run 9; it's a
+  structural gap in that one parity assertion, not a data-loss defect — every content checksum
+  (point_readings/agg_5m/agg_1d) was clean. Deploy = PR
+  [#248](https://github.com/simonhac/LiveOne/pull/248), squash-merged, Vercel prod READY in 53s. Named
+  smoke set (6/6, see below) green against `www.liveone.energy` with a real prod Clerk session and real
+  prod QStash signing keys. Resumed (`cutover-pause.ts clear --env=prod`); backlog (outbox depth 222 at
+  resume) drained to steady-state within ~2 minutes, confirmed by `point_readings`/`agg_5m` freshness
+  tracking `now()` within seconds, sustained.
+- **Operational finding — prod DDL needs a role that inherits `postgres`, not the app's own pooled
+  connection.** `registry-sync.ts`/`config-transform.ts` do DDL (`ALTER TABLE … SET NOT NULL`, column
+  renames); the app's `pscale_api_lmkcwljm7fcb` role 42501'd with "must be owner of table areas".
+  Minted a TTL-bounded `pscale role create liveone sydney <name> --inherited-roles postgres --ttl 3h`
+  for each DDL step; did NOT use `pscale role reset-default` (rotates the shared `postgres` password,
+  risking backup credentials mid-window). **Nuance on the CLAUDE.md ownership-trap warning:** the app
+  reaches all tables via `pg_read_all_data`/`pg_write_all_data` role MEMBERSHIP, not per-table
+  ownership or grants (`information_schema.role_table_grants` on `point_readings` is empty) — so a
+  temp-role-owned twin table does NOT lock the app out; the residual risk is purely that a future
+  `postgres`-run migration hits "must be owner" until the temp role is reassigned
+  (`pscale role reassign … --successor postgres --force`) and deleted.
+- **Post-cutover:** `sync-prod-to-dev.yml` re-enabled and manually triggered to verify — failed with a
+  new, real defect: `users.default_dashboard_id` FK violation, because `dashboards.id` is now
+  `gen_random_uuid()`-minted independently per environment (only `legacy_id` is stable cross-env). Not
+  caught by any single-environment rehearsal. Tracked as a Phase 9 follow-up in the execution plan
+  (not a Group C blocker — prod itself is unaffected; only the dev-mirror config-table sync leg is
+  blocked until fixed).
+
 **Run 7 — DONE (2026-07-26), full Group-B build in: parity 61/61 · authz-check 13/13 · DAO-equivalence
 215/215 · window ✅ GO (5.3 min × 3 = 15.9 min).** Every Run-5 red is now green: the 4 W-series
 (schema.ts flipped) + the 3 AC1-vacuity reds. The rid-flip is validated by a new `dao-equivalence` sweep
@@ -333,12 +393,37 @@ certifies the fold, not the access path. "Walk every page" is not a gate — thi
 
 | Route | Catches |
 | --- | --- |
-| `/api/data?systemId=` for a device handle **and** a multi-device-area handle | `area_bindings`, the synthesis deletion |
+| `/api/data?systemId=` for a device handle **and** a multi-device-area handle | `area_bindings`, handle resolution (D-l device-first — synthesis deletion is deferred to Phase 9, so this exercises today's already-device-first path, not a deletion) |
 | `/admin/systems/{id}/point-readings` | `readAdminPivot` — whose unit test cannot fail (the fake ignores SQL) |
 | `/api/admin/point/{sys}.{pt}/readings` | the dropped `pr.id`/`system_id`/`point_id` projections |
 | `/api/history`; a granted-dashboard SSR load; a share-token SSR load | `grants.ts`/`sharing.ts` |
 | `/api/system/{id}/points` + `/series`; `/dashboard/id/{n}` | the `requireSystemAccess` collapse, `legacy_id` routing |
 | one old-grammar `{systemId}.{pointIndex}` observation POSTed to the receiver | the dual-grammar backlog drain |
+
+**Run 8 (dev, 2026-07-26) — all 6 rows green**, driven locally (`npm run dev` against the transformed
+`liveone-dev`; the Vercel preview is behind SSO deployment protection with no bypass secret, so it
+couldn't be driven headlessly). Auth via a real Clerk session JWT (`get-test-token.ts`) + real
+`?access=` share tokens; the dual-grammar row used a genuinely HS256-signed QStash JWT (Development-scope
+signing key) POSTed to the local receiver — `{rawInserted:1}`, verified in `point_readings` by
+`point_rid`, then deleted.
+
+**Run 9 (prod, 2026-07-26) — all 6 rows green** (plus the owner-dashboard-SSR substitute below), driven
+against `www.liveone.energy` with a real prod Clerk session (`get-test-token.ts` against the prod
+Clerk instance — reuses an existing session, does not create one) and real prod QStash signing keys.
+One substitution: prod had **zero** `dashboard_grants` rows at cutover time (dev's test grants don't
+exist in prod), so the granted-dashboard row was covered by an owner-dashboard SSR load instead (same
+DAO/access path, minus the grant-specific branch — the grant branch itself was only exercised in Run
+8). The dual-grammar row got a real signed JWT that correctly hit the still-armed pause gate
+(`500 cutover_paused` — not a signature error, proving the key AND the fail-closed gate both work) since
+prod was paused at test time; the resolution logic itself was already proven end-to-end in Run 8.
+Confirmed `/api/data?systemId=13` resolves `vendorType:"sigenergy"` (the device) — **D-l device-first
+verified live in production**, not just on a rehearsal branch.
+
+**Window-report's `W_target` (30 min) is the TRANSFORM ONLY** — `T_window` in the timing ledger. It does
+NOT include the quiescence gate (a fixed ~5-min floor: `2 × CONFIG_V4_QUIESCE_SEC`), S0's snapshot, or
+S7's deploy/verify/smoke — all of which sit inside the real paused window. Run 9's actual pause ran
+longer than the 4.4-min `T_window` alone; budget the whole runbook, not just the transform, against any
+outage-duration target.
 
 **Honesty ledger.** `liveone-dev` has no crons and no pollers (`CRONS_ENABLED` unset), so the dev cutover
 rehearses the DEPLOY and the RUNBOOK — **not** pause/resume mechanics, outbox-backlog drain at volume, the

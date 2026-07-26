@@ -17,45 +17,33 @@
 > phase" step is deferred — the batch opens as one PR (PR-G+H = **#228**; a later reader/writer batch would
 > be its own PR).
 
-## ▶ NEXT ACTION — Phase 8: Group B build ✅ DONE + validated (Run 7) → doc-reconcile → Group C window
+## ▶ NEXT ACTION — Phase 8 ✅ DONE (2026-07-26) → Phase 9: post-cutover teardown
 
-> **CURRENT STATE (2026-07-26): the Group B cutover BUILD is complete and fully validated on a prod
-> restore (Run 7).** Remaining Phase-8 work = this doc reconciliation + the Group C window.
+> **PHASE 8 IS COMPLETE.** Prod is live on the config-v4 shape. `liveone-dev` cut over first (dress
+> rehearsal, Run 8), prod the same day (Run 9), via PR
+> [#248](https://github.com/simonhac/LiveOne/pull/248) (`faa6f007`, merged 2026-07-26). Full detail in
+> [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md) § Verification and
+> [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md) §§ Run 8/9.
 >
-> - **Group B build — DONE** (branch `simonhac/config-v4-group-b-v2`, un-merged until the window):
->   dashboards + sharing/grants uuid-native (all `db_↔uuid` translation at the DAO seam via new codec
->   primitive `EntityCodec.toUuidOrNull` — endpoints pass an opaque handle, never touch `lib/ids`); DAO
->   rid-flip (23 `// SEAM:` sites + 6 external → `point_rid` twins); parity NOT-NULL alignment
->   (`dashboards.doc`/`areas.day_offset_min`/`devices.primary_area_id`) — on top of the `areas` renames,
->   unify `sharing.ts` onto `share_tokens`, narrow `grants.ts` to admin|viewer, retire the legacy
->   owner-scoped share token.
-> - **Run 7 (today's prod restore): parity 61/61 · authz-check 13/13 · DAO-equivalence 215/215 · window
->   ✅ GO (5.3 min × 3 = 15.9 min ≤ 30).** All green. A new `dao-equivalence` sweep proves the rid-flip:
->   the flipped DAO's reads == direct twin reads keyed on each point's real rid (point- AND device-keyed).
-> - **AC1 vacuity — FIXED** (#245 `authz-check --snapshot`; verified NON-vacuous in Run 7: 62-point
->   pre-transform baseline, `descriptor ⊆ doc` with 0 lost points).
-> - **Item D (delete virtual-system synthesis) — DEFERRED to Phase 9.** The current code is ALREADY
->   device-first (`getViewableSystem`/`isAreaHandle` "real row wins", systems-manager.ts:170/177), so
->   handle 13 already resolves to the device (12 sys13 pts) = the locked **D-l device-first** behavior.
->   Deleting it would switch to `resolveHandle` area-first (CREATING the D-l defect) then re-suppress it —
->   net-zero on security-sensitive auth code. And it reads the `systems` table (retained until Phase 9),
->   so it lands there with `systems`→`devices`. **D-l is thereby a non-issue** (no re-baseline needed).
-> - **Areas id-uniformity — DEFERRED** to one post-cutover cleanup (areas keep the raw uuid internally
->   and `ar_` only at the wire; the other three entities confine the raw key to the data layer). Dashboard
->   docs already store `ar_`/`dv_` TypeID refs, so there is **no doc migration**.
-> - **Runbook finding:** `authz-check --snapshot` (step 0) MUST run on the PRE-CUTOVER build — its
->   resolver reads the RENAMED `areas` columns, so from the cutover branch against a pre-transform DB it
->   `42703`s and `access.ts`'s per-area `catch{}` vacates the scope. The real window does this
->   automatically (step 0 runs on the still-deployed prod build, before the cutover build deploys); a
->   single-branch rehearsal needs `git checkout origin/main` for step 0.
+> - **Run 9 (prod):** transform 263.1s · authz-check 13/13 (pre- and post-deploy) · window GO
+>   (13.2 ≤ 30 min). Parity 60/61 — one root-caused, reproduced, non-blocking deviation
+>   (`device_state`/`polling_status`, a structural race unique to a LIVE window with pollers un-paused
+>   by design; every content checksum green). Named smoke set 6/6 green against `www.liveone.energy`
+>   with a real prod session; confirmed **D-l device-first live** (handle 13 → the Sigenergy device).
+>   Resumed cleanly; backlog (outbox depth 222 at resume) drained to steady-state within ~2 minutes.
+> - **Run 8 (dev):** transform 246.0s · parity 61/61 · authz-check 13/13 · window GO. Found + fixed two
+>   real defects before they could hit prod: a **29s device-keyed query regression** from the rid-flip
+>   (`lib/readings/dao.ts`, `bb58dbe5` — the twins don't recreate `pr5m_system_time_idx`; fixed with a
+>   per-rid `LATERAL`, ~39,000× faster, no new index) and a **latent `lib/kv.ts` bug** (`2d304dab`) where
+>   `cutover-pause.ts clear` could silently no-op and report success while leaving the cutover flag set.
+> - **Post-window finding (not a Group C blocker):** `sync-prod-to-dev.yml`'s config-table leg now
+>   fails on `users.default_dashboard_id` FK — `dashboards.id` is minted independently per environment
+>   post-cutover (only `legacy_id` is stable cross-env). Tracked below under Phase 9.
+> - **Item D (delete virtual-system synthesis) — confirmed still DEFERRED to Phase 9** (unchanged by
+>   the window — see the Phase 9 list below). **Areas id-uniformity — still DEFERRED** likewise.
 >
-> Remaining: (1) this doc-reconcile PR; (2) **Group C window** — pre-window rebase onto current `main` +
-> CI-green on the merge SHA + silence off-repo jobs; then `liveone-dev` FIRST (dress rehearsal, incl. the
-> device-keyed `EXPLAIN` on the twin) → prod the next day (pause → snapshot-on-deployed-build → transform
-> → parity/authz/window green → merge to `main` = deploy → smoke → resume = one-way door).
->
-> _The blockquotes below are the historical Run-1..5 / Group-A / Group-B0 trail, superseded by the summary
-> above._
+> _The blockquotes below are the historical Run-1..7 / Group-A/B/B0 trail, superseded by the summary
+> above and by [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md)'s Verification section._
 
 > **Run 5 is complete (2026-07-26): `parity 48/52` · `authz 10/13` · `window-report` ✅ GO · transform `rc=0`**,
 > on branch `rehearse-5` restored from a freshly-dispatched prod backup (`0846o64bc1a7`, 2026-07-25 13:46 UTC).
@@ -563,6 +551,12 @@ Shell.dataHandles`), `access.ts` v4-scope so a _shared_ v4 dashboard's `/api/dat
 
 ### Phase 8 — THE CUTOVER (single irreversible window)
 
+> **SUPERSEDED — historical planning draft, kept for context only.** Phase 8 actually shipped
+> 2026-07-26 (see the `▶ NEXT ACTION` block at the top of this file); the executed runbook is
+> [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md)'s ordered steps, not this draft (which
+> predates that doc — e.g. it names the retired `POST /api/admin/observations/info` pause mechanism,
+> superseded by `cutover-pause.ts`, and a KV keyspace rebuild that was later deferred to Phase 9).
+
 1. **Pause materialization only** — `POST /api/admin/observations/info {action:"pause"}` freezes
    QStash delivery→receiver→hot-table writes (hot tables go static). **Keep `CRONS_ENABLED=true`** so
    poll+push collection and the relay keep buffering into the outbox + the paused queue. No poller
@@ -615,6 +609,19 @@ Shell.dataHandles`), `access.ts` v4-scope so a _shared_ v4 dashboard's `/api/dat
   need throwaway `CardV3`/`synthCardV3` scaffolding AND a `v3-to-v4.ts rewriteCard` config-forwarding
   edit (it forwards config per-type, so a v3-placed new card's config is dropped at cutover). See
   [hws-stripe-and-heatmap-cards.md](hws-stripe-and-heatmap-cards.md).
+- **Fix `sync-prod-to-dev-db.ts`'s `users.default_dashboard_id` FK violation (found live in the Group
+  C window, 2026-07-26).** Re-enabling the sync workflow post-cutover, its small-config-table leg
+  failed: `insert or update on table "users" violates foreign key constraint
+  "users_default_dashboard_id_dashboards_fk"`. Root cause: pre-cutover `dashboards.id` was a stable
+  serial int; Group B made it `gen_random_uuid()`, minted independently by each environment's own
+  `config-transform` run — prod's and dev's uuids for "the same" dashboard are unrelated values (only
+  `dashboards.legacy_id` is stable cross-environment). The sync copies `users.default_dashboard_id`
+  (a uuid FK) verbatim from prod, which doesn't exist in dev's `dashboards`. Not caught by any
+  rehearsal (single-environment; this is a two-environment interaction). Fix likely resolves
+  `default_dashboard_id` via a `legacy_id` lookup into the target environment's own dashboard row,
+  mirroring the `/dashboard/id/{n}` redirect's existing pattern. Prod itself is unaffected; only the
+  dev-mirror config-table sync is blocked (data-plane reading sync is unaffected) until fixed —
+  `sync-prod-to-dev.yml` will keep alerting red every 2h in the meantime.
 
 ## Collection continuity (no ingest freeze — verified)
 
