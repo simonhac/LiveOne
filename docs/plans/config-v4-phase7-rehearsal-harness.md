@@ -397,6 +397,87 @@ cutover branch against a pre-transform DB it 42703s and vacates the scope. A sin
 dress-rehearsal: `EXPLAIN (ANALYZE,BUFFERS)` on the device-keyed twin queries — correct in Run 7, but the
 `*_system_*` indexes aren't recreated, so confirm the plans.)
 
+### Run 8 (2026-07-26) — `liveone-dev` dress rehearsal, THE REAL Group C window (not a PS-5 restore)
+
+First run against `liveone-dev` itself (not a throwaway restore) — the actual dev leg of the Group C
+runbook, on branch `simonhac/config-v4-group-b-v2` rebased onto `main` @ `cbcab297`.
+
+- **S0** `authz-check --snapshot` from an `origin/main` git worktree: 3 dashboards / 62 points,
+  non-vacuous — identical to Run 7's baseline.
+- **S1** `cutover-pause set --env=dev` (KV-only by design — dev has no queue half) →
+  `parity-check --quiescence` green (fixed ~5-min floor: 3 samples over 2×150s holds).
+- **Transform** `246.0s`: copy-raw 63.6s · copy-5m 35.0s · **indexes 133.0s** (the single biggest
+  stage) · analyze 10.8s · swap 0.2s.
+- **Gates:** parity **61/61** · authz-check **13/13** · window-report **GO** (4.1 min × 3 = 12.3 ≤ 30).
+- **Found + fixed a 29s device-keyed query regression** (commit `bb58dbe5`) — see the Phase-8 plan of
+  record's Verification section for the full writeup. Root cause: the twins don't recreate
+  `pr5m_system_time_idx`, so `latestAgg5mIntervalMsForDevice`/`maxAgg5mIntervalMsForDevices`'s
+  `ORDER BY interval_end DESC LIMIT 1` walked the GLOBAL time index backwards for a stale device
+  (29,484ms / 3,084,559 rows). `point_rid = ANY(array)` did not help (27,171ms — the misestimate is on
+  the LIMIT, not the predicate). Fixed with a per-rid `LATERAL` against the existing PK: 66ms
+  end-to-end through the DAO (~39,000×), no new index. This closes the Run-7 deferred item ("confirm
+  the plans" via `EXPLAIN (ANALYZE,BUFFERS)`) — the plans were fine for an active device, pathological
+  for a stale one, which Run 7's ad-hoc equivalence sweep never isolated.
+- **Found + fixed a latent `lib/kv.ts` bug** (commit `2d304dab`) — KV credentials were read at
+  `import` time, before every `scripts/config-v4/*` driver's `dotenv.config()` call runs in its body
+  (imports are hoisted). `cutover-pause.ts clear` would silently no-op the `kv.del`, read back `null`
+  through the same degraded Proxy, agree with a genuinely-resumed QStash queue, and print `✅ LIVE` —
+  on the far side of the cutover's one-way door. Demonstrated live: with `dev:cutover:paused="1"` set
+  via direct REST, the old code reported `unset (live)`. Fixed by resolving on first property access;
+  regression test verified to fail against the old code.
+- **Named smoke set 6/6 green**, driven locally (`npm run dev` against the transformed `liveone-dev` —
+  the Vercel preview alias is behind Vercel SSO deployment protection with no
+  `VERCEL_AUTOMATION_BYPASS_SECRET`, so it couldn't be driven headlessly). Auth: a real Clerk session
+  JWT via `scripts/utils/get-test-token.ts`; `?access=` share tokens for the shareable routes; the
+  dual-grammar row used a genuinely HS256-signed QStash JWT (pulled the Development-scope
+  `OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY` via `vercel env pull --environment=development`) POSTed to
+  the local receiver — `{rawInserted:1}`, verified in `point_readings` by `point_rid`, then deleted.
+  `/api/data?systemId=13` confirmed `vendorType:"sigenergy"` — **D-l device-first confirmed** (handle
+  13 is both a device and a multi-member area; resolves as the device).
+
+### Run 9 (2026-07-26) — PROD, the real window, same day as Run 8
+
+- **S0** on an `origin/main` worktree against prod (sourcing `PLANETSCALE_DATABASE_URL` from
+  `vercel env pull --environment=production`, NOT `.env.local` — `.env.local`'s var is `liveone-dev`
+  and the guard correctly refuses it under `CONFIG_V4_TARGET=prod`): 3 dashboards / 62 points,
+  non-vacuous — matches Run 8 exactly.
+- **S1** both halves paused (`cutover-pause set --env=prod`, queue paused first) →
+  `parity-check --quiescence` green; outbox unpublished depth **grew 2→23** during the hold — the
+  correct healthy signal (pollers alive, buffering, not gated).
+- **DDL role note:** `registry-sync`/`config-transform` need a role that inherits `postgres` — the
+  app's own pooled `pscale_api_lmkcwljm7fcb` role 42501'd ("must be owner of table areas") on the
+  stage-2e rename. Minted a TTL-bounded `pscale role create liveone sydney <name>
+  --inherited-roles postgres --ttl 3h` per DDL step (did not `reset-default`, to avoid rotating shared
+  backup credentials mid-window).
+- **Transform** `263.1s`: copy-raw 69.5s · copy-5m 39.3s · indexes 139.3s · analyze 11.6s · swap 0.2s.
+  Swap committed = past the last recoverable abort point per the abort matrix.
+- **Gates:** authz-check **13/13** (non-vacuous, 0 lost points) · window-report **GO** (4.4 min × 3 =
+  13.2 ≤ 30). **Parity 60/61** — see the Phase-8 plan of record's Verification section for the full
+  root-cause writeup (`device_state`/`polling_status` race, structural to a LIVE window with pollers
+  un-paused by design; every content checksum green). Confirmed reproducible: re-synced `device_state`
+  twice, re-ran parity twice, same single red both times with a fresh checksum each time (proving it
+  really is chasing a moving target, not a stuck value).
+- **Deploy:** PR [#248](https://github.com/simonhac/LiveOne/pull/248), squash-merged to `main`
+  (`faa6f007`), Vercel production deploy READY in 53s. Re-ran parity (same 60/61) + authz-check
+  (13/13) against the deployed build.
+- **Named smoke set 6/6 green** (+ one substitution) against `www.liveone.energy`, using a real prod
+  Clerk session (`get-test-token.ts` pointed at the prod Clerk secret key — reuses
+  `simon@holmesacourt.com`'s existing session, does not create one) and real prod QStash signing keys.
+  Prod had **zero** `dashboard_grants` rows, so the granted-dashboard SSR item was substituted with an
+  owner-dashboard SSR load (same DAO/access path minus the grant branch, which Run 8 already covered).
+  The dual-grammar row's signed request correctly hit the still-armed pause gate (`500 cutover_paused`
+  — proves the real signing key verifies AND the fail-closed gate holds under a genuine request);
+  post-resume the same code path was proven live by the drain itself.
+- **Resume** `cutover-pause.ts clear --env=prod` (flag cleared first, then queue resumed). Outbox depth
+  was 222 at resume; `point_readings`/`agg_5m` freshness (`max(created_at)`/`max(updated_at)`) caught
+  up to within seconds of `now()` and stayed there over a sustained 60s re-check, with outbox holding
+  at steady-state (~2–4 unpublished) rather than accumulating.
+- **Post-window:** re-enabled the 5 silenced workflows; manually triggered `sync-prod-to-dev` to
+  verify rather than waiting for its 2h cron — it failed on a genuine, newly-surfaced defect
+  (`users.default_dashboard_id` FK violation: `dashboards.id` is now minted independently per
+  environment, only `legacy_id` is stable cross-env). Tracked as a Phase 9 follow-up in the execution
+  plan; not a Group C blocker.
+
 ## 6. Iterate-to-green & done
 
 Loop: fresh branch → C1 target-assert + version/FK-orphan gates → transform → `parity-check.ts` →
