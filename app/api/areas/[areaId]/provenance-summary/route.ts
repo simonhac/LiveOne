@@ -6,6 +6,8 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { getYesterdayInTimezone } from "@/lib/date-utils";
 import { labelForFlowPath } from "@/lib/aggregation/flow-node-meta";
+import { areaRefToUuid } from "@/lib/areas/ref";
+import { Area } from "@/lib/ids";
 
 export const maxDuration = 30;
 
@@ -38,6 +40,9 @@ export async function GET(
   const db = planetscaleDb;
 
   const { areaId } = await params;
+  const uuid = areaRefToUuid(areaId);
+  if (!uuid)
+    return NextResponse.json({ error: "Invalid area id" }, { status: 400 });
   const [area] = await db
     .select({
       ownerClerkUserId: areas.ownerUserId,
@@ -45,7 +50,7 @@ export async function GET(
       tz: areas.timezoneOffsetMin,
     })
     .from(areas)
-    .where(eq(areas.id, areaId))
+    .where(eq(areas.id, uuid))
     .limit(1);
   if (!area)
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
@@ -104,7 +109,7 @@ export async function GET(
       SUM(cost_c)       FILTER (WHERE cost_c IS NOT NULL)        AS cost_c,
       SUM(energy_kwh)   FILTER (WHERE cost_c IS NOT NULL)        AS cost_known_kwh
     FROM point_readings_flow_attr_1d
-    WHERE area_id = ${areaId} AND day >= ${startDay} AND day <= ${endDay}
+    WHERE area_id = ${uuid} AND day >= ${startDay} AND day <= ${endDay}
     GROUP BY source_path
     ORDER BY SUM(energy_kwh) DESC
   `);
@@ -152,7 +157,7 @@ export async function GET(
 
   return NextResponse.json({
     ok: true,
-    areaId,
+    areaId: Area.encode(uuid),
     systemId: area.legacySystemId,
     range: { start: startDay, end: endDay },
     sources,

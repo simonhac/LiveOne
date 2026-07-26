@@ -112,6 +112,15 @@ describe("EntityCodec", () => {
     expect(Device.is("garbage")).toBe(false);
   });
 
+  it("toUuidOrNull never throws: accepts this entity's id, rejects a foreign id or garbage", () => {
+    const ar = Area.generate();
+    expect(Area.toUuidOrNull(ar)).toBe(Area.toUuid(ar));
+    // A raw (undecorated) uuid is not this entity's TypeID — the codec alone rejects it.
+    expect(Area.toUuidOrNull(Area.toUuid(ar))).toBeNull();
+    expect(Area.toUuidOrNull(Device.generate())).toBeNull();
+    expect(Area.toUuidOrNull("garbage")).toBeNull();
+  });
+
   describe("parse — malformed inputs map to typed codes", () => {
     const suffix = "01h455vb4pex5vsknk084sn02q"; // valid 26-char base32
     const cases: Array<{ name: string; input: string; code: string }> = [

@@ -14,6 +14,8 @@ import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { isDashboardV4 } from "@/lib/dashboard/v4";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
+import { areaRefToUuid } from "@/lib/areas/ref";
+import { Area } from "@/lib/ids";
 import { dashboardAreaUuids } from "@/lib/dashboard/composition";
 import { getOrCreateUserPreferences } from "@/lib/user-preferences";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
@@ -121,7 +123,10 @@ async function renderCompositionDashboard(
   // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
   const pins = new Set<number>();
   for (const s of descriptor.sections) {
-    if (!areaById.has(s.areaId)) continue; // only authorized sections
+    // s.areaId is `ar_` (the read-normalized descriptor); areaById is raw-uuid-keyed (sharedAreas /
+    // initialReadableAreas, below the seam) — decode before the lookup.
+    const sectionUuid = areaRefToUuid(s.areaId);
+    if (!sectionUuid || !areaById.has(sectionUuid)) continue; // only authorized sections
     for (const c of s.cards) {
       if (typeof c.deviceSystemId === "number") pins.add(c.deviceSystemId);
       for (const t of c.tiles ?? []) {
@@ -229,8 +234,17 @@ async function renderCompositionDashboard(
             doc: v4doc ?? undefined,
           }}
           canEdit={canEdit}
-          sharedAreas={sharedAreas}
-          initialReadableAreas={initialReadableAreas}
+          // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
+          // (below the seam) up to this point; the client's areaById must match the read-normalized
+          // (ar_) descriptor and the `ar_`-returning /api/areas/readable fetch fallback.
+          sharedAreas={sharedAreas?.map((a) => ({
+            ...a,
+            id: Area.encode(a.id),
+          }))}
+          initialReadableAreas={initialReadableAreas?.map((a) => ({
+            ...a,
+            id: Area.encode(a.id),
+          }))}
           resolvedDevices={readableDevices}
         />
       </HydrationBoundary>

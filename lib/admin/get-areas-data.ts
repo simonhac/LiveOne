@@ -15,6 +15,7 @@ import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
 import type { AreaLocation } from "@/lib/areas/types";
+import { Area } from "@/lib/ids";
 
 export interface AreaSourceSystem {
   id: number;
@@ -23,6 +24,7 @@ export interface AreaSourceSystem {
 }
 
 export interface AdminAreaData {
+  /** The opaque `ar_` TypeID — the area builder round-trips this verbatim (create/edit/delete). */
   id: string;
   displayName: string;
   alias: string | null;
@@ -137,7 +139,7 @@ async function shapeAreas(
     ).sort((a, b) => a.id - b.id);
 
     areasData.push({
-      id: area.id,
+      id: Area.encode(area.id),
       displayName: area.name,
       alias: area.slug,
       legacySystemId: area.legacySystemId,

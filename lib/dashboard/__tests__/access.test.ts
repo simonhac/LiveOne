@@ -1,6 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
-import { Device, type DeviceId } from "@/lib/ids";
+import { Device, newUuidV7, type DeviceId } from "@/lib/ids";
 import type { DeviceAddr, DeviceRid } from "@/lib/registry";
+
+// dashboardAreaUuids now requires a v3 section.areaId to be a real (canonical uuid or `ar_`) area ref
+// — short mnemonic labels ("site", "A", "ghost") no longer decode. Mint one real uuid per mnemonic so
+// the fixtures below can keep their readable labels while satisfying the decode.
+const AREA = new Proxy({} as Record<string, string>, {
+  get: (cache, label: string) => (cache[label] ??= newUuidV7()),
+});
 
 // allowedSystemIds maps Area uuids → legacy_system_id, and resolveDashboardReadPoints fans out to the
 // point layer. Mock both so the set logic / union is driven deterministically (no DB).
@@ -106,7 +113,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockGetLegacy.mockResolvedValue(7); // area → real system 7
     withPoints({ 7: [pt(7, 0), pt(7, 1)] });
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: "a7" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: AREA.a7 }]),
     });
     expect(out).toEqual([7]);
   });
@@ -115,7 +122,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockGetLegacy.mockResolvedValue(1000002); // area handle
     withPoints({ 1000002: [pt(1, 0), pt(14, 0), pt(1, 5)] }); // members 1 + 14
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: AREA.site }]),
     });
     expect([...out].sort((a, b) => a - b)).toEqual([1, 14, 1000002]);
   });
@@ -123,7 +130,9 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
   it("unions distinct section areas (handles + members), deduped", async () => {
     mockGetLegacy.mockImplementation(
       async (areaId: string) =>
-        (({ A: 1000002, B: 8 }) as Record<string, number>)[areaId] ?? null,
+        (({ [AREA.A]: 1000002, [AREA.B]: 8 }) as Record<string, number>)[
+          areaId
+        ] ?? null,
     );
     withPoints({
       1000002: [pt(1, 0), pt(14, 0)],
@@ -131,8 +140,8 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     });
     const out = await allowedSystemIds({
       descriptor: descriptor([
-        { type: "tiles", areaId: "A" },
-        { type: "chart", id: "c1", areaId: "B" },
+        { type: "tiles", areaId: AREA.A },
+        { type: "chart", id: "c1", areaId: AREA.B },
       ]),
     });
     expect([...out].sort((a, b) => a - b)).toEqual([1, 5, 6, 8, 14, 1000002]);
@@ -142,7 +151,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockGetLegacy.mockResolvedValue(null); // uuid unknown
     withPoints({});
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "chart", id: "c1", areaId: "ghost" }]),
+      descriptor: descriptor([{ type: "chart", id: "c1", areaId: AREA.ghost }]),
     });
     expect(out).toEqual([]);
   });
@@ -156,7 +165,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
       getActivePointsForSystem,
     } as unknown as ReturnType<typeof PointManager.getInstance>);
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: "site" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: AREA.site }]),
     });
     expect(out).toEqual([1000002]);
   });
@@ -206,7 +215,7 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      descriptor: descriptor([{ type: "tiles", areaId: "composite" }]),
+      descriptor: descriptor([{ type: "tiles", areaId: AREA.composite }]),
     });
     expect(out.systemIds).toEqual([5, 6]);
     expect(out.points).toHaveLength(3);
@@ -214,7 +223,7 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
 
   it("defensively skips an unresolvable system handle instead of throwing", async () => {
     mockGetLegacy.mockImplementation(async (areaId: string) =>
-      areaId === "good" ? 5 : 999,
+      areaId === AREA.good ? 5 : 999,
     );
     const getActivePointsForSystem = jest.fn(async (sid: number) => {
       if (sid === 5) return [pt(5, 0), pt(5, 1)];
@@ -226,8 +235,8 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
 
     const out = await resolveDashboardReadPoints({
       descriptor: descriptor([
-        { type: "tiles", areaId: "good" },
-        { type: "chart", id: "c1", areaId: "gone" },
+        { type: "tiles", areaId: AREA.good },
+        { type: "chart", id: "c1", areaId: AREA.gone },
       ]),
     });
     // sys 999 threw and was skipped; sys 5's points survive.

@@ -9,6 +9,8 @@ import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates
 import { getYesterdayInTimezone } from "@/lib/date-utils";
 import { recomputeBatteryProvenanceForWindow } from "@/lib/db/planetscale/battery-provenance-pg";
 import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
+import { areaRefToUuid } from "@/lib/areas/ref";
+import { Area } from "@/lib/ids";
 
 // A batch of up to MAX_LIMIT days runs comfortably inside this; the caller loops for longer ranges.
 // 300 (not 60): the first batch's learn REDUCES full history from agg_5m on a rebuild (one bounded
@@ -49,6 +51,9 @@ export async function POST(
     return NextResponse.json({ error: "DB not configured" }, { status: 503 });
 
   const { areaId } = await params;
+  const uuid = areaRefToUuid(areaId);
+  if (!uuid)
+    return NextResponse.json({ error: "Invalid area id" }, { status: 400 });
   const [area] = await planetscaleDb
     .select({
       ownerClerkUserId: areas.ownerUserId,
@@ -56,7 +61,7 @@ export async function POST(
       tz: areas.timezoneOffsetMin,
     })
     .from(areas)
-    .where(eq(areas.id, areaId))
+    .where(eq(areas.id, uuid))
     .limit(1);
   if (!area)
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
@@ -85,7 +90,7 @@ export async function POST(
     .from(areaBindings)
     .where(
       and(
-        eq(areaBindings.areaId, areaId),
+        eq(areaBindings.areaId, uuid),
         eq(areaBindings.role, "battery"),
         eq(areaBindings.metricType, "power"),
       ),
@@ -195,7 +200,7 @@ export async function POST(
 
   return NextResponse.json({
     ok: true,
-    areaId,
+    areaId: Area.encode(uuid),
     systemId: handle,
     learnedEtaDays,
     learnMode,

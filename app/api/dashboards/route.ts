@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listReadableAreas } from "@/lib/areas/list";
+import { areaRefToUuid, encodeDescriptorAreaRefs } from "@/lib/areas/ref";
 import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 import {
   createDashboard,
@@ -49,11 +50,14 @@ export async function POST(request: NextRequest) {
     typeof body?.seedAreaId === "string" ? body.seedAreaId : null;
 
   // Seed from an Area's defaults, or start empty. The seed Area must be readable by the caller.
+  // Dual-accept decode (areaRefToUuid): the picker sends `ar_`, but a not-yet-migrated caller could
+  // still send a raw uuid.
   let descriptor = emptyCompositionDescriptor();
   if (seedAreaId) {
-    const area = (await listReadableAreas(auth.userId)).find(
-      (a) => a.id === seedAreaId,
-    );
+    const uuid = areaRefToUuid(seedAreaId);
+    const area = uuid
+      ? (await listReadableAreas(auth.userId)).find((a) => a.id === uuid)
+      : undefined;
     if (!area) {
       return NextResponse.json(
         { error: "seedAreaId is not an area you can read" },
@@ -68,7 +72,10 @@ export async function POST(request: NextRequest) {
       ownerClerkUserId: auth.userId,
       displayName,
       alias,
-      descriptor,
+      // The seed descriptor's section.areaId is a raw uuid (buildAreaStrategyForHandle passthrough) —
+      // persist `ar_` so the stored descriptor never regresses to a form the migration would have to
+      // fix. No-op on an empty descriptor.
+      descriptor: encodeDescriptorAreaRefs(descriptor),
     });
     return NextResponse.json({ id });
   } catch (err) {

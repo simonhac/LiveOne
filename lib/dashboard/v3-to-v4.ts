@@ -2,7 +2,7 @@
  * config-v4 v3→v4 dashboard rewriter (clean-sheet §11 dark-prep, §8.1 model).
  *
  * Pure structural transform of a v3 descriptor into a v4 doc, behind an injectable `LegacyRefResolver`:
- *   - `areaRef(uuid)` is PURE (`Area.encode`) and ships DARK today (areas already have uuid ids).
+ *   - `areaRef(ref)` is PURE (dual-accept raw-uuid-or-`ar_` → `ar_`, `lib/areas/ref.ts`) and ships DARK.
  *   - `deviceRef(legacySystemId)` needs the minted `devices` + `legacy_handles` (cutover), so it is
  *     injected — real at/after cutover, a stub in dark rehearsal/tests.
  *
@@ -16,21 +16,29 @@
  * verbatim as `device` refs; the Phase-6 scope resolver enforces each device is readable (§8.4 "refs
  * always strict"), so an orphan/stale pin cannot widen scope end-to-end.
  */
-import { Area } from "@/lib/ids";
 import type { AreaId, DeviceId } from "@/lib/ids";
+import { areaRefToArId } from "@/lib/areas/ref";
 import type { DashboardV3, AreaSectionV3, CardV3, TileV3 } from "./v3";
 import type { DashboardV4, DashboardNode, GroupNode, CardNode } from "./v4";
 import { normalizeDocV4 } from "./v4-validate";
 
 export interface LegacyRefResolver {
-  /** Area uuid → `ar_` TypeID. Pure (`Area.encode`); ships dark. */
-  areaRef(areaUuid: string): AreaId;
+  /** Area ref (raw uuid OR already `ar_`) → `ar_` TypeID. Pure; ships dark. */
+  areaRef(areaRef: string): AreaId;
   /** Legacy integer `system_id` → `dv_` TypeID. Needs minted devices + legacy_handles (cutover). */
   deviceRef(legacySystemId: number): DeviceId;
 }
 
-/** The pure half of a resolver, usable today: area uuid → `ar_` TypeID. */
-export const pureAreaRef = (areaUuid: string): AreaId => Area.encode(areaUuid);
+/**
+ * The pure half of a resolver, usable today: an area ref (raw uuid OR already `ar_`, dual-accept —
+ * PR2 flips `section.areaId` to `ar_` ahead of the one-off descriptor migration) → `ar_` TypeID.
+ * Throws if `areaRef` is neither (a programmer error — every real descriptor's `areaId` is one).
+ */
+export const pureAreaRef = (areaRef: string): AreaId => {
+  const encoded = areaRefToArId(areaRef);
+  if (!encoded) throw new TypeError(`not a valid area ref: ${areaRef}`);
+  return encoded;
+};
 
 /** Rewrite a v3 descriptor into a normalized v4 doc. */
 export function rewriteV3ToV4(

@@ -83,11 +83,6 @@ type FullTable = {
   // Delete only those colliding rows before the upsert so staged prod config wins.
   replaceConflicts?: string[][];
   excludeCols?: string[]; // drop the surrogate id so dev keeps/assigns its own
-  // Exact by-PK mirror: copy the prod serial `id` (restore-aligned), upsert on the PK, and DELETE
-  // dev rows whose id is absent from prod. The ONLY correct keying when no single unique index is a
-  // total non-null key (dashboards has TWO partial unique indexes, neither total). Wrapped in a txn;
-  // realigns the serial after; FK children cascade on the orphan delete. Ignores conflictCols/excludeCols.
-  mirror?: boolean;
   idDrift?: IdDrift; // clear divergent-id collisions before the by-PK upsert (see IdDrift)
 };
 type IncrementalTable = {
@@ -111,14 +106,31 @@ export interface SyncProdToDevOptions {
 
 // Small config tables — full refresh, FK parents first.
 const FULL: FullTable[] = [
-  ...[
-    "systems",
-    "users",
-    "user_systems",
-    "polling_status",
-    "share_tokens",
-    "roles",
-  ].map((name): FullTable => ({ name, mode: "full", onConflict: "update" })),
+  { name: "systems", mode: "full", onConflict: "update" },
+  // dashboards' uuid PK is minted independently by each environment's own config-transform run at
+  // cutover, so dev and prod hold different uuids for "the same" dashboard (matched only by the frozen
+  // legacy_id). A plain by-PK upsert would leave dev's own (divergent) row in place and never touch it,
+  // and any FK that copies verbatim afterward (users.default_dashboard_id, share_tokens.dashboard_id)
+  // would reference a prod uuid absent from dev. `idDrift` makes dev ADOPT prod's uuid: clear the dev
+  // row colliding on legacy_id (or on owner+slug for legacy_id=NULL rows) before the by-PK upsert. Every
+  // FK to dashboards.id is CASCADE/SET NULL (users, share_tokens, dashboard_grants, dashboard_revisions),
+  // so no manual child clears are needed (children: []). Runs FIRST of the FK-bearing full tables so
+  // users/share_tokens (synced next) land on uuids that already exist in dev.
+  {
+    name: "dashboards",
+    mode: "full",
+    onConflict: "update",
+    idDrift: {
+      uniqueKeys: [
+        ["legacy_id"], // dashboards_legacy_id_unique
+        ["owner_user_id", "slug"], // dashboards_owner_alias_unique
+      ],
+      children: [],
+    },
+  },
+  ...["users", "user_systems", "polling_status", "share_tokens", "roles"].map(
+    (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
+  ),
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
   // legacy_system_id / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
   // unique index (areas_legacy_system_unique / areas_owner_alias_unique). `idDrift` clears the mismatched
@@ -131,7 +143,7 @@ const FULL: FullTable[] = [
     idDrift: {
       uniqueKeys: [
         ["legacy_system_id"], // areas_legacy_system_unique
-        ["owner_clerk_user_id", "alias"], // areas_owner_alias_unique
+        ["owner_user_id", "slug"], // areas_owner_alias_unique — config-v4 renamed owner_clerk_user_id/alias
       ],
       children: [
         { table: "area_devices", cols: ["area_id"] },
@@ -140,6 +152,21 @@ const FULL: FullTable[] = [
         { table: "battery_provenance_daily", cols: ["area_id"] },
         { table: "device_trackers", cols: ["area_id"] },
         { table: "device_run_periods", cols: ["area_id"] },
+        // config-v4 migration 0033 added this table (with an area_id FK, no ON DELETE) after this
+        // children list was written, so it was never accounted for. Not itself in the sync manifest
+        // (it's a frozen-at-cutover compat shim, not prod-mirrored data), so a cleared row isn't
+        // restored by a later leg — same disposable-mirror tradeoff as device_run_periods above.
+        { table: "legacy_handles", cols: ["area_id"] },
+        // NOT handled here (2026-07-26 finding, deliberately out of scope): the config-v4 dark
+        // v4-registry mirror (devices/points/derivations/derived_intervals, migration 0035) is
+        // populated on dev by a SEPARATE script (registry-sync.ts), not this sync, so it isn't safe to
+        // clear-and-abandon the way the other children above are. devices.primary_area_id /
+        // derivations.area_id are NOT NULL/RESTRICT, so a real (post-cutover) drifted area with a
+        // device blocks this delete — AND area_bindings.point_uid (dark, unconsumed by the app) can
+        // cross-reference a point owned by a device under a DIFFERENT, non-drifted area, so naively
+        // deleting devices/points here would also destroy live area_bindings rows for unrelated areas.
+        // Needs its own considered fix (repair via registry-sync.ts re-run, or a null-out-not-delete
+        // repair for the dark point_uid column) — see the areas-idDrift-devices follow-up.
       ],
     },
   },
@@ -217,13 +244,6 @@ const FULL: FullTable[] = [
     conflictCols: ["system_id", "role"], // device_trackers_system_role_unique
     excludeCols: ["id"],
   },
-  // Exact by-id mirror (see `mirror`). dashboards has TWO partial unique indexes —
-  // (clerk_user_id, system_id) and (clerk_user_id, alias) — and BOTH columns are nullable, so
-  // neither is a total non-null ON CONFLICT arbiter. The serial `id` is restore-aligned, so mirror by
-  // PK and delete dev-only/divergent rows. Self-heals the composition-dashboard duplicates that caused
-  // the alias collision. Cascade-deletes dev-only dashboard_share_tokens/grants for absent dashboards —
-  // fine, dev is disposable.
-  { name: "dashboards", mode: "full", onConflict: "update", mirror: true },
 ];
 
 // Large, time-keyed tables — incremental. sessions before point_readings so the
@@ -498,25 +518,16 @@ export async function syncTable(
   colsByTable: Map<string, string[]>,
   pkByTable: Map<string, string[]>,
 ): Promise<{ table: string; rows: number }> {
-  const mirror = t.mode === "full" && t.mirror === true; // narrows t to FullTable
-  const exclude = new Set(
-    mirror ? [] : ((t as IncrementalTable).excludeCols ?? []),
-  );
+  const exclude = new Set((t as IncrementalTable).excludeCols ?? []);
   const cols = (colsByTable.get(t.name) ?? []).filter((c) => !exclude.has(c));
   if (cols.length === 0)
     throw new Error(`no columns found for ${t.name} (schema mismatch?)`);
   const colList = cols.join(", ");
 
   const pk = pkByTable.get(t.name) ?? [];
-  const conflictCols = mirror
-    ? pk
-    : ((t as IncrementalTable).conflictCols ?? pk);
+  const conflictCols = (t as IncrementalTable).conflictCols ?? pk;
   if (conflictCols.length === 0)
     throw new Error(`no conflict key for ${t.name}`);
-  if (mirror && pk.length !== 1)
-    throw new Error(
-      `mirror ${t.name} requires a single-column PK (got ${pk.length})`,
-    );
 
   // Source predicate: incremental ⇒ rows newer than (dev max − overlap). Read the
   // watermark HERE (lazily, per table), not batched up front, because the full leg
@@ -581,22 +592,7 @@ export async function syncTable(
   // 3. Upsert into dev. The transaction paths ROLLBACK before rethrowing so a failure
   // never leaves the persistent dev connection stuck in an aborted transaction.
   try {
-    if (mirror) {
-      const idCol = conflictCols[0];
-      // ONE transaction so a crash can't leave dev half-synced: delete orphans FIRST (frees the
-      // colliding alias/system values held by divergent dev rows), upsert prod rows by PK, realign the
-      // serial (is_called=true ⇒ next nextval = max+1). id is NOT NULL so `NOT IN` is safe.
-      await dev.query(
-        `BEGIN;
-       DELETE FROM public.${t.name}
-         WHERE ${idCol} NOT IN (SELECT ${idCol} FROM sync_staging.${t.name});
-       ${upsert}
-       SELECT setval(pg_get_serial_sequence('public.${t.name}', '${idCol}'),
-                     GREATEST((SELECT max(${idCol}) FROM public.${t.name}), 1), true);
-       COMMIT;
-       DROP TABLE sync_staging.${t.name};`,
-      );
-    } else if (idDrift) {
+    if (idDrift) {
       // Same-logical-row-different-PK: dev rows sharing ANY secondary unique key with a staged prod row
       // but sitting under a different PK. Whichever key collides would abort the by-PK upsert, so clear
       // them (and their FK children — not all ON DELETE CASCADE) inside the upsert's transaction. `_drift`
