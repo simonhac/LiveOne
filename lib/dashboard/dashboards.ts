@@ -4,10 +4,17 @@
  * Distinct from the legacy per-(user,system) `store.ts` (retired with the old path). A row here has
  * `display_name`, an optional owner-unique `alias`, and a composition `descriptor` (every card
  * area-bound); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
+ *
+ * config-v4 id boundary: the `dashboards` PK is a uuid, but this module's PUBLIC surface speaks the
+ * opaque `db_…` TypeID (the `id` field of every returned object; every id PARAM). The raw uuid is decoded
+ * on the way into SQL and encoded on the way out, and NEVER escapes this module — so routes/pages/clients
+ * treat the id as an opaque handle and never touch `lib/ids`. A malformed/foreign id decodes to null and
+ * reads as "not found".
  */
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
+import { Dashboard } from "@/lib/ids";
 import {
   allCardsV3,
   normalizeDescriptor,
@@ -15,10 +22,11 @@ import {
   type DashboardV3,
 } from "./v3";
 import type { DashboardV4 } from "./v4";
+import { rewriteV3ToV4, pureAreaRef } from "./v3-to-v4";
 import { listGrantsForUser } from "./grants";
 
 export interface CompositionDashboard {
-  id: number;
+  id: string;
   ownerClerkUserId: string;
   displayName: string | null;
   alias: string | null;
@@ -33,7 +41,7 @@ export interface CompositionDashboard {
 }
 
 export interface DashboardSummary {
-  id: number;
+  id: string;
   displayName: string | null;
   alias: string | null;
   cardCount: number;
@@ -60,18 +68,34 @@ export async function createDashboard(args: {
   displayName: string;
   alias?: string | null;
   descriptor: DashboardV3;
-}): Promise<number> {
+}): Promise<string> {
   try {
+    // config-v4: `doc` is NOT NULL (cutover shape) — build the v4 node tree from the descriptor. These
+    // create-path descriptors are empty or area-only (device-pinned cards arrive via the /api/v4 doc PUT),
+    // so `deviceRef` is never reached; it throws to catch a device card slipping in through this path.
+    const descriptor = normalizeDescriptor(args.descriptor);
+    const doc = rewriteV3ToV4(descriptor, {
+      areaRef: pureAreaRef,
+      deviceRef: () => {
+        throw new Error(
+          "createDashboard: device-pinned cards must be set via the v4 doc PUT, not the create descriptor",
+        );
+      },
+    });
     const [row] = await requirePlanetscaleDb()
       .insert(dashboards)
       .values({
-        clerkUserId: args.ownerClerkUserId,
-        displayName: args.displayName,
-        alias: args.alias ?? null,
-        descriptor: normalizeDescriptor(args.descriptor),
+        // config-v4: KEYS are the renamed columns; the ARGS shape is unchanged (elective → Phase 9).
+        // No `id` is supplied — 5d sets DEFAULT gen_random_uuid() precisely so this insert keeps
+        // working (defect D-a: the promoted uuid PK inherited no default, 23502 on the first POST).
+        ownerUserId: args.ownerClerkUserId,
+        name: args.displayName,
+        slug: args.alias ?? null,
+        descriptor,
+        doc,
       })
       .returning({ id: dashboards.id });
-    return row.id;
+    return Dashboard.encode(row.id);
   } catch (err) {
     if (isUniqueViolation(err)) throw new DashboardAliasTakenError();
     throw err;
@@ -79,7 +103,7 @@ export async function createDashboard(args: {
 }
 
 function rowToDashboard(r: {
-  id: number;
+  id: string;
   clerkUserId: string;
   displayName: string | null;
   alias: string | null;
@@ -90,7 +114,7 @@ function rowToDashboard(r: {
   updatedAt: Date;
 }): CompositionDashboard {
   return {
-    id: r.id,
+    id: Dashboard.encode(r.id),
     ownerClerkUserId: r.clerkUserId,
     displayName: r.displayName,
     alias: r.alias,
@@ -104,9 +128,9 @@ function rowToDashboard(r: {
 
 const DASHBOARD_COLUMNS = {
   id: dashboards.id,
-  clerkUserId: dashboards.clerkUserId,
-  displayName: dashboards.displayName,
-  alias: dashboards.alias,
+  clerkUserId: dashboards.ownerUserId,
+  displayName: dashboards.name,
+  alias: dashboards.slug,
   descriptor: dashboards.descriptor,
   doc: dashboards.doc,
   revision: dashboards.revision,
@@ -115,14 +139,31 @@ const DASHBOARD_COLUMNS = {
 } as const;
 
 export async function getDashboard(
-  id: number,
+  id: string,
 ): Promise<CompositionDashboard | null> {
+  const uuid = Dashboard.toUuidOrNull(id);
+  if (!uuid) return null;
   const [row] = await requirePlanetscaleDb()
     .select(DASHBOARD_COLUMNS)
     .from(dashboards)
-    .where(eq(dashboards.id, id))
+    .where(eq(dashboards.id, uuid))
     .limit(1);
   return row ? rowToDashboard(row) : null;
+}
+
+/**
+ * config-v4: the opaque `db_…` id of the dashboard carrying this frozen pre-cutover int (`legacy_id`),
+ * or null. Backs the permanent `/dashboard/id/{n}` (int) → `/dashboard/id/{db_…}` redirect.
+ */
+export async function getDashboardIdByLegacyId(
+  legacyId: number,
+): Promise<string | null> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ id: dashboards.id })
+    .from(dashboards)
+    .where(eq(dashboards.legacyId, legacyId))
+    .limit(1);
+  return row ? Dashboard.encode(row.id) : null;
 }
 
 export type DocUpdateResult =
@@ -138,15 +179,17 @@ export type DocUpdateResult =
  * serial-id dashboard pre-cutover — history starts at cutover.
  */
 export async function updateDashboardDoc(
-  id: number,
+  id: string,
   doc: DashboardV4,
   expectedRevision?: number,
 ): Promise<DocUpdateResult> {
+  const uuid = Dashboard.toUuidOrNull(id);
+  if (!uuid) throw new Error(`dashboard ${id} not found`);
   return requirePlanetscaleDb().transaction(async (tx) => {
     const [row] = await tx
       .select({ revision: dashboards.revision })
       .from(dashboards)
-      .where(eq(dashboards.id, id))
+      .where(eq(dashboards.id, uuid))
       .for("update")
       .limit(1);
     if (!row) throw new Error(`dashboard ${id} not found`);
@@ -157,7 +200,7 @@ export async function updateDashboardDoc(
     await tx
       .update(dashboards)
       .set({ doc, revision, updatedAt: new Date() })
-      .where(eq(dashboards.id, id));
+      .where(eq(dashboards.id, uuid));
     return { ok: true, revision, doc };
   });
 }
@@ -171,8 +214,8 @@ export async function getDashboardByOwnerAlias(
     .from(dashboards)
     .where(
       and(
-        eq(dashboards.clerkUserId, ownerClerkUserId),
-        eq(dashboards.alias, alias),
+        eq(dashboards.ownerUserId, ownerClerkUserId),
+        eq(dashboards.slug, alias),
       ),
     )
     .limit(1);
@@ -188,8 +231,8 @@ export async function listDashboardsForOwner(
     .from(dashboards)
     .where(
       and(
-        eq(dashboards.clerkUserId, ownerClerkUserId),
-        isNotNull(dashboards.displayName),
+        eq(dashboards.ownerUserId, ownerClerkUserId),
+        isNotNull(dashboards.name),
       ),
     )
     .orderBy(desc(dashboards.updatedAt));
@@ -199,7 +242,7 @@ export async function listDashboardsForOwner(
 /** Shape a dashboard row into a DashboardSummary, tagged with how the caller reaches it. */
 function rowToSummary(
   r: {
-    id: number;
+    id: string;
     displayName: string | null;
     alias: string | null;
     descriptor: unknown;
@@ -208,7 +251,7 @@ function rowToSummary(
   access: "owner" | "shared",
 ): DashboardSummary {
   return {
-    id: r.id,
+    id: Dashboard.encode(r.id),
     displayName: r.displayName,
     alias: r.alias,
     cardCount: isDashboardV3(r.descriptor)
@@ -241,8 +284,14 @@ export async function listAccessibleDashboards(
     .from(dashboards)
     .where(
       and(
-        inArray(dashboards.id, grantedIds),
-        isNotNull(dashboards.displayName),
+        // grantedIds are opaque `db_…` ids → decode to uuids for the PK IN-list.
+        inArray(
+          dashboards.id,
+          grantedIds
+            .map((id) => Dashboard.toUuidOrNull(id))
+            .filter((u): u is string => u != null),
+        ),
+        isNotNull(dashboards.name),
       ),
     );
   const shared = sharedRows.map((r) => rowToSummary(r, "shared"));
@@ -250,7 +299,7 @@ export async function listAccessibleDashboards(
 }
 
 export async function updateDashboard(
-  id: number,
+  id: string,
   patch: {
     displayName?: string;
     alias?: string | null;
@@ -269,21 +318,29 @@ export async function updateDashboard(
   const set: Partial<typeof dashboards.$inferInsert> = {
     updatedAt: new Date(),
   };
-  if (patch.displayName !== undefined) set.displayName = patch.displayName;
-  if (patch.alias !== undefined) set.alias = patch.alias;
+  // config-v4: the columns are renamed (display_name→name, alias→slug); the PATCH arg shape is
+  // unchanged (elective → Phase 9), so map the legacy arg keys onto the renamed columns here.
+  if (patch.displayName !== undefined) set.name = patch.displayName;
+  if (patch.alias !== undefined) set.slug = patch.alias;
   if (patch.descriptor !== undefined)
     set.descriptor = normalizeDescriptor(patch.descriptor);
+  const uuid = Dashboard.toUuidOrNull(id);
+  if (!uuid) return;
   try {
     await requirePlanetscaleDb()
       .update(dashboards)
       .set(set)
-      .where(eq(dashboards.id, id));
+      .where(eq(dashboards.id, uuid));
   } catch (err) {
     if (isUniqueViolation(err)) throw new DashboardAliasTakenError();
     throw err;
   }
 }
 
-export async function deleteDashboard(id: number): Promise<void> {
-  await requirePlanetscaleDb().delete(dashboards).where(eq(dashboards.id, id));
+export async function deleteDashboard(id: string): Promise<void> {
+  const uuid = Dashboard.toUuidOrNull(id);
+  if (!uuid) return;
+  await requirePlanetscaleDb()
+    .delete(dashboards)
+    .where(eq(dashboards.id, uuid));
 }

@@ -9,7 +9,8 @@ import type { PointId } from "@/lib/ids";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
-import { validateShareToken } from "@/lib/share-tokens";
+import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
+import { getDashboard } from "@/lib/dashboard/dashboards";
 import Timeline from "./Timeline";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -74,13 +75,17 @@ export default async function KinkoraHwsPage({
   );
   if (!system) notFound();
 
-  // Access check: a valid share token whose owner matches the system's owner is sufficient.
-  // Otherwise fall back to Clerk auth (owner or admin).
+  // Access check: a valid (unified) dashboard share token whose dashboard is owned by the system's
+  // owner is sufficient — config-v4 re-pointed the legacy owner-scoped token at an owner-wide
+  // auto-created dashboard, so owner-match preserves the pre-cutover scope. Else fall back to Clerk auth.
   let viaShareToken = false;
   if (access) {
-    const validated = await validateShareToken(access);
-    if (validated && validated.ownerClerkUserId === system.ownerClerkUserId) {
-      viaShareToken = true;
+    const validated = await validateDashboardShareToken(access);
+    if (validated) {
+      const dash = await getDashboard(validated.dashboardId);
+      if (dash && dash.ownerClerkUserId === system.ownerClerkUserId) {
+        viaShareToken = true;
+      }
     }
   }
   if (!viaShareToken) {

@@ -191,7 +191,7 @@ function GroupNodeView({
   node: GroupNode;
   context: NodeContext;
   resolver: ShellResolver;
-  dashboardId?: number;
+  dashboardId?: string;
   areasResolved: boolean;
 }) {
   const nodeContext = childContext(node, context);
@@ -323,7 +323,7 @@ export function NodeView({
   node: DashboardNode;
   context: NodeContext;
   resolver: ShellResolver;
-  dashboardId?: number;
+  dashboardId?: string;
   areasResolved: boolean;
 }): React.ReactElement | null {
   if (node.kind === "group") {
@@ -357,7 +357,7 @@ export function DashboardV4View({
 }: {
   doc: DashboardV4;
   areaById: Map<string, ReadableArea>;
-  dashboardId?: number;
+  dashboardId?: string;
   areasResolved?: boolean;
   deviceById?: Map<string, ResolvedDevice>;
 }) {

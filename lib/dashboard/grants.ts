@@ -4,8 +4,8 @@
  * A grant is the "invite a specific person" counterpart to the public `?access=` share token. Like a
  * token, a grant is READ-scoped to exactly what the dashboard shows — Dashboard → its Area(s) →
  * `area_bindings` → points (lib/dashboard/access.ts) — never general system access. role ∈
- * owner|admin|viewer; today invites are viewer (read-only) and `role` is plumbed for a future
- * editable variant.
+ * admin|viewer (config-v4 narrowed away `owner`); today invites are viewer (read-only) and `role`
+ * is plumbed for a future editable variant.
  */
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -13,32 +13,38 @@ import { dashboardGrants } from "@/lib/db/planetscale/schema";
 import type { DashboardGrant } from "@/lib/db/planetscale/schema";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
+import { Dashboard } from "@/lib/ids";
 
-export type DashboardGrantRole = "owner" | "admin" | "viewer";
+export type DashboardGrantRole = "admin" | "viewer";
 
-/** The dashboard ids this user has been granted access to (uses dashboard_grants_user_idx). */
+// config-v4: this module's public surface speaks the opaque `db_…` dashboard id; the raw uuid
+// (dashboard_grants.dashboard_id) is decoded on the way into SQL and encoded on the way out.
+
+/** The opaque `db_…` dashboard ids this user has been granted access to (uses dashboard_grants_user_idx). */
 export async function listGrantsForUser(
   clerkUserId: string,
-): Promise<number[]> {
+): Promise<string[]> {
   const rows = await requirePlanetscaleDb()
     .select({ dashboardId: dashboardGrants.dashboardId })
     .from(dashboardGrants)
-    .where(eq(dashboardGrants.clerkUserId, clerkUserId));
-  return rows.map((r) => r.dashboardId);
+    .where(eq(dashboardGrants.userId, clerkUserId));
+  return rows.map((r) => Dashboard.encode(r.dashboardId));
 }
 
 /** A single (dashboard, user) membership, or null. The unique-index lookup used by the view route. */
 export async function getGrant(
-  dashboardId: number,
+  dashboardId: string,
   clerkUserId: string,
 ): Promise<DashboardGrant | null> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return null;
   const [row] = await requirePlanetscaleDb()
     .select()
     .from(dashboardGrants)
     .where(
       and(
-        eq(dashboardGrants.dashboardId, dashboardId),
-        eq(dashboardGrants.clerkUserId, clerkUserId),
+        eq(dashboardGrants.dashboardId, uuid),
+        eq(dashboardGrants.userId, clerkUserId),
       ),
     )
     .limit(1);
@@ -47,45 +53,51 @@ export async function getGrant(
 
 /** Add (or re-role) a member on a dashboard. Upserts on the (dashboardId, clerkUserId) unique index. */
 export async function createGrant(args: {
-  dashboardId: number;
+  dashboardId: string;
   clerkUserId: string;
   role: DashboardGrantRole;
 }): Promise<void> {
+  const uuid = Dashboard.toUuidOrNull(args.dashboardId);
+  if (!uuid) return;
   await requirePlanetscaleDb()
     .insert(dashboardGrants)
     .values({
-      dashboardId: args.dashboardId,
-      clerkUserId: args.clerkUserId,
+      dashboardId: uuid,
+      userId: args.clerkUserId,
       role: args.role,
-      createdAtMs: Date.now(),
+      createdAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [dashboardGrants.dashboardId, dashboardGrants.clerkUserId],
+      target: [dashboardGrants.dashboardId, dashboardGrants.userId],
       set: { role: args.role },
     });
 }
 
 /** All members of a dashboard, for the manage-members UI (caller decorates with email/username). */
 export async function listGrantsForDashboard(
-  dashboardId: number,
+  dashboardId: string,
 ): Promise<DashboardGrant[]> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return [];
   return requirePlanetscaleDb()
     .select()
     .from(dashboardGrants)
-    .where(eq(dashboardGrants.dashboardId, dashboardId));
+    .where(eq(dashboardGrants.dashboardId, uuid));
 }
 
 /** Remove one membership. Returns true if a row was deleted. */
 export async function revokeGrant(
-  dashboardId: number,
+  dashboardId: string,
   clerkUserId: string,
 ): Promise<boolean> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return false;
   const result = await requirePlanetscaleDb()
     .delete(dashboardGrants)
     .where(
       and(
-        eq(dashboardGrants.dashboardId, dashboardId),
-        eq(dashboardGrants.clerkUserId, clerkUserId),
+        eq(dashboardGrants.dashboardId, uuid),
+        eq(dashboardGrants.userId, clerkUserId),
       ),
     )
     .returning();

@@ -51,7 +51,7 @@ export async function POST(
   const { areaId } = await params;
   const [area] = await planetscaleDb
     .select({
-      ownerClerkUserId: areas.ownerClerkUserId,
+      ownerClerkUserId: areas.ownerUserId,
       legacySystemId: areas.legacySystemId,
       tz: areas.timezoneOffsetMin,
     })

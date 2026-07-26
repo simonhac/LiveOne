@@ -1,18 +1,25 @@
 /**
  * Per-dashboard sharing (P4): dashboard-scoped share tokens + grant lookups.
  *
- * A share token is a read-only public link scoped to ONE dashboard (unlike the legacy owner-scoped
- * `share_tokens`). A holder gets read access to exactly the points that dashboard exposes
- * (lib/dashboard/access.ts), resolved at consumption time — never general system access. Reuses the
- * 3-word phrase generator + epoch-ms / revoke / expiry convention from lib/share-tokens.ts.
+ * A share token is a read-only public link scoped to ONE dashboard. A holder gets read access to
+ * exactly the points that dashboard exposes (lib/dashboard/access.ts), resolved at consumption time —
+ * never general system access. Reuses the 3-word phrase generator from lib/share-tokens.ts.
+ *
+ * config-v4: the two token tables are UNIFIED onto `share_tokens` (dashboard_id uuid NOT NULL, naive-UTC
+ * `timestamp` columns; the legacy owner-scoped `share_tokens` rows were re-pointed at auto-created
+ * dashboards at cutover). The retired `dashboard_share_tokens` table survives (dead) until Phase 9.
  */
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { dashboardShareTokens } from "@/lib/db/planetscale/schema";
+import { shareTokens } from "@/lib/db/planetscale/schema";
 import { generateTokenString, isWellFormedToken } from "@/lib/share-tokens";
+import { Dashboard } from "@/lib/ids";
+
+// config-v4: this module's public surface speaks the opaque `db_…` dashboard id; the raw uuid
+// (share_tokens.dashboard_id) is decoded on the way into SQL and encoded on the way out.
 
 export interface CreateDashboardShareTokenOptions {
-  dashboardId: number;
+  dashboardId: string; // opaque `db_…` dashboard id
   expiresInDays?: number | null; // null/undefined => never expires
   label: string; // required, human-readable name for the link
 }
@@ -20,6 +27,8 @@ export interface CreateDashboardShareTokenOptions {
 export async function createDashboardShareToken(
   opts: CreateDashboardShareTokenOptions,
 ): Promise<{ token: string; expiresAtMs: number | null }> {
+  const dashboardUuid = Dashboard.toUuidOrNull(opts.dashboardId);
+  if (!dashboardUuid) throw new Error("invalid dashboard id");
   for (let attempt = 0; attempt < 5; attempt++) {
     const token = generateTokenString();
     const expiresAtMs =
@@ -27,13 +36,15 @@ export async function createDashboardShareToken(
         ? Date.now() + opts.expiresInDays * 24 * 60 * 60 * 1000
         : null;
     try {
-      await requirePlanetscaleDb().insert(dashboardShareTokens).values({
-        token,
-        dashboardId: opts.dashboardId,
-        label: opts.label,
-        createdAtMs: Date.now(),
-        expiresAtMs,
-      });
+      await requirePlanetscaleDb()
+        .insert(shareTokens)
+        .values({
+          token,
+          dashboardId: dashboardUuid,
+          label: opts.label,
+          createdAt: new Date(),
+          expiresAt: expiresAtMs != null ? new Date(expiresAtMs) : null,
+        });
       return { token, expiresAtMs };
     } catch (err: unknown) {
       // Token PK collision → SQLSTATE 23505 (unique_violation); retry with a fresh phrase.
@@ -46,7 +57,7 @@ export async function createDashboardShareToken(
 
 export interface ValidatedDashboardToken {
   token: string;
-  dashboardId: number;
+  dashboardId: string; // opaque `db_…` dashboard id
 }
 
 /** Validate a token (well-formed, not revoked, not expired) → its dashboard, touching last_used. */
@@ -54,19 +65,16 @@ export async function validateDashboardShareToken(
   token: string,
 ): Promise<ValidatedDashboardToken | null> {
   if (!isWellFormedToken(token)) return null;
-  const nowMs = Date.now();
+  const now = new Date();
   const pg = requirePlanetscaleDb();
   const rows = await pg
     .select()
-    .from(dashboardShareTokens)
+    .from(shareTokens)
     .where(
       and(
-        eq(dashboardShareTokens.token, token),
-        isNull(dashboardShareTokens.revokedAtMs),
-        or(
-          isNull(dashboardShareTokens.expiresAtMs),
-          gt(dashboardShareTokens.expiresAtMs, nowMs),
-        ),
+        eq(shareTokens.token, token),
+        isNull(shareTokens.revokedAt),
+        or(isNull(shareTokens.expiresAt), gt(shareTokens.expiresAt, now)),
       ),
     )
     .limit(1);
@@ -74,35 +82,39 @@ export async function validateDashboardShareToken(
   if (!row) return null;
 
   void pg
-    .update(dashboardShareTokens)
-    .set({ lastUsedAtMs: nowMs })
-    .where(eq(dashboardShareTokens.token, token))
+    .update(shareTokens)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(shareTokens.token, token))
     .catch(() => {});
 
-  return { token: row.token, dashboardId: row.dashboardId };
+  return { token: row.token, dashboardId: Dashboard.encode(row.dashboardId) };
 }
 
-export async function listDashboardShareTokens(dashboardId: number) {
+export async function listDashboardShareTokens(dashboardId: string) {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return [];
   return requirePlanetscaleDb()
     .select()
-    .from(dashboardShareTokens)
-    .where(eq(dashboardShareTokens.dashboardId, dashboardId))
-    .orderBy(desc(dashboardShareTokens.createdAtMs));
+    .from(shareTokens)
+    .where(eq(shareTokens.dashboardId, uuid))
+    .orderBy(desc(shareTokens.createdAt));
 }
 
 /** Revoke a token, scoped to its dashboard (the route verifies the caller owns that dashboard). */
 export async function revokeDashboardShareToken(
   token: string,
-  dashboardId: number,
+  dashboardId: string,
 ): Promise<boolean> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return false;
   const result = await requirePlanetscaleDb()
-    .update(dashboardShareTokens)
-    .set({ revokedAtMs: Date.now() })
+    .update(shareTokens)
+    .set({ revokedAt: new Date() })
     .where(
       and(
-        eq(dashboardShareTokens.token, token),
-        eq(dashboardShareTokens.dashboardId, dashboardId),
-        isNull(dashboardShareTokens.revokedAtMs),
+        eq(shareTokens.token, token),
+        eq(shareTokens.dashboardId, uuid),
+        isNull(shareTokens.revokedAt),
       ),
     )
     .returning();
@@ -112,17 +124,19 @@ export async function revokeDashboardShareToken(
 /** Rename a (non-revoked) token's label, scoped to its dashboard. Returns true if a row updated. */
 export async function renameDashboardShareToken(
   token: string,
-  dashboardId: number,
+  dashboardId: string,
   label: string,
 ): Promise<boolean> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return false;
   const result = await requirePlanetscaleDb()
-    .update(dashboardShareTokens)
+    .update(shareTokens)
     .set({ label })
     .where(
       and(
-        eq(dashboardShareTokens.token, token),
-        eq(dashboardShareTokens.dashboardId, dashboardId),
-        isNull(dashboardShareTokens.revokedAtMs),
+        eq(shareTokens.token, token),
+        eq(shareTokens.dashboardId, uuid),
+        isNull(shareTokens.revokedAt),
       ),
     )
     .returning();

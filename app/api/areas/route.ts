@@ -55,8 +55,8 @@ export async function GET(request: NextRequest) {
     .select({
       id: areas.id,
       legacySystemId: areas.legacySystemId,
-      displayName: areas.displayName,
-      alias: areas.alias,
+      displayName: areas.name,
+      alias: areas.slug,
       status: areas.status,
     })
     .from(areas)

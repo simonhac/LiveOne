@@ -10,13 +10,14 @@ import { sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   dashboards,
-  dashboardShareTokens,
+  shareTokens,
   dashboardGrants,
 } from "@/lib/db/planetscale/schema";
 import { allCardsV3, isDashboardV3 } from "@/lib/dashboard/v3";
+import { Dashboard } from "@/lib/ids";
 
 export interface AdminDashboardRow {
-  id: number;
+  id: string; // dashboards.id (uuid)
   owner: {
     clerkId: string;
     email: string | null;
@@ -44,17 +45,17 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
   const allDashboards = await db
     .select()
     .from(dashboards)
-    .orderBy(dashboards.clerkUserId, dashboards.id);
+    .orderBy(dashboards.ownerUserId, dashboards.id);
 
   // Share-token and grant counts per dashboard (two grouped queries).
   const [shareRows, grantRows] = await Promise.all([
     db
       .select({
-        dashboardId: dashboardShareTokens.dashboardId,
+        dashboardId: shareTokens.dashboardId,
         count: sql<number>`count(*)::int`,
       })
-      .from(dashboardShareTokens)
-      .groupBy(dashboardShareTokens.dashboardId),
+      .from(shareTokens)
+      .groupBy(shareTokens.dashboardId),
     db
       .select({
         dashboardId: dashboardGrants.dashboardId,
@@ -67,7 +68,7 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
   const grantCounts = new Map(grantRows.map((r) => [r.dashboardId, r.count]));
 
   // Resolve owner info from Clerk.
-  const ownerIds = [...new Set(allDashboards.map((d) => d.clerkUserId))];
+  const ownerIds = [...new Set(allDashboards.map((d) => d.ownerUserId))];
   const userCache = new Map<
     string,
     { email: string | null; userName: string | null }
@@ -94,16 +95,17 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
   }
 
   const dashboardsData: AdminDashboardRow[] = allDashboards.map((d) => {
-    const userInfo = userCache.get(d.clerkUserId);
+    const userInfo = userCache.get(d.ownerUserId);
     return {
-      id: d.id,
+      // Opaque `db_…` id for the admin UI (the table read here sees the raw uuid).
+      id: Dashboard.encode(d.id),
       owner: {
-        clerkId: d.clerkUserId,
+        clerkId: d.ownerUserId,
         email: userInfo?.email || null,
         userName: userInfo?.userName || null,
       },
-      displayName: d.displayName,
-      alias: d.alias,
+      displayName: d.name,
+      alias: d.slug,
       cardCount: isDashboardV3(d.descriptor)
         ? allCardsV3(d.descriptor).length
         : 0,

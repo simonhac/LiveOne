@@ -24,8 +24,8 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
 
   const [area] = await db
     .select({
-      displayName: areas.displayName,
-      owner: areas.ownerClerkUserId,
+      displayName: areas.name,
+      owner: areas.ownerUserId,
       tzOff: areas.timezoneOffsetMin,
       tz: areas.displayTimezone,
     })

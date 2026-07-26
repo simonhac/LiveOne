@@ -37,7 +37,7 @@ export default function DashboardSettingsDialog({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  id: number;
+  id: string;
   initialName: string;
   initialAlias: string;
   /** The dashboard's area ids — enables "Recompute sankeys" (owner/admin only, per the API). */

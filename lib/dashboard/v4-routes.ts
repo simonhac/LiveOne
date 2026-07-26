@@ -1,9 +1,9 @@
 /**
  * config-v4 `/api/v4/dashboards/*` route helpers (Phase 6, DARK — writes go live at cutover).
  *
- * Shared owner-load + the §8.4 reference-readability check. Dashboards are addressed by their CURRENT
- * serial id (int) here; `db_…` TypeID addressing lands at cutover (dashboards get uuid ids + `legacy_id`
- * — there is no int↔TypeID mapping pre-cutover). Auth mirrors the v3 `/api/dashboards/[id]` route.
+ * Shared owner-load + the §8.4 reference-readability check. config-v4: dashboards are addressed by their
+ * opaque `db_…` id, which is passed straight to the DAO (`lib/dashboard/dashboards.ts` owns the id↔uuid
+ * translation); a malformed/foreign id reads as not-found. Auth mirrors the v3 `/api/dashboards/[id]` route.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
@@ -24,13 +24,7 @@ export async function loadOwnedDashboard(
 > {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
-  const id = parseInt(idStr, 10);
-  if (isNaN(id)) {
-    return {
-      error: NextResponse.json({ error: "Invalid id" }, { status: 400 }),
-    };
-  }
-  const dashboard = await getDashboard(id);
+  const dashboard = await getDashboard(idStr);
   if (!dashboard) {
     return {
       error: NextResponse.json({ error: "Not found" }, { status: 404 }),

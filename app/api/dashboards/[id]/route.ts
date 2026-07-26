@@ -25,13 +25,7 @@ async function loadOwned(
 > {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
-  const id = parseInt(idStr, 10);
-  if (isNaN(id)) {
-    return {
-      error: NextResponse.json({ error: "Invalid id" }, { status: 400 }),
-    };
-  }
-  const dashboard = await getDashboard(id);
+  const dashboard = await getDashboard(idStr);
   if (!dashboard) {
     return {
       error: NextResponse.json({ error: "Not found" }, { status: 404 }),

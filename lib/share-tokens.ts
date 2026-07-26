@@ -1,7 +1,9 @@
 import { randomInt } from "crypto";
-import { and, desc, eq, isNull, gt, or } from "drizzle-orm";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { shareTokens as pgShareTokens } from "@/lib/db/planetscale/schema";
+
+// config-v4: the owner-scoped share-token DB path (createShareToken/validateShareToken/listShareTokens/
+// revokeShareToken) is RETIRED — sharing is unified onto per-dashboard `share_tokens` (lib/dashboard/
+// sharing.ts). This module now provides only the 3-word token-string generator + validator, still used by
+// the unified path.
 
 // Three-word tokens use the form: <adjective>-<adjective>-<noun>
 // Wordlists are intentionally short (single-syllable preferred, no homophones,
@@ -534,105 +536,4 @@ const TOKEN_RE = /^[a-z]+-[a-z]+-[a-z]+$/;
 
 export function isWellFormedToken(token: string): boolean {
   return TOKEN_RE.test(token) && token.length <= 60;
-}
-
-export interface CreateShareTokenOptions {
-  ownerClerkUserId: string;
-  expiresInDays?: number | null; // null/undefined => never expires
-  label?: string | null;
-}
-
-export async function createShareToken(opts: CreateShareTokenOptions) {
-  // Retry on the slim chance of a token collision (PRIMARY KEY violation).
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const token = generateTokenString();
-    const expiresAtMs =
-      opts.expiresInDays && opts.expiresInDays > 0
-        ? Date.now() + opts.expiresInDays * 24 * 60 * 60 * 1000
-        : null;
-    try {
-      await requirePlanetscaleDb()
-        .insert(pgShareTokens)
-        .values({
-          token,
-          ownerClerkUserId: opts.ownerClerkUserId,
-          label: opts.label ?? null,
-          createdAtMs: Date.now(),
-          expiresAtMs,
-        });
-      return { token, expiresAtMs };
-    } catch (err: any) {
-      // Token PK collision: Postgres surfaces SQLSTATE 23505 (unique_violation).
-      if (err?.code === "23505") {
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw new Error("failed to allocate unique share token");
-}
-
-export interface ValidatedToken {
-  token: string;
-  ownerClerkUserId: string;
-}
-
-export async function validateShareToken(
-  token: string,
-): Promise<ValidatedToken | null> {
-  if (!isWellFormedToken(token)) return null;
-  const nowMs = Date.now();
-  const pg = requirePlanetscaleDb();
-  const rows = await pg
-    .select()
-    .from(pgShareTokens)
-    .where(
-      and(
-        eq(pgShareTokens.token, token),
-        isNull(pgShareTokens.revokedAtMs),
-        or(
-          isNull(pgShareTokens.expiresAtMs),
-          gt(pgShareTokens.expiresAtMs, nowMs),
-        ),
-      ),
-    )
-    .limit(1);
-  const row = rows[0] ?? null;
-  if (!row) return null;
-
-  // Best-effort touch of last_used_at_ms (don't await; ignore failure).
-  void pg
-    .update(pgShareTokens)
-    .set({ lastUsedAtMs: nowMs })
-    .where(eq(pgShareTokens.token, token))
-    .catch(() => {});
-
-  return { token: row.token, ownerClerkUserId: row.ownerClerkUserId };
-}
-
-export async function listShareTokens(ownerClerkUserId: string) {
-  return requirePlanetscaleDb()
-    .select()
-    .from(pgShareTokens)
-    .where(eq(pgShareTokens.ownerClerkUserId, ownerClerkUserId))
-    .orderBy(desc(pgShareTokens.createdAtMs));
-}
-
-export async function revokeShareToken(
-  token: string,
-  ownerClerkUserId: string,
-) {
-  const revokedAtMs = Date.now();
-  const result = await requirePlanetscaleDb()
-    .update(pgShareTokens)
-    .set({ revokedAtMs })
-    .where(
-      and(
-        eq(pgShareTokens.token, token),
-        eq(pgShareTokens.ownerClerkUserId, ownerClerkUserId),
-        isNull(pgShareTokens.revokedAtMs),
-      ),
-    )
-    .returning();
-  return result.length > 0;
 }

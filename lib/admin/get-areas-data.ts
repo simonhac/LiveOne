@@ -90,7 +90,7 @@ async function shapeAreas(
   const ownerIds = [
     ...new Set(
       allAreas
-        .map((a) => a.ownerClerkUserId)
+        .map((a) => a.ownerUserId)
         .filter((id): id is string => Boolean(id)),
     ),
   ];
@@ -119,9 +119,7 @@ async function shapeAreas(
   const areasData: AdminAreaData[] = [];
 
   for (const area of allAreas) {
-    const userInfo = area.ownerClerkUserId
-      ? userCache.get(area.ownerClerkUserId)
-      : null;
+    const userInfo = area.ownerUserId ? userCache.get(area.ownerUserId) : null;
 
     // Uniform: an Area's member devices are its `area_devices` rows — no single-vs-multi branch.
     const memberIds = await getAreaDeviceSystemIds(area.id);
@@ -140,15 +138,15 @@ async function shapeAreas(
 
     areasData.push({
       id: area.id,
-      displayName: area.displayName,
-      alias: area.alias,
+      displayName: area.name,
+      alias: area.slug,
       legacySystemId: area.legacySystemId,
       status: area.status,
       displayTimezone: area.displayTimezone,
       timezoneOffsetMin: area.timezoneOffsetMin,
       location: (area.location as AreaLocation | null) ?? null,
       owner: {
-        clerkId: area.ownerClerkUserId,
+        clerkId: area.ownerUserId,
         email: userInfo?.email || null,
         userName: userInfo?.userName || null,
       },
@@ -163,7 +161,7 @@ async function shapeAreas(
 /** Every Area (admin view — all owners, includes archived). Powers `/admin/areas`. */
 export async function getAdminAreasData(): Promise<AdminAreasResult> {
   const db = requirePlanetscaleDb();
-  const allAreas = await db.select().from(areas).orderBy(areas.displayName);
+  const allAreas = await db.select().from(areas).orderBy(areas.name);
   const areasData = await shapeAreas(allAreas);
   return {
     success: true,
@@ -181,8 +179,8 @@ export async function getOwnerAreasData(
   const allAreas = await db
     .select()
     .from(areas)
-    .where(and(eq(areas.ownerClerkUserId, userId), eq(areas.status, "active")))
-    .orderBy(areas.displayName);
+    .where(and(eq(areas.ownerUserId, userId), eq(areas.status, "active")))
+    .orderBy(areas.name);
   const areasData = await shapeAreas(allAreas);
   return {
     success: true,

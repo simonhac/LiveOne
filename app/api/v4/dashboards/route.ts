@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
       ? body.slug.trim()
       : null;
 
-  let id: number;
+  let id: string; // opaque `db_…` dashboard id
   try {
     id = await createDashboard({
       ownerClerkUserId: auth.userId,
@@ -137,5 +137,6 @@ export async function POST(request: NextRequest) {
     const upd = await updateDashboardDoc(id, normalized);
     if (upd.ok) revision = upd.revision;
   }
+  // `id` is already the opaque `db_…` id (the DAO owns the uuid↔TypeID translation).
   return NextResponse.json({ id, revision }, { status: 201 });
 }

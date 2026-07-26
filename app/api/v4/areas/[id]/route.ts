@@ -31,8 +31,8 @@ export async function GET(
   const [row] = await db
     .select({
       id: areas.id,
-      name: areas.displayName,
-      slug: areas.alias,
+      name: areas.name,
+      slug: areas.slug,
       status: areas.status,
       dayOffsetMin: areas.dayOffsetMin,
       timezoneOffsetMin: areas.timezoneOffsetMin,

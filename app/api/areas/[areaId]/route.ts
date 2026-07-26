@@ -63,8 +63,8 @@ export async function GET(
   const [row] = await requirePlanetscaleDb()
     .select({
       id: areas.id,
-      displayName: areas.displayName,
-      alias: areas.alias,
+      displayName: areas.name,
+      alias: areas.slug,
       timezoneOffsetMin: areas.timezoneOffsetMin,
       displayTimezone: areas.displayTimezone,
       location: areas.location,

@@ -58,9 +58,9 @@ beforeEach(() => {
     getViewableSystem: getSystem,
     isAreaHandle: jest.fn(async () => false),
   } as unknown as ReturnType<typeof SystemsManager.getInstance>);
-  mockValidate.mockResolvedValue({ token: "tok", dashboardId: 1 });
+  mockValidate.mockResolvedValue({ token: "tok", dashboardId: "d1" });
   mockGetDashboard.mockResolvedValue({
-    id: 1,
+    id: "d1",
     ownerClerkUserId: "owner",
     displayName: "Test",
     alias: null,

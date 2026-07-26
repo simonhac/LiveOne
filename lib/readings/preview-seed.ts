@@ -79,7 +79,8 @@ const utcDays = (n: number) =>
 function slices(seedDays: number, seedDaysDaily: number) {
   return [
     ["sessions", `created_at >= ${utcDays(seedDays + 1)}`],
-    // SEAM: preview COPY of the three hot stores; Phase 8 rewrites their table/key shapes here.
+    // config-v4: cutover-invariant — the COPY is `SELECT *` (follows the twin's point_rid columns
+    // automatically) and these time-window predicates (measurement_time/interval_end/day) all survive.
     ["point_readings", `measurement_time >= ${utcDays(seedDays)}`],
     ["point_readings_agg_5m", `interval_end >= ${utcDays(seedDays)}`],
     [
@@ -141,7 +142,8 @@ export async function seedPreviewDatabase(
   // The branch is disposable: drop the readings->sessions FK so a partial time window can't dangle.
   const fk = psql(
     dstEnv,
-    // SEAM: the raw store's legacy session FK disappears/rekeys at Phase 8.
+    // config-v4: cutover-invariant — the twin keeps a point_readings→sessions FK (pr_new_session_fk), and
+    // this probe matches it by catalog (conrelid/confrelid), not by name, so it still finds + drops it.
     `SELECT conname FROM pg_constraint WHERE conrelid='point_readings'::regclass AND contype='f' AND confrelid='sessions'::regclass LIMIT 1`,
   );
   if (fk) {

@@ -22,7 +22,7 @@ export default function GrantsPanel({
   dashboardId,
   enabled,
 }: {
-  dashboardId: number;
+  dashboardId: string;
   enabled: boolean;
 }) {
   const [members, setMembers] = useState<Member[]>([]);
