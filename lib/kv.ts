@@ -15,9 +15,6 @@ import { getEnvironment } from "./env";
  * - This prevents data collisions when using the same KV instance
  */
 
-const kvConfigured = !!(
-  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
-);
 let kvWarned = false;
 
 function warnOnce() {
@@ -29,22 +26,40 @@ function warnOnce() {
   }
 }
 
-// Create client eagerly, but use a Proxy to warn only on actual access
-const kvClient = kvConfigured
-  ? createClient({
-      url: process.env.KV_REST_API_URL!,
-      token: process.env.KV_REST_API_TOKEN!,
-    })
-  : null;
+// Resolved LAZILY, on first property access — NOT at import time.
+//
+// `import`s are hoisted and evaluated before a module body runs, so any script that calls
+// `dotenv.config()` in its body (every scripts/config-v4/* driver does) imports this module BEFORE
+// .env.local is loaded. Reading the credentials at import time therefore latched `kvClient = null`
+// permanently, and every kv.* call became the no-op Proxy below — while the caller's own
+// `process.env.KV_REST_API_URL` check, running after dotenv, saw the vars and passed.
+//
+// That combination is silent and unfalsifiable: cutover-pause.ts's `clear` would no-op the `kv.del`,
+// read the flag back as null, agree with the resumed queue and print "✅ LIVE" while the cutover flag
+// was still set in KV and the receiver kept refusing every observation. Deferring resolution to first
+// access makes the credentials the ones the caller actually has.
+let kvResolved = false;
+let kvClient: ReturnType<typeof createClient> | null = null;
+
+function getKvClient(): ReturnType<typeof createClient> | null {
+  if (!kvResolved) {
+    const url = process.env.KV_REST_API_URL;
+    const token = process.env.KV_REST_API_TOKEN;
+    kvClient = url && token ? createClient({ url, token }) : null;
+    kvResolved = true;
+  }
+  return kvClient;
+}
 
 export const kv = new Proxy({} as ReturnType<typeof createClient>, {
   get(_target, prop) {
-    if (!kvClient) {
+    const client = getKvClient();
+    if (!client) {
       warnOnce();
       // Return no-op functions instead of throwing
       return () => Promise.resolve(null);
     }
-    return (kvClient as any)[prop];
+    return (client as any)[prop];
   },
 });
 
