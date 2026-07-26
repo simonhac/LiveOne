@@ -7,7 +7,7 @@ import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
 interface DashboardsMenuProps {
   /** The composition dashboard currently being viewed, to highlight it (undefined on legacy pages). */
-  currentDashboardId?: number;
+  currentDashboardId?: string;
   /** Only fetch for a real authed owner (off in the read-only shared view). */
   enabled?: boolean;
   /** Close the parent dropdown after picking a row / choosing "New". */

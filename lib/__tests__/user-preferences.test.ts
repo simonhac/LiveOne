@@ -45,8 +45,12 @@ import {
   setDefaultDashboardById,
   clearDefaultDashboard,
 } from "@/lib/user-preferences";
+import { Dashboard } from "@/lib/ids";
 
 const USER = "u1";
+// A real dashboard identity: the raw uuid the DB stores, and its opaque `db_…` wire id.
+const DASH_UUID = "00000000-0000-7000-8000-000000000001";
+const DASH_ID = Dashboard.encode(DASH_UUID);
 
 beforeEach(() => {
   updates.length = 0;
@@ -61,13 +65,15 @@ beforeEach(() => {
 
 describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
   it("a set default → /dashboard/id/{id} (no write)", async () => {
-    usersRow!.defaultDashboardId = 88;
+    usersRow!.defaultDashboardId = DASH_UUID;
     mockGetDashboard.mockResolvedValue({
-      id: 88,
+      id: DASH_ID,
       ownerClerkUserId: USER,
       displayName: "Home",
     });
-    expect(await resolveDefaultDashboardRoute(USER)).toBe("/dashboard/id/88");
+    expect(await resolveDefaultDashboardRoute(USER)).toBe(
+      `/dashboard/id/${DASH_ID}`,
+    );
     expect(updates).toHaveLength(0);
   });
 
@@ -77,7 +83,7 @@ describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
   });
 
   it("auto-clears a stale pointer whose dashboard has vanished", async () => {
-    usersRow!.defaultDashboardId = 77;
+    usersRow!.defaultDashboardId = DASH_UUID;
     mockGetDashboard.mockResolvedValue(null);
     expect(await resolveDefaultDashboardRoute(USER)).toBeNull();
     expect(updates).toContainEqual(
@@ -89,38 +95,38 @@ describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
 describe("setDefaultDashboardById (owner-only)", () => {
   it("owner's dashboard → writes default_dashboard_id", async () => {
     mockGetDashboard.mockResolvedValue({
-      id: 90,
+      id: DASH_ID,
       ownerClerkUserId: USER,
       displayName: "My Home",
     });
-    const res = await setDefaultDashboardById(USER, 90);
+    const res = await setDefaultDashboardById(USER, DASH_ID);
     expect(res.success).toBe(true);
     expect(updates).toContainEqual(
-      expect.objectContaining({ defaultDashboardId: 90 }),
+      expect.objectContaining({ defaultDashboardId: DASH_UUID }),
     );
   });
 
   it("rejects another user's dashboard (no write)", async () => {
     mockGetDashboard.mockResolvedValue({
-      id: 90,
+      id: DASH_ID,
       ownerClerkUserId: "someone-else",
       displayName: "Theirs",
     });
-    const res = await setDefaultDashboardById(USER, 90);
+    const res = await setDefaultDashboardById(USER, DASH_ID);
     expect(res.success).toBe(false);
     expect(updates).toHaveLength(0);
   });
 
   it("404-sentinels a missing dashboard", async () => {
     mockGetDashboard.mockResolvedValue(null);
-    const res = await setDefaultDashboardById(USER, 91);
+    const res = await setDefaultDashboardById(USER, DASH_ID);
     expect(res).toEqual({ success: false, error: "not_found" });
   });
 });
 
 describe("clearDefaultDashboard", () => {
   it("nulls default_dashboard_id", async () => {
-    usersRow!.defaultDashboardId = 90;
+    usersRow!.defaultDashboardId = DASH_UUID;
     const res = await clearDefaultDashboard(USER);
     expect(res.success).toBe(true);
     expect(updates).toContainEqual(

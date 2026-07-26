@@ -37,7 +37,7 @@ function cardKeyV3(card: CardV3, i: number): string {
 interface DashboardProps {
   /** This dashboard's id — part of the per-sankey options key (`sankeyId:areaId:dashboardId`). Omitted
    *  by the per-device viewer (no saved dashboard) → the sankey options fall back to keying on the handle. */
-  dashboardId?: number;
+  dashboardId?: string;
   descriptor: DashboardV3;
   /** areaId -> its Area (addressing handle + label). May be empty while the readable-areas fetch is
    *  in flight — sections still render their skeleton layout from the descriptor in the meantime. */
@@ -121,7 +121,7 @@ function AreaSectionView({
   areasResolved,
   showHeader,
 }: {
-  dashboardId?: number;
+  dashboardId?: string;
   section: AreaSectionV3;
   /** Undefined while the readable-areas fetch is in flight → the cards draw skeletons. */
   area?: ReadableArea;

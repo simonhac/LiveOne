@@ -1,10 +1,11 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
+import { redirect, permanentRedirect } from "next/navigation";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import {
   getDashboard,
   getDashboardByOwnerAlias,
+  getDashboardIdByLegacyId,
   listAccessibleDashboards,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
@@ -302,9 +303,16 @@ export default async function DashboardPage({
       : slug.length === 3 && slug[1] === "id"
         ? slug[2]
         : null;
-  if (compositionId && /^\d+$/.test(compositionId)) {
+  if (compositionId) {
+    // config-v4: the legacy `/dashboard/id/{n}` (int) form redirects permanently to the opaque-id form
+    // via dashboards.legacy_id → id; the primary address is the opaque `db_…` id (the DAO owns id↔uuid).
+    if (/^\d+$/.test(compositionId)) {
+      const dbId = await getDashboardIdByLegacyId(parseInt(compositionId, 10));
+      if (!dbId) redirect("/dashboard");
+      permanentRedirect(`/dashboard/id/${dbId}`);
+    }
     const dashboard = await timer.time("dashboard", () =>
-      getDashboard(parseInt(compositionId, 10)),
+      getDashboard(compositionId),
     );
     if (!dashboard) redirect("/dashboard");
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;

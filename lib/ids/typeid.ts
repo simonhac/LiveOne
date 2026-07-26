@@ -81,6 +81,12 @@ export interface EntityCodec<P extends string> {
   encode(uuid: string): TypeId<P>;
   /** Branded TypeID -> canonical lowercase uuid. Throws if `id` is not this entity's TypeID. */
   toUuid(id: TypeId<P>): string;
+  /**
+   * Opaque wire string -> canonical uuid, or null if malformed / a foreign entity's id. Never throws.
+   * The data-layer decode primitive: a DAO takes an opaque `<prefix>_…` handle from the wire and turns
+   * it into the raw uuid its SQL uses, so callers above the DAO never touch the codec.
+   */
+  toUuidOrNull(s: string): string | null;
   /** Untrusted string -> branded TypeID or a typed error. Never throws. */
   parse(s: string): ParseResult<TypeId<P>>;
   /** Type guard: is `s` a well-formed TypeID for this entity? */
@@ -97,6 +103,10 @@ export function makeEntityCodec<P extends string>(prefix: P): EntityCodec<P> {
       const r = decodeTypeId(prefix, id as unknown as string);
       if (!r.ok) throw new TypeError(`not a ${prefix}_ id: ${r.message}`);
       return r.uuid;
+    },
+    toUuidOrNull: (s) => {
+      const r = decodeTypeId(prefix, s);
+      return r.ok ? r.uuid : null;
     },
     parse: (s) => {
       const r = decodeTypeId(prefix, s);

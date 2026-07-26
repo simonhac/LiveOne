@@ -31,7 +31,7 @@ export default function AddAreaDialog({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  dashboardId: number;
+  dashboardId: string;
   descriptor: DashboardV3;
   readableAreas: ReadableArea[];
   onSaved: () => void;

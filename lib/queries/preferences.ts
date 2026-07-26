@@ -4,7 +4,7 @@ import { fetchJson } from "./fetcher";
 /** The subset of user preferences the client reads (`GET /api/user/preferences`). */
 export interface UserPreferencesDTO {
   clerkUserId: string;
-  defaultDashboardId: number | null;
+  defaultDashboardId: string | null; // opaque `db_…` dashboard id
 }
 
 export interface UserPreferencesResponse {

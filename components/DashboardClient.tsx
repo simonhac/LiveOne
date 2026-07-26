@@ -34,7 +34,7 @@ const MENU_ITEM_CLASS =
 
 interface DashboardClientProps {
   dashboard: {
-    id: number;
+    id: string; // config-v4: the `db_…` TypeID (used verbatim in URLs; routes decode it)
     displayName: string | null;
     alias: string | null;
     descriptor: DashboardV3;

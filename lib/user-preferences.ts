@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { users as pgUsers } from "@/lib/db/planetscale/schema";
 import { getDashboard } from "@/lib/dashboard/dashboards";
+import { Dashboard } from "@/lib/ids";
 
 /**
  * User preferences (the `users` config table) — Postgres only.
@@ -13,7 +14,7 @@ import { getDashboard } from "@/lib/dashboard/dashboards";
 
 export interface UserPreferences {
   clerkUserId: string;
-  defaultDashboardId: number | null;
+  defaultDashboardId: string | null; // dashboards.id (uuid)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,7 +34,9 @@ export async function getOrCreateUserPreferences(
   if (existing.length > 0) {
     return {
       clerkUserId: existing[0].clerkUserId,
-      defaultDashboardId: existing[0].defaultDashboardId,
+      defaultDashboardId: existing[0].defaultDashboardId
+        ? Dashboard.encode(existing[0].defaultDashboardId)
+        : null,
       createdAt: existing[0].createdAt,
       updatedAt: existing[0].updatedAt,
     };
@@ -51,20 +54,30 @@ export async function getOrCreateUserPreferences(
     .limit(1);
   return {
     clerkUserId: newUser.clerkUserId,
-    defaultDashboardId: newUser.defaultDashboardId,
+    defaultDashboardId: newUser.defaultDashboardId
+      ? Dashboard.encode(newUser.defaultDashboardId)
+      : null,
     createdAt: newUser.createdAt,
     updatedAt: newUser.updatedAt,
   };
 }
 
-/** Write `default_dashboard_id` — the single source of truth for the landing page. */
+/**
+ * Write `default_dashboard_id` — the single source of truth for the landing page. `dashboardId` is the
+ * opaque `db_…` id (decoded to the uuid PK for storage).
+ */
 async function writeDefaultDashboard(
   clerkUserId: string,
-  dashboardId: number | null,
+  dashboardId: string | null,
 ): Promise<void> {
   await requirePlanetscaleDb()
     .update(pgUsers)
-    .set({ defaultDashboardId: dashboardId, updatedAt: new Date() })
+    .set({
+      defaultDashboardId: dashboardId
+        ? Dashboard.toUuidOrNull(dashboardId)
+        : null,
+      updatedAt: new Date(),
+    })
     .where(eq(pgUsers.clerkUserId, clerkUserId));
 }
 
@@ -74,7 +87,7 @@ async function writeDefaultDashboard(
  */
 export async function setDefaultDashboardById(
   clerkUserId: string,
-  dashboardId: number,
+  dashboardId: string,
 ): Promise<{ success: boolean; error?: string }> {
   await getOrCreateUserPreferences(clerkUserId);
   const dash = await getDashboard(dashboardId);
@@ -110,5 +123,6 @@ export async function resolveDefaultDashboardRoute(
     await writeDefaultDashboard(clerkUserId, null);
     return null;
   }
+  // config-v4: dash.id is already the opaque `db_…` id (the DAO owns the uuid↔TypeID translation).
   return `/dashboard/id/${dash.id}`;
 }

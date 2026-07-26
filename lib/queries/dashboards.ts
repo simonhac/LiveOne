@@ -6,7 +6,7 @@ import { fetchJson } from "./fetcher";
  * but `updatedAt` arrives as an ISO string over the wire).
  */
 export interface DashboardSummaryDTO {
-  id: number;
+  id: string; // opaque `db_…` dashboard id
   displayName: string | null;
   alias: string | null;
   cardCount: number;

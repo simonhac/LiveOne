@@ -59,9 +59,9 @@ export async function PATCH(request: NextRequest) {
         message: "Default dashboard cleared",
       });
     }
-    if (typeof defaultDashboardId !== "number") {
+    if (typeof defaultDashboardId !== "string") {
       return NextResponse.json(
-        { error: "defaultDashboardId must be a number or null" },
+        { error: "defaultDashboardId must be a dashboard id or null" },
         { status: 400 },
       );
     }

@@ -24,15 +24,10 @@ import { getUserIdByEmail, getUserIdByUsername } from "@/lib/user-cache";
 async function ownDashboard(
   request: NextRequest,
   idStr: string,
-): Promise<{ id: number; ownerClerkUserId: string } | { error: NextResponse }> {
+): Promise<{ id: string; ownerClerkUserId: string } | { error: NextResponse }> {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return { error: auth };
-  const id = parseInt(idStr, 10);
-  if (isNaN(id))
-    return {
-      error: NextResponse.json({ error: "Invalid id" }, { status: 400 }),
-    };
-  const dashboard = await getDashboard(id);
+  const dashboard = await getDashboard(idStr);
   if (!dashboard)
     return {
       error: NextResponse.json({ error: "Not found" }, { status: 404 }),
@@ -43,7 +38,7 @@ async function ownDashboard(
     return {
       error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
     };
-  return { id, ownerClerkUserId: dashboard.ownerClerkUserId };
+  return { id: dashboard.id, ownerClerkUserId: dashboard.ownerClerkUserId };
 }
 
 export async function GET(
@@ -64,7 +59,7 @@ export async function GET(
       let email: string | null = null;
       let name: string | null = null;
       try {
-        const user = await clerk.users.getUser(g.clerkUserId);
+        const user = await clerk.users.getUser(g.userId);
         email = user.emailAddresses[0]?.emailAddress ?? null;
         name =
           user.username ??
@@ -74,11 +69,11 @@ export async function GET(
         // Deleted Clerk user — surface the raw id rather than dropping the row.
       }
       return {
-        clerkUserId: g.clerkUserId,
+        clerkUserId: g.userId,
         role: g.role,
         email,
         name,
-        createdAtMs: g.createdAtMs,
+        createdAtMs: g.createdAt.getTime(),
       };
     }),
   );

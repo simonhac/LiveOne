@@ -169,7 +169,8 @@ export const users = pgTable(
     // The default landing DASHBOARD (P6: the legacy per-system `default_system_id` was dropped). FK to
     // dashboards.id, ON DELETE SET NULL so deleting the dashboard silently clears the default. (forward
     // ref: `dashboards` is declared later in this module.)
-    defaultDashboardId: integer("default_dashboard_id").references(
+    // ⚠️ config-v4 CUTOVER SHAPE — transform stage 5d re-keys this int → the dashboards uuid.
+    defaultDashboardId: uuid("default_dashboard_id").references(
       () => dashboards.id,
       { onDelete: "set null" },
     ),
@@ -584,10 +585,22 @@ export type NewBatteryProvenanceDailyRow =
 export const shareTokens = pgTable(
   "share_tokens",
   {
+    // ⚠️ config-v4 CUTOVER SHAPE — the UNIFIED per-dashboard share token. Transform stage 5d folds
+    // dashboard_share_tokens in 1:1 (epoch-ms → naive-UTC `timestamp`), re-points the last legacy
+    // owner-scoped row at an auto-created dashboard, then flips dashboard_id NOT NULL. The legacy
+    // owner_clerk_user_id + the *_ms columns are RETAINED (NOT-NULL dropped) and die in Phase 9.
     token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
-    ownerClerkUserId: text("owner_clerk_user_id").notNull(),
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id, { onDelete: "cascade" }),
     label: text("label"),
-    createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at"),
+    expiresAt: timestamp("expires_at"),
+    revokedAt: timestamp("revoked_at"),
+    lastUsedAt: timestamp("last_used_at"),
+    // Phase-9 legacy columns (NOT-NULL dropped by 5d; dropped entirely in Phase 9).
+    ownerClerkUserId: text("owner_clerk_user_id"),
+    createdAtMs: bigint("created_at_ms", { mode: "number" }),
     expiresAtMs: bigint("expires_at_ms", { mode: "number" }),
     revokedAtMs: bigint("revoked_at_ms", { mode: "number" }),
     lastUsedAtMs: bigint("last_used_at_ms", { mode: "number" }),
@@ -655,13 +668,19 @@ export const observationsOutbox = pgTable(
 export const dashboards = pgTable(
   "dashboards",
   {
-    id: serial("id").primaryKey(),
-    clerkUserId: text("clerk_user_id").notNull(), // the owner
-    // A dashboard's name + owner-unique shortname (the /dashboard/{user}/{alias} path). Nullable for
+    // ⚠️ config-v4 CUTOVER SHAPE (see the `areas` header above for why this branch cannot reach `main`
+    // before the window). Stage 5d swaps the serial int PK for a uuid, freezing the old int in
+    // `legacy_id`, and renames clerk_user_id→owner_user_id, display_name→name, alias→slug.
+    id: uuid("id").primaryKey().defaultRandom(), // 5d sets DEFAULT gen_random_uuid() (defect D-a)
+    // The frozen pre-cutover int id. Permanent: it backs the `/dashboard/id/{n}` 301 and the
+    // `?systemId=N` compat alias, so it is NOT dropped in Phase 9.
+    legacyId: integer("legacy_id"),
+    ownerUserId: text("owner_user_id").notNull(), // the owner
+    // A dashboard's name + owner-unique shortname (the /dashboard/{user}/{slug} path). Nullable for
     // an unnamed dashboard. The legacy per-system `system_id`/`area_id` handles were dropped in P6 —
-    // a dashboard is a v3 composition whose sections each carry their own Area uuid.
-    displayName: text("display_name"),
-    alias: text("alias"), // owner-unique shortname for /dashboard/{user}/{alias}; null = unnamed
+    // a dashboard is a composition whose sections each carry their own Area uuid.
+    name: text("name"),
+    slug: text("slug"), // owner-unique shortname for /dashboard/{user}/{slug}; null = unnamed
     descriptor: jsonb("descriptor").notNull(),
     // --- config-v4 dark columns (Phase 4, migration 0032; unread by the v3 app) ---
     // The v4 node-tree document (clean-sheet §8). Coexists with `descriptor` (v3) through the
@@ -675,12 +694,17 @@ export const dashboards = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
-    // (clerk_user_id, alias) unique — owner-scoped shortname (NULL aliases distinct).
+    // (owner_user_id, slug) unique — owner-scoped shortname (NULL slugs distinct). Index NAMES are
+    // unchanged: a column rename carries its indexes along, and the transform never renames them.
     ownerAliasUnique: uniqueIndex("dashboards_owner_alias_unique").on(
-      table.clerkUserId,
-      table.alias,
+      table.ownerUserId,
+      table.slug,
     ),
-    userIdx: index("dashboards_user_idx").on(table.clerkUserId),
+    userIdx: index("dashboards_user_idx").on(table.ownerUserId),
+    // 5d: ADD CONSTRAINT dashboards_legacy_id_unique UNIQUE (legacy_id).
+    legacyIdUnique: uniqueIndex("dashboards_legacy_id_unique").on(
+      table.legacyId,
+    ),
   }),
 );
 
@@ -692,13 +716,14 @@ export const dashboards = pgTable(
 // dashboard's data exposes (resolved Dashboard → Area → area_bindings; see lib/dashboard/access.ts),
 // never general system access. Same 3-word phrase + epoch-ms convention as `share_tokens`.
 // ============================================================================
+// ⚠️ config-v4: SUPERSEDED by the unified `share_tokens` (transform stage 5d folds these rows in 1:1).
+// The table survives Phase 8 (dropped in Phase 9) but is no longer written/read by the app, and its FK to
+// dashboards is dropped by the swap (dashboards.id is now uuid, this dashboard_id stays the frozen int).
 export const dashboardShareTokens = pgTable(
   "dashboard_share_tokens",
   {
     token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
-    dashboardId: integer("dashboard_id")
-      .notNull()
-      .references(() => dashboards.id, { onDelete: "cascade" }),
+    dashboardId: integer("dashboard_id").notNull(),
     label: text("label"),
     createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
     expiresAtMs: bigint("expires_at_ms", { mode: "number" }),
@@ -720,19 +745,28 @@ export const dashboardShareTokens = pgTable(
 export const dashboardGrants = pgTable(
   "dashboard_grants",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    dashboardId: integer("dashboard_id")
+    // ⚠️ config-v4 CUTOVER SHAPE — transform stage 5d: dashboard_id int→uuid, clerk_user_id→user_id,
+    // created_at_ms→created_at (naive UTC), role narrowed to admin|viewer (owner→admin), the surrogate
+    // `id` dropped, and the (dashboard_id, user_id) unique index promoted to the composite PK
+    // `dashboard_grants_pk`. created_at_ms is retained (NOT-NULL dropped) → dropped in Phase 9.
+    dashboardId: uuid("dashboard_id")
       .notNull()
       .references(() => dashboards.id, { onDelete: "cascade" }),
-    clerkUserId: text("clerk_user_id").notNull(),
-    role: text("role").notNull(), // 'owner' | 'admin' | 'viewer'
-    createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
+    userId: text("user_id").notNull(),
+    role: text("role").notNull(), // 'admin' | 'viewer'
+    createdAt: timestamp("created_at").notNull(),
+    createdAtMs: bigint("created_at_ms", { mode: "number" }),
   },
   (table) => ({
-    dashboardUserUnique: uniqueIndex(
-      "dashboard_grants_dashboard_user_unique",
-    ).on(table.dashboardId, table.clerkUserId),
-    userIdx: index("dashboard_grants_user_idx").on(table.clerkUserId),
+    pk: primaryKey({
+      name: "dashboard_grants_pk",
+      columns: [table.dashboardId, table.userId],
+    }),
+    userIdx: index("dashboard_grants_user_idx").on(table.userId),
+    roleCheck: check(
+      "dashboard_grants_role_check",
+      sql`${table.role} IN ('admin','viewer')`,
+    ),
   }),
 );
 
@@ -1119,7 +1153,10 @@ export const derivedIntervals = pgTable(
 export const dashboardRevisions = pgTable(
   "dashboard_revisions",
   {
-    dashboardId: uuid("dashboard_id").notNull(), // FK → dashboards(id) DEFERRED to cutover
+    // ⚠️ config-v4 CUTOVER SHAPE — the deferred FK → dashboards(id) is wired by transform stage 5d.
+    dashboardId: uuid("dashboard_id")
+      .notNull()
+      .references(() => dashboards.id, { onDelete: "cascade" }),
     revision: integer("revision").notNull(),
     doc: jsonb("doc").notNull(),
     savedBy: text("saved_by").notNull(), // clerk user id
