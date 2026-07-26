@@ -118,8 +118,7 @@ describe("prod→dev readings transfer", () => {
         watermark: "created_at",
         overlap: "2 hours",
         onConflict: "nothing",
-        conflictCols: ["system_id", "point_id", "measurement_time"],
-        excludeCols: ["id"],
+        conflictCols: ["point_rid", "measurement_time"],
       },
       {
         name: "point_readings_agg_5m",
@@ -167,16 +166,16 @@ describe("prod→dev readings transfer", () => {
         new Map([
           [
             "point_readings",
-            ["id", "system_id", "point_id", "measurement_time", "value"],
+            ["point_rid", "session_id", "measurement_time", "value"],
           ],
         ]),
-        new Map([["point_readings", ["id"]]]),
+        new Map([["point_readings", ["point_rid", "measurement_time"]]]),
       ),
     ).resolves.toEqual({ table: "point_readings", rows: 1 });
 
     expect(devSql[1]).toContain("CREATE UNLOGGED TABLE");
     expect(devSql.at(-1)).toContain(
-      "ON CONFLICT (system_id, point_id, measurement_time) DO NOTHING",
+      "ON CONFLICT (point_rid, measurement_time) DO NOTHING",
     );
   });
 

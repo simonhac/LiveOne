@@ -55,6 +55,10 @@ jest.mock("@/lib/registry", () => {
             ]),
           ),
       ),
+      // config-v4: the DAO now resolves points to the internal rid for the (point_rid, time) twins.
+      ridsForPoints: jest.fn(
+        async (ids: string[]) => new Map(ids.map((id) => [id, 1])),
+      ),
     },
     UnknownIdError: class UnknownIdError extends Error {},
   };

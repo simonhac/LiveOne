@@ -8,16 +8,18 @@ const deviceById = new Map<DeviceId, DeviceAddr>();
 const deviceByHandle = new Map<number, DeviceAddr>();
 jest.mock("@/lib/registry", () => ({
   RegistryCache: {
+    // rid-keyed seam: the flipped DAO resolves PointId → point_rid (from addrMap's `.rid`).
+    ridsForPoints: async (ids: PointId[]) =>
+      new Map(ids.map((id) => [id, addrMap.get(id)!.rid])),
+    ridForPoint: async (id: PointId) => addrMap.get(id)!.rid,
+    // Still used by readAdminPivot (needs both `.rid` and `.systemId` for the on-device check).
     addrsForPoints: async (ids: PointId[]) =>
       new Map(ids.map((id) => [id, addrMap.get(id)!])),
-    addrForPoint: async (id: PointId) => addrMap.get(id)!,
   },
   DeviceRegistry: {
-    addrsForHandles: async (handles: number[]) =>
-      new Map(handles.map((handle) => [handle, deviceByHandle.get(handle)!])),
-    addrForHandle: async (handle: number) => deviceByHandle.get(handle)!,
     addrsForDevices: async (ids: DeviceId[]) =>
       new Map(ids.map((id) => [id, deviceById.get(id)!])),
+    // The `db`/`exec` 2nd arg is ignored by the mock.
     addrForDevice: async (id: DeviceId) => deviceById.get(id)!,
   },
 }));
@@ -102,18 +104,17 @@ function makeFakeExec(selectRows: any[] = []) {
       };
     },
     select() {
-      return {
-        from() {
-          return { where: result, orderBy: result };
-        },
-      };
+      // Device-keyed reads now `.from(hot).innerJoin(points, …).where()…` — `innerJoin` re-chains to
+      // the same object so `.from().where()` and `.from().innerJoin().where()` both resolve `selectRows`.
+      const chain: any = { where: result, orderBy: result };
+      chain.innerJoin = () => chain;
+      return { from: () => chain };
     },
     selectDistinct() {
-      return {
-        from() {
-          return { where: () => Promise.resolve(selectRows) };
-        },
-      };
+      // deviceIdsWithAgg5mSince now `.selectDistinct().from(hot).innerJoin(points, …).where()`.
+      const chain: any = { where: () => Promise.resolve(selectRows) };
+      chain.innerJoin = () => chain;
+      return { from: () => chain };
     },
     selectDistinctOn() {
       return {
@@ -161,8 +162,8 @@ beforeEach(() => {
   deviceByHandle.clear();
 });
 
-describe("ReadingsDao writes — composite-key expansion", () => {
-  it("insertRaw builds (systemId, pointId=index) rows with Date times and first-write-wins", async () => {
+describe("ReadingsDao writes — rid-keyed value-building", () => {
+  it("insertRaw builds pointRid rows with Date times and first-write-wins", async () => {
     const p = point(11, 1, 3);
     const { exec, inserts } = makeFakeExec();
     const res = await ReadingsDao.insertRaw(
@@ -183,8 +184,7 @@ describe("ReadingsDao writes — composite-key expansion", () => {
     expect(inserts[0].table).toBe("point_readings");
     expect(inserts[0].mode).toBe("nothing");
     expect(inserts[0].rows[0]).toMatchObject({
-      systemId: 1,
-      pointId: 3,
+      pointRid: 11,
       value: 42,
     });
     expect(inserts[0].rows[0].measurementTime).toBeInstanceOf(Date);
@@ -364,8 +364,7 @@ describe("ReadingsDao writes — composite-key expansion", () => {
       mode: "update",
     });
     expect(inserts[0].rows[0]).toMatchObject({
-      systemId: 3,
-      pointId: 1,
+      pointRid: 13,
       day: "2026-07-22",
     });
   });
@@ -379,10 +378,10 @@ describe("ReadingsDao writes — composite-key expansion", () => {
 
 describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-ms", () => {
   it("read5m returns a per-point ascending series keyed by PointId", async () => {
-    const p = point(21, 7, 4); // systemId 7, index 4
+    const p = point(21, 7, 4); // rid 21
     const rows = [
       {
-        pointId: 4,
+        pointRid: 21,
         intervalEnd: new Date(1_700_000_300_000),
         createdAt: new Date(1_700_000_301_000),
         avg: 1,
@@ -429,10 +428,10 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("latest5mForPoints maps the latest agg_5m row per point (incl. createdAtMs), null when none", async () => {
-    const p = point(23, 9, 2); // systemId 9, index 2
+    const p = point(23, 9, 2); // rid 23
     const rows = [
       {
-        pointId: 2,
+        pointRid: 23,
         intervalEnd: new Date(1_700_000_600_000),
         createdAt: new Date(1_700_000_601_000),
         avg: 3,
@@ -472,8 +471,8 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   it("countAgg5mByLocalDay maps per-point per-local-day counts", async () => {
     const p = point(31, 9, 2);
     const { exec } = makeFakeExec([
-      { local_day: "2026-07-20", point_id: 2, n: 48 },
-      { local_day: "2026-07-21", point_id: 2, n: 47 },
+      { local_day: "2026-07-20", point_rid: 31, n: 48 },
+      { local_day: "2026-07-21", point_rid: 31, n: 47 },
     ]);
     const out = await ReadingsDao.countAgg5mByLocalDay(
       [p],
@@ -491,7 +490,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   it("countAgg5mForLocalDay maps per-point count for one day (0 when absent)", async () => {
     const p = point(32, 9, 2);
     const absent = point(33, 9, 3);
-    const { exec } = makeFakeExec([{ point_id: 2, n: 288 }]);
+    const { exec } = makeFakeExec([{ point_rid: 32, n: 288 }]);
     const out = await ReadingsDao.countAgg5mForLocalDay(
       [p, absent],
       { day: "2026-07-20", offsetMin: 600 },
@@ -502,10 +501,10 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("latestAgg5mIntervalMsForPoints maps per-point MAX(interval_end) to epoch-ms, null when absent", async () => {
-    const p1 = point(41, 7, 4); // systemId 7, index 4 — has a row
-    const p2 = point(42, 7, 5); // same system, index 5 — no matching row → null
+    const p1 = point(41, 7, 4); // rid 41 — has a row
+    const p2 = point(42, 7, 5); // rid 42 — no matching row → null
     const { exec } = makeFakeExec([
-      { pointId: 4, m: new Date(1_700_000_300_000) },
+      { pointRid: 41, m: new Date(1_700_000_300_000) },
     ]);
     const out = await ReadingsDao.latestAgg5mIntervalMsForPoints(
       [p1, p2],
@@ -587,7 +586,7 @@ describe("ReadingsDao operational readers", () => {
     const p2 = point(12, 1, 4);
     const { exec } = makeFakeExec([
       {
-        pointId: 3,
+        pointRid: 11,
         first: new Date("2026-01-01T00:00:00Z"),
         last: new Date("2026-01-02T00:00:00Z"),
       },
@@ -648,10 +647,14 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(await ReadingsDao.earliestAgg5mMs(empty.exec)).toBeNull();
   });
 
-  it("deviceIdsWithAgg5mSince maps distinct system handles to stable ids", async () => {
+  it("deviceIdsWithAgg5mSince maps distinct device uuids (via the point_rid → points join) to stable ids", async () => {
     const d1 = device(1);
     const d14 = device(14);
-    const { exec } = makeFakeExec([{ systemId: 1 }, { systemId: 14 }]);
+    // The rid-keyed twin has no system_id: the DAO now SELECTs DISTINCT points.device_id.
+    const { exec } = makeFakeExec([
+      { deviceUuid: Device.toUuid(d1) },
+      { deviceUuid: Device.toUuid(d14) },
+    ]);
     expect(
       await ReadingsDao.deviceIdsWithAgg5mSince(1_700_000_000_000, exec),
     ).toEqual([d1, d14]);

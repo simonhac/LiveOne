@@ -162,10 +162,11 @@ const FULL: FullTable[] = [
         // so clear any dev row holding an incoming prod rid before the by-PK upsert (like point_uid)
       ],
       children: [
-        // SEAM: id-drift cleanup for the three hot stores rekeys to point_rid in Phase 8.
-        { table: "point_readings_agg_5m", cols: ["system_id", "point_id"] },
-        { table: "point_readings_agg_1d", cols: ["system_id", "point_id"] },
-        { table: "point_readings", cols: ["system_id", "point_id"] },
+        // config-v4 CUTOVER SHAPE: the three hot stores now key on the internal point_rid (FK→points.rid),
+        // so id-drift cleanup clears them by point_rid rather than the retired (system_id, point_id).
+        { table: "point_readings_agg_5m", cols: ["point_rid"] },
+        { table: "point_readings_agg_1d", cols: ["point_rid"] },
+        { table: "point_readings", cols: ["point_rid"] },
         { table: "area_bindings", cols: ["point_system_id", "point_id"] },
         {
           table: "device_trackers",
@@ -236,14 +237,13 @@ const INCREMENTAL: IncrementalTable[] = [
     onConflict: "nothing",
   },
   {
-    // SEAM: hot-store COPY manifest; table/conflict/watermark shape changes in Phase 8.
+    // config-v4 CUTOVER SHAPE: the twin's natural PK is (point_rid, measurement_time) and it has no serial id.
     name: "point_readings",
     mode: "incremental",
     watermark: "created_at",
     overlap: "2 hours",
     onConflict: "nothing",
-    conflictCols: ["system_id", "point_id", "measurement_time"], // pr_point_time_unique, not the serial PK
-    excludeCols: ["id"], // dev assigns its own serial
+    conflictCols: ["point_rid", "measurement_time"], // point_readings_new_pkey
     // Correlated EXISTS, NOT `IN (SELECT id FROM sessions)`: the top-level `OR session_id IS NULL` blocks a
     // hash semijoin, so an uncorrelated IN degrades to a per-row scan of a materialised ~1M-row sessions set
     // (plan cost ~370M → ~20 min for an ~8k-row delta — this was the whole sync's bottleneck). EXISTS keys
@@ -253,7 +253,8 @@ const INCREMENTAL: IncrementalTable[] = [
       "(session_id IS NULL OR EXISTS (SELECT 1 FROM public.sessions se WHERE se.id = session_id))",
   },
   {
-    // SEAM: hot-store COPY manifest; table/conflict shape changes in Phase 8.
+    // config-v4: cutover-invariant — no explicit conflictCols, so onConflict:"update" uses pkOf() (now
+    // (point_rid, interval_end)/(point_rid, day)) and columnsOf() follows the twin, both at runtime.
     name: "point_readings_agg_5m",
     mode: "incremental",
     watermark: "updated_at",
@@ -261,7 +262,8 @@ const INCREMENTAL: IncrementalTable[] = [
     onConflict: "update",
   },
   {
-    // SEAM: hot-store COPY manifest; table/conflict shape changes in Phase 8.
+    // config-v4: cutover-invariant — no explicit conflictCols, so onConflict:"update" uses pkOf() (now
+    // (point_rid, interval_end)/(point_rid, day)) and columnsOf() follows the twin, both at runtime.
     name: "point_readings_agg_1d",
     mode: "incremental",
     watermark: "updated_at",

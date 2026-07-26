@@ -29,8 +29,11 @@ import {
   sql,
 } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { DeviceRegistry, RegistryCache, type PointAddr } from "@/lib/registry";
-import { Point, type DeviceId, type PointId } from "@/lib/ids";
+import { DeviceRegistry, RegistryCache } from "@/lib/registry";
+import { Device, Point, type DeviceId, type PointId } from "@/lib/ids";
+// The `points` identity table is broadly importable (NOT one of the three seam-restricted hot symbols),
+// and joining it is how the rid-keyed twins recover the device address they no longer carry inline.
+import { points } from "@/lib/db/planetscale/schema";
 import {
   pointReadings,
   pointReadingsAgg5m,
@@ -152,8 +155,6 @@ export interface Agg5mCoverage {
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────────────────────────────
-const addrKey = (systemId: number, index: number) => `${systemId}.${index}`;
-
 /** Pick the read window's upper-bound operator: half-open `lt` when `toInclusive === false`, else
  *  inclusive `lte`. Extracted pure so the half-open branch is pinned by reference in a unit test — the
  *  SEAM WHERE below is otherwise only exercised end-to-end. */
@@ -166,22 +167,6 @@ export const upperBoundOp = (toInclusive: boolean | undefined) =>
 const localDayExpr = (offsetMin: number) =>
   sql<string>`to_char(${pointReadingsAgg5m.intervalEnd} + (${offsetMin} || ' minutes')::interval - interval '1 second', 'YYYY-MM-DD')`;
 
-/** Group resolved addresses by system + build the (systemId.index → PointId) reverse map. */
-function groupBySystem(addrs: Map<PointId, PointAddr>): {
-  bySystem: Map<number, number[]>;
-  rev: Map<string, PointId>;
-} {
-  const bySystem = new Map<number, number[]>();
-  const rev = new Map<string, PointId>();
-  for (const [id, a] of addrs) {
-    let idxs = bySystem.get(a.systemId);
-    if (!idxs) bySystem.set(a.systemId, (idxs = []));
-    idxs.push(a.index);
-    rev.set(addrKey(a.systemId, a.index), id);
-  }
-  return { bySystem, rev };
-}
-
 // ── Reads ────────────────────────────────────────────────────────────────────────────────────────
 async function readRaw(
   points: PointId[],
@@ -193,45 +178,44 @@ async function readRaw(
   const db = exec ?? requirePlanetscaleDb();
   const from = new Date(window.fromMs);
   const to = new Date(window.toMs);
-  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid).
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE (single query, no per-system fan-out).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    const rows = await db
-      .select({
-        pointId: pointReadings.pointId,
-        measurementTime: pointReadings.measurementTime,
-        receivedTime: pointReadings.receivedTime,
-        value: pointReadings.value,
-        valueStr: pointReadings.valueStr,
-        error: pointReadings.error,
-        dataQuality: pointReadings.dataQuality,
-        sessionId: pointReadings.sessionId,
-      })
-      .from(pointReadings)
-      .where(
-        and(
-          eq(pointReadings.systemId, systemId),
-          inArray(pointReadings.pointId, indexes),
-          gte(pointReadings.measurementTime, from),
-          upperBoundOp(window.toInclusive)(pointReadings.measurementTime, to),
-        ),
-      )
-      .orderBy(pointReadings.measurementTime);
-    for (const r of rows) {
-      const id = rev.get(addrKey(systemId, r.pointId));
-      if (!id) continue;
-      out.get(id)!.push({
-        measurementTimeMs: r.measurementTime.getTime(),
-        receivedTimeMs: r.receivedTime.getTime(),
-        value: r.value,
-        valueStr: r.valueStr,
-        error: r.error,
-        dataQuality: r.dataQuality,
-        sessionId: r.sessionId,
-      });
-    }
+  const rows = await db
+    .select({
+      pointRid: pointReadings.pointRid,
+      measurementTime: pointReadings.measurementTime,
+      receivedTime: pointReadings.receivedTime,
+      value: pointReadings.value,
+      valueStr: pointReadings.valueStr,
+      error: pointReadings.error,
+      dataQuality: pointReadings.dataQuality,
+      sessionId: pointReadings.sessionId,
+    })
+    .from(pointReadings)
+    .where(
+      and(
+        inArray(pointReadings.pointRid, rids),
+        gte(pointReadings.measurementTime, from),
+        upperBoundOp(window.toInclusive)(pointReadings.measurementTime, to),
+      ),
+    )
+    .orderBy(pointReadings.measurementTime);
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id) continue;
+    out.get(id)!.push({
+      measurementTimeMs: r.measurementTime.getTime(),
+      receivedTimeMs: r.receivedTime.getTime(),
+      value: r.value,
+      valueStr: r.valueStr,
+      error: r.error,
+      dataQuality: r.dataQuality,
+      sessionId: r.sessionId,
+    });
   }
   return out;
 }
@@ -246,55 +230,54 @@ async function read5m(
   const db = exec ?? requirePlanetscaleDb();
   const from = new Date(window.fromMs);
   const to = new Date(window.toMs);
-  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid).
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE (single query, no per-system fan-out).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    const rows = await db
-      .select({
-        pointId: pointReadingsAgg5m.pointId,
-        intervalEnd: pointReadingsAgg5m.intervalEnd,
-        createdAt: pointReadingsAgg5m.createdAt,
-        avg: pointReadingsAgg5m.avg,
-        min: pointReadingsAgg5m.min,
-        max: pointReadingsAgg5m.max,
-        last: pointReadingsAgg5m.last,
-        delta: pointReadingsAgg5m.delta,
-        valueStr: pointReadingsAgg5m.valueStr,
-        sampleCount: pointReadingsAgg5m.sampleCount,
-        errorCount: pointReadingsAgg5m.errorCount,
-        dataQuality: pointReadingsAgg5m.dataQuality,
-        sessionId: pointReadingsAgg5m.sessionId,
-      })
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, systemId),
-          inArray(pointReadingsAgg5m.pointId, indexes),
-          gte(pointReadingsAgg5m.intervalEnd, from),
-          upperBoundOp(window.toInclusive)(pointReadingsAgg5m.intervalEnd, to),
-        ),
-      )
-      .orderBy(pointReadingsAgg5m.intervalEnd);
-    for (const r of rows) {
-      const id = rev.get(addrKey(systemId, r.pointId));
-      if (!id) continue;
-      out.get(id)!.push({
-        intervalEndMs: r.intervalEnd.getTime(),
-        createdAtMs: r.createdAt.getTime(),
-        avg: r.avg,
-        min: r.min,
-        max: r.max,
-        last: r.last,
-        delta: r.delta,
-        valueStr: r.valueStr,
-        sampleCount: r.sampleCount,
-        errorCount: r.errorCount,
-        dataQuality: r.dataQuality,
-        sessionId: r.sessionId,
-      });
-    }
+  const rows = await db
+    .select({
+      pointRid: pointReadingsAgg5m.pointRid,
+      intervalEnd: pointReadingsAgg5m.intervalEnd,
+      createdAt: pointReadingsAgg5m.createdAt,
+      avg: pointReadingsAgg5m.avg,
+      min: pointReadingsAgg5m.min,
+      max: pointReadingsAgg5m.max,
+      last: pointReadingsAgg5m.last,
+      delta: pointReadingsAgg5m.delta,
+      valueStr: pointReadingsAgg5m.valueStr,
+      sampleCount: pointReadingsAgg5m.sampleCount,
+      errorCount: pointReadingsAgg5m.errorCount,
+      dataQuality: pointReadingsAgg5m.dataQuality,
+      sessionId: pointReadingsAgg5m.sessionId,
+    })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        inArray(pointReadingsAgg5m.pointRid, rids),
+        gte(pointReadingsAgg5m.intervalEnd, from),
+        upperBoundOp(window.toInclusive)(pointReadingsAgg5m.intervalEnd, to),
+      ),
+    )
+    .orderBy(pointReadingsAgg5m.intervalEnd);
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id) continue;
+    out.get(id)!.push({
+      intervalEndMs: r.intervalEnd.getTime(),
+      createdAtMs: r.createdAt.getTime(),
+      avg: r.avg,
+      min: r.min,
+      max: r.max,
+      last: r.last,
+      delta: r.delta,
+      valueStr: r.valueStr,
+      sampleCount: r.sampleCount,
+      errorCount: r.errorCount,
+      dataQuality: r.dataQuality,
+      sessionId: r.sessionId,
+    });
   }
   return out;
 }
@@ -307,47 +290,46 @@ async function read1d(
   const out: SeriesByPoint<Agg1dReading> = new Map(points.map((p) => [p, []]));
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid).
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE (single query, no per-system fan-out).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    const rows = await db
-      .select({
-        pointId: pointReadingsAgg1d.pointId,
-        day: pointReadingsAgg1d.day,
-        avg: pointReadingsAgg1d.avg,
-        min: pointReadingsAgg1d.min,
-        max: pointReadingsAgg1d.max,
-        last: pointReadingsAgg1d.last,
-        delta: pointReadingsAgg1d.delta,
-        sampleCount: pointReadingsAgg1d.sampleCount,
-        errorCount: pointReadingsAgg1d.errorCount,
-      })
-      .from(pointReadingsAgg1d)
-      .where(
-        and(
-          eq(pointReadingsAgg1d.systemId, systemId),
-          inArray(pointReadingsAgg1d.pointId, indexes),
-          gte(pointReadingsAgg1d.day, range.startDay),
-          lte(pointReadingsAgg1d.day, range.endDay),
-        ),
-      )
-      .orderBy(pointReadingsAgg1d.day);
-    for (const r of rows) {
-      const id = rev.get(addrKey(systemId, r.pointId));
-      if (!id) continue;
-      out.get(id)!.push({
-        day: r.day,
-        avg: r.avg,
-        min: r.min,
-        max: r.max,
-        last: r.last,
-        delta: r.delta,
-        sampleCount: r.sampleCount,
-        errorCount: r.errorCount,
-      });
-    }
+  const rows = await db
+    .select({
+      pointRid: pointReadingsAgg1d.pointRid,
+      day: pointReadingsAgg1d.day,
+      avg: pointReadingsAgg1d.avg,
+      min: pointReadingsAgg1d.min,
+      max: pointReadingsAgg1d.max,
+      last: pointReadingsAgg1d.last,
+      delta: pointReadingsAgg1d.delta,
+      sampleCount: pointReadingsAgg1d.sampleCount,
+      errorCount: pointReadingsAgg1d.errorCount,
+    })
+    .from(pointReadingsAgg1d)
+    .where(
+      and(
+        inArray(pointReadingsAgg1d.pointRid, rids),
+        gte(pointReadingsAgg1d.day, range.startDay),
+        lte(pointReadingsAgg1d.day, range.endDay),
+      ),
+    )
+    .orderBy(pointReadingsAgg1d.day);
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id) continue;
+    out.get(id)!.push({
+      day: r.day,
+      avg: r.avg,
+      min: r.min,
+      max: r.max,
+      last: r.last,
+      delta: r.delta,
+      sampleCount: r.sampleCount,
+      errorCount: r.errorCount,
+    });
   }
   return out;
 }
@@ -363,43 +345,38 @@ async function latestForPoints(
   const out = new Map<PointId, RawReading | null>(points.map((p) => [p, null]));
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid; DISTINCT ON (point_rid)).
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE; DISTINCT ON (point_rid).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    const rows = await db
-      .selectDistinctOn([pointReadings.pointId], {
-        pointId: pointReadings.pointId,
-        measurementTime: pointReadings.measurementTime,
-        receivedTime: pointReadings.receivedTime,
-        value: pointReadings.value,
-        valueStr: pointReadings.valueStr,
-        error: pointReadings.error,
-        dataQuality: pointReadings.dataQuality,
-        sessionId: pointReadings.sessionId,
-      })
-      .from(pointReadings)
-      .where(
-        and(
-          eq(pointReadings.systemId, systemId),
-          inArray(pointReadings.pointId, indexes),
-        ),
-      )
-      .orderBy(pointReadings.pointId, desc(pointReadings.measurementTime));
-    for (const r of rows) {
-      const id = rev.get(addrKey(systemId, r.pointId));
-      if (!id) continue;
-      out.set(id, {
-        measurementTimeMs: r.measurementTime.getTime(),
-        receivedTimeMs: r.receivedTime.getTime(),
-        value: r.value,
-        valueStr: r.valueStr,
-        error: r.error,
-        dataQuality: r.dataQuality,
-        sessionId: r.sessionId,
-      });
-    }
+  const rows = await db
+    .selectDistinctOn([pointReadings.pointRid], {
+      pointRid: pointReadings.pointRid,
+      measurementTime: pointReadings.measurementTime,
+      receivedTime: pointReadings.receivedTime,
+      value: pointReadings.value,
+      valueStr: pointReadings.valueStr,
+      error: pointReadings.error,
+      dataQuality: pointReadings.dataQuality,
+      sessionId: pointReadings.sessionId,
+    })
+    .from(pointReadings)
+    .where(inArray(pointReadings.pointRid, rids))
+    .orderBy(pointReadings.pointRid, desc(pointReadings.measurementTime));
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id) continue;
+    out.set(id, {
+      measurementTimeMs: r.measurementTime.getTime(),
+      receivedTimeMs: r.receivedTime.getTime(),
+      value: r.value,
+      valueStr: r.valueStr,
+      error: r.error,
+      dataQuality: r.dataQuality,
+      sessionId: r.sessionId,
+    });
   }
   return out;
 }
@@ -417,56 +394,48 @@ async function latest5mForPoints(
   );
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key expansion + WHERE (Phase 8 → point_rid; DISTINCT ON (point_rid)).
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE; DISTINCT ON (point_rid).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    const rows = await db
-      .selectDistinctOn([pointReadingsAgg5m.pointId], {
-        pointId: pointReadingsAgg5m.pointId,
-        intervalEnd: pointReadingsAgg5m.intervalEnd,
-        createdAt: pointReadingsAgg5m.createdAt,
-        avg: pointReadingsAgg5m.avg,
-        min: pointReadingsAgg5m.min,
-        max: pointReadingsAgg5m.max,
-        last: pointReadingsAgg5m.last,
-        delta: pointReadingsAgg5m.delta,
-        valueStr: pointReadingsAgg5m.valueStr,
-        sampleCount: pointReadingsAgg5m.sampleCount,
-        errorCount: pointReadingsAgg5m.errorCount,
-        dataQuality: pointReadingsAgg5m.dataQuality,
-        sessionId: pointReadingsAgg5m.sessionId,
-      })
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, systemId),
-          inArray(pointReadingsAgg5m.pointId, indexes),
-        ),
-      )
-      .orderBy(
-        pointReadingsAgg5m.pointId,
-        desc(pointReadingsAgg5m.intervalEnd),
-      );
-    for (const r of rows) {
-      const id = rev.get(addrKey(systemId, r.pointId));
-      if (!id) continue;
-      out.set(id, {
-        intervalEndMs: r.intervalEnd.getTime(),
-        createdAtMs: r.createdAt.getTime(),
-        avg: r.avg,
-        min: r.min,
-        max: r.max,
-        last: r.last,
-        delta: r.delta,
-        valueStr: r.valueStr,
-        sampleCount: r.sampleCount,
-        errorCount: r.errorCount,
-        dataQuality: r.dataQuality,
-        sessionId: r.sessionId,
-      });
-    }
+  const rows = await db
+    .selectDistinctOn([pointReadingsAgg5m.pointRid], {
+      pointRid: pointReadingsAgg5m.pointRid,
+      intervalEnd: pointReadingsAgg5m.intervalEnd,
+      createdAt: pointReadingsAgg5m.createdAt,
+      avg: pointReadingsAgg5m.avg,
+      min: pointReadingsAgg5m.min,
+      max: pointReadingsAgg5m.max,
+      last: pointReadingsAgg5m.last,
+      delta: pointReadingsAgg5m.delta,
+      valueStr: pointReadingsAgg5m.valueStr,
+      sampleCount: pointReadingsAgg5m.sampleCount,
+      errorCount: pointReadingsAgg5m.errorCount,
+      dataQuality: pointReadingsAgg5m.dataQuality,
+      sessionId: pointReadingsAgg5m.sessionId,
+    })
+    .from(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.pointRid, rids))
+    .orderBy(pointReadingsAgg5m.pointRid, desc(pointReadingsAgg5m.intervalEnd));
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id) continue;
+    out.set(id, {
+      intervalEndMs: r.intervalEnd.getTime(),
+      createdAtMs: r.createdAt.getTime(),
+      avg: r.avg,
+      min: r.min,
+      max: r.max,
+      last: r.last,
+      delta: r.delta,
+      valueStr: r.valueStr,
+      sampleCount: r.sampleCount,
+      errorCount: r.errorCount,
+      dataQuality: r.dataQuality,
+      sessionId: r.sessionId,
+    });
   }
   return out;
 }
@@ -480,7 +449,8 @@ async function latestForActivePoints(
   exec?: ReadingsExec,
 ): Promise<ActivePointLatest[]> {
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: both composite-key LATERAL probes become point_rid probes in Phase 8.
+  // SEAM: both LATERAL probes now key on the rid-keyed twins (pr.point_rid = pi.rid). `point_info.rid`
+  // is the same internal recorder key the hot tables store, so the driver + projection are unchanged.
   const res = await db.execute(
     sql.raw(`
     WITH candidates AS (
@@ -491,7 +461,7 @@ async function latestForActivePoints(
       JOIN LATERAL (
         SELECT value, value_str, measurement_time, received_time, session_id
         FROM point_readings pr
-        WHERE pr.system_id = pi.system_id AND pr.point_id = pi.id
+        WHERE pr.point_rid = pi.rid
         ORDER BY measurement_time DESC LIMIT 1
       ) r ON true
       WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
@@ -503,7 +473,7 @@ async function latestForActivePoints(
       JOIN LATERAL (
         SELECT last, value_str, interval_end, session_id
         FROM point_readings_agg_5m ag
-        WHERE ag.system_id = pi.system_id AND ag.point_id = pi.id
+        WHERE ag.point_rid = pi.rid
         ORDER BY interval_end DESC LIMIT 1
       ) a ON true
       WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
@@ -558,33 +528,28 @@ async function agg5mCoverageForPoints(
   );
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE/GROUP BY.
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    // SEAM: composite-key WHERE/GROUP BY becomes point_rid in Phase 8.
-    const rows = await db
-      .select({
-        pointId: pointReadingsAgg5m.pointId,
-        first: sql<Date | null>`min(${pointReadingsAgg5m.intervalEnd})`,
-        last: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})`,
-      })
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, systemId),
-          inArray(pointReadingsAgg5m.pointId, indexes),
-        ),
-      )
-      .groupBy(pointReadingsAgg5m.pointId);
-    for (const row of rows) {
-      const point = rev.get(addrKey(systemId, row.pointId));
-      if (!point || row.first == null || row.last == null) continue;
-      out.set(point, {
-        firstMs: new Date(row.first as string | number | Date).getTime(),
-        lastMs: new Date(row.last as string | number | Date).getTime(),
-      });
-    }
+  const rows = await db
+    .select({
+      pointRid: pointReadingsAgg5m.pointRid,
+      first: sql<Date | null>`min(${pointReadingsAgg5m.intervalEnd})`,
+      last: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})`,
+    })
+    .from(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.pointRid, rids))
+    .groupBy(pointReadingsAgg5m.pointRid);
+  for (const row of rows) {
+    const point = pointByRid.get(row.pointRid);
+    if (!point || row.first == null || row.last == null) continue;
+    out.set(point, {
+      firstMs: new Date(row.first as string | number | Date).getTime(),
+      lastMs: new Date(row.last as string | number | Date).getTime(),
+    });
   }
   return out;
 }
@@ -617,29 +582,24 @@ async function latestAgg5mIntervalMsForPoints(
   const out = new Map<PointId, number | null>(points.map((p) => [p, null]));
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key WHERE + per-point MAX(interval_end) (Phase 8 → point_rid).
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  // SEAM: rid-keyed WHERE + per-point MAX(interval_end).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    const rows = await db
-      .select({
-        pointId: pointReadingsAgg5m.pointId,
-        m: max(pointReadingsAgg5m.intervalEnd),
-      })
-      .from(pointReadingsAgg5m)
-      .where(
-        and(
-          eq(pointReadingsAgg5m.systemId, systemId),
-          inArray(pointReadingsAgg5m.pointId, indexes),
-        ),
-      )
-      .groupBy(pointReadingsAgg5m.pointId);
-    for (const r of rows) {
-      const id = rev.get(addrKey(systemId, r.pointId));
-      if (!id || r.m == null) continue;
-      out.set(id, new Date(r.m as string | number | Date).getTime());
-    }
+  const rows = await db
+    .select({
+      pointRid: pointReadingsAgg5m.pointRid,
+      m: max(pointReadingsAgg5m.intervalEnd),
+    })
+    .from(pointReadingsAgg5m)
+    .where(inArray(pointReadingsAgg5m.pointRid, rids))
+    .groupBy(pointReadingsAgg5m.pointRid);
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id || r.m == null) continue;
+    out.set(id, new Date(r.m as string | number | Date).getTime());
   }
   return out;
 }
@@ -655,15 +615,14 @@ async function latestAgg5mUpdatedAtForPoint(
   exec?: ReadingsExec,
 ): Promise<number | null> {
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key WHERE (Phase 8 → point_rid). MAX(updated_at) over an interval_end window.
-  const a = await RegistryCache.addrForPoint(point);
+  // SEAM: rid-keyed WHERE. MAX(updated_at) over an interval_end window.
+  const rid = await RegistryCache.ridForPoint(point);
   const [row] = await db
     .select({ m: max(pointReadingsAgg5m.updatedAt) })
     .from(pointReadingsAgg5m)
     .where(
       and(
-        eq(pointReadingsAgg5m.systemId, a.systemId),
-        eq(pointReadingsAgg5m.pointId, a.index),
+        eq(pointReadingsAgg5m.pointRid, rid),
         gt(pointReadingsAgg5m.intervalEnd, new Date(opts.afterIntervalEndMs)),
         lte(
           pointReadingsAgg5m.intervalEnd,
@@ -695,33 +654,32 @@ async function countAgg5mByLocalDay(
   const from = new Date(opts.fromMs);
   const to = new Date(opts.toMs);
   const localDay = localDayExpr(opts.offsetMin);
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    // SEAM: composite-key WHERE (Phase 8 → point_rid). Raw SQL to reproduce the grouped local-day
-    // aggregate verbatim (the query builder mis-serialises a reused GROUP BY expression).
-    const res = await db.execute(sql`
-      SELECT ${localDay} AS local_day,
-             ${pointReadingsAgg5m.pointId} AS point_id,
-             count(*)::int AS n
-      FROM ${pointReadingsAgg5m}
-      WHERE ${pointReadingsAgg5m.systemId} = ${systemId}
-        AND ${pointReadingsAgg5m.pointId} IN (${sql.join(
-          indexes.map((i) => sql`${i}`),
-          sql`, `,
-        )})
-        AND ${pointReadingsAgg5m.intervalEnd} >= ${from}
-        AND ${pointReadingsAgg5m.intervalEnd} <  ${to}
-      GROUP BY 1, 2
-    `);
-    for (const row of res.rows ?? []) {
-      const pid = Number((row as { point_id: unknown }).point_id);
-      const id = rev.get(addrKey(systemId, pid));
-      if (!id) continue;
-      const day = String((row as { local_day: unknown }).local_day);
-      out.get(id)!.set(day, Number((row as { n: unknown }).n));
-    }
+  // SEAM: rid-keyed WHERE. Raw SQL to reproduce the grouped local-day aggregate verbatim (the query
+  // builder mis-serialises a reused GROUP BY expression).
+  const res = await db.execute(sql`
+    SELECT ${localDay} AS local_day,
+           ${pointReadingsAgg5m.pointRid} AS point_rid,
+           count(*)::int AS n
+    FROM ${pointReadingsAgg5m}
+    WHERE ${pointReadingsAgg5m.pointRid} IN (${sql.join(
+      rids.map((r) => sql`${r}`),
+      sql`, `,
+    )})
+      AND ${pointReadingsAgg5m.intervalEnd} >= ${from}
+      AND ${pointReadingsAgg5m.intervalEnd} <  ${to}
+    GROUP BY 1, 2
+  `);
+  for (const row of res.rows ?? []) {
+    const rid = Number((row as { point_rid: unknown }).point_rid);
+    const id = pointByRid.get(rid);
+    if (!id) continue;
+    const day = String((row as { local_day: unknown }).local_day);
+    out.get(id)!.set(day, Number((row as { n: unknown }).n));
   }
   return out;
 }
@@ -739,28 +697,27 @@ async function countAgg5mForLocalDay(
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
   const localDay = localDayExpr(opts.offsetMin);
-  const { bySystem, rev } = groupBySystem(
-    await RegistryCache.addrsForPoints(points),
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
   );
-  for (const [systemId, indexes] of bySystem) {
-    // SEAM: composite-key WHERE (Phase 8 → point_rid). Raw SQL, verbatim with the original.
-    const res = await db.execute(sql`
-      SELECT ${pointReadingsAgg5m.pointId} AS point_id, count(*)::int AS n
-      FROM ${pointReadingsAgg5m}
-      WHERE ${pointReadingsAgg5m.systemId} = ${systemId}
-        AND ${pointReadingsAgg5m.pointId} IN (${sql.join(
-          indexes.map((i) => sql`${i}`),
-          sql`, `,
-        )})
-        AND ${localDay} = ${opts.day}
-      GROUP BY ${pointReadingsAgg5m.pointId}
-    `);
-    for (const row of res.rows ?? []) {
-      const pid = Number((row as { point_id: unknown }).point_id);
-      const id = rev.get(addrKey(systemId, pid));
-      if (!id) continue;
-      out.set(id, Number((row as { n: unknown }).n));
-    }
+  // SEAM: rid-keyed WHERE. Raw SQL, verbatim with the original.
+  const res = await db.execute(sql`
+    SELECT ${pointReadingsAgg5m.pointRid} AS point_rid, count(*)::int AS n
+    FROM ${pointReadingsAgg5m}
+    WHERE ${pointReadingsAgg5m.pointRid} IN (${sql.join(
+      rids.map((r) => sql`${r}`),
+      sql`, `,
+    )})
+      AND ${localDay} = ${opts.day}
+    GROUP BY ${pointReadingsAgg5m.pointRid}
+  `);
+  for (const row of res.rows ?? []) {
+    const rid = Number((row as { point_rid: unknown }).point_rid);
+    const id = pointByRid.get(rid);
+    if (!id) continue;
+    out.set(id, Number((row as { n: unknown }).n));
   }
   return out;
 }
@@ -772,22 +729,20 @@ async function insertRaw(
   exec?: ReadingsExec,
 ): Promise<{ inserted: number }> {
   if (rows.length === 0) return { inserted: 0 };
-  const addrs = await RegistryCache.addrsForPoints(rows.map((r) => r.point));
+  const ridByPoint = await RegistryCache.ridsForPoints(
+    rows.map((r) => r.point),
+  );
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key value-building (Phase 8 → { pointRid }).
-  const values = rows.map((r) => {
-    const a = addrs.get(r.point)!;
-    return {
-      systemId: a.systemId,
-      pointId: a.index,
-      sessionId: r.sessionId,
-      measurementTime: new Date(r.measurementTimeMs),
-      receivedTime: new Date(r.receivedTimeMs),
-      value: r.value,
-      valueStr: r.valueStr,
-      dataQuality: r.dataQuality ?? "good",
-    };
-  });
+  // SEAM: rid-keyed value-building.
+  const values = rows.map((r) => ({
+    pointRid: ridByPoint.get(r.point)!,
+    sessionId: r.sessionId,
+    measurementTime: new Date(r.measurementTimeMs),
+    receivedTime: new Date(r.receivedTimeMs),
+    value: r.value,
+    valueStr: r.valueStr,
+    dataQuality: r.dataQuality ?? "good",
+  }));
   const res = await db
     .insert(pointReadings)
     .values(values)
@@ -828,36 +783,30 @@ async function insert5m(
   exec?: ReadingsExec,
 ): Promise<{ written: number }> {
   if (rows.length === 0) return { written: 0 };
-  const addrs = await RegistryCache.addrsForPoints(rows.map((r) => r.point));
+  const ridByPoint = await RegistryCache.ridsForPoints(
+    rows.map((r) => r.point),
+  );
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key value-building (Phase 8 → { pointRid }).
-  const values = rows.map((r) => {
-    const a = addrs.get(r.point)!;
-    return {
-      systemId: a.systemId,
-      pointId: a.index,
-      intervalEnd: new Date(r.intervalEndMs),
-      sessionId: r.sessionId,
-      avg: r.avg,
-      min: r.min,
-      max: r.max,
-      last: r.last,
-      delta: r.delta,
-      valueStr: r.valueStr,
-      sampleCount: r.sampleCount,
-      errorCount: r.errorCount,
-      dataQuality: r.dataQuality,
-    };
-  });
+  // SEAM: rid-keyed value-building.
+  const values = rows.map((r) => ({
+    pointRid: ridByPoint.get(r.point)!,
+    intervalEnd: new Date(r.intervalEndMs),
+    sessionId: r.sessionId,
+    avg: r.avg,
+    min: r.min,
+    max: r.max,
+    last: r.last,
+    delta: r.delta,
+    valueStr: r.valueStr,
+    sampleCount: r.sampleCount,
+    errorCount: r.errorCount,
+    dataQuality: r.dataQuality,
+  }));
   const insert = db.insert(pointReadingsAgg5m).values(values);
   const res = await (
     opts.upsert
       ? insert.onConflictDoUpdate({
-          target: [
-            pointReadingsAgg5m.systemId,
-            pointReadingsAgg5m.pointId,
-            pointReadingsAgg5m.intervalEnd,
-          ],
+          target: [pointReadingsAgg5m.pointRid, pointReadingsAgg5m.intervalEnd],
           set: {
             avg: sql`excluded.avg`,
             min: sql`excluded.min`,
@@ -894,33 +843,27 @@ async function upsert1d(
   exec?: ReadingsExec,
 ): Promise<{ written: number }> {
   if (rows.length === 0) return { written: 0 };
-  const addrs = await RegistryCache.addrsForPoints(rows.map((r) => r.point));
+  const ridByPoint = await RegistryCache.ridsForPoints(
+    rows.map((r) => r.point),
+  );
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: composite-key value-building (Phase 8 → { pointRid }).
-  const values = rows.map((r) => {
-    const a = addrs.get(r.point)!;
-    return {
-      systemId: a.systemId,
-      pointId: a.index,
-      day: r.day,
-      avg: r.avg,
-      min: r.min,
-      max: r.max,
-      last: r.last,
-      delta: r.delta,
-      sampleCount: r.sampleCount,
-      errorCount: r.errorCount,
-    };
-  });
+  // SEAM: rid-keyed value-building.
+  const values = rows.map((r) => ({
+    pointRid: ridByPoint.get(r.point)!,
+    day: r.day,
+    avg: r.avg,
+    min: r.min,
+    max: r.max,
+    last: r.last,
+    delta: r.delta,
+    sampleCount: r.sampleCount,
+    errorCount: r.errorCount,
+  }));
   const res = await db
     .insert(pointReadingsAgg1d)
     .values(values)
     .onConflictDoUpdate({
-      target: [
-        pointReadingsAgg1d.systemId,
-        pointReadingsAgg1d.pointId,
-        pointReadingsAgg1d.day,
-      ],
+      target: [pointReadingsAgg1d.pointRid, pointReadingsAgg1d.day],
       set: {
         avg: sql`excluded.avg`,
         min: sql`excluded.min`,
@@ -965,17 +908,13 @@ async function deviceIdsWithAgg5mSince(
   exec?: ReadingsExec,
 ): Promise<DeviceId[]> {
   const db = exec ?? requirePlanetscaleDb();
+  // SEAM: the rid-keyed twin has no system_id — recover the distinct devices via a point_rid → points join.
   const rows = await db
-    .selectDistinct({ systemId: pointReadingsAgg5m.systemId })
+    .selectDistinct({ deviceUuid: points.deviceId })
     .from(pointReadingsAgg5m)
+    .innerJoin(points, eq(pointReadingsAgg5m.pointRid, points.rid))
     .where(gte(pointReadingsAgg5m.intervalEnd, new Date(sinceMs)));
-  const handles = rows.map((r) => r.systemId);
-  const mapped = await DeviceRegistry.addrsForHandles(handles, db);
-  return handles.map((handle) => {
-    const device = mapped.get(handle);
-    if (!device) throw new Error(`Missing device mapping for system ${handle}`);
-    return device.deviceId;
-  });
+  return rows.map((r) => Device.encode(r.deviceUuid));
 }
 
 /**
@@ -989,11 +928,13 @@ async function latestAgg5mIntervalMsForDevice(
   exec?: ReadingsExec,
 ): Promise<number | null> {
   const db = exec ?? requirePlanetscaleDb();
-  const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId, db);
+  // SEAM: filter the device via a point_rid → points.device_id join (the twin has no system_id).
+  const { uuid } = await DeviceRegistry.addrForDevice(deviceId, db);
   const [row] = await db
     .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
     .from(pointReadingsAgg5m)
-    .where(eq(pointReadingsAgg5m.systemId, systemId))
+    .innerJoin(points, eq(pointReadingsAgg5m.pointRid, points.rid))
+    .where(eq(points.deviceId, uuid))
     .orderBy(desc(pointReadingsAgg5m.intervalEnd))
     .limit(1);
   return row ? row.intervalEnd.getTime() : null;
@@ -1077,9 +1018,11 @@ async function distinctSystemsByRawCreatedAtSince(
   exec?: ReadingsExec,
 ): Promise<number> {
   const db = exec ?? requirePlanetscaleDb();
+  // SEAM: count distinct devices via a point_rid → points join (the twin has no system_id).
   const [row] = await db
-    .select({ n: sql<number>`count(distinct ${pointReadings.systemId})::int` })
+    .select({ n: sql<number>`count(distinct ${points.deviceId})::int` })
     .from(pointReadings)
+    .innerJoin(points, eq(pointReadings.pointRid, points.rid))
     .where(gte(pointReadings.createdAt, new Date(sinceMs)));
   return Number(row?.n ?? 0);
 }
@@ -1134,15 +1077,17 @@ async function maxAgg5mIntervalMsForDevices(
   if (deviceIds.length === 0) return null;
   const db = exec ?? requirePlanetscaleDb();
   const mappings = await DeviceRegistry.addrsForDevices(deviceIds, db);
-  const systemIds = deviceIds.map((id) => {
+  // SEAM: filter the device set via a point_rid → points.device_id join (the twin has no system_id).
+  const uuids = deviceIds.map((id) => {
     const device = mappings.get(id);
     if (!device) throw new Error(`Missing device mapping for ${id}`);
-    return device.handle;
+    return device.uuid;
   });
   const [row] = await db
     .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
     .from(pointReadingsAgg5m)
-    .where(inArray(pointReadingsAgg5m.systemId, systemIds))
+    .innerJoin(points, eq(pointReadingsAgg5m.pointRid, points.rid))
+    .where(inArray(points.deviceId, uuids))
     .orderBy(desc(pointReadingsAgg5m.intervalEnd))
     .limit(1);
   return row ? row.intervalEnd.getTime() : null;
@@ -1231,7 +1176,11 @@ async function readAdminPivot(
 ): Promise<Row[]> {
   const { source, cursor, direction } = p;
   const db = exec ?? requirePlanetscaleDb();
-  const { handle: systemId } = await DeviceRegistry.addrForDevice(p.device, db);
+  // SEAM: device filter → points.device_id (join); pivot CASE → pr.point_rid. The twin has no
+  // system_id/point_id, so the on-device check keys on the point's own (immutable) systemId == the
+  // device handle, and each pivot column selects its point by the globally-unique point_rid.
+  const { handle: systemId, uuid: deviceUuid } =
+    await DeviceRegistry.addrForDevice(p.device, db);
   const pointAddrs = await RegistryCache.addrsForPoints(
     p.points.map((point) => point.point),
   );
@@ -1249,7 +1198,7 @@ async function readAdminPivot(
       const addr = pointAddrs.get(point.point);
       if (!addr || addr.systemId !== systemId)
         throw new Error(`Admin pivot point is not on device ${p.device}`);
-      return `MAX(CASE WHEN pr.system_id = ${systemId} AND pr.point_id = ${addr.index} THEN pr.${columns[point.valueColumn]} END) as ${point.outputKey}`;
+      return `MAX(CASE WHEN pr.point_rid = ${addr.rid} THEN pr.${columns[point.valueColumn]} END) as ${point.outputKey}`;
     })
     .join(",\n  ");
   const limit = Math.max(1, Math.min(1000, Math.trunc(p.limit)));
@@ -1269,8 +1218,8 @@ async function readAdminPivot(
       WITH recent_days AS (
         SELECT DISTINCT day
         FROM point_readings_agg_1d pr
-        INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-        WHERE pi.system_id = ${systemId}
+        INNER JOIN points ON pr.point_rid = points.rid
+        WHERE points.device_id = '${deviceUuid}'
         ${cursorFilter}
         ORDER BY day ${orderDirection}
         LIMIT ${limit}
@@ -1281,7 +1230,8 @@ async function readAdminPivot(
         NULL as session_label,
         ${pivotColumns}
       FROM point_readings_agg_1d pr
-      WHERE pr.system_id = ${systemId}
+      INNER JOIN points ON pr.point_rid = points.rid
+      WHERE points.device_id = '${deviceUuid}'
         AND pr.day IN (SELECT day FROM recent_days)
       GROUP BY pr.day
       ORDER BY pr.day DESC
@@ -1304,8 +1254,8 @@ async function readAdminPivot(
     WITH recent_timestamps AS (
       SELECT DISTINCT ${timeCol}
       FROM ${table} pr
-      INNER JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-      WHERE pi.system_id = ${systemId}
+      INNER JOIN points ON pr.point_rid = points.rid
+      WHERE points.device_id = '${deviceUuid}'
       ${cursorFilter}
       ORDER BY ${timeCol} ${orderDirection}
       LIMIT ${limit}
@@ -1316,8 +1266,9 @@ async function readAdminPivot(
       s.session_label,
       ${pivotColumns}
     FROM ${table} pr
+    INNER JOIN points ON pr.point_rid = points.rid
     LEFT JOIN sessions s ON pr.session_id = s.id
-    WHERE pr.system_id = ${systemId}
+    WHERE points.device_id = '${deviceUuid}'
       AND pr.${timeCol} IN (SELECT ${timeCol} FROM recent_timestamps)
     GROUP BY pr.${timeCol}, pr.session_id, s.session_label
     ORDER BY pr.${timeCol} DESC, pr.session_id
@@ -1341,10 +1292,11 @@ async function hasReadingsForDevice(
   exec?: ReadingsExec,
 ): Promise<boolean> {
   const db = exec ?? requirePlanetscaleDb();
-  const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId, db);
+  // SEAM: the twin has no system_id — probe via a point_rid → points.device_id join.
+  const { uuid } = await DeviceRegistry.addrForDevice(deviceId, db);
   const res = await db.execute(
     sql.raw(
-      `SELECT 1 FROM ${STORE_TABLE[store]} WHERE system_id = ${systemId} LIMIT 1`,
+      `SELECT 1 FROM ${STORE_TABLE[store]} pr JOIN points ON pr.point_rid = points.rid WHERE points.device_id = '${uuid}' LIMIT 1`,
     ),
   );
   return (((res as { rows?: unknown[] }).rows ?? []).length ?? 0) > 0;
@@ -1364,7 +1316,8 @@ async function hasReadingsForDeviceBeyond(
   exec?: ReadingsExec,
 ): Promise<boolean> {
   const db = exec ?? requirePlanetscaleDb();
-  const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId, db);
+  // SEAM: the twin has no system_id — probe via a point_rid → points.device_id join.
+  const { uuid } = await DeviceRegistry.addrForDevice(deviceId, db);
   const op = direction === "older" ? "<" : ">";
   const rhs =
     store === "agg1d"
@@ -1372,7 +1325,7 @@ async function hasReadingsForDeviceBeyond(
       : `to_timestamp(${Number(boundary)} / 1000.0)`;
   const res = await db.execute(
     sql.raw(
-      `SELECT 1 FROM ${STORE_TABLE[store]} WHERE system_id = ${systemId} AND ${STORE_TIME_COL[store]} ${op} ${rhs} LIMIT 1`,
+      `SELECT 1 FROM ${STORE_TABLE[store]} pr JOIN points ON pr.point_rid = points.rid WHERE points.device_id = '${uuid}' AND pr.${STORE_TIME_COL[store]} ${op} ${rhs} LIMIT 1`,
     ),
   );
   return (((res as { rows?: unknown[] }).rows ?? []).length ?? 0) > 0;
@@ -1395,7 +1348,8 @@ async function readRawWindowAround(
   exec?: ReadingsExec,
 ): Promise<Row[]> {
   const db = exec ?? requirePlanetscaleDb();
-  const { systemId, index } = await RegistryCache.addrForPoint(point);
+  // SEAM: rid-keyed WHERE (single point).
+  const rid = await RegistryCache.ridForPoint(point);
   const oneHour = 60 * 60 * 1000;
   const startTime = centerMs - oneHour;
   const endTime = centerMs + oneHour;
@@ -1412,8 +1366,7 @@ async function readRawWindowAround(
       s.session_label as "sessionLabel"
     FROM point_readings pr
     LEFT JOIN sessions s ON pr.session_id = s.id
-    WHERE pr.system_id = ${systemId}
-      AND pr.point_id = ${index}
+    WHERE pr.point_rid = ${rid}
       AND pr.measurement_time >= ${tsLitUTC(startTime)}
       AND pr.measurement_time <= ${tsLitUTC(endTime)}
     ORDER BY pr.measurement_time ASC
@@ -1441,13 +1394,14 @@ async function read5mRowWindowAround(
   exec?: ReadingsExec,
 ): Promise<Row[]> {
   const db = exec ?? requirePlanetscaleDb();
-  const { systemId, index } = await RegistryCache.addrForPoint(point);
+  // SEAM: rid-keyed WHERE (single point).
+  const rid = await RegistryCache.ridForPoint(point);
   const res = await db.execute(
     sql.raw(`
       WITH all_rows AS (
         SELECT interval_end, ROW_NUMBER() OVER (ORDER BY interval_end ASC) as row_num
         FROM point_readings_agg_5m
-        WHERE system_id = ${systemId} AND point_id = ${index}
+        WHERE point_rid = ${rid}
       ),
       target_position AS (
         SELECT row_num as target_row FROM all_rows
@@ -1469,7 +1423,7 @@ async function read5mRowWindowAround(
           ROW_NUMBER() OVER (ORDER BY pr.interval_end ASC) as row_num
         FROM point_readings_agg_5m pr
         LEFT JOIN sessions s ON pr.session_id = s.id
-        WHERE pr.system_id = ${systemId} AND pr.point_id = ${index}
+        WHERE pr.point_rid = ${rid}
       )
       SELECT ranked.* FROM ranked, target_position
       WHERE ranked.row_num BETWEEN (target_position.target_row - 10) AND (target_position.target_row + 10)

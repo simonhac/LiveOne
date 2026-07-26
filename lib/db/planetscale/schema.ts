@@ -300,14 +300,14 @@ export const pointInfo = pgTable(
 export const pointReadings = pgTable(
   "point_readings",
   {
-    id: serial("id").primaryKey(),
-
-    // Relationships
-    systemId: integer("system_id").notNull(),
-    pointId: integer("point_id").notNull(),
-    // Session id is text (UUIDv7 / stringified-int historical). FK to
-    // sessions(id) is enforced (added in PR-7b after co-enqueue guarantees the
-    // session row lands before its readings). NULL session_id is allowed.
+    // ⚠️ config-v4 CUTOVER SHAPE — the (point_rid, time) twin from config-transform stage 4. The composite
+    // (system_id, point_id) address AND the serial `id` are gone; rows key on the internal `point_rid` (a
+    // FK → points.rid). Only the readings seam (lib/readings/**) imports this. Index/constraint names keep
+    // the `_new` suffix through Phase 8 (renamed to canonical in Phase 9).
+    pointRid: integer("point_rid")
+      .notNull()
+      .references(() => points.rid),
+    // Session id is text (UUIDv7 / stringified-int historical); FK to sessions(id). NULL is allowed.
     sessionId: text("session_id").references(() => sessions.id),
 
     // Timestamps (UTC)
@@ -322,30 +322,18 @@ export const pointReadings = pgTable(
     error: text("error"),
     dataQuality: text("data_quality").notNull().default("good"),
 
-    // When this row was ingested into Postgres (the queue consumer leaves this to
-    // defaultNow). Distinct from measurementTime/receivedTime — used to chart the
-    // true ingestion rate, and to distinguish live ingestion from later backfills.
+    // When this row was ingested into Postgres (defaultNow); distinct from measurement/received time.
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => ({
-    pointTimeUnique: uniqueIndex("pr_point_time_unique").on(
-      table.systemId,
-      table.pointId,
-      table.measurementTime,
-    ),
-    systemTimeIdx: index("pr_system_time_idx").on(
-      table.systemId,
-      table.measurementTime,
-    ),
-    measurementTimeIdx: index("pr_measurement_time_idx").on(
-      table.measurementTime,
-    ),
-    createdAtIdx: index("pr_created_at_idx").on(table.createdAt),
-    pointInfoFk: foreignKey({
-      columns: [table.systemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.index],
-      name: "point_readings_system_id_point_id_point_info_fk",
+    pk: primaryKey({
+      name: "point_readings_new_pkey",
+      columns: [table.pointRid, table.measurementTime],
     }),
+    measurementTimeIdx: index("pr_new_measurement_time_idx").on(
+      table.measurementTime,
+    ),
+    createdAtIdx: index("pr_new_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -355,12 +343,13 @@ export const pointReadings = pgTable(
 export const pointReadingsAgg5m = pgTable(
   "point_readings_agg_5m",
   {
-    // Composite primary key columns
-    systemId: integer("system_id").notNull(),
-    pointId: integer("point_id").notNull(),
+    // ⚠️ config-v4 CUTOVER SHAPE — the (point_rid, interval_end) twin (config-transform stage 4).
+    pointRid: integer("point_rid")
+      .notNull()
+      .references(() => points.rid),
     intervalEnd: timestamp("interval_end").notNull(),
 
-    // Optional session tracking (text: UUIDv7 / stringified-int historical)
+    // Optional session tracking (text: UUIDv7 / stringified-int historical). No FK on the 5m twin.
     sessionId: text("session_id"),
 
     // Aggregates
@@ -380,22 +369,13 @@ export const pointReadingsAgg5m = pgTable(
   },
   (table) => ({
     pk: primaryKey({
-      columns: [table.systemId, table.pointId, table.intervalEnd],
+      name: "pr5m_new_pkey",
+      columns: [table.pointRid, table.intervalEnd],
     }),
-    systemTimeIdx: index("pr5m_system_time_idx").on(
-      table.systemId,
-      table.intervalEnd,
-    ),
-    intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
-    createdAtIdx: index("pr5m_created_at_idx").on(table.createdAt),
-    // Watermark column for the incremental prod→dev sync (sync-prod-to-dev-db.ts): the export
-    // filters `WHERE updated_at > <wm>`, which seq-scanned the whole ~3M-row table without this.
-    updatedAtIdx: index("pr5m_updated_at_idx").on(table.updatedAt),
-    pointInfoFk: foreignKey({
-      columns: [table.systemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.index],
-      name: "point_readings_agg_5m_system_id_point_id_point_info_fk",
-    }),
+    intervalEndIdx: index("pr5m_new_interval_end_idx").on(table.intervalEnd),
+    createdAtIdx: index("pr5m_new_created_at_idx").on(table.createdAt),
+    // Watermark column for the incremental prod→dev sync (sync-prod-to-dev-db.ts).
+    updatedAtIdx: index("pr5m_new_updated_at_idx").on(table.updatedAt),
   }),
 );
 
@@ -405,9 +385,10 @@ export const pointReadingsAgg5m = pgTable(
 export const pointReadingsAgg1d = pgTable(
   "point_readings_agg_1d",
   {
-    // Composite primary key columns
-    systemId: integer("system_id").notNull(),
-    pointId: integer("point_id").notNull(),
+    // ⚠️ config-v4 CUTOVER SHAPE — the (point_rid, day) twin (config-transform stage 4).
+    pointRid: integer("point_rid")
+      .notNull()
+      .references(() => points.rid),
     day: text("day").notNull(), // YYYY-MM-DD format
 
     // Aggregates
@@ -424,14 +405,11 @@ export const pointReadingsAgg1d = pgTable(
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => ({
-    pk: primaryKey({ columns: [table.systemId, table.pointId, table.day] }),
-    systemDayIdx: index("pr1d_system_day_idx").on(table.systemId, table.day),
-    dayIdx: index("pr1d_day_idx").on(table.day),
-    pointInfoFk: foreignKey({
-      columns: [table.systemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.index],
-      name: "point_readings_agg_1d_system_id_point_id_point_info_fk",
+    pk: primaryKey({
+      name: "pr1d_new_pkey",
+      columns: [table.pointRid, table.day],
     }),
+    dayIdx: index("pr1d_new_day_idx").on(table.day),
   }),
 );
 
