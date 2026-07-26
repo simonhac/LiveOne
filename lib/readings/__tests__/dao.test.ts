@@ -660,15 +660,18 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     ).toEqual([d1, d14]);
   });
 
+  // Both device-keyed "latest interval" seams now go through one raw LATERAL that projects
+  // `latest_ms` (epoch-ms) rather than a drizzle select of `intervalEnd` — see
+  // maxAgg5mIntervalMsForDeviceUuids for why the flat JOIN shape had to go (a stale device took
+  // 29.5s on the twin). A null row models "device has no agg_5m rows".
   it("latestAgg5mIntervalMsForDevice returns the newest interval as epoch-ms, null when empty", async () => {
     const d9 = device(9);
-    const withRow = makeFakeExec([
-      { intervalEnd: new Date(1_700_000_900_000) },
-    ]);
+    const withRow = makeFakeExec([{ latest_ms: "1700000900000" }]);
     expect(
       await ReadingsDao.latestAgg5mIntervalMsForDevice(d9, withRow.exec),
     ).toBe(1_700_000_900_000);
-    const empty = makeFakeExec([]);
+    // `max()` over no rows yields one row whose latest_ms is NULL — not zero rows.
+    const empty = makeFakeExec([{ latest_ms: null }]);
     expect(
       await ReadingsDao.latestAgg5mIntervalMsForDevice(d9, empty.exec),
     ).toBeNull();
@@ -734,13 +737,11 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
   it("maxAgg5mIntervalMsForDevices returns max for a set; null for empty set or no rows", async () => {
     const d1 = device(1);
     const d2 = device(2);
-    const withRow = makeFakeExec([
-      { intervalEnd: new Date(1_700_000_900_000) },
-    ]);
+    const withRow = makeFakeExec([{ latest_ms: "1700000900000" }]);
     expect(
       await ReadingsDao.maxAgg5mIntervalMsForDevices([d1, d2], withRow.exec),
     ).toBe(1_700_000_900_000);
-    const emptyRows = makeFakeExec([]);
+    const emptyRows = makeFakeExec([{ latest_ms: null }]);
     expect(
       await ReadingsDao.maxAgg5mIntervalMsForDevices([d1], emptyRows.exec),
     ).toBeNull();

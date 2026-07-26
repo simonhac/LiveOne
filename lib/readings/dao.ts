@@ -930,14 +930,50 @@ async function latestAgg5mIntervalMsForDevice(
   const db = exec ?? requirePlanetscaleDb();
   // SEAM: filter the device via a point_rid → points.device_id join (the twin has no system_id).
   const { uuid } = await DeviceRegistry.addrForDevice(deviceId, db);
-  const [row] = await db
-    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
-    .from(pointReadingsAgg5m)
-    .innerJoin(points, eq(pointReadingsAgg5m.pointRid, points.rid))
-    .where(eq(points.deviceId, uuid))
-    .orderBy(desc(pointReadingsAgg5m.intervalEnd))
-    .limit(1);
-  return row ? row.intervalEnd.getTime() : null;
+  return maxAgg5mIntervalMsForDeviceUuids([uuid], db);
+}
+
+/**
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) across a set of device uuids, or null when none of
+ * them has any row. Shared by the one-device and many-device seams.
+ *
+ * ⚠️ The LATERAL is load-bearing — do NOT "simplify" this back to the flat
+ *   `agg_5m JOIN points … WHERE points.device_id = … ORDER BY interval_end DESC LIMIT 1`.
+ * Pre-cutover that shape rode `pr5m_system_time_idx (system_id, interval_end)`, which the twins do NOT
+ * recreate. Left with only `pr5m_new_interval_end_idx`, the planner reads the flat form's
+ * `ORDER BY … DESC LIMIT 1` as licence to walk the GLOBAL time index backwards and filter each row by
+ * device — quick for a device that reported a minute ago, catastrophic for a stale one. Measured on
+ * the transformed liveone-dev twin (5.5M agg_5m rows): a device last seen 2026-01-06 scanned 3,084,559
+ * rows / ~994k buffers in **29.5 s**. Rewriting the predicate to `point_rid = ANY(array)` did NOT help
+ * (27.2 s) — the misestimate is on the LIMIT, not the predicate.
+ *
+ * Driving from `points` turns each device's handful of rids into its own `(point_rid, interval_end)`
+ * PK probe — an Index Only Scan Backward that stops on the first row — so cost tracks the device's
+ * POINT COUNT, not the table size. Same stale device: **0.76 ms** (~39,000×); 28 ms cold for two
+ * devices / 21 points.
+ */
+async function maxAgg5mIntervalMsForDeviceUuids(
+  uuids: string[],
+  db: ReadingsExec,
+): Promise<number | null> {
+  if (uuids.length === 0) return null;
+  const list = uuids.map((u) => `'${u}'`).join(",");
+  const res = await db.execute(
+    sql.raw(
+      `SELECT (EXTRACT(EPOCH FROM max(x.interval_end) AT TIME ZONE 'UTC') * 1000)::bigint AS latest_ms
+       FROM points r
+       CROSS JOIN LATERAL (
+         SELECT a.interval_end FROM point_readings_agg_5m a
+         WHERE a.point_rid = r.rid
+         ORDER BY a.interval_end DESC LIMIT 1
+       ) x
+       WHERE r.device_id = ANY(ARRAY[${list}]::uuid[])`,
+    ),
+  );
+  const raw = ((
+    res as unknown as { rows?: { latest_ms: string | number | null }[] }
+  ).rows ?? [])[0]?.latest_ms;
+  return raw === null || raw === undefined ? null : Number(raw);
 }
 
 /** Which hot table's `created_at` axis an observability query reads. Kept inside the seam so callers
@@ -1083,14 +1119,8 @@ async function maxAgg5mIntervalMsForDevices(
     if (!device) throw new Error(`Missing device mapping for ${id}`);
     return device.uuid;
   });
-  const [row] = await db
-    .select({ intervalEnd: pointReadingsAgg5m.intervalEnd })
-    .from(pointReadingsAgg5m)
-    .innerJoin(points, eq(pointReadingsAgg5m.pointRid, points.rid))
-    .where(inArray(points.deviceId, uuids))
-    .orderBy(desc(pointReadingsAgg5m.intervalEnd))
-    .limit(1);
-  return row ? row.intervalEnd.getTime() : null;
+  // Same planner trap as the single-device seam — see maxAgg5mIntervalMsForDeviceUuids.
+  return maxAgg5mIntervalMsForDeviceUuids(uuids, db);
 }
 
 /**
