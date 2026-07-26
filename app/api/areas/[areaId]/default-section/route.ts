@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listReadableAreas } from "@/lib/areas/list";
+import { areaRefToUuid, areaRefToArId } from "@/lib/areas/ref";
 import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 
 /**
@@ -19,8 +20,12 @@ export async function GET(
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
 
+  const uuid = areaRefToUuid(areaId);
+  if (!uuid) {
+    return NextResponse.json({ error: "Invalid area id" }, { status: 400 });
+  }
   const area = (await listReadableAreas(auth.userId)).find(
-    (a) => a.id === areaId,
+    (a) => a.id === uuid,
   );
   if (!area) {
     return NextResponse.json(
@@ -33,5 +38,11 @@ export async function GET(
     area.id,
     area.legacySystemId,
   );
-  return NextResponse.json({ section: descriptor.sections[0] });
+  // buildAreaStrategyForHandle passes area.id (raw uuid) straight through into section.areaId — encode
+  // it before this section is appended to a persisted descriptor (AddAreaDialog).
+  const section = {
+    ...descriptor.sections[0],
+    areaId: areaRefToArId(descriptor.sections[0].areaId) ?? uuid,
+  };
+  return NextResponse.json({ section });
 }

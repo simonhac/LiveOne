@@ -50,7 +50,7 @@ export default function AreaBuilderDialog({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  /** null = create mode; a uuid = edit that area. */
+  /** null = create mode; an `ar_` id = edit that area. */
   areaId?: string | null;
   /** A device to pre-seed (locked) as member #1 in create mode. */
   initialMemberSystemId?: number;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { listReadableAreas } from "@/lib/areas/list";
+import { Area } from "@/lib/ids";
 import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 
 /**
@@ -18,5 +19,8 @@ export async function GET(request: NextRequest) {
       withChartCapability: true,
     }),
   );
-  return NextResponse.json({ areas }, { headers: serverTimingHeaders(t) });
+  return NextResponse.json(
+    { areas: areas.map((a) => ({ ...a, id: Area.encode(a.id) })) },
+    { headers: serverTimingHeaders(t) },
+  );
 }

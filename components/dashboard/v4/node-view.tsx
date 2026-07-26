@@ -66,9 +66,11 @@ export function clientShellResolver(
 ): ShellResolver {
   return {
     area: (id) => {
-      const uuid = areaUuidOf(id);
-      if (!uuid) return null;
-      const ra = areaById.get(uuid);
+      // areaById is keyed by `ar_` (DashboardClient's readableAreas — the wire/props form), same as
+      // `id` here — key by it directly. areaUuidOf is kept only as a validity guard (malformed `id`
+      // never resolves), not for the lookup.
+      if (!areaUuidOf(id)) return null;
+      const ra = areaById.get(id);
       if (!ra) return null;
       return {
         areaId: id,

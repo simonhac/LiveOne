@@ -6,6 +6,11 @@
  * Plus the config-v4 read-side loaders (`findReadableArea` / `loadReadableArea`): parse an `ar_` TypeID
  * and resolve it within the caller's READABLE set (owner ∪ visible-system areas). The `/api/v4/areas/*`
  * routes are TypeID-native, so the `ar_`→uuid decode lives here in one place.
+ *
+ * `loadAreaForOwner` is the equivalent decode+auth seam for the legacy **area-builder** routes
+ * (`/api/areas/[areaId]*`), which check OWNERSHIP (not merely readability): parse an `ar_` id, then
+ * 404/403 the same way those routes always have. Consolidates what used to be three near-identical
+ * `requireAreaOwner` copies (one per route file).
  */
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -113,4 +118,45 @@ export async function loadReadableArea(
     };
   }
   return { area: r.area, userId: auth.userId };
+}
+
+/**
+ * Authenticate + parse an `ar_` TypeID + authorize OWNER/ADMIN write access — the loader every
+ * `/api/areas/[areaId]*` mutation route uses. Malformed id → 400; unknown → 404; well-formed but not
+ * owned (and not admin) → 403. `area.id` (below the seam) is the raw uuid every DAO call in `create.ts`
+ * expects.
+ */
+export async function loadAreaForOwner(
+  request: NextRequest,
+  arId: string,
+): Promise<
+  | { userId: string; isAdmin: boolean; area: AreaAuthRow }
+  | { error: NextResponse }
+> {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return { error: auth };
+  const uuid = Area.toUuidOrNull(arId);
+  if (!uuid) {
+    return {
+      error: NextResponse.json(
+        { error: `Invalid area id: ${arId}` },
+        { status: 400 },
+      ),
+    };
+  }
+  const area = await loadAreaForAuth(uuid);
+  if (!area) {
+    return {
+      error: NextResponse.json({ error: "Area not found" }, { status: 404 }),
+    };
+  }
+  if (!(auth.isAdmin || area.ownerClerkUserId === auth.userId)) {
+    return {
+      error: NextResponse.json(
+        { error: "Write access required" },
+        { status: 403 },
+      ),
+    };
+  }
+  return { userId: auth.userId, isAdmin: auth.isAdmin, area };
 }

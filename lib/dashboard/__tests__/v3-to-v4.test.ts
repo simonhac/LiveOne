@@ -160,4 +160,21 @@ describe("rewriteV3ToV4", () => {
     expect(validateDocV4(v4).valid).toBe(true);
     expect(collectRefs(v4)).toEqual({ areas: [], devices: [] });
   });
+
+  it("dual-accept: an already-`ar_` section.areaId resolves identically to its raw-uuid form", () => {
+    const uuid = newUuidV7();
+    const { resolver: resolverRaw } = makeResolver();
+    const { resolver: resolverArId } = makeResolver();
+    const v3Raw: DashboardV3 = {
+      version: 3,
+      sections: [{ areaId: uuid, cards: [{ type: "amber-now" }] }],
+    };
+    const v3ArId: DashboardV3 = {
+      version: 3,
+      sections: [{ areaId: Area.encode(uuid), cards: [{ type: "amber-now" }] }],
+    };
+    const v4Raw = rewriteV3ToV4(v3Raw, resolverRaw);
+    const v4ArId = rewriteV3ToV4(v3ArId, resolverArId);
+    expect(collectRefs(v4Raw)).toEqual(collectRefs(v4ArId));
+  });
 });

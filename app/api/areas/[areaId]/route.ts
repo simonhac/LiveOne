@@ -1,51 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { requireAuth } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
-import { loadAreaForAuth, locationPatchFromBody } from "@/lib/areas/http";
+import { loadAreaForOwner, locationPatchFromBody } from "@/lib/areas/http";
 import {
   updateAreaMeta,
   getAreaBindingsForEditor,
   refreshAreaServing,
   AreaAliasTakenError,
 } from "@/lib/areas/create";
+import { Area } from "@/lib/ids";
 
 /**
- * Owner/admin edit of a single Area (the area builder's General/Location tab), addressed by uuid.
+ * Owner/admin edit of a single Area (the area builder's General/Location tab), addressed by its
+ * opaque `ar_` TypeID (decoded to the raw uuid at the seam, `loadAreaForOwner`).
  *   PATCH  → rename / re-alias / retime / relocate / set status.
  *   DELETE → soft-delete (`status = 'archived'`); refuses legacy real-system-handle Areas.
  * Access is area-ownership (owner or admin) — the caller must own the area to edit it.
  */
-
-/** Resolve the area + authorize owner/admin. Returns the row, or a NextResponse to short-circuit. */
-async function requireAreaOwner(
-  request: NextRequest,
-  areaId: string,
-): Promise<
-  | {
-      userId: string;
-      isAdmin: boolean;
-      area: NonNullable<Awaited<ReturnType<typeof loadAreaForAuth>>>;
-    }
-  | NextResponse
-> {
-  const auth = await requireAuth(request);
-  if (auth instanceof NextResponse) return auth;
-  const area = await loadAreaForAuth(areaId);
-  if (!area)
-    return NextResponse.json({ error: "Area not found" }, { status: 404 });
-  const canWrite = auth.isAdmin || area.ownerClerkUserId === auth.userId;
-  if (!canWrite)
-    return NextResponse.json(
-      { error: "Write access required" },
-      { status: 403 },
-    );
-  return { userId: auth.userId, isAdmin: auth.isAdmin, area };
-}
 
 /**
  * GET → the area builder's edit payload for one area: its metadata, member systemIds, and current
@@ -57,8 +32,9 @@ export async function GET(
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
+  const uuid = authed.area.id;
 
   const [row] = await requirePlanetscaleDb()
     .select({
@@ -72,14 +48,18 @@ export async function GET(
       legacySystemId: areas.legacySystemId,
     })
     .from(areas)
-    .where(eq(areas.id, areaId))
+    .where(eq(areas.id, uuid))
     .limit(1);
   if (!row)
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
 
-  const memberSystemIds = await getAreaDeviceSystemIds(areaId);
-  const bindings = await getAreaBindingsForEditor(areaId);
-  return NextResponse.json({ area: row, memberSystemIds, bindings });
+  const memberSystemIds = await getAreaDeviceSystemIds(uuid);
+  const bindings = await getAreaBindingsForEditor(uuid);
+  return NextResponse.json({
+    area: { ...row, id: Area.encode(row.id) },
+    memberSystemIds,
+    bindings,
+  });
 }
 
 export async function PATCH(
@@ -87,9 +67,10 @@ export async function PATCH(
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
   const { area } = authed;
+  const uuid = area.id;
 
   const body = await request.json().catch(() => null);
   const patch: Parameters<typeof updateAreaMeta>[1] = {};
@@ -110,7 +91,7 @@ export async function PATCH(
   }
 
   try {
-    await updateAreaMeta(areaId, patch);
+    await updateAreaMeta(uuid, patch);
   } catch (err) {
     if (err instanceof AreaAliasTakenError)
       return NextResponse.json(
@@ -120,7 +101,7 @@ export async function PATCH(
     throw err;
   }
   // Metadata edits don't change the point set, but location feeds grid-region derivation — cheap to refresh.
-  await refreshAreaServing(areaId);
+  await refreshAreaServing(uuid);
   return NextResponse.json({ ok: true });
 }
 
@@ -129,9 +110,10 @@ export async function DELETE(
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
   const { area } = authed;
+  const uuid = area.id;
 
   // A legacy Area addressed by a real systems.id may still be load-bearing — never delete it here.
   if (
@@ -144,7 +126,7 @@ export async function DELETE(
     );
   }
 
-  await updateAreaMeta(areaId, { status: "archived" });
-  await refreshAreaServing(areaId);
+  await updateAreaMeta(uuid, { status: "archived" });
+  await refreshAreaServing(uuid);
   return NextResponse.json({ ok: true });
 }

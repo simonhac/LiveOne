@@ -15,6 +15,7 @@ import {
   AreaValidationError,
 } from "@/lib/areas/create";
 import { locationPatchFromBody } from "@/lib/areas/http";
+import { Area } from "@/lib/ids";
 
 /**
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.
@@ -76,7 +77,10 @@ export async function GET(request: NextRequest) {
     .where(eq(areaBindings.areaId, resolved.id))
     .orderBy(areaBindings.ordinal);
 
-  return NextResponse.json({ area, bindings });
+  return NextResponse.json({
+    area: area ? { ...area, id: Area.encode(area.id) } : area,
+    bindings,
+  });
 }
 
 /**
@@ -156,7 +160,7 @@ export async function POST(request: NextRequest) {
       memberSystemIds,
     });
     await refreshAreaServing(created.id);
-    return NextResponse.json(created);
+    return NextResponse.json({ ...created, id: Area.encode(created.id) });
   } catch (err) {
     if (err instanceof AreaAliasTakenError)
       return NextResponse.json(

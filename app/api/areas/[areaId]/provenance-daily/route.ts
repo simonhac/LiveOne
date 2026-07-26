@@ -12,6 +12,8 @@ import {
   type ProvenanceDailyResponse,
   type ProvenanceFieldKey,
 } from "@/lib/battery-provenance/field-registry";
+import { areaRefToUuid } from "@/lib/areas/ref";
+import { Area } from "@/lib/ids";
 
 export const maxDuration = 30;
 
@@ -44,6 +46,9 @@ export async function GET(
   const db = planetscaleDb;
 
   const { areaId } = await params;
+  const uuid = areaRefToUuid(areaId);
+  if (!uuid)
+    return NextResponse.json({ error: "Invalid area id" }, { status: 400 });
   const [area] = await db
     .select({
       ownerClerkUserId: areas.ownerUserId,
@@ -51,7 +56,7 @@ export async function GET(
       tz: areas.timezoneOffsetMin,
     })
     .from(areas)
-    .where(eq(areas.id, areaId))
+    .where(eq(areas.id, uuid))
     .limit(1);
   if (!area)
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
@@ -112,7 +117,7 @@ export async function GET(
   if (start.compare(LIVEONE_BIRTHDATE) < 0) start = LIVEONE_BIRTHDATE;
   if (start.compare(end) > 0) {
     const body: ProvenanceDailyResponse = {
-      areaId,
+      areaId: Area.encode(uuid),
       systemId: area.legacySystemId,
       range: { start: start.toString(), end: end.toString() },
       days: [],
@@ -134,7 +139,7 @@ export async function GET(
     .from(batteryProvenanceDaily)
     .where(
       and(
-        eq(batteryProvenanceDaily.areaId, areaId),
+        eq(batteryProvenanceDaily.areaId, uuid),
         gte(batteryProvenanceDaily.day, startDay),
         lte(batteryProvenanceDaily.day, endDay),
       ),
@@ -183,7 +188,7 @@ export async function GET(
   }
 
   const body: ProvenanceDailyResponse = {
-    areaId,
+    areaId: Area.encode(uuid),
     systemId: area.legacySystemId,
     range: { start: startDay, end: endDay },
     days,

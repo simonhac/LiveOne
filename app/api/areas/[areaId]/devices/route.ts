@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
-import { loadAreaForAuth } from "@/lib/areas/http";
+import { loadAreaForOwner } from "@/lib/areas/http";
 import {
   addMember,
   removeMember,
@@ -12,24 +11,11 @@ import {
 } from "@/lib/areas/create";
 
 /**
- * Member-device membership of an Area (the area builder's Members tab).
+ * Member-device membership of an Area (the area builder's Members tab), addressed by its opaque `ar_`
+ * TypeID (decoded to the raw uuid at the seam, `loadAreaForOwner`).
  *   POST   { systemId } → add a member (must be readable by the caller).
  *   DELETE { systemId } → remove a member (+ its orphaned bindings; refused on the last member).
  */
-
-async function requireAreaOwner(request: NextRequest, areaId: string) {
-  const auth = await requireAuth(request);
-  if (auth instanceof NextResponse) return auth;
-  const area = await loadAreaForAuth(areaId);
-  if (!area)
-    return NextResponse.json({ error: "Area not found" }, { status: 404 });
-  if (!(auth.isAdmin || area.ownerClerkUserId === auth.userId))
-    return NextResponse.json(
-      { error: "Write access required" },
-      { status: 403 },
-    );
-  return { userId: auth.userId, isAdmin: auth.isAdmin, area };
-}
 
 function parseSystemId(body: unknown): number | null {
   const v = (body as { systemId?: unknown })?.systemId;
@@ -41,9 +27,10 @@ export async function POST(
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
   const { userId, isAdmin, area } = authed;
+  const uuid = area.id;
 
   const systemId = parseSystemId(await request.json().catch(() => null));
   if (systemId == null)
@@ -78,8 +65,8 @@ export async function POST(
     throw err;
   }
 
-  await addMember(areaId, systemId);
-  await refreshAreaServing(areaId);
+  await addMember(uuid, systemId);
+  await refreshAreaServing(uuid);
   return NextResponse.json({ ok: true });
 }
 
@@ -88,8 +75,9 @@ export async function DELETE(
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
+  const uuid = authed.area.id;
 
   const systemId = parseSystemId(await request.json().catch(() => null));
   if (systemId == null)
@@ -99,12 +87,12 @@ export async function DELETE(
     );
 
   try {
-    await removeMember(areaId, systemId);
+    await removeMember(uuid, systemId);
   } catch (err) {
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 400 });
     throw err;
   }
-  await refreshAreaServing(areaId);
+  await refreshAreaServing(uuid);
   return NextResponse.json({ ok: true });
 }

@@ -15,6 +15,7 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
+import { encodeDescriptorAreaRefs } from "@/lib/areas/ref";
 import {
   allCardsV3,
   normalizeDescriptor,
@@ -118,7 +119,13 @@ function rowToDashboard(r: {
     ownerClerkUserId: r.clerkUserId,
     displayName: r.displayName,
     alias: r.alias,
-    descriptor: r.descriptor as DashboardV3,
+    // Read-normalize: a pre-migration row's section.areaId is still a raw uuid on disk (the one-off
+    // rewrite, scripts/config-v4/rewrite-descriptor-area-refs.ts, is a separate cleanup step) — every
+    // descriptor this module hands out speaks `ar_` regardless, so the deploy needs no simultaneity
+    // with that migration. Idempotent on an already-`ar_` descriptor.
+    descriptor: isDashboardV3(r.descriptor)
+      ? encodeDescriptorAreaRefs(r.descriptor)
+      : (r.descriptor as DashboardV3),
     doc: (r.doc as DashboardV4 | null) ?? null,
     revision: r.revision,
     createdAt: r.createdAt,

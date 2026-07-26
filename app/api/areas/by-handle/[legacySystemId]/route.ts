@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getAuthContext } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
+import { Area } from "@/lib/ids";
 
 export const maxDuration = 15;
 
@@ -59,7 +60,7 @@ export async function GET(
     );
 
   return NextResponse.json({
-    areaId: area.id,
+    areaId: Area.encode(area.id),
     systemId: area.legacySystemId,
     displayName: area.displayName,
     alias: area.alias,

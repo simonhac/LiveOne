@@ -35,6 +35,7 @@ export interface AreaBinding {
 
 /** The Area's metadata slice from `GET /api/areas/[areaId]`. */
 export interface AreaEditMeta {
+  /** The opaque `ar_` TypeID. */
   id: string;
   displayName: string;
   alias: string | null;

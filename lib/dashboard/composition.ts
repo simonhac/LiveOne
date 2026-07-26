@@ -10,6 +10,7 @@ import { emptyDashboardV3, isDashboardV3, type DashboardV3 } from "./v3";
 import { isDashboardV4 } from "./v4";
 import { collectRefs } from "./v4-validate";
 import { Area } from "@/lib/ids";
+import { areaRefToUuid } from "@/lib/areas/ref";
 
 /** An empty composition dashboard — no sections yet (the user adds them in the configurator). */
 export function emptyCompositionDescriptor(): DashboardV3 {
@@ -41,10 +42,14 @@ export function descriptorAreaIds(descriptor: unknown): string[] {
 }
 
 /**
- * The distinct Area uuids a dashboard references, SHAPE-AWARE: a v4 `doc` (via the §8.3 envelope walk,
- * decoded to uuids) else the v3 `descriptor`. Use this wherever the render path resolves a dashboard's
- * areas, so a v4 doc's sections resolve on the shared/grantee paths too (the owner path already lists
- * all readable areas). For a v3 dashboard it is identical to `descriptorAreaIds(descriptor)`.
+ * The distinct Area UUIDS a dashboard references, SHAPE-AWARE: a v4 `doc` (via the §8.3 envelope walk,
+ * decoded to uuids) else the v3 `descriptor` (its stored `section.areaId` is `ar_`, dual-accept-decoded
+ * to uuid — `areaRefToUuid` also tolerates a not-yet-migrated raw-uuid descriptor). Use this wherever
+ * the render path resolves a dashboard's areas, so a v4 doc's sections resolve on the shared/grantee
+ * paths too (the owner path already lists all readable areas). Unlike `descriptorAreaIds`, this ALWAYS
+ * returns raw uuids (below the seam) regardless of the stored ref form — callers passing the result to
+ * a below-seam DAO (`getLegacySystemIdForArea`, `resolveAreasByIds`, …) must use this, not
+ * `descriptorAreaIds`.
  */
 export function dashboardAreaUuids(d: {
   descriptor?: unknown;
@@ -65,5 +70,11 @@ export function dashboardAreaUuids(d: {
       ),
     ];
   }
-  return descriptorAreaIds(d.descriptor);
+  return [
+    ...new Set(
+      descriptorAreaIds(d.descriptor)
+        .map((ref) => areaRefToUuid(ref))
+        .filter((x): x is string => x != null),
+    ),
+  ];
 }

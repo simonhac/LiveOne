@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-auth";
-import { loadAreaForAuth } from "@/lib/areas/http";
+import { loadAreaForOwner } from "@/lib/areas/http";
 import {
   getAreaBindingsForEditor,
   replaceBindings,
@@ -10,35 +9,22 @@ import {
 } from "@/lib/areas/create";
 
 /**
- * The typed role→point bindings of an Area (the area builder's Bindings tab).
+ * The typed role→point bindings of an Area (the area builder's Bindings tab), addressed by its opaque
+ * `ar_` TypeID (decoded to the raw uuid at the seam, `loadAreaForOwner`).
  *   GET → the current ordered bindings.
  *   PUT → replace ALL bindings with the given ordered list (ordinal = position).
  * Owner/admin only; a binding's point must belong to a current member device (enforced server-side).
  */
-
-async function requireAreaOwner(request: NextRequest, areaId: string) {
-  const auth = await requireAuth(request);
-  if (auth instanceof NextResponse) return auth;
-  const area = await loadAreaForAuth(areaId);
-  if (!area)
-    return NextResponse.json({ error: "Area not found" }, { status: 404 });
-  if (!(auth.isAdmin || area.ownerClerkUserId === auth.userId))
-    return NextResponse.json(
-      { error: "Write access required" },
-      { status: 403 },
-    );
-  return { area };
-}
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
   return NextResponse.json({
-    bindings: await getAreaBindingsForEditor(areaId),
+    bindings: await getAreaBindingsForEditor(authed.area.id),
   });
 }
 
@@ -66,8 +52,9 @@ export async function PUT(
   { params }: { params: Promise<{ areaId: string }> },
 ) {
   const { areaId } = await params;
-  const authed = await requireAreaOwner(request, areaId);
-  if (authed instanceof NextResponse) return authed;
+  const authed = await loadAreaForOwner(request, areaId);
+  if ("error" in authed) return authed.error;
+  const uuid = authed.area.id;
 
   const body = await request.json().catch(() => null);
   const raw = Array.isArray(body?.bindings) ? body.bindings : null;
@@ -90,14 +77,14 @@ export async function PUT(
   }
 
   try {
-    await replaceBindings(areaId, bindings);
+    await replaceBindings(uuid, bindings);
   } catch (err) {
     if (err instanceof AreaValidationError)
       return NextResponse.json({ error: err.message }, { status: 400 });
     throw err;
   }
-  await refreshAreaServing(areaId);
+  await refreshAreaServing(uuid);
   return NextResponse.json({
-    bindings: await getAreaBindingsForEditor(areaId),
+    bindings: await getAreaBindingsForEditor(uuid),
   });
 }

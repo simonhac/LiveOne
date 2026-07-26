@@ -22,12 +22,25 @@ describe("dashboardAreaUuids — dual-shape", () => {
   const u1 = newUuidV7();
   const u2 = newUuidV7();
 
-  it("reads a v3 descriptor's section area ids (doc null)", () => {
+  it("reads a v3 descriptor's section area ids, decoding ar_ to uuid (doc null)", () => {
     const descriptor: DashboardV3 = {
       version: 3,
       sections: [
-        { areaId: u1, cards: [] },
-        { areaId: u2, cards: [] },
+        { areaId: Area.encode(u1), cards: [] },
+        { areaId: Area.encode(u2), cards: [] },
+      ],
+    };
+    expect(dashboardAreaUuids({ descriptor, doc: null }).sort()).toEqual(
+      [u1, u2].sort(),
+    );
+  });
+
+  it("dual-accept: also decodes a not-yet-migrated raw-uuid descriptor (mixed with ar_)", () => {
+    const descriptor: DashboardV3 = {
+      version: 3,
+      sections: [
+        { areaId: u1, cards: [] }, // raw uuid — pre-migration form
+        { areaId: Area.encode(u2), cards: [] }, // ar_ — already migrated
       ],
     };
     expect(dashboardAreaUuids({ descriptor, doc: null }).sort()).toEqual(
@@ -48,7 +61,7 @@ describe("dashboardAreaUuids — dual-shape", () => {
     // descriptor here is a non-empty v3, but the v4 doc wins.
     const descriptor: DashboardV3 = {
       version: 3,
-      sections: [{ areaId: u2, cards: [] }],
+      sections: [{ areaId: Area.encode(u2), cards: [] }],
     };
     expect(dashboardAreaUuids({ descriptor, doc })).toEqual([u1]);
   });

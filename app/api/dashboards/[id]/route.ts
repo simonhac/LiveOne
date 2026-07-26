@@ -9,7 +9,7 @@ import {
   DashboardAliasTakenError,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
-import { descriptorAreaIds } from "@/lib/dashboard/composition";
+import { dashboardAreaUuids } from "@/lib/dashboard/composition";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 
 /**
@@ -89,8 +89,10 @@ export async function PATCH(
         { status: 400 },
       );
     }
-    // No-escalation authoring check: every section's Area must be readable by the owner.
-    const areaIds = descriptorAreaIds(descriptor);
+    // No-escalation authoring check: every section's Area must be readable by the owner. Decode via
+    // dashboardAreaUuids (not the raw descriptorAreaIds) — the incoming descriptor's section.areaId is
+    // `ar_`, but listReadableAreas returns raw uuids (below the seam).
+    const areaIds = dashboardAreaUuids({ descriptor });
     if (areaIds.length > 0) {
       const readableAreas = await listReadableAreas(
         r.dashboard.ownerClerkUserId,

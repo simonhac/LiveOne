@@ -19,7 +19,7 @@ export default function OwnerAreasClient({
   areas: AdminAreaData[];
 }) {
   const router = useRouter();
-  // `undefined` = closed; `null` = create mode; a uuid = edit that area.
+  // `undefined` = closed; `null` = create mode; an ar_ id = edit that area.
   const [dialogAreaId, setDialogAreaId] = useState<string | null | undefined>(
     undefined,
   );
