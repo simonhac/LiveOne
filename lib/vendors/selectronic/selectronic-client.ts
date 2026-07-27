@@ -9,27 +9,29 @@ export interface SelectronicData {
   solarW: number | null; // Total solar (solarinverter_w + shunt_w) in Watts
   solarInverterW: number | null; // Remote solar generation in Watts
   shuntW: number | null; // Local solar generation in Watts
-  loadW: number; // Load in Watts
-  batterySOC: number;
-  batteryW: number; // Battery power in Watts (negative = charging)
-  gridW: number; // Grid power in Watts
-  faultCode: number;
-  faultTimestamp: number; // Unix timestamp
-  generatorStatus: number;
+  // Every field below is nullable and `null` means "select.live did not send it" — NOT zero.
+  // The adapter skips null readings (adapter.ts:111), so a missing field writes no point row at all.
+  loadW: number | null; // Load in Watts
+  batterySOC: number | null;
+  batteryW: number | null; // Battery power in Watts (negative = charging)
+  gridW: number | null; // Grid power in Watts
+  faultCode: number | null;
+  faultTimestamp: number | null; // Unix timestamp
+  generatorStatus: number | null;
   // Energy totals (kWh despite the _wh_ in API names)
-  solarKwhTotal: number;
-  loadKwhTotal: number;
-  batteryInKwhTotal: number;
-  batteryOutKwhTotal: number;
-  gridInKwhTotal: number;
-  gridOutKwhTotal: number;
+  solarKwhTotal: number | null;
+  loadKwhTotal: number | null;
+  batteryInKwhTotal: number | null;
+  batteryOutKwhTotal: number | null;
+  gridInKwhTotal: number | null;
+  gridOutKwhTotal: number | null;
   // Daily energy (kWh despite the _wh_ in API names)
-  solarKwhToday: number;
-  loadKwhToday: number;
-  batteryInKwhToday: number;
-  batteryOutKwhToday: number;
-  gridInKwhToday: number;
-  gridOutKwhToday: number;
+  solarKwhToday: number | null;
+  loadKwhToday: number | null;
+  batteryInKwhToday: number | null;
+  batteryOutKwhToday: number | null;
+  gridInKwhToday: number | null;
+  gridOutKwhToday: number | null;
   timestamp: Date;
   raw?: Record<string, any>;
 }
@@ -459,9 +461,26 @@ export class SelectronicFetchClient {
       const data = JSON.parse(responseText);
       console.log("[Selectronic] Data received successfully");
 
-      // Transform the data - only fields that actually exist in the API
-      const solarInverterW = data.items?.solarinverter_w ?? null;
-      const shuntW = data.items?.shunt_w ?? null;
+      // Transform the data - only fields that actually exist in the API.
+      //
+      // A field select.live did not send must NEVER become a measurement. These helpers preserve a
+      // genuine 0 but map absent/null/non-numeric to null, and the adapter SKIPS null readings
+      // (adapter.ts:111) so no point row is written at all. The previous `|| 0` fabricated a zero
+      // that is indistinguishable downstream from a real reading: a dropped `grid_w` would read as
+      // "no grid/generator import" and a dropped `battery_soc` as a flat battery. (Same defect class
+      // as the run-detector's inability to tell "no data" from "below threshold".)
+      const numOrNull = (v: unknown): number | null => {
+        if (v === null || v === undefined) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      const roundOrNull = (v: unknown): number | null => {
+        const n = numOrNull(v);
+        return n === null ? null : Math.round(n);
+      };
+
+      const solarInverterW = numOrNull(data.items?.solarinverter_w);
+      const shuntW = numOrNull(data.items?.shunt_w);
 
       const transformed: SelectronicData = {
         solarW:
@@ -471,27 +490,27 @@ export class SelectronicFetchClient {
         solarInverterW:
           solarInverterW !== null ? Math.round(solarInverterW) : null, // Remote solar
         shuntW: shuntW !== null ? Math.round(shuntW) : null, // Local solar
-        loadW: Math.round(data.items?.load_w || 0),
-        batterySOC: data.items?.battery_soc || 0,
-        batteryW: Math.round(data.items?.battery_w || 0),
-        gridW: Math.round(data.items?.grid_w || 0),
-        faultCode: data.items?.fault_code || 0,
-        faultTimestamp: data.items?.fault_ts || 0,
-        generatorStatus: data.items?.gen_status || 0,
+        loadW: roundOrNull(data.items?.load_w),
+        batterySOC: numOrNull(data.items?.battery_soc),
+        batteryW: roundOrNull(data.items?.battery_w),
+        gridW: roundOrNull(data.items?.grid_w),
+        faultCode: numOrNull(data.items?.fault_code),
+        faultTimestamp: numOrNull(data.items?.fault_ts),
+        generatorStatus: numOrNull(data.items?.gen_status),
         // Energy totals (API returns these as kWh despite _wh_ naming)
-        solarKwhTotal: data.items?.solar_wh_total || 0,
-        loadKwhTotal: data.items?.load_wh_total || 0,
-        batteryInKwhTotal: data.items?.battery_in_wh_total || 0,
-        batteryOutKwhTotal: data.items?.battery_out_wh_total || 0,
-        gridInKwhTotal: data.items?.grid_in_wh_total || 0,
-        gridOutKwhTotal: data.items?.grid_out_wh_total || 0,
+        solarKwhTotal: numOrNull(data.items?.solar_wh_total),
+        loadKwhTotal: numOrNull(data.items?.load_wh_total),
+        batteryInKwhTotal: numOrNull(data.items?.battery_in_wh_total),
+        batteryOutKwhTotal: numOrNull(data.items?.battery_out_wh_total),
+        gridInKwhTotal: numOrNull(data.items?.grid_in_wh_total),
+        gridOutKwhTotal: numOrNull(data.items?.grid_out_wh_total),
         // Daily energy (API returns these as kWh despite _wh_ naming)
-        solarKwhToday: data.items?.solar_wh_today || 0,
-        loadKwhToday: data.items?.load_wh_today || 0,
-        batteryInKwhToday: data.items?.battery_in_wh_today || 0,
-        batteryOutKwhToday: data.items?.battery_out_wh_today || 0,
-        gridInKwhToday: data.items?.grid_in_wh_today || 0,
-        gridOutKwhToday: data.items?.grid_out_wh_today || 0,
+        solarKwhToday: numOrNull(data.items?.solar_wh_today),
+        loadKwhToday: numOrNull(data.items?.load_wh_today),
+        batteryInKwhToday: numOrNull(data.items?.battery_in_wh_today),
+        batteryOutKwhToday: numOrNull(data.items?.battery_out_wh_today),
+        gridInKwhToday: numOrNull(data.items?.grid_in_wh_today),
+        gridOutKwhToday: numOrNull(data.items?.grid_out_wh_today),
         timestamp: data.items?.timestamp
           ? new Date(data.items.timestamp * 1000)
           : new Date(),
