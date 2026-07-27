@@ -183,11 +183,23 @@ pre-cutover backups can't be rolled forward — and this project bootstraps envi
 never from migration replay. `0036_*.sql`'s header documents this and points at
 `config-transform.ts`'s git history.
 
-1. **Probe prod's actual shape first** (short-TTL `pg_read_all_data` role): `drizzle-kit pull` against
-   prod into scratch, diff vs the dev probe (`.context/snapshot-probe/`). Dev is NOT proof of prod —
-   prod has its own hand-applied-DDL history (the CONCURRENTLY index era), and `backfill_progress` /
-   `area_bindings.point_uid` population must be confirmed per-environment. Also verify prod descriptors
-   are 100% `ar_`; if not, run `rewrite-descriptor-area-refs.ts` on prod (backup, dry-run, `--commit`).
+1. **✅ DONE — prod probed 2026-07-27** (short-TTL `pg_read_all_data` role, revoked after). Result:
+   **prod and dev are structurally IDENTICAL** — 34 tables each, zero column, type, notNull or index
+   differences. So a 0036 validated on `liveone-dev` will apply cleanly to prod; the feared
+   hand-applied-DDL divergence (the CONCURRENTLY index era) did not materialise.
+   - **`drizzle-kit pull` under-records CHECK constraints** — the prod snapshot recorded 0, the dev
+     snapshot 5, but direct `pg_constraint` queries prove all 5 exist on BOTH. A pull artifact, not
+     drift. Harmless for the 0036 snapshot (generate-from-empty reads `schema.ts`, not the DB) but the
+     step-5 audit must treat CHECK lines as expected churn.
+   - Confirmed per-environment: `backfill_progress` 29 rows on prod (as dev); `area_bindings.point_uid`
+     **72/72 populated on prod** (as dev); `_old` tables 15.60M / 6.07M / 19.6K rows = **4.14 GB**.
+     Row-count guard already satisfied: live `point_readings` 15,634,764 ≥ `point_readings_old`
+     15,602,747.
+   - **Prod descriptors are NOT migrated: 16/16 sections still raw uuid, 0 in `ar_` form.** So the
+     Phase-9 PR 2 data migration definitively never ran on prod. `rewrite-descriptor-area-refs.ts` must
+     run there (backup, dry-run, `--commit`) — it needs a **write** role, so it is its own approval
+     step. (Not a live break: `rowToDashboard`'s read-normalize + dual-accept `areaRefToUuid` handle
+     both forms; but it blocks the Phase-14 strict-decode tightening.)
 2. **Fix `schema.ts` BEFORE cutting the 0036 snapshot** — cutting it first bakes the drift in silently
    (verified: a snapshot from today's `schema.ts` contains zero occurrences of
    `area_bindings.point_uid`, so the column becomes permanently invisible to drizzle instead of
