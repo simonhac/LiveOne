@@ -15,10 +15,21 @@ const MAX_PERIOD_DAYS = 366; // hard upper bound — this endpoint is always bou
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 10;
 
-/** kW (1dp) magnitude of a signed Watt value, mirroring the legacy generator-events rounding. */
-function magnitudeKw(w: number | null): number {
-  if (w == null) return 0;
-  return Math.round(Math.abs(w) / 100) / 10;
+/**
+ * Average power over a completed run, in Watts, derived from energy ÷ duration — correct for ANY
+ * signal kind. `derived_intervals.{min,max,avg}_power_w` hold statistics of the raw signal series
+ * (which since the 27 Jul DSE re-point is engine rpm, not power), so they must NOT be surfaced as
+ * power. Energy comes from a dedicated energy point, so energy ÷ duration is a true average power.
+ * Null for an open (running) period — no completed duration to average over.
+ */
+function avgPowerWFromEnergy(
+  energyKwh: number | null,
+  durationSeconds: number | null,
+): number | null {
+  if (energyKwh == null || durationSeconds == null || durationSeconds <= 0) {
+    return null;
+  }
+  return (energyKwh * 3_600_000) / durationSeconds;
 }
 
 /** Shape one derived interval into the (legacy-compatible + enriched) event the UI consumes. */
@@ -29,14 +40,12 @@ function toEvent(r: DerivedInterval, tz: string) {
     startTime: formatInTimezone(r.startTime, tz, "HH:mm"),
     endTime: r.endTime ? formatInTimezone(r.endTime, tz, "HH:mm") : null,
     running: r.endTime === null,
-    minPowerKw: magnitudeKw(r.maxPowerW), // magnitude min = |max signed|
-    maxPowerKw: magnitudeKw(r.minPowerW), // magnitude max = |min signed|
     energyKwh: r.energyKwh ?? 0,
     // Richer fields for cards / future generalisation:
     startTimeISO: r.startTime.toISOString(),
     endTimeISO: r.endTime ? r.endTime.toISOString() : null,
     durationSeconds: r.durationSeconds,
-    avgPowerW: r.avgPowerW,
+    avgPowerW: avgPowerWFromEnergy(r.energyKwh, r.durationSeconds),
     sampleCount: r.sampleCount,
   };
 }

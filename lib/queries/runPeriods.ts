@@ -15,8 +15,7 @@ export interface RunPeriodEvent {
   durationSeconds?: number | null;
   startTimeISO?: string;
   endTimeISO?: string | null;
-  minPowerKw?: number;
-  maxPowerKw?: number;
+  /** Average power over the completed run (W), derived from energy ÷ duration; null while running. */
   avgPowerW?: number | null;
   sampleCount?: number;
   energyKwh: number;
