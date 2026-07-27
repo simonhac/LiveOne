@@ -531,12 +531,11 @@ only three days since musher-start have any `value > 100` samples, so three runs
 truncated. End-to-end: `/api/system/1/run-periods?last=30d` on live prod returns 200 with the new
 22 Jul boundaries.
 
-> ⚠️ **Cosmetic follow-up, pre-existing (not introduced by the regenerate).** The detector is still
-> `signalKind: "power-threshold"`, so a run's signal statistics land in the `*_power_w` columns and
-> the API serves them as `minPowerKw` / `maxPowerKw`. With an rpm signal the card now reads
-> "1.6 kW / 1.5 kW" for what is really ~1550 rpm (and min > max, since the fields aren't ordered for
-> a positive signal). `energy_kwh` is unaffected — it comes from the separate energy point. Fix
-> belongs with the aesthetic/v4-native work, not here.
+> ⚠️ **Surfaced here, pre-existing, NOT introduced by the regenerate — and not cosmetic.** The
+> detector is still `signalKind: "power-threshold"`, so a run's signal statistics land in the
+> `*_power_w` columns; with an rpm signal the generator card now shows ~1.5 kW (rpm ÷ 1000) against a
+> true 2–3.3 kW. A wrong number, not a mislabel. Written up in full, with the fix, under
+> **Open follow-up — run-interval statistics assume the signal IS power** at the end of this file.
 
 **Still TODO**
 
@@ -549,7 +548,7 @@ truncated. End-to-end: `/api/system/1/run-periods?last=30d` on live prod returns
 > in sequence: (a) **resolved** — schema preflight mismatch, prod-only `point_readings_new_pkey` /
 > `pr_new_created_at_idx`, i.e. 0039 was on dev before prod; prod 0039 landed later on 27 Jul and the
 > 15:15Z run cleared preflight. (b) **current blocker** — `update or delete on table "areas" violates
-> foreign key constraint "devices_primary_area_id_areas_id_fk"`. This is precisely the deferred
+foreign key constraint "devices_primary_area_id_areas_id_fk"`. This is precisely the deferred
 > follow-up at `lib/readings/prod-dev-sync.ts:162-171`: post-cutover, drifted dev areas own real
 > `devices`, and `devices.primary_area_id` is NOT NULL/RESTRICT, so idDrift's clear-and-delete can't
 > proceed. Six dev areas are drifted, each owning one device — legacy handles **15, 16, 10000, 10001,
@@ -761,3 +760,39 @@ independently revertible.
   still holds for any future windowed operation.
 - **KV is a disposable cache** — rebuild from PG rather than migrating it.
 - Run `npm run build:local && npm run type-check` before every commit.
+
+---
+
+## Open follow-up — run-interval statistics assume the signal IS power
+
+**Not scheduled to a phase yet.** Found 2026-07-28 while verifying the Daylesford regenerate.
+
+`derived-intervals-pg.ts:159-161` writes `max_power_w` / `min_power_w` / `avg_power_w` as statistics
+of the **signal series**, whatever that signal happens to be — they have never been tied to a power
+point. That held while the Daylesford detector pointed at Selectronic grid power. Since the 27 Jul
+re-point to **DSE Engine Speed**, those columns hold **rpm**, and
+`components/GeneratorClient.tsx:139-140` renders `avgPowerW` straight into the runs table as
+`${Math.abs(v)/1000} kW`. So every Daylesford run now displays ~1.5 kW — engine rpm ÷ 1000 — against
+a true average of 2–3.3 kW:
+
+| run    | shown  | actual (`energy_kwh` ÷ `duration_seconds`) |
+| ------ | ------ | ------------------------------------------ |
+| 22 Jul | 1.5 kW | 3.29 kW                                    |
+| 26 Jul | 1.5 kW | 2.69 kW                                    |
+| 27 Jul | 1.5 kW | 2.08 kW                                    |
+
+This is a **wrong number on the card, not a mislabel**, and it is a regression from the DSE re-point —
+not from Phase 11, which preserved the existing behaviour exactly. `energy_kwh` and
+`duration_seconds` are unaffected: energy comes from the separate `source_points.energy` point.
+
+**Cheap fix, no schema change** — in `app/api/system/[systemId]/run-periods/route.ts:39`, derive
+avg power as `energyKwh / durationSeconds` instead of passing the signal statistic through. Correct
+for any `signalKind`. The sibling `minPowerKw` / `maxPowerKw` (route.ts:32-33) have **no UI consumer**
+(only the route itself references them), so they can be dropped from the response at the same time —
+note their deliberate min/max swap only makes sense for a negative import signal, so they read
+inverted for a positive one anyway.
+
+**Proper fix, belongs in a phase** — either rename the columns to something signal-neutral carrying a
+unit, or add a `signalKind: "value-threshold"` alongside `"power-threshold"` so a non-power signal can
+never be presented as power. Phase 14 is the natural home, since that is where the run-periods card
+goes v4-native; the API-side patch above is worth doing before then regardless.
