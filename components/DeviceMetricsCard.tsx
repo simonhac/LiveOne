@@ -6,6 +6,7 @@ import Tile from "@/components/Tile";
 import { formatValueWithUnit } from "@/lib/point/format-value";
 import { latestReadingsQuery } from "@/lib/queries";
 import { useModalContext } from "@/contexts/ModalContext";
+import { TILE_GRID_CONTAINER, tileGridClass } from "@/lib/dashboard/tile-grid";
 
 /**
  * Generic device-metrics card — a single device's numeric points, rendered straight from their own
@@ -104,18 +105,17 @@ export default function DeviceMetricsCard({
     );
   }
 
-  const gridClass =
-    "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1";
-
   if (isPending && rows.length === 0) {
     return (
-      <div className={gridClass}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div
-            key={i}
-            className="min-h-[110px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
-          />
-        ))}
+      <div className={TILE_GRID_CONTAINER}>
+        <div className={tileGridClass(4)}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div
+              key={i}
+              className="min-h-[110px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
+            />
+          ))}
+        </div>
       </div>
     );
   }
@@ -129,35 +129,37 @@ export default function DeviceMetricsCard({
   }
 
   return (
-    <div className={gridClass}>
-      {rows.map((row, i) => {
-        const formatted =
-          row.value != null
-            ? formatValueWithUnit(row.value, row.metricUnit)
-            : "n/a";
-        // The only ReactElement case (json) is filtered out above, so `formatted` is a string here;
-        // guard belt-and-suspenders to satisfy Tile's `value: string` contract.
-        const value = typeof formatted === "string" ? formatted : "n/a";
-        return (
-          <Tile
-            key={
-              row.pointReference ??
-              row.logicalPath ??
-              `${row.physicalPath}-${i}`
-            }
-            title={row.pointName}
-            value={value}
-            icon={<Gauge className="w-6 h-6" />}
-            iconColor="text-slate-400"
-            bgColor="bg-slate-800/40"
-            borderColor="border-slate-700"
-            staleThresholdSeconds={staleThresholdSeconds}
-            measurementTime={
-              row.measurementTime ? new Date(row.measurementTime) : undefined
-            }
-          />
-        );
-      })}
+    <div className={TILE_GRID_CONTAINER}>
+      <div className={tileGridClass(rows.length)}>
+        {rows.map((row, i) => {
+          const formatted =
+            row.value != null
+              ? formatValueWithUnit(row.value, row.metricUnit)
+              : "n/a";
+          // The only ReactElement case (json) is filtered out above, so `formatted` is a string here;
+          // guard belt-and-suspenders to satisfy Tile's `value: string` contract.
+          const value = typeof formatted === "string" ? formatted : "n/a";
+          return (
+            <Tile
+              key={
+                row.pointReference ??
+                row.logicalPath ??
+                `${row.physicalPath}-${i}`
+              }
+              title={row.pointName}
+              value={value}
+              icon={<Gauge className="w-6 h-6" />}
+              iconColor="text-slate-400"
+              bgColor="bg-slate-800/40"
+              borderColor="border-slate-700"
+              staleThresholdSeconds={staleThresholdSeconds}
+              measurementTime={
+                row.measurementTime ? new Date(row.measurementTime) : undefined
+              }
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
