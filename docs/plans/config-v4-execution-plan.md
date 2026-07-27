@@ -484,14 +484,39 @@ rebuilt), and every gate green:
   `/api/cron/run-periods` path 404s; `hasEnabledRunDetector` → true for handle 1, false for 6;
   `/api/data` serves `source.generator/running` (1.17) and `load.hws/temperature` (6.19).
 
+**✅ PROD PREPARED (2026-07-28), ahead of the PR merge.** Short-TTL `pscale role`s, reassigned +
+deleted afterwards; read-only role for the probe/backup, write role only for the two writes.
+
+- **0040 applied to `sydney`** — verified via `pg_constraint` (`confdeltype='c'`), 41 journal rows,
+  matching dev. Metadata-only, so no base backup required.
+- **Fill applied** — 2 rows re-keyed to the deterministic ids, 78 intervals rebuilt.
+  `verify-derivations.ts` on prod: **78 compared, 0 differences**. Backups of the prior state in
+  `.context/backups/prod-{derivations,derived-intervals,device-run-periods}-pre-phase11.json`
+  (2 / 80 / 78 rows).
+- **The design's crux held**: prod's area ids are IDENTICAL to dev's (`019ec06c-f635…`,
+  `019ec06c-f6b8…`), so both environments now carry the SAME deterministic derivation ids
+  (`947afbcc-…`, `253f145f-…`) — which is what makes the by-PK sync correct. Their previous random
+  ids differed across environments (`dcaf7065…`/`71e6d56c…` on prod vs `7488b145…`/`1f782b56…` on
+  dev), exactly the breakage the normalization prevents.
+- 🛑 **Prod's derivation row was STALE, and the fill fixed it.** `device_trackers` had been re-pointed
+  to the DSE on 2026-07-27 01:00 — AFTER the 26 Jul cutover — so the transform-era derivation still
+  described the retired Selectronic grid-power proxy (`lowerW:-50, delayOff:120`, signal
+  `bidi.grid/power`). The live tracker is `upperW:100, delayOff:240`, signal **system 14 point 3,
+  `generator.engine/speed` (rpm)**. The fill takes `device_trackers` as authoritative, so the
+  derivation now describes the DSE. This also explains prod's 80-vs-78 interval drift: the frozen
+  cutover snapshot predated the re-point.
+- Prod stayed healthy throughout (`/api/health` 200); the running build reads `device_run_periods`
+  and never touches these tables.
+
 **Still TODO**
 
-1. Apply 0040 to prod `sydney`.
-2. Prod: run the fill (it will re-key prod's transform-minted ids too) minutes before deploying PR 1;
-   the first minutely reconcile (6h trailing) heals the gap. Verify with `--before=<deploy − 6h>`.
-3. **Regenerate Daylesford from musher-start** (Simon, 2026-07-28): find `MIN(measurement_time)` of the
+1. Merge + deploy PR 1. The first minutely `/api/cron/derivations` pass reconciles the trailing 6h,
+   healing anything the old build wrote to `device_run_periods` between the fill and the deploy.
+   If more than ~6h elapse, heal explicitly with `action=aggregate&last=Nd`.
+   ⚠️ Do NOT re-run the fill after deploying — it refuses by design (`assertNotAlreadyLive`).
+2. **Regenerate Daylesford from musher-start** (Simon, 2026-07-28): find `MIN(measurement_time)` of the
    DSE signal point, then `action=regenerate&start=…&end=…` on the new cron route.
-4. Soak ~1 day, then PR 2: drop both legacy tables (migration 0041) — code first, per the drop rule.
+3. Soak ~1 day, then PR 2: drop both legacy tables (migration 0041) — code first, per the drop rule.
 
 **Done when:** run periods for the Daylesford genset and the Kinkora HWS series are byte-identical
 before/after on `liveone-dev`; the run-periods route and the generator-runs card render unchanged; both
