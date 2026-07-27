@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
+import { cronSkipReason } from "@/lib/cron/guard";
 import { parseDate } from "@internationalized/date";
 import { getNowFormattedAEST } from "@/lib/date-utils";
 import {
@@ -86,9 +86,6 @@ async function handle(request: NextRequest) {
     // guards: the standing CRONS_ENABLED switch and the cutover window gate.
     const skip = cronSkipReason(request, authResult);
     if (skip) return NextResponse.json(skip);
-
-    const cutover = await cutoverSkipReason(request, authResult);
-    if (cutover) return NextResponse.json(cutover);
 
     const { searchParams } = new URL(request.url);
     const body =

@@ -4,17 +4,18 @@ import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
  * Regression: `lib/kv.ts` must resolve KV credentials LAZILY (first property access), never at
  * import time.
  *
- * `import`s are hoisted and evaluated before a module body runs, so every `scripts/config-v4/*`
- * driver — which calls `dotenv.config()` in its body — imports `lib/kv` BEFORE .env.local is
- * loaded. When the credentials were read at import time, `kvClient` latched to `null` for the
- * lifetime of the process and every kv.* call became the silent no-op Proxy, even though the
- * caller's own `process.env.KV_REST_API_URL` guard (running after dotenv) saw the vars and passed.
+ * `import`s are hoisted and evaluated before a module body runs, so any script that calls
+ * `dotenv.config()` in its body — `scripts/config-v4/*`, `rebuild-dev-kv-from-db.ts` — imports
+ * `lib/kv` BEFORE .env.local is loaded. When the credentials were read at import time, `kvClient`
+ * latched to `null` for the lifetime of the process and every kv.* call became the silent no-op
+ * Proxy, even though the caller's own `process.env.KV_REST_API_URL` guard (running after dotenv)
+ * saw the vars and passed.
  *
- * Why that combination is dangerous rather than merely annoying: `cutover-pause.ts clear
- * --env=prod` would no-op the `kv.del`, read the flag back as null through the same Proxy, agree
- * with the genuinely-resumed QStash queue, and print "✅ LIVE" — while `prod:cutover:paused` was
- * still set and the observations receiver kept fail-closed-refusing every reading. That is on the
- * far side of the cutover's one-way door.
+ * Why that is dangerous rather than merely annoying: the failure is SILENT and self-confirming. A
+ * writer no-ops, then reads its own value back as `null` through the same Proxy and agrees with
+ * itself, so the script reports success having done nothing. `db:rebuild-dev-kv` would report a
+ * rebuilt cache while leaving KV empty. (Found the hard way during the config-v4 cutover
+ * rehearsal, where the same latch made a "pause cleared ✅" report while the flag was still set.)
  */
 describe("lib/kv credential resolution", () => {
   const saved = {

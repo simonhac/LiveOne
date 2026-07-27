@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteRange, aggregateRange } from "@/lib/aggregation/daily-points";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
+import { cronSkipReason } from "@/lib/cron/guard";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -140,11 +140,6 @@ async function handleAggregation(request: NextRequest) {
 
     const skip = cronSkipReason(request, authResult);
     if (skip) return NextResponse.json(skip);
-
-    // Cutover: daily aggregation writes agg_1d from agg_5m — a hot-table writer. Must not run while
-    // the window is transforming those tables.
-    const cutover = await cutoverSkipReason(request, authResult);
-    if (cutover) return NextResponse.json(cutover);
 
     // Extract parameters from query params (GET) or body (POST)
     const { searchParams } = new URL(request.url);

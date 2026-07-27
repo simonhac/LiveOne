@@ -37,7 +37,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 import { requireCronOrAdmin } from "@/lib/api-auth";
-import { cronSkipReason, cutoverSkipReason } from "@/lib/cron/guard";
+import { cronSkipReason } from "@/lib/cron/guard";
 import { envLabel } from "@/lib/env";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
@@ -124,11 +124,6 @@ export async function GET(request: NextRequest) {
 
   const skip = cronSkipReason(request, auth);
   if (skip) return NextResponse.json(skip);
-
-  // Cutover: suppress the monitor for the window. Materialization is deliberately paused, so its
-  // staleness checks would fire a storm of false alerts about a condition we created on purpose.
-  const cutover = await cutoverSkipReason(request, auth);
-  if (cutover) return NextResponse.json(cutover);
 
   if (!planetscaleDb) {
     return NextResponse.json({ configured: false });
