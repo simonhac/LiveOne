@@ -304,11 +304,11 @@ export const pointReadings = pgTable(
     // (system_id, point_id) address AND the serial `id` are gone; rows key on the internal `point_rid` (a
     // FK → points.rid). Only the readings seam (lib/readings/**) imports this.
     //
-    // The index/PK names below keep the transform's `_new` suffix, and they are CORRECT — they match the
-    // live DB. They cannot be renamed to canonical until the `_old` tables are dropped: index and
-    // PK-constraint names are schema-GLOBALLY unique in Postgres, and `point_readings_old` still owns
-    // `point_readings_pkey` / `pr_measurement_time_idx` / `pr_created_at_idx`, so an early rename is a
-    // 42P07. Migration 0038 drops `_old`; 0039 then renames these to canonical.
+    // The index/PK names below are canonical as of migration 0039. They carried the transform's `_new`
+    // suffix from the cutover until then: index and PK-constraint names are schema-GLOBALLY unique in
+    // Postgres, and the retained `point_readings_old` still owned `point_readings_pkey` /
+    // `pr_measurement_time_idx` / `pr_created_at_idx`, so renaming before 0038 dropped `_old` would
+    // have been a 42P07.
     pointRid: integer("point_rid")
       .notNull()
       .references(() => points.rid),
@@ -332,13 +332,13 @@ export const pointReadings = pgTable(
   },
   (table) => ({
     pk: primaryKey({
-      name: "point_readings_new_pkey",
+      name: "point_readings_pkey",
       columns: [table.pointRid, table.measurementTime],
     }),
-    measurementTimeIdx: index("pr_new_measurement_time_idx").on(
+    measurementTimeIdx: index("pr_measurement_time_idx").on(
       table.measurementTime,
     ),
-    createdAtIdx: index("pr_new_created_at_idx").on(table.createdAt),
+    createdAtIdx: index("pr_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -374,13 +374,13 @@ export const pointReadingsAgg5m = pgTable(
   },
   (table) => ({
     pk: primaryKey({
-      name: "pr5m_new_pkey",
+      name: "pr5m_pkey",
       columns: [table.pointRid, table.intervalEnd],
     }),
-    intervalEndIdx: index("pr5m_new_interval_end_idx").on(table.intervalEnd),
-    createdAtIdx: index("pr5m_new_created_at_idx").on(table.createdAt),
+    intervalEndIdx: index("pr5m_interval_end_idx").on(table.intervalEnd),
+    createdAtIdx: index("pr5m_created_at_idx").on(table.createdAt),
     // Watermark column for the incremental prod→dev sync (sync-prod-to-dev-db.ts).
-    updatedAtIdx: index("pr5m_new_updated_at_idx").on(table.updatedAt),
+    updatedAtIdx: index("pr5m_updated_at_idx").on(table.updatedAt),
   }),
 );
 
@@ -411,10 +411,10 @@ export const pointReadingsAgg1d = pgTable(
   },
   (table) => ({
     pk: primaryKey({
-      name: "pr1d_new_pkey",
+      name: "pr1d_pkey",
       columns: [table.pointRid, table.day],
     }),
-    dayIdx: index("pr1d_new_day_idx").on(table.day),
+    dayIdx: index("pr1d_day_idx").on(table.day),
   }),
 );
 

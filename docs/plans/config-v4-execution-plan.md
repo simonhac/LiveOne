@@ -26,13 +26,13 @@ changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the m
 2. **The drizzle snapshot no longer describes the live database.** ✅ **Repaired on dev** by migration
    0036 (see Phase 10 steps 2–5); **prod apply still outstanding**.
 
-**Phase 10 status (2026-07-27):** code half ✅ (#251). Schema half: **0036 applied and audit-verified on
-BOTH `liveone-dev` and prod `sydney`** — `db:pg:generate` reports "No schema changes" and both
-DB-equivalence audits are clean (132 statements, zero unexplained, shape-identical). **0037 applied and
-verified on dev; PARTIAL on prod** (see the ordering rule in step 6 — the column drops were rolled back
-to restore share-token access and must re-land after this branch deploys).
-**Remaining: deploy this branch → finish 0037 on prod, then 0038, 0039, plus the prod
-`rewrite-descriptor-area-refs.ts` run.**
+**Phase 10 status (2026-07-27):** code half ✅ (#251). Schema half: **0036 + 0037 applied and
+audit-verified on BOTH `liveone-dev` and prod `sydney`** (#252). **0038 + 0039 applied and verified on
+dev** — `_old` and `backfill_progress` gone (4,216 MB freed), hot-table index names canonical, zero
+`_new` names left, boundary-guard regex simplified. `db:pg:generate` reports "No schema changes" and
+dev's DB-equivalence audit is down to **120 statements, zero unexplained** — the permanent residue.
+**Remaining: apply 0038 + 0039 to prod** (needs the validation-window sign-off + a one-off
+`pscale backup create`), **plus the prod `rewrite-descriptor-area-refs.ts` run.**
 
 **Also done 2026-07-27:** the Phase 7/8 rehearsal branches `rehearse-5` (`fq7uult9pcir`) and `rehearse-6`
 (`z3ok95wtk88o`) were **deleted** — they were restored-from-prod copies, unreferenced outside these plan
@@ -300,12 +300,13 @@ never from migration replay. `0036_*.sql`'s header documents this and points at
 > which is precisely why 0037 also replaced the two bare `.select()`s with explicit projections. Those
 > projections must be **deployed** before the drop re-lands.
 
-⚠️ **PROD IS MID-0037 RIGHT NOW.** Its journal records 0037 as applied and
-`dashboard_share_tokens` **is** dropped (safe — zero query sites), but the five `share_tokens` legacy
-columns + `share_tokens_owner_idx` + `dashboard_grants.created_at_ms` were **restored** and are still
-present. **To finish: deploy this branch to prod, then re-drop those 7 objects by hand** (the journal
-already claims 0037, so completing it by hand makes the journal true — no new migration, no journal
-edit). Until then prod↔dev diverge and the step-5 audit on prod will show those columns.
+✅ **0037 is now COMPLETE on prod (2026-07-27).** After #252 merged and Vercel deployed the explicit
+projections, the 7 rolled-back objects were re-dropped by hand — the journal already claimed 0037, so
+completing it manually made the journal true, with no new migration and no journal edit. The drop was
+run **self-healing**: baseline the live `?access=` share path → drop → re-exercise the path → auto-restore
+on failure. The path stayed healthy (65 KB, content present), which is also the proof that the deployed
+build carries the projections — the old build would have 500'd instantly. Prod's step-5 audit is clean
+again: **128 statements, zero unexplained**, matching dev.
 
 6. **Then prove the restored workflow with three normal journalled migrations:**
    - **✅ 0037 DONE on dev (`0037_kind_famine.sql`, generated + applied 2026-07-27; PROD PARTIAL — see
@@ -342,6 +343,16 @@ edit). Until then prod↔dev diverge and the step-5 audit on prod will show thos
      `ShareLinksPanel.tsx`. Project the `timestamp` columns and map to ms — which also fixes a latent
      bug: `createDashboardShareToken` only ever writes the timestamp columns, so those bigints are
      already always NULL and the panel renders blanks today;
+   - **✅ 0038 DONE on dev (`0038_drop_old_hot_tables_and_backfill_progress.sql`, 2026-07-27; PROD
+     TODO).** Freed **4,216 MB**; live tables verified intact at exactly their pre-drop counts
+     (15,355,536 / 5,533,074 / 19,400).
+     - **The guard invariant is `>=`, NOT `>` — the plan's "live max beyond old's" wording is wrong.**
+       On `liveone-dev` crons are disabled, so nothing has been written to the live tables since the
+       cutover copy: live == `_old` exactly, same row counts AND same `max(measurement_time)`. A `>`
+       guard aborts on a perfectly healthy dev database. The real invariant is containment.
+     - **The guards were negative-tested before use**, not just written: running a deliberately
+       inverted invariant inside a transaction raised the exception and rolled the `DROP` back, with
+       `point_readings_old` still present afterwards. A guard that never fires is worse than none.
    - **0038, hand-written** (`drizzle-kit generate --custom`): drop `backfill_progress` (orphan from
      the June-2026 Turso decommission: 29 rows, never in a migration, zero repo references) and the
      three `_old` hot tables — **4.2 GB on dev** (`point_readings_old` 2823 MB / 15.35M rows,
@@ -350,6 +361,14 @@ edit). Until then prod↔dev diverge and the step-5 audit on prod will show thos
      drizzle's unguarded `DROP TABLE … CASCADE`. Precondition: Simon confirms the validation window
      has passed; R2 dumps taken before the drop contain the `_old` data (retention: daily 21d /
      weekly 91d / monthly 365d) and a one-off `pscale backup create` lands first per the checklist.
+   - **✅ 0039 DONE on dev (`0039_rename_hot_indexes_to_canonical.sql`, 2026-07-27; PROD TODO).** All
+     nine names verified free first (the `_old` drop released them), then renamed and verified against
+     `pg_indexes`: `point_readings_pkey`, `pr_measurement_time_idx`, `pr_created_at_idx`, `pr5m_pkey`,
+     `pr5m_interval_end_idx`, `pr5m_created_at_idx`, `pr5m_updated_at_idx`, `pr1d_pkey`,
+     `pr1d_day_idx`. **Zero `_new` names remain anywhere in the database.** Snapshot transplanted (as
+     0036) since renames cannot be generated. `check-readings-boundary.mjs`'s `(_old|_new|_v\d+)?`
+     group removed with its three fixtures — the comment records how to restore it if a future
+     migration ever reintroduces a twin.
    - **0039, hand-written** (`generate --custom`) — **only now are the canonical names free.** Rename
      the nine `_new` index/PK names (`point_readings_new_pkey`, `pr_new_*`, `pr5m_new_*`, `pr1d_new_*`)
      to canonical, with the matching `schema.ts` edit and another snapshot transplant. Guarded, and

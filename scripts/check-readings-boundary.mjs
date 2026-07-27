@@ -36,13 +36,14 @@ export const HOT_SYMBOLS = new Set([
 // char, so `point_readings_flow_attr_1d` / `point_readings_flow_1d` NEVER match (base "point_readings"
 // is followed by "_flow", failing the lookahead) — those are different, out-of-scope tables.
 //
-// The `(_old|_new|_v\d+)?` group keeps the guard honest ACROSS the config-v4 cutover, which transiently
-// creates `point_readings_new` (the rid-keyed twin) and leaves `point_readings_old` behind until Phase 9.
-// Without it the guard silently stops covering the very tables it exists to protect, at exactly the moment
-// the codebase is most likely to reach around the seam. `_flow_attr_1d` is still rejected: `_flow` matches
-// neither optional group, so the lookahead sees `_` and fails.
-export const HOT_TABLE =
-  /\bpoint_readings(_agg_5m|_agg_1d)?(_old|_new|_v\d+)?(?![_A-Za-z0-9])/;
+// This carried an extra `(_old|_new|_v\d+)?` group through the config-v4 cutover, which transiently
+// created `point_readings_new` (the rid-keyed twin) and left `point_readings_old` behind. Both are gone:
+// migration 0038 dropped the `_old` tables and 0039 renamed the `_new` indexes to canonical, so no
+// suffixed spelling of a hot table exists any more and the group only added noise. If a future migration
+// ever reintroduces a twin, restore the group for the duration — a guard that stops covering the tables
+// it protects, at exactly the moment the codebase is most tempted to reach around the seam, is worse
+// than no guard.
+export const HOT_TABLE = /\bpoint_readings(_agg_5m|_agg_1d)?(?![_A-Za-z0-9])/;
 // Admin routes must pass typed PointIds/value-column enums to ReadingsDao, never construct hot-key
 // pivot SQL themselves. This catches the historical escape hatch even when it doesn't name a table.
 export const CALLER_PIVOT_SQL =
