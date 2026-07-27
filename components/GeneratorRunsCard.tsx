@@ -4,15 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { runPeriodsQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
-
-/** Format a duration in seconds as "2h 30m" / "45m" / "3h". */
-function formatDuration(seconds: number): string {
-  const totalMin = Math.round(seconds / 60);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  return `${m}m`;
-}
+import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 
 /**
  * A dashboard panel listing a device's generator runs WITHIN the temporal-navigator window — the
@@ -146,7 +138,9 @@ export default function GeneratorRunsCard({
                       )}
                     </td>
                     <td className={`${td} text-right tabular-nums`}>
-                      {durationSec != null ? formatDuration(durationSec) : "—"}
+                      {durationSec != null
+                        ? formatSecondsAsDuration(durationSec)
+                        : "—"}
                     </td>
                     <td className={`${td} text-right tabular-nums`}>
                       {e.energyKwh.toFixed(2)}
@@ -161,7 +155,7 @@ export default function GeneratorRunsCard({
                   </td>
                   <td className={td} />
                   <td className={`${td} text-right tabular-nums`}>
-                    {formatDuration(totalSeconds)}
+                    {formatSecondsAsDuration(totalSeconds)}
                   </td>
                   <td className={`${td} text-right tabular-nums`}>
                     {totalEnergyKwh.toFixed(2)}

@@ -166,6 +166,26 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Format a duration given in SECONDS as "2h 30m" / "45m" / "3h" — the run-periods spelling.
+ *
+ * NOTE the input unit, which is the only thing separating the three duration formatters here:
+ * `formatDuration` takes MILLISECONDS and spells things differently ("2m 15s", NBSP-joined), and
+ * `formatHoursAsDuration` takes HOURS and omits the space ("1h5m"). Hence the explicit name.
+ *
+ * Examples:
+ * - 9000 -> "2h 30m"
+ * - 2700 -> "45m"
+ * - 10800 -> "3h"
+ */
+export function formatSecondsAsDuration(seconds: number): string {
+  const totalMin = Math.round(seconds / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${m}m`;
+}
+
+/**
  * Format a duration given in hours as a compact "Xh Ym" / "Xd Yh" string (no spaces).
  *
  * Examples:

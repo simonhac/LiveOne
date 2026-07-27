@@ -2,15 +2,19 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { runPeriodsQuery } from "@/lib/queries";
+import { formatSecondsAsDuration } from "@/lib/fe-date-format";
+import { applyExcelFormat } from "@/lib/point/display/excel-format";
+import { avgPowerWFromEnergy } from "@/lib/run-tracking/run-period-view";
 
-/** Format a duration in seconds as "2h 30m" / "45m" / "3h". */
-function formatDuration(seconds: number): string {
-  const totalMin = Math.round(seconds / 60);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  return `${m}m`;
+/** Average power (W) rendered as kW, 1dp — fixed scale so a column never mixes W and kW rows. */
+function kwText(avgPowerW: number | null | undefined): string {
+  if (avgPowerW == null) return "—";
+  return `${(Math.abs(avgPowerW) / 1000).toFixed(1)}`;
 }
+
+const TH_LEFT = "px-4 py-3 text-left text-sm font-medium text-gray-200";
+const TH_RIGHT = "px-4 py-3 text-right text-sm font-medium text-gray-200";
+const TD_NUM = "px-4 py-3 text-sm text-right tabular-nums";
 
 interface AvailableSystem {
   id: number;
@@ -63,6 +67,21 @@ export default function GeneratorClient({
       : "Unknown error"
     : null;
 
+  // The server decides which columns are honest for this detector (it knows the signal's unit); the
+  // table just obeys. Non-null exactly when the signal column should render, so it narrows at use.
+  const signalCol = generatorData?.columns?.signal
+    ? (generatorData.signal ?? null)
+    : null;
+  const showAvgPower = generatorData?.columns?.avgPower ?? false;
+  const basis = generatorData?.columns?.avgPowerBasis ?? "energy";
+  const totalEnergyKwh = generatorData?.totalEnergyKwh ?? 0;
+  const totalDurationSeconds = generatorData?.totalDurationSeconds ?? 0;
+  // A genuine period average: total energy over total RUNNING time (not a mean of per-run means).
+  const periodAvgPowerW =
+    basis === "energy"
+      ? avgPowerWFromEnergy(totalEnergyKwh, totalDurationSeconds)
+      : null;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-800 flex items-center justify-center">
@@ -81,7 +100,7 @@ export default function GeneratorClient({
 
   return (
     <div className="container mx-auto px-4 py-8">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <h1 className="text-2xl font-bold mb-6">Generator Events</h1>
 
         {!generatorData || generatorData.events.length === 0 ? (
@@ -90,28 +109,24 @@ export default function GeneratorClient({
           </div>
         ) : (
           <>
-            <div className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+            <div className="bg-gray-800 rounded-lg overflow-x-auto border border-gray-700">
               <table className="w-full">
                 <thead className="bg-gray-700">
                   <tr>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-200">
-                      Date
-                    </th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-200">
-                      Start
-                    </th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-200">
-                      End
-                    </th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-200">
-                      Duration
-                    </th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-200">
-                      Avg Power
-                    </th>
-                    <th className="px-4 py-3 text-right text-sm font-medium text-gray-200">
-                      Energy (kWh)
-                    </th>
+                    <th className={TH_LEFT}>Date</th>
+                    <th className={TH_LEFT}>Start</th>
+                    <th className={`${TH_LEFT} hidden sm:table-cell`}>End</th>
+                    <th className={TH_RIGHT}>Duration</th>
+                    {signalCol && (
+                      <th className={`${TH_RIGHT} hidden sm:table-cell`}>
+                        Avg {signalCol.label}
+                        {signalCol.unit ? ` (${signalCol.unit})` : ""}
+                      </th>
+                    )}
+                    {showAvgPower && (
+                      <th className={TH_RIGHT}>Avg Power (kW)</th>
+                    )}
+                    <th className={TH_RIGHT}>Energy (kWh)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
@@ -120,6 +135,12 @@ export default function GeneratorClient({
                       event.running && event.startTimeISO
                         ? (Date.now() - Date.parse(event.startTimeISO)) / 1000
                         : (event.durationSeconds ?? null);
+                    // A running row has no stored duration yet, so the server can't give it an avg
+                    // power — recompute from the live elapsed time rather than showing a dash.
+                    const avgPowerW =
+                      event.running && basis === "energy"
+                        ? avgPowerWFromEnergy(event.energyKwh, durationSec)
+                        : event.avgPowerW;
                     return (
                       <tr
                         key={idx}
@@ -127,32 +148,52 @@ export default function GeneratorClient({
                       >
                         <td className="px-4 py-3 text-sm">{event.date}</td>
                         <td className="px-4 py-3 text-sm">{event.startTime}</td>
-                        <td className="px-4 py-3 text-sm">
+                        <td className="px-4 py-3 text-sm hidden sm:table-cell">
                           {event.running ? "now" : (event.endTime ?? "—")}
                         </td>
-                        <td className="px-4 py-3 text-sm text-right tabular-nums">
+                        <td className={TD_NUM}>
                           {durationSec != null
-                            ? formatDuration(durationSec)
+                            ? formatSecondsAsDuration(durationSec)
                             : "—"}
                         </td>
-                        <td className="px-4 py-3 text-sm text-right tabular-nums">
-                          {event.avgPowerW != null
-                            ? `${(Math.abs(event.avgPowerW) / 1000).toFixed(1)} kW`
-                            : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right tabular-nums">
-                          {event.energyKwh.toFixed(2)}
-                        </td>
+                        {signalCol && (
+                          <td className={`${TD_NUM} hidden sm:table-cell`}>
+                            {event.avgSignal != null
+                              ? applyExcelFormat(
+                                  event.avgSignal,
+                                  signalCol.format,
+                                )
+                              : "—"}
+                          </td>
+                        )}
+                        {showAvgPower && (
+                          <td className={TD_NUM}>{kwText(avgPowerW)}</td>
+                        )}
+                        <td className={TD_NUM}>{event.energyKwh.toFixed(2)}</td>
                       </tr>
                     );
                   })}
                   <tr className="bg-gray-700 font-bold text-gray-100">
-                    <td className="px-4 py-3 text-sm" colSpan={5}>
-                      Total
+                    {/* Explicit cells, not a colSpan: the signal column is conditional and a
+                        hard-coded span silently desyncs from it. */}
+                    <td className="px-4 py-3 text-sm">Total</td>
+                    <td className="px-4 py-3 text-sm" />
+                    <td className="px-4 py-3 text-sm hidden sm:table-cell" />
+                    <td className={TD_NUM}>
+                      {totalDurationSeconds > 0
+                        ? formatSecondsAsDuration(totalDurationSeconds)
+                        : "—"}
                     </td>
-                    <td className="px-4 py-3 text-sm text-right tabular-nums">
-                      {(generatorData.totalEnergyKwh ?? 0).toFixed(2)} kWh
-                    </td>
+                    {signalCol && (
+                      // Deliberately blank: an unweighted mean of per-run means is not a
+                      // meaningful figure, and printing one would be the very dishonesty this
+                      // table was fixed to remove.
+                      <td className={`${TD_NUM} hidden sm:table-cell`} />
+                    )}
+                    {showAvgPower && (
+                      <td className={TD_NUM}>{kwText(periodAvgPowerW)}</td>
+                    )}
+                    <td className={TD_NUM}>{totalEnergyKwh.toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -167,6 +208,14 @@ export default function GeneratorClient({
               <p className="mt-1">
                 Consecutive readings within 120 seconds are grouped into one
                 run.
+              </p>
+              <p className="mt-1">
+                {basis === "energy"
+                  ? "Avg Power is each run’s energy divided by its duration."
+                  : "Avg Power is the average of the signal samples over the run."}
+                {signalCol
+                  ? ` Avg ${signalCol.label} is the mean of the raw ${signalCol.unit || signalCol.metricUnit} samples the detector follows; it is blank for runs recorded by an earlier detector version, whose units cannot be confirmed.`
+                  : ""}
               </p>
             </div>
           </>
