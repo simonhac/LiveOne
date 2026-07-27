@@ -100,7 +100,7 @@ describe("prod→dev readings transfer", () => {
       "point_info",
       "area_devices",
       "area_bindings",
-      "device_trackers",
+      "derivations",
       "sessions",
       "point_readings",
       "point_readings_agg_5m",
@@ -114,6 +114,17 @@ describe("prod→dev readings transfer", () => {
     expect(names.indexOf("dashboards")).toBeLessThan(names.indexOf("users"));
     expect(names.indexOf("dashboards")).toBeLessThan(
       names.indexOf("share_tokens"),
+    );
+    // derivations.area_id is a NOT NULL FK, so areas must land first.
+    expect(names.indexOf("areas")).toBeLessThan(names.indexOf("derivations"));
+    // Its id is deterministic (uuidv5 over area/kind/role), identical in both environments — so it
+    // upserts by PK, unlike the natural-key/excludeCols dance device_trackers needed.
+    expect(manifest.find((t) => t.name === "derivations")).toMatchObject({
+      mode: "full",
+      onConflict: "update",
+    });
+    expect(manifest.find((t) => t.name === "derivations")).not.toHaveProperty(
+      "excludeCols",
     );
     expect(
       manifest

@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Backfill device run periods over the full history (run-tracking feature).
+ * Backfill derived run intervals over the full history (run-tracking feature).
  *
  * Data goes back to ~2025-08-16, so this is NOT something to run through the 60s serverless cron.
  * Run it from a workstation via tsx: it calls the same chunked, idempotent `recomputeRange` the
- * cron uses (14-day chunks, bounded read + delete-and-reinsert per chunk, per-system advisory
+ * cron uses (14-day chunks, bounded read + delete-and-reinsert per chunk, per-derivation advisory
  * lock), but with no function-duration limit and a progress line per chunk. Safe to re-run / resume.
  *
- * Prereqs: the generator role + tracker must already be seeded (scripts/seed-generator-tracker.ts).
+ * Prereqs: an enabled `run-detector` derivation must exist for the area.
  *
  * SAFETY: defaults to a DRY RUN (prints the plan). Pass --apply to write. The DB target is
  * whatever .env.local points at.
@@ -20,7 +20,7 @@
 import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
-import { listEnabledTrackers } from "../lib/run-tracking/resolve";
+import { listEnabledRunDetectors } from "../lib/derivations/resolve";
 import { recomputeRange } from "../lib/run-tracking/recompute";
 
 const APPLY = process.argv.includes("--apply");
@@ -34,15 +34,15 @@ async function main() {
   if (isNaN(startMs)) throw new Error(`Invalid --start: ${startStr}`);
   const nowMs = Date.now();
 
-  const trackers = await listEnabledTrackers();
+  const trackers = await listEnabledRunDetectors();
   console.log(
     `${tag} backfill ${new Date(startMs).toISOString()} .. ${new Date(nowMs).toISOString()} ` +
-      `for ${trackers.length} enabled tracker(s): ${trackers.map((t) => `${t.systemId}/${t.role}`).join(", ") || "(none)"}`,
+      `for ${trackers.length} enabled run detector(s): ${trackers.map((t) => `${t.legacyHandle}/${t.role}`).join(", ") || "(none)"}`,
   );
 
   if (trackers.length === 0) {
     console.log(
-      "No enabled trackers — seed one first (seed-generator-tracker.ts).",
+      "No enabled run detectors — create a run-detector derivation for the area first.",
     );
     return;
   }

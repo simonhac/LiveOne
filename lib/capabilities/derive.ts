@@ -12,7 +12,7 @@
  *    "does this tile have a value right now" (skeleton vs empty).
  *
  * Both are ATOMIC-only. Compound capabilities (`generator-running`, `grid-signals`) are added by the
- * server-side `deviceCapabilities`/`areaCapabilities` resolvers (a predicate over device_trackers /
+ * server-side `deviceCapabilities`/`areaCapabilities` resolvers (a predicate over derivations /
  * grid context), never a point scan — see lib/capabilities (server module, added later).
  */
 

@@ -1,15 +1,22 @@
 /**
- * Register the derived hot-water temperature point for a system.
+ * Register the derived hot-water temperature point for a system, and the `derivations` row that
+ * turns it on.
  *
  * The modelled faucet temperature lives in the generic readings system as a normal `point_info`
- * row (`load.hws/temperature`, °C) — its existence is what "enables" HWS modelling for a system
- * (the recompute, lib/hws/recompute.ts, finds it and starts producing values). It must have a
- * sibling `load.hws/power` point to model from.
+ * row (`load.hws/temperature`, °C). Since config-v4 Phase 11 the point alone no longer enables
+ * modelling — an `output='point'`, `kind='hws-model'` derivation naming it does (that is what
+ * lib/hws/recompute.ts discovers). Both steps are idempotent; a system still needs a sibling
+ * `load.hws/power` point to model from.
  */
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { derivations, pointInfo } from "@/lib/db/planetscale/schema";
 import { mintPointUid } from "@/lib/point/mint-point-uid";
+import { deriveDerivationId } from "@/lib/derivations/ids";
+import {
+  HWS_MODEL_KIND,
+  resolveAreaIdForHandle,
+} from "@/lib/derivations/resolve";
 
 const HWS_STEM = "load.hws";
 const TEMP_PHYSICAL_PATH = "derived/load.hws/temperature"; // synthetic, unique per system
@@ -104,4 +111,68 @@ export async function ensureHwsTemperaturePoint(
     tempPointId: row.index,
     powerPointId: power.index,
   };
+}
+
+export interface EnsureDerivationResult {
+  status: "created" | "exists" | "no-points" | "no-area";
+  systemId: number;
+  derivationId?: string;
+}
+
+/**
+ * Ensure the `hws-model` derivation for `systemId` exists, wiring the power point (source) to the
+ * temperature point (output). Idempotent via the deterministic id — safe to re-run, and it upserts
+ * the wiring rather than duplicating. Requires {@link ensureHwsTemperaturePoint} to have run.
+ */
+export async function ensureHwsDerivation(
+  systemId: number,
+  apply: boolean,
+): Promise<EnsureDerivationResult> {
+  const db = requirePlanetscaleDb();
+
+  const pts = await db
+    .select({
+      metricType: pointInfo.metricType,
+      pointUid: pointInfo.pointUid,
+      displayName: pointInfo.displayName,
+    })
+    .from(pointInfo)
+    .where(
+      and(
+        eq(pointInfo.systemId, systemId),
+        eq(pointInfo.logicalPathStem, HWS_STEM),
+        eq(pointInfo.active, true),
+      ),
+    );
+  const power = pts.find((p) => p.metricType === "power");
+  const temp = pts.find((p) => p.metricType === "temperature");
+  if (!power || !temp) return { status: "no-points", systemId };
+
+  const areaId = await resolveAreaIdForHandle(systemId);
+  if (!areaId) return { status: "no-area", systemId };
+
+  const id = deriveDerivationId(areaId, HWS_MODEL_KIND, null);
+  const [existing] = await db
+    .select({ id: derivations.id })
+    .from(derivations)
+    .where(eq(derivations.id, id))
+    .limit(1);
+  if (existing) return { status: "exists", systemId, derivationId: id };
+  if (!apply) return { status: "created", systemId, derivationId: id };
+
+  await db.insert(derivations).values({
+    id,
+    areaId,
+    kind: HWS_MODEL_KIND,
+    role: null,
+    name: temp.displayName,
+    enabled: true,
+    output: "point",
+    outputPointId: temp.pointUid,
+    // Sparse: the model runs on DEFAULT_HWS_MODEL_OPTIONS unless a constant is overridden here.
+    params: {},
+    sourcePoints: { power: power.pointUid },
+  });
+
+  return { status: "created", systemId, derivationId: id };
 }

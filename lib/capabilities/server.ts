@@ -1,13 +1,13 @@
 /**
  * Server-side capability resolution — the ELIGIBILITY answer ("which cards CAN this area/device show")
- * derived from CONFIG (`point_info` + trackers + grid context), so it is defined before any reading has
+ * derived from CONFIG (`point_info` + derivations + grid context), so it is defined before any reading has
  * arrived. This is the server half of the capability model; the client half is `capabilitiesFromLatest`
  * (runtime presence). Both consume the same registry rule table.
  *
  * ONE entry point for a real device OR an area: `getActivePointsForSystem(handle)` already unions an
  * area's member points (areas-backed → member/bound points; real device → its own), so the ATOMIC
  * capabilities fall straight out of `capabilitiesFromPoints`. COMPOUND capabilities are predicates:
- *  - `generator-running` — any member device has an enabled generator `device_trackers` row.
+ *  - `generator-running` — any member device has an enabled generator run-detector `derivations` row.
  *  - `grid-signals`      — the area's location derives a NEM region backed by a seeded OE system
  *                          (`resolveGridContextForSystem`).
  *
@@ -18,7 +18,7 @@ import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
-import { hasEnabledTracker } from "@/lib/run-tracking/resolve";
+import { hasEnabledRunDetector } from "@/lib/derivations/resolve";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
 import {
   capabilitiesFromPoints,
@@ -66,7 +66,7 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
     const sys = await sm.getSystem(sid);
     if (sys?.config?.capabilities)
       Object.assign(overrides, sys.config.capabilities);
-    if (!hasGenerator && (await hasEnabledTracker(sid, "generator")))
+    if (!hasGenerator && (await hasEnabledRunDetector(sid, "generator")))
       hasGenerator = true;
   }
   if (hasGenerator) caps.add("generator-running");

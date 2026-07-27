@@ -67,7 +67,7 @@ type FkChild = { table: string; cols: string[] };
 // Caveat: idDrift clears a realigned parent's FK children, which their own later manifest legs then
 // re-populate — but the flow/agg/provenance children re-sync INCREMENTALLY (bounded by the watermark
 // overlap), so a drifted area's rows OLDER than that window aren't restored until a full R2 restore.
-// device_run_periods is recomputed on dev (db:recompute-dev-runs), not synced. Fine for a disposable
+// derived_intervals is recomputed on dev (db:recompute-dev-runs), not synced. Fine for a disposable
 // mirror; the realigning rows are few (an occasional independently-created area / renumbered helper point).
 type IdDrift = {
   uniqueKeys: string[][]; // secondary unique indexes (each a full column list) a divergent-PK row collides on
@@ -150,12 +150,14 @@ const FULL: FullTable[] = [
         { table: "area_bindings", cols: ["area_id"] },
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
-        { table: "device_trackers", cols: ["area_id"] },
-        { table: "device_run_periods", cols: ["area_id"] },
+        // config-v4 Phase 11: run detectors + the HWS model are `derivations` rows keyed by area.
+        // derived_intervals has an ON DELETE CASCADE FK to derivations (migration 0040), so it does
+        // not need its own entry — and it is recomputed on dev anyway (db:recompute-dev-runs).
+        { table: "derivations", cols: ["area_id"] },
         // config-v4 migration 0033 added this table (with an area_id FK, no ON DELETE) after this
         // children list was written, so it was never accounted for. Not itself in the sync manifest
         // (it's a frozen-at-cutover compat shim, not prod-mirrored data), so a cleared row isn't
-        // restored by a later leg — same disposable-mirror tradeoff as device_run_periods above.
+        // restored by a later leg — same disposable-mirror tradeoff as derived_intervals above.
         { table: "legacy_handles", cols: ["area_id"] },
         // NOT handled here (2026-07-26 finding, deliberately out of scope): the config-v4 dark
         // v4-registry mirror (devices/points/derivations/derived_intervals, migration 0035) is
@@ -195,14 +197,9 @@ const FULL: FullTable[] = [
         { table: "point_readings_agg_1d", cols: ["point_rid"] },
         { table: "point_readings", cols: ["point_rid"] },
         { table: "area_bindings", cols: ["point_system_id", "point_id"] },
-        {
-          table: "device_trackers",
-          cols: ["signal_system_id", "signal_point_id"],
-        },
-        {
-          table: "device_run_periods",
-          cols: ["signal_system_id", "signal_point_id"],
-        },
+        // config-v4 Phase 11: derivations cite their source/output points by uuid inside jsonb
+        // (`source_points`) and `output_point_id`, neither of which carries an FK or unique index
+        // into point_info — so an id drift can't block the upsert and there is nothing to clear.
       ],
     },
   },
@@ -231,18 +228,19 @@ const FULL: FullTable[] = [
     replaceConflicts: [["area_id", "role", "metric_type", "priority"]],
     excludeCols: ["id"],
   },
-  // Run-tracking config. Upsert by the natural (system_id, role) key and exclude the surrogate
-  // uuid `id` (assigned independently on dev, like area_bindings) — dev keeps its own id, which the
-  // dev run-period recompute (db:recompute-dev-runs, see the workflow) uses for tracker_id. The
-  // run periods themselves are NOT copied here: device_run_periods has a composite PK (can't use
+  // Derived-signal config (run detectors + the HWS model). A plain by-PK upsert: `derivations.id`
+  // is DETERMINISTIC — uuidv5 over (area, kind, role), see lib/derivations/ids.ts — and areas share
+  // their uuid across environments, so prod and dev independently mint the SAME id for the same
+  // logical derivation. Hence no excludeCols/natural-key dance (and a role-less row, i.e. the HWS
+  // model, still has a stable identity). Must follow `areas` — the area_id FK parent.
+  //
+  // The intervals themselves are NOT copied: derived_intervals has a composite PK (can't use
   // mirror) and its rows shift/merge under recompute, so a copy would orphan stale rows — dev
-  // recomputes them from the synced readings instead.
+  // recomputes them from the synced readings instead (db:recompute-dev-runs).
   {
-    name: "device_trackers",
+    name: "derivations",
     mode: "full",
     onConflict: "update",
-    conflictCols: ["system_id", "role"], // device_trackers_system_role_unique
-    excludeCols: ["id"],
   },
 ];
 

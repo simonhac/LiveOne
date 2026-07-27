@@ -1,20 +1,20 @@
 /**
  * Run-period recompute orchestration (run-tracking feature) — the analogue of
- * `lib/aggregation/daily-points.ts`. Drives the per-tracker PG recompute over a window, and
+ * `lib/aggregation/daily-points.ts`. Drives the per-detector PG recompute over a window, and
  * exposes the backfill/regenerate/delete range operations the cron uses.
  *
  * Decoupling invariant: this reads only the serving store (`point_readings`) and writes only
- * `device_run_periods`. It is never wired into the queue receiver / hot ingest path.
+ * `derived_intervals`. It is never wired into the queue receiver / hot ingest path.
  */
 import { and, gte, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { deviceRunPeriods } from "@/lib/db/planetscale/schema";
+import { derivedIntervals } from "@/lib/db/planetscale/schema";
 import {
   withTransientPostgresRetry,
   type TransientPostgresRetryOptions,
 } from "@/lib/db/planetscale/transient-retry";
-import { recomputeRunPeriodsForWindow } from "@/lib/db/planetscale/run-periods-pg";
-import { listEnabledTrackers } from "./resolve";
+import { recomputeIntervalsForWindow } from "@/lib/db/planetscale/derived-intervals-pg";
+import { listEnabledRunDetectors } from "@/lib/derivations/resolve";
 
 export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // 6h trailing window for the minutely cron
 
@@ -35,7 +35,7 @@ export interface RecomputeRetryOptions extends TransientPostgresRetryOptions {
   failOnError?: boolean;
 }
 
-/** Recompute every enabled tracker over [winStartMs, winEndMs], "as of" nowMs. */
+/** Recompute every enabled run detector over [winStartMs, winEndMs], "as of" nowMs. */
 async function recomputeWindowAllTrackers(
   winStartMs: number,
   winEndMs: number,
@@ -43,7 +43,7 @@ async function recomputeWindowAllTrackers(
 ): Promise<RecomputeSummary> {
   const db = requirePlanetscaleDb();
   const trackers = await withTransientPostgresRetry(() =>
-    listEnabledTrackers(),
+    listEnabledRunDetectors(),
   );
   let rowsDeleted = 0;
   let rowsInserted = 0;
@@ -52,14 +52,14 @@ async function recomputeWindowAllTrackers(
   for (const tracker of trackers) {
     try {
       const res = await withTransientPostgresRetry(() =>
-        recomputeRunPeriodsForWindow(db, tracker, winStartMs, winEndMs, nowMs),
+        recomputeIntervalsForWindow(db, tracker, winStartMs, winEndMs, nowMs),
       );
       rowsDeleted += res.deleted;
       rowsInserted += res.inserted;
       if (res.open) openPeriods += 1;
     } catch (err) {
       console.error(
-        `[RunTracking] recompute failed for tracker ${tracker.id} (system=${tracker.systemId} role=${tracker.role}):`,
+        `[RunTracking] recompute failed for derivation ${tracker.id} (handle=${tracker.legacyHandle} role=${tracker.role}):`,
         err,
       );
     }
@@ -115,7 +115,7 @@ export async function recomputeRange(
 ): Promise<RecomputeSummary> {
   const db = requirePlanetscaleDb();
   const trackers = await withTransientPostgresRetry(
-    () => listEnabledTrackers(),
+    () => listEnabledRunDetectors(),
     retryOptions,
   );
   let rowsDeleted = 0;
@@ -130,21 +130,21 @@ export async function recomputeRange(
       const ce = Math.min(cs + CHUNK_MS, endMs);
       try {
         const res = await withTransientPostgresRetry(
-          () => recomputeRunPeriodsForWindow(db, tracker, cs, ce, nowMs),
+          () => recomputeIntervalsForWindow(db, tracker, cs, ce, nowMs),
           retryOptions,
         );
         rowsDeleted += res.deleted;
         rowsInserted += res.inserted;
         trackerOpen = res.open;
         onProgress?.({
-          tracker: `${tracker.systemId}/${tracker.role}`,
+          tracker: `${tracker.legacyHandle}/${tracker.role}`,
           chunkStartMs: cs,
           chunkEndMs: ce,
           inserted: res.inserted,
         });
       } catch (err) {
         console.error(
-          `[RunTracking] recompute failed for tracker ${tracker.id} chunk ` +
+          `[RunTracking] recompute failed for derivation ${tracker.id} chunk ` +
             `${new Date(cs).toISOString()}..${new Date(ce).toISOString()}:`,
           err,
         );
@@ -169,26 +169,26 @@ export async function recomputeRange(
   if (retryOptions.failOnError && failures.length > 0) {
     throw new AggregateError(
       failures,
-      `run-period recompute failed for ${failures.length} tracker window(s) after retries`,
+      `run-period recompute failed for ${failures.length} detector window(s) after retries`,
     );
   }
   return summary;
 }
 
-/** Delete all run periods whose start_time falls in [startMs, endMs] (all trackers). */
+/** Delete all derived intervals whose start_time falls in [startMs, endMs] (all detectors). */
 export async function deleteRange(
   startMs: number,
   endMs: number,
 ): Promise<{ rowsDeleted: number }> {
   const deleted = await requirePlanetscaleDb()
-    .delete(deviceRunPeriods)
+    .delete(derivedIntervals)
     .where(
       and(
-        gte(deviceRunPeriods.startTime, new Date(startMs)),
-        lte(deviceRunPeriods.startTime, new Date(endMs)),
+        gte(derivedIntervals.startTime, new Date(startMs)),
+        lte(derivedIntervals.startTime, new Date(endMs)),
       ),
     )
-    .returning({ startTime: deviceRunPeriods.startTime });
+    .returning({ startTime: derivedIntervals.startTime });
   console.log(
     `[RunTracking] deleted ${deleted.length} run periods in ` +
       `${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}`,

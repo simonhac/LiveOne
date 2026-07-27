@@ -1,14 +1,14 @@
 /**
- * Recompute device run periods on liveone-dev from its (just-synced) readings — the run-tracking
+ * Recompute derived run intervals on liveone-dev from its (just-synced) readings — the run-tracking
  * leg of the prod→dev sync, analogous to rebuild-dev-kv-from-db.ts.
  *
- * Why recompute instead of copying device_run_periods: dev crons are off (nothing recomputes
- * organically) AND the rows can't be cleanly mirrored — device_run_periods has a composite PK and
+ * Why recompute instead of copying derived_intervals: dev crons are off (nothing recomputes
+ * organically) AND the rows can't be cleanly mirrored — derived_intervals has a composite PK and
  * its periods shift/merge under recompute, so a row-copy would leave orphaned stale runs. The
- * config table (device_trackers) IS synced; here we rebuild the runs from the synced point_readings
+ * config table (derivations) IS synced; here we rebuild the runs from the synced point_readings
  * via the same delete-and-reinsert recompute the prod cron uses, so dev's runs panel matches prod.
  *
- * Writes ONLY device_run_periods, ONLY to whatever PLANETSCALE_DATABASE_URL points at — and refuses
+ * Writes ONLY derived_intervals, ONLY to whatever PLANETSCALE_DATABASE_URL points at — and refuses
  * to run if that resolves to the prod branch.
  *
  *   PLANETSCALE_DATABASE_URL=<dev write url> npx tsx --env-file=.env.local \

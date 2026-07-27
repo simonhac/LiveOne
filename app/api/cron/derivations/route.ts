@@ -1,3 +1,13 @@
+/**
+ * The derivations cron — one minutely pass over every kind of derived signal (config-v4 Phase 11).
+ *
+ * Dispatches by derivation kind: `run-detector` (→ derived_intervals, plus the KV "running" point)
+ * then `hws-model` (→ the derived temperature point's agg_5m + KV). HWS used to be hard-wired into
+ * the minutely cron; both are now discovered through the same `derivations` table.
+ *
+ * The explicit range actions (delete | regenerate | aggregate) operate on run-detector intervals.
+ * HWS ranges heal through the daily pass and scripts/backfill-hws-temperature.ts.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
@@ -9,6 +19,7 @@ import {
   deleteRange,
 } from "@/lib/run-tracking/recompute";
 import { publishRunningLatest } from "@/lib/run-tracking/running-latest";
+import { reconcileTrailingWindow as reconcileHwsTemperature } from "@/lib/hws/recompute";
 
 // Earliest data (when point data collection began) — clamps backfill ranges.
 const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
@@ -112,10 +123,10 @@ async function handle(request: NextRequest) {
       );
     }
 
-    // No action + no range → the default minutely cron pass.
+    // No action + no range → the default minutely cron pass, over every derivation kind.
     if (!action && !range) {
       const summary = await reconcileTrailingWindow(nowMs);
-      // Publish each tracker's live running state into the KV latest map (derived point) so
+      // Publish each detector's live running state into the KV latest map (derived point) so
       // dashboards read it from /api/data like any other live value. Best-effort.
       let runningPublished = 0;
       try {
@@ -123,11 +134,24 @@ async function handle(request: NextRequest) {
       } catch (err) {
         console.error("[Cron] publishRunningLatest failed:", err);
       }
+      // output='point' derivations: the HWS thermal model. Best-effort, same as above — a model
+      // failure must not cost us the interval reconcile that already succeeded.
+      let hwsPairs = 0;
+      let hwsRows = 0;
+      try {
+        const hws = await reconcileHwsTemperature(nowMs);
+        hwsPairs = hws.pairsProcessed;
+        hwsRows = hws.rowsWritten;
+      } catch (err) {
+        console.error("[Cron] HWS temperature reconcile failed:", err);
+      }
       return NextResponse.json({
         success: true,
         action: "reconcile",
         ...summary,
         runningPublished,
+        hwsPairs,
+        hwsRows,
         durationMs: Date.now() - startTime,
         executedAt: getNowFormattedAEST(),
       });
@@ -183,7 +207,7 @@ async function handle(request: NextRequest) {
       { status: 400 },
     );
   } catch (error) {
-    console.error("[Cron] Run-period recompute failed:", error);
+    console.error("[Cron] Derivations recompute failed:", error);
     return NextResponse.json(
       {
         success: false,

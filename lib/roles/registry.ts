@@ -118,9 +118,9 @@ export const ROLES: Record<RoleId, RoleDef> = {
   },
   // Run-tracking device role (see lib/run-tracking). Deliberately NOT in ROLE_IDS below, so it
   // does not appear in the composite editor's energy-flow panels or get composite-path-validated;
-  // it exists as a role so device_trackers.role / device_run_periods.role have an FK target and so
-  // the binary "running" entity carries HA export metadata. `ha` describes the numeric signal
-  // (power/W); `device.haDeviceClass` is the binary_sensor class.
+  // it exists so a run-detector `derivations.role` has a legal value (the CHECK covers the same six
+  // roles) and so the binary "running" entity carries HA export metadata. `ha` describes the numeric
+  // signal (power/W); `device.haDeviceClass` is the binary_sensor class.
   generator: {
     id: "generator",
     category: "source",
