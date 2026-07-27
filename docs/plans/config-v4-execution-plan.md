@@ -10,29 +10,42 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 10 (scaffolding demolition + snapshot reconciliation)
+## ▶ NEXT ACTION — Phase 11 (derivations). **Phase 10 is COMPLETE.**
 
 Phase 9's PR 1 + PR 2 merged as [#250](https://github.com/simonhac/LiveOne/pull/250). **PR 3 ("aesthetic
 changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the migration is 100% complete
-(i.e. after Phase 14), so it is not part of this plan at all. Nothing else is outstanding from Phase 9.
+(i.e. after Phase 14), so it is not part of this plan at all.
 
-**Two loose ends carried in from Phase 9 — settle both in Phase 10:**
+**✅ PHASE 10 COMPLETE (2026-07-27).** Both halves, on both environments, with both Phase-9 loose ends
+settled:
 
-1. **`rewrite-descriptor-area-refs.ts` ran on `liveone-dev` only.** No prod run is recorded; the prod
-   probe confirms 16/16 sections are still raw uuid. This is not a live break (the read-normalize in
-   `rowToDashboard` plus dual-accept `areaRefToUuid` make the code correct against both forms) but the
-   migration is unfinished and blocks the Phase-14 strict-decode tightening. **Still outstanding** — it
-   needs a prod WRITE role, so it is its own approval step.
-2. **The drizzle snapshot no longer describes the live database.** ✅ **Repaired on dev** by migration
-   0036 (see Phase 10 steps 2–5); **prod apply still outstanding**.
+- **Code half** ✅ (#251) — cutover scaffolding retired, cutover pause disarmed.
+- **Schema half** ✅ (#252, #253) — 0036–0039 applied and audit-verified on `liveone-dev` AND prod
+  `sydney`. `db:pg:generate` reports "No schema changes"; both DB-equivalence audits sit at **120
+  statements, zero unexplained, shape-identical** — that is the permanent residue. `_old` +
+  `backfill_progress` gone (4,216 MB dev / 4,140 MB prod), hot-table index names canonical, zero `_new`
+  names anywhere, boundary-guard regex simplified.
+- **`rewrite-descriptor-area-refs.ts` on prod** ✅ — the last Phase-9 loose end. Dry-run first under a
+  **read-only** role (so an accidental write would fail, not succeed silently), descriptors backed up to
+  `.context/backups/prod-descriptors-pre-arid.json`, then committed under a short-TTL write role:
+  **16/16 sections across 4 v3 dashboards rewritten raw-uuid → `ar_`**, 0 unrecognized. Verified three
+  ways — the script's own post-write re-inspect, an independent `jsonb` query (16 `ar_`, 0 raw uuid), and
+  end-to-end on live prod (shared dashboard renders; `/api/data?access=` returns live data; a bogus token
+   401s). **This unblocks the Phase-14 strict-decode tightening** (dropping the dual-accept
+  `areaRefToUuid` + `rowToDashboard` read-normalize).
 
-**Phase 10 status — SCHEMA HALF COMPLETE (2026-07-27).** Code half ✅ (#251); **0036–0039 applied and
-audit-verified on BOTH `liveone-dev` and prod `sydney`** (#252, #253). `db:pg:generate` reports "No
-schema changes"; both DB-equivalence audits sit at **120 statements, zero unexplained, shape-identical**
-— that is the permanent residue. `_old` + `backfill_progress` gone (4,216 MB dev / 4,140 MB prod),
-hot-table index names canonical, zero `_new` names anywhere, boundary-guard regex simplified.
-**Remaining for Phase 10: only the prod `rewrite-descriptor-area-refs.ts` run** (needs a write role; prod
-descriptors are still 16/16 raw uuid, which blocks the Phase-14 strict-decode tightening).
+> **Correction worth carrying:** the prod cutover ran **2026-07-26 10:51 UTC**, not 25 Jul. The 25 Jul
+> figure is migration 0035's journal `when` (its generation time); the transform was out-of-band and
+> later. `point_readings_old`'s last write — the terminal rename-swap — dates it precisely. So the `_old`
+> validation window at drop time was ~26 h, not ~2 days. Guards passed with live strictly ahead on all
+> three tables (15,664,671 vs 15,599,219 raw), and backup `fzmopfcooojg` (2.69 GB, verified `success`)
+> was taken minutes before.
+
+> 🛑 **Ordering rule, learned by breaking prod during 0037 (full detail in step 6 below).** CLAUDE.md's
+> "apply migrations to prod BEFORE the dependent code merges" is the **additive** rule. **Drops invert
+> it:** deploy the code that stops referencing the column FIRST, then drop. A projection-less
+> `.select()` expands to the columns declared in the *running* build, so any column drop is a breaking
+> change until the new build is live.
 
 > **Correction worth carrying:** the prod cutover ran **2026-07-26 10:51 UTC**, not 25 Jul. The 25 Jul
 > figure is migration 0035's journal `when` (its generation time); the transform was out-of-band and
@@ -218,10 +231,11 @@ never from migration replay. `0036_*.sql`'s header documents this and points at
      Row-count guard already satisfied: live `point_readings` 15,634,764 ≥ `point_readings_old`
      15,602,747.
    - **Prod descriptors are NOT migrated: 16/16 sections still raw uuid, 0 in `ar_` form.** So the
-     Phase-9 PR 2 data migration definitively never ran on prod. `rewrite-descriptor-area-refs.ts` must
-     run there (backup, dry-run, `--commit`) — it needs a **write** role, so it is its own approval
-     step. (Not a live break: `rowToDashboard`'s read-normalize + dual-accept `areaRefToUuid` handle
-     both forms; but it blocks the Phase-14 strict-decode tightening.)
+     Phase-9 PR 2 data migration definitively never ran on prod. **✅ RUN AND VERIFIED on prod
+     2026-07-27** — see the Phase-10-complete summary at the top: 16/16 sections rewritten to `ar_`,
+     0 unrecognized, verified by the script's post-write check, an independent `jsonb` query, and live
+     end-to-end. (Never a live break: `rowToDashboard`'s read-normalize + dual-accept `areaRefToUuid`
+     handled both forms throughout; it was blocking the Phase-14 strict-decode tightening.)
 2. **✅ DONE — fixed `schema.ts` BEFORE cutting the 0036 snapshot.** Cutting it first bakes drift in
    silently (verified: a snapshot from the old `schema.ts` contains zero occurrences of
    `area_bindings.point_uid`, so the column becomes permanently invisible to drizzle instead of
@@ -545,8 +559,10 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
   `isDashboardV3`/`isDashboardV4` branches in `dashboards.ts`, `composition.ts`, `access.ts` and
   `app/dashboard/[...slug]/page.tsx`. Retire the bridge tests (~362 LOC).
 - **Tighten to strict decode** — PR 2's deferred Commit 5: drop the dual-accept `areaRefToUuid` and the
-  `rowToDashboard` read-normalize once prod is confirmed 100% `ar_` (Phase 10). Fix the `/api/data`
-  `system.vendorSiteId` raw-uuid wire leak noted in PR 2.
+  `rowToDashboard` read-normalize. **Precondition MET**: prod was confirmed 100% `ar_` on 2026-07-27
+  (Phase 10 ran `rewrite-descriptor-area-refs.ts` there; 16/16 sections, 0 raw uuid). Re-assert before
+  dropping the scaffolding — any dashboard created between then and now must also be `ar_`. Fix the
+  `/api/data` `system.vendorSiteId` raw-uuid wire leak noted in PR 2.
 - **Queued card work, unblocked here:** port the standalone HWS 7-day stripe (`/labs/kinkora-hws`) to a
   generic `daily-stripe` card and the selectable-series heatmap (`/device/{id}/heatmap`) to a `heatmap`
   card — deliberately deferred until the registries are unified, because building them v3-shaped would
