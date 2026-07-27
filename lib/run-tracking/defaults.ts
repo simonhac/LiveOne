@@ -1,7 +1,7 @@
 /**
- * Per-role detector defaults — the behaviour knobs a `device_trackers` row inherits when its
- * own column is null. The threshold bounds (lower/upper) have no sensible default and are always
- * per-instance; these cover the anti-flap / boundary behaviour only.
+ * Per-role detector defaults — the behaviour knobs a run-detector `derivations` row inherits for
+ * any key absent from its sparse `params`. The threshold bounds (lower/upper) have no sensible
+ * default and are always per-instance; these cover the anti-flap / boundary behaviour only.
  *
  * Generator defaults reproduce the legacy generator-events behaviour (120s coalescing, no
  * hysteresis, edge boundaries, no min-run) so the cutover is observable as "same events, now

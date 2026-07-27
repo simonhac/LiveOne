@@ -1,5 +1,5 @@
 /**
- * The read half of the sparse-params contract (the write half is `fill-map.ts`).
+ * The sparse-params contract.
  *
  * `derivations.params` stores only what was explicitly configured; everything else inherits the
  * per-role detector defaults. Keeping the merge here — pure, DB-free — means the inheritance rule

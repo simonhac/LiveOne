@@ -3,15 +3,15 @@
  * layer for every kind of derived signal (config-v4 Phase 11).
  *
  * A derivation is config that computes a new signal from existing points (clean-sheet §4.4):
- * `output='intervals'` → run/event periods in `derived_intervals` (was `device_trackers` +
- * `device_run_periods`); `output='point'` → a derived point in the readings pipeline (the HWS
- * model, previously discovered by scanning `point_info` for a `load.hws/temperature` row).
+ * `output='intervals'` → run/event periods in `derived_intervals`; `output='point'` → a derived
+ * point in the readings pipeline (the HWS model, previously discovered by scanning `point_info` for
+ * a `load.hws/temperature` row).
  *
  * Two conventions worth knowing:
  *
  * - **`params` is SPARSE.** A key is present only when it was explicitly configured; anything
- *   absent inherits the per-role code defaults (`lib/run-tracking/defaults.ts`), exactly as a NULL
- *   `device_trackers` column did. Thresholds are always explicit — they have no sensible default.
+ *   absent inherits the per-role code defaults (`lib/run-tracking/defaults.ts`). Thresholds are
+ *   always explicit — they have no sensible default.
  * - **`source_points` holds raw uuids**, not the legacy `(system_id, index)` address pair. They are
  *   `points.id` values, so a consumer encodes straight to a `PointId` and hands it to the DAO — no
  *   `RegistryCache.pointForAddr` round-trip, and a point rename can't break the wiring.

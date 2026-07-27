@@ -288,6 +288,13 @@
       "when": 1785162257381,
       "tag": "0040_derived_intervals_cascade",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1785166351918,
+      "tag": "0041_drop_legacy_tracker_tables",
+      "breakpoints": true
     }
   ]
 }
