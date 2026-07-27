@@ -118,7 +118,7 @@ describe("prod→dev readings transfer", () => {
     // derivations.area_id is a NOT NULL FK, so areas must land first.
     expect(names.indexOf("areas")).toBeLessThan(names.indexOf("derivations"));
     // Its id is deterministic (uuidv5 over area/kind/role), identical in both environments — so it
-    // upserts by PK, unlike the natural-key/excludeCols dance device_trackers needed.
+    // upserts by PK, with no natural-key/excludeCols dance.
     expect(manifest.find((t) => t.name === "derivations")).toMatchObject({
       mode: "full",
       onConflict: "update",

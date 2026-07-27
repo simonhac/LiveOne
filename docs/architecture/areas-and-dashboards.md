@@ -242,8 +242,8 @@ Read-only over the stable semantic layer; independent of Phase 2.
 
 The old roadmap listed "drop `areas.legacy_system_id` + the integer `system_id` handles" as cleanup. It is
 **not** cleanup: `legacy_system_id` is the **load-bearing integer addressing seam** for composites — it
-backs `SystemsManager.getSystem(n)`, the `latest:system:N` KV keyspace, the `device_run_periods` /
-`device_trackers` keys, and `dashboards.system_id`. Composites have no `systems` row, so this integer
+backs `SystemsManager.getSystem(n)`, the `latest:system:N` KV keyspace, and `dashboards.system_id`.
+Composites have no `systems` row, so this integer
 handle (via `synthesizeCompositeSystem`) is _how they are addressed at all_. Removing it means moving every
 caller to UUID (`area.id`) addressing and re-keying the KV space and those tables — a multi-week
 rearchitecture with no current driver. Treat the integer handle as a deliberate, stable part of the design;

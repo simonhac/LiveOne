@@ -10,7 +10,7 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 11 (derivations). **Phase 10 is COMPLETE.**
+## ▶ NEXT ACTION — Phase 11 PR 2: apply migration 0041. **Phase 10 COMPLETE; Phase 11 PR 1 LIVE.**
 
 Phase 9's PR 1 + PR 2 merged as [#250](https://github.com/simonhac/LiveOne/pull/250). **PR 3 ("aesthetic
 changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the migration is 100% complete
@@ -511,19 +511,67 @@ deleted afterwards; read-only role for the probe/backup, write role only for the
 - Prod stayed healthy throughout (`/api/health` 200); the running build reads `device_run_periods`
   and never touches these tables.
 
+**✅ PR 1 MERGED AND LIVE ON PROD** ([#256](https://github.com/simonhac/LiveOne/pull/256), 2026-07-27
+14:54 UTC). Verified on prod: the old `/api/cron/run-periods` 404s, `/api/cron/derivations` is on the
+minutely schedule in `vercel.json`, `/api/health` 200.
+
+**✅ Daylesford regenerated from musher-start (2026-07-28).** Probed prod under a short-TTL read-only
+`pscale role` (reassigned + deleted afterwards): exactly **one** enabled run detector, signal point
+`e149f15f-…` = system 14 index 3 **Engine Speed**, params `upperW:100 / delayOff:240` — i.e. prod's
+fill really did take the re-pointed DSE tracker. Signal readings run `2026-07-11 07:39:48Z` →
+now, 288 samples/day. Backed up all 78 intervals to
+`.context/backups/prod-derived-intervals-pre-regen.json`, then
+`action=regenerate&start=2026-07-11&end=2026-07-27` → `rowsPurged:3, rowsInserted:3`.
+
+Diff, pre vs post: **exactly one row changed** — 22 Jul `01:46:19–02:16:18` (proxy-derived: max/avg
+power **−1156 / −3723 W**, the Selectronic grid signal) became `01:50:00–02:18:00` (DSE-derived,
+1551 rpm, 1.537 kWh). The 26 + 27 Jul runs were already DSE-detected and came back byte-identical;
+everything before 11 Jul (75 rows back to 2025-09-03) is untouched. Daily Engine-Speed rollups confirm
+only three days since musher-start have any `value > 100` samples, so three runs is complete, not
+truncated. End-to-end: `/api/system/1/run-periods?last=30d` on live prod returns 200 with the new
+22 Jul boundaries.
+
+> ⚠️ **Surfaced here, pre-existing, NOT introduced by the regenerate — and not cosmetic.** The
+> detector is still `signalKind: "power-threshold"`, so a run's signal statistics land in the
+> `*_power_w` columns; with an rpm signal the generator card now shows ~1.5 kW (rpm ÷ 1000) against a
+> true 2–3.3 kW. A wrong number, not a mislabel. Written up in full, with the fix, under
+> **Open follow-up — run-interval statistics assume the signal IS power** at the end of this file.
+
 **Still TODO**
 
-1. Merge + deploy PR 1. The first minutely `/api/cron/derivations` pass reconciles the trailing 6h,
-   healing anything the old build wrote to `device_run_periods` between the fill and the deploy.
-   If more than ~6h elapse, heal explicitly with `action=aggregate&last=Nd`.
-   ⚠️ Do NOT re-run the fill after deploying — it refuses by design (`assertNotAlreadyLive`).
-2. **Regenerate Daylesford from musher-start** (Simon, 2026-07-28): find `MIN(measurement_time)` of the
-   DSE signal point, then `action=regenerate&start=…&end=…` on the new cron route.
-3. Soak ~1 day, then PR 2: drop both legacy tables (migration 0041) — code first, per the drop rule.
+1. Soak, then apply migration **0041** — code first, per the drop rule: merge + deploy PR 2, confirm
+   prod is serving the new build, then `db:pg:migrate` against `sydney`, then `liveone-dev`.
 
-**Done when:** run periods for the Daylesford genset and the Kinkora HWS series are byte-identical
-before/after on `liveone-dev`; the run-periods route and the generator-runs card render unchanged; both
-legacy tables are gone; `point_info` has exactly one remaining FK child (`area_bindings`).
+> 🛑 **The prod→dev sync is DOWN and has been since ~2026-07-25** (found 2026-07-28 while checking
+> post-merge state; Simon's call: proceed with the regenerate + PR 2 first, fix it in Phase 12).
+> `liveone-dev` is frozen — its copy of the DSE signal point stops at `2026-07-25 03:40Z`. Two causes
+> in sequence: (a) **resolved** — schema preflight mismatch, prod-only `point_readings_new_pkey` /
+> `pr_new_created_at_idx`, i.e. 0039 was on dev before prod; prod 0039 landed later on 27 Jul and the
+> 15:15Z run cleared preflight. (b) **current blocker** — `update or delete on table "areas" violates
+foreign key constraint "devices_primary_area_id_areas_id_fk"`. This is precisely the deferred
+> follow-up at `lib/readings/prod-dev-sync.ts:162-171`: post-cutover, drifted dev areas own real
+> `devices`, and `devices.primary_area_id` is NOT NULL/RESTRICT, so idDrift's clear-and-delete can't
+> proceed. Six dev areas are drifted, each owning one device — legacy handles **15, 16, 10000, 10001,
+> 10002, 10003** (all uuid-prefixed `019f97ba-…`). **Consequence: until this is fixed, no dev-side
+> check is evidence about prod.** Dev's Daylesford derivation still describes the retired Selectronic
+> proxy simply because it hasn't synced. Phase 12 should treat this as its first item, not a footnote.
+
+**PR 2 (built 2026-07-28, not yet applied to any database).** Code-only removal plus a guarded drop:
+
+- Deleted `scripts/config-v4/{fill,verify}-derivations.ts`, `lib/derivations/fill-map.ts` + its test
+  (the fill script was their only consumer), and the `deviceTrackers` / `deviceRunPeriods` tables +
+  their four `$inferSelect`/`$inferInsert` type exports from `schema.ts`. Comment touch-ups in
+  `lib/derivations/{resolve,params}.ts`, `lib/run-tracking/defaults.ts`, the prod-dev-sync test, and
+  the two `docs/architecture/` files. `lib/run-tracking/` and `lib/readings/prod-dev-sync.ts` needed
+  no change — already fully on `derived_intervals` / `derivations`.
+- **`0041_drop_legacy_tracker_tables.sql`** — drizzle emitted a bare `DROP TABLE … CASCADE`; replaced
+  with a `DO`/`RAISE EXCEPTION` coverage guard (`derived_intervals` row count ≥ `device_run_periods`,
+  and its `max(start_time)` not trailing) and `DROP TABLE IF EXISTS` **without** `CASCADE`, so an
+  unexpected dependent aborts instead of being silently removed. Idempotent.
+- Green: `tsc` (app + `scripts/config-v4`), 128 suites / 1243 tests, `check:readings`, `build:local`.
+
+**Done when:** the run-periods route and the generator-runs card render unchanged; both legacy tables
+are gone; `point_info` has exactly one remaining FK child (`area_bindings`).
 
 **Risks:** a silent re-key error would corrupt derived daily history. Gate on a recompute-and-compare
 over a multi-week window, not a spot check.
@@ -558,7 +606,9 @@ phase and the one that finally deletes the dark mirror.
 - **Drop `user_systems` and `isViewer`** (7 query sites; `isViewer` is confined to `lib/api-auth.ts` and
   only feeds `canRead`), and drop `roles` — `area_bindings_role_check` from migration 0032 already
   enforces the 6-role set, and Phase 11 removed the other FKs.
-- **Fix the deferred prod→dev sync hazard** (Phase 9 PR 1's flagged follow-up): the `areas` `idDrift` step
+- **Fix the deferred prod→dev sync hazard — DO THIS FIRST; it is no longer theoretical.** As of
+  2026-07-25 it breaks every sync run, so `liveone-dev` is frozen and unusable as a rehearsal target
+  (see the Phase 11 note above). The `areas` `idDrift` step
   can't realign a drifted area that owns real `devices`/`points`, because `devices.primary_area_id` and
   `derivations.area_id` are NOT NULL/RESTRICT while `area_bindings` can cross-reference a point owned by a
   device under a _different_ area — a naive clear-and-delete destroys other areas' live bindings. It
@@ -710,3 +760,39 @@ independently revertible.
   still holds for any future windowed operation.
 - **KV is a disposable cache** — rebuild from PG rather than migrating it.
 - Run `npm run build:local && npm run type-check` before every commit.
+
+---
+
+## Open follow-up — run-interval statistics assume the signal IS power
+
+**Not scheduled to a phase yet.** Found 2026-07-28 while verifying the Daylesford regenerate.
+
+`derived-intervals-pg.ts:159-161` writes `max_power_w` / `min_power_w` / `avg_power_w` as statistics
+of the **signal series**, whatever that signal happens to be — they have never been tied to a power
+point. That held while the Daylesford detector pointed at Selectronic grid power. Since the 27 Jul
+re-point to **DSE Engine Speed**, those columns hold **rpm**, and
+`components/GeneratorClient.tsx:139-140` renders `avgPowerW` straight into the runs table as
+`${Math.abs(v)/1000} kW`. So every Daylesford run now displays ~1.5 kW — engine rpm ÷ 1000 — against
+a true average of 2–3.3 kW:
+
+| run    | shown  | actual (`energy_kwh` ÷ `duration_seconds`) |
+| ------ | ------ | ------------------------------------------ |
+| 22 Jul | 1.5 kW | 3.29 kW                                    |
+| 26 Jul | 1.5 kW | 2.69 kW                                    |
+| 27 Jul | 1.5 kW | 2.08 kW                                    |
+
+This is a **wrong number on the card, not a mislabel**, and it is a regression from the DSE re-point —
+not from Phase 11, which preserved the existing behaviour exactly. `energy_kwh` and
+`duration_seconds` are unaffected: energy comes from the separate `source_points.energy` point.
+
+**Cheap fix, no schema change** — in `app/api/system/[systemId]/run-periods/route.ts:39`, derive
+avg power as `energyKwh / durationSeconds` instead of passing the signal statistic through. Correct
+for any `signalKind`. The sibling `minPowerKw` / `maxPowerKw` (route.ts:32-33) have **no UI consumer**
+(only the route itself references them), so they can be dropped from the response at the same time —
+note their deliberate min/max swap only makes sense for a negative import signal, so they read
+inverted for a positive one anyway.
+
+**Proper fix, belongs in a phase** — either rename the columns to something signal-neutral carrying a
+unit, or add a `signalKind: "value-threshold"` alongside `"power-threshold"` so a non-power signal can
+never be presented as power. Phase 14 is the natural home, since that is where the run-periods card
+goes v4-native; the API-side patch above is worth doing before then regardless.
