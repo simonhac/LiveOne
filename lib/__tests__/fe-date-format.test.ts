@@ -1,5 +1,8 @@
 import { describe, it, expect } from "@jest/globals";
-import { formatHoursAsDuration } from "@/lib/fe-date-format";
+import {
+  formatHoursAsDuration,
+  formatSecondsAsDuration,
+} from "@/lib/fe-date-format";
 
 describe("formatHoursAsDuration", () => {
   it("shows 0h for exactly zero", () => {
@@ -26,5 +29,25 @@ describe("formatHoursAsDuration", () => {
     expect(formatHoursAsDuration(25.1)).toBe("1d1h");
     expect(formatHoursAsDuration(24)).toBe("1d0h");
     expect(formatHoursAsDuration(30.5)).toBe("1d6h");
+  });
+});
+
+describe("formatSecondsAsDuration", () => {
+  it("shows hours and minutes together", () => {
+    expect(formatSecondsAsDuration(9000)).toBe("2h 30m");
+  });
+
+  it("shows minutes alone under an hour", () => {
+    expect(formatSecondsAsDuration(2700)).toBe("45m");
+  });
+
+  it("drops the minutes on a whole hour", () => {
+    expect(formatSecondsAsDuration(10800)).toBe("3h");
+  });
+
+  it("rounds to the nearest minute", () => {
+    expect(formatSecondsAsDuration(0)).toBe("0m");
+    expect(formatSecondsAsDuration(29)).toBe("0m");
+    expect(formatSecondsAsDuration(31)).toBe("1m");
   });
 });
