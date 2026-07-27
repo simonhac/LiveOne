@@ -54,7 +54,7 @@ export const PREFLIGHTS: { name: string; sql: string; why: string }[] = [
     name: "systems with no legacy_handles row",
     sql: `SELECT count(*) FROM systems s
            WHERE NOT EXISTS (SELECT 1 FROM legacy_handles lh WHERE lh.handle = s.id AND lh.device_id IS NOT NULL)`,
-    why: "devices is populated by joining legacy_handles; an unmapped system is silently dropped and only the row-count guard would notice — run backfill-foundation.ts --commit first",
+    why: "devices is populated by joining legacy_handles; an unmapped system is silently dropped and only the row-count guard would notice — mint the missing handle via DeviceRegistry.ensureDeviceForHandle first (the bulk backfill-foundation.ts one-shot was retired in Phase 10)",
   },
   {
     name: "point_info rows whose system has no legacy_handles mapping",

@@ -38,8 +38,9 @@ export async function ensureAreaMember(
 
 /**
  * Handles of active explicit Areas that are eligible to own an energy-flow matrix (a Sankey). Flow is an
- * Area-only concept: a raw device never gets its own matrix. The legacy implied area rows are retired by
- * `scripts/cleanup/retire-implied-areas.ts`, so this enumerates `areas` directly and only keeps the
+ * Area-only concept: a raw device never gets its own matrix. Config-v4 keeps the implied areas-of-one
+ * (decision "Option A" — deleting them would destroy their uuid-keyed flow/provenance history), so this
+ * enumerates `areas` directly and keeps the
  * duplicate-prevention guard: if an area's integer handle is itself a member device of another active
  * Area, the parent Area owns the flow view. The caller maps these through `resolveLogicalSystem` +
  * `isComplete`, so an Area that lacks a source/load role set still drops out. SQL-only (no resolver import).
