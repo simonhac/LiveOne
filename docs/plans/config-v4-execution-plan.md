@@ -791,14 +791,33 @@ This is a **wrong number on the card, not a mislabel**, and it is a regression f
 not from Phase 11, which preserved the existing behaviour exactly. `energy_kwh` and
 `duration_seconds` are unaffected: energy comes from the separate `source_points.energy` point.
 
-**✅ Cheap fix — addressed in PR [#259](https://github.com/simonhac/LiveOne/pull/259) (2026-07-28), no
-schema change** — `app/api/system/[systemId]/run-periods/route.ts` `toEvent()` now derives avg power as
-`energyKwh / durationSeconds` (a dedicated energy point, correct for any `signalKind`) instead of passing
-the signal statistic through; null for an open/running period. The sibling `minPowerKw` / `maxPowerKw`
-had **no UI consumer** and were dropped from the response and the shared `RunPeriodEvent` type at the same
-time.
+**✅ FIXED 2026-07-28, no schema change.** An energy÷duration-only patch (PR #259, **closed**) was
+rejected: it produced a correct number but discarded the signal, so you could no longer see what the
+detector actually followed. Simon's rule is **follow the signal — power shows as power, rpm shows as
+rpm**. What shipped instead:
 
-**Proper fix, belongs in a phase** — either rename the columns to something signal-neutral carrying a
-unit, or add a `signalKind: "value-threshold"` alongside `"power-threshold"` so a non-power signal can
-never be presented as power. Phase 14 is the natural home, since that is where the run-periods card
-goes v4-native; the API-side patch above is worth doing before then regardless.
+- The route resolves the signal point's `display_name` / `metric_type` / `metric_unit` (one uuid-keyed
+  `point_info` read, joined to `systems` for the display registry's `vendorType` key) and returns them
+  as `signal` alongside a server-computed `columns` plan. The full-page table renders a dynamic
+  **"Avg ⟨Signal⟩ (⟨unit⟩)"** column — "Avg Engine Speed (rpm)" for Daylesford.
+- `avgPowerW` now comes from **energy ÷ duration** (a dedicated energy point, correct for any signal
+  kind). A power signal collapses the two columns into one, so a power-threshold site sees exactly the
+  table it always did.
+- 🛑 **The unit-provenance trap this uncovered.** Prod's history is **mixed-unit** and permanently so:
+  the 75 rows before 11 Jul are Selectronic **Watts** (avg −3808…−93), only the 3 regenerated rows are
+  rpm — and all of them were `detector_version = 1`, so nothing distinguished them. A dynamic "rpm"
+  header would have printed **−3723 as rpm**. `detector_version` was written but read by nothing, so it
+  became the free gate: bump the derivation to **v2**, regenerate the DSE window, and suppress
+  `avgSignal` for rows whose version doesn't match (they render "—"). `avgPowerW` is unit-stable and
+  stays populated for all history, so only the diagnostic column is sparse. Pre-11-Jul runs predate
+  musher and can never be re-derived, so this is the permanent shape until the columns carry a unit.
+- `minPowerKw` / `maxPowerKw` dropped — no UI consumer, and their min/max swap only read right for a
+  negative import signal.
+
+**Still deferred to Phase 14** — rename the `*_power_w` columns to something signal-neutral carrying a
+unit (or add `signalKind: "value-threshold"`), which is what would retire the `detector_version` gate.
+
+**Cost/emissions columns are a separate, larger piece** — see
+[run-period-provenance.md](run-period-provenance.md). Config constants only fit an off-grid generator;
+a load with time-varying intensity (EV off the grid/solar/battery) needs per-interval integration of the
+fold's blended load-path price, emissions and renewable fraction.
