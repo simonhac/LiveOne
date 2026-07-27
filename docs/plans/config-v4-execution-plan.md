@@ -365,9 +365,10 @@ again: **128 statements, zero unexplained**, matching dev.
      `ShareLinksPanel.tsx`. Project the `timestamp` columns and map to ms — which also fixes a latent
      bug: `createDashboardShareToken` only ever writes the timestamp columns, so those bigints are
      already always NULL and the panel renders blanks today;
-   - **✅ 0038 DONE on dev (`0038_drop_old_hot_tables_and_backfill_progress.sql`, 2026-07-27; PROD
-     TODO).** Freed **4,216 MB**; live tables verified intact at exactly their pre-drop counts
-     (15,355,536 / 5,533,074 / 19,400).
+   - **✅ 0038 DONE on dev AND prod (`0038_drop_old_hot_tables_and_backfill_progress.sql`,
+     2026-07-27).** Freed **4,216 MB** on dev; live tables verified intact at exactly their pre-drop
+     counts (15,355,536 / 5,533,074 / 19,400). Prod re-verified 2026-07-28 on the OBJECTS (not the
+     journal): zero `%_old` tables, no `backfill_progress`.
      - **The guard invariant is `>=`, NOT `>` — the plan's "live max beyond old's" wording is wrong.**
        On `liveone-dev` crons are disabled, so nothing has been written to the live tables since the
        cutover copy: live == `_old` exactly, same row counts AND same `max(measurement_time)`. A `>`
@@ -383,7 +384,9 @@ again: **128 statements, zero unexplained**, matching dev.
      drizzle's unguarded `DROP TABLE … CASCADE`. Precondition: Simon confirms the validation window
      has passed; R2 dumps taken before the drop contain the `_old` data (retention: daily 21d /
      weekly 91d / monthly 365d) and a one-off `pscale backup create` lands first per the checklist.
-   - **✅ 0039 DONE on dev (`0039_rename_hot_indexes_to_canonical.sql`, 2026-07-27; PROD TODO).** All
+   - **✅ 0039 DONE on dev AND prod (`0039_rename_hot_indexes_to_canonical.sql`, 2026-07-27).**
+     Prod re-verified 2026-07-28 on the OBJECTS: all nine canonical names present in `pg_indexes`,
+     zero `_new` names, hot tables intact (15.67M / 5.42M / 19.7K). All
      nine names verified free first (the `_old` drop released them), then renamed and verified against
      `pg_indexes`: `point_readings_pkey`, `pr_measurement_time_idx`, `pr_created_at_idx`, `pr5m_pkey`,
      `pr5m_interval_end_idx`, `pr5m_created_at_idx`, `pr5m_updated_at_idx`, `pr1d_pkey`,
