@@ -27,7 +27,7 @@ import { formatRelativeTime, formatDate } from "@/lib/fe-date-format";
 export interface ShareTokenRow {
   token: string;
   label: string | null;
-  createdAtMs: number;
+  createdAtMs: number | null;
   expiresAtMs: number | null;
   revokedAtMs: number | null;
   lastUsedAtMs: number | null;

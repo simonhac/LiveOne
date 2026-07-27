@@ -45,7 +45,9 @@ import { Client } from "pg";
 const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
   [
     { table: "systems", col: "owner_clerk_user_id" },
-    { table: "share_tokens", col: "owner_clerk_user_id" },
+    // NB `share_tokens.owner_clerk_user_id` was dropped by migration 0037 — share tokens are scoped by
+    // `dashboard_id` alone now, and the dashboards row is reowned below, so there is nothing to reown
+    // here. (Left as a comment because its absence is deliberate, not an oversight.)
     // Legacy per-system dashboards (and their `system_id` column) were dropped in the P6 demolition
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     // config-v4 cutover renamed clerk_user_id -> owner_user_id.

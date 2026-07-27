@@ -60,6 +60,16 @@ export interface ValidatedDashboardToken {
   dashboardId: string; // opaque `db_…` dashboard id
 }
 
+/** Wire shape returned to the share-settings panel (epoch-ms, mirroring `ShareTokenRow` there). */
+export interface ShareTokenListRow {
+  token: string;
+  label: string | null;
+  createdAtMs: number | null;
+  expiresAtMs: number | null;
+  revokedAtMs: number | null;
+  lastUsedAtMs: number | null;
+}
+
 /** Validate a token (well-formed, not revoked, not expired) → its dashboard, touching last_used. */
 export async function validateDashboardShareToken(
   token: string,
@@ -90,14 +100,42 @@ export async function validateDashboardShareToken(
   return { token: row.token, dashboardId: Dashboard.encode(row.dashboardId) };
 }
 
-export async function listDashboardShareTokens(dashboardId: string) {
+/**
+ * List a dashboard's share tokens for the settings panel.
+ *
+ * Projects EXPLICITLY and maps the `timestamp` columns to epoch-ms. It used to be a bare
+ * `.select()`, which passed every column through to the client — including the legacy `*_ms` bigints
+ * that `createDashboardShareToken` has never written. Those were therefore always NULL, so the panel
+ * showed every token as "Never expires", never showed last-used, and — because it filters on
+ * `revokedAtMs == null` — listed REVOKED tokens as active. (Auth was never affected:
+ * `validateDashboardShareToken` reads the `timestamp` columns.) Migration 0037 drops the `*_ms`
+ * columns; this projection is what decouples the UI from them.
+ */
+export async function listDashboardShareTokens(
+  dashboardId: string,
+): Promise<ShareTokenListRow[]> {
   const uuid = Dashboard.toUuidOrNull(dashboardId);
   if (!uuid) return [];
-  return requirePlanetscaleDb()
-    .select()
+  const rows = await requirePlanetscaleDb()
+    .select({
+      token: shareTokens.token,
+      label: shareTokens.label,
+      createdAt: shareTokens.createdAt,
+      expiresAt: shareTokens.expiresAt,
+      revokedAt: shareTokens.revokedAt,
+      lastUsedAt: shareTokens.lastUsedAt,
+    })
     .from(shareTokens)
     .where(eq(shareTokens.dashboardId, uuid))
     .orderBy(desc(shareTokens.createdAt));
+  return rows.map((r) => ({
+    token: r.token,
+    label: r.label,
+    createdAtMs: r.createdAt?.getTime() ?? null,
+    expiresAtMs: r.expiresAt?.getTime() ?? null,
+    revokedAtMs: r.revokedAt?.getTime() ?? null,
+    lastUsedAtMs: r.lastUsedAt?.getTime() ?? null,
+  }));
 }
 
 /** Revoke a token, scoped to its dashboard (the route verifies the caller owns that dashboard). */
