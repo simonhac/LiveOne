@@ -79,10 +79,10 @@ async function renderCompositionDashboard(
   const descriptor: DashboardV3 = isDashboardV3(raw)
     ? raw
     : { version: 3, sections: [] };
-  // Dual-shape render window (§8, Phase 5): a dashboard carrying a v4 `doc` renders the v4 node tree
+  // Dual-shape render window (§8): a dashboard carrying a v4 `doc` renders the v4 node tree
   // (DashboardV4View, branched inside DashboardClient); area resolution + data seeding below stay
-  // shape-aware via `dashboardAreaUuids`. DARK — no dashboard has a `doc` yet, so `v4doc` is null in
-  // production and the v3 path is unchanged.
+  // shape-aware via `dashboardAreaUuids`. Since the Phase 8/10 cutover `dashboards.doc` is NOT NULL,
+  // so this is the live path; the v3 fallback survives only for a doc that fails the shape guard.
   const v4doc = isDashboardV4(dashboard.doc) ? dashboard.doc : null;
   const v4DeviceIds = v4doc ? collectRefs(v4doc).devices : [];
   const readableDevices: ReadableDevice[] =

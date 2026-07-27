@@ -12,6 +12,7 @@ import type { TileView } from "@/lib/dashboard/v3";
 import type { TileV3 } from "@/lib/dashboard/v3";
 import type { CardPlugin } from "./types";
 import { staleThreshold, TileSkeleton, useAreaDatum } from "./shared";
+import { TILE_GRID_CONTAINER, tileGridClass } from "@/lib/dashboard/tile-grid";
 
 function tileKeyV3(t: TileV3, i: number): string {
   return t.id ?? `${t.view}-${t.deviceSystemId ?? "self"}-${i}`;
@@ -68,19 +69,21 @@ function TilesCard({
   const visible = (card.tiles ?? []).filter((t) => !t.hidden);
   if (visible.length === 0) return null;
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 lg:gap-4 auto-rows-fr px-1">
-      {visible.map((t, i) =>
-        handle == null ? (
-          <TileSkeleton key={tileKeyV3(t, i)} />
-        ) : (
-          <TileCell
-            key={tileKeyV3(t, i)}
-            view={t.view}
-            deviceSystemId={t.deviceSystemId}
-            handleSystemId={handle}
-          />
-        ),
-      )}
+    <div className={TILE_GRID_CONTAINER}>
+      <div className={tileGridClass(visible.length)}>
+        {visible.map((t, i) =>
+          handle == null ? (
+            <TileSkeleton key={tileKeyV3(t, i)} />
+          ) : (
+            <TileCell
+              key={tileKeyV3(t, i)}
+              view={t.view}
+              deviceSystemId={t.deviceSystemId}
+              handleSystemId={handle}
+            />
+          ),
+        )}
+      </div>
     </div>
   );
 }

@@ -1,20 +1,21 @@
 "use client";
 
 /**
- * config-v4 dashboard renderer — the recursive v4 node tree (Phase 5, DARK).
+ * config-v4 dashboard renderer — the recursive v4 node tree. This is the LIVE renderer: since the
+ * Phase 8/10 cutover `dashboards.doc` is NOT NULL, so `DashboardClient` always takes this branch.
  *
  * `<DashboardV4View doc>` renders a v4 document (clean-sheet §8) by recursing `<NodeView>`:
- *   - `group` → a flex layout container; a group with `heading` + a resolved `area` renders the area
- *     header (a v3 "section"); a `row` group is a v3 "tiles" grid. Its direct card children that are
- *     chart/sankey collapse into ONE <SiteChartsGroup> (the v3 two-pass collapse, ported here and keyed
- *     on the GROUP's area handle).
+ *   - `group` → a layout container; a group with `heading` + a resolved `area` renders the area
+ *     header (a v3 "section"); a `row` group is a v3 "tiles" grid — an `@container` grid of equal
+ *     columns (lib/dashboard/tile-grid.ts). Its direct card children that are chart/sankey collapse
+ *     into ONE <SiteChartsGroup> (the v3 two-pass collapse, ported here and keyed on the GROUP's
+ *     area handle).
  *   - `card` → dispatched by type: a promoted tile view renders a self-fetching tile cell; a v3 card
  *     type renders the UNCHANGED v3 `CardPlugin` via the v4→v3 adapter (lib/dashboard/v4-adapt.ts);
  *     an unknown type renders a labelled placeholder (§8.4).
  *
- * Context (`area`/`device`) inherits down the tree (§8.1). Nothing in the live path renders v4 yet
- * (no dashboard has a `doc`); the two v3 registries are reused untouched. Layout is structurally
- * correct; pixel parity with v3 is tuned once real v4 docs render (Phase 6+).
+ * Context (`area`/`device`) inherits down the tree (§8.1); the two v3 registries are reused untouched.
+ * `GroupNode.size` (the 12-column hint) is still unread here — layout is child order + group flow.
  */
 import type React from "react";
 import type { ReactNode } from "react";
@@ -50,6 +51,11 @@ import {
   synthSectionV3,
   v4CardRenderKind,
 } from "@/lib/dashboard/v4-adapt";
+import {
+  TILE_GRID_CONTAINER,
+  tileGridClass,
+  tileRowClass,
+} from "@/lib/dashboard/tile-grid";
 
 function areaUuidOf(id: AreaId): string | null {
   try {
@@ -280,11 +286,26 @@ function GroupNodeView({
       );
     });
 
-  const isRow = node.direction === "row";
-  const layoutClass = isRow
-    ? `flex flex-row ${node.wrap ? "flex-wrap" : ""} gap-2 lg:gap-4`
-    : "flex flex-col gap-4";
-  const inner = <div className={layoutClass}>{body}</div>;
+  // A `row` group is a GRID of equal columns, not a flex row: flex items size to max-content, which
+  // leaves tiles ragged and collapses the ones that size themselves from their own `@container`
+  // queries (Amber/Tesla small cards) onto their `min-w` floor. Column count comes from the rendered
+  // child count and the container's width — see lib/dashboard/tile-grid.ts.
+  const inner =
+    node.direction === "row" ? (
+      <div className={TILE_GRID_CONTAINER}>
+        <div
+          className={
+            node.wrap === false
+              ? tileRowClass()
+              : tileGridClass(body.filter(Boolean).length)
+          }
+        >
+          {body}
+        </div>
+      </div>
+    ) : (
+      <div className="flex flex-col gap-4">{body}</div>
+    );
 
   if (node.heading && area) {
     return (
