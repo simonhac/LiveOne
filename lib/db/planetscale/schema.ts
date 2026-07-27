@@ -302,8 +302,13 @@ export const pointReadings = pgTable(
   {
     // ⚠️ config-v4 CUTOVER SHAPE — the (point_rid, time) twin from config-transform stage 4. The composite
     // (system_id, point_id) address AND the serial `id` are gone; rows key on the internal `point_rid` (a
-    // FK → points.rid). Only the readings seam (lib/readings/**) imports this. Index/constraint names keep
-    // the `_new` suffix through Phase 8 (renamed to canonical in Phase 9).
+    // FK → points.rid). Only the readings seam (lib/readings/**) imports this.
+    //
+    // The index/PK names below keep the transform's `_new` suffix, and they are CORRECT — they match the
+    // live DB. They cannot be renamed to canonical until the `_old` tables are dropped: index and
+    // PK-constraint names are schema-GLOBALLY unique in Postgres, and `point_readings_old` still owns
+    // `point_readings_pkey` / `pr_measurement_time_idx` / `pr_created_at_idx`, so an early rename is a
+    // 42P07. Migration 0038 drops `_old`; 0039 then renames these to canonical.
     pointRid: integer("point_rid")
       .notNull()
       .references(() => points.rid),
@@ -560,33 +565,22 @@ export type NewBatteryProvenanceDailyRow =
 // (mirrors the legacy `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
 // ============================================================================
-export const shareTokens = pgTable(
-  "share_tokens",
-  {
-    // ⚠️ config-v4 CUTOVER SHAPE — the UNIFIED per-dashboard share token. Transform stage 5d folds
-    // dashboard_share_tokens in 1:1 (epoch-ms → naive-UTC `timestamp`), re-points the last legacy
-    // owner-scoped row at an auto-created dashboard, then flips dashboard_id NOT NULL. The legacy
-    // owner_clerk_user_id + the *_ms columns are RETAINED (NOT-NULL dropped) and die in Phase 9.
-    token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
-    dashboardId: uuid("dashboard_id")
-      .notNull()
-      .references(() => dashboards.id, { onDelete: "cascade" }),
-    label: text("label"),
-    createdAt: timestamp("created_at"),
-    expiresAt: timestamp("expires_at"),
-    revokedAt: timestamp("revoked_at"),
-    lastUsedAt: timestamp("last_used_at"),
-    // Phase-9 legacy columns (NOT-NULL dropped by 5d; dropped entirely in Phase 9).
-    ownerClerkUserId: text("owner_clerk_user_id"),
-    createdAtMs: bigint("created_at_ms", { mode: "number" }),
-    expiresAtMs: bigint("expires_at_ms", { mode: "number" }),
-    revokedAtMs: bigint("revoked_at_ms", { mode: "number" }),
-    lastUsedAtMs: bigint("last_used_at_ms", { mode: "number" }),
-  },
-  (table) => ({
-    ownerIdx: index("share_tokens_owner_idx").on(table.ownerClerkUserId),
-  }),
-);
+export const shareTokens = pgTable("share_tokens", {
+  // ⚠️ config-v4 CUTOVER SHAPE — the UNIFIED per-dashboard share token. Transform stage 5d folded
+  // dashboard_share_tokens in 1:1 (epoch-ms → naive-UTC `timestamp`), re-pointed the last legacy
+  // owner-scoped row at an auto-created dashboard, then flipped dashboard_id NOT NULL. The legacy
+  // owner_clerk_user_id + the *_ms columns were retained through the cutover and are DROPPED by
+  // migration 0037 — the `timestamp` columns below are the sole source of truth.
+  token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
+  dashboardId: uuid("dashboard_id")
+    .notNull()
+    .references(() => dashboards.id, { onDelete: "cascade" }),
+  label: text("label"),
+  createdAt: timestamp("created_at"),
+  expiresAt: timestamp("expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  lastUsedAt: timestamp("last_used_at"),
+});
 
 // ============================================================================
 // Observations outbox - the transactional "PG bin before the queue" (Phase 4).
@@ -684,34 +678,10 @@ export const dashboards = pgTable(
   }),
 );
 
-// ============================================================================
-// Dashboard share tokens (P4) - read-only public links scoped to ONE dashboard.
-//
-// Distinct from the legacy `share_tokens` (which is owner-scoped to all the owner's systems and has
-// no GET consumption). A holder of a valid token gets read access to exactly the points that
-// dashboard's data exposes (resolved Dashboard → Area → area_bindings; see lib/dashboard/access.ts),
-// never general system access. Same 3-word phrase + epoch-ms convention as `share_tokens`.
-// ============================================================================
-// ⚠️ config-v4: SUPERSEDED by the unified `share_tokens` (transform stage 5d folds these rows in 1:1).
-// The table survives Phase 8 (dropped in Phase 9) but is no longer written/read by the app, and its FK to
-// dashboards is dropped by the swap (dashboards.id is now uuid, this dashboard_id stays the frozen int).
-export const dashboardShareTokens = pgTable(
-  "dashboard_share_tokens",
-  {
-    token: text("token").primaryKey(), // 3-word phrase, e.g. "leaping-fizzy-wombat"
-    dashboardId: integer("dashboard_id").notNull(),
-    label: text("label"),
-    createdAtMs: bigint("created_at_ms", { mode: "number" }).notNull(),
-    expiresAtMs: bigint("expires_at_ms", { mode: "number" }),
-    revokedAtMs: bigint("revoked_at_ms", { mode: "number" }),
-    lastUsedAtMs: bigint("last_used_at_ms", { mode: "number" }),
-  },
-  (table) => ({
-    dashboardIdx: index("dashboard_share_tokens_dashboard_idx").on(
-      table.dashboardId,
-    ),
-  }),
-);
+// NOTE: `dashboard_share_tokens` (the P4 per-dashboard link table) was SUPERSEDED by the unified
+// `share_tokens` — config-transform stage 5d folded its rows in 1:1 — and is dropped by migration 0037.
+// It had zero query sites and no type exports by then. The functions still NAMED
+// `*DashboardShareToken*` in lib/dashboard/sharing.ts operate on `share_tokens`, not on this table.
 
 // ============================================================================
 // Dashboard grants (P4) - per-dashboard membership (invite a person to a dashboard).
@@ -724,14 +694,13 @@ export const dashboardGrants = pgTable(
     // ⚠️ config-v4 CUTOVER SHAPE — transform stage 5d: dashboard_id int→uuid, clerk_user_id→user_id,
     // created_at_ms→created_at (naive UTC), role narrowed to admin|viewer (owner→admin), the surrogate
     // `id` dropped, and the (dashboard_id, user_id) unique index promoted to the composite PK
-    // `dashboard_grants_pk`. created_at_ms is retained (NOT-NULL dropped) → dropped in Phase 9.
+    // `dashboard_grants_pk`. created_at_ms was retained through the cutover and is dropped by 0037.
     dashboardId: uuid("dashboard_id")
       .notNull()
       .references(() => dashboards.id, { onDelete: "cascade" }),
     userId: text("user_id").notNull(),
     role: text("role").notNull(), // 'admin' | 'viewer'
     createdAt: timestamp("created_at").notNull(),
-    createdAtMs: bigint("created_at_ms", { mode: "number" }),
   },
   (table) => ({
     pk: primaryKey({
@@ -863,6 +832,12 @@ export const areaBindings = pgTable(
     metricType: text("metric_type").notNull(), // from point_info: 'power' | 'soc' | 'energy' | 'rate' ...
     pointSystemId: integer("point_system_id").notNull(), // the CHILD physical system
     pointId: integer("point_id").notNull(), // (point_system_id, point_id) → point_info(system_id, id)
+    // config-v4 forward seam: the uuid address of the same point the (point_system_id, point_id) pair
+    // names. Added ADDITIVELY by config-transform stage 5 and fully populated (72/72 on both dev and
+    // prod), but it went in out-of-band, so it was a LIVE column drizzle knew nothing about until
+    // migration 0036 declared it here. Nullable until Phase 12 re-points the binding at `points` by
+    // uuid and drops the int pair. Plain NO ACTION: deleting a `points` row is BLOCKED, not cascaded.
+    pointUid: uuid("point_uid").references(() => points.id),
     ordinal: integer("ordinal").notNull(),
     // Config-v4 selection order. Unlike ordinal (which stabilizes the legacy KV subscriber index),
     // priority is scoped to one (area, role, metric) slot and survives cutover. Lowest wins.
@@ -1070,7 +1045,10 @@ export const derivations = pgTable(
     name: text("name").notNull(),
     enabled: boolean("enabled").notNull().default(true),
     output: text("output").notNull(), // CHECK ('point'|'intervals') below
-    outputPointId: uuid("output_point_id"), // FK → points(id) DEFERRED to cutover (points not minted yet)
+    // FK → points(id): deferred at 0033 (points was empty), then WIRED by config-transform stage 5.
+    // Declared here by migration 0036 — the constraint has been live since the cutover; leaving it
+    // undeclared made drizzle want to DROP it on the next generate.
+    outputPointId: uuid("output_point_id").references(() => points.id),
     params: jsonb("params").notNull(), // typed per kind: thresholds/hysteresis/delays | model constants
     sourcePoints: jsonb("source_points").notNull(), // typed point refs (signal, energy, …) by uuid
     detectorVersion: integer("detector_version").notNull().default(1),
@@ -1145,13 +1123,14 @@ export const dashboardRevisions = pgTable(
 
 // legacy_handles: permanent compat shim mapping every old integer handle (systems.id AND
 // areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (area first, else device).
-// Frozen at cutover. device_id is bare uuid (FK → devices(id) DEFERRED — devices not minted yet);
-// area_id → areas(id) IS wired (areas is already uuid).
+// Frozen at cutover. Both FKs are wired: area_id → areas(id) from the start, and device_id →
+// devices(id) since config-transform stage 5 minted devices. The device FK was declared here by
+// migration 0036 — it had been live but undeclared, so drizzle wanted to DROP it on the next generate.
 export const legacyHandles = pgTable(
   "legacy_handles",
   {
     handle: integer("handle").primaryKey(), // old systems.id or areas.legacy_system_id
-    deviceId: uuid("device_id"), // FK → devices(id) DEFERRED to cutover
+    deviceId: uuid("device_id").references(() => devices.id),
     areaId: uuid("area_id").references(() => areas.id),
   },
   (table) => ({

@@ -18,11 +18,25 @@ changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the m
 
 **Two loose ends carried in from Phase 9 — settle both in Phase 10:**
 
-1. **`rewrite-descriptor-area-refs.ts` ran on `liveone-dev` only.** No prod run is recorded. Prod
-   descriptors may still hold raw area uuids. This is not a live break (the read-normalize in
+1. **`rewrite-descriptor-area-refs.ts` ran on `liveone-dev` only.** No prod run is recorded; the prod
+   probe confirms 16/16 sections are still raw uuid. This is not a live break (the read-normalize in
    `rowToDashboard` plus dual-accept `areaRefToUuid` make the code correct against both forms) but the
-   migration is unfinished and blocks the Phase-14 strict-decode tightening.
-2. **The drizzle snapshot no longer describes the live database.** See Phase 10.
+   migration is unfinished and blocks the Phase-14 strict-decode tightening. **Still outstanding** — it
+   needs a prod WRITE role, so it is its own approval step.
+2. **The drizzle snapshot no longer describes the live database.** ✅ **Repaired on dev** by migration
+   0036 (see Phase 10 steps 2–5); **prod apply still outstanding**.
+
+**Phase 10 status (2026-07-27):** code half ✅ (#251). Schema half: **0036 applied and audit-verified on
+BOTH `liveone-dev` and prod `sydney`** — `db:pg:generate` reports "No schema changes" and both
+DB-equivalence audits are clean (132 statements, zero unexplained, shape-identical). **0037 applied and
+verified on dev; PARTIAL on prod** (see the ordering rule in step 6 — the column drops were rolled back
+to restore share-token access and must re-land after this branch deploys).
+**Remaining: deploy this branch → finish 0037 on prod, then 0038, 0039, plus the prod
+`rewrite-descriptor-area-refs.ts` run.**
+
+**Also done 2026-07-27:** the Phase 7/8 rehearsal branches `rehearse-5` (`fq7uult9pcir`) and `rehearse-6`
+(`z3ok95wtk88o`) were **deleted** — they were restored-from-prod copies, unreferenced outside these plan
+docs, and had been billing since the cutover. `liveone` now has only the `sydney` branch.
 
 ## Where we are
 
@@ -148,9 +162,10 @@ again. Independent of every other phase — do it first, it is small and removes
   mean OFF) and `cronSkipReason`'s override matrix.
 - Corrected a wrong comment in `lib/areas/devices.ts` that credited `retire-implied-areas.ts` with having
   retired the implied areas — that script was abandoned and never ran (Option A keeps them).
-- **Correction to the plan:** the `prebuild` wiring **cannot** be removed yet. `guard.ts` is imported by
-  the survivors (`registry-sync`, `rewrite-descriptor-area-refs`), so `scripts/config-v4/` and its
-  `tsc -p …/tsconfig.json` prebuild step live until **Phase 12**.
+- **Correction to the plan:** the `prebuild` wiring **cannot** be removed yet. `scripts/config-v4/guard.ts`
+  (the config-v4 target guard `assertRehearsalTarget` — NOT `lib/cron/guard.ts`, which is unrelated and
+  has no importers here) is imported by the survivors (`registry-sync`, `rewrite-descriptor-area-refs`),
+  so `scripts/config-v4/` and its `tsc --noEmit -p …/tsconfig.json` prebuild step live until **Phase 12**.
 
 **Remaining — the schema half. Stress-tested 2026-07-27, then re-litigated with Simon: NO SQUASH.
 History 0000–0035 stays intact; the fix is a catch-up entry 0036. The sequence below is ORDERED and the
@@ -200,40 +215,133 @@ never from migration replay. `0036_*.sql`'s header documents this and points at
      run there (backup, dry-run, `--commit`) — it needs a **write** role, so it is its own approval
      step. (Not a live break: `rowToDashboard`'s read-normalize + dual-accept `areaRefToUuid` handle
      both forms; but it blocks the Phase-14 strict-decode tightening.)
-2. **Fix `schema.ts` BEFORE cutting the 0036 snapshot** — cutting it first bakes the drift in silently
-   (verified: a snapshot from today's `schema.ts` contains zero occurrences of
+2. **✅ DONE — fixed `schema.ts` BEFORE cutting the 0036 snapshot.** Cutting it first bakes drift in
+   silently (verified: a snapshot from the old `schema.ts` contains zero occurrences of
    `area_bindings.point_uid`, so the column becomes permanently invisible to drizzle instead of
-   dropped). Declare `area_bindings.point_uid` (nullable uuid; FK → `points.id`, plain NO ACTION —
+   dropped). Declared `area_bindings.point_uid` (nullable uuid; FK → `points.id`, plain NO ACTION —
    read from `pg_constraint`, so a `points` delete is _blocked_, not cascaded as Phase 9 PR 1 feared;
-   fully populated 72/72 on dev). Rename `schema.ts`'s `pr*_new_*` index names to canonical in the
-   same pass.
-3. **Write `0036_config_v4_cutover_reconcile.sql` by hand** — the renames ARE the migration, journalled
-   and applied by plain `db:pg:migrate` (no out-of-band DDL pass): `ALTER INDEX … RENAME` /
-   `ALTER TABLE … RENAME CONSTRAINT` for the 6 `pr*_new_*` indexes, the 4 hot-table FKs
-   (`pr_new_point_fk` → drizzle-default names), the ~7 config-table FKs whose transform-given names
-   (`…_dashboards_fk`) differ from drizzle defaults (`…_dashboards_id_fk`), and the `point_uid` FK if
-   its DB name differs from the declared one. All metadata-only and instant; wrap each in a
-   `DO`/`IF EXISTS` guard so the file is idempotent and no-op-safe on any DB shape. **Why renames can't
-   be a generated migration:** drizzle-kit cannot express a rename — it emits DROP INDEX +
-   CREATE INDEX, a multi-minute rebuild on the 15M-row table. Accepted cosmetic residue (do NOT
-   chase): a few uniques exist as CONSTRAINTs in the DB where `schema.ts` says `uniqueIndex` (e.g.
-   `dashboards_legacy_id_unique`) — identical enforcement, invisible to generate.
-4. **Transplant the snapshot:** scratch generate-from-empty against the fixed `schema.ts` → take its
-   snapshot verbatim, patch `prevId` := 0035's snapshot id, save as `meta/0036_snapshot.json`; append
-   the journal entry (`when` > 0035's 1784954146501). Run `db:pg:migrate` on dev, verify the renames
-   really landed (`pg_indexes`, not migrate's output — the journal-drift lesson), then prod. Ordinary
-   numbering discipline applies (fetch main, check for in-flight 0036s in other workspaces) — but
-   unlike the squash, a collision here is renumberable as usual.
-5. **Audit-verify the snapshot against the live DB.** "generate → No schema changes" only proves
-   snapshot == `schema.ts`, NOT snapshot == database. With no docker locally, the DB-equivalence proof
-   is the churn-diff audit: re-run the pull-as-prev scratch diff and require every statement to
-   classify as (a) pull-vocabulary churn with an identical definition, (b) a step-2/3 fix, or (c) the
-   known step-6 drops. Zero unexplained lines on dev AND prod.
-6. **Then prove the restored workflow with two normal journalled migrations:**
+   fully populated 72/72 on dev and prod).
+
+   > ⚠️ **CORRECTION — do NOT rename the `pr*_new_*` INDEX names here (the old step 2/3 said to).**
+   > `schema.ts` already _declares_ the `_new` names and a `pg_indexes` probe confirms the live DB
+   > matches, so snapshot == schema == DB already; the rename is unnecessary for correctness. It is also
+   > **unsafe before 0038**: index and PK-constraint names are schema-GLOBALLY unique in Postgres, and
+   > the retained `_old` tables still own `point_readings_pkey` / `pr_measurement_time_idx` /
+   > `pr_created_at_idx` / `pr5m_*` / `pr1d_day_idx`, so an early rename is a **42P07**. This is exactly
+   > the hazard `config-transform.ts`'s D-g note called out. The cosmetic rename to canonical moves to
+   > **0039, after the `_old` drop** (Simon, 2026-07-27). FOREIGN KEY names are per-TABLE, not
+   > schema-global, so those renames are safe in 0036 — verified empirically, including
+   > `point_readings_session_id_sessions_id_fk`, which `point_readings_old` also holds.
+
+   > ⚠️ **Two MORE live-but-undeclared FKs, found by the step-5 audit** (same class of defect as
+   > `point_uid`, both with `schema.ts` comments still claiming "DEFERRED to cutover"):
+   > `derivations.output_point_id` → `points(id)` and `legacy_handles.device_id` → `devices(id)`. Both
+   > were wired by config-transform stage 5. Undeclared, `generate` wanted to **DROP** them. Now
+   > declared. NB this also means Phase 11's "add the FK `derivations.output_point_id` → `points`" item
+   > is **already done** — do not re-do it.
+3. **✅ DONE — `0036_config_v4_cutover_reconcile.sql`, hand-written.** The renames ARE the migration,
+   journalled and applied by plain `db:pg:migrate` (no out-of-band DDL pass): 11
+   `ALTER TABLE … RENAME CONSTRAINT` statements — the 4 hot-table FKs (`pr_new_point_fk`,
+   `pr_new_session_fk`, `pr5m_new_point_fk`, `pr1d_new_point_fk` → drizzle defaults), the 5
+   config-table FKs whose transform-given names (`…_dashboards_fk`) differ from drizzle defaults
+   (`…_dashboards_id_fk`, plus `area_bindings_point_uid_points_fk`), and the 2 newly-declared FKs above.
+   **No index or PK renames** (see the correction in step 2). All metadata-only and instant; each is
+   wrapped in a `DO`/`IF EXISTS` guard so the file is idempotent and no-op-safe on any DB shape.
+   **The guards scope by `conrelid`, not `conname` alone** — `conname` is unique per TABLE, not per
+   schema, so a bare name match sees `point_readings_old`'s copy of
+   `point_readings_session_id_sessions_id_fk` and wrongly skips the rename.
+   **Why renames can't be a generated migration:** drizzle-kit cannot express a rename — it emits
+   DROP INDEX + CREATE INDEX, a multi-minute rebuild on the 15M-row table.
+4. **✅ DONE on dev — transplanted the snapshot.** Scratch generate-from-empty against the fixed
+   `schema.ts` → snapshot taken verbatim, `prevId` := 0035's id, saved as `meta/0036_snapshot.json`;
+   journal entry appended. `db:pg:generate` then reports **"No schema changes"** with no prompts.
+   Applied to dev with plain `db:pg:migrate` and verified against `pg_constraint` (not migrate's
+   output — the journal-drift lesson): all 11 renames present, zero old names left on live tables.
+   - **Migrator mechanic confirmed empirically:** drizzle stores `created_at` = the journal's `when`
+     value, NOT the wall-clock apply time (dev's max was exactly 0035's `when`, 1784954146501). So a
+     `when` merely greater than the previous entry's is sufficient and safe.
+   - Numbering discipline applied (fetched main; 0036 was free).
+   - **✅ Applied to prod `sydney` 2026-07-27** via a short-TTL `pscale role` (reassigned to `postgres`
+     + deleted afterwards). Pre-flight probe confirmed prod was at exactly 36 journal rows with all 11
+     old FK names and zero new ones; post-apply `pg_constraint` shows all 11 renamed, zero old names
+     left on live tables, 37 journal rows. 0036 is metadata-only (renames), so no base backup was
+     required — nothing is dropped or rewritten and every statement is reversible.
+5. **✅ DONE on dev — audit-verified the snapshot against the live DB.** "generate → No schema changes"
+   only proves snapshot == `schema.ts`, NOT snapshot == database. With no docker locally, the
+   DB-equivalence proof is the churn-diff audit: `drizzle-kit pull` the live DB, use it as `prev`, and
+   generate — then require every statement to classify as (a) pull-vocabulary churn with an identical
+   definition, (b) a step-2/3 fix, or (c) the known step-6 drops. **Result on dev: 132 statements, zero
+   unexplained.** 53 index DROP+CREATE round-trips (identical definitions, none dropped-without-recreate)
+   + 5 CHECK drop/add pairs + `dashboard_grants_pk` drop/add + 8 statements for the known 0038 drops.
+   Accepted cosmetic residue, do NOT chase — it recurs in this audit forever and is invisible to the
+   gate: `dashboards_legacy_id_unique` and `points_rid_unique` (uniques that exist as CONSTRAINTs, or
+   that pull simply omits, where `schema.ts` says `uniqueIndex`); `point_info.rid`'s
+   `nextval('point_rid_seq')` vs pull's `::regclass`-qualified rendering; and
+   `point_readings_flow_attr_1d`'s PK, whose DB name is truncated at Postgres' 63-char identifier limit
+   (`…_load_path_p` vs `…_load_path_pk`).
+   - **✅ Re-run against prod 2026-07-27 after 0036 landed: 132 statements, zero unexplained — the audit
+     is shape-identical to dev's** (same 53 round-trips, same 2 created-not-dropped, same 24 non-index
+     statements). This independently re-confirms step 1's "prod and dev are structurally identical".
+     Note prod's pull DID record all 5 CHECKs this time (as drop/add pairs, exactly like dev), so the
+     earlier "prod pull records 0 CHECKs" artifact did not recur.
+> 🛑 **ORDERING RULE — learned the hard way, 2026-07-27. For a DROP, the code deploys FIRST.**
+> CLAUDE.md's "apply migrations to prod BEFORE the dependent code merges" is the rule for **ADDITIVE**
+> changes (new code needs the new column). **Drops are the exact opposite** and the rule inverts:
+> deploy the code that stops referencing the column, THEN drop it. Applying 0037 to prod while prod
+> still ran the old build **took share-token access down**: `validateDashboardShareToken` and
+> `listDashboardShareTokens` both issue a projection-less `.select().from(shareTokens)`, which drizzle
+> expands to the column list **declared in the running build** — including the five just-dropped
+> columns — so every share-link request 500'd with `42703 column "owner_clerk_user_id" does not exist`.
+> Recovery was to re-add the five columns + `share_tokens_owner_idx` + `dashboard_grants.created_at_ms`
+> (all nullable, backfilled from the authoritative `timestamp` columns) — verified by re-running the old
+> build's exact query, and end-to-end: a valid `?access=` token renders the dashboard while a bogus one
+> is denied. **Total exposure: a few minutes.**
+> **A projection-less `.select()` turns ANY column drop into a breaking change** for the running build —
+> which is precisely why 0037 also replaced the two bare `.select()`s with explicit projections. Those
+> projections must be **deployed** before the drop re-lands.
+
+⚠️ **PROD IS MID-0037 RIGHT NOW.** Its journal records 0037 as applied and
+`dashboard_share_tokens` **is** dropped (safe — zero query sites), but the five `share_tokens` legacy
+columns + `share_tokens_owner_idx` + `dashboard_grants.created_at_ms` were **restored** and are still
+present. **To finish: deploy this branch to prod, then re-drop those 7 objects by hand** (the journal
+already claims 0037, so completing it by hand makes the journal true — no new migration, no journal
+edit). Until then prod↔dev diverge and the step-5 audit on prod will show those columns.
+
+6. **Then prove the restored workflow with three normal journalled migrations:**
+   - **✅ 0037 DONE on dev (`0037_kind_famine.sql`, generated + applied 2026-07-27; PROD PARTIAL — see
+     the ordering rule above).**
+     Generated exactly the intended 9 statements and nothing else; gate, type-check, 127 suites / 1237
+     tests and `check:readings` all green afterwards.
+     - **Pre-flight found the "1:1 fold" claim is not quite true.** `dashboard_share_tokens` held **1
+       row that was never folded** into `share_tokens`: `spare-comic-osprey`, label `v4-e2e-verify`,
+       created 2026-07-24 11:24 UTC and last used 11:27 — i.e. e2e-test debris written straight into
+       the legacy table, on a dashboard (`legacy_id=6`, "Daylesford") that already has a live unified
+       token. It was **already non-functional** (the table has zero query sites, and
+       `validateDashboardShareToken` reads `share_tokens`), so dropping the table changed no behaviour.
+       ⚠️ **Re-run this same check on prod before applying 0037 there** — if prod holds an unfolded row
+       that is NOT test debris, a real share link broke at cutover and needs re-issuing, not dropping.
+     - **No information loss from the `*_ms` drops:** verified on the one row that had them
+       (`keen-fruity-tapir`) — `created_at` matched the ms value exactly and `last_used_at` carried
+       *more* precision (`.62`) than the ms-derived value.
+     - **Verified end-to-end against the running app**, not just tests: `GET /api/dashboards/{id}/share`
+       with a real Clerk session now returns populated `createdAtMs` / `lastUsedAtMs`, and — the sharp
+       one — a genuinely revoked token now reports `revokedAtMs`, so `ShareLinksPanel`'s
+       `filter(t => t.revokedAtMs == null)` correctly excludes it. **Before this change a REVOKED share
+       link was listed as ACTIVE** (display only; `validateDashboardShareToken` always honoured
+       `revoked_at`, so access was never actually granted).
    - **0037, generated:** drop `dashboard_share_tokens` (0 query sites),
-     `share_tokens.owner_clerk_user_id` + its four `*_ms` columns + `share_tokens_owner_idx`,
-     `dashboard_grants.created_at_ms`, and the stale `$inferSelect` exports — small tables, safe on
-     autopilot;
+     `share_tokens.owner_clerk_user_id` + its four `*_ms` columns (`created_at_ms`, `expires_at_ms`,
+     `revoked_at_ms`, **`last_used_at_ms`** — there is no `last_accessed_at_ms`) +
+     `share_tokens_owner_idx`, and `dashboard_grants.created_at_ms` — small tables, safe on autopilot.
+     There are **no stale `$inferSelect` exports to remove** (`dashboard_share_tokens` never had any).
+     **Two code couplings must land in the same PR** (verified, and missed by the original plan):
+     (i) `scripts/utils/reown-dev-data.ts:48` lists `share_tokens`/`owner_clerk_user_id` in `OWNERSHIP`
+     and its try/catch sets `hadError = true` if the column vanishes; (ii) the four `_ms` columns reach
+     the UI through a projection-less `.select().from(shareTokens)` in `lib/dashboard/sharing.ts`
+     → `app/api/dashboards/[id]/share/route.ts` → `DashboardSettingsDialog.tsx` →
+     `ShareLinksPanel.tsx`. Project the `timestamp` columns and map to ms — which also fixes a latent
+     bug: `createDashboardShareToken` only ever writes the timestamp columns, so those bigints are
+     already always NULL and the panel renders blanks today;
    - **0038, hand-written** (`drizzle-kit generate --custom`): drop `backfill_progress` (orphan from
      the June-2026 Turso decommission: 29 rows, never in a migration, zero repo references) and the
      three `_old` hot tables — **4.2 GB on dev** (`point_readings_old` 2823 MB / 15.35M rows,
@@ -242,16 +350,24 @@ never from migration replay. `0036_*.sql`'s header documents this and points at
      drizzle's unguarded `DROP TABLE … CASCADE`. Precondition: Simon confirms the validation window
      has passed; R2 dumps taken before the drop contain the `_old` data (retention: daily 21d /
      weekly 91d / monthly 365d) and a one-off `pscale backup create` lands first per the checklist.
-     Also simplify `check-readings-boundary.mjs`'s `(_old|_new)?` regex group here.
+   - **0039, hand-written** (`generate --custom`) — **only now are the canonical names free.** Rename
+     the nine `_new` index/PK names (`point_readings_new_pkey`, `pr_new_*`, `pr5m_new_*`, `pr1d_new_*`)
+     to canonical, with the matching `schema.ts` edit and another snapshot transplant. Guarded, and
+     metadata-only — but note drizzle CANNOT generate a rename (it emits DROP + CREATE INDEX, a
+     multi-minute rebuild on the 15M-row table), which is why it is hand-written. Optionally also give
+     `point_readings_flow_attr_1d`'s PK an explicit ≤63-char name to retire that audit-churn line.
+     Simplify `check-readings-boundary.mjs:45`'s `(_old|_new|_v\d+)?` group here and prune the fixtures
+     at `scripts/__tests__/check-readings-boundary.test.ts:73-78,134-138`.
 
 **Done when:** `db:pg:generate` reports "No schema changes" with no prompts, on a snapshot that
 audit-matches BOTH dev and prod; the full 0000–0036 history is intact and 0036 was applied by plain
-`db:pg:migrate` on both envs; `_old` + `backfill_progress` absent; `area_bindings.point_uid` declared;
-0037/0038 applied via plain `db:pg:migrate`; `check:readings` green.
+`db:pg:migrate` on both envs; `_old` + `backfill_progress` absent; `area_bindings.point_uid`,
+`derivations.output_point_id` and `legacy_handles.device_id` all declared; 0037/0038/0039 applied via
+plain `db:pg:migrate`; the hot-table index names are canonical; `check:readings` green.
 
 **Risks:** materially lower than the squash it replaces — no journal-table hand-edits, no history
-rewrite, failures loud and rolled-back. The residual risk is a wrong rename in 0036 (guarded, verified
-against `pg_indexes` on dev before prod) and the step-6 drops (guarded, backed up).
+rewrite, failures loud and rolled-back. The residual risk is a wrong rename (guarded, verified against
+`pg_constraint`/`pg_indexes` on dev before prod) and the step-6 drops (guarded, backed up).
 
 ---
 
