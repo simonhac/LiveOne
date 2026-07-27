@@ -2,11 +2,13 @@
  * Hot-water temperature recompute (HWS model).
  *
  * The modelled hot-tap temperature is a **derived point** in the generic readings system — NOT a
- * bespoke table. For each system that has a `load.hws/power` point (the signal) AND a registered
- * `load.hws/temperature` point (the derived output, see scripts/seed-hws-point.ts), this reads the
- * power point's `point_readings_agg_5m.avg`, runs the pure thermal model (`lib/hws-model.ts`), and
- * writes the faucet temperature into the temperature point's own `point_readings_agg_5m` rows (plus
- * the KV latest cache, so it shows on the dashboard like any other point).
+ * bespoke table. Each modelled system is an `output='point'` row in `derivations` (config-v4
+ * Phase 11) naming its `load.hws/power` signal and its `load.hws/temperature` output point; this
+ * reads the power point's `point_readings_agg_5m.avg`, runs the pure thermal model
+ * (`lib/hws-model.ts`), and writes the faucet temperature into the temperature point's own
+ * `point_readings_agg_5m` rows (plus the KV latest cache, so it shows on the dashboard like any
+ * other point). Enablement used to be "a temperature point_info row exists"; it is now "an enabled
+ * hws-model derivation exists" — the same mechanism that discovers a run detector.
  *
  * It reads only `point_readings_agg_5m` and writes only the derived point's `agg_5m`/KV — it is
  * never on the hot ingest path. The 5m aggregator skips points with no raw readings, so it never
@@ -17,37 +19,18 @@
  * `[winStart − WARMUP_MS, winEnd]`, model across it, and UPSERT only the window's intervals — so a
  * re-run / late data resolves to the same values with no deletes.
  */
-import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
 import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
-import { Point, type PointId } from "@/lib/ids";
+import { modelHws, type HwsSample } from "@/lib/hws-model";
 import {
-  modelHws,
-  DEFAULT_HWS_MODEL_OPTIONS,
-  type HwsModelOptions,
-  type HwsSample,
-} from "@/lib/hws-model";
+  listEnabledHwsModels,
+  type ResolvedHwsModel,
+} from "@/lib/derivations/resolve";
 import { updateLatestPointValue } from "@/lib/kv-cache-manager";
-
-const HWS_STEM = "load.hws";
-const TEMP_METRIC = "temperature";
 
 export const WARMUP_MS = 2 * 24 * 60 * 60 * 1000; // model warmup lead-in (≈6× convergence time)
 export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // minutely-cron trailing window
 const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // backfill chunk (≫ warmup)
-
-/** A system's HWS point pair: the power signal and the derived temperature output. */
-interface HwsPair {
-  systemId: number;
-  powerPoint: PointId; // power signal — the agg_5m `avg` model input
-  tempPoint: PointId; // derived temperature output — the agg_5m write target
-  tempPointId: number; // integer index — the KV latest cache key
-  tempPath: string; // "load.hws/temperature"
-  tempUnit: string;
-  tempDisplayName: string;
-  options: HwsModelOptions;
-}
 
 export interface HwsRecomputeSummary {
   pairsProcessed: number;
@@ -55,60 +38,11 @@ export interface HwsRecomputeSummary {
 }
 
 /**
- * All HWS point pairs: every active `load.hws/temperature` point joined to its sibling
- * `load.hws/power` point in the same system. A temperature point with no power sibling is skipped.
+ * Every enabled HWS model. Kept as a named export (rather than inlining
+ * `listEnabledHwsModels`) because the backfill script and tests discover pairs through it.
  */
-export async function listHwsPairs(): Promise<HwsPair[]> {
-  const db = requirePlanetscaleDb();
-  const temps = await db
-    .select({
-      systemId: pointInfo.systemId,
-      index: pointInfo.index,
-      pointUid: pointInfo.pointUid,
-      metricUnit: pointInfo.metricUnit,
-      displayName: pointInfo.displayName,
-    })
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.logicalPathStem, HWS_STEM),
-        eq(pointInfo.metricType, TEMP_METRIC),
-        eq(pointInfo.active, true),
-      ),
-    );
-
-  const pairs: HwsPair[] = [];
-  for (const t of temps) {
-    const [power] = await db
-      .select({ pointUid: pointInfo.pointUid })
-      .from(pointInfo)
-      .where(
-        and(
-          eq(pointInfo.systemId, t.systemId),
-          eq(pointInfo.logicalPathStem, HWS_STEM),
-          eq(pointInfo.metricType, "power"),
-          eq(pointInfo.active, true),
-        ),
-      )
-      .limit(1);
-    if (!power) {
-      console.warn(
-        `[HWS] system ${t.systemId}: load.hws/temperature point has no load.hws/power sibling — skipping`,
-      );
-      continue;
-    }
-    pairs.push({
-      systemId: t.systemId,
-      powerPoint: Point.encode(power.pointUid),
-      tempPoint: Point.encode(t.pointUid),
-      tempPointId: t.index,
-      tempPath: `${HWS_STEM}/${TEMP_METRIC}`,
-      tempUnit: t.metricUnit,
-      tempDisplayName: t.displayName,
-      options: DEFAULT_HWS_MODEL_OPTIONS,
-    });
-  }
-  return pairs;
+export async function listHwsPairs(): Promise<ResolvedHwsModel[]> {
+  return listEnabledHwsModels();
 }
 
 /**
@@ -116,7 +50,7 @@ export async function listHwsPairs(): Promise<HwsPair[]> {
  * temperature point's agg_5m. With `updateLatest`, also refresh the KV latest from the newest step.
  */
 async function recomputePairWindow(
-  pair: HwsPair,
+  pair: ResolvedHwsModel,
   winStartMs: number,
   winEndMs: number,
   updateLatest: boolean,
@@ -166,7 +100,7 @@ async function recomputePairWindow(
     const last = steps[steps.length - 1];
     await updateLatestPointValue(
       pair.systemId,
-      pair.tempPointId,
+      pair.tempPointIndex,
       pair.tempPath,
       last.faucetC,
       last.tsMs,

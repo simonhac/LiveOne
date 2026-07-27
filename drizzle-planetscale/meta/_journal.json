@@ -281,6 +281,13 @@
       "when": 1785138999424,
       "tag": "0039_rename_hot_indexes_to_canonical",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1785162257381,
+      "tag": "0040_derived_intervals_cascade",
+      "breakpoints": true
     }
   ]
 }

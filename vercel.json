@@ -22,7 +22,7 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/run-periods",
+      "path": "/api/cron/derivations",
       "schedule": "* * * * *"
     },
     {
@@ -31,7 +31,7 @@
     }
   ],
   "functions": {
-    "app/api/cron/run-periods/route.ts": {
+    "app/api/cron/derivations/route.ts": {
       "maxDuration": 60
     },
     "app/api/cron/minutely/route.ts": {

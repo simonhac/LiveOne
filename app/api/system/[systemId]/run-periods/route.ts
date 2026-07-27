@@ -3,9 +3,10 @@ import { requireDashboardAccess } from "@/lib/api-auth";
 import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
-  deviceRunPeriods,
-  type DeviceRunPeriod,
+  derivedIntervals,
+  type DerivedInterval,
 } from "@/lib/db/planetscale/schema";
+import { getRunDetectorForHandleRole } from "@/lib/derivations/resolve";
 import { formatInTimezone } from "@/lib/date-utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -20,8 +21,8 @@ function magnitudeKw(w: number | null): number {
   return Math.round(Math.abs(w) / 100) / 10;
 }
 
-/** Shape one run period into the (legacy-compatible + enriched) event the UI consumes. */
-function toEvent(r: DeviceRunPeriod, tz: string) {
+/** Shape one derived interval into the (legacy-compatible + enriched) event the UI consumes. */
+function toEvent(r: DerivedInterval, tz: string) {
   return {
     // Legacy generator-events contract:
     date: formatInTimezone(r.startTime, tz, "EEE d MMM"),
@@ -71,6 +72,11 @@ export async function GET(
     const tz = authResult.system.displayTimezone;
     const db = requirePlanetscaleDb();
 
+    // The intervals hang off the run detector for this (handle, role). No detector configured →
+    // no rows, which is the same empty response this endpoint has always given for an untracked
+    // system. Resolved through the shared handle→area mapping so reader and writer always agree.
+    const detector = await getRunDetectorForHandleRole(systemId, role);
+
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
     // dashboard generator-runs card. Bounded by limit (no time window).
     const limitParam = searchParams.get("limit");
@@ -84,18 +90,15 @@ export async function GET(
         0,
       );
       // Fetch one extra to know whether an older page exists.
-      const rows = await db
-        .select()
-        .from(deviceRunPeriods)
-        .where(
-          and(
-            eq(deviceRunPeriods.systemId, systemId),
-            eq(deviceRunPeriods.role, role),
-          ),
-        )
-        .orderBy(desc(deviceRunPeriods.startTime))
-        .limit(limit + 1)
-        .offset(offset);
+      const rows = detector
+        ? await db
+            .select()
+            .from(derivedIntervals)
+            .where(eq(derivedIntervals.derivationId, detector.id))
+            .orderBy(desc(derivedIntervals.startTime))
+            .limit(limit + 1)
+            .offset(offset)
+        : [];
       const hasMore = rows.length > limit;
       const events = rows.slice(0, limit).map((r) => toEvent(r, tz));
       return NextResponse.json({
@@ -140,21 +143,22 @@ export async function GET(
     }
 
     // A period is in range if it starts at/before the range end and is open or ends at/after start.
-    const rows = await db
-      .select()
-      .from(deviceRunPeriods)
-      .where(
-        and(
-          eq(deviceRunPeriods.systemId, systemId),
-          eq(deviceRunPeriods.role, role),
-          lte(deviceRunPeriods.startTime, new Date(rangeEndMs)),
-          or(
-            isNull(deviceRunPeriods.endTime),
-            gte(deviceRunPeriods.endTime, new Date(rangeStartMs)),
-          ),
-        ),
-      )
-      .orderBy(asc(deviceRunPeriods.startTime));
+    const rows = detector
+      ? await db
+          .select()
+          .from(derivedIntervals)
+          .where(
+            and(
+              eq(derivedIntervals.derivationId, detector.id),
+              lte(derivedIntervals.startTime, new Date(rangeEndMs)),
+              or(
+                isNull(derivedIntervals.endTime),
+                gte(derivedIntervals.endTime, new Date(rangeStartMs)),
+              ),
+            ),
+          )
+          .orderBy(asc(derivedIntervals.startTime))
+      : [];
 
     let runningNow = false;
     let totalEnergyKwh = 0;

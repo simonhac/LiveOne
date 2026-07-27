@@ -22,7 +22,7 @@
  *    lib/capabilities/derive.ts.
  *  - **Compound / derived** — NOT a union; a predicate over area config + external rows. Present as
  *    capability ids here so the catalog can require them, but their satisfaction is a function call
- *    resolved server-side (device_trackers row → `generator-running`; area location + a grid point +
+ *    resolved server-side (an enabled run-detector derivation → `generator-running`; area location + a grid point +
  *    NEM region + a seeded OE row → `grid-signals`), not a point-presence scan.
  */
 
@@ -151,7 +151,7 @@ export const CAPABILITIES: Record<CapabilityId, CapabilityDef> = {
     tier: "atomic",
     label: "Instrumentation",
   },
-  // Compound — satisfaction resolved server-side (device_trackers / grid context).
+  // Compound — satisfaction resolved server-side (derivations / grid context).
   "generator-running": {
     id: "generator-running",
     tier: "compound",

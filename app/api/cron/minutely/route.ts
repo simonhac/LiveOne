@@ -11,7 +11,6 @@ import { fromDate } from "@internationalized/date";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { jsonResponse, transformForStorage } from "@/lib/json";
-import { reconcileTrailingWindow as reconcileHwsTemperature } from "@/lib/hws/recompute";
 import { reconcileTrailingWindow as reconcileBatteryProvenance } from "@/lib/battery-provenance/recompute";
 
 /**
@@ -510,14 +509,10 @@ export async function GET(request: NextRequest) {
       sessionCause,
     });
 
-    // Derived hot-water temperature: reconcile the trailing window so the modelled faucet temp
-    // stays fresh. Reads the just-(soon-)materialised load.hws/power agg_5m, writes the derived
-    // load.hws/temperature point. Best-effort; a no-op for systems without an HWS temperature point.
-    try {
-      await reconcileHwsTemperature(Date.now());
-    } catch (error) {
-      console.error("[Cron] HWS temperature reconcile failed:", error);
-    }
+    // The derived hot-water temperature used to be reconciled here. Since config-v4 Phase 11 it is
+    // an `hws-model` row in `derivations`, dispatched by /api/cron/derivations alongside the run
+    // detectors — one mechanism for every derived signal. It may now trail materialization by up
+    // to one minutely tick, which the next pass heals.
 
     // Derived battery-provenance blend: reconcile the trailing window so the battery's blended
     // emissions/renewable/price stay fresh (KV latest for the live card). Best-effort; a no-op for

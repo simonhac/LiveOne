@@ -1,10 +1,11 @@
 #!/usr/bin/env tsx
 /**
- * Register the derived hot-water temperature point (`load.hws/temperature`) for a system.
+ * Register HWS modelling for a system: the derived `load.hws/temperature` point AND the
+ * `hws-model` derivation that turns it on.
  *
- * This is the entire "config" for HWS modelling: once the point exists, the minutely cron's
- * reconcile + the daily heal start producing modelled temperature into its generic agg_5m rows
- * (lib/hws/recompute.ts). No new table — it's a normal point_info row in the existing system.
+ * Since config-v4 Phase 11 the point alone is not enough — the derivations cron discovers an
+ * enabled `hws-model` row (lib/derivations/resolve.ts) and models into that point's generic agg_5m
+ * rows. Both steps are idempotent; no new table, just a point_info row and a derivations row.
  *
  * SAFETY: defaults to a DRY RUN. Pass --apply to write. The DB target is whatever .env.local
  * points at. ⚠️ tsx scripts need `--env-file=.env.local` (the planetscaleDb singleton is an IIFE
@@ -21,7 +22,10 @@ dotenv.config({ path: ".env.local" });
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "../lib/db/planetscale";
 import { pointInfo } from "../lib/db/planetscale/schema";
-import { ensureHwsTemperaturePoint } from "../lib/hws/register";
+import {
+  ensureHwsDerivation,
+  ensureHwsTemperaturePoint,
+} from "../lib/hws/register";
 
 const APPLY = process.argv.includes("--apply");
 const tag = APPLY ? "[APPLY]" : "[DRY-RUN]";
@@ -65,10 +69,7 @@ async function main() {
     console.log(
       `${tag} system ${systemId}: temperature point already exists (point ${res.tempPointId}, power ${res.powerPointId}).`,
     );
-    return;
-  }
-  // created
-  if (APPLY) {
+  } else if (APPLY) {
     console.log(
       `${tag} system ${systemId}: registered load.hws/temperature (point ${res.tempPointId}, power ${res.powerPointId}).`,
     );
@@ -76,6 +77,33 @@ async function main() {
     console.log(
       `${tag} system ${systemId}: would register load.hws/temperature (power ${res.powerPointId}). Pass --apply to write.`,
     );
+  }
+
+  // The derivation is what actually enables modelling. On a dry run the point may not exist yet,
+  // so this can legitimately report "no-points" — it resolves once the point is applied.
+  const dv = await ensureHwsDerivation(systemId, APPLY);
+  switch (dv.status) {
+    case "exists":
+      console.log(
+        `${tag}   hws-model derivation present (${dv.derivationId}).`,
+      );
+      break;
+    case "created":
+      console.log(
+        `${tag}   ${APPLY ? "created" : "would create"} hws-model derivation ${dv.derivationId}.`,
+      );
+      break;
+    case "no-area":
+      console.error(
+        `${tag}   ⚠️ system ${systemId} has no resolvable area — the derivation cannot be placed.`,
+      );
+      process.exitCode = 1;
+      break;
+    case "no-points":
+      console.log(
+        `${tag}   (temperature point not written yet — re-run with --apply to create the derivation.)`,
+      );
+      break;
   }
 }
 

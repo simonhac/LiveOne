@@ -22,14 +22,14 @@ mechanics live in code (linked below).
 | Step        | Script                                        | npm                     | Writes                 |
 | ----------- | --------------------------------------------- | ----------------------- | ---------------------- |
 | DB top-up   | `scripts/utils/sync-prod-to-dev-db.ts`        | `db:sync-dev-db`        | `liveone-dev` Postgres |
-| Run periods | `scripts/utils/recompute-dev-runs-from-db.ts` | `db:recompute-dev-runs` | `device_run_periods`   |
+| Run periods | `scripts/utils/recompute-dev-runs-from-db.ts` | `db:recompute-dev-runs` | `derived_intervals`    |
 | KV rebuild  | `scripts/utils/rebuild-dev-kv-from-db.ts`     | `db:rebuild-dev-kv`     | `dev:` KV namespace    |
 
 Both later steps run **after** the DB sync so they reconstruct from the data that was just loaded —
 all three stay consistent. The run-period step exists because dev crons are off (nothing recomputes
-runs organically) and `device_run_periods` can't be copied by the DB sync — it has a composite PK
+runs organically) and `derived_intervals` can't be copied by the DB sync — it has a composite PK
 (so no `mirror`) and its rows shift/merge under recompute, which a row-copy would orphan. The
-`device_trackers` config table _is_ copied by the DB sync; the runs are then recomputed from the
+`derivations` config table _is_ copied by the DB sync; the runs are then recomputed from the
 synced `point_readings` via the same delete-and-reinsert the prod cron uses. Any step failing trips the `Alert on failure` step
 (`OBSERVATIONS_ALERT_WEBHOOK_URL`).
 

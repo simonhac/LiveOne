@@ -1077,9 +1077,12 @@ export const derivations = pgTable(
 export const derivedIntervals = pgTable(
   "derived_intervals",
   {
+    // CASCADE (migration 0040): intervals are disposable derived output, fully reproducible from
+    // the readings by a recompute — so they follow their derivation rather than blocking its
+    // delete (which is also what makes the prod→dev sync's area idDrift cleanup safe).
     derivationId: uuid("derivation_id")
       .notNull()
-      .references(() => derivations.id),
+      .references(() => derivations.id, { onDelete: "cascade" }),
     startTime: timestamp("start_time").notNull(), // UTC; immutable identity
     endTime: timestamp("end_time"), // UTC; NULL = OPEN (running now)
     durationSeconds: integer("duration_seconds"), // null while open

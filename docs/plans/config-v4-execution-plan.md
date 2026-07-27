@@ -31,7 +31,7 @@ settled:
   **16/16 sections across 4 v3 dashboards rewritten raw-uuid → `ar_`**, 0 unrecognized. Verified three
   ways — the script's own post-write re-inspect, an independent `jsonb` query (16 `ar_`, 0 raw uuid), and
   end-to-end on live prod (shared dashboard renders; `/api/data?access=` returns live data; a bogus token
-   401s). **This unblocks the Phase-14 strict-decode tightening** (dropping the dual-accept
+  401s). **This unblocks the Phase-14 strict-decode tightening** (dropping the dual-accept
   `areaRefToUuid` + `rowToDashboard` read-normalize).
 
 > **Correction worth carrying:** the prod cutover ran **2026-07-26 10:51 UTC**, not 25 Jul. The 25 Jul
@@ -44,7 +44,7 @@ settled:
 > 🛑 **Ordering rule, learned by breaking prod during 0037 (full detail in step 6 below).** CLAUDE.md's
 > "apply migrations to prod BEFORE the dependent code merges" is the **additive** rule. **Drops invert
 > it:** deploy the code that stops referencing the column FIRST, then drop. A projection-less
-> `.select()` expands to the columns declared in the *running* build, so any column drop is a breaking
+> `.select()` expands to the columns declared in the _running_ build, so any column drop is a breaking
 > change until the new build is live.
 
 > **Correction worth carrying:** the prod cutover ran **2026-07-26 10:51 UTC**, not 25 Jul. The 25 Jul
@@ -260,6 +260,7 @@ never from migration replay. `0036_*.sql`'s header documents this and points at
    > were wired by config-transform stage 5. Undeclared, `generate` wanted to **DROP** them. Now
    > declared. NB this also means Phase 11's "add the FK `derivations.output_point_id` → `points`" item
    > is **already done** — do not re-do it.
+
 3. **✅ DONE — `0036_config_v4_cutover_reconcile.sql`, hand-written.** The renames ARE the migration,
    journalled and applied by plain `db:pg:migrate` (no out-of-band DDL pass): 11
    `ALTER TABLE … RENAME CONSTRAINT` statements — the 4 hot-table FKs (`pr_new_point_fk`,
@@ -283,43 +284,43 @@ never from migration replay. `0036_*.sql`'s header documents this and points at
      `when` merely greater than the previous entry's is sufficient and safe.
    - Numbering discipline applied (fetched main; 0036 was free).
    - **✅ Applied to prod `sydney` 2026-07-27** via a short-TTL `pscale role` (reassigned to `postgres`
-     + deleted afterwards). Pre-flight probe confirmed prod was at exactly 36 journal rows with all 11
-     old FK names and zero new ones; post-apply `pg_constraint` shows all 11 renamed, zero old names
-     left on live tables, 37 journal rows. 0036 is metadata-only (renames), so no base backup was
-     required — nothing is dropped or rewritten and every statement is reversible.
+     - deleted afterwards). Pre-flight probe confirmed prod was at exactly 36 journal rows with all 11
+       old FK names and zero new ones; post-apply `pg_constraint` shows all 11 renamed, zero old names
+       left on live tables, 37 journal rows. 0036 is metadata-only (renames), so no base backup was
+       required — nothing is dropped or rewritten and every statement is reversible.
 5. **✅ DONE on dev — audit-verified the snapshot against the live DB.** "generate → No schema changes"
    only proves snapshot == `schema.ts`, NOT snapshot == database. With no docker locally, the
    DB-equivalence proof is the churn-diff audit: `drizzle-kit pull` the live DB, use it as `prev`, and
    generate — then require every statement to classify as (a) pull-vocabulary churn with an identical
    definition, (b) a step-2/3 fix, or (c) the known step-6 drops. **Result on dev: 132 statements, zero
    unexplained.** 53 index DROP+CREATE round-trips (identical definitions, none dropped-without-recreate)
-   + 5 CHECK drop/add pairs + `dashboard_grants_pk` drop/add + 8 statements for the known 0038 drops.
-   Accepted cosmetic residue, do NOT chase — it recurs in this audit forever and is invisible to the
-   gate: `dashboards_legacy_id_unique` and `points_rid_unique` (uniques that exist as CONSTRAINTs, or
-   that pull simply omits, where `schema.ts` says `uniqueIndex`); `point_info.rid`'s
-   `nextval('point_rid_seq')` vs pull's `::regclass`-qualified rendering; and
-   `point_readings_flow_attr_1d`'s PK, whose DB name is truncated at Postgres' 63-char identifier limit
-   (`…_load_path_p` vs `…_load_path_pk`).
-   - **✅ Re-run against prod 2026-07-27 after 0036 landed: 132 statements, zero unexplained — the audit
+   - 5 CHECK drop/add pairs + `dashboard_grants_pk` drop/add + 8 statements for the known 0038 drops.
+     Accepted cosmetic residue, do NOT chase — it recurs in this audit forever and is invisible to the
+     gate: `dashboards_legacy_id_unique` and `points_rid_unique` (uniques that exist as CONSTRAINTs, or
+     that pull simply omits, where `schema.ts` says `uniqueIndex`); `point_info.rid`'s
+     `nextval('point_rid_seq')` vs pull's `::regclass`-qualified rendering; and
+     `point_readings_flow_attr_1d`'s PK, whose DB name is truncated at Postgres' 63-char identifier limit
+     (`…_load_path_p` vs `…_load_path_pk`).
+   * **✅ Re-run against prod 2026-07-27 after 0036 landed: 132 statements, zero unexplained — the audit
      is shape-identical to dev's** (same 53 round-trips, same 2 created-not-dropped, same 24 non-index
      statements). This independently re-confirms step 1's "prod and dev are structurally identical".
      Note prod's pull DID record all 5 CHECKs this time (as drop/add pairs, exactly like dev), so the
      earlier "prod pull records 0 CHECKs" artifact did not recur.
-> 🛑 **ORDERING RULE — learned the hard way, 2026-07-27. For a DROP, the code deploys FIRST.**
-> CLAUDE.md's "apply migrations to prod BEFORE the dependent code merges" is the rule for **ADDITIVE**
-> changes (new code needs the new column). **Drops are the exact opposite** and the rule inverts:
-> deploy the code that stops referencing the column, THEN drop it. Applying 0037 to prod while prod
-> still ran the old build **took share-token access down**: `validateDashboardShareToken` and
-> `listDashboardShareTokens` both issue a projection-less `.select().from(shareTokens)`, which drizzle
-> expands to the column list **declared in the running build** — including the five just-dropped
-> columns — so every share-link request 500'd with `42703 column "owner_clerk_user_id" does not exist`.
-> Recovery was to re-add the five columns + `share_tokens_owner_idx` + `dashboard_grants.created_at_ms`
-> (all nullable, backfilled from the authoritative `timestamp` columns) — verified by re-running the old
-> build's exact query, and end-to-end: a valid `?access=` token renders the dashboard while a bogus one
-> is denied. **Total exposure: a few minutes.**
-> **A projection-less `.select()` turns ANY column drop into a breaking change** for the running build —
-> which is precisely why 0037 also replaced the two bare `.select()`s with explicit projections. Those
-> projections must be **deployed** before the drop re-lands.
+     > 🛑 **ORDERING RULE — learned the hard way, 2026-07-27. For a DROP, the code deploys FIRST.**
+     > CLAUDE.md's "apply migrations to prod BEFORE the dependent code merges" is the rule for **ADDITIVE**
+     > changes (new code needs the new column). **Drops are the exact opposite** and the rule inverts:
+     > deploy the code that stops referencing the column, THEN drop it. Applying 0037 to prod while prod
+     > still ran the old build **took share-token access down**: `validateDashboardShareToken` and
+     > `listDashboardShareTokens` both issue a projection-less `.select().from(shareTokens)`, which drizzle
+     > expands to the column list **declared in the running build** — including the five just-dropped
+     > columns — so every share-link request 500'd with `42703 column "owner_clerk_user_id" does not exist`.
+     > Recovery was to re-add the five columns + `share_tokens_owner_idx` + `dashboard_grants.created_at_ms`
+     > (all nullable, backfilled from the authoritative `timestamp` columns) — verified by re-running the old
+     > build's exact query, and end-to-end: a valid `?access=` token renders the dashboard while a bogus one
+     > is denied. **Total exposure: a few minutes.**
+     > **A projection-less `.select()` turns ANY column drop into a breaking change** for the running build —
+     > which is precisely why 0037 also replaced the two bare `.select()`s with explicit projections. Those
+     > projections must be **deployed** before the drop re-lands.
 
 ✅ **0037 is now COMPLETE on prod (2026-07-27).** After #252 merged and Vercel deployed the explicit
 projections, the 7 rolled-back objects were re-dropped by hand — the journal already claimed 0037, so
@@ -344,7 +345,7 @@ again: **128 statements, zero unexplained**, matching dev.
        that is NOT test debris, a real share link broke at cutover and needs re-issuing, not dropping.
      - **No information loss from the `*_ms` drops:** verified on the one row that had them
        (`keen-fruity-tapir`) — `created_at` matched the ms value exactly and `last_used_at` carried
-       *more* precision (`.62`) than the ms-derived value.
+       _more_ precision (`.62`) than the ms-derived value.
      - **Verified end-to-end against the running app**, not just tests: `GET /api/dashboards/{id}/share`
        with a real Clerk session now returns populated `createdAtMs` / `lastUsedAtMs`, and — the sharp
        one — a genuinely revoked token now reports `revokedAtMs`, so `ShareLinksPanel`'s
@@ -386,8 +387,7 @@ again: **128 statements, zero unexplained**, matching dev.
      nine names verified free first (the `_old` drop released them), then renamed and verified against
      `pg_indexes`: `point_readings_pkey`, `pr_measurement_time_idx`, `pr_created_at_idx`, `pr5m_pkey`,
      `pr5m_interval_end_idx`, `pr5m_created_at_idx`, `pr5m_updated_at_idx`, `pr1d_pkey`,
-     `pr1d_day_idx`. **Zero `_new` names remain anywhere in the database.** Snapshot transplanted (as
-     0036) since renames cannot be generated. `check-readings-boundary.mjs`'s `(_old|_new|_v\d+)?`
+     `pr1d_day_idx`. **Zero `_new` names remain anywhere in the database.** Snapshot transplanted (as 0036) since renames cannot be generated. `check-readings-boundary.mjs`'s `(_old|_new|_v\d+)?`
      group removed with its three fixtures — the comment records how to restore it if a future
      migration ever reintroduces a twin.
    - **0039, hand-written** (`generate --custom`) — **only now are the canonical names free.** Rename
@@ -416,31 +416,89 @@ rewrite, failures loud and rolled-back. The residual risk is a wrong rename (gua
 **Goal:** collapse run-tracking and HWS onto `derivations`/`derived_intervals`, and drop
 `device_trackers`/`device_run_periods`. Small, self-contained, and it unblocks Phase 12's FK drops.
 
-**Work**
+**✅ PR 1 (the re-key + fill tooling) BUILT.** `tsc` clean (app + `scripts/config-v4`), 129 suites /
+1257 tests pass, `check:readings` green, `build:local` compiles. Not yet applied to any database.
 
-- Data-migrate `device_trackers` → `derivations` (`role`, `output` ∈ (point, intervals), `area_id`) and
-  `device_run_periods` → `derived_intervals` (PK `(derivation_id, start_time)`, the open-interval partial
-  unique). Both tables were created empty by migration 0033 and are still unconsumed, so this is a fill,
-  not a reshape.
-- Move `lib/run-tracking/` (9 modules) onto the new tables: `resolve.ts` reads `derivations` instead of
-  `device_trackers`; `lib/db/planetscale/run-periods-pg.ts`, `recompute.ts`, `live.ts` and
-  `app/api/system/[systemId]/run-periods/route.ts` read `derived_intervals`. Keep the row semantics
-  identical — this is a re-key, not a behaviour change.
-- Register HWS as a `derivations` row (`output = point`, `output_point_id` → the existing
-  `load.hws/temperature` point) so `lib/hws/recompute.ts` is discovered through the same mechanism as a
-  tracker rather than being hard-wired in the minutely cron. The thermal model itself does not change.
-- Add the FK `derivations.output_point_id` → `points` (deferred at 0033 because `points` was empty).
-- Drop `device_trackers` + `device_run_periods`, which removes two of the three composite FKs into
-  `point_info` and two of the three FKs into `roles`.
-- Retire `scripts/seed-generator-tracker.ts` or port it to the new shape (it is the only `roles` writer).
+Corrections to the original sketch, found while building it:
+
+- 🛑 **THE DATA MIGRATION WAS ALREADY DONE — by the cutover transform.** `derivations` and
+  `derived_intervals` are **not** empty: config-transform stage 5 already wrote them (dev: 2
+  derivations, 76 intervals, byte-identical to `device_run_periods`). The plan's "fill, not a
+  reshape" premise was wrong — it is a **reconcile**. Better still, the transform's `params` and
+  `source_points` are byte-identical to what this phase's mapper independently produces, which
+  cross-validates both.
+  **But the transform minted RANDOM v4 ids, independently per environment.** That silently breaks the
+  by-PK prod→dev sync this phase adds (two ids for one logical row → duplicate → a
+  `derivations_area_role_unique` violation). So `fill-derivations.ts` **normalizes**: any row for the
+  same (area, kind, role) under a non-deterministic id is deleted and re-inserted under the
+  deterministic uuidv5 id, rebuilding its intervals from `device_run_periods`. **This is why the fill
+  must run BEFORE the legacy tables are dropped** — they are the rebuild source.
+- **The FK `derivations.output_point_id` → `points` is ALREADY LIVE** — Phase 10's migration 0036
+  declared it (it had been wired by config-transform stage 5 but left undeclared). Do not re-add.
+- **Run periods do NOT feed `battery-provenance/fold`.** The only reference is a comment noting the
+  shared recompute _pattern_; there is no data dependency. The real coupling is the best-effort daily
+  heal pass at `lib/aggregation/daily-points.ts:224`. The multi-week recompute-and-compare gate stands
+  regardless — a silent re-key error is still the risk that matters.
+- `scripts/backfill-run-periods.ts` was an unlisted `listEnabledTrackers` consumer.
+
+**What landed in PR 1**
+
+- **`lib/derivations/`** — the new discovery layer. `resolve.ts` (typed jsonb contracts + the resolved
+  shapes + `listEnabledRunDetectors`/`listEnabledHwsModels`/`hasEnabledRunDetector`), `params.ts` (the
+  sparse-params → role-defaults merge, pure), `ids.ts` (deterministic `uuidv5(area:kind:role)` ids),
+  `fill-map.ts` (pure legacy→v4 row mappers). `lib/run-tracking/resolve.ts` deleted.
+- **`resolveAreaIdForHandle`** is the ONE handle→area mapping, used by the fill _and_ every reader, so
+  a derivation can't land on an area the readers don't resolve to.
+- **`run-periods-pg.ts` → `derived-intervals-pg.ts`**, re-keyed `(system_id, role, start_time)` →
+  `(derivation_id, start_time)`; advisory lock now `hashtext(derivation_id)`; source points arrive
+  pre-resolved as `PointId`, so the `RegistryCache.pointForAddr` hop is gone.
+- **One cron**: `/api/cron/run-periods` → `/api/cron/derivations`, dispatching run-detectors then HWS;
+  the minutely-cron HWS hard-wire removed (`vercel.json` updated). Accepted: HWS may trail
+  materialization by ≤1 tick, healed next pass.
+- **Migration 0040** — `derived_intervals.derivation_id` gains `ON DELETE CASCADE` (guarded,
+  idempotent). Intervals are disposable derived output, so they follow their derivation; this is also
+  what makes the sync's area idDrift cleanup safe. `db:pg:generate` then reports "No schema changes".
+- **prod→dev sync**: `device_trackers` → `derivations` as a plain **by-PK** upsert (deterministic ids
+  mean dev and prod mint the same id — no `excludeCols`/natural-key dance); the point_info idDrift
+  signal-point children are gone (jsonb refs carry no FK).
+- **`scripts/seed-generator-tracker.ts` deleted** (its job is done; the Daylesford tracker is already
+  re-pointed to the DSE). `roles` is now writer-less — Phase 12 drops it.
+- New tooling: `scripts/config-v4/fill-derivations.ts` (dry-run default, idempotent, refuses to run
+  once the new build is live) and `verify-derivations.ts` (the byte-identical gate).
+
+**✅ Dev rehearsal PASSED (2026-07-28)** — 0040 applied to `liveone-dev` (verified via `pg_constraint`:
+`confdeltype='c'`, 41 journal rows), fill applied (2 rows re-keyed to deterministic ids, 76 intervals
+rebuilt), and every gate green:
+
+- `verify-derivations.ts`: **76 compared, 0 differences**.
+- **Old writer vs new writer**: `db:recompute-dev-runs 30` rewrote 8 periods through the new
+  `derived-intervals-pg.ts`; re-verify still **0 differences**. This is the phase gate.
+- **HWS**: discovery via `derivations` returns the identical pair the old `point_info` scan did
+  (system 6, temp index 19, same unit/name/options, same power point uuid — the only active
+  `load.hws/power` row). Fixed-window recompute twice → **0 value diffs** (deterministic). ⚠️ A
+  _sliding_ `Date.now()` window does legitimately shift values (warmup lead-in moves + newly-synced
+  power); don't mistake that for a regression — pin the window when A/B testing.
+- **End-to-end on the running app**: `/api/system/1/run-periods` returns 76 events, energy checksum
+  167.296 and all 76 start times **identical to `device_run_periods`**; `/api/cron/derivations`
+  dispatches both kinds in one pass (`trackersProcessed:1, runningPublished:1, hwsPairs:1`); the old
+  `/api/cron/run-periods` path 404s; `hasEnabledRunDetector` → true for handle 1, false for 6;
+  `/api/data` serves `source.generator/running` (1.17) and `load.hws/temperature` (6.19).
+
+**Still TODO**
+
+1. Apply 0040 to prod `sydney`.
+2. Prod: run the fill (it will re-key prod's transform-minted ids too) minutes before deploying PR 1;
+   the first minutely reconcile (6h trailing) heals the gap. Verify with `--before=<deploy − 6h>`.
+3. **Regenerate Daylesford from musher-start** (Simon, 2026-07-28): find `MIN(measurement_time)` of the
+   DSE signal point, then `action=regenerate&start=…&end=…` on the new cron route.
+4. Soak ~1 day, then PR 2: drop both legacy tables (migration 0041) — code first, per the drop rule.
 
 **Done when:** run periods for the Daylesford genset and the Kinkora HWS series are byte-identical
 before/after on `liveone-dev`; the run-periods route and the generator-runs card render unchanged; both
 legacy tables are gone; `point_info` has exactly one remaining FK child (`area_bindings`).
 
-**Risks:** run-tracking feeds `battery-provenance/fold` and `daily-points` aggregation, so a silent re-key
-error would corrupt derived daily history. Gate on a recompute-and-compare over a multi-week window, not a
-spot check.
+**Risks:** a silent re-key error would corrupt derived daily history. Gate on a recompute-and-compare
+over a multi-week window, not a spot check.
 
 ---
 
