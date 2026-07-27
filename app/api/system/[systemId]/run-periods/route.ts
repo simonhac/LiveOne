@@ -4,9 +4,23 @@ import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   derivedIntervals,
+  pointInfo,
+  systems,
   type DerivedInterval,
 } from "@/lib/db/planetscale/schema";
-import { getRunDetectorForHandleRole } from "@/lib/derivations/resolve";
+import {
+  getRunDetectorForHandleRole,
+  type ResolvedRunDetector,
+} from "@/lib/derivations/resolve";
+import { Point, type PointId } from "@/lib/ids";
+import { resolvePointDisplay } from "@/lib/point/display/registry";
+import { getUnitDisplay } from "@/lib/point/unit-display";
+import {
+  avgPowerWFromEnergy,
+  planRunPeriodColumns,
+  type RunPeriodColumns,
+  type RunSignalMeta,
+} from "@/lib/run-tracking/run-period-view";
 import { formatInTimezone } from "@/lib/date-utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -15,29 +29,116 @@ const MAX_PERIOD_DAYS = 366; // hard upper bound — this endpoint is always bou
 const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 10;
 
-/** kW (1dp) magnitude of a signed Watt value, mirroring the legacy generator-events rounding. */
-function magnitudeKw(w: number | null): number {
-  if (w == null) return 0;
-  return Math.round(Math.abs(w) / 100) / 10;
+/** Fallback number format when the display registry doesn't cover the signal point. */
+const DEFAULT_SIGNAL_FORMAT = "0.0";
+
+/**
+ * Describe the signal a detector follows, so its statistics can be shown in their OWN unit rather
+ * than assumed to be Watts. One uuid-keyed `point_info` read (joined to `systems` for the
+ * `vendorType` the display registry keys on) — same pattern as `listEnabledHwsModels`.
+ *
+ * A missing `point_info` row is survivable: warn and return null, and the caller simply omits the
+ * signal column (never a 500).
+ */
+async function readSignalMeta(
+  signalPoint: PointId,
+): Promise<RunSignalMeta | null> {
+  const uuid = Point.toUuid(signalPoint);
+  const [row] = await requirePlanetscaleDb()
+    .select({
+      displayName: pointInfo.displayName,
+      metricType: pointInfo.metricType,
+      metricUnit: pointInfo.metricUnit,
+      subsystem: pointInfo.subsystem,
+      physicalPathTail: pointInfo.physicalPathTail,
+      vendorType: systems.vendorType,
+    })
+    .from(pointInfo)
+    .innerJoin(systems, eq(systems.id, pointInfo.systemId))
+    .where(eq(pointInfo.pointUid, uuid))
+    .limit(1);
+  if (!row) {
+    console.warn(
+      `[RunPeriods] signal point ${uuid} has no point_info row — omitting the signal column`,
+    );
+    return null;
+  }
+  // The registry wins where it covers the point (e.g. deepsea generator engine_rpm -> rpm / "0");
+  // otherwise fall back to the RAW unit spelling. Deliberately NOT getContextualUnitDisplay, which
+  // maps metric_type 'power' to "kW" WITHOUT scaling the value — the same mislabel in a new coat.
+  const display = resolvePointDisplay(
+    row.vendorType,
+    row.subsystem,
+    row.physicalPathTail,
+  );
+  return {
+    label: row.displayName,
+    metricType: row.metricType,
+    metricUnit: row.metricUnit,
+    unit: display?.unit ?? getUnitDisplay(row.metricUnit),
+    format: display?.format ?? DEFAULT_SIGNAL_FORMAT,
+  };
+}
+
+/** Everything a row needs that is constant across the request. */
+interface EventShape {
+  tz: string;
+  columns: RunPeriodColumns;
+  /** The detector's CURRENT version — rows written by an older one may be in a different unit. */
+  detectorVersion: number | null;
 }
 
 /** Shape one derived interval into the (legacy-compatible + enriched) event the UI consumes. */
-function toEvent(r: DerivedInterval, tz: string) {
+function toEvent(r: DerivedInterval, s: EventShape) {
+  // `avg_power_w` holds a statistic of the RAW SIGNAL, whose unit is whatever the detector's signal
+  // point measures. A row written by an EARLIER detector version predates a signal/config change, so
+  // its unit is not provably the one `signal` describes (Daylesford's pre-2026-07-11 rows are
+  // Selectronic Watts; its current rows are DSE rpm). Suppress rather than mislabel.
+  const unitProven =
+    s.detectorVersion != null && r.detectorVersion === s.detectorVersion;
+  const avgSignal = unitProven ? r.avgPowerW : null;
   return {
     // Legacy generator-events contract:
-    date: formatInTimezone(r.startTime, tz, "EEE d MMM"),
-    startTime: formatInTimezone(r.startTime, tz, "HH:mm"),
-    endTime: r.endTime ? formatInTimezone(r.endTime, tz, "HH:mm") : null,
+    date: formatInTimezone(r.startTime, s.tz, "EEE d MMM"),
+    startTime: formatInTimezone(r.startTime, s.tz, "HH:mm"),
+    endTime: r.endTime ? formatInTimezone(r.endTime, s.tz, "HH:mm") : null,
     running: r.endTime === null,
-    minPowerKw: magnitudeKw(r.maxPowerW), // magnitude min = |max signed|
-    maxPowerKw: magnitudeKw(r.minPowerW), // magnitude max = |min signed|
     energyKwh: r.energyKwh ?? 0,
     // Richer fields for cards / future generalisation:
     startTimeISO: r.startTime.toISOString(),
     endTimeISO: r.endTime ? r.endTime.toISOString() : null,
     durationSeconds: r.durationSeconds,
-    avgPowerW: r.avgPowerW,
     sampleCount: r.sampleCount,
+    /** Mean of the raw on-samples, in `signal.unit`. Null when the unit isn't provable. */
+    avgSignal,
+    /**
+     * True average power (W). From energy ÷ duration wherever an energy point is bound; only when
+     * the signal ITSELF is power (and no energy point exists) does it fall back to the signal mean,
+     * where `Math.abs` is right because the figure is being presented as a magnitude.
+     */
+    avgPowerW:
+      s.columns.avgPowerBasis === "signal"
+        ? avgSignal == null
+          ? null
+          : Math.abs(avgSignal)
+        : avgPowerWFromEnergy(r.energyKwh, r.durationSeconds),
+  };
+}
+
+/** Resolve the per-request signal metadata + column plan for a detector (or the empty plan). */
+async function resolveShape(
+  detector: ResolvedRunDetector | null,
+  tz: string,
+): Promise<{ signal: RunSignalMeta | null; shape: EventShape }> {
+  const signal = detector ? await readSignalMeta(detector.signalPoint) : null;
+  const columns = planRunPeriodColumns({
+    signalMetricType: signal?.metricType ?? null,
+    signalMetricUnit: signal?.metricUnit ?? null,
+    hasEnergyPoint: detector?.energyPoint != null,
+  });
+  return {
+    signal,
+    shape: { tz, columns, detectorVersion: detector?.detectorVersion ?? null },
   };
 }
 
@@ -77,6 +178,9 @@ export async function GET(
     // system. Resolved through the shared handle→area mapping so reader and writer always agree.
     const detector = await getRunDetectorForHandleRole(systemId, role);
 
+    // What the detector follows + which columns are honest for it. Resolved ONCE per request.
+    const { signal, shape } = await resolveShape(detector, tz);
+
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
     // dashboard generator-runs card. Bounded by limit (no time window).
     const limitParam = searchParams.get("limit");
@@ -100,10 +204,12 @@ export async function GET(
             .offset(offset)
         : [];
       const hasMore = rows.length > limit;
-      const events = rows.slice(0, limit).map((r) => toEvent(r, tz));
+      const events = rows.slice(0, limit).map((r) => toEvent(r, shape));
       return NextResponse.json({
         role,
         events,
+        signal,
+        columns: shape.columns,
         limit,
         offset,
         hasMore,
@@ -162,17 +268,24 @@ export async function GET(
 
     let runningNow = false;
     let totalEnergyKwh = 0;
+    // Summed alongside the energy so the footer can show a genuine period-average power
+    // (Σenergy ÷ Σduration). Open runs contribute no duration, matching their null avg power.
+    let totalDurationSeconds = 0;
     const events = rows.map((r) => {
-      const ev = toEvent(r, tz);
+      const ev = toEvent(r, shape);
       if (ev.running) runningNow = true;
       totalEnergyKwh += ev.energyKwh;
+      totalDurationSeconds += ev.durationSeconds ?? 0;
       return ev;
     });
 
     return NextResponse.json({
       role,
       events,
+      signal,
+      columns: shape.columns,
       totalEnergyKwh: Math.round(totalEnergyKwh * 1000) / 1000,
+      totalDurationSeconds,
       running: runningNow,
     });
   } catch (error) {

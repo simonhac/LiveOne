@@ -1,6 +1,12 @@
 import { queryOptions } from "@tanstack/react-query";
 import { fetchJson } from "./fetcher";
 import { queryKeys, type SystemIdLike } from "./keys";
+import type {
+  RunPeriodColumns,
+  RunSignalMeta,
+} from "@/lib/run-tracking/run-period-view";
+
+export type { RunPeriodColumns, RunSignalMeta };
 
 /**
  * One persisted device run period, as shaped by `/api/system/{id}/run-periods`. Covers BOTH the
@@ -15,8 +21,13 @@ export interface RunPeriodEvent {
   durationSeconds?: number | null;
   startTimeISO?: string;
   endTimeISO?: string | null;
-  minPowerKw?: number;
-  maxPowerKw?: number;
+  /**
+   * Mean of the raw on-samples of the SIGNAL the detector follows, in `RunSignalMeta.unit` — rpm for
+   * an engine-speed detector, W for a power one. Null when the row was written by an older detector
+   * version, whose unit isn't provably the one `signal` describes.
+   */
+  avgSignal?: number | null;
+  /** True average power over the run (W) — energy ÷ duration; null while still running. */
   avgPowerW?: number | null;
   sampleCount?: number;
   energyKwh: number;
@@ -31,12 +42,18 @@ export interface RunPeriodEvent {
 export interface RunPeriodsResponse {
   role: string;
   events: RunPeriodEvent[];
+  /** What the detector follows (unit + label for `avgSignal`). Null when it can't be resolved. */
+  signal?: RunSignalMeta | null;
+  /** Which columns are honest for this detector — the server owns the rule, clients just obey it. */
+  columns?: RunPeriodColumns;
   /** paged mode */
   limit?: number;
   offset?: number;
   hasMore?: boolean;
   /** period mode */
   totalEnergyKwh?: number;
+  /** period mode: Σ duration of closed runs, so the footer can show Σenergy ÷ Σduration. */
+  totalDurationSeconds?: number;
   running?: boolean;
 }
 
