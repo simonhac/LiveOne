@@ -26,13 +26,20 @@ changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the m
 2. **The drizzle snapshot no longer describes the live database.** ✅ **Repaired on dev** by migration
    0036 (see Phase 10 steps 2–5); **prod apply still outstanding**.
 
-**Phase 10 status (2026-07-27):** code half ✅ (#251). Schema half: **0036 + 0037 applied and
-audit-verified on BOTH `liveone-dev` and prod `sydney`** (#252). **0038 + 0039 applied and verified on
-dev** — `_old` and `backfill_progress` gone (4,216 MB freed), hot-table index names canonical, zero
-`_new` names left, boundary-guard regex simplified. `db:pg:generate` reports "No schema changes" and
-dev's DB-equivalence audit is down to **120 statements, zero unexplained** — the permanent residue.
-**Remaining: apply 0038 + 0039 to prod** (needs the validation-window sign-off + a one-off
-`pscale backup create`), **plus the prod `rewrite-descriptor-area-refs.ts` run.**
+**Phase 10 status — SCHEMA HALF COMPLETE (2026-07-27).** Code half ✅ (#251); **0036–0039 applied and
+audit-verified on BOTH `liveone-dev` and prod `sydney`** (#252, #253). `db:pg:generate` reports "No
+schema changes"; both DB-equivalence audits sit at **120 statements, zero unexplained, shape-identical**
+— that is the permanent residue. `_old` + `backfill_progress` gone (4,216 MB dev / 4,140 MB prod),
+hot-table index names canonical, zero `_new` names anywhere, boundary-guard regex simplified.
+**Remaining for Phase 10: only the prod `rewrite-descriptor-area-refs.ts` run** (needs a write role; prod
+descriptors are still 16/16 raw uuid, which blocks the Phase-14 strict-decode tightening).
+
+> **Correction worth carrying:** the prod cutover ran **2026-07-26 10:51 UTC**, not 25 Jul. The 25 Jul
+> figure is migration 0035's journal `when` (its generation time); the transform was out-of-band and
+> later. `point_readings_old`'s last write — the terminal rename-swap — dates it precisely. So the `_old`
+> validation window at drop time was ~26 h, not ~2 days. Guards passed with live strictly ahead on all
+> three tables (15,664,671 vs 15,599,219 raw), and backup `fzmopfcooojg` (2.69 GB, verified `success`)
+> was taken minutes before.
 
 **Also done 2026-07-27:** the Phase 7/8 rehearsal branches `rehearse-5` (`fq7uult9pcir`) and `rehearse-6`
 (`z3ok95wtk88o`) were **deleted** — they were restored-from-prod copies, unreferenced outside these plan
