@@ -114,9 +114,9 @@ export function createMusher(opts: MusherOptions): Source {
 
   // ── Diagnostics (temporary, env-gated) ──────────────────────────────────────
   // MUSHER_DIAGNOSTICS=1 durably captures the FULL register dump (all ~94 regs: raw words + decoded
-  // value + sentinel reason) while the genset is running AND for the next MUSHER_DIAG_POSTRUN_TICKS
-  // polls (a fine-resolution cool-down baseline). In diag mode isRunning() reports the whole window,
-  // so the loop holds its fast (1-min) cadence across the post-run tail, then reverts to idle.
+  // value + sentinel reason) on EVERY poll — idle included, at the 5-min idle cadence.
+  // MUSHER_DIAG_POSTRUN_TICKS no longer gates capture; it only holds the fast (1-min) cadence for
+  // that many polls after a run ends, giving a fine-resolution cool-down baseline.
   const DIAG = process.env.MUSHER_DIAGNOSTICS === "1";
   const POSTRUN = Math.max(
     0,
@@ -180,23 +180,28 @@ export function createMusher(opts: MusherOptions): Source {
         lastReadAt = new Date().toISOString();
 
         if (DIAG) {
-          // Diagnostic window = running OR within POSTRUN polls of the run ending. Evaluated once per
-          // tick (read() runs once per tick, before isRunning) so the post-run counter is exact.
+          // EVERY tick is journalled, idle included. The run/post-run window no longer gates capture,
+          // only CADENCE: it is what isRunning() reports, so the loop samples at 1 min across a run
+          // and its cool-down tail, and at the 5-min idle rate otherwise.
+          //
+          // Capturing idle ticks is the whole point. The previous running-gated capture could never
+          // show WHY a start happened, because its first record was already running — a start is only
+          // explicable from the state that PRECEDED it (control mode, status flags, start counter).
+          // Evaluated once per tick (read() runs once per tick, before isRunning) so the post-run
+          // counter stays exact.
           const running =
             Number(values.engineRpm ?? 0) > 0 ||
             Number(values.genFreqHz ?? 0) > 0;
-          let inWindow: boolean;
           if (running) {
             holdRemaining = POSTRUN;
-            inWindow = true;
+            lastActive = true;
           } else if (holdRemaining > 0) {
-            inWindow = true;
+            lastActive = true;
             holdRemaining--; // consume one post-run slot
           } else {
-            inWindow = false;
+            lastActive = false;
           }
-          lastActive = inWindow;
-          if (inWindow) emitDiag(dump, running, holdRemaining);
+          emitDiag(dump, running, holdRemaining);
         }
         return values;
       } finally {
@@ -209,8 +214,9 @@ export function createMusher(opts: MusherOptions): Source {
       }
     },
     // Running when the engine is turning / producing — drives the loop's faster (1-min) cadence. In
-    // diag mode this reports the whole capture window (run + post-run hold) so the fast cadence — and
-    // thus the 1-min cool-down dump — extends across the post-run tail before reverting to idle.
+    // diag mode this reports run + post-run hold, so the fast cadence — and thus the 1-min
+    // cool-down dump — extends across the post-run tail before reverting to the 5-min idle rate.
+    // (Capture itself is unconditional in diag mode; this only sets the sampling rate.)
     isRunning(values: Values): boolean {
       if (DIAG) return lastActive;
       return (

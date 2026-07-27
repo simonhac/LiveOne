@@ -4,13 +4,18 @@
  * A trimmed sibling of the blackbox: appends arbitrary JSON records to a daily append-only JSONL
  * file `<dir>/YYYY-MM-DD.jsonl` (UTC day) on the persistent volume, gzipping completed days on the
  * roll. Used by musher's MUSHER_DIAGNOSTICS mode to durably capture the FULL DeepSea register dump
- * (all ~94 regs, raw words + decoded value + sentinel reason) during a generator run + a short
- * post-run tail — data that would otherwise be lost to Fly's ephemeral log buffer.
+ * (all ~94 regs, raw words + decoded value + sentinel reason) on EVERY poll — data that would
+ * otherwise be lost to Fly's ephemeral log buffer.
  *
  * Failure posture (same as the blackbox): a broken/full disk DEGRADES journaling (one warning,
  * appends become no-ops) and NEVER throws into the collector loop. Unlike the blackbox there is no
- * disk-GC here — the data is tiny (~150 KB/run) and the whole thing is temporary — but appends stop
- * cleanly if the disk fills. Records never contain auth material.
+ * disk-GC here — but appends stop cleanly if the disk fills. Records never contain auth material.
+ *
+ * ⚠️ SIZING: capture is continuous, not run-gated. A record is ~8 KB, so the 5-min idle cadence alone
+ * is ~288 records ≈ 2.3 MB/day uncompressed; completed days gzip to roughly a tenth of that on the
+ * roll, so steady state is ~0.25 MB/day plus the current day. That is years on the 1 GB volume, but
+ * there is still NO GC — this mode is a temporary debugging aid. Unset MUSHER_DIAGNOSTICS or prune
+ * `/data/usher/diag` when the investigation is done.
  */
 
 import { promises as fs } from "node:fs";

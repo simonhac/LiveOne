@@ -16,7 +16,9 @@
 #   KINKORA_PEER_PUBKEY      kinkora UDM WG public key
 #   KINKORA_DEVICE_CIDRS     the two Fronius inverter /32s, comma-separated ("10.0.1.190/32,10.0.1.191/32")
 #   TUNNEL_TOKEN             cloudflared tunnel token (Cloudflare Access → usher.liveone.energy)
-#   SHEEPHOUSE_API_KEY       gusher gk_ key for system "sheephouse"
+#   MUSHER_API_KEY           gusher gk_ key for system "sheephouse" (the name usher.example.yaml's
+#                            `apiKeyEnv` actually reads — NOT "SHEEPHOUSE_API_KEY", as this comment
+#                            previously claimed; provisioning that name silently yields no auth)
 #   KINKORA_API_KEY          gusher gk_ key for system "kinkora"
 app = "liveone-flyhub"
 primary_region = "syd"
@@ -32,6 +34,18 @@ primary_region = "syd"
   KINKORA_PEER_WG_IP = "10.9.0.3/32"
   # On-disk store (blackbox journal + outage spool) on the persistent volume (see [mounts]).
   USHER_DATA_DIR = "/data/usher"
+  # ── TEMPORARY: DeepSea diagnostics (debugging the Daylesford genset start trigger) ──────────────
+  # Captures the FULL register dump (~100 regs: decoded value + raw words + sentinel reason) on EVERY
+  # poll — idle included — to /data/usher/diag/YYYY-MM-DD.jsonl (gzipped on the day roll).
+  # Declared here, NOT as a secret: these are plain config, and keeping them visible in the repo is
+  # the point — the flag was previously set out-of-band, so nobody knew capture was off and the
+  # 2026-07-26 run was lost. Costs ~2.3 MB/day uncompressed (~0.25 MB/day once rolled) and there is
+  # NO GC on the diag dir. To turn off: set MUSHER_DIAGNOSTICS = "0" and redeploy, then prune
+  # /data/usher/diag.
+  MUSHER_DIAGNOSTICS = "1"
+  # Polls to hold the fast (1-min) cadence after a run ends — a fine-resolution cool-down baseline.
+  # Does NOT gate capture (that is unconditional); 60 ticks ≈ 60 minutes.
+  MUSHER_DIAG_POSTRUN_TICKS = "60"
 
 # Persistent volume for the usher store — survives deploys/restarts, so an outage backlog is never
 # lost to a redeploy. CREATE THE VOLUME BEFORE THE FIRST DEPLOY WITH THIS BLOCK (the deploy fails
