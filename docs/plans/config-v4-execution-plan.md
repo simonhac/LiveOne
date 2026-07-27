@@ -1,6 +1,6 @@
 # Config v4 — execution plan
 
-> **Status: ACTIVE (started 2026-07-22; Phases 0–9 shipped).** The _rationale_ is
+> **Status: ACTIVE (started 2026-07-22; Phases 0–11 shipped).** The _rationale_ is
 > [config-v4-clean-sheet.md](config-v4-clean-sheet.md) — the canonical design doc, and the source of the
 > finish-line checklist (§4.8 "What dies"). This file is the _execution_ plan: what has landed, what is
 > still legacy, and the phases that finish the job.
@@ -10,7 +10,7 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 11 PR 2: apply migration 0041. **Phase 10 COMPLETE; Phase 11 PR 1 LIVE.**
+## ▶ NEXT ACTION — Phase 12: registry cutover (make `devices`/`points` primary). **Phases 10 + 11 COMPLETE.**
 
 Phase 9's PR 1 + PR 2 merged as [#250](https://github.com/simonhac/LiveOne/pull/250). **PR 3 ("aesthetic
 changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the migration is 100% complete
@@ -128,9 +128,9 @@ model. Those are still v3, with v4 running alongside as a dark mirror.
 | **Dashboards are dual-shape, v3-write**          | `descriptor` **and** `doc` both NOT NULL and both written. `/api/dashboards/[id]` PATCH — the only editor — accepts **only** v3. Header/nav/`AddAreaDialog` all read `descriptor`.                                                                          | Phase 14    |
 | **Zero v4-native renderers**                     | 19 plugins across two split registries (`CARD_RENDERERS` 10 + `TILE_RENDERERS` 9), 100% v3-shaped, reached through `v4-adapt.ts`. `card-types.ts`' 18 unified types have no renderer map.                                                                   | Phase 14    |
 | **All v4 mutation routes missing**               | 10 endpoints unbuilt (`/devices`, `/devices/{id}/points`, `/areas/{id}/members\|bindings\|derivations` PUT, `/dashboards/{id}/shares\|grants\|revisions`, `/export`, `/import`); 28 legacy handlers across 15 routes still serve.                           | Phase 14    |
-| **Derivations unused; two derive mechanisms**    | `derivations`/`derived_intervals` have 0 consumers. Run-tracking is still 9 bespoke modules on `device_trackers`/`device_run_periods`; HWS is still bespoke.                                                                                                | Phase 11    |
+| **Derivations unused; two derive mechanisms**    | ✅ **Phase 11 DONE** — run-tracking + HWS now read/write `derivations`/`derived_intervals`; `device_trackers`/`device_run_periods` dropped (0041).                                                                                                | Phase 11    |
 | **`user_systems` / `isViewer`**                  | 7 query sites; `isViewer` confined to `lib/api-auth.ts` (5 refs) and folded into `canRead`.                                                                                                                                                                 | Phase 12    |
-| **`roles` table**                                | 1 query site (a seed script) but still the FK target for `area_bindings.role` (CHECK already covers it) + both tracker tables.                                                                                                                              | Phase 11/12 |
+| **`roles` table**                                | 1 query site (a seed script); writer-less. Phase 11 dropped the two tracker-table FKs into it — now only `area_bindings.role` references it (its CHECK already covers the set).                                                                              | Phase 12    |
 | **Dead weight in `schema.ts`**                   | `dashboard_share_tokens` — **0 query sites, schema-only**. Plus 5 dead `share_tokens.*_ms`/`owner_clerk_user_id` columns and `dashboard_grants.created_at_ms`.                                                                                              | Phase 10    |
 | **Three `_old` hot tables in the DB**            | Created by the transform's rename-swap, never dropped. Not declared in `schema.ts`; only the scaffolding references them.                                                                                                                                   | Phase 10    |
 | **~160 KB of cutover scaffolding**               | 13 files in `scripts/config-v4/`, and `tsc -p scripts/config-v4/tsconfig.json` runs on **every** `prebuild`.                                                                                                                                                | Phase 10    |
@@ -537,10 +537,16 @@ truncated. End-to-end: `/api/system/1/run-periods?last=30d` on live prod returns
 > true 2–3.3 kW. A wrong number, not a mislabel. Written up in full, with the fix, under
 > **Open follow-up — run-interval statistics assume the signal IS power** at the end of this file.
 
-**Still TODO**
-
-1. Soak, then apply migration **0041** — code first, per the drop rule: merge + deploy PR 2, confirm
-   prod is serving the new build, then `db:pg:migrate` against `sydney`, then `liveone-dev`.
+**✅ PHASE 11 COMPLETE (2026-07-28).** Migration **0041** applied — code-first per the drop rule: PR 2
+([#258](https://github.com/simonhac/LiveOne/pull/258)) merged + deployed, prod confirmed serving the new
+build (`/api/health` 200), then `db:pg:migrate` against `sydney`, then `liveone-dev`. Both DBs verified:
+the coverage guard passed (`derived_intervals` ≥ `device_run_periods`, latest not trailing —
+78/78 on prod, 76/76 on the frozen dev), `device_trackers`/`device_run_periods` are gone, the journal is
+at 42 rows, and `point_info` now has exactly **one** FK child (`area_bindings_point_info_fk`) — the
+phase's "Done when". `db:pg:generate` reports "No schema changes" on both. The sydney apply used a
+short-TTL admin `pscale role` (deleted afterwards; a pure DROP creates nothing, so no ownership-trap
+reassign was needed) rather than `reset-default`, to avoid rotating the app's `postgres` password; dev
+applied as its persistent `postgres` role.
 
 > 🛑 **The prod→dev sync is DOWN and has been since ~2026-07-25** (found 2026-07-28 while checking
 > post-merge state; Simon's call: proceed with the regenerate + PR 2 first, fix it in Phase 12).
@@ -785,12 +791,12 @@ This is a **wrong number on the card, not a mislabel**, and it is a regression f
 not from Phase 11, which preserved the existing behaviour exactly. `energy_kwh` and
 `duration_seconds` are unaffected: energy comes from the separate `source_points.energy` point.
 
-**Cheap fix, no schema change** — in `app/api/system/[systemId]/run-periods/route.ts:39`, derive
-avg power as `energyKwh / durationSeconds` instead of passing the signal statistic through. Correct
-for any `signalKind`. The sibling `minPowerKw` / `maxPowerKw` (route.ts:32-33) have **no UI consumer**
-(only the route itself references them), so they can be dropped from the response at the same time —
-note their deliberate min/max swap only makes sense for a negative import signal, so they read
-inverted for a positive one anyway.
+**✅ Cheap fix — addressed in PR [#259](https://github.com/simonhac/LiveOne/pull/259) (2026-07-28), no
+schema change** — `app/api/system/[systemId]/run-periods/route.ts` `toEvent()` now derives avg power as
+`energyKwh / durationSeconds` (a dedicated energy point, correct for any `signalKind`) instead of passing
+the signal statistic through; null for an open/running period. The sibling `minPowerKw` / `maxPowerKw`
+had **no UI consumer** and were dropped from the response and the shared `RunPeriodEvent` type at the same
+time.
 
 **Proper fix, belongs in a phase** — either rename the columns to something signal-neutral carrying a
 unit, or add a `signalKind: "value-threshold"` alongside `"power-threshold"` so a non-power signal can
