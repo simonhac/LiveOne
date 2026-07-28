@@ -69,9 +69,23 @@ type FkChild = { table: string; cols: string[] };
 // overlap), so a drifted area's rows OLDER than that window aren't restored until a full R2 restore.
 // derived_intervals is recomputed on dev (db:recompute-dev-runs), not synced. Fine for a disposable
 // mirror; the realigning rows are few (an occasional independently-created area / renumbered helper point).
+//
+// `repoint` is the alternative to `children` for an FK that CANNOT be cleared: a NOT NULL / NO ACTION
+// reference (devices.primary_area_id, derivations.area_id) blocks the parent DELETE outright. Those rows
+// belong to the same LOGICAL parent, so they are MOVED onto prod's PK rather than deleted — which also
+// avoids the trap that makes the delete-the-devices alternative unsafe: area_bindings.point_uid can
+// reference a point owned by a device under a DIFFERENT, non-drifted area, so cascading from devices
+// would destroy unrelated areas' live bindings. Repointing touches no devices/points rows at all.
+//
+// The repoint UPDATE needs prod's row to already exist (it is the FK target), but the drifted dev row
+// blocks the upsert on a secondary unique index — so `neutralize` names the NULLABLE columns of those
+// unique keys, cleared first so both rows can coexist for the middle of the transaction (Postgres unique
+// indexes permit multiple NULLs). Ordering is therefore load-bearing: neutralize → upsert → repoint → delete.
 type IdDrift = {
   uniqueKeys: string[][]; // secondary unique indexes (each a full column list) a divergent-PK row collides on
   children: FkChild[];
+  repoint?: FkChild[]; // FKs that must FOLLOW the realignment instead of being deleted (NOT NULL/NO ACTION)
+  neutralize?: string[]; // nullable columns of `uniqueKeys` to clear so prod's row can land alongside
 };
 
 type FullTable = {
@@ -150,26 +164,28 @@ const FULL: FullTable[] = [
         { table: "area_bindings", cols: ["area_id"] },
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
-        // config-v4 Phase 11: run detectors + the HWS model are `derivations` rows keyed by area.
-        // derived_intervals has an ON DELETE CASCADE FK to derivations (migration 0040), so it does
-        // not need its own entry — and it is recomputed on dev anyway (db:recompute-dev-runs).
-        { table: "derivations", cols: ["area_id"] },
         // config-v4 migration 0033 added this table (with an area_id FK, no ON DELETE) after this
         // children list was written, so it was never accounted for. Not itself in the sync manifest
         // (it's a frozen-at-cutover compat shim, not prod-mirrored data), so a cleared row isn't
-        // restored by a later leg — same disposable-mirror tradeoff as derived_intervals above.
+        // restored by a later leg — the disposable-mirror tradeoff.
         { table: "legacy_handles", cols: ["area_id"] },
-        // NOT handled here (2026-07-26 finding, deliberately out of scope): the config-v4 dark
-        // v4-registry mirror (devices/points/derivations/derived_intervals, migration 0035) is
-        // populated on dev by a SEPARATE script (registry-sync.ts), not this sync, so it isn't safe to
-        // clear-and-abandon the way the other children above are. devices.primary_area_id /
-        // derivations.area_id are NOT NULL/RESTRICT, so a real (post-cutover) drifted area with a
-        // device blocks this delete — AND area_bindings.point_uid (dark, unconsumed by the app) can
-        // cross-reference a point owned by a device under a DIFFERENT, non-drifted area, so naively
-        // deleting devices/points here would also destroy live area_bindings rows for unrelated areas.
-        // Needs its own considered fix (repair via registry-sync.ts re-run, or a null-out-not-delete
-        // repair for the dark point_uid column) — see the areas-idDrift-devices follow-up.
       ],
+      // The config-v4 dark v4-registry mirror (migration 0035) is populated on dev by a SEPARATE
+      // script (registry-sync.ts), not this sync — so unlike the children above it can't be
+      // cleared-and-abandoned. Both FKs below are NOT NULL / NO ACTION, so a post-cutover drifted area
+      // that owns a device BLOCKS the parent delete outright: this is the failure that froze
+      // liveone-dev from 2026-07-25 (`devices_primary_area_id_areas_id_fk`). They name the same
+      // LOGICAL area as prod's incoming row, so they are MOVED onto prod's uuid instead of deleted.
+      // derivations moved out of `children` for the same reason — repointing it also preserves its
+      // derived_intervals (CASCADE, migration 0040) rather than forcing a recompute.
+      repoint: [
+        { table: "devices", cols: ["primary_area_id"] },
+        { table: "derivations", cols: ["area_id"] },
+      ],
+      // Nullable columns behind areas_legacy_system_unique / areas_owner_alias_unique. Cleared on the
+      // drifted dev row so prod's row can be inserted alongside it, which the repoint UPDATE needs as
+      // its FK target. The drifted row is deleted moments later, in the same transaction.
+      neutralize: ["legacy_system_id", "slug"],
     },
   },
   // point_info's serial `id` is BOTH assigned independently on dev AND the FK-join key every readings
@@ -609,6 +625,49 @@ export async function syncTable(
           return `DELETE FROM public.${c.table} x USING _drift b WHERE ${on};`;
         })
         .join("\n       ");
+      // A repointed FK must be MOVED to prod's PK, so `_drift` has to carry that PK too — captured as
+      // `new_<col>` from the staged prod row. Only selected when repointing, so the no-repoint tables
+      // (dashboards, point_info) emit exactly the SQL they always did.
+      const repoint = idDrift.repoint ?? [];
+      const newPkCols = repoint.length
+        ? ", " + pk.map((c) => `s.${c} AS new_${c}`).join(", ")
+        : "";
+      // Cleared BEFORE the upsert so prod's row can be inserted alongside the drifted one — the repoint
+      // UPDATE below needs it present as its FK target. Both rows coexist only inside this transaction.
+      const neutralize = idDrift.neutralize?.length
+        ? `UPDATE public.${t.name} d SET ${idDrift.neutralize
+            .map((c) => `${c} = NULL`)
+            .join(", ")}
+         FROM _drift b WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};`
+        : "";
+      // AFTER the upsert (needs prod's row to exist) and BEFORE the parent delete (which it unblocks).
+      const repoints = repoint
+        .map((c) => {
+          const set = c.cols
+            .map((col, i) => `${col} = b.new_${pk[i]}`)
+            .join(", ");
+          const on = c.cols
+            .map((col, i) => `x.${col} = b.${pk[i]}`)
+            .join(" AND ");
+          return `UPDATE public.${c.table} x SET ${set} FROM _drift b WHERE ${on};`;
+        })
+        .join("\n       ");
+      const parentDelete = `DELETE FROM public.${t.name} d USING _drift b
+         WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};`;
+      // Without a repoint the drifted row has no un-clearable dependants, so the original order stands:
+      // delete it, THEN upsert prod's row into the vacated unique-key slot.
+      //
+      // With one, the drifted row cannot be deleted until its NOT NULL/NO ACTION dependants have been
+      // moved — and they cannot be moved until prod's row exists to point at. So the order inverts, and
+      // `neutralize` is what lets the two rows coexist across the middle of it:
+      //   neutralize (free the unique keys) → upsert (prod's row lands) → repoint → delete the drifted row.
+      const realign = repoint.length
+        ? `${neutralize}
+       ${upsert}
+       ${repoints}
+       ${parentDelete}`
+        : `${parentDelete}
+       ${upsert}`;
       // ANALYZE _drift before the child DELETEs: it's a just-created temp table with no
       // stats, and on the normal (no-drift) run it's EMPTY. Without stats the planner
       // mis-estimates its cardinality and full-seq-scans the huge child tables
@@ -618,15 +677,13 @@ export async function syncTable(
       await dev.query(
         `BEGIN;
        CREATE TEMP TABLE _drift ON COMMIT DROP AS
-         SELECT DISTINCT ${pk.map((c) => `d.${c}`).join(", ")}
+         SELECT DISTINCT ${pk.map((c) => `d.${c}`).join(", ")}${newPkCols}
            FROM public.${t.name} d
            JOIN sync_staging.${t.name} s ON (${match})
           WHERE NOT (${samePk});
        ANALYZE _drift;
        ${childDeletes}
-       DELETE FROM public.${t.name} d USING _drift b
-         WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};
-       ${upsert}
+       ${realign}
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,
       );
