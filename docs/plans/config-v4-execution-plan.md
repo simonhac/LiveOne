@@ -629,6 +629,7 @@ change the slicing. Recounted:
 | 7 | outbox re-key is "rename only, no rewrite" | Contradicts this section's own Risks para. Expand/contract. Cheap either way — 2 code refs (`lib/observations/outbox.ts:53,74`). |
 | 8 | `points` needs populating | Already dual-written at mint (`lib/point/point-manager.ts:620-646`) and already a **live production read** (`lib/readings/dao.ts:913-915,964,1059-1061`). The work is a read-path swap. |
 | 9 | `SystemsManager` = 72 files / 75 sites | 66 files / 78 `getInstance()` sites. Method spread is very uneven — `getSystem` alone is 34, so slice by **method**, not by file. |
+| 10 | (silent — implied by #8) | **The mirror is written at MINT only; every point EDIT drifts it.** `PointManager.updatePoint` (`lib/point/point-manager.ts:408`) writes `point_info` alone — no `mirrorPoint` call — so `display_name`, `active`, `logical_path_stem` and `transform` all diverge from `points.name`/`active`/`logical_path`/`transform` the moment anyone edits them. Its one caller is the admin edit route (`app/api/system/[systemId]/point/[pointId]/route.ts:112`), i.e. **the normal UI path**. `mirrorPoint` (`lib/registry/v4-mirror.ts:178`) can't self-heal it either: the mint upsert hands it the row `point_info` just returned, so it only ever re-copies what is already there. Measured 2026-07-28 on prod while re-stemming the Sigenergy site for [#273](https://github.com/simonhac/LiveOne/pull/273) — `point_info.logical_path_stem` said `load.rest-of-house`/`load.ev`, `points.logical_path` still said `load`/`ev.charge`; the same run found dev already half-drifted this way. Both envs repaired, but **the leak is still open**. Consequence for this phase: any pre-cutover audit of `points` fidelity is measuring mint-time truth, not current truth, so **slice M cannot assume `points` is a faithful copy** — it needs a reconcile pass (or the `updatePoint` fix in Ordering traps) before the read-flip, exactly like slice C needed one for `device_state`. |
 
 **Work** — ordered PRs off `main` (the Phase-3 A–L pattern), **not** one long branch: the code/DDL
 interleave has to land at merge points, and a long branch has none. That is the 0037 lesson.
@@ -664,6 +665,11 @@ first, then prod, then dev. **[C]** code-only.
   legacy row is a poison pill.
 - FKs into `systems` that must all go before the drop: `polling_status.system_id`, `user_systems.system_id`,
   `sessions.system_id`, `point_info.system_id`.
+- **Teach `updatePoint` to mirror, early — it is a one-line fix that stops the drift accumulating.**
+  Adding the `mirrorPoint` call inside `PointManager.updatePoint`'s transaction (correction #10) costs
+  nothing now and is worth doing well before slice M, because every day it is missing is more divergence
+  for M's reconcile to find. The alternative — fixing it *as part of* M — means the reconcile has to
+  cover the whole history of edits rather than a frozen set.
 - Fix in K6: `createSystem` writes the `legacy_handles` row **twice** — `insertSystemToPg` calls
   `ensureDeviceForHandle` inside its tx (`lib/systems-manager.ts:448`), then `createSystem` calls
   `ensureDeviceRow` outside it (`:333`), which calls it again.
@@ -932,6 +938,17 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
   `/api/dashboards/[id]` PATCH, which accepts **only** v3; `AddAreaDialog` is handed `descriptor`, and the
   page shell still calls `hasTimeTravelingCard`/`primaryHandle`/`sectionAreaIdsV3` on it. Move the shell
   onto the doc and make `temporal-cards.ts` v4-aware.
+
+  ⚠️ **This is worse than "accepts only v3" — it writes to the shape that is no longer rendered.**
+  `updateDashboard` (`lib/dashboard/dashboards.ts:308`) sets `descriptor` and **never regenerates `doc`**
+  (`:333`; the doc has its own writer, `updateDashboardDoc` at `:188`), while since the Phase 8/10
+  cutover the render path is the doc — `app/dashboard/[...slug]/page.tsx:86` takes `doc` when it passes
+  the shape guard and keeps v3 only as a fallback. So an edit through the PATCH route is **invisible on
+  screen and silently diverges the two shapes**; the more it is used before this phase, the more
+  `descriptor` and `doc` disagree. Confirmed 2026-07-28 tidying the Kew dashboard: patching `descriptor`
+  alone would have been a no-op, so both were pruned together and `revision` bumped by hand. Until the
+  v4 editor exists, treat that route as unsafe for card/tile edits — and note the drop of
+  `dashboards.descriptor` below is only safe once nothing has been authoring into it unilaterally.
 - **Build the 10 missing `/api/v4` mutation endpoints** — `/devices`, `/devices/{id}/points`,
   `/areas/{id}/members|bindings|derivations` (PUT), `/dashboards/{id}/shares|grants|revisions`, `/export`,
   `/import` — then retire the 28 legacy handlers across 15 `/api/dashboards/*` and `/api/areas/*` routes.

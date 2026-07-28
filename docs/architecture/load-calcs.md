@@ -1,6 +1,11 @@
 # Load Calculations
 
-> **Status:** current — last verified 2026-06-10.
+> **Status:** stale — last verified 2026-06-10. Scoped to the **browser chart** path
+> (`lib/site-data-processor.ts`); it does not describe the flow/Sankey pipeline. Two known drifts:
+> the "Three Cases" below still have a master `load` and its children coexisting as loads, which the
+> `load` hierarchy replaced (see the Directional model in
+> [energy-flow-matrix.md](energy-flow-matrix.md)), and the Data Paths section still uses the
+> pre-`source.solar` `generation.*` naming. Needs its own pass.
 
 This document describes how load calculations work in the site data processor, particularly the "Rest of House" calculation.
 
