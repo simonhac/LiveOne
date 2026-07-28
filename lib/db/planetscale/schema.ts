@@ -1057,7 +1057,13 @@ export const devices = pgTable(
   "devices",
   {
     id: uuid("id").primaryKey(),
-    rid: integer("rid").notNull(),
+    // Sequence-allocated (0043). ⚠️ INERT while `systems` still exists: systems_id_seq advances
+    // independently, so a device minted from the default could later collide with a new systems.id
+    // on devices_rid_unique. Every writer (ensureDeviceRow) must keep naming rid as systems.id
+    // verbatim until Phase 12 slice N drops `systems` and re-asserts the setval.
+    rid: integer("rid")
+      .notNull()
+      .default(sql`nextval('device_rid_seq')`),
     ownerUserId: text("owner_user_id"),
     vendor: text("vendor").notNull(), // ← systems.vendor_type
     vendorSiteId: text("vendor_site_id").notNull(),
@@ -1096,7 +1102,12 @@ export const points = pgTable(
   "points",
   {
     id: uuid("id").primaryKey(), // = point_info.point_uid
-    rid: integer("rid").notNull(), // = point_info.rid
+    // = point_info.rid, and DELIBERATELY the same sequence (0043): the two columns must stay equal,
+    // so they must draw from one counter. Inert until slice M — mirrorPoint still names rid
+    // explicitly with the value point_info's own default returned.
+    rid: integer("rid")
+      .notNull()
+      .default(sql`nextval('point_rid_seq')`),
     deviceId: uuid("device_id")
       .notNull()
       .references(() => devices.id),
