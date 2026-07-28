@@ -138,6 +138,14 @@ const FULL: FullTable[] = [
       uniqueKeys: [
         ["legacy_id"], // dashboards_legacy_id_unique
         ["owner_user_id", "slug"], // dashboards_owner_alias_unique
+        // Not an index — the stable CROSS-ENVIRONMENT identity, needed because neither key above can
+        // see a drifted `legacy-share-*` dashboard. Those are minted from a share-token phrase by each
+        // environment's own cutover, so legacy_id is NULL on both sides (NULL = NULL never matches) and
+        // reown-dev-data.ts has already rewritten dev's owner_user_id, so owner+slug can't match either.
+        // The pair then survives to collide in reown's remap (dashboards_owner_alias_unique), which is
+        // what failed the sync's last leg once the areas fix let it get that far. The slug is derived
+        // from the token phrase and so is identical in both environments.
+        ["slug"],
       ],
       children: [],
     },

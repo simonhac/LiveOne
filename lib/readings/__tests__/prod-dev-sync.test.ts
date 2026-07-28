@@ -164,7 +164,9 @@ describe("prod→dev readings transfer", () => {
       mode: "full",
       onConflict: "update",
       idDrift: {
-        uniqueKeys: [["legacy_id"], ["owner_user_id", "slug"]],
+        // ["slug"] is not an index — it is the stable cross-env identity of a `legacy-share-*`
+        // dashboard, whose legacy_id is NULL on both sides and whose dev owner reown has rewritten.
+        uniqueKeys: [["legacy_id"], ["owner_user_id", "slug"], ["slug"]],
         children: [],
       },
     });
@@ -199,6 +201,7 @@ describe("prod→dev readings transfer", () => {
     expect(sql).toContain("CREATE TEMP TABLE _drift");
     expect(sql).toContain("ANALYZE _drift");
     expect(sql).toContain("d.legacy_id = s.legacy_id");
+    expect(sql).toContain("(d.slug = s.slug)");
     expect(sql).toContain(
       "d.owner_user_id = s.owner_user_id AND d.slug = s.slug",
     );
