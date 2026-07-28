@@ -162,8 +162,17 @@ function sliceInputsAt(
   return {
     ...inputs,
     timeline: inputs.timeline.slice(j),
-    sources: inputs.sources.map((s) => ({ ...s, power: s.power.slice(j) })),
-    loads: inputs.loads.map((l) => ({ ...l, power: l.power.slice(j) })),
+    sources: inputs.sources.map((s) => ({
+      ...s,
+      power: s.power.slice(j),
+      // Per-interval overlay: sliced interval 0 = original interval j, so the same fence post.
+      energyKwh: s.energyKwh?.slice(j),
+    })),
+    loads: inputs.loads.map((l) => ({
+      ...l,
+      power: l.power.slice(j),
+      energyKwh: l.energyKwh?.slice(j),
+    })),
     gridEmissions: cut(inputs.gridEmissions)!,
     gridEmissionsEstimated: cut(inputs.gridEmissionsEstimated)!,
     gridRenewable: cut(inputs.gridRenewable)!,
@@ -171,8 +180,6 @@ function sliceInputsAt(
     gridPriceEstimated: cut(inputs.gridPriceEstimated)!,
     gridExportPrice: cut(inputs.gridExportPrice)!,
     soc: cut(inputs.soc)!,
-    batteryChargeEnergyKwh: cut(inputs.batteryChargeEnergyKwh),
-    batteryDischargeEnergyKwh: cut(inputs.batteryDischargeEnergyKwh),
     etaSeries: cut(inputs.etaSeries),
     capacitySeries: cut(inputs.capacitySeries),
     chargeEfficiencySeries: cut(inputs.chargeEfficiencySeries),

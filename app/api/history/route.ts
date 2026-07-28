@@ -393,6 +393,22 @@ async function getSystemHistoryInOpenNEMFormat(
   const computeSankey =
     sankey !== undefined && flowMatrixOmittedReason === undefined;
 
+  // Exact-energy overlay: also fetch the logical system's energy-accumulator points so the Sankey
+  // can prefer metered interval energies over power integration (`FlowSeries.energyKwh`). Additive
+  // only — the coverage check above stays POWER-only, so missing energy rows can never omit the
+  // Sankey (they just fall back to integration), and `buildSeriesFromAggRows` iterates
+  // `seriesInfos`, so the extra rows never leak into the chart payload.
+  if (computeSankey) {
+    const have = new Set(uniquePairsArray.map(([s, p]) => `${s},${p}`));
+    for (const ep of sankey!.logicalSystem.energyPoints) {
+      const key = `${ep.ref.systemId},${ep.ref.pointId}`;
+      if (!have.has(key)) {
+        have.add(key);
+        uniquePairsArray.push([ep.ref.systemId, ep.ref.pointId]);
+      }
+    }
+  }
+
   // Time window: 1d uses YYYY-MM-DD day strings; 5m/30m uses an epoch-ms dense timeline.
   // When aggregating 5m → 30m we fetch 25 min earlier (a 30m bucket needs six 5m readings).
   const startDate =
