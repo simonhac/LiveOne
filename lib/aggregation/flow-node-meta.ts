@@ -81,6 +81,8 @@ export function labelForFlowPath(
       return "Grid Export";
     case "load.rest-of-house":
       return "Other"; // mirrors REST_OF_HOUSE_LABEL in site-data-processor
+    case "ev.charge":
+      return displayNameByStem.get(path) ?? "EV Charging";
   }
   if (path === "source.solar" || path.startsWith("source.solar.")) {
     return displayNameByStem.get(path) ?? solarLabel(path);
@@ -109,6 +111,8 @@ function loadRank(path: string): number {
   if (path === "load") return 2;
   if (path === "load.rest-of-house") return 9;
   if (path.startsWith("load.")) return 5;
+  // EV sits with the sub-meters — a sibling of the master load, not a child of it.
+  if (path === "ev.charge" || path.startsWith("ev.charge.")) return 6;
   return 20;
 }
 

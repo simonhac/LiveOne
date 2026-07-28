@@ -166,6 +166,8 @@ export function isCompleteRoleSet(stems: string[]): boolean {
     if (
       s === "load" ||
       s.startsWith("load.") ||
+      s === "ev.charge" ||
+      s.startsWith("ev.charge.") ||
       s === "bidi.battery" ||
       s === "bidi.grid"
     )

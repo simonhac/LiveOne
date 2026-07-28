@@ -10,6 +10,11 @@ import { FlowSeries } from "./flow-matrix-core";
 
 export const SOLAR_PARENT_PATH = "source.solar";
 export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
+/**
+ * EV charging. A top-level load stem in its own right — NOT under `load.` — because the vendor's
+ * house-load figure excludes it; see the sibling-load handling in `buildFlowSeries`.
+ */
+export const EV_PATH = "ev.charge";
 
 /**
  * Per-interval power below which a solar residual is treated as measurement noise rather than
@@ -213,6 +218,7 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
   let gridPower: (number | null)[] | null = null;
   let masterLoad: (number | null)[] | null = null;
   const childLoads: FlowSeries[] = [];
+  const siblingLoads: FlowSeries[] = [];
 
   for (const p of points) {
     if (
@@ -228,6 +234,13 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
       masterLoad = p.power;
     } else if (p.stem.startsWith("load.")) {
       childLoads.push({ path: p.stem, power: p.power });
+    } else if (p.stem === EV_PATH || p.stem.startsWith(EV_PATH + ".")) {
+      // EV charging is a SIBLING of the master load, not a `load.<sub>` child: the vendor's house-load
+      // figure excludes it (verified on Sigenergy — `pvPower = buySellPower + batteryPower + loadPower
+      // + acPower` balances to ~0.001 kW mean residual). Feeding it through `childLoads` would make
+      // `computeRestOfHouse` subtract it from a master that never contained it, driving rest-of-house
+      // to zero and losing the EV's energy from the matrix entirely.
+      siblingLoads.push({ path: p.stem, power: p.power });
     }
   }
 
@@ -260,14 +273,25 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
 
   if (masterLoad !== null) loads.push({ path: "load", power: masterLoad });
   for (const c of childLoads) loads.push(c);
+  // Siblings sit alongside the master load and are deliberately absent from `childSum` below.
+  for (const s of siblingLoads) loads.push(s);
 
   const childSum =
     childLoads.length > 0 ? sumSeries(childLoads.map((c) => c.power)) : null;
   const totalGen =
     sources.length > 0 ? sumSeries(sources.map((s) => s.power)) : null;
+  // With a master load, rest-of-house = master − children, and siblings are correctly excluded (they
+  // were never inside master). WITHOUT one it is derived from generation, so the siblings must be
+  // subtracted there too — otherwise the EV's energy lands in both its own node and rest-of-house.
+  const remainderSubtrahend =
+    masterLoad !== null
+      ? childSum
+      : childLoads.length + siblingLoads.length > 0
+        ? sumSeries([...childLoads, ...siblingLoads].map((s) => s.power))
+        : null;
   const restOfHouse = computeRestOfHouse(
     masterLoad,
-    childSum,
+    remainderSubtrahend,
     batteryCharge,
     gridExport,
     totalGen,

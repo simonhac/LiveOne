@@ -32,12 +32,19 @@ export interface SigenergyStationInfo {
   raw: unknown;
 }
 
-/** Raw energy-flow metrics (power in kW as returned by the API; SOC in %). */
+/**
+ * Raw energy-flow metrics (power in kW as returned by the API; SOC in %) — VENDOR signs, which are
+ * "outflow positive" on both bidi channels. `sigenergyFlowToData` negates them into LiveOne's
+ * canonical "inflow positive" convention; see the sign note there.
+ */
 export interface SigenergyEnergyFlow {
   pvKw: number | null;
   batteryKw: number | null; // + charge / − discharge
-  gridKw: number | null; // + import(buy) / − export(sell)
+  // + export(sell) / − import(buy). NOT the reverse: the vendor's own balance identity
+  // `pv = buySellPower + battery + load + ac` only closes under this reading (verified, n=2329).
+  gridKw: number | null;
   loadKw: number | null;
+  /** EV charging (a load; excluded from `loadKw` — the two are siblings, verified by the identity above). */
   evKw: number | null;
   batterySoc: number | null; // %
   raw: unknown;

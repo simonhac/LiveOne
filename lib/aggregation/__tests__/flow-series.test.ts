@@ -161,4 +161,35 @@ describe("buildFlowSeries", () => {
     // Master load present with no children → no rest-of-house.
     expect(loads.some((l) => l.path === "load.rest-of-house")).toBe(false);
   });
+
+  it("adds EV charging as a load SIBLING, leaving rest-of-house derived from the master alone", () => {
+    // The vendor's master load excludes EV (Sigenergy: pv = grid + battery + load + ev), so the EV
+    // must not be subtracted from it the way a `load.<sub>` child is.
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: [10, 10] },
+      { stem: "load", power: [3, 3] },
+      { stem: "load.hws", power: [1, 1] },
+      { stem: "ev.charge", power: [6, 6] },
+    ];
+    const { loads } = buildFlowSeries(points);
+
+    expect(loads.find((l) => l.path === "ev.charge")!.power).toEqual([6, 6]);
+    // rest-of-house = master(3) − hws(1) = 2 — the EV is NOT subtracted.
+    expect(loads.find((l) => l.path === "load.rest-of-house")!.power).toEqual([
+      2, 2,
+    ]);
+  });
+
+  it("subtracts EV from a generation-derived remainder (no master load) so it is not double-counted", () => {
+    const points: ClassifiedPoint[] = [
+      { stem: "source.solar", power: [10, 10] },
+      { stem: "ev.charge", power: [6, 6] },
+    ];
+    const { loads } = buildFlowSeries(points);
+
+    // rest-of-house = Σgen(10) − charge(0) − export(0) − ev(6) = 4
+    expect(loads.find((l) => l.path === "load.rest-of-house")!.power).toEqual([
+      4, 4,
+    ]);
+  });
 });
