@@ -12,8 +12,8 @@
 
 LiveOne's own design (`areas-and-dashboards.md`) deliberately borrows Home Assistant
 vocabulary — System→Device, Point→Entity, Area→Area, `area_bindings`→Energy-dashboard
-config — and the `roles` table literally stores `ha_device_class` / `ha_state_class` /
-`ha_unit` against a planned HA export bridge. So the two systems are worth comparing
+config — and the role registry (`lib/roles/registry.ts`) literally carries `ha_device_class` /
+`ha_state_class` / `ha_unit` against a planned HA export bridge. So the two systems are worth comparing
 carefully: not to copy HA wholesale, but to know exactly where we mirror it, where we
 diverge, and why. This doc is the honest scorecard.
 
@@ -55,30 +55,30 @@ memory and act on it instantly; we can't, so we lean on a durable store plus a f
 
 ## Object-model mapping
 
-| LiveOne                                                                         | Home Assistant                                                   | Mapping quality                                                                                                          |
-| ------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `point_info` row, addressed `(system_id, id)`                                   | **Entity** (`unique_id` → `entity_id`)                           | **Clean concept, weaker identity** — see "How ours maps onto theirs"                                                     |
-| `point_info.physical_path_tail` (`selectronic/solar_w`)                         | entity **`unique_id`** (vendor-stable)                           | Clean — both the stable, vendor-derived, non-user identity                                                               |
-| `point_info.logical_path_stem` + `metric_type` (`source.solar`/`power`)         | `device_class` + `state_class` + energy-role                     | **Leaky** — we overload one path to do all three jobs                                                                    |
-| `point_info.display_name` (editable) vs `point_name` (default)                  | entity registry **name override** vs device-supplied name        | Clean                                                                                                                    |
-| `point_info.metric_type` / `metric_unit`                                        | **`device_class`** + **`unit_of_measurement`**                   | Mostly clean (we lack model-layer unit conversion W↔kW)                                                                 |
-| `point_info.transform` (`d`=delta) + agg rules keyed on `metric_type`           | **`state_class`** (`measurement` / `total` / `total_increasing`) | Same intent, different mechanism (theirs first-class, ours inferred)                                                     |
-| `roles` (stores `ha_device_class` / `ha_state_class` / `ha_unit`)               | _(no native table)_ — Energy-dashboard role slots                | Clean & **explicitly HA-aware** — our bridge-in-waiting                                                                  |
-| `systems` row (integer `id`, `vendor_type`, `vendor_site_id`, `model`/`serial`) | **Config entry + Device** _(fused)_                              | **Leaky/merged** — we fuse connection-instance and device into one row                                                   |
-| `areas` (`kind=identity\|composite`, `legacy_system_id`, `location`)            | **Area** registry                                                | **Overloaded** — ours is room + logical-system + aggregation-scope; `kind=composite` has no HA analog                    |
-| `area_bindings` (typed role→point edges, FK to `point_info` + `roles`)          | Energy "preferences" (role→entity)                               | Clean & direct; **ours FK-enforced, theirs JSON in `.storage`**                                                          |
-| `dashboards.descriptor` (jsonb) + cards                                         | **Lovelace** dashboard + cards                                   | Clean — presentation referencing points by id; auto-generated default                                                    |
-| KV latest cache + newest `point_readings`                                       | **State machine** `State` (in-memory)                            | Functional analog (theirs authoritative in-RAM, ours a derived cache)                                                    |
-| `point_readings` (raw, durable, SQL)                                            | recorder `states` table                                          | Theirs is best-effort history; ours is the source of truth                                                               |
-| `point_readings_agg_5m` / `agg_1d`                                              | `statistics_short_term` (5m) / `statistics` (hourly)             | **Strikingly parallel**; semantics differ (see below). Cadence mismatch: our coarse tier is **daily**, theirs **hourly** |
-| `point_readings_flow_1d` (directional Sankey matrix)                            | _(none — computed at query time)_                                | No mapping — we materialize, HA derives on the fly                                                                       |
-| `sessions` (poll provenance, vendor response)                                   | _(none)_                                                         | No mapping — HA keeps no per-poll record                                                                                 |
-| `observations_outbox` + QStash + receiver                                       | event bus (`state_changed`) + recorder write                     | No mapping — **different reliability model**                                                                             |
-| `derivations` / `derived_intervals`                                             | Threshold helper (`binary_sensor`) + recorder history            | Same intent ("HA-style threshold helper"); we persist richer run-periods + energy attribution                            |
-| `dashboard_grants` / `dashboard_share_tokens`                                   | _(none — single-tenant)_                                         | No mapping                                                                                                               |
-| —                                                                               | **Floor** registry                                               | **Absent in ours** (no floor tier)                                                                                       |
-| —                                                                               | **Label** registry                                               | **Absent in ours** (no orthogonal tag dimension)                                                                         |
-| `lib/vendors/*` adapters + registry                                             | **Integration + platform** (`manifest.json`, config-flow)        | Clean structurally; HA `iot_class` ≈ our `dataSource` (poll/push/combined)                                               |
+| LiveOne                                                                                                                    | Home Assistant                                                   | Mapping quality                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `point_info` row, addressed `(system_id, id)`                                                                              | **Entity** (`unique_id` → `entity_id`)                           | **Clean concept, weaker identity** — see "How ours maps onto theirs"                                                     |
+| `point_info.physical_path_tail` (`selectronic/solar_w`)                                                                    | entity **`unique_id`** (vendor-stable)                           | Clean — both the stable, vendor-derived, non-user identity                                                               |
+| `point_info.logical_path_stem` + `metric_type` (`source.solar`/`power`)                                                    | `device_class` + `state_class` + energy-role                     | **Leaky** — we overload one path to do all three jobs                                                                    |
+| `point_info.display_name` (editable) vs `point_name` (default)                                                             | entity registry **name override** vs device-supplied name        | Clean                                                                                                                    |
+| `point_info.metric_type` / `metric_unit`                                                                                   | **`device_class`** + **`unit_of_measurement`**                   | Mostly clean (we lack model-layer unit conversion W↔kW)                                                                 |
+| `point_info.transform` (`d`=delta) + agg rules keyed on `metric_type`                                                      | **`state_class`** (`measurement` / `total` / `total_increasing`) | Same intent, different mechanism (theirs first-class, ours inferred)                                                     |
+| `lib/roles/registry.ts` (carries `ha_device_class` / `ha_state_class` / `ha_unit`; code, not a table since migration 0044) | _(no native table)_ — Energy-dashboard role slots                | Clean & **explicitly HA-aware** — our bridge-in-waiting                                                                  |
+| `systems` row (integer `id`, `vendor_type`, `vendor_site_id`, `model`/`serial`)                                            | **Config entry + Device** _(fused)_                              | **Leaky/merged** — we fuse connection-instance and device into one row                                                   |
+| `areas` (`kind=identity\|composite`, `legacy_system_id`, `location`)                                                       | **Area** registry                                                | **Overloaded** — ours is room + logical-system + aggregation-scope; `kind=composite` has no HA analog                    |
+| `area_bindings` (typed role→point edges, FK to `point_info`; `role` CHECK-constrained)                                     | Energy "preferences" (role→entity)                               | Clean & direct; **ours constraint-enforced, theirs JSON in `.storage`**                                                  |
+| `dashboards.descriptor` (jsonb) + cards                                                                                    | **Lovelace** dashboard + cards                                   | Clean — presentation referencing points by id; auto-generated default                                                    |
+| KV latest cache + newest `point_readings`                                                                                  | **State machine** `State` (in-memory)                            | Functional analog (theirs authoritative in-RAM, ours a derived cache)                                                    |
+| `point_readings` (raw, durable, SQL)                                                                                       | recorder `states` table                                          | Theirs is best-effort history; ours is the source of truth                                                               |
+| `point_readings_agg_5m` / `agg_1d`                                                                                         | `statistics_short_term` (5m) / `statistics` (hourly)             | **Strikingly parallel**; semantics differ (see below). Cadence mismatch: our coarse tier is **daily**, theirs **hourly** |
+| `point_readings_flow_1d` (directional Sankey matrix)                                                                       | _(none — computed at query time)_                                | No mapping — we materialize, HA derives on the fly                                                                       |
+| `sessions` (poll provenance, vendor response)                                                                              | _(none)_                                                         | No mapping — HA keeps no per-poll record                                                                                 |
+| `observations_outbox` + QStash + receiver                                                                                  | event bus (`state_changed`) + recorder write                     | No mapping — **different reliability model**                                                                             |
+| `derivations` / `derived_intervals`                                                                                        | Threshold helper (`binary_sensor`) + recorder history            | Same intent ("HA-style threshold helper"); we persist richer run-periods + energy attribution                            |
+| `dashboard_grants` / `dashboard_share_tokens`                                                                              | _(none — single-tenant)_                                         | No mapping                                                                                                               |
+| —                                                                                                                          | **Floor** registry                                               | **Absent in ours** (no floor tier)                                                                                       |
+| —                                                                                                                          | **Label** registry                                               | **Absent in ours** (no orthogonal tag dimension)                                                                         |
+| `lib/vendors/*` adapters + registry                                                                                        | **Integration + platform** (`manifest.json`, config-flow)        | Clean structurally; HA `iot_class` ≈ our `dataSource` (poll/push/combined)                                               |
 
 ## Where Home Assistant is clearer / more general
 
@@ -124,7 +124,7 @@ Real design advantages, mostly orthogonal to the domain difference — several w
 ## How ours maps onto theirs
 
 Surprisingly well at the **semantic layer** — because we deliberately borrowed the vocabulary
-and even store `ha_device_class` / `ha_state_class` / `ha_unit` in `roles` with an
+and even carry `ha_device_class` / `ha_state_class` / `ha_unit` in the role registry with an
 MQTT-Discovery export bridge planned (areas P5). Point→Entity, Area→Area,
 `area_bindings`→Energy preferences, dashboards→Lovelace all translate directly.
 
@@ -179,9 +179,9 @@ Genuine wins — separating real architectural advantages from "different proble
    `dashboard_grants` (owner/admin/viewer) + `dashboard_share_tokens` (one token → one
    dashboard, resolving Dashboard → its cards' bindings → exactly those points):
    least-privilege, FK-enforced, per-dashboard. HA is single-tenant and has no analog.
-5. **FK-enforced typed bindings vs HA's JSON-in-`.storage`.** `area_bindings` and `roles` are
-   SQL with real FKs (`area_bindings.(point_system_id, point_id) → point_info`, `.role →
-roles.role`, composite-unique). Ours can't dangle past a cascade; HA's referential
+5. **Constraint-enforced typed bindings vs HA's JSON-in-`.storage`.** `area_bindings` is SQL with
+   real constraints (`(point_system_id, point_id) → point_info` FK, `role` CHECKed against the
+   6-role set, composite-unique). Ours can't dangle past a cascade; HA's referential
    integrity is code-only and can drift. (Tradeoff: HA's looseness buys zero-migration schema
    evolution — a fair trade, not strictly inferior.)
 6. **Engine/web separation + stable integer addressing — MIXED / domain-appropriate.** The

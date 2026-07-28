@@ -1,20 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { userSystems, systems } from "@/lib/db/planetscale/schema";
-import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 
 // Helper function to map system data
-function mapSystemAccess(system: any, role: "owner" | "viewer") {
+function mapSystemAccess(system: any) {
   return {
     systemId: system.id,
     vendorType: system.vendorType,
     vendorSiteId: system.vendorSiteId,
     displayName: system.displayName,
     status: system.status,
-    role,
   };
 }
 
@@ -23,56 +19,32 @@ export async function GET(request: NextRequest) {
     const authResult = await requireAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
 
-    // Get all user-system relationships from userSystems table
-    const allUserSystems = await requirePlanetscaleDb()
-      .select()
-      .from(userSystems)
-      .innerJoin(systems, eq(userSystems.systemId, systems.id));
-
-    // Get all systems to find owners
+    // Systems are listed by OWNERSHIP only. There used to be a second leg here — a full-table
+    // `user_systems innerJoin systems` that contributed extra (system, role) pairs and extra user ids.
+    // That table died in migration 0045 (slice F), so a user who appeared ONLY via a grant no longer
+    // appears at all, and every listed system is one the user owns (hence no `role` field).
     const systemsManager = SystemsManager.getInstance();
     const allSystems = await systemsManager.getAllSystems();
 
-    // Get unique user IDs from both userSystems and system owners
-    const userIdsFromUserSystems = allUserSystems.map(
-      (us) => us.user_systems.clerkUserId,
-    );
-    const userIdsFromOwners = allSystems
-      .map((s) => s.ownerClerkUserId)
-      .filter((id) => id !== null) as string[];
     const uniqueUserIds = [
-      ...new Set([...userIdsFromUserSystems, ...userIdsFromOwners]),
+      ...new Set(
+        allSystems
+          .map((s) => s.ownerClerkUserId)
+          .filter((id): id is string => id !== null),
+      ),
     ];
 
     // Fetch user details from Clerk
     const usersData = [];
 
     for (const clerkUserId of uniqueUserIds) {
+      const ownedSystems = allSystems
+        .filter((s) => s.ownerClerkUserId === clerkUserId)
+        .map(mapSystemAccess);
+
       try {
         const client = await clerkClient();
         const clerkUser = await client.users.getUser(clerkUserId);
-
-        // Get all systems this user owns
-        const ownedSystems = allSystems
-          .filter((s) => s.ownerClerkUserId === clerkUserId)
-          .map((s) => mapSystemAccess(s, "owner"));
-
-        // Get all systems this user has access to via userSystems table
-        const additionalAccess = allUserSystems
-          .filter((us) => us.user_systems.clerkUserId === clerkUserId)
-          .map((us) =>
-            mapSystemAccess(
-              us.systems,
-              us.user_systems.role as "owner" | "viewer",
-            ),
-          );
-
-        // Combine and deduplicate (owned systems take precedence)
-        const ownedSystemIds = new Set(ownedSystems.map((s) => s.systemId));
-        const userSystemAccess = [
-          ...ownedSystems,
-          ...additionalAccess.filter((s) => !ownedSystemIds.has(s.systemId)),
-        ];
 
         // Extract data from private metadata
         let isPlatformAdmin = false;
@@ -92,35 +64,12 @@ export async function GET(request: NextRequest) {
           username: clerkUser.username,
           createdAt: clerkUser.createdAt,
           lastSignIn: clerkUser.lastSignInAt,
-          systems: userSystemAccess,
+          systems: ownedSystems,
           isPlatformAdmin,
         });
       } catch (err) {
         console.error(`Failed to fetch Clerk user ${clerkUserId}:`, err);
         // Include user even if Clerk fetch fails
-
-        // Get all systems this user owns
-        const ownedSystems = allSystems
-          .filter((s) => s.ownerClerkUserId === clerkUserId)
-          .map((s) => mapSystemAccess(s, "owner"));
-
-        // Get all systems this user has access to via userSystems table
-        const additionalAccess = allUserSystems
-          .filter((us) => us.user_systems.clerkUserId === clerkUserId)
-          .map((us) =>
-            mapSystemAccess(
-              us.systems,
-              us.user_systems.role as "owner" | "viewer",
-            ),
-          );
-
-        // Combine and deduplicate (owned systems take precedence)
-        const ownedSystemIds = new Set(ownedSystems.map((s) => s.systemId));
-        const userSystemAccess = [
-          ...ownedSystems,
-          ...additionalAccess.filter((s) => !ownedSystemIds.has(s.systemId)),
-        ];
-
         usersData.push({
           clerkUserId,
           email: undefined,
@@ -128,7 +77,7 @@ export async function GET(request: NextRequest) {
           lastName: undefined,
           createdAt: new Date().toISOString(),
           lastSignIn: undefined,
-          systems: userSystemAccess,
+          systems: ownedSystems,
         });
       }
     }

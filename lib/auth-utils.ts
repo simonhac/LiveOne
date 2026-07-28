@@ -1,7 +1,4 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { userSystems } from "@/lib/db/planetscale/schema";
-import { eq, or } from "drizzle-orm";
 
 type AuthResult = Awaited<ReturnType<typeof auth>>;
 
@@ -69,21 +66,4 @@ export async function isUserAdmin(
   }
 
   return false;
-}
-
-export async function getUserSystems(userId?: string | null) {
-  // If userId is not provided, get it from auth
-  if (!userId) {
-    const authResult = await auth();
-    userId = authResult.userId;
-  }
-
-  if (!userId) {
-    return [];
-  }
-
-  return requirePlanetscaleDb()
-    .select()
-    .from(userSystems)
-    .where(eq(userSystems.clerkUserId, userId));
 }

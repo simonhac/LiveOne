@@ -10,8 +10,15 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 12 slice G (`roles` dies). **Phases 10 + 11 COMPLETE; Phase 12 slices A + B + C shipped 2026-07-28.**
+## ▶ NEXT ACTION — Phase 12 slice H (`area_devices` → `area_members`). **Phases 10 + 11 COMPLETE; Phase 12 slices A + B + C + G + F shipped 2026-07-28.**
 
+> 🛑 **Slices G + F have a MIGRATION DEBT: 0044 + 0045 are written and dry-run-verified but NOT YET
+> APPLIED to either environment.** They are `[D]` drops, so the code deploys first and the DDL follows —
+> apply **prod `sydney` first, then `liveone-dev`**, then tick the two lines here. Until then both
+> environments still carry `roles` and `user_systems` as orphan tables that no code touches: harmless,
+> but slice N's terminal `systems` drop is blocked until 0045 releases
+> `user_systems_system_id_systems_id_fk`. Do not start slice H's DDL until these two are in.
+>
 > **DB state (2026-07-28): ✅ 0043 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
 > prod ([#267](https://github.com/simonhac/LiveOne/pull/267), live 15:20 AEST) and post-checked clean.**
 > All 9 active devices wrote `device_state` after the flip (`last_poll_time` past the freeze,
@@ -143,8 +150,8 @@ model. Those are still v3, with v4 running alongside as a dark mirror.
 | **Zero v4-native renderers**                     | 19 plugins across two split registries (`CARD_RENDERERS` 10 + `TILE_RENDERERS` 9), 100% v3-shaped, reached through `v4-adapt.ts`. `card-types.ts`' 18 unified types have no renderer map.                                                                   | Phase 14    |
 | **All v4 mutation routes missing**               | 10 endpoints unbuilt (`/devices`, `/devices/{id}/points`, `/areas/{id}/members\|bindings\|derivations` PUT, `/dashboards/{id}/shares\|grants\|revisions`, `/export`, `/import`); 28 legacy handlers across 15 routes still serve.                           | Phase 14    |
 | **Derivations unused; two derive mechanisms**    | ✅ **Phase 11 DONE** — run-tracking + HWS now read/write `derivations`/`derived_intervals`; `device_trackers`/`device_run_periods` dropped (0041).                                                                                                | Phase 11    |
-| **`user_systems` / `isViewer`**                  | 13 query lines / 9 files; `isViewer` confined to `lib/api-auth.ts` (5 refs, **zero consumers** of the returned field) and folded into `canRead`. **Prod holds 0 rows** (probed 2026-07-28) — dev's 22 are `reown-dev-data.ts` debris, so the drop is free.    | Phase 12    |
-| **`roles` table**                                | **0 query sites**; writer-less (its last one died with Phase 11 PR 1). Phase 11 dropped the two tracker-table FKs — now only `area_bindings.role` references it, and `area_bindings_role_check` already covers the set.                                       | Phase 12    |
+| **`user_systems` / `isViewer`**                  | ✅ **Phase 12 slice F DONE** — table + `isViewer` gone; 0045 written (not yet applied). The admin Viewers UI and `/api/setup` went with it; `getSystemsVisibleByUser`'s granted leg was re-pointed at `dashboard_grants`, not deleted.                        | Phase 12    |
+| **`roles` table**                                | ✅ **Phase 12 slice G DONE** — table + the `area_bindings.role` FK gone; 0044 written (not yet applied). `area_bindings_role_check` is now the sole enforcement of the 6-role set.                                                                            | Phase 12    |
 | **Dead weight in `schema.ts`**                   | ✅ **Phase 10 DONE** — `dashboard_share_tokens`, the 5 dead `share_tokens.*_ms`/`owner_clerk_user_id` columns and `dashboard_grants.created_at_ms` all gone.                                                                                                | Phase 10    |
 | **Three `_old` hot tables in the DB**            | ✅ **Phase 10 DONE** — dropped by 0038/0039 (4,216 MB dev / 4,140 MB prod reclaimed).                                                                                                                                                                       | Phase 10    |
 | **~160 KB of cutover scaffolding**               | ✅ **Phase 10 DONE** (mostly) — retired by #251. `registry-sync`/`registry-populate` die in Phase 12 slice L; `rewrite-descriptor-area-refs.ts` still holds the `prebuild` `tsc` step open until then.                                                       | Phase 10/12 |
@@ -617,8 +624,8 @@ change the slicing. Recounted:
 | 2 | `polling_status` is a read-switch | **`device_state` has zero runtime writers** — only `schema.ts` + the two doomed `scripts/config-v4/` scripts. `lib/polling-utils.ts` still writes `polling_status`. Needs a writer + backfill (slice C), not a read swap. |
 | 3 | "the `systemId.pointIndex` ref grammar in the publisher/receiver" | Understated ~10×. `RegistryCache.pointForAddr` has ~18 call sites in 13 files and `lib/registry/registry-cache.ts:118-123` reads `point_info` as its backing store. **This, not the `SystemsManager` rename, is the long pole.** |
 | 4 | `AREA_HANDLE_BASE`/`allocateAreaHandle` → Phase 13 | Forced into Phase 12: `lib/areas/handles.ts:33-35` computes `max(systems.id)`, so `systems` cannot drop while it exists. |
-| 5 | `roles` has 1 query site | **0 query sites.** Residue is the `schema.ts:728` declaration, `Role`/`NewRole`, the `areaBindings.role` FK, and the manifest string. |
-| 6 | `user_systems`/`isViewer` = 7 query sites | 13 query lines / 9 files. `isViewer` is 5 occurrences, all in `lib/api-auth.ts`, with **zero consumers** of the returned field. **Prod `user_systems` holds 0 rows** (probed 2026-07-28); dev's 22 are `reown-dev-data.ts` debris. The drop is free. |
+| 5 | `roles` has 1 query site | **0 query sites.** Residue is the `schema.ts:728` declaration, `Role`/`NewRole`, the `areaBindings.role` FK, and the manifest string. ✅ Confirmed exactly right when slice G shipped. |
+| 6 | `user_systems`/`isViewer` = 7 query sites | 13 query lines / 9 files. `isViewer` is 5 occurrences, all in `lib/api-auth.ts`, with **zero consumers** of the returned field (✅ exact). **Prod `user_systems` holds 0 rows** (probed 2026-07-28); dev's 22 are `reown-dev-data.ts` debris. ⚠️ **"The drop is free" was wrong about the CODE** — measured at slice F: **9 read sites / 8 files**, plus live writers (`lib/user-systems.ts`), an admin **UI feature** (AdminTab Viewers), and dev's 22 rows are **load-bearing for Vercel preview**, not debris. See the slice-F block. |
 | 7 | outbox re-key is "rename only, no rewrite" | Contradicts this section's own Risks para. Expand/contract. Cheap either way — 2 code refs (`lib/observations/outbox.ts:53,74`). |
 | 8 | `points` needs populating | Already dual-written at mint (`lib/point/point-manager.ts:620-646`) and already a **live production read** (`lib/readings/dao.ts:913-915,964,1059-1061`). The work is a read-path swap. |
 | 9 | `SystemsManager` = 72 files / 75 sites | 66 files / 78 `getInstance()` sites. Method spread is very uneven — `getSystem` alone is 34, so slice by **method**, not by file. |
@@ -635,8 +642,8 @@ first, then prod, then dev. **[C]** code-only.
 | **A** | ✅ v4 registries into the sync manifest — see below | [C] |
 | **B** | ✅ `points.rid`/`devices.rid` get `DEFAULT nextval(…)`; `setval(device_rid_seq, …)` — see below | [A] 0043 |
 | **C** | ✅ `device_state` becomes the polling writer + reader; `polling_status` frozen — see below | [C] |
-| **G** | `roles` dies (drop the `areaBindings.role` FK; `area_bindings_role_check` already enforces the 6-role set) | [C] → [D] 0044 |
-| **F** | `user_systems` + `isViewer` die (prod table is empty) | [C] → [D] 0045 |
+| **G** | ✅ `roles` dies (drop the `areaBindings.role` FK; `area_bindings_role_check` already enforces the 6-role set) — see below | [C] → [D] 0044 |
+| **F** | ✅ `user_systems` + `isViewer` die (prod table is empty) — see below | [C] → [D] 0045 |
 | **H** | `area_devices` → `area_members` | [C] → [D] 0046 |
 | **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain | [C] |
 | **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0047 |
@@ -790,6 +797,71 @@ Note the sign trap when reading `total_polls` deltas: `device_state` starts the 
 `polling_status` by the reconcile→deploy gap and only crosses over once that many minutes of polling
 accrue. The observed `+2…+28` was consistent with a ~5-minute gap; a negative delta shortly after a flip
 is not a fault.
+
+**✅ SLICE G DONE (2026-07-28).** Migration **0044** drops `roles` and the last FK into it,
+`area_bindings_role_roles_role_fk`. The one-line plan entry was accurate — this really was 7 edit points
+and zero query sites — so the only notes worth carrying are about what the drop *costs*:
+
+- **`area_bindings_role_check` is now the SOLE enforcement of the role vocabulary, and nothing derives
+  it.** 0032 added it for exactly this handover, but the consequence only bites now: adding a role to
+  `lib/roles/registry.ts` requires a migration widening **both** `area_bindings_role_check` and
+  `derivations_role_check`. That warning is now in the registry's own header rather than only here.
+- **There is no SQL-joinable copy of role metadata any more** (`category`/`stem`/`label`/`ha_*`/
+  `summary_*`). `schema.ts`'s old header advertised "SQL joins (Sankey side, HA export) can read role
+  metadata without the code registry" — nothing ever did, and the future HA export bridge now has to
+  read `lib/roles/registry.ts`. Deliberate, per clean-sheet §4.8.
+- Stale-comment cleanup that came with it: `schema.ts:733` listed only 5 roles (predating `generator`),
+  and `lib/roles/registry.ts:60` still said `device` metadata is "not projected into the `roles` SQL
+  table" — a distinction with nothing left to distinguish from.
+
+Verified on `liveone-dev` by running the migration body inside a rolled-back transaction: guard NOTICE
+`roles has 6 rows; area_bindings roles in use: battery, ev, grid, load, solar; CHECK present; no
+unexpected FK dependents`; after the drop `to_regclass('public.roles')` NULL, the FK count 0, the CHECK
+count still 1, `area_bindings` still **72** rows. The proof that matters: an `INSERT … role = 'bogus'`
+inside the same transaction was **still rejected** — by the CHECK, not the FK. Both guard failure paths
+were also exercised and both abort *before* any DROP: dropping the CHECK first raises "would leave
+area_bindings.role unconstrained", and a smuggled-in out-of-set role raises "holds role(s) outside the
+CHECK set: bogus". `db:pg:generate` clean afterwards.
+
+**✅ SLICE F DONE (2026-07-28).** Migration **0045** drops `user_systems`, releasing one of the four FKs
+into `systems` that block slice N. Three things the one-line entry ("prod table is empty") got wrong or
+did not say:
+
+- **"The drop is free" was true of the DATA, not the CODE.** Correction #6 counted query sites but not
+  writers: `lib/user-systems.ts` (`grantUserSystem`/`revokeAllForSystem`) was live, driven by a real
+  **admin UI feature** — the Viewers add/remove section of `components/AdminTab.tsx` behind
+  `/api/admin/systems/{id}/admin-settings`. Simon approved deleting it (share tokens +
+  `dashboard_grants` are the sharing mechanism, and clean-sheet §4.8 retires `user_systems` with "no
+  replacement"). Also deleted outright: `app/api/setup/route.ts`, a legacy Selectronic self-service
+  link/create flow built entirely on the table with **zero** in-repo callers. Actual read-site count was
+  **9 across 8 files**, not 7.
+- **One leg was re-pointed, not deleted — and finding out why was the real work of this slice.** Dev's
+  22 rows are not inert debris: `scripts/utils/reown-dev-data.ts` reowns mirrored config to the DEV
+  clerk id and grants the PROD id back, and **Vercel preview authenticates against the LIVE prod Clerk
+  instance**. So a pure deletion would have emptied preview's device switcher, `/dashboard` landing
+  redirect and area candidate list. `getSystemsVisibleByUser` (`lib/systems-manager.ts`) therefore keeps
+  a granted leg, now derived from `dashboard_grants` via the pre-existing
+  `grantedSystemScopeForUser` — which `reown-dev-data.ts` also grants back, so it is a one-for-one swap.
+  It is imported **dynamically** (`await import`) to break a module cycle: `dashboard/grants` →
+  `dashboard/access` → `point/point-manager` → `systems-manager`; same trick as
+  `lib/vendors/amber/client.ts:255`. The other three paths (`requireSystemAccess`, `listReadableDevices`,
+  `assertMembersReadable`) are pure deletions — `grantedSystemScopeForUser` is N+1 dashboard fetches and
+  does not belong on the hot per-request auth path.
+- **`canWrite` is bit-identical; `canRead` provably only narrowed.** The `isViewer` probe sat behind
+  `if (ctx.userId && !isOwner && !ctx.isAdmin)` and only ORed into `canRead`, so
+  `canRead_new ⊆ canRead_old` at all ~30 `requireSystemAccess` call sites — the grant never conveyed
+  write. Visible consequence to expect: a user who appeared in `/api/admin/users` **only** via a grant no
+  longer appears at all, and every system listed there is now owned (the `role` field and the client's
+  "viewer" badge branch are gone). On prod that set is empty.
+
+Verified on `liveone-dev` in a rolled-back transaction: the guard logged all **22** rows verbatim (2
+clerk ids × 11 systems — the apply log is the only copy), passed the redundancy assertion, and the FK
+count into `systems` went **4 → 3**. Failure path exercised too: a synthetic grantee with neither
+ownership nor any dashboard grant aborts the migration *before* the DROP. Note the guard's
+dashboard-grant half is deliberately **loose** — "holds any grant", not "a grant reaching this system",
+because the precise question needs `allowedSystemIds` (descriptor parsing), which is app logic; the
+migration header says so rather than implying equivalence. Full unit suite **133/133**, `tsc --noEmit`
+and `build:local` clean (the route manifest confirms `/api/setup` is gone), `db:pg:generate` clean.
 
 **Done when:** zero query sites against any dropped table; `SystemsManager` deleted; a real poll →
 publish → receive → aggregate → serve cycle green on `liveone-dev` including a **newly minted point**

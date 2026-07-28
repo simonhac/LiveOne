@@ -138,30 +138,12 @@ export const pollingStatus = pgTable(
   }),
 );
 
-// ============================================================================
-// User-System junction table for many-to-many relationship
-// ============================================================================
-export const userSystems = pgTable(
-  "user_systems",
-  {
-    id: serial("id").primaryKey(),
-    clerkUserId: text("clerk_user_id").notNull(),
-    systemId: integer("system_id")
-      .notNull()
-      .references(() => systems.id, { onDelete: "cascade" }),
-    role: text("role").notNull().default("viewer"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => ({
-    userSystemUnique: uniqueIndex("user_system_unique").on(
-      table.clerkUserId,
-      table.systemId,
-    ),
-    userIdx: index("user_systems_user_idx").on(table.clerkUserId),
-    systemIdx: index("user_systems_system_idx").on(table.systemId),
-  }),
-);
+// The `user_systems` junction table — the pre-Areas per-system access grant — was dropped by
+// migration 0045 (config-v4 Phase 12 slice F), releasing an FK into `systems`. It held ZERO rows on
+// prod, and the clean-sheet retires it with no replacement: sharing is `dashboard_grants` +
+// `share_tokens`. Read access is now exactly owner ∪ ownerless-is-public ∪ admin, plus whatever a
+// dashboard grant implies (`grantedSystemScopeForUser`, lib/dashboard/grants.ts). The grant never
+// conveyed write access, so nothing about `canWrite` changed.
 
 // ============================================================================
 // Users table - stores user preferences
@@ -722,24 +704,12 @@ export const dashboardGrants = pgTable(
 export type DashboardGrant = typeof dashboardGrants.$inferSelect;
 export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 
-// ============================================================================
-// Roles - HA-device_class-aware role registry (P3). A SQL projection of the code
-// source of truth in lib/roles/registry.ts (ROLES). Seeded/kept-in-sync by the
-// backfill script; exists so area_bindings.role has a FK target and so SQL joins
-// (Sankey side, HA export) can read role metadata without the code registry.
-// Do NOT hand-edit role data here — change lib/roles/registry.ts and re-seed.
-// ============================================================================
-export const roles = pgTable("roles", {
-  role: text("role").primaryKey(), // RoleId: 'solar' | 'battery' | 'load' | 'grid' | 'ev'
-  category: text("category").notNull(), // 'source' | 'load' | 'bidi'
-  stem: text("stem").notNull(), // anchor logical_path_stem, e.g. 'source.solar' | 'bidi.battery'
-  label: text("label").notNull(),
-  haDeviceClass: text("ha_device_class").notNull(), // 'power' | 'battery' ...
-  haStateClass: text("ha_state_class").notNull(), // 'measurement' | 'total' | 'total_increasing'
-  haUnit: text("ha_unit").notNull(), // 'W' | '%'
-  summaryMetric: text("summary_metric"), // 'power' | 'soc' — null = not summarised (ev)
-  summaryAggregable: boolean("summary_aggregable"), // null when not summarised
-});
+// The `roles` table — a SQL projection of lib/roles/registry.ts — was dropped by migration 0044
+// (config-v4 Phase 12 slice G). It had no writer and no query site: the registry is CODE, and the
+// only thing the table still did was back the area_bindings.role FK. Enforcement moved to the
+// `area_bindings_role_check` / `derivations_role_check` CHECK constraints below, which 0032 added
+// for exactly this handover. Role METADATA (category/stem/label/ha_*/summary_*) is read from
+// lib/roles/registry.ts — there is no longer a SQL-joinable copy, by design.
 
 // ============================================================================
 // Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
@@ -830,9 +800,9 @@ export const areaBindings = pgTable(
     areaId: uuid("area_id")
       .notNull()
       .references(() => areas.id, { onDelete: "cascade" }),
-    role: text("role")
-      .notNull()
-      .references(() => roles.role),
+    // Constrained by `area_bindings_role_check` below — the FK to `roles` went with that table in
+    // migration 0044 (slice G).
+    role: text("role").notNull(),
     metricType: text("metric_type").notNull(), // from point_info: 'power' | 'soc' | 'energy' | 'rate' ...
     pointSystemId: integer("point_system_id").notNull(), // the CHILD physical system
     pointId: integer("point_id").notNull(), // (point_system_id, point_id) → point_info(system_id, id)
@@ -873,10 +843,11 @@ export const areaBindings = pgTable(
       foreignColumns: [pointInfo.systemId, pointInfo.index],
       name: "area_bindings_point_info_fk",
     }),
-    // config-v4 (Phase 4, migration 0032): enumerate the 6-role registry (lib/roles/registry.ts)
-    // as a CHECK alongside the existing roles FK, so dropping the `roles` table at cutover leaves
-    // enforcement intact. All 6 incl. 'generator' (ROLE_IDS omits it, but the roles table + this
-    // CHECK need it). Cannot fail on apply — every live role already comes from the registry via the FK.
+    // config-v4 (Phase 4, migration 0032): enumerates the 6-role registry (lib/roles/registry.ts).
+    // Added alongside the then-existing `roles` FK so that dropping the table would leave enforcement
+    // intact — and since migration 0044 (slice G) dropped it, this CHECK is now the SOLE enforcement
+    // of the role set. Keep it in step with `ROLES` by hand; nothing derives it. All 6 incl.
+    // 'generator' (ROLE_IDS omits it, but this CHECK needs it).
     roleCheck: check(
       "area_bindings_role_check",
       sql`${table.role} IN ('solar','battery','load','grid','ev','generator')`,
@@ -1193,8 +1164,6 @@ export type DeviceState = typeof deviceState.$inferSelect;
 export type NewDeviceState = typeof deviceState.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;
 export type NewPollingStatus = typeof pollingStatus.$inferInsert;
-export type UserSystem = typeof userSystems.$inferSelect;
-export type NewUserSystem = typeof userSystems.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
@@ -1217,8 +1186,6 @@ export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;
 export type NewObservationsOutbox = typeof observationsOutbox.$inferInsert;
 export type Dashboard = typeof dashboards.$inferSelect;
 export type NewDashboard = typeof dashboards.$inferInsert;
-export type Role = typeof roles.$inferSelect;
-export type NewRole = typeof roles.$inferInsert;
 export type Area = typeof areas.$inferSelect;
 export type NewArea = typeof areas.$inferInsert;
 export type AreaBinding = typeof areaBindings.$inferSelect;

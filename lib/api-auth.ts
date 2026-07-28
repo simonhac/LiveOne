@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "./auth-utils";
 import { SystemsManager, SystemWithPolling } from "./systems-manager";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { userSystems } from "@/lib/db/planetscale/schema";
-import { eq, and } from "drizzle-orm";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
@@ -28,7 +25,6 @@ export interface AuthenticatedContext extends AuthContext {
 export interface SystemAuthContext extends AuthenticatedContext {
   system: SystemWithPolling;
   isOwner: boolean;
-  isViewer: boolean;
   canRead: boolean;
   canWrite: boolean;
 }
@@ -150,25 +146,12 @@ export async function requireSystemAccess(
   const isOwner = ctx.userId === system.ownerClerkUserId;
   // Ownerless systems are PUBLIC: readable by everyone (but writable only by admins).
   const isPublic = system.ownerClerkUserId == null;
-  let isViewer = false;
 
-  if (ctx.userId && !isOwner && !ctx.isAdmin) {
-    // Check userSystems table for viewer access
-    const viewerAccess = await requirePlanetscaleDb()
-      .select()
-      .from(userSystems)
-      .where(
-        and(
-          eq(userSystems.clerkUserId, ctx.userId),
-          eq(userSystems.systemId, systemId),
-        ),
-      )
-      .limit(1);
-    isViewer = viewerAccess.length > 0;
-  }
-
-  const canRead =
-    ctx.isAdmin || ctx.isClaudeDev || isOwner || isViewer || isPublic;
+  // There used to be a fourth read term here — a `user_systems` probe for a per-system viewer grant.
+  // That table was dropped in migration 0045 (slice F); it held 0 rows on prod and never conveyed
+  // write access, so `canWrite` is unchanged and `canRead` only narrowed. A dashboard grantee still
+  // gets in via requireDashboardAccess's grantedSystemScopeForUser fallback below.
+  const canRead = ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic;
   const canWrite = ctx.isAdmin || isOwner;
 
   if (!canRead && !ctx.userId) {
@@ -186,7 +169,6 @@ export async function requireSystemAccess(
     userId: ctx.userId!,
     system,
     isOwner,
-    isViewer,
     canRead,
     canWrite,
   };

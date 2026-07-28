@@ -309,6 +309,20 @@
       "when": 1785204491710,
       "tag": "0043_rid_sequence_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1785224035649,
+      "tag": "0044_drop_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1785224050073,
+      "tag": "0045_drop_user_systems",
+      "breakpoints": true
     }
   ]
 }

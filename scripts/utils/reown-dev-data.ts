@@ -9,8 +9,8 @@
  * ids, so on `liveone-dev` your data is owned by your prod id while you log in with your dev id — you
  * can open things by URL (admin) but they aren't "yours" (menu / ownership / default dashboard). This
  * remaps the ownership columns prod→dev so dev-you genuinely owns the mirrored data — and then GRANTS
- * (viewer role, `user_systems` / `dashboard_grants`, purely additive) the prod id back onto everything
- * it just lost ownership of, so a prod-Clerk-authenticated session (preview) still resolves it via
+ * (viewer role, `dashboard_grants`, purely additive) the prod id back onto everything it just lost
+ * ownership of, so a prod-Clerk-authenticated session (preview) still resolves it via
  * `getSystemsVisibleByUser`/`listAccessibleDashboards`'s existing owned-OR-granted logic. Idempotent
  * (ON CONFLICT DO NOTHING) and never revokes/deletes a grant, matching the sync's own "full refresh,
  * upsert, no deletes" convention for small config tables.
@@ -30,18 +30,19 @@ import { Client } from "pg";
 // Every clerk-id-keyed OWNERSHIP column. `users.clerk_user_id` is the PRIMARY KEY — handled separately
 // below (copy prefs, don't rename) to avoid a collision when both the prod and dev user rows exist.
 //
-// GRANT tables (`user_systems`, `dashboard_grants`) are deliberately NOT here. They are access grants
-// with a COMPOSITE key — `(clerk_user_id, system_id)` unique / `(dashboard_id, user_id)` PK (config-v4
-// renamed dashboard_grants.clerk_user_id -> user_id and promoted its unique index to the table PK) —
-// not ownership. Two reasons they must stay out of the ownership remap:
+// The GRANT table (`dashboard_grants`) is deliberately NOT here. It is an access grant with a
+// COMPOSITE key — `(dashboard_id, user_id)` PK (config-v4 renamed clerk_user_id -> user_id and promoted
+// its unique index to the table PK) — not ownership. Two reasons it must stay out of the ownership
+// remap:
 //   1. Redundant: dev-you already sees the data by OWNING it (the systems/dashboards/areas owner
 //      columns below remap to the dev id); an extra grant for the dev id buys nothing.
-//   2. Harmful: `UPDATE ... SET clerk_user_id = <dev>` collides with the row a previous run's
-//      grant-back already created for that (user, system/dashboard) pair → a duplicate-key abort
-//      (`user_system_unique` / the `dashboard_grants_pk` composite PK) that failed the sync every
-//      steady-state run, drifting `liveone-dev`.
+//   2. Harmful: `UPDATE ... SET user_id = <dev>` collides with the row a previous run's grant-back
+//      already created for that (user, dashboard) pair → a duplicate-key abort (the
+//      `dashboard_grants_pk` composite PK) that failed the sync every steady-state run, drifting
+//      `liveone-dev`.
 // The PROD id's read-back access is handled purely additively by the ON CONFLICT DO NOTHING
-// grant-back below — which is the ONLY thing that should touch these two tables.
+// grant-back below — which is the ONLY thing that should touch that table. (A sibling `user_systems`
+// grant-back lived here too until migration 0045 dropped the table.)
 const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
   [
     { table: "systems", col: "owner_clerk_user_id" },
@@ -53,12 +54,14 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // config-v4 cutover renamed clerk_user_id -> owner_user_id.
     { table: "dashboards", col: "owner_user_id" },
     // Only reown areas whose handle IS a real `systems` row. An orphan/composite handle (a multi-device
-    // area with no `systems` row, e.g. a "Unified" area) is readable ONLY via ownership —
-    // `getSystemsVisibleByUser` excludes area views and `user_systems` grants inner-join `systems`, so
-    // NO grant-back can reach it. Reowning it to the dev id strips the prod-Clerk preview session's only
-    // read path (→ a blank dashboard on preview). Keep those prod-owned by skipping the remap; the
-    // tradeoff is dev-local won't own them. Real-system areas still remap — preview reaches them via the
-    // systems grant-back below.
+    // area with no `systems` row, e.g. a "Unified" area) was readable ONLY via ownership when this
+    // filter was written: `getSystemsVisibleByUser` excludes area views, and the then-current
+    // `user_systems` grant-back inner-joined `systems`, so no grant could reach it. Reowning it to the
+    // dev id stripped the prod-Clerk preview session's only read path (→ a blank dashboard on preview).
+    // Since slice F re-pointed the granted leg at `dashboard_grants`, a grant CAN now reach an
+    // orphan-handle area (the dashboard's own grant authorizes its areas), so this filter is probably
+    // no longer load-bearing — but it is harmless and unproven either way, so it stays until someone
+    // tests removing it against a real preview deploy. Tradeoff as before: dev-local won't own them.
     {
       table: "areas",
       // config-v4 cutover renamed owner_clerk_user_id -> owner_user_id.
@@ -147,23 +150,13 @@ async function main() {
       // mine" experience (menu/default dashboard) is unaffected. Selects by current ownership (`to`)
       // rather than "just remapped by this run", so it also backfills anything remapped by an EARLIER
       // run (before this grant-back existed) or by a prior sync cycle.
-      try {
-        const sysGrant = await c.query(
-          `INSERT INTO user_systems (clerk_user_id, system_id, role)
-             SELECT $1, id, 'viewer' FROM systems WHERE owner_clerk_user_id = $2
-             ON CONFLICT (clerk_user_id, system_id) DO NOTHING`,
-          [from, to],
-        );
-        if (sysGrant.rowCount)
-          console.log(
-            `  user_systems: granted ${from} -> ${sysGrant.rowCount} systems`,
-          );
-      } catch (e) {
-        hadError = true;
-        console.error(
-          `  ERR user_systems grant-back: ${e instanceof Error ? e.message : e}`,
-        );
-      }
+      //
+      // ⚠️ There used to be a SECOND grant-back here, into `user_systems`, covering the systems leg.
+      // That table died in migration 0045 (config-v4 Phase 12 slice F), so `dashboard_grants` below is
+      // now the ONLY thing restoring the prod id's reach — and it carries the systems leg too:
+      // `getSystemsVisibleByUser` derives its granted systems from these dashboard grants via
+      // `grantedSystemScopeForUser`. Which means the dashboards remap and this grant-back are what
+      // keep the preview switcher populated; if that regresses, look here first.
       try {
         // config-v4 cutover reshaped dashboard_grants: clerk_user_id -> user_id, created_at_ms ->
         // created_at (NOT NULL, naive UTC), and (dashboard_id, clerk_user_id) is now the table's

@@ -17,7 +17,6 @@ import {
   areaDevices,
   pointInfo,
   systems,
-  userSystems,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
@@ -65,9 +64,14 @@ function constraintOf(err: unknown): string | undefined {
 
 /**
  * Assert the caller may pull each `systemId` into an area they own — the no-escalation firewall. A
- * member is allowed when the caller can READ it (admin / owner / public-ownerless / viewer): you can
- * only aggregate data you can already see. (Read, not write: public grid-region systems — e.g. an
+ * member is allowed when the caller can READ it (admin / owner / public-ownerless): you can only
+ * aggregate data you can already see. (Read, not write: public grid-region systems — e.g. an
  * OpenElectricity NEM region — are legitimately added as members without owning them.)
+ *
+ * A fourth `user_systems` viewer-grant term was dropped with that table in migration 0045 (slice F).
+ * This is the strict direction — a caller who could previously add a granted member now gets
+ * `AreaAccessError` — which is the correct default for a firewall whose whole job is refusing
+ * escalation.
  */
 export async function assertMembersReadable(
   userId: string,
@@ -75,7 +79,6 @@ export async function assertMembersReadable(
   systemIds: number[],
 ): Promise<void> {
   const sm = SystemsManager.getInstance();
-  const db = requirePlanetscaleDb();
   for (const sid of systemIds) {
     const sys = await sm.getSystem(sid);
     if (!sys) throw new AreaValidationError(`System ${sid} not found`);
@@ -85,14 +88,7 @@ export async function assertMembersReadable(
       sys.ownerClerkUserId == null
     )
       continue;
-    const [viewer] = await db
-      .select({ systemId: userSystems.systemId })
-      .from(userSystems)
-      .where(
-        and(eq(userSystems.clerkUserId, userId), eq(userSystems.systemId, sid)),
-      )
-      .limit(1);
-    if (!viewer) throw new AreaAccessError(`No access to system ${sid}`);
+    throw new AreaAccessError(`No access to system ${sid}`);
   }
 }
 
