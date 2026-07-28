@@ -78,14 +78,20 @@ type FkChild = { table: string; cols: string[] };
 // would destroy unrelated areas' live bindings. Repointing touches no devices/points rows at all.
 //
 // The repoint UPDATE needs prod's row to already exist (it is the FK target), but the drifted dev row
-// blocks the upsert on a secondary unique index — so `neutralize` names the NULLABLE columns of those
-// unique keys, cleared first so both rows can coexist for the middle of the transaction (Postgres unique
-// indexes permit multiple NULLs). Ordering is therefore load-bearing: neutralize → upsert → repoint → delete.
+// blocks the upsert on a secondary unique index — so `neutralize` names the columns of those unique keys,
+// made non-colliding first so both rows can coexist for the middle of the transaction. Ordering is
+// therefore load-bearing: neutralize → upsert → repoint → delete.
 type IdDrift = {
   uniqueKeys: string[][]; // secondary unique indexes (each a full column list) a divergent-PK row collides on
   children: FkChild[];
   repoint?: FkChild[]; // FKs that must FOLLOW the realignment instead of being deleted (NOT NULL/NO ACTION)
-  neutralize?: string[]; // nullable columns of `uniqueKeys` to clear so prod's row can land alongside
+  // Columns of `uniqueKeys` freed on the drifted dev row so prod's row can be inserted alongside it.
+  // A bare string NULLs the column (Postgres unique indexes permit multiple NULLs) — which only works
+  // if it is nullable. `{ col, expr }` assigns an expression instead, for a NOT NULL key column where
+  // there is nothing to NULL: `devices.rid` is NOT NULL, so the drifted row is pushed into a disjoint
+  // value range rather than emptied. The neutralised row is DELETED moments later in the SAME
+  // transaction, so the value never has to be restored or even meaningful — only collision-free.
+  neutralize?: (string | { col: string; expr: string })[];
 };
 
 type FullTable = {
@@ -173,16 +179,14 @@ const FULL: FullTable[] = [
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
         // config-v4 migration 0033 added this table (with an area_id FK, no ON DELETE) after this
-        // children list was written, so it was never accounted for. Not itself in the sync manifest
-        // (it's a frozen-at-cutover compat shim, not prod-mirrored data), so a cleared row isn't
-        // restored by a later leg — the disposable-mirror tradeoff.
+        // children list was written, so it was never accounted for. Phase 12 slice A added it to the
+        // manifest below (after `devices`, its other FK parent), so a cleared row IS now restored by a
+        // later leg — it is an ordinary clear-and-repopulate child like the four above.
         { table: "legacy_handles", cols: ["area_id"] },
       ],
-      // The config-v4 dark v4-registry mirror (migration 0035) is populated on dev by a SEPARATE
-      // script (registry-sync.ts), not this sync — so unlike the children above it can't be
-      // cleared-and-abandoned. Both FKs below are NOT NULL / NO ACTION, so a post-cutover drifted area
-      // that owns a device BLOCKS the parent delete outright: this is the failure that froze
-      // liveone-dev from 2026-07-25 (`devices_primary_area_id_areas_id_fk`). They name the same
+      // Both FKs below are NOT NULL / NO ACTION, so a post-cutover drifted area that owns a device
+      // BLOCKS the parent delete outright: this is the failure that froze liveone-dev from
+      // 2026-07-25 (`devices_primary_area_id_areas_id_fk`). They name the same
       // LOGICAL area as prod's incoming row, so they are MOVED onto prod's uuid instead of deleted.
       // derivations moved out of `children` for the same reason — repointing it also preserves its
       // derived_intervals (CASCADE, migration 0040) rather than forcing a recompute.
@@ -195,6 +199,63 @@ const FULL: FullTable[] = [
       // its FK target. The drifted row is deleted moments later, in the same transaction.
       neutralize: ["legacy_system_id", "slug"],
     },
+  },
+  // ── config-v4 v4 registries (Phase 12 slice A) ──────────────────────────────
+  // These were populated on dev by scripts/config-v4/registry-sync.ts — cutover scaffolding that Phase 12
+  // DELETES — so without them here dev's registries freeze at the last manual run (already 4 area_members
+  // short of area_devices when this landed). They are also no longer dark: point_readings and both agg
+  // twins FK point_rid → points.rid, so a point minted on prod that never reaches dev's `points` breaks
+  // the incremental readings legs outright — the same class of failure as the areas FK that froze dev for
+  // three days. FK order within the group: devices (→ areas) → everything else (→ devices).
+  {
+    name: "devices",
+    mode: "full",
+    onConflict: "update",
+    // devices.id is a per-environment random UUIDv7 (Device.generate()), minted independently by each
+    // environment's own registry-sync run — so EVERY row drifts (16/16 when this landed), not the
+    // occasional row areas/point_info see. Dev must ADOPT prod's uuid: it is the FK-join key all four
+    // children carry, and points.device_id in particular is how a synced point finds its device.
+    idDrift: {
+      uniqueKeys: [
+        ["rid"], // devices_rid_unique
+        ["owner_user_id", "slug"], // devices_owner_slug_unique
+      ],
+      // Nothing is cleared: all four FKs into devices.id are NO ACTION and non-deferrable, points.device_id
+      // is NOT NULL, and the points themselves can't be deleted regardless (point_readings.point_rid →
+      // points.rid, ~13M rows). So every child MOVES onto prod's uuid instead — see `repoint` on areas.
+      children: [],
+      repoint: [
+        { table: "points", cols: ["device_id"] },
+        { table: "area_members", cols: ["device_id"] },
+        { table: "device_state", cols: ["device_id"] },
+        { table: "legacy_handles", cols: ["device_id"] },
+      ],
+      // `rid` is NOT NULL, so unlike areas' nullable keys there is nothing to NULL. Push the drifted dev
+      // row into the negative range instead: disjoint from every staged prod rid (both sequences allocate
+      // upward from 1), and distinct across drifted rows because rid is unique. The `- 1` keeps rid 0 —
+      // which no live sequence produces, but costs nothing to exclude — off its own identity. The row is
+      // deleted at the end of the same transaction, so the sentinel is never observable outside it.
+      neutralize: [{ col: "rid", expr: "-d.rid - 1" }, "slug"],
+    },
+  },
+  // points.id is DETERMINISTIC — uuidv5, and identical to point_info.point_uid by the seam invariant — so
+  // both environments independently mint the SAME id for the same logical point (0/134 drift when this
+  // landed) and a plain by-PK upsert works. Only device_id diverged, and `devices` above has already
+  // repointed dev's rows onto prod's uuids by the time this leg runs.
+  { name: "points", mode: "full", onConflict: "update" },
+  // Natural composite/1:1 PKs, no surrogate — plain by-PK upserts, after both FK parents.
+  { name: "area_members", mode: "full", onConflict: "update" },
+  { name: "device_state", mode: "full", onConflict: "update" },
+  // Frozen-at-cutover handle→device/area map. Previously left out of the manifest deliberately, but it is
+  // also an areas idDrift CHILD — so a realigning area cleared its handle rows with no later leg to restore
+  // them (dev sat 2 handles short of prod). Syncing it here closes that leak. Either partial unique index
+  // can name a different dev row than the PK does if a handle was ever re-pointed, so clear those
+  // collisions rather than letting one abort the whole run.
+  {
+    name: "legacy_handles",
+    mode: "full",
+    onConflict: "update",
+    replaceConflicts: [["device_id"], ["area_id"]],
   },
   // point_info's serial `id` is BOTH assigned independently on dev AND the FK-join key every readings
   // row carries — so, unlike area_bindings, dev must ADOPT prod's id (can't exclude it). When dev holds
@@ -644,7 +705,9 @@ export async function syncTable(
       // UPDATE below needs it present as its FK target. Both rows coexist only inside this transaction.
       const neutralize = idDrift.neutralize?.length
         ? `UPDATE public.${t.name} d SET ${idDrift.neutralize
-            .map((c) => `${c} = NULL`)
+            .map((c) =>
+              typeof c === "string" ? `${c} = NULL` : `${c.col} = ${c.expr}`,
+            )
             .join(", ")}
          FROM _drift b WHERE ${pk.map((c) => `d.${c} = b.${c}`).join(" AND ")};`
         : "";
