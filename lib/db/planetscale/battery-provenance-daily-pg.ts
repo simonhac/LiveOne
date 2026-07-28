@@ -65,7 +65,7 @@ const CAPACITY_SEED = 15;
 /** Reduce-algorithm version. Bump when the reduction semantics change (daily.ts) — a mismatch on any
  *  cached row triggers a full input rebuild. Distinct from the CHECKPOINT model version, which lives
  *  inside fold_state.v. v3: charge_run_kwh (coulomb-floor input) added to the reduction. */
-export const BATTERY_DAILY_VERSION = 3;
+export const BATTERY_DAILY_VERSION = 4;
 /** Always re-reduce this many trailing local days (absorbs late-arriving data near the tip). */
 const TRAILING_REREDUCE_DAYS = 3;
 /** agg_1d probe: a cached day is dirty when its stored register baseline moved by more than this. */

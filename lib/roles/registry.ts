@@ -193,11 +193,12 @@ export function classifyEnergyStem(stem: string): EnergyStemClass | null {
     stem === "source.solar" ||
     stem.startsWith("source.solar.") ||
     stem === "load" ||
-    stem.startsWith("load.") ||
-    stem === "ev.charge" ||
-    stem.startsWith("ev.charge.")
+    stem.startsWith("load.")
   )
     return { kind: "uni", targetPath: stem };
+  // `ev.charge` is deliberately absent: an EV charger participates as `load.ev` (a child of the load
+  // hierarchy). An `ev.charge`-stemmed register is the vehicle's own view of energy already metered
+  // elsewhere, so it decorates no node — see `buildFlowSeries`.
   return null;
 }
 
@@ -217,11 +218,12 @@ export function isCompleteRoleSet(stems: string[]): boolean {
   for (const s of stems) {
     if (isSolar(s) || s === "bidi.battery" || s === "bidi.grid")
       hasSource = true;
+    // `ev.charge` is NOT counted: it is not a flow sink (an EV charger participates as `load.ev`),
+    // so an area whose only "load" was an EV point would be judged complete and then render an
+    // empty sink side.
     if (
       s === "load" ||
       s.startsWith("load.") ||
-      s === "ev.charge" ||
-      s.startsWith("ev.charge.") ||
       s === "bidi.battery" ||
       s === "bidi.grid"
     )

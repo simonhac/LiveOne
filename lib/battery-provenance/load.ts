@@ -591,16 +591,27 @@ export async function loadBatteryThroughput(
       endMs,
       "delta",
     );
-    for (const s of cs) {
-      const i = tIndex.get(s.t);
-      if (i !== undefined)
-        chargeKwh[i] = Math.max(0, toKwh(s.v, chargeBind.unit) ?? 0);
-    }
-    for (const s of ds) {
-      const i = tIndex.get(s.t);
-      if (i !== undefined)
-        dischargeKwh[i] = Math.max(0, toKwh(s.v, dischargeBind.unit) ?? 0);
-    }
+    // A counter re-base is a MATCHED PAIR — one negative delta, then a catch-up carrying everything
+    // the counter had accumulated. Clamping the negative to 0 while keeping the catch-up would feed
+    // the η/capacity learners a phantom cycle (the same defect fixed in `attachEnergyOverlays`), so
+    // drop BOTH halves: the interval reads 0 throughput rather than a fabricated one.
+    const scatter = (
+      rows: { t: number; v: number | null }[],
+      unit: string | null,
+      out: number[],
+    ): void => {
+      let prevNegative = false;
+      for (const s of rows) {
+        const kwh = toKwh(s.v, unit);
+        const negative = kwh !== null && kwh < 0;
+        const i = tIndex.get(s.t);
+        if (i !== undefined)
+          out[i] = negative || prevNegative ? 0 : Math.max(0, kwh ?? 0);
+        prevNegative = negative;
+      }
+    };
+    scatter(cs, chargeBind.unit, chargeKwh);
+    scatter(ds, dischargeBind.unit, dischargeKwh);
   } else {
     // Integrate signed battery power over each 5-min interval (negative = charge, positive = discharge).
     const hours = FIVE_MIN_MS / 3_600_000;
