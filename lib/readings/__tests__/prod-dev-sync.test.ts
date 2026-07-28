@@ -97,6 +97,11 @@ describe("prod→dev readings transfer", () => {
       "share_tokens",
       "roles",
       "areas",
+      "devices",
+      "points",
+      "area_members",
+      "device_state",
+      "legacy_handles",
       "point_info",
       "area_devices",
       "area_bindings",
@@ -117,6 +122,41 @@ describe("prod→dev readings transfer", () => {
     );
     // derivations.area_id is a NOT NULL FK, so areas must land first.
     expect(names.indexOf("areas")).toBeLessThan(names.indexOf("derivations"));
+    // config-v4 v4 registries. devices.primary_area_id is a NOT NULL FK to areas; points, area_members,
+    // device_state and legacy_handles all FK devices.id (points.device_id NOT NULL). So the group is
+    // strictly ordered areas → devices → the rest.
+    expect(names.indexOf("areas")).toBeLessThan(names.indexOf("devices"));
+    for (const child of [
+      "points",
+      "area_members",
+      "device_state",
+      "legacy_handles",
+    ]) {
+      expect(names.indexOf("devices")).toBeLessThan(names.indexOf(child));
+    }
+    // The whole point of the group: point_readings and both agg twins FK point_rid → points.rid, so a
+    // point minted on prod must reach dev's `points` BEFORE the incremental readings legs try to land
+    // its readings — otherwise every one of them fails the FK.
+    for (const hot of [
+      "point_readings",
+      "point_readings_agg_5m",
+      "point_readings_agg_1d",
+    ]) {
+      expect(names.indexOf("points")).toBeLessThan(names.indexOf(hot));
+    }
+    // area_bindings.point_uid and derivations.output_point_id both FK points.id.
+    expect(names.indexOf("points")).toBeLessThan(
+      names.indexOf("area_bindings"),
+    );
+    // points.id is deterministic (uuidv5, = point_info.point_uid) and identical across environments, so
+    // it upserts by PK with no natural-key/excludeCols dance — like derivations.
+    expect(manifest.find((t) => t.name === "points")).toMatchObject({
+      mode: "full",
+      onConflict: "update",
+    });
+    expect(manifest.find((t) => t.name === "points")).not.toHaveProperty(
+      "excludeCols",
+    );
     // Its id is deterministic (uuidv5 over area/kind/role), identical in both environments — so it
     // upserts by PK, with no natural-key/excludeCols dance.
     expect(manifest.find((t) => t.name === "derivations")).toMatchObject({
@@ -282,6 +322,66 @@ describe("prod→dev readings transfer", () => {
     // OTHER areas, because area_bindings.point_uid can cross-reference a point under a different area.
     expect(sql).not.toContain("DELETE FROM public.devices");
     expect(sql).not.toContain("DELETE FROM public.points");
+  });
+
+  it("realigns drifted devices by neutralizing NOT NULL rid to a sentinel, not NULL", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "devices",
+    )!;
+    // Nothing is cleared — points.device_id is NOT NULL and the points themselves are undeletable
+    // (point_readings.point_rid → points.rid, ~13M rows). Every child moves instead.
+    expect(table).toMatchObject({ mode: "full", idDrift: { children: [] } });
+    expect(
+      (
+        table as { idDrift: { repoint?: Array<{ table: string }> } }
+      ).idDrift.repoint?.map((c) => c.table),
+    ).toEqual(["points", "area_members", "device_state", "legacy_handles"]);
+
+    const { prod, dev, devSql } = copyClients();
+    await syncTable(
+      prod,
+      dev,
+      table,
+      new Map([["devices", ["id", "rid", "owner_user_id", "name", "slug"]]]),
+      new Map([["devices", ["id"]]]),
+    );
+
+    const sql = devSql.at(-1)!;
+    // The whole point: `rid` is NOT NULL, so it CANNOT be freed by NULLing it the way areas frees
+    // legacy_system_id. It is pushed into the negative range instead — disjoint from every staged prod
+    // rid, and still distinct per drifted row because rid is unique.
+    expect(sql).toContain("SET rid = -d.rid - 1, slug = NULL");
+    expect(sql).not.toContain("rid = NULL");
+
+    // All four children repoint onto prod's uuid; none is deleted.
+    for (const child of [
+      "points",
+      "area_members",
+      "device_state",
+      "legacy_handles",
+    ]) {
+      expect(sql).toContain(
+        `UPDATE public.${child} x SET device_id = b.new_id FROM _drift b WHERE x.device_id = b.id;`,
+      );
+      expect(sql).not.toContain(`DELETE FROM public.${child}`);
+    }
+
+    // Same load-bearing order as areas: neutralize (frees devices_rid_unique) → upsert (prod's row
+    // lands, becoming the FK target) → repoint → delete the drifted parent.
+    const at = (needle: string) => {
+      const i = sql.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at("SET rid = -d.rid - 1")).toBeLessThan(
+      at("INSERT INTO public.devices"),
+    );
+    expect(at("INSERT INTO public.devices")).toBeLessThan(
+      at("UPDATE public.points x SET device_id"),
+    );
+    expect(at("UPDATE public.legacy_handles x SET device_id")).toBeLessThan(
+      at("DELETE FROM public.devices d USING _drift"),
+    );
   });
 
   it("fails closed before connecting when the write target is prod", async () => {
