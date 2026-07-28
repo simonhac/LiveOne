@@ -15,6 +15,21 @@
  * remodel. This module is **pure data** — no React, no lucide, no node — so server and client both
  * import it safely.
  *
+ * ── The stems are a HIERARCHY, and that is a modelling rule, not a naming style ──────────────────
+ * `load` and `source.solar` work the same way: the anchor stem is the site TOTAL, and each dotted
+ * child (`load.ev`, `source.solar.local`) is a METERED SUBSET of it. An anchor is therefore a flow
+ * node in its own right only when it has NO children; once it has children it becomes a BUDGET, and
+ * the nodes are the children plus ONE complement absorbing the remainder (`load.rest-of-house`,
+ * `source.solar.residual`) — synthesised, or measured where a vendor publishes that quantity. Emit
+ * both an anchor and its children and you double-count the subsets against the total.
+ *
+ * The corollary is that a role's stem is not automatically a node: `ev` is a real role with real
+ * points, but `ev.charge` is a vehicle's own view of energy already metered by a `load.ev` circuit
+ * or the site meter, so it never becomes a sink. That is what the two "deliberately absent" comments
+ * in `classifyEnergyStem` and `isCompleteRoleSet` below are consequences of. `buildFlowSeries`
+ * (lib/aggregation/flow-series.ts) is where the rule is implemented; the Directional model section
+ * of docs/architecture/energy-flow-matrix.md is the prose version.
+ *
  * ⚠️ There is no SQL copy of this any more. The `roles` table (a projection of `ROLES`) was dropped
  * by migration 0044; the only thing SQL still knows about the role set is the enumeration in the
  * `area_bindings_role_check` / `derivations_role_check` CHECK constraints. ADDING A ROLE HERE

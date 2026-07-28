@@ -1,5 +1,10 @@
 # Energy Flow Matrix (Sankey) — daily materialization, monthly by summation
 
+> **Status:** partly stale — last verified 2026-07-28. The **Directional model** and **Invariants**
+> sections are current. **Storage**, **Compute**, and parts of **Read**/**Key code** still describe
+> `point_readings_flow_1d` and the `FLOW_MATRIX_*` flags, all of which were retired —
+> `point_readings_flow_attr_1d` is now the sole flow/Sankey matrix. Those sections need their own pass.
+
 How the dashboard's energy‑flow **Sankey** stays correct over multi‑day ranges (weekly, 30‑day, calendar month).
 
 > **See also** [battery-provenance.md](battery-provenance.md): the Sankey is the ENERGY leg of a unified
@@ -32,7 +37,7 @@ Energy is **always ≥ 0**; direction is encoded by **which slot** a flow lands 
 - **Battery**: negative = charge → `load.battery`; positive = discharge → `source.battery`.
 - **Grid**: negative = export → `load.grid`; positive = import → `source.grid`.
 - **Solar**: vendors expose a bare total `source.solar` and/or per‑array leaves (`source.solar.local`, `source.solar.remote`). The bare total equals the sum of the leaves, so the **leaves are used** and a synthetic `source.solar.residual = max(0, total − Σleaves)` captures any unmetered remainder (sub‑20 W dropped as noise). With no leaves, the bare total is the single solar node. (`resolveSolarSources` in `lib/aggregation/flow-series.ts`.)
-- **Loads**: real load points (`load`, `load.hws`, …) plus the synthetic **`load.rest-of-house`** (remainder = master − children, or generation − charge − export − children).
+- **Loads**: `load` is a **hierarchy, exactly like `source.solar` above**. The master `load` is the site TOTAL and each `load.<sub>` (`load.hws`, `load.ev`, …) is a metered subset of it. So the master is a sink only when it has **no** children; with children it becomes a **budget**, and the sinks are the children plus the **complement** `load.rest-of-house` — the load no sub‑meter covers. The complement is always exactly **one** node, either synthesised (remainder = master − children, or generation − charge − export − children) or **measured**, where a vendor publishes that quantity directly (Sigenergy's `loadPower` excludes its AC charger, so it _is_ the complement); a measured complement is sized by the master register's remainder for its exact energy. `ev.charge` is **not** a sink: a charger inside the site meter participates as `load.ev`, and an `ev.charge` register is a vehicle's own view of energy already metered by that circuit or the site meter, so it decorates no node (it remains a point for cards and charts). (`buildFlowSeries` in `lib/aggregation/flow-series.ts`.)
 
 Nodes are keyed by **canonical path string**, not point id — so aggregated solar and the synthetic rest‑of‑house have a stable identity, and labels/colors resolve at read time. Synthetic and aggregated nodes simply have no backing point.
 
@@ -88,6 +93,7 @@ Gated by `FLOW_MATRIX_SERVE_FROM_PG`; off → the dashboard computes sub‑daily
 - Allocate at the 5‑minute grain, then sum energy — never re‑derive allocation from coarse totals.
 - One day boundary (`dayToUnixRangeForAggregation`), identical to `agg_1d`.
 - `Σ(source energy) − Σ(load energy) ≥ 0` (losses are non‑negative, within a plausible efficiency band).
+- A master `load` and its children are **never both** sinks: sinks are the children plus the one complement. Emitting both double‑counts the metered subsets against the total.
 
 ## Key code
 
