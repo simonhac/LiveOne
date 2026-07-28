@@ -11,7 +11,7 @@
  * treat the id as an opaque handle and never touch `lib/ids`. A malformed/foreign id decodes to null and
  * reads as "not found".
  */
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
@@ -329,8 +329,31 @@ export async function updateDashboard(
   // unchanged (elective → Phase 9), so map the legacy arg keys onto the renamed columns here.
   if (patch.displayName !== undefined) set.name = patch.displayName;
   if (patch.alias !== undefined) set.slug = patch.alias;
-  if (patch.descriptor !== undefined)
-    set.descriptor = normalizeDescriptor(patch.descriptor);
+  if (patch.descriptor !== undefined) {
+    const descriptor = normalizeDescriptor(patch.descriptor);
+    set.descriptor = descriptor;
+    // config-v4: regenerate `doc` from the descriptor, exactly as `createDashboard` does. Writing
+    // `descriptor` alone made this route a NO-OP ON SCREEN: since the Phase 8/10 cutover `dashboards.doc`
+    // is NOT NULL and the render path takes it (app/dashboard/[...slug]/page.tsx), keeping v3 only as a
+    // fallback for a doc that fails the shape guard. So an edit here — e.g. AddAreaDialog adding an area
+    // section — changed nothing visible AND silently diverged the two shapes.
+    //
+    // ⚠️ REVISIT IN PHASE 14 (v4-native presentation). This regenerates unconditionally, which is safe
+    // only while `doc` has no independent author: today it comes solely from this rewrite and
+    // `createDashboard`'s. Once a v4 editor writes `doc` directly, a descriptor PATCH would CLOBBER
+    // v4-authored structure, and this must become a reject-or-merge decision rather than an overwrite.
+    set.doc = rewriteV3ToV4(descriptor, {
+      areaRef: pureAreaRef,
+      deviceRef: () => {
+        throw new Error(
+          "updateDashboard: device-pinned cards must be set via the v4 doc PUT, not the descriptor PATCH",
+        );
+      },
+    });
+    // Keep the whole-doc revision counter honest — `updateDashboardDoc` uses it for optimistic
+    // concurrency, so a doc rewritten here must advance it too or a concurrent v4 PUT sees no change.
+    set.revision = sql`${dashboards.revision} + 1` as unknown as number;
+  }
   const uuid = Dashboard.toUuidOrNull(id);
   if (!uuid) return;
   try {

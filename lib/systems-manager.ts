@@ -445,27 +445,44 @@ export class SystemsManager {
   }
 
   /**
-   * Update an existing system.
+   * Update an existing system, and re-mirror it into the v4 `devices` registry.
    *
    * Updates Postgres only (config writes are Postgres-only). The patch maps 1:1 —
    * PG jsonb/timestamp columns accept plain objects/Dates directly, so no per-field
    * mapping is needed. `updatedAt` is always stamped to now regardless of the patch.
+   *
+   * config-v4: the `systems` write and its `devices` mirror are ONE transaction. Before this, the mirror
+   * was written at mint only, so every edit here drifted `devices.name`/`status`/`slug`/`config`/
+   * `adapter_state` — and `ensureDeviceRow` was `ON CONFLICT DO NOTHING`, so nothing could self-heal it.
+   * Slice K reads `devices` as the config registry, so the drift is not cosmetic.
    */
   async updateSystem(systemId: number, patch: Partial<System>): Promise<void> {
     // Never let the caller override the id or the freshly-stamped updatedAt.
     const { id: _ignoredId, updatedAt: _ignoredUpdatedAt, ...rest } = patch;
     const values = { ...rest, updatedAt: new Date() };
 
-    await requirePlanetscaleDb()
-      .update(pgSystems)
-      .set(values as Partial<InferSelectModel<typeof pgSystems>>)
-      .where(eq(pgSystems.id, systemId));
+    await requirePlanetscaleDb().transaction(async (tx) => {
+      await tx
+        .update(pgSystems)
+        .set(values as Partial<InferSelectModel<typeof pgSystems>>)
+        .where(eq(pgSystems.id, systemId));
+      // Re-copies the mutable columns from the row just written (ensureDeviceRow SELECTs `systems`).
+      await ensureDeviceRow(systemId, tx);
+    });
   }
 
   /**
    * Delete a system.
    *
    * Deletes from Postgres only.
+   *
+   * ⚠️ config-v4 KNOWN GAP (deliberately not closed here): this leaves the mirrored `devices` row
+   * ORPHANED. There is no FK from `devices` to `systems` (`devices.rid` is a plain integer), so nothing
+   * cascades. Not fixed in the mirror-leak pass because deleting a device is not the inverse of this
+   * one-liner — `area_members`, `points.device_id` and the device's area-of-one all hang off it, so the
+   * safe teardown order is slice N's problem, not a side effect of a v3 delete. Low real exposure: the
+   * only caller is the create-rollback path in `app/api/systems/route.ts`, where the device row was just
+   * minted moments earlier. Revisit when `devices` becomes the primary registry (slice K/N).
    */
   async deleteSystem(systemId: number): Promise<void> {
     await requirePlanetscaleDb()

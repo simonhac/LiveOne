@@ -39,6 +39,7 @@ import {
   areas,
   areaDevices,
   areaMembers,
+  pointInfo,
   points,
   systems,
 } from "@/lib/db/planetscale/schema";
@@ -62,6 +63,34 @@ export interface MirrorPointInput {
   active: boolean;
   createdAt: Date | null;
   updatedAt: Date | null;
+}
+
+/**
+ * Narrow a `point_info` row to the mirror's input.
+ *
+ * Shared by BOTH writers — the mint upsert and `updatePoint` — deliberately: when they each built this
+ * object inline, only one of them existed, and the edit path silently shipped without a mirror call at
+ * all. One mapper means a new mirrored column is a compile error in one place, not a leak in the other.
+ */
+export function toMirrorPointInput(
+  row: typeof pointInfo.$inferSelect,
+): MirrorPointInput {
+  return {
+    systemId: row.systemId,
+    pointUid: row.pointUid,
+    rid: row.rid,
+    physicalPathTail: row.physicalPathTail,
+    logicalPathStem: row.logicalPathStem,
+    metricType: row.metricType,
+    metricUnit: row.metricUnit,
+    displayName: row.displayName,
+    defaultName: row.defaultName,
+    subsystem: row.subsystem,
+    transform: row.transform,
+    active: row.active,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 /**
@@ -133,11 +162,22 @@ async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
 
 /**
  * Ensure a `devices` row (and its `legacy_handles` mapping, area-of-one and `area_members` edge) exists
- * for a legacy system handle. Idempotent.
+ * for a legacy system handle, and bring its mutable columns back in step with `systems`. Idempotent.
  *
  * Column mapping mirrors the cutover transform exactly: `vendor_type→vendor`, `display_name→name`,
  * `alias→slug`, `owner_clerk_user_id→owner_user_id`, `metadata→adapter_state`, and the free-text
  * ratings/solar/battery fields stashed under `config.legacy*`.
+ *
+ * `ON CONFLICT (id) DO UPDATE` (not `DO NOTHING`) is what makes this a *mirror* rather than a one-shot
+ * mint, matching `mirrorPoint` below. It previously did nothing on conflict, so `devices` was written at
+ * mint only and every `systems` edit drifted it — a rename or a status change through the admin UI
+ * (`updateSystem`, 8+ callers) diverged `name`/`status`/`slug`/`config`/`adapter_state` silently, and
+ * nothing could self-heal it. `systems` is the sole writer of those columns (the only other `devices`
+ * writer is the one-off `scripts/config-v4/registry-populate.ts`), so re-copying cannot clobber
+ * device-side state.
+ *
+ * NEVER overwritten on conflict: `rid`, `primary_area_id` and `created_at` — those are identity. `rid`
+ * in particular is the `devices.rid == systems.id` seam invariant.
  *
  * @returns the device uuid
  */
@@ -159,7 +199,19 @@ export async function ensureDeviceRow(
            s.metadata, s.commissioned_on, s.created_at, s.updated_at
     FROM systems s
     WHERE s.id = ${systemId}
-    ON CONFLICT (id) DO NOTHING`);
+    ON CONFLICT (id) DO UPDATE SET
+      owner_user_id   = EXCLUDED.owner_user_id,
+      vendor          = EXCLUDED.vendor,
+      vendor_site_id  = EXCLUDED.vendor_site_id,
+      status          = EXCLUDED.status,
+      name            = EXCLUDED.name,
+      slug            = EXCLUDED.slug,
+      model           = EXCLUDED.model,
+      serial          = EXCLUDED.serial,
+      config          = EXCLUDED.config,
+      adapter_state   = EXCLUDED.adapter_state,
+      commissioned_on = EXCLUDED.commissioned_on,
+      updated_at      = EXCLUDED.updated_at`);
 
   await exec
     .insert(areaMembers)

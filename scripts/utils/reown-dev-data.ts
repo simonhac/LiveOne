@@ -46,6 +46,14 @@ import { Client } from "pg";
 const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
   [
     { table: "systems", col: "owner_clerk_user_id" },
+    // config-v4: `devices.owner_user_id` MIRRORS `systems.owner_clerk_user_id`, so it has to be reowned
+    // alongside it or the mirror is inconsistent on dev. It was missing here, and dev carried 9 devices
+    // still owned by the PROD clerk id (measured 2026-07-28). Harmless while the column is dark —
+    // nothing reads it, `listReadableDevices` authorizes off `systems` — but slice K makes `devices` the
+    // config registry, at which point a stale owner here is a real dev/preview auth bug. `ensureDeviceRow`
+    // now re-copies this column on every `systems` write, so the two converge either way; listing it here
+    // means the whole set heals on the next sync instead of one device at a time as each is next edited.
+    { table: "devices", col: "owner_user_id" },
     // NB `share_tokens.owner_clerk_user_id` was dropped by migration 0037 — share tokens are scoped by
     // `dashboard_id` alone now, and the dashboards row is reowned below, so there is nothing to reown
     // here. (Left as a comment because its absence is deliberate, not an oversight.)
