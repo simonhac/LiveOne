@@ -555,6 +555,23 @@ AC-input is a generator; an off-grid site can still be geolocated in VIC without
 grid). The fold then prices generator charge and direct use exactly like grid; **no fold change**.
 Opt-in: absent config → generator energy stays `estimated` (no regression).
 
+**Second consumer — run-period provenance.** The same triple prices each generator RUN
+(`derived_intervals.cost_c` / `emissions_g` / `renewable_kwh`, accumulated by the recompute). Both
+paths resolve it through the ONE gate, `resolveGeneratorIntensity` in
+`lib/battery-provenance/generator-source.ts` — do not re-inline the checks, or the runs table will
+silently disagree with the Sankey the first time the gating changes. Two behaviours differ by design
+and are worth knowing:
+
+- **The Sankey re-folds on every read; a run's figures are frozen at write time.** Changing
+  `generatorSource` re-prices the Sankey immediately but leaves historical runs on the old constants
+  until a `POST /api/cron/derivations {"action":"regenerate"}` over a bounded window rewrites them.
+- **The run integrates its own energy point** (a cumulative Wh counter, ~1-min deltas), not the
+  `bidi.grid` power series the fold trapezoid-integrates. Same physical register, different
+  integration — close, but not exactly reconcilable.
+
+See [../plans/run-period-provenance.md](../plans/run-period-provenance.md), including the warning
+about regenerating across a detector re-point.
+
 ### Serving
 
 `GET /api/energy-flow-matrix?systemId=&start=&end=&source=legacy|modern`

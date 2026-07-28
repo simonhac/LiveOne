@@ -37,6 +37,12 @@ export interface RunPeriodColumns {
   signal: boolean;
   /** Show an average-power column. */
   avgPower: boolean;
+  /** Show the accumulated cost column ($). */
+  cost: boolean;
+  /** Show the accumulated emissions column (kg CO₂). */
+  emissions: boolean;
+  /** Show the renewable-share column (%). */
+  renewable: boolean;
   /**
    * Where the avg-power figure comes from. "energy" = energy ÷ duration (a true time-weighted
    * average, preferred). "signal" = the signal IS power and no energy point is bound, so the
@@ -73,6 +79,13 @@ export function planRunPeriodColumns(input: {
   signalMetricUnit: string | null;
   /** Whether the detector binds a dedicated energy point (`source_points.energy`). */
   hasEnergyPoint: boolean;
+  /**
+   * Whether the rows being returned actually CARRY each provenance figure. Deliberately derived
+   * from the data, not from the site's intensity config — provenance is accumulated at recompute
+   * time, so config describes what future runs will be priced at, while only the rows say what was
+   * stored. See the note on `resolveShape` in the run-periods route.
+   */
+  provenance?: { cost: boolean; emissions: boolean; renewable: boolean };
 }): RunPeriodColumns {
   const numeric =
     input.signalMetricType != null &&
@@ -87,7 +100,49 @@ export function planRunPeriodColumns(input: {
   // A power signal is already represented by the avg-power column; showing it twice would be noise.
   const signal = numeric && !(isPower && avgPower);
 
-  return { signal, avgPower, avgPowerBasis };
+  // Each provenance factor is gated INDEPENDENTLY: the config gates price separately from
+  // emissions, so a site with emissions but no configured price shows CO₂ and omits cost rather
+  // than printing "$0.00". A column appears only when some row can fill it.
+  const cost = input.provenance?.cost ?? false;
+  const emissions = input.provenance?.emissions ?? false;
+  const renewable = input.provenance?.renewable ?? false;
+
+  return { signal, avgPower, avgPowerBasis, cost, emissions, renewable };
+}
+
+/** An en dash with no surrounding spaces reads as a range; a hyphen reads as a subtraction. */
+const RANGE_DASH = "–";
+
+/**
+ * One human-readable "when" for a run — the merged replacement for the old Date / Start / End
+ * columns. Operates on the strings the server already formatted in the system's display timezone
+ * (`formatInTimezone`), so no timezone logic leaks to the client.
+ *
+ * `endDate` is set by the server ONLY when the run ends on a different local day than it started;
+ * printing it then is the point of this function. Without it a midnight-crossing run reads
+ * "Mon 27 Jul, 23:40–01:15", which quietly implies both times are on the Monday.
+ */
+export function formatRunWhen(e: {
+  /** Start date, "EEE d MMM". */
+  date: string;
+  /** Start time, "HH:mm". */
+  startTime: string;
+  /** End date, "EEE d MMM" — only when it differs from `date`; else null/undefined. */
+  endDate?: string | null;
+  /** End time, "HH:mm"; null for an open run. */
+  endTime: string | null;
+  /** True while the run is still going. */
+  running?: boolean;
+}): string {
+  if (e.running) return `${e.date}, ${e.startTime}${RANGE_DASH}now`;
+  // A run with no end, or one whose end rounds to the same minute, is a point in time not a range.
+  if (e.endTime == null || (e.endTime === e.startTime && !e.endDate)) {
+    return `${e.date}, ${e.startTime}`;
+  }
+  if (e.endDate) {
+    return `${e.date}, ${e.startTime} ${RANGE_DASH} ${e.endDate}, ${e.endTime}`;
+  }
+  return `${e.date}, ${e.startTime}${RANGE_DASH}${e.endTime}`;
 }
 
 /**

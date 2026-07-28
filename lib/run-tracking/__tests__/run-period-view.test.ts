@@ -1,5 +1,16 @@
 import { describe, it, expect } from "@jest/globals";
-import { avgPowerWFromEnergy, planRunPeriodColumns } from "../run-period-view";
+import {
+  avgPowerWFromEnergy,
+  formatRunWhen,
+  planRunPeriodColumns,
+} from "../run-period-view";
+
+/** The expected column flags when no row carries any provenance figure — all absent. */
+const UNPRICED = { cost: false, emissions: false, renewable: false };
+/** Rows that carry all three figures (Daylesford, once recomputed). */
+const ALL_PRESENT = { cost: true, emissions: true, renewable: true };
+/** Rows that carry none — an unpriced device, or a window recomputed before provenance existed. */
+const NONE_PRESENT = { cost: false, emissions: false, renewable: false };
 
 describe("avgPowerWFromEnergy", () => {
   it("derives average power from energy over duration", () => {
@@ -43,7 +54,12 @@ describe("planRunPeriodColumns", () => {
         signalMetricUnit: "W",
         hasEnergyPoint: true,
       }),
-    ).toEqual({ signal: false, avgPower: true, avgPowerBasis: "energy" });
+    ).toEqual({
+      signal: false,
+      avgPower: true,
+      avgPowerBasis: "energy",
+      ...UNPRICED,
+    });
   });
 
   it("falls back to the signal statistic for a power signal with no energy point", () => {
@@ -54,7 +70,12 @@ describe("planRunPeriodColumns", () => {
         signalMetricUnit: "W",
         hasEnergyPoint: false,
       }),
-    ).toEqual({ signal: false, avgPower: true, avgPowerBasis: "signal" });
+    ).toEqual({
+      signal: false,
+      avgPower: true,
+      avgPowerBasis: "signal",
+      ...UNPRICED,
+    });
   });
 
   it("shows both columns for a non-power signal with an energy point (Daylesford/rpm)", () => {
@@ -64,7 +85,12 @@ describe("planRunPeriodColumns", () => {
         signalMetricUnit: "rpm",
         hasEnergyPoint: true,
       }),
-    ).toEqual({ signal: true, avgPower: true, avgPowerBasis: "energy" });
+    ).toEqual({
+      signal: true,
+      avgPower: true,
+      avgPowerBasis: "energy",
+      ...UNPRICED,
+    });
   });
 
   it("shows only the signal column for a non-power signal with no energy point", () => {
@@ -76,7 +102,12 @@ describe("planRunPeriodColumns", () => {
         signalMetricUnit: "rpm",
         hasEnergyPoint: false,
       }),
-    ).toEqual({ signal: true, avgPower: false, avgPowerBasis: "signal" });
+    ).toEqual({
+      signal: true,
+      avgPower: false,
+      avgPowerBasis: "signal",
+      ...UNPRICED,
+    });
   });
 
   it("fences out non-numeric signals whose mean would be meaningless", () => {
@@ -98,7 +129,12 @@ describe("planRunPeriodColumns", () => {
         signalMetricUnit: null,
         hasEnergyPoint: true,
       }),
-    ).toEqual({ signal: false, avgPower: true, avgPowerBasis: "energy" });
+    ).toEqual({
+      signal: false,
+      avgPower: true,
+      avgPowerBasis: "energy",
+      ...UNPRICED,
+    });
   });
 
   it("never advertises two power columns, over the whole input space", () => {
@@ -123,5 +159,144 @@ describe("planRunPeriodColumns", () => {
         }
       }
     }
+  });
+
+  it("shows the provenance columns when the rows carry the figures", () => {
+    expect(
+      planRunPeriodColumns({
+        signalMetricType: "speed",
+        signalMetricUnit: "rpm",
+        hasEnergyPoint: true,
+        provenance: ALL_PRESENT,
+      }),
+    ).toEqual({
+      signal: true,
+      avgPower: true,
+      avgPowerBasis: "energy",
+      cost: true,
+      emissions: true,
+      renewable: true,
+    });
+  });
+
+  it("gates each provenance column independently", () => {
+    // `generatorSource` gates price separately from emissions, so a site with emissions but no
+    // configured price writes rows with emissions_g and a NULL cost_c — the table must show CO₂ and
+    // OMIT cost, never render it as $0.00.
+    expect(
+      planRunPeriodColumns({
+        signalMetricType: "speed",
+        signalMetricUnit: "rpm",
+        hasEnergyPoint: true,
+        provenance: { cost: false, emissions: true, renewable: true },
+      }),
+    ).toMatchObject({ cost: false, emissions: true, renewable: true });
+  });
+
+  it("omits every provenance column when no row carries a figure", () => {
+    // A load-side device (EV, pump) is never priced today; so is any window recomputed before the
+    // provenance columns existed. Absent, not zero.
+    expect(
+      planRunPeriodColumns({
+        signalMetricType: "power",
+        signalMetricUnit: "W",
+        hasEnergyPoint: true,
+        provenance: NONE_PRESENT,
+      }),
+    ).toMatchObject(UNPRICED);
+  });
+
+  it("omits provenance when the caller passes none (an untracked system)", () => {
+    expect(
+      planRunPeriodColumns({
+        signalMetricType: "power",
+        signalMetricUnit: "W",
+        hasEnergyPoint: true,
+      }),
+    ).toMatchObject(UNPRICED);
+  });
+
+  it("follows the rows, not the config — the data is the only gate that can't lie", () => {
+    // Provenance is accumulated at recompute time. Gating on live config instead would show three
+    // empty columns the instant `generatorSource` is set (before any recompute), and would hide
+    // columns over rows that still hold real figures the instant it is unset. Only the rows know.
+    expect(
+      planRunPeriodColumns({
+        signalMetricType: "speed",
+        signalMetricUnit: "rpm",
+        hasEnergyPoint: true,
+        provenance: ALL_PRESENT,
+      }),
+    ).toMatchObject(ALL_PRESENT);
+  });
+});
+
+describe("formatRunWhen", () => {
+  it("renders a same-day closed run as one range", () => {
+    expect(
+      formatRunWhen({
+        date: "Tue 28 Jul",
+        startTime: "14:32",
+        endTime: "16:05",
+      }),
+    ).toBe("Tue 28 Jul, 14:32–16:05");
+  });
+
+  it("spells out a run that crosses midnight", () => {
+    // The whole reason `endDate` exists: without it this reads as a Monday 23:40→01:15 range.
+    expect(
+      formatRunWhen({
+        date: "Mon 27 Jul",
+        startTime: "23:40",
+        endDate: "Tue 28 Jul",
+        endTime: "01:15",
+      }),
+    ).toBe("Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15");
+  });
+
+  it("renders an open run as running to now", () => {
+    expect(
+      formatRunWhen({
+        date: "Tue 28 Jul",
+        startTime: "14:32",
+        endTime: null,
+        running: true,
+      }),
+    ).toBe("Tue 28 Jul, 14:32–now");
+  });
+
+  it("renders a degenerate run as a single instant, not an empty range", () => {
+    expect(
+      formatRunWhen({ date: "Tue 28 Jul", startTime: "14:32", endTime: null }),
+    ).toBe("Tue 28 Jul, 14:32");
+    expect(
+      formatRunWhen({
+        date: "Tue 28 Jul",
+        startTime: "14:32",
+        endTime: "14:32",
+      }),
+    ).toBe("Tue 28 Jul, 14:32");
+  });
+
+  it("keeps a midnight-crossing run that starts and ends at the same clock time", () => {
+    // Same HH:mm but a different day is a 24h run, NOT an instant — the endDate must win.
+    expect(
+      formatRunWhen({
+        date: "Mon 27 Jul",
+        startTime: "14:32",
+        endDate: "Tue 28 Jul",
+        endTime: "14:32",
+      }),
+    ).toBe("Mon 27 Jul, 14:32 – Tue 28 Jul, 14:32");
+  });
+
+  it("uses an en dash, never a hyphen", () => {
+    const s = formatRunWhen({
+      date: "Tue 28 Jul",
+      startTime: "14:32",
+      endTime: "16:05",
+    });
+    expect(s).toContain("–");
+    expect(s).not.toContain("-");
   });
 });

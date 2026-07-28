@@ -1,130 +1,142 @@
 # Per-run provenance — cost, emissions and renewable share for a run period
 
-> **Status: PLANNED — not started.** Scoped out of the run-periods unit-honesty change (2026-07-28,
-> Simon's call) because the naive implementation is only correct for an off-grid generator. Nothing is
-> built yet. Prerequisite work lands in the battery-provenance layer, not in the run-periods table.
+> **Status: SHIPPED for producing (source-role) devices, 2026-07-28.** `derived_intervals` carries
+> `cost_c` / `emissions_g` / `renewable_kwh`, accumulated by the recompute. The remaining work is the
+> **load-side** provider (EV, pump) — see [Still to do](#still-to-do).
 
 ## Context
 
 A run period (`derived_intervals`) records what a device did between two timestamps — for Daylesford's
-genset, ~30 min to 3 h with a known `energy_kwh`. The obvious next columns on the runs table are
-**cost**, **emissions** and **renewable share**: "what did that genset run cost me, and what did it emit?"
+genset, ~30 min to 3 h with a known `energy_kwh`. The obvious next columns are **cost**, **emissions**
+and **renewable share**: "what did that genset run cost me, and what did it emit?"
 
-The obvious *implementation* is wrong, which is why this is a plan and not a patch.
+The obvious _implementation_ — `energy × constant`, computed when the table is rendered — is wrong
+twice over: wrong about **where** the work belongs, and wrong for any device that isn't an off-grid
+generator.
 
-### Why `energy × constant` is not the answer
+## What was built
 
-`systems.config.batteryProvenance.generatorSource` (`lib/capabilities/config.ts:26-33`) already holds
-exactly the three factors needed, and is confirmed set on prod system 1 (Daylesford's battery system):
-`{ pricePerKwh: 70 (c/kWh), emissionsIntensity: 1000 (gCO₂/kWh), renewableFraction: 0 }`. The
-battery-provenance fold prices generator energy with precisely these constants
-(`lib/battery-provenance/load.ts:461-483` — `gridEmissions = timeline.map(() => gen.emissionsIntensity)`,
-same for price), overriding any NEM/Amber signal. So for Daylesford, `energy_kwh × factor` is not even
-an approximation — it is arithmetically identical to what the fold computes.
+**The run tracker accumulates provenance, exactly as it already accumulates energy.** Not a render-time
+derivation. `recomputeIntervalsForWindow` (`lib/db/planetscale/derived-intervals-pg.ts`) already reads
+the energy point's readings once per window for `assignEnergyToPeriods`; the provenance integral rides
+that **same array**, so it costs no extra reads, and the read path is a plain column select.
 
-**But the run detector is role-generic.** It is `generator` today; `pump` and EV-charging are the stated
-direction. An EV charging from the grid is the opposite case:
+This is what dissolved the original blocker. The first draft of this plan framed the problem as
+render-time — one `buildAttributedFlowMatrix` per run, ~76 for a 30-day page, each seeding the fold,
+"not viable in a table request". Moving the computation to the writer makes the question moot.
 
-- Amber import price moves every 30 min; OpenElectricity emissions intensity every 5 min.
-- If it charges partly off solar and battery, the honest intensity is neither the grid's nor a
-  constant — it is the **blended** figure the fold already computes per 5-minute interval.
-
-Applying a generator constant there would be straightforwardly wrong, not slightly off. Worse, the
-`generatorSource` factors describe a **generator's output**; applying them to a *load* would price
-consumption at the genset tariff. So any implementation must gate on what the device actually is.
-
-## The design
-
-**A run's cost/emissions/renewable share is an energy-weighted integral over the intervals it spans:**
+### The integral
 
 ```
-costC       = Σ (energy_i × price_i)
-emissionsG  = Σ (energy_i × emissionsIntensity_i)
-renewableKwh= Σ (energy_i × renewableFraction_i)
+costC        = Σ (sliceKwh × price(t))
+emissionsG   = Σ (sliceKwh × emissionsIntensity(t))
+renewableKwh = Σ (sliceKwh × renewableFraction(t))
 ```
 
-over the 5-minute intervals `i` covered by `[run.start, run.end]`.
+`assignProvenanceToPeriods` (`lib/run-tracking/energy.ts`). The slices are the **energy counter's own
+~1-minute steps**, not 5-minute flow intervals — which is strictly better than the original design:
 
-**Which intensity series** — Simon's ruling, 2026-07-28:
+- **Finer** than the fold's timeline.
+- **No edge truncation.** `computeFlowAccounting`'s `window` only counts intervals lying _entirely_
+  inside it (`lib/aggregation/flow-matrix-core.ts`), so a fold-based per-run figure would have
+  systematically under-counted short runs by up to two intervals.
+- **Reconciles with the run's own `energy_kwh` by construction** — same readings, same reset-safe
+  forward-delta rule (a counter reset drops the negative step).
 
-- **Consuming device** (EV, pump): the fold's **blended load-path** intensity for that device's load
-  path — price, emissions intensity **and renewable fraction**. This is what accounts for the
-  solar/battery/grid mix at the moment of consumption.
-- **Producing device** (generator): the source-side intensity. For an off-grid generator the fold's
-  series are the config constants, so this falls out as the **degenerate case of the same
-  integration** — no separate code path, and nothing built here is wasted.
+Each of the three accumulators is **independently null** when its factor is unknown across the run, so
+a site with emissions but no configured price reports CO₂ and omits cost. NULL means unknown; the
+column is then **absent** from the table, never rendered as `$0.00`.
 
-### The problem to solve first
+### Which intensity — and how the side is decided
 
-`buildAttributedFlowMatrix(handle, startMs, endMs, …)` (`lib/history/build-attributed-flow-matrix.ts:130`)
-already computes attributed energy/emissions/renewable/cost legs for an **arbitrary sub-daily window**
-— it seeds the fold from a persisted checkpoint, runs `computeBatteryProvenance`, then
-`computeFlowAccounting({ window })`. It is production code behind `/api/history?include=sankey`.
+- **Producing device** (generator): the source-side intensity of the energy it produces. Off-grid that
+  is the site's `generatorSource` triple — the same constants the battery-provenance fold substitutes
+  for the OE/Amber grid signal, so a run and the Sankey price the same energy identically.
+- **Consuming device** (EV, pump): the fold's **blended load-path** intensity at the moment of
+  consumption. Not built — see [Still to do](#still-to-do).
 
-The blocker is **granularity of the API, not correctness**: it returns **one aggregate per window**. A
-per-run figure would mean one invocation per run — ~76 for the full page's 30-day window, each seeding
-the fold. Not viable in a table request.
+**The side is already declared in code**: `RoleCategory` (`lib/roles/registry.ts`) is
+`"source" | "load" | "bidi"`; `generator` is `source`, `ev` is `load`. The original open question
+("how does a detector declare which side it sits on?") needed no new concept.
 
-So the work is to expose **per-interval (or batched-window) attribution** from the provenance layer:
-one range read per request, integrated per run in memory. Note that
-`point_readings_flow_attr_1d` is **day-granular** (PK `(area_id, day, source_path, load_path)`) and
-cannot be sliced per run — it is not the source here.
+### One resolution, so runs and the Sankey can't drift
 
-### Pieces to reuse
+`resolveGeneratorIntensity` (`lib/battery-provenance/generator-source.ts`) is the **only**
+implementation of the `generatorSource` gate — `loadProvenanceInputs` was rewritten to call it. The
+rule: `emissionsIntensity` must be finite for _any_ factors to apply; `pricePerKwh` is gated
+**independently** inside that; `renewableFraction` defaults to 0.
 
-- `computeFlowAccounting`, `buildSourceIntensities` (`lib/battery-provenance/compute.ts:87`)
-- `SourceIntensity` (`lib/aggregation/flow-matrix-core.ts:51-58`) — per-interval `emissions[]`,
-  `price[]`, `renewable[]`, `selfRenewable[]`, `estimated[]`, index-aligned to the timeline
-- The `bidi.battery/*` blend points (`lib/battery-provenance/register.ts:30`) — carbon-intensity, price,
-  renewable-fraction, already persisted at 5-minute resolution
-- `reduceLoadProvenance` / `reduceSourceProvenance` (`lib/energy-flow-matrix.ts:147,247`) — the existing
-  per-load / per-source summary reducers
-- Formatters in `lib/provenance-format.ts` — `formatDollars` takes **cents**, `formatKgCo2` takes **kg**,
-  `formatGramsPerKwh`, `formatRenewablePct`. Display precedent: `components/LoadProvenanceCard.tsx:98-129`
+`resolveIntensitySeries` (`lib/run-tracking/intensity.ts`) finds the config in **two hops**, which is
+not obvious and worth stating: a detector's own area is typically a device-level **area-of-one with no
+bindings at all** (Daylesford's generator detector hangs off the Selectronic's area), while
+`generatorSource` lives on the battery system named by the **site** area's `role=battery, metric=power`
+binding. So: detector's area → its member devices → every area those devices belong to → that binding
+→ that system's config. One place to configure; a site that prices its Sankey prices its runs.
 
 ### Units
 
-| quantity | factor unit | arithmetic | result |
-| --- | --- | --- | --- |
-| cost | `pricePerKwh` c/kWh | `energyKwh × price` | **cents** (`formatDollars` divides by 100) |
-| emissions | `emissionsIntensity` gCO₂/kWh | `energyKwh × intensity` | **grams** (UI ÷1000 for `formatKgCo2`) |
-| renewable | `renewableFraction` 0..1 | `energyKwh × fraction` | kWh (or % of run energy) |
+| column          | unit           | display                                              |
+| --------------- | -------------- | ---------------------------------------------------- |
+| `cost_c`        | cents (signed) | `formatDollars` (divides by 100)                     |
+| `emissions_g`   | grams CO₂      | `formatKgCo2(g / 1000)`                              |
+| `renewable_kwh` | kWh            | `formatRenewablePct(100 × renewableKwh / energyKwh)` |
 
-### The seam
+Footer totals sum only the runs that carry a figure; the renewable-% denominator is
+`renewableKnownKwh` (the energy of just those runs), so a partially-priced window reports the share of
+what it actually knows rather than diluting it with unknowns.
 
-Put the arithmetic behind a provider so the route and tables never change again:
+## Operating it
 
-```ts
-runIntensity(run) → { costC, emissionsG, renewableKwh } | null
+### Re-pricing history
+
+A persisted figure is priced at the constants **in force when the run was recorded**. Change
+`generatorSource` and history keeps the old price until you re-run the recompute — at which point the
+runs table would otherwise silently disagree with the (always re-folded) Sankey.
+
+```bash
+curl -X POST https://liveone.energy/api/cron/derivations \
+  -H "Authorization: Bearer $CRON_SECRET" -d '{"action":"regenerate","start":"…","end":"…"}'
 ```
 
-A constant-factor implementation and a per-interval implementation are then interchangeable. Columns
-must be **gated server-side** (as `RunPeriodColumns` in `lib/run-tracking/run-period-view.ts` already
-does for the signal/power columns) so they are **absent** — never `$0.00` — when intensity is unknown.
-Reuse the `generatorSource` gates exactly as the fold applies them (`load.ts:461-483`):
-`emissionsIntensity` must be finite for *any* factors to apply, `pricePerKwh` is gated
-**independently**, `renewableFraction` defaults to 0. If that resolution is duplicated rather than
-shared, the runs table will silently disagree with the Sankey the first time the fold's gating changes.
+> ⚠️ **Never regenerate over all history.** The recompute re-detects from the CURRENT signal point, so
+> any window predating a detector re-point is rebuilt from a signal that has no data there — the runs
+> are **deleted, not re-priced**. Daylesford's detector moved to DSE Engine Speed on 2026-07-27 and
+> that point only has data from 2026-07-11; a full-range regenerate on dev collapsed 71 rows to 3.
+> Bound `start` to the current signal's data window. Older runs simply keep NULL provenance — which is
+> consistent, since their `avgSignal` is already suppressed by the `detector_version` unit gate.
 
-## Open questions
+### Backfill after the migration
 
-- **Source vs load determination per role** — how does a detector declare which side it sits on?
-  Derivable from `role` today (`generator` = source), but that wants stating explicitly rather than
-  inferred.
-- **Which energy series to integrate** — the run's `energy_kwh` comes from the detector's
-  `source_points.energy` point (`lib/run-tracking/energy.ts`), while the fold's `source.grid` comes from
-  the `bidi.grid` flow series. If they are the same physical register the run cost reconciles with the
-  Sankey exactly; if not, they differ by meter error. **Verify before claiming reconciliation.**
-- **Renewable presentation** — kWh, or % of the run's energy?
-- **Open (running) runs** — energy-so-far is real, so a partial figure is meaningful; confirm that's
-  wanted rather than blank.
-- **Reconciliation test** — the gate for this work: split a run's energy into unequal 5-minute slices,
-  sum `slice × intensity_i`, and assert it matches the whole-run figure. That pins the claim that the
-  per-run integral agrees with the fold.
+Migration `0042_derived_intervals_provenance` is expand-only (three nullable columns). Existing rows
+carry NULL until a recompute rewrites them, so run `regenerate` over the current signal's window.
+
+## Still to do
+
+**The load-side provider.** `resolveIntensitySeries` returns null for a `load`-category role, so an EV
+or pump detector gets no provenance columns at all. Making it work needs a **time-varying**
+`IntensitySeries` — the integrator already accepts one and is tested against one, so this is a change
+to the provider only:
+
+- There is **no per-interval, per-load blended intensity anywhere today**. The load blend only
+  materialises as an aggregate inside `computeFlowAccounting`; the persisted `bidi.battery/*` blend
+  points are the _battery's_ contents, not a load path.
+- Grid/solar intensities are not persisted either (grid comes from separately-bound OE/Amber points,
+  the generator override is config-only), so a provider would still have to reassemble them —
+  essentially `loadProvenanceInputs` + `buildSourceIntensities`.
+- Watch the off-by-one: fold step `i` covers `[timeline[i], timeline[i+1]]`, `computeFlowAccounting`
+  reads intensity at index `i`, but `writeBlendOutputs` stamps `interval_end = timeline[i+1]`.
+
+Also open:
+
+- **Renewable presentation** ships as a % of run energy. For a diesel generator that column is `0%` on
+  every row — accepted deliberately; revisit if it stays noise.
+- **Reconciliation with the Sankey** is close but not exact: the run integrates the energy point's
+  counter deltas, while the fold's `source.grid` trapezoid-integrates the `bidi.grid` power series.
+  Same physical register, different integration — do not claim exact agreement.
 
 ## Related
 
-- [config-v4-execution-plan.md](config-v4-execution-plan.md) — "Open follow-up — run-interval statistics
-  assume the signal IS power", the sibling issue (fixed separately in the unit-honesty change).
 - [../architecture/battery-provenance.md](../architecture/battery-provenance.md) — the fold, the
   off-grid-generator section, and how `source.grid` carries generator output.
+- [config-v4-execution-plan.md](config-v4-execution-plan.md) — the sibling "run-interval statistics
+  assume the signal IS power" issue, fixed in the unit-honesty change.
