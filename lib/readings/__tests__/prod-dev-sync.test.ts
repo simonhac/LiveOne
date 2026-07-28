@@ -164,7 +164,9 @@ describe("prod→dev readings transfer", () => {
       mode: "full",
       onConflict: "update",
       idDrift: {
-        uniqueKeys: [["legacy_id"], ["owner_user_id", "slug"]],
+        // ["slug"] is not an index — it is the stable cross-env identity of a `legacy-share-*`
+        // dashboard, whose legacy_id is NULL on both sides and whose dev owner reown has rewritten.
+        uniqueKeys: [["legacy_id"], ["owner_user_id", "slug"], ["slug"]],
         children: [],
       },
     });
@@ -199,6 +201,7 @@ describe("prod→dev readings transfer", () => {
     expect(sql).toContain("CREATE TEMP TABLE _drift");
     expect(sql).toContain("ANALYZE _drift");
     expect(sql).toContain("d.legacy_id = s.legacy_id");
+    expect(sql).toContain("(d.slug = s.slug)");
     expect(sql).toContain(
       "d.owner_user_id = s.owner_user_id AND d.slug = s.slug",
     );
@@ -211,6 +214,74 @@ describe("prod→dev readings transfer", () => {
     expect(sql).not.toContain("pg_get_serial_sequence");
     expect(sql).not.toContain("DELETE FROM public.users");
     expect(sql).not.toContain("DELETE FROM public.share_tokens");
+  });
+
+  // Regression: from 2026-07-25 every sync run aborted on
+  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id and
+  // derivations.area_id are NOT NULL / NO ACTION, so a drifted area that owns a dark-mirror device
+  // can't be deleted — those rows must be MOVED to prod's uuid instead.
+  it("realigns a drifted area by repointing its NOT NULL dependants, never deleting devices", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "areas",
+    )!;
+    expect(table).toMatchObject({
+      mode: "full",
+      idDrift: {
+        repoint: [
+          { table: "devices", cols: ["primary_area_id"] },
+          { table: "derivations", cols: ["area_id"] },
+        ],
+        neutralize: ["legacy_system_id", "slug"],
+      },
+    });
+    // derivations must be repointed, NOT deleted — that preserves its derived_intervals (CASCADE).
+    expect(
+      (
+        table as { idDrift: { children: Array<{ table: string }> } }
+      ).idDrift.children.map((c) => c.table),
+    ).not.toContain("derivations");
+
+    const { prod, dev, devSql } = copyClients();
+    await syncTable(
+      prod,
+      dev,
+      table,
+      new Map([
+        ["areas", ["id", "owner_user_id", "legacy_system_id", "name", "slug"]],
+      ]),
+      new Map([["areas", ["id"]]]),
+    );
+
+    const sql = devSql.at(-1)!;
+    // _drift must carry prod's PK too — it is the repoint target.
+    expect(sql).toContain("s.id AS new_id");
+    expect(sql).toContain(
+      "UPDATE public.devices x SET primary_area_id = b.new_id FROM _drift b WHERE x.primary_area_id = b.id;",
+    );
+    expect(sql).toContain(
+      "UPDATE public.derivations x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
+    );
+
+    // Ordering is load-bearing: neutralize → upsert → repoint → delete the drifted parent.
+    const at = (needle: string) => {
+      const i = sql.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at("SET legacy_system_id = NULL, slug = NULL")).toBeLessThan(
+      at("INSERT INTO public.areas"),
+    );
+    expect(at("INSERT INTO public.areas")).toBeLessThan(
+      at("UPDATE public.devices x SET primary_area_id"),
+    );
+    expect(at("UPDATE public.derivations x SET area_id")).toBeLessThan(
+      at("DELETE FROM public.areas d USING _drift"),
+    );
+
+    // The unsafe alternative: cascading from devices/points would destroy live area_bindings of
+    // OTHER areas, because area_bindings.point_uid can cross-reference a point under a different area.
+    expect(sql).not.toContain("DELETE FROM public.devices");
+    expect(sql).not.toContain("DELETE FROM public.points");
   });
 
   it("fails closed before connecting when the write target is prod", async () => {
