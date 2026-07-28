@@ -267,3 +267,96 @@ describe("energy overlay: month-style reconciliation (Sankey == registers)", () 
     );
   });
 });
+
+describe("energy overlay: counter re-base (matched negative + catch-up)", () => {
+  // A Sigenergy daily counter re-bases mid-day: one negative delta, then a catch-up delta carrying
+  // everything the counter had accumulated. Raw deltas self-cancel; keeping only the catch-up would
+  // count the day's history twice (measured on prod: −27.3 then +29.3 kWh in adjacent slots).
+  const timestamps = tl(4);
+  const points: ClassifiedPoint[] = [
+    { stem: "source.solar", power: [3, 3, 3, 3, 3] },
+    { stem: "load", power: [3, 3, 3, 3, 3] },
+  ];
+  const energy: EnergySeriesInput[] = [
+    { stem: "source.solar", energyKwhBySlot: [null, 0.25, 0.25, 0.25, 0.25] },
+    // slots:            i0   i1     i2(reset)  i3(catch-up)  i4
+    { stem: "load", energyKwhBySlot: [null, 0.25, -5, 5.25, 0.25] },
+  ];
+
+  it("nulls BOTH halves of the re-base — neither interval inherits the catch-up", () => {
+    const { sources, loads } = buildFlowSeries(points, energy, timestamps);
+    const load = loads.find((l) => l.path === "load")!;
+    expect(load.energyKwh![0]).toBeCloseTo(0.25, 9); // normal
+    expect(load.energyKwh![1]).toBeNull(); // the negative slot
+    expect(load.energyKwh![2]).toBeNull(); // the catch-up slot
+    expect(load.energyKwh![3]).toBeCloseTo(0.25, 9); // back to normal
+  });
+
+  it("the re-based intervals fall back to power integration, not to the spike", () => {
+    const { sources, loads } = buildFlowSeries(points, energy, timestamps);
+    const m = computeFlowMatrix({ timestamps, sources, loads });
+    const trapezoid = 3 * (FIVE_MIN / 3_600_000); // 0.25 kWh — the two fallback intervals
+    expect(at(m, "source.solar", "load")).toBeCloseTo(
+      0.25 * 2 + trapezoid * 2,
+      9,
+    );
+  });
+});
+
+describe("energy overlay: a master-load register sizes the complement", () => {
+  // The Kutis shape: the site meter's ENERGY counter is the total (house + EV); the charger is a
+  // power-only sub-meter and the house-excluding-charger point IS the complement, measured. The
+  // register has no `load` node to decorate (the master is a budget), so it sizes the complement =
+  // total − Σ sub-meters, and the sink side sums to the metered total.
+  const timestamps = tl(2);
+  const points: ClassifiedPoint[] = [
+    { stem: "source.solar", power: [12, 12, 12] },
+    { stem: "load.rest-of-house", power: [2, 2, 2] }, // measured complement
+    { stem: "load.ev", power: [10, 10, 10] }, // the charger circuit
+  ];
+  const evKwh = 10 * (FIVE_MIN / 3_600_000); // 0.8333 kWh/interval
+  const powerHouseKwh = 2 * (FIVE_MIN / 3_600_000); // what integrating the complement says
+  const unmetered = 0.1; // …and what the site meter says it missed
+  const siteTotal = powerHouseKwh + evKwh + unmetered;
+  const energy: EnergySeriesInput[] = [
+    { stem: "source.solar", energyKwhBySlot: [null, 1, 1] },
+    { stem: "load", energyKwhBySlot: [null, siteTotal, siteTotal] },
+  ];
+
+  it("the measured complement takes the exact total − Σ sub-meters, and the master is not a node", () => {
+    const { loads } = buildFlowSeries(points, energy, timestamps);
+    expect(loads.some((l) => l.path === "load")).toBe(false);
+    const complement = loads.find((l) => l.path === "load.rest-of-house")!;
+    // Exact wins over its own power integration — one node, not a measured part plus a leftover.
+    expect(complement.energyKwh![0]).toBeCloseTo(powerHouseKwh + unmetered, 9);
+  });
+
+  it("only ONE complement node exists — a measured one is never synthesised over", () => {
+    const { loads } = buildFlowSeries(points, energy, timestamps);
+    expect(loads.filter((l) => l.path === "load.rest-of-house")).toHaveLength(
+      1,
+    );
+  });
+
+  it("total sinks equal the metered site total — nothing counted twice", () => {
+    const { sources, loads } = buildFlowSeries(points, energy, timestamps);
+    const m = computeFlowMatrix({ timestamps, sources, loads });
+    expect(m.totalEnergy).toBeCloseTo(siteTotal * 2, 9);
+  });
+
+  it("without a timeline the sub-meters cannot be integrated → the complement falls back to power", () => {
+    const { loads } = buildFlowSeries(points, energy); // no timeline
+    const complement = loads.find((l) => l.path === "load.rest-of-house")!;
+    expect(complement.energyKwh![0]).toBeNull();
+  });
+
+  it("no children → the master register attaches to the `load` node unchanged", () => {
+    const solo: ClassifiedPoint[] = [
+      { stem: "source.solar", power: [12, 12, 12] },
+      { stem: "load", power: [2, 2, 2] },
+    ];
+    const { loads } = buildFlowSeries(solo, energy, timestamps);
+    const load = loads.find((l) => l.path === "load")!;
+    expect(load.energyKwh![0]).toBeCloseTo(siteTotal, 9);
+  });
+});

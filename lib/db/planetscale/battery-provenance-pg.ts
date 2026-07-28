@@ -113,7 +113,7 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
 // v3: exact energy-accumulator magnitudes (`FlowSeries.energyKwh`) — gross bidi flows preserved
 // through intra-interval reversals, dropped power intervals recovered. Power-only areas
 // re-materialise to identical values.
-export const FLOW_ATTR_VERSION = 3;
+export const FLOW_ATTR_VERSION = 4;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */

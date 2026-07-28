@@ -110,7 +110,11 @@ export function buildFlowMatrixFromAggRows(
     energySeries.push({ stem: p.stem, energyKwhBySlot });
   }
 
-  const { sources, loads } = buildFlowSeries(classified, energySeries);
+  const { sources, loads } = buildFlowSeries(
+    classified,
+    energySeries,
+    timestamps,
+  );
   if (sources.length === 0 || loads.length === 0) return null;
 
   const result = computeFlowMatrix({ timestamps, sources, loads });

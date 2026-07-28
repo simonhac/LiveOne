@@ -66,7 +66,12 @@ export function buildChartData(
   } else {
     solarData =
       findSeries("source.solar*/power.avg") || findSeries("solar*/power.avg");
-    loadData = findSeries("load/power.avg");
+    // A site whose load meter is a HIERARCHY has no bare `load` power point — the master is the
+    // energy register and the complement is its power-metered `load.rest-of-house` (Sigenergy). Fall back to it
+    // so the load trace keeps showing exactly the series it always did.
+    loadData =
+      findSeries("load/power.avg") ||
+      findSeries("load.rest-of-house/power.avg");
     batteryWData = findSeries("bidi.battery/power.avg");
     batterySOCData = findSeries("bidi.battery/soc.last");
     batterySOCMinData = null;

@@ -105,14 +105,18 @@ export function unionCapabilities(
  * whole-home meter (mondo) or a multi-device area carries these, so the stacked load/generation split
  * is meaningful. A single inverter (selectronic/sigenergy) reports only the master `load/power` — and
  * note it may still report sub-SOURCES like `source.solar.local`, which are NOT a stacking signal
- * (verified: selectronic is sidebar despite carrying `source.solar.local`). Hot water (`load.hws`) is
- * excluded — a derived helper load, not a site sub-load.
+ * (verified: selectronic is sidebar despite carrying `source.solar.local`).
+ *
+ * Three sub-loads are excluded because they are not evidence of a circuit-metered site:
+ * `load.hws` (a derived helper load), `load.rest-of-house` (the complement itself, measured or synthetic) and `load.ev` (one charger, which an inverter reports on
+ * its own — Sigenergy). A genuinely sub-metered site has something else besides these.
  */
 const SUB_LOAD_BREAKDOWN = /^load\.([^/]+)\/power$/;
+const NOT_A_BREAKDOWN_SIGNAL = new Set(["hws", "rest-of-house", "ev"]);
 function pathsAggregate(paths: Iterable<string>): boolean {
   for (const p of paths) {
     const m = SUB_LOAD_BREAKDOWN.exec(p);
-    if (m && m[1] !== "hws") return true;
+    if (m && !NOT_A_BREAKDOWN_SIGNAL.has(m[1])) return true;
   }
   return false;
 }

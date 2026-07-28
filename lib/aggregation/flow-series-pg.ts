@@ -218,6 +218,10 @@ export async function loadFlowSeriesFromAgg5m(
     energySeries.push({ stem: p.stem, energyKwhBySlot });
   }
 
-  const { sources, loads } = buildFlowSeries(classified, energySeries);
+  const { sources, loads } = buildFlowSeries(
+    classified,
+    energySeries,
+    timeline,
+  );
   return { timeline, sources, loads };
 }

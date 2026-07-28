@@ -162,32 +162,37 @@ describe("buildFlowSeries", () => {
     expect(loads.some((l) => l.path === "load.rest-of-house")).toBe(false);
   });
 
-  it("adds EV charging as a load SIBLING, leaving rest-of-house derived from the master alone", () => {
-    // The vendor's master load excludes EV (Sigenergy: pv = grid + battery + load + ev), so the EV
-    // must not be subtracted from it the way a `load.<sub>` child is.
+  it("with children the master is a BUDGET, not a sink — children + residual reconstruct it", () => {
+    // `load` is a hierarchy like `source.solar`: the master is the total, `load.<sub>` are metered
+    // subsets. Emitting the master AND its children would count the metered circuits twice.
     const points: ClassifiedPoint[] = [
       { stem: "source.solar", power: [10, 10] },
-      { stem: "load", power: [3, 3] },
+      { stem: "load", power: [9, 9] }, // site total
       { stem: "load.hws", power: [1, 1] },
-      { stem: "ev.charge", power: [6, 6] },
+      { stem: "load.ev", power: [6, 6] },
     ];
     const { loads } = buildFlowSeries(points);
 
-    expect(loads.find((l) => l.path === "ev.charge")!.power).toEqual([6, 6]);
-    // rest-of-house = master(3) − hws(1) = 2 — the EV is NOT subtracted.
+    expect(loads.some((l) => l.path === "load")).toBe(false);
+    expect(loads.find((l) => l.path === "load.ev")!.power).toEqual([6, 6]);
+    // residual = master(9) − hws(1) − ev(6) = 2; sinks sum back to the master.
     expect(loads.find((l) => l.path === "load.rest-of-house")!.power).toEqual([
       2, 2,
     ]);
   });
 
-  it("subtracts EV from a generation-derived remainder (no master load) so it is not double-counted", () => {
+  it("an `ev.charge` point is not a sink — the vehicle's own view is never a flow node", () => {
+    // Its energy is already metered by a `load.ev` circuit or by the site meter; counting it would
+    // double-count (Kinkora metered both views: 42.7 vs 33.3 kWh in one week).
     const points: ClassifiedPoint[] = [
       { stem: "source.solar", power: [10, 10] },
-      { stem: "ev.charge", power: [6, 6] },
+      { stem: "load.ev", power: [6, 6] },
+      { stem: "ev.charge", power: [6, 6] }, // the car's view of the same charging
     ];
     const { loads } = buildFlowSeries(points);
 
-    // rest-of-house = Σgen(10) − charge(0) − export(0) − ev(6) = 4
+    expect(loads.some((l) => l.path === "ev.charge")).toBe(false);
+    // rest-of-house = Σgen(10) − charge(0) − export(0) − load.ev(6) = 4 — subtracted ONCE.
     expect(loads.find((l) => l.path === "load.rest-of-house")!.power).toEqual([
       4, 4,
     ]);

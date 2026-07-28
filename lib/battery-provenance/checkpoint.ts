@@ -29,7 +29,7 @@ import { FoldState, ResetTrigger } from "./fold";
 // v5: exact-energy overlays (`FlowSeries.energyKwh`) — battery flows consume accumulator registers
 // directly in extractBatteryFlows (correct slot alignment + linked-source exclusion) instead of the
 // old post-hoc rescale in compute.ts.
-export const BATPROV_MODEL_VERSION = 5;
+export const BATPROV_MODEL_VERSION = 6;
 
 export interface FoldCheckpointEnvelope {
   /** == BATPROV_MODEL_VERSION at write time. */
