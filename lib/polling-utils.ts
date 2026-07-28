@@ -2,18 +2,25 @@ import { eq, sql } from "drizzle-orm";
 import { transformForStorage } from "@/lib/json";
 import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pollingStatus as pgPollingStatus } from "@/lib/db/planetscale/schema";
+import {
+  devices as pgDevices,
+  deviceState as pgDeviceState,
+} from "@/lib/db/planetscale/schema";
 
 /**
- * Get the last polling status for a system (from Postgres).
+ * Get the last polling status for a device, by its legacy integer handle.
+ *
+ * Reads `device_state` (config-v4 Phase 12 slice C — `polling_status` is frozen until slice N
+ * drops it). The handle bridges via the verbatim-rid invariant `devices.rid == systems.id`.
  */
 export async function getPollingStatus(systemId: number) {
-  const [status] = await requirePlanetscaleDb()
-    .select()
-    .from(pgPollingStatus)
-    .where(eq(pgPollingStatus.systemId, systemId))
+  const [row] = await requirePlanetscaleDb()
+    .select({ state: pgDeviceState })
+    .from(pgDeviceState)
+    .innerJoin(pgDevices, eq(pgDevices.id, pgDeviceState.deviceId))
+    .where(eq(pgDevices.rid, systemId))
     .limit(1);
-  return status ?? null;
+  return row?.state ?? null;
 }
 
 /**
@@ -39,63 +46,9 @@ export async function updatePollingStatusSuccess(
     ? transformForStorage(responseData)
     : null;
 
-  // The counter increment is ATOMIC in the upsert — `total_polls + 1` etc. are
-  // computed from the existing row inside onConflictDoUpdate (no read-then-write),
-  // so concurrent polls can't lose increments.
-  await writePollingStatusSuccessPg(systemId, now, transformedResponse);
-}
-
-/**
- * Postgres success upsert.
- *
- * LOG-BUT-DON'T-THROW: a PG write failure here is caught and logged, never rethrown.
- * This function is called from the poll's `shouldPoll` path; if it threw, the caller
- * would treat the poll as failed and re-poll, minting a duplicate session.
- *
- * ATOMIC counters: on conflict we reference the EXISTING row
- * (`polling_status.total_polls + 1`, `polling_status.successful_polls + 1`) via `sql`,
- * so the increment happens server-side in a single statement with no read-then-write race.
- * `consecutive_errors` resets to 0 on success.
- */
-async function writePollingStatusSuccessPg(
-  systemId: number,
-  now: Date,
-  transformedResponse: unknown,
-): Promise<void> {
-  try {
-    await requirePlanetscaleDb()
-      .insert(pgPollingStatus)
-      .values({
-        systemId,
-        lastPollTime: now,
-        lastSuccessTime: now,
-        lastError: null,
-        lastResponse: transformedResponse,
-        consecutiveErrors: 0,
-        totalPolls: 1,
-        successfulPolls: 1,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: pgPollingStatus.systemId,
-        set: {
-          lastPollTime: now,
-          lastSuccessTime: now,
-          lastError: null,
-          lastResponse: transformedResponse,
-          consecutiveErrors: 0,
-          totalPolls: sql`${pgPollingStatus.totalPolls} + 1`,
-          successfulPolls: sql`${pgPollingStatus.successfulPolls} + 1`,
-          updatedAt: now,
-        },
-      });
-  } catch (e) {
-    console.error(
-      `[POLLING-STATUS] updatePollingStatusSuccess systemId=${systemId} failed (swallowed): ${
-        (e as Error)?.message ?? String(e)
-      }`,
-    );
-  }
+  // The counter increment is ATOMIC in the upsert — `total_polls + 1` is computed from the existing
+  // row inside ON CONFLICT (no read-then-write), so concurrent polls can't lose increments.
+  await writeDeviceStateSuccessPg(systemId, now, transformedResponse);
 }
 
 /**
@@ -115,7 +68,7 @@ export async function updatePollingStatusError(
     : null;
 
   // `consecutive_errors` and `total_polls` increment atomically in the upsert.
-  await writePollingStatusErrorPg(
+  await writeDeviceStateErrorPg(
     systemId,
     now,
     errorMessage,
@@ -123,51 +76,107 @@ export async function updatePollingStatusError(
   );
 }
 
-/**
- * Postgres error upsert.
- *
- * LOG-BUT-DON'T-THROW (see writePollingStatusSuccessPg): a PG failure is caught and
- * logged, never rethrown, so a poll-error path can't itself throw and re-poll.
- *
- * ATOMIC counters: on conflict, `consecutive_errors` and `total_polls` are incremented
- * from the EXISTING row via `sql` in a single statement. `successful_polls` is left
- * untouched on conflict.
- */
-async function writePollingStatusErrorPg(
+// ============================================================================
+// device_state — the sole operational-state writer (config-v4 Phase 12 slice C).
+//
+// `polling_status` is FROZEN, not dropped: it holds the pre-flip state verbatim as the rollback
+// snapshot until slice N drops it. Nothing writes it and nothing reads it. Do not resurrect the
+// write to "keep it warm" — that is a full vendor-payload jsonb write per poll per device for a
+// table no code touches. If a rollback is ever needed, redeploy the previous build and re-run
+// scripts/config-v4/reconcile-device-state.ts in reverse.
+//
+// LOG-BUT-DON'T-THROW: a PG write failure here is caught and logged, never rethrown. This runs from
+// the poll's shouldPoll path; if it threw, the caller would treat the poll as failed and re-poll,
+// minting a duplicate session.
+//
+// Hand-written SQL, not the drizzle builder, because the device is resolved in the SAME statement
+// (`devices.rid = systemId`, an index-only probe of devices_rid_unique) rather than in a second
+// round trip on the ingest hot path. Deliberately NOT via DeviceRegistry.addrForHandle: that is an
+// uncached extra query AND it throws UnknownDeviceIdError, which would breach the
+// LOG-BUT-DON'T-THROW contract above. Here a system with no device row inserts 0 rows, silently.
+//
+// ⚠️ Timestamps are passed as `toISOString()` + an explicit `::timestamp` cast. Handing node-pg a
+// Date serialises it with the *local* UTC offset, which a `timestamp without time zone` column then
+// takes as literal wall clock — correct on Vercel (UTC), 10 hours out on a Sydney laptop.
+//
+// ⚠️ The atomic counters reference device_state's OWN columns. Copying the polling_status
+// expressions across would emit `polling_status.total_polls + 1` inside an INSERT INTO device_state
+// — the most likely silent bug in this slice.
+// ============================================================================
+
+/** jsonb bind for a transformed vendor response (null stays SQL NULL, not the string "null"). */
+function jsonbParam(transformedResponse: unknown) {
+  return transformedResponse === null || transformedResponse === undefined
+    ? sql`NULL::jsonb`
+    : sql`${JSON.stringify(transformedResponse)}::jsonb`;
+}
+
+/** Record a successful poll. */
+async function writeDeviceStateSuccessPg(
+  systemId: number,
+  now: Date,
+  transformedResponse: unknown,
+): Promise<void> {
+  const ts = now.toISOString();
+  const response = jsonbParam(transformedResponse);
+  try {
+    await requirePlanetscaleDb().execute(sql`
+      INSERT INTO device_state (
+        device_id, last_poll_time, last_success_time, last_error, last_response,
+        consecutive_errors, total_polls, successful_polls, updated_at
+      )
+      SELECT d.id, ${ts}::timestamp, ${ts}::timestamp, NULL, ${response}, 0, 1, 1, ${ts}::timestamp
+      FROM devices d
+      WHERE d.rid = ${systemId}
+      ON CONFLICT (device_id) DO UPDATE SET
+        last_poll_time = ${ts}::timestamp,
+        last_success_time = ${ts}::timestamp,
+        last_error = NULL,
+        last_response = ${response},
+        consecutive_errors = 0,
+        total_polls = device_state.total_polls + 1,
+        successful_polls = device_state.successful_polls + 1,
+        updated_at = ${ts}::timestamp
+    `);
+  } catch (e) {
+    console.error(
+      `[DEVICE-STATE] success upsert systemId=${systemId} failed (swallowed): ${
+        (e as Error)?.message ?? String(e)
+      }`,
+    );
+  }
+}
+
+/** Record a failed poll. */
+async function writeDeviceStateErrorPg(
   systemId: number,
   now: Date,
   errorMessage: string,
   transformedResponse: unknown,
 ): Promise<void> {
+  const ts = now.toISOString();
+  const response = jsonbParam(transformedResponse);
   try {
-    await requirePlanetscaleDb()
-      .insert(pgPollingStatus)
-      .values({
-        systemId,
-        lastPollTime: now,
-        lastErrorTime: now,
-        lastError: errorMessage,
-        lastResponse: transformedResponse,
-        consecutiveErrors: 1,
-        totalPolls: 1,
-        successfulPolls: 0,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: pgPollingStatus.systemId,
-        set: {
-          lastPollTime: now,
-          lastErrorTime: now,
-          lastError: errorMessage,
-          lastResponse: transformedResponse,
-          consecutiveErrors: sql`${pgPollingStatus.consecutiveErrors} + 1`,
-          totalPolls: sql`${pgPollingStatus.totalPolls} + 1`,
-          updatedAt: now,
-        },
-      });
+    await requirePlanetscaleDb().execute(sql`
+      INSERT INTO device_state (
+        device_id, last_poll_time, last_error_time, last_error, last_response,
+        consecutive_errors, total_polls, successful_polls, updated_at
+      )
+      SELECT d.id, ${ts}::timestamp, ${ts}::timestamp, ${errorMessage}, ${response}, 1, 1, 0, ${ts}::timestamp
+      FROM devices d
+      WHERE d.rid = ${systemId}
+      ON CONFLICT (device_id) DO UPDATE SET
+        last_poll_time = ${ts}::timestamp,
+        last_error_time = ${ts}::timestamp,
+        last_error = ${errorMessage},
+        last_response = ${response},
+        consecutive_errors = device_state.consecutive_errors + 1,
+        total_polls = device_state.total_polls + 1,
+        updated_at = ${ts}::timestamp
+    `);
   } catch (e) {
     console.error(
-      `[POLLING-STATUS] updatePollingStatusError systemId=${systemId} failed (swallowed): ${
+      `[DEVICE-STATE] error upsert systemId=${systemId} failed (swallowed): ${
         (e as Error)?.message ?? String(e)
       }`,
     );

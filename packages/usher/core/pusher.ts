@@ -3,8 +3,8 @@
  *
  * POSTs self-describing readings to `/api/gush` with auth (siteId + apiKey) and retry/backoff on
  * transient failures. Abstracted so an alternative sink (e.g. MqttSink) can drop in later without
- * touching the sources. A successful store also updates the system's polling_status on the server,
- * so LiveOne's existing freshness alerting doubles as the heartbeat.
+ * touching the sources. A successful store also updates the device's operational state on the server
+ * (`device_state`), so LiveOne's existing freshness alerting doubles as the heartbeat.
  */
 
 import type { GushRequestBody, PushReading } from "@liveone/protocol";

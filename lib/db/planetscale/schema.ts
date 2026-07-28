@@ -107,7 +107,11 @@ export const systems = pgTable(
 );
 
 // ============================================================================
-// Polling Status table - track health and errors
+// Polling Status table — track health and errors.
+//
+// ⚠️ FROZEN as of config-v4 Phase 12 slice C (2026-07-28). `device_state` is the live table; nothing
+// reads or writes this one. It is kept, unchanged, as the pre-flip rollback snapshot until slice N
+// drops it (with `point_info` and `systems`, in FK order). Do not add a reader or a writer.
 // ============================================================================
 export const pollingStatus = pgTable(
   "polling_status",
@@ -1155,7 +1159,8 @@ export const areaMembers = pgTable(
   }),
 );
 
-// device_state ← polling_status. 1:1 operational satellite of devices; written every poll.
+// device_state ← polling_status. 1:1 operational satellite of devices; written every poll, and since
+// Phase 12 slice C the ONLY operational-state table (polling_status is frozen — see its header).
 export const deviceState = pgTable("device_state", {
   deviceId: uuid("device_id")
     .primaryKey()
