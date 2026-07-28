@@ -4,12 +4,29 @@ import { useQuery } from "@tanstack/react-query";
 import { runPeriodsQuery } from "@/lib/queries";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { applyExcelFormat } from "@/lib/point/display/excel-format";
-import { avgPowerWFromEnergy } from "@/lib/run-tracking/run-period-view";
+import {
+  avgPowerWFromEnergy,
+  formatRunWhen,
+} from "@/lib/run-tracking/run-period-view";
+import {
+  formatDollars,
+  formatKgCo2,
+  formatRenewablePct,
+} from "@/lib/provenance-format";
 
 /** Average power (W) rendered as kW, 1dp — fixed scale so a column never mixes W and kW rows. */
 function kwText(avgPowerW: number | null | undefined): string {
   if (avgPowerW == null) return "—";
   return `${(Math.abs(avgPowerW) / 1000).toFixed(1)}`;
+}
+
+/** Renewable ENERGY (kWh) as a share of the energy it came from. Null denominator ⇒ "—". */
+function renewablePctText(
+  renewableKwh: number | null | undefined,
+  energyKwh: number | null | undefined,
+): string {
+  if (renewableKwh == null || !energyKwh) return "—";
+  return formatRenewablePct((100 * renewableKwh) / energyKwh);
 }
 
 const TH_LEFT = "px-4 py-3 text-left text-sm font-medium text-gray-200";
@@ -73,9 +90,26 @@ export default function GeneratorClient({
     ? (generatorData.signal ?? null)
     : null;
   const showAvgPower = generatorData?.columns?.avgPower ?? false;
+  const showCost = generatorData?.columns?.cost ?? false;
+  const showEmissions = generatorData?.columns?.emissions ?? false;
+  const showRenewable = generatorData?.columns?.renewable ?? false;
   const basis = generatorData?.columns?.avgPowerBasis ?? "energy";
   const totalEnergyKwh = generatorData?.totalEnergyKwh ?? 0;
   const totalDurationSeconds = generatorData?.totalDurationSeconds ?? 0;
+  const totalCostC = generatorData?.totalCostC ?? null;
+  const totalEmissionsG = generatorData?.totalEmissionsG ?? null;
+  const totalRenewableKwh = generatorData?.totalRenewableKwh ?? null;
+  const costKnownKwh = generatorData?.costKnownKwh ?? 0;
+  const emissionsKnownKwh = generatorData?.emissionsKnownKwh ?? 0;
+  const renewableKnownKwh = generatorData?.renewableKnownKwh ?? 0;
+  // A window can straddle the moment provenance was switched on (or a detector re-point), leaving
+  // some runs unpriced. The Energy total still covers every run, so an unmarked cost total would
+  // invite dividing the two and reading a tariff far below the real one. Mark it instead.
+  const provenancePartial =
+    (showCost && totalCostC != null && costKnownKwh < totalEnergyKwh) ||
+    (showEmissions &&
+      totalEmissionsG != null &&
+      emissionsKnownKwh < totalEnergyKwh);
   // A genuine period average: total energy over total RUNNING time (not a mean of per-run means).
   const periodAvgPowerW =
     basis === "energy"
@@ -113,9 +147,7 @@ export default function GeneratorClient({
               <table className="w-full">
                 <thead className="bg-gray-700">
                   <tr>
-                    <th className={TH_LEFT}>Date</th>
-                    <th className={TH_LEFT}>Start</th>
-                    <th className={`${TH_LEFT} hidden sm:table-cell`}>End</th>
+                    <th className={TH_LEFT}>When</th>
                     <th className={TH_RIGHT}>Duration</th>
                     {signalCol && (
                       <th className={`${TH_RIGHT} hidden sm:table-cell`}>
@@ -127,6 +159,17 @@ export default function GeneratorClient({
                       <th className={TH_RIGHT}>Avg Power (kW)</th>
                     )}
                     <th className={TH_RIGHT}>Energy (kWh)</th>
+                    {showCost && <th className={TH_RIGHT}>Cost</th>}
+                    {showEmissions && (
+                      <th className={`${TH_RIGHT} hidden sm:table-cell`}>
+                        CO₂ (kg)
+                      </th>
+                    )}
+                    {showRenewable && (
+                      <th className={`${TH_RIGHT} hidden sm:table-cell`}>
+                        Renewable
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-700">
@@ -146,10 +189,8 @@ export default function GeneratorClient({
                         key={idx}
                         className="text-gray-100 odd:bg-gray-800 even:bg-gray-750 hover:bg-gray-700"
                       >
-                        <td className="px-4 py-3 text-sm">{event.date}</td>
-                        <td className="px-4 py-3 text-sm">{event.startTime}</td>
-                        <td className="px-4 py-3 text-sm hidden sm:table-cell">
-                          {event.running ? "now" : (event.endTime ?? "—")}
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {formatRunWhen(event)}
                         </td>
                         <td className={TD_NUM}>
                           {durationSec != null
@@ -170,6 +211,28 @@ export default function GeneratorClient({
                           <td className={TD_NUM}>{kwText(avgPowerW)}</td>
                         )}
                         <td className={TD_NUM}>{event.energyKwh.toFixed(2)}</td>
+                        {showCost && (
+                          <td className={TD_NUM}>
+                            {event.costC != null
+                              ? formatDollars(event.costC)
+                              : "—"}
+                          </td>
+                        )}
+                        {showEmissions && (
+                          <td className={`${TD_NUM} hidden sm:table-cell`}>
+                            {event.emissionsG != null
+                              ? formatKgCo2(event.emissionsG / 1000)
+                              : "—"}
+                          </td>
+                        )}
+                        {showRenewable && (
+                          <td className={`${TD_NUM} hidden sm:table-cell`}>
+                            {renewablePctText(
+                              event.renewableKwh,
+                              event.energyKwh,
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -177,8 +240,6 @@ export default function GeneratorClient({
                     {/* Explicit cells, not a colSpan: the signal column is conditional and a
                         hard-coded span silently desyncs from it. */}
                     <td className="px-4 py-3 text-sm">Total</td>
-                    <td className="px-4 py-3 text-sm" />
-                    <td className="px-4 py-3 text-sm hidden sm:table-cell" />
                     <td className={TD_NUM}>
                       {totalDurationSeconds > 0
                         ? formatSecondsAsDuration(totalDurationSeconds)
@@ -194,6 +255,31 @@ export default function GeneratorClient({
                       <td className={TD_NUM}>{kwText(periodAvgPowerW)}</td>
                     )}
                     <td className={TD_NUM}>{totalEnergyKwh.toFixed(2)}</td>
+                    {showCost && (
+                      <td className={TD_NUM}>
+                        {totalCostC != null ? formatDollars(totalCostC) : "—"}
+                        {provenancePartial && (
+                          <sup className="text-amber-400 font-semibold">*</sup>
+                        )}
+                      </td>
+                    )}
+                    {showEmissions && (
+                      <td className={`${TD_NUM} hidden sm:table-cell`}>
+                        {totalEmissionsG != null
+                          ? formatKgCo2(totalEmissionsG / 1000)
+                          : "—"}
+                        {provenancePartial && (
+                          <sup className="text-amber-400 font-semibold">*</sup>
+                        )}
+                      </td>
+                    )}
+                    {showRenewable && (
+                      <td className={`${TD_NUM} hidden sm:table-cell`}>
+                        {/* Over only the energy that HAS a renewable figure — not the period's
+                            whole energy, which would dilute the share with unknowns. */}
+                        {renewablePctText(totalRenewableKwh, renewableKnownKwh)}
+                      </td>
+                    )}
                   </tr>
                 </tbody>
               </table>
@@ -217,6 +303,24 @@ export default function GeneratorClient({
                   ? ` Avg ${signalCol.label} is the mean of the raw ${signalCol.unit || signalCol.metricUnit} samples the detector follows; it is blank for runs recorded by an earlier detector version, whose units cannot be confirmed.`
                   : ""}
               </p>
+              {(showCost || showEmissions || showRenewable) && (
+                <p className="mt-1">
+                  Cost, CO₂ and renewable share are accumulated over each run’s
+                  metered energy at this site’s configured generator intensity,
+                  at the time the run was recorded.
+                  {provenancePartial && (
+                    <>
+                      {" "}
+                      <span className="text-amber-400 font-semibold">
+                        *
+                      </span>{" "}
+                      Some runs in this period have no figure, so the total
+                      covers less than the {totalEnergyKwh.toFixed(2)} kWh
+                      shown.
+                    </>
+                  )}
+                </p>
+              )}
             </div>
           </>
         )}

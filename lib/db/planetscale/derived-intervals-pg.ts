@@ -24,7 +24,13 @@ import { derivedIntervals } from "./schema";
 import { ReadingsDao } from "@/lib/readings";
 import type { PointId } from "@/lib/ids";
 import { detectRunPeriods, type Sample } from "@/lib/run-tracking/detect";
-import { assignEnergyToPeriods } from "@/lib/run-tracking/energy";
+import {
+  assignEnergyToPeriods,
+  assignProvenanceToPeriods,
+  NO_PROVENANCE,
+  type PeriodProvenance,
+} from "@/lib/run-tracking/energy";
+import { resolveIntensitySeries } from "@/lib/run-tracking/intensity";
 import type { ResolvedRunDetector } from "@/lib/derivations/resolve";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -66,6 +72,16 @@ export async function recomputeIntervalsForWindow(
   winEndMs: number,
   nowMs: number,
 ): Promise<RecomputeResult> {
+  // What this device's energy costs/emits. Resolved once per call, OUTSIDE the transaction — a
+  // small config read, constant across every run in the window. Null (an unpriced device) leaves
+  // all three provenance columns NULL, which the reader takes as "omit the columns".
+  //
+  // Skipped entirely without an energy point: provenance is integrated over that point's counter,
+  // so there is nothing the series could be applied to.
+  const intensity = det.energyPoint
+    ? await resolveIntensitySeries(db, det)
+    : null;
+
   return db.transaction(async (tx) => {
     // Serialize recomputes for THIS derivation so a concurrent run can't interleave delete/insert.
     // `hashtext` folds the uuid into the int4 the advisory-lock API takes; a collision would only
@@ -120,6 +136,7 @@ export async function recomputeIntervalsForWindow(
 
     // Batched energy (one read for the whole window) — replaces the legacy per-event N+1.
     let energies: (number | null)[] = periods.map(() => null);
+    let provenance: PeriodProvenance[] = periods.map(() => NO_PROVENANCE);
     if (det.energyPoint && periods.length > 0) {
       const readings = await readPointSeries(
         tx,
@@ -127,11 +144,21 @@ export async function recomputeIntervalsForWindow(
         readStartMs,
         winEndMs,
       );
-      energies = assignEnergyToPeriods(
-        periods.map((p) => ({ startMs: p.startMs, endMs: p.endMs })),
-        readings,
-        nowMs,
-      );
+      const windows = periods.map((p) => ({
+        startMs: p.startMs,
+        endMs: p.endMs,
+      }));
+      energies = assignEnergyToPeriods(windows, readings, nowMs);
+      // Cost/emissions/renewable ride the SAME readings — the energy-weighted integral over the
+      // counter's own slices, so a run's provenance and its energy can never disagree.
+      if (intensity) {
+        provenance = assignProvenanceToPeriods(
+          windows,
+          readings,
+          intensity,
+          nowMs,
+        );
+      }
     }
 
     // Delete exactly the span we rebuild: [anchor, winEnd]. Bounded so later periods (relative to
@@ -156,6 +183,9 @@ export async function recomputeIntervalsForWindow(
         durationSeconds:
           p.endMs != null ? Math.round((p.endMs - p.startMs) / 1000) : null,
         energyKwh: energies[i],
+        costC: provenance[i].costC,
+        emissionsG: provenance[i].emissionsG,
+        renewableKwh: provenance[i].renewableKwh,
         maxPowerW: p.maxW,
         minPowerW: p.minW,
         avgPowerW: p.avgW,

@@ -976,6 +976,13 @@ export const derivedIntervals = pgTable(
     maxPowerW: doublePrecision("max_power_w"),
     minPowerW: doublePrecision("min_power_w"),
     avgPowerW: doublePrecision("avg_power_w"),
+    // Per-run provenance, ACCUMULATED by the recompute exactly like energy_kwh — never derived at
+    // render time. NULL = UNKNOWN, never zero: when the device's intensity is unknowable the
+    // columns are omitted from the UI entirely (lib/run-tracking/intensity.ts). Named for their
+    // units, deliberately not repeating the *_power_w mislabelling they sit beside.
+    costC: doublePrecision("cost_c"), // cents (signed) — Σ sliceKwh × price(t)
+    emissionsG: doublePrecision("emissions_g"), // grams CO₂ — Σ sliceKwh × intensity(t)
+    renewableKwh: doublePrecision("renewable_kwh"), // kWh — Σ sliceKwh × renewableFraction(t)
     sampleCount: integer("sample_count").notNull().default(0),
     detectorVersion: integer("detector_version").notNull().default(1),
     createdAt: timestamp("created_at").notNull().defaultNow(),

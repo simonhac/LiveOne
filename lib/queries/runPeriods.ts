@@ -17,6 +17,11 @@ export interface RunPeriodEvent {
   date: string;
   startTime: string;
   endTime: string | null;
+  /**
+   * End date ("EEE d MMM"), present ONLY when the run ends on a different local day than it
+   * started — so `formatRunWhen` can spell a midnight-crossing run out in full.
+   */
+  endDate?: string | null;
   running?: boolean;
   durationSeconds?: number | null;
   startTimeISO?: string;
@@ -31,6 +36,14 @@ export interface RunPeriodEvent {
   avgPowerW?: number | null;
   sampleCount?: number;
   energyKwh: number;
+  /**
+   * Per-run provenance, ACCUMULATED by the recompute against the run's own metered energy (see
+   * lib/run-tracking/energy.ts). Null = unknown — the corresponding column is then absent from the
+   * table entirely, never rendered as a zero.
+   */
+  costC?: number | null; // cents (signed) — formatDollars divides by 100
+  emissionsG?: number | null; // grams CO₂ — formatKgCo2 wants kg, so ÷1000
+  renewableKwh?: number | null; // kWh; shown as a % of the run's energy
 }
 
 /**
@@ -54,6 +67,19 @@ export interface RunPeriodsResponse {
   totalEnergyKwh?: number;
   /** period mode: Σ duration of closed runs, so the footer can show Σenergy ÷ Σduration. */
   totalDurationSeconds?: number;
+  /** period mode: provenance totals. Null when NO run in the window carried that figure. */
+  totalCostC?: number | null;
+  totalEmissionsG?: number | null;
+  totalRenewableKwh?: number | null;
+  /**
+   * period mode: Σ energy of only those runs that carried each figure. Two uses: it is the honest
+   * denominator for the renewable %, and comparing it against `totalEnergyKwh` tells the client
+   * whether a total covers the whole window or only part of it (a window can straddle the moment
+   * provenance was switched on) so it can be marked partial rather than read as complete.
+   */
+  costKnownKwh?: number;
+  emissionsKnownKwh?: number;
+  renewableKnownKwh?: number;
   running?: boolean;
 }
 

@@ -21,6 +21,7 @@ import {
   type RunPeriodColumns,
   type RunSignalMeta,
 } from "@/lib/run-tracking/run-period-view";
+import { roundToThree } from "@/lib/history/format-opennem";
 import { formatInTimezone } from "@/lib/date-utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,6 +32,30 @@ const DEFAULT_LIMIT = 10;
 
 /** Fallback number format when the display registry doesn't cover the signal point. */
 const DEFAULT_SIGNAL_FORMAT = "0.0";
+
+/**
+ * A provenance total that knows what it covers.
+ *
+ * Two rules, both load-bearing. It stays **null** until some run actually contributes, so a period
+ * with no priced runs shows a blank footer cell rather than "$0.00". And it tracks `knownKwh` — the
+ * energy of just the runs that carried a figure — because a window can straddle the moment
+ * provenance was switched on, and a total that silently covers 7 of 12 runs while the Energy total
+ * covers all 12 invites exactly the wrong division (cost ÷ energy ⇒ a c/kWh well under the real
+ * tariff). The client compares `knownKwh` against the period energy and marks the total as partial.
+ */
+function knownSum() {
+  let total: number | null = null;
+  let knownKwh = 0;
+  return {
+    add(value: number | null | undefined, energyKwh: number) {
+      if (value == null) return;
+      total = (total ?? 0) + value;
+      knownKwh += energyKwh;
+    },
+    total: () => roundToThree(total),
+    knownKwh: () => roundToThree(knownKwh) ?? 0,
+  };
+}
 
 /**
  * Describe the signal a detector follows, so its statistics can be shown in their OWN unit rather
@@ -88,6 +113,17 @@ interface EventShape {
   detectorVersion: number | null;
 }
 
+/**
+ * The run's end date, but only when it falls on a DIFFERENT local day than the start — the merged
+ * "when" column prints it exactly then, so a midnight-crossing run can't read as a same-day range.
+ */
+function endDateIfDifferentDay(r: DerivedInterval, tz: string): string | null {
+  if (!r.endTime) return null;
+  const startDay = formatInTimezone(r.startTime, tz, "EEE d MMM");
+  const endDay = formatInTimezone(r.endTime, tz, "EEE d MMM");
+  return endDay === startDay ? null : endDay;
+}
+
 /** Shape one derived interval into the (legacy-compatible + enriched) event the UI consumes. */
 function toEvent(r: DerivedInterval, s: EventShape) {
   // `avg_power_w` holds a statistic of the RAW SIGNAL, whose unit is whatever the detector's signal
@@ -102,8 +138,17 @@ function toEvent(r: DerivedInterval, s: EventShape) {
     date: formatInTimezone(r.startTime, s.tz, "EEE d MMM"),
     startTime: formatInTimezone(r.startTime, s.tz, "HH:mm"),
     endTime: r.endTime ? formatInTimezone(r.endTime, s.tz, "HH:mm") : null,
+    /** Set only when the run ends on a different local day — see `endDateIfDifferentDay`. */
+    endDate: endDateIfDifferentDay(r, s.tz),
     running: r.endTime === null,
     energyKwh: r.energyKwh ?? 0,
+    /**
+     * Accumulated at recompute time (never derived here) — see lib/run-tracking/energy.ts
+     * `assignProvenanceToPeriods`. Null = unknown; the matching column is then absent entirely.
+     */
+    costC: r.costC,
+    emissionsG: r.emissionsG,
+    renewableKwh: r.renewableKwh,
     // Richer fields for cards / future generalisation:
     startTimeISO: r.startTime.toISOString(),
     endTimeISO: r.endTime ? r.endTime.toISOString() : null,
@@ -125,16 +170,33 @@ function toEvent(r: DerivedInterval, s: EventShape) {
   };
 }
 
-/** Resolve the per-request signal metadata + column plan for a detector (or the empty plan). */
+/**
+ * Resolve the per-request signal metadata + column plan.
+ *
+ * The provenance columns are gated on THE ROWS, not on the site's current config. That is the only
+ * gate that can't lie, because provenance is accumulated at recompute time: config says what runs
+ * *would* be priced at from now on, whereas the fetched rows say what actually got stored. Gating on
+ * config instead produces two symmetric failures — three empty columns after enabling
+ * `generatorSource` but before a recompute has rewritten anything, and silently hidden columns over
+ * rows that still hold real figures after it's unset. It also keeps the read path free of the
+ * battery-binding join, and avoids having to sample a time-varying series at some arbitrary instant
+ * (`Date.now()`) to decide what a whole window's worth of rows may show.
+ */
 async function resolveShape(
   detector: ResolvedRunDetector | null,
   tz: string,
+  rows: DerivedInterval[],
 ): Promise<{ signal: RunSignalMeta | null; shape: EventShape }> {
   const signal = detector ? await readSignalMeta(detector.signalPoint) : null;
   const columns = planRunPeriodColumns({
     signalMetricType: signal?.metricType ?? null,
     signalMetricUnit: signal?.metricUnit ?? null,
     hasEnergyPoint: detector?.energyPoint != null,
+    provenance: {
+      cost: rows.some((r) => r.costC != null),
+      emissions: rows.some((r) => r.emissionsG != null),
+      renewable: rows.some((r) => r.renewableKwh != null),
+    },
   });
   return {
     signal,
@@ -178,9 +240,6 @@ export async function GET(
     // system. Resolved through the shared handle→area mapping so reader and writer always agree.
     const detector = await getRunDetectorForHandleRole(systemId, role);
 
-    // What the detector follows + which columns are honest for it. Resolved ONCE per request.
-    const { signal, shape } = await resolveShape(detector, tz);
-
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
     // dashboard generator-runs card. Bounded by limit (no time window).
     const limitParam = searchParams.get("limit");
@@ -204,7 +263,11 @@ export async function GET(
             .offset(offset)
         : [];
       const hasMore = rows.length > limit;
-      const events = rows.slice(0, limit).map((r) => toEvent(r, shape));
+      const page = rows.slice(0, limit);
+      // Columns are planned from the rows being returned, so this page never advertises a column
+      // it can't fill (see `resolveShape`).
+      const { signal, shape } = await resolveShape(detector, tz, page);
+      const events = page.map((r) => toEvent(r, shape));
       return NextResponse.json({
         role,
         events,
@@ -266,16 +329,24 @@ export async function GET(
           .orderBy(asc(derivedIntervals.startTime))
       : [];
 
+    const { signal, shape } = await resolveShape(detector, tz, rows);
+
     let runningNow = false;
     let totalEnergyKwh = 0;
     // Summed alongside the energy so the footer can show a genuine period-average power
     // (Σenergy ÷ Σduration). Open runs contribute no duration, matching their null avg power.
     let totalDurationSeconds = 0;
+    const cost = knownSum();
+    const emissions = knownSum();
+    const renewable = knownSum();
     const events = rows.map((r) => {
       const ev = toEvent(r, shape);
       if (ev.running) runningNow = true;
       totalEnergyKwh += ev.energyKwh;
       totalDurationSeconds += ev.durationSeconds ?? 0;
+      cost.add(ev.costC, ev.energyKwh);
+      emissions.add(ev.emissionsG, ev.energyKwh);
+      renewable.add(ev.renewableKwh, ev.energyKwh);
       return ev;
     });
 
@@ -284,8 +355,14 @@ export async function GET(
       events,
       signal,
       columns: shape.columns,
-      totalEnergyKwh: Math.round(totalEnergyKwh * 1000) / 1000,
+      totalEnergyKwh: roundToThree(totalEnergyKwh),
       totalDurationSeconds,
+      totalCostC: cost.total(),
+      costKnownKwh: cost.knownKwh(),
+      totalEmissionsG: emissions.total(),
+      emissionsKnownKwh: emissions.knownKwh(),
+      totalRenewableKwh: renewable.total(),
+      renewableKnownKwh: renewable.knownKwh(),
       running: runningNow,
     });
   } catch (error) {

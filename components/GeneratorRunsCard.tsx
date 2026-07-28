@@ -5,6 +5,8 @@ import { runPeriodsQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
+import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
+import { formatDollars } from "@/lib/provenance-format";
 
 /**
  * A dashboard panel listing a device's generator runs WITHIN the temporal-navigator window — the
@@ -81,6 +83,15 @@ export default function GeneratorRunsCard({
   const totalEnergyKwh = rows.reduce((s, r) => s + r.e.energyKwh, 0);
   const anyOutside = rows.some((r) => r.spansOutside);
 
+  // Merging Date+Time into one column frees exactly one slot, so the card can answer "what did that
+  // cost?" without getting wider. Gated server-side like every other column: absent, never $0.00.
+  const showCost = data?.columns?.cost ?? false;
+  // Totals sum only the runs that carry a figure, matching how the footer's other totals behave.
+  const totalCostC = rows.reduce<number | null>(
+    (s, r) => (r.e.costC == null ? s : (s ?? 0) + r.e.costC),
+    null,
+  );
+
   const th = "px-4 py-2 text-xs font-medium text-gray-200";
   const td = "px-4 py-2 text-sm";
 
@@ -114,10 +125,10 @@ export default function GeneratorRunsCard({
             <table className="w-full">
               <thead className="bg-gray-700 sticky top-0">
                 <tr>
-                  <th className={`${th} text-left`}>Date</th>
-                  <th className={`${th} text-left`}>Time</th>
+                  <th className={`${th} text-left`}>When</th>
                   <th className={`${th} text-right`}>Duration</th>
                   <th className={`${th} text-right`}>Energy (kWh)</th>
+                  {showCost && <th className={`${th} text-right`}>Cost</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">
@@ -126,13 +137,12 @@ export default function GeneratorRunsCard({
                     key={i}
                     className="text-gray-100 odd:bg-gray-800 even:bg-gray-750"
                   >
-                    <td className={td}>{e.date}</td>
+                    {/* Deliberately NOT whitespace-nowrap: this card sits in a fixed-width
+                        dashboard column, and a midnight-crossing run's full
+                        "Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15" would set a min-content width that
+                        pushes the rightmost column out of the card's `overflow-hidden` box. */}
                     <td className={td}>
-                      {e.running
-                        ? `${e.startTime} – now`
-                        : e.endTime === null || e.startTime === e.endTime
-                          ? e.startTime
-                          : `${e.startTime} - ${e.endTime}`}
+                      {formatRunWhen(e)}
                       {spansOutside && (
                         <sup className="text-amber-400 font-semibold">*</sup>
                       )}
@@ -145,6 +155,11 @@ export default function GeneratorRunsCard({
                     <td className={`${td} text-right tabular-nums`}>
                       {e.energyKwh.toFixed(2)}
                     </td>
+                    {showCost && (
+                      <td className={`${td} text-right tabular-nums`}>
+                        {e.costC != null ? formatDollars(e.costC) : "—"}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -153,13 +168,17 @@ export default function GeneratorRunsCard({
                   <td className={td}>
                     {rows.length} {rows.length === 1 ? "run" : "runs"}
                   </td>
-                  <td className={td} />
                   <td className={`${td} text-right tabular-nums`}>
                     {formatSecondsAsDuration(totalSeconds)}
                   </td>
                   <td className={`${td} text-right tabular-nums`}>
                     {totalEnergyKwh.toFixed(2)}
                   </td>
+                  {showCost && (
+                    <td className={`${td} text-right tabular-nums`}>
+                      {totalCostC != null ? formatDollars(totalCostC) : "—"}
+                    </td>
+                  )}
                 </tr>
               </tfoot>
             </table>

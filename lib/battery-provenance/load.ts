@@ -32,6 +32,7 @@ import {
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { ExportTariffConfig } from "@/lib/capabilities/config";
+import { resolveGeneratorIntensity } from "./generator-source";
 import { DEFAULT_RESERVE_PCT } from "./reserve-floor";
 import type { ProvenanceInputs, ProvenanceWindow } from "./types";
 
@@ -468,15 +469,17 @@ export async function loadProvenanceInputs(
   if (batterySystemId != null) {
     // Solar opportunity-cost source (none/amber/schedule); resolved to a series in `compute`.
     exportTariff = batSysRow?.config?.batteryProvenance?.exportTariff;
-    const gen = batSysRow?.config?.batteryProvenance?.generatorSource;
-    if (gen && Number.isFinite(gen.emissionsIntensity)) {
-      gridEmissions = timeline.map(() => gen.emissionsIntensity);
+    // Shared with run-period provenance — see lib/battery-provenance/generator-source.ts.
+    const gen = resolveGeneratorIntensity(
+      batSysRow?.config?.batteryProvenance?.generatorSource,
+    );
+    if (gen) {
+      gridEmissions = timeline.map(() => gen.gPerKwh);
       gridEmissionsEstimated = timeline.map(() => false);
-      gridRenewable = timeline.map(() =>
-        Number.isFinite(gen.renewableFraction) ? gen.renewableFraction : 0,
-      );
-      if (Number.isFinite(gen.pricePerKwh)) {
-        gridPrice = timeline.map(() => gen.pricePerKwh);
+      gridRenewable = timeline.map(() => gen.renewable);
+      const priceC = gen.priceC;
+      if (priceC != null) {
+        gridPrice = timeline.map(() => priceC);
         gridPriceEstimated = timeline.map(() => false);
       }
     }
