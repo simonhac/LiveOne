@@ -21,7 +21,7 @@ import {
 import { SystemIdentifier, PointReference } from "@/lib/identifiers";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
 import { mintPointUid } from "@/lib/point/mint-point-uid";
-import { mirrorPoint } from "@/lib/registry/v4-mirror";
+import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
 import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
@@ -404,6 +404,15 @@ export class PointManager {
   /**
    * Update a point's information
    * Automatically invalidates the series cache for the affected system
+   *
+   * config-v4: the `point_info` update and its `points` mirror are ONE transaction — the same invariant
+   * `ensurePointInfo` holds at mint. Before this, `mirrorPoint` was called only on the mint path, so
+   * every edit here drifted `points.name`/`active`/`logical_path`/`transform`, and `mirrorPoint` could
+   * not self-heal it (the mint upsert hands it the row `point_info` just returned, so it only ever
+   * re-copies what is already there). Measured on prod 2026-07-28 while re-stemming the Sigenergy site:
+   * `point_info.logical_path_stem` said `load.rest-of-house`, `points.logical_path` still said `load`.
+   * Slice M's read-flip assumes `points` is a faithful copy, so this closes the leak at the source
+   * rather than leaving a whole edit history for M's reconcile to find.
    */
   async updatePoint(
     systemId: number,
@@ -415,18 +424,25 @@ export class PointManager {
       transform: string | null;
     }>,
   ): Promise<void> {
-    await requirePlanetscaleDb()
-      .update(pgPointInfoTable)
-      .set({
-        ...updates,
-        updatedAt: new Date(), // PG native timestamp
-      })
-      .where(
-        and(
-          eq(pgPointInfoTable.systemId, systemId),
-          eq(pgPointInfoTable.index, pointIndex),
-        ),
-      );
+    await requirePlanetscaleDb().transaction(async (tx) => {
+      const [row] = await tx
+        .update(pgPointInfoTable)
+        .set({
+          ...updates,
+          updatedAt: new Date(), // PG native timestamp
+        })
+        .where(
+          and(
+            eq(pgPointInfoTable.systemId, systemId),
+            eq(pgPointInfoTable.index, pointIndex),
+          ),
+        )
+        .returning();
+
+      // No such point — nothing was updated, so there is nothing to mirror.
+      if (!row) return;
+      await mirrorPoint(toMirrorPointInput(row), tx);
+    });
 
     // Invalidate cache for this system
     this.invalidateSeriesCache(systemId);
@@ -624,25 +640,7 @@ export class PointManager {
             .values(insertValues(pointUid))
             .onConflictDoUpdate(onConflict)
             .returning();
-          await mirrorPoint(
-            {
-              systemId: row.systemId,
-              pointUid: row.pointUid,
-              rid: row.rid,
-              physicalPathTail: row.physicalPathTail,
-              logicalPathStem: row.logicalPathStem,
-              metricType: row.metricType,
-              metricUnit: row.metricUnit,
-              displayName: row.displayName,
-              defaultName: row.defaultName,
-              subsystem: row.subsystem,
-              transform: row.transform,
-              active: row.active,
-              createdAt: row.createdAt,
-              updatedAt: row.updatedAt,
-            },
-            tx,
-          );
+          await mirrorPoint(toMirrorPointInput(row), tx);
           return row;
         });
       };

@@ -10,16 +10,15 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 12 slice H (`area_devices` → `area_members`). **Phases 10 + 11 COMPLETE; Phase 12 slices A + B + C + G + F shipped 2026-07-28.**
+## ▶ NEXT ACTION — Phase 12 slice H (`area_devices` → `area_members`). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28.**
 
-> 🛑 **Slices G + F have a MIGRATION DEBT: 0044 + 0045 are written and dry-run-verified but NOT YET
-> APPLIED to either environment.** They are `[D]` drops, so the code deploys first and the DDL follows —
-> apply **prod `sydney` first, then `liveone-dev`**, then tick the two lines here. Until then both
-> environments still carry `roles` and `user_systems` as orphan tables that no code touches: harmless,
-> but slice N's terminal `systems` drop is blocked until 0045 releases
-> `user_systems_system_id_systems_id_fk`. Do not start slice H's DDL until these two are in.
+> ✅ **The slice G + F migration debt is CLEARED. 0044 + 0045 are applied to BOTH environments**
+> (2026-07-28: prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC), post-checked identical. `roles`
+> and `user_systems` are gone; **slice N is unblocked** — FKs into `systems` went **4 → 3**, leaving
+> `point_info.system_id`, `polling_status.system_id`, `sessions.system_id`. Slice H's DDL is free to
+> start. Full apply record under slices G and F below.
 >
-> **DB state (2026-07-28): ✅ 0043 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
+> **DB state (2026-07-28): ✅ 0043, 0044, 0045 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
 > prod ([#267](https://github.com/simonhac/LiveOne/pull/267), live 15:20 AEST) and post-checked clean.**
 > All 9 active devices wrote `device_state` after the flip (`last_poll_time` past the freeze,
 > `consecutive_errors` 0), coverage 11/11, zero unmapped `polling_status` rows, and zero
@@ -150,8 +149,8 @@ model. Those are still v3, with v4 running alongside as a dark mirror.
 | **Zero v4-native renderers**                     | 19 plugins across two split registries (`CARD_RENDERERS` 10 + `TILE_RENDERERS` 9), 100% v3-shaped, reached through `v4-adapt.ts`. `card-types.ts`' 18 unified types have no renderer map.                                                                   | Phase 14    |
 | **All v4 mutation routes missing**               | 10 endpoints unbuilt (`/devices`, `/devices/{id}/points`, `/areas/{id}/members\|bindings\|derivations` PUT, `/dashboards/{id}/shares\|grants\|revisions`, `/export`, `/import`); 28 legacy handlers across 15 routes still serve.                           | Phase 14    |
 | **Derivations unused; two derive mechanisms**    | ✅ **Phase 11 DONE** — run-tracking + HWS now read/write `derivations`/`derived_intervals`; `device_trackers`/`device_run_periods` dropped (0041).                                                                                                | Phase 11    |
-| **`user_systems` / `isViewer`**                  | ✅ **Phase 12 slice F DONE** — table + `isViewer` gone; 0045 written (not yet applied). The admin Viewers UI and `/api/setup` went with it; `getSystemsVisibleByUser`'s granted leg was re-pointed at `dashboard_grants`, not deleted.                        | Phase 12    |
-| **`roles` table**                                | ✅ **Phase 12 slice G DONE** — table + the `area_bindings.role` FK gone; 0044 written (not yet applied). `area_bindings_role_check` is now the sole enforcement of the 6-role set.                                                                            | Phase 12    |
+| **`user_systems` / `isViewer`**                  | ✅ **Phase 12 slice F DONE** — table + `isViewer` gone; 0045 applied to both environments 2026-07-28. The admin Viewers UI and `/api/setup` went with it; `getSystemsVisibleByUser`'s granted leg was re-pointed at `dashboard_grants`, not deleted.          | Phase 12    |
+| **`roles` table**                                | ✅ **Phase 12 slice G DONE** — table + the `area_bindings.role` FK gone; 0044 applied to both environments 2026-07-28. `area_bindings_role_check` is now the sole enforcement of the 6-role set.                                                              | Phase 12    |
 | **Dead weight in `schema.ts`**                   | ✅ **Phase 10 DONE** — `dashboard_share_tokens`, the 5 dead `share_tokens.*_ms`/`owner_clerk_user_id` columns and `dashboard_grants.created_at_ms` all gone.                                                                                                | Phase 10    |
 | **Three `_old` hot tables in the DB**            | ✅ **Phase 10 DONE** — dropped by 0038/0039 (4,216 MB dev / 4,140 MB prod reclaimed).                                                                                                                                                                       | Phase 10    |
 | **~160 KB of cutover scaffolding**               | ✅ **Phase 10 DONE** (mostly) — retired by #251. `registry-sync`/`registry-populate` die in Phase 12 slice L; `rewrite-descriptor-area-refs.ts` still holds the `prebuild` `tsc` step open until then.                                                       | Phase 10/12 |
@@ -585,7 +584,8 @@ applied as its persistent `postgres` role.
 > **The standing lesson: a dev-side check is only evidence about prod when the sync is demonstrably
 > green.** Confirm a green _scheduled_ run before treating `liveone-dev` as a rehearsal result.
 
-**PR 2 (built 2026-07-28, not yet applied to any database).** Code-only removal plus a guarded drop:
+**PR 2 (built 2026-07-28; 0041 since applied to both environments — `device_trackers` and
+`device_run_periods` verified absent).** Code-only removal plus a guarded drop:
 
 - Deleted `scripts/config-v4/{fill,verify}-derivations.ts`, `lib/derivations/fill-map.ts` + its test
   (the fill script was their only consumer), and the `deviceTrackers` / `deviceRunPeriods` tables +
@@ -629,7 +629,7 @@ change the slicing. Recounted:
 | 7 | outbox re-key is "rename only, no rewrite" | Contradicts this section's own Risks para. Expand/contract. Cheap either way — 2 code refs (`lib/observations/outbox.ts:53,74`). |
 | 8 | `points` needs populating | Already dual-written at mint (`lib/point/point-manager.ts:620-646`) and already a **live production read** (`lib/readings/dao.ts:913-915,964,1059-1061`). The work is a read-path swap. |
 | 9 | `SystemsManager` = 72 files / 75 sites | 66 files / 78 `getInstance()` sites. Method spread is very uneven — `getSystem` alone is 34, so slice by **method**, not by file. |
-| 10 | (silent — implied by #8) | **The mirror is written at MINT only; every point EDIT drifts it.** `PointManager.updatePoint` (`lib/point/point-manager.ts:408`) writes `point_info` alone — no `mirrorPoint` call — so `display_name`, `active`, `logical_path_stem` and `transform` all diverge from `points.name`/`active`/`logical_path`/`transform` the moment anyone edits them. Its one caller is the admin edit route (`app/api/system/[systemId]/point/[pointId]/route.ts:112`), i.e. **the normal UI path**. `mirrorPoint` (`lib/registry/v4-mirror.ts:178`) can't self-heal it either: the mint upsert hands it the row `point_info` just returned, so it only ever re-copies what is already there. Measured 2026-07-28 on prod while re-stemming the Sigenergy site for [#273](https://github.com/simonhac/LiveOne/pull/273) — `point_info.logical_path_stem` said `load.rest-of-house`/`load.ev`, `points.logical_path` still said `load`/`ev.charge`; the same run found dev already half-drifted this way. Both envs repaired, but **the leak is still open**. Consequence for this phase: any pre-cutover audit of `points` fidelity is measuring mint-time truth, not current truth, so **slice M cannot assume `points` is a faithful copy** — it needs a reconcile pass (or the `updatePoint` fix in Ordering traps) before the read-flip, exactly like slice C needed one for `device_state`. |
+| 10 | (silent — implied by #8) | **The mirror is written at MINT only; every point EDIT drifts it.** `PointManager.updatePoint` (`lib/point/point-manager.ts:408`) writes `point_info` alone — no `mirrorPoint` call — so `display_name`, `active`, `logical_path_stem` and `transform` all diverge from `points.name`/`active`/`logical_path`/`transform` the moment anyone edits them. Its one caller is the admin edit route (`app/api/system/[systemId]/point/[pointId]/route.ts:112`), i.e. **the normal UI path**. `mirrorPoint` (`lib/registry/v4-mirror.ts:178`) can't self-heal it either: the mint upsert hands it the row `point_info` just returned, so it only ever re-copies what is already there. Measured 2026-07-28 on prod while re-stemming the Sigenergy site for [#273](https://github.com/simonhac/LiveOne/pull/273) — `point_info.logical_path_stem` said `load.rest-of-house`/`load.ev`, `points.logical_path` still said `load`/`ev.charge`; the same run found dev already half-drifted this way. Both envs repaired, and **the leak is now CLOSED** — slice A2 below. Consequence for this phase: any pre-cutover audit of `points` fidelity is measuring mint-time truth, not current truth, so **slice M cannot assume `points` is a faithful copy** — it needed a reconcile pass or the `updatePoint` fix — A2 took the latter, so M inherits a mirror that is correct from 2026-07-28 forward and only has to reconcile edits made BEFORE that date (audited: prod 0 drifted, dev 0 after repair). |
 
 **Work** — ordered PRs off `main` (the Phase-3 A–L pattern), **not** one long branch: the code/DDL
 interleave has to land at merge points, and a long branch has none. That is the 0037 lesson.
@@ -645,6 +645,7 @@ first, then prod, then dev. **[C]** code-only.
 | **C** | ✅ `device_state` becomes the polling writer + reader; `polling_status` frozen — see below | [C] |
 | **G** | ✅ `roles` dies (drop the `areaBindings.role` FK; `area_bindings_role_check` already enforces the 6-role set) — see below | [C] → [D] 0044 |
 | **F** | ✅ `user_systems` + `isViewer` die (prod table is empty) — see below | [C] → [D] 0045 |
+| **A2** | ✅ Close the mint-only mirror leaks (`updatePoint`, `updateSystem`, `updateDashboard`) — see below | [C] |
 | **H** | `area_devices` → `area_members` | [C] → [D] 0046 |
 | **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain | [C] |
 | **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0047 |
@@ -663,16 +664,61 @@ first, then prod, then dev. **[C]** code-only.
 - Slice M deletes the legacy `"{systemId}.{pointIndex}"` branch in `app/api/observations/receive/route.ts:81-128`
   only after `SELECT count(*) FROM observations_outbox WHERE published_at IS NULL` is 0 — an in-flight
   legacy row is a poison pill.
-- FKs into `systems` that must all go before the drop: `polling_status.system_id`, `user_systems.system_id`,
-  `sessions.system_id`, `point_info.system_id`.
-- **Teach `updatePoint` to mirror, early — it is a one-line fix that stops the drift accumulating.**
-  Adding the `mirrorPoint` call inside `PointManager.updatePoint`'s transaction (correction #10) costs
-  nothing now and is worth doing well before slice M, because every day it is missing is more divergence
-  for M's reconcile to find. The alternative — fixing it *as part of* M — means the reconcile has to
-  cover the whole history of edits rather than a frozen set.
+- FKs into `systems` that must all go before the drop: `polling_status.system_id`, `sessions.system_id`,
+  `point_info.system_id`. (`user_systems.system_id` was the fourth — released by 0045, slice F, so this
+  count is **3** as of 2026-07-28; verified on both environments.)
+- ✅ **`updatePoint` now mirrors** — done in slice A2 (2026-07-28), ahead of slice M as this bullet
+  argued it should be. M's reconcile now faces a frozen set (edits made before that date) rather than a
+  growing one, and both environments audited clean at the time of the fix.
 - Fix in K6: `createSystem` writes the `legacy_handles` row **twice** — `insertSystemToPg` calls
   `ensureDeviceForHandle` inside its tx (`lib/systems-manager.ts:448`), then `createSystem` calls
   `ensureDeviceRow` outside it (`:333`), which calls it again.
+
+**✅ SLICE A2 DONE (2026-07-28).** Close the mint-only mirror leaks. Correction #10 documented one; the
+same reasoning applied to the sibling writers found **two more**, so this is a defect *class*, not a bug:
+**every v4 mirror was wired at mint and not at edit.** That is the sentence worth carrying forward — when
+a later slice adds a mirrored column, ask which writers touch it, not just where it is minted.
+
+| Leak | Writer | Was | Now |
+| ---- | ------ | --- | --- |
+| 1 | `PointManager.updatePoint` | wrote `point_info` alone; `mirrorPoint` had exactly one caller repo-wide (the mint path) | update + `mirrorPoint` in ONE transaction |
+| 2 | `updateDashboard` | wrote `descriptor`, never regenerated `doc` — and the render path reads `doc` | regenerates `doc` via `rewriteV3ToV4` + bumps `revision`, as `createDashboard` already did |
+| 3 | `SystemsManager.updateSystem` | wrote `systems` alone; `ensureDeviceRow` was `ON CONFLICT DO NOTHING` so nothing could self-heal | update + `ensureDeviceRow` in ONE transaction, conflict clause now `DO UPDATE` |
+
+Leak 3 was **not** in the plan — found by asking the #10 question of `devices`. It has 8+ live callers
+(`/api/admin/systems/{id}/status`, `/settings`, the Tesla/Enphase connect+disconnect flows), so a rename
+or a status change through the admin UI diverged `devices.name`/`status`/`slug`/`config`/`adapter_state`.
+That matters for **slice K**, not just M.
+
+Notes worth keeping:
+
+- **`ensureDeviceRow` is now self-healing** (`DO UPDATE`), so pre-existing drift repairs itself on the
+  next write to that system. Safe because `systems` is the sole author of those columns — the only other
+  `devices` writer is the one-off `registry-populate.ts`, and nothing writes `devices.config` /
+  `primary_area_id` independently. `rid`, `primary_area_id` and `created_at` are excluded from the
+  conflict clause: identity, and `rid` is the `devices.rid == systems.id` seam invariant.
+- **No write amplification.** `ensurePointInfo` early-returns for points already in its map, so the mint
+  mirror (and therefore `ensureDeviceRow`) runs only for genuinely new points, not per poll.
+- **`toMirrorPointInput` is now shared** by both point writers. They each built the input inline before —
+  which is precisely how one of them shipped without a mirror call at all. One mapper turns a new mirrored
+  column into a compile error in one place instead of a silent leak in the other.
+- **`reown-dev-data.ts` gained `devices.owner_user_id`.** It reowned `systems`/`dashboards`/`areas` but
+  not the mirror, so dev carried **9 devices still owned by the PROD clerk id**. Dark today — nothing
+  reads that column, `listReadableDevices` authorizes off `systems` — but slice K makes it real.
+- **`deleteSystem` still orphans its `devices` row** (no FK; nothing cascades). Deliberately NOT fixed
+  here: the safe teardown order for `area_members` / `points.device_id` / the area-of-one is slice N's
+  problem, not a side effect of a v3 delete. Its only caller is a create-rollback path. Noted in code.
+
+**Drift audit at the time of the fix.** Prod: **0** device drift, **0** point drift, **0** orphan devices,
+**0** dashboard shape drift — the leaks were real but prod had not yet accumulated damage (the Sigenergy
+point drift was repaired during [#273](https://github.com/simonhac/LiveOne/pull/273)). Dev: 9 drifted
+devices, all `owner_user_id`, all from the reown gap above — repaired, re-audited **0**. So the fix is
+*preventive* on prod and *corrective* on dev, and slice M inherits a frozen reconcile set.
+
+Verified by driving each real code path against `liveone-dev` and asserting the v4 side followed, then
+restoring: `updatePoint` → `points.name` tracked; `updateSystem` → `devices.name` tracked with `rid`
+untouched; a descriptor PATCH → `doc` children went 13 → 12 with the descriptor and `revision` 1 → 2.
+`tsc --noEmit` clean, **134/134** suites.
 
 **✅ SLICE A DONE (2026-07-28).** `devices`, `points`, `area_members`, `device_state`, `legacy_handles`
 added to the sync manifest, FK-ordered after `areas`. The non-obvious part: **`devices.id` was 100%
@@ -829,6 +875,15 @@ were also exercised and both abort *before* any DROP: dropping the CHECK first r
 area_bindings.role unconstrained", and a smuggled-in out-of-set role raises "holds role(s) outside the
 CHECK set: bogus". `db:pg:generate` clean afterwards.
 
+**Applied 2026-07-28** — prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC (with 0045, one
+transaction each). Post-check identical on both: `to_regclass('public.roles')` NULL,
+`area_bindings_role_roles_role_fk` count **0**, and `area_bindings_role_check` still present *as a
+CHECK* with the full 6-role list — asserted via `pg_get_constraintdef`, not a bare count, since a count
+cannot fail given a non-`CASCADE` drop. `area_bindings` unchanged at **72** rows in both. The 6 prod
+role rows were captured before the drop, because `drizzle-kit` attaches no `'notice'` listener and the
+guard's `RAISE NOTICE` is therefore **swallowed** — the "apply log is the record" premise in the
+migration header does not hold under `db:pg:migrate`. Capture first if you want the record.
+
 **✅ SLICE F DONE (2026-07-28).** Migration **0045** drops `user_systems`, releasing one of the four FKs
 into `systems` that block slice N. Three things the one-line entry ("prod table is empty") got wrong or
 did not say:
@@ -868,6 +923,27 @@ dashboard-grant half is deliberately **loose** — "holds any grant", not "a gra
 because the precise question needs `allowedSystemIds` (descriptor parsing), which is app logic; the
 migration header says so rather than implying equivalence. Full unit suite **133/133**, `tsc --noEmit`
 and `build:local` clean (the route manifest confirms `/api/setup` is gone), `db:pg:generate` clean.
+
+**Applied 2026-07-28** — prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC. `user_systems` is NULL
+and **FKs into `systems` are 4 → 3** on both, so slice N is unblocked. Two notes for whoever runs the
+next `[D]` slice:
+
+- **Re-probe the emptiness gate at apply time, not from an earlier reading.** Because 0045's redundancy
+  guard is deliberately loose, "prod holds 0 rows" is the fact actually making the drop safe — so it was
+  re-asserted immediately before the migrate (still 0), rather than trusted from the morning's probe. A
+  row arriving in between whose grantee held any dashboard grant would have passed the guard.
+- **`ALTER TABLE area_bindings DROP CONSTRAINT` (0044) is the only prod-risky statement in either file**
+  — `ACCESS EXCLUSIVE` on a table the flow/battery-provenance read path joins per area
+  (`lib/battery-provenance/load.ts:207-223`). Hold time is trivial at 72 rows; *acquisition* is the risk,
+  since a queued `ALTER` blocks every reader behind it. `lock_timeout` cannot ride on the URL
+  (`drizzle-planetscale.config.ts:27-35` discards search params) — set it on the role instead:
+  `ALTER ROLE CURRENT_USER SET lock_timeout = '5s'`, which persists across that role's sessions. It never
+  contended (the DDL was deliberately run in the quiet window between deploy-live and the accumulator
+  regen), and a timeout would have rolled both migrations back safely — see below.
+
+Both migrations apply in a **single transaction**: `drizzle-orm`'s migrator opens one
+`session.transaction` and loops all pending files inside it. So an exception in 0045's guard rolls back
+0044's drop too — there is no half-applied state, and the abort branch is simply "`applied` stays 44".
 
 **Done when:** zero query sites against any dropped table; `SystemsManager` deleted; a real poll →
 publish → receive → aggregate → serve cycle green on `liveone-dev` including a **newly minted point**
@@ -939,16 +1015,23 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
   page shell still calls `hasTimeTravelingCard`/`primaryHandle`/`sectionAreaIdsV3` on it. Move the shell
   onto the doc and make `temporal-cards.ts` v4-aware.
 
-  ⚠️ **This is worse than "accepts only v3" — it writes to the shape that is no longer rendered.**
-  `updateDashboard` (`lib/dashboard/dashboards.ts:308`) sets `descriptor` and **never regenerates `doc`**
-  (`:333`; the doc has its own writer, `updateDashboardDoc` at `:188`), while since the Phase 8/10
-  cutover the render path is the doc — `app/dashboard/[...slug]/page.tsx:86` takes `doc` when it passes
-  the shape guard and keeps v3 only as a fallback. So an edit through the PATCH route is **invisible on
-  screen and silently diverges the two shapes**; the more it is used before this phase, the more
-  `descriptor` and `doc` disagree. Confirmed 2026-07-28 tidying the Kew dashboard: patching `descriptor`
-  alone would have been a no-op, so both were pruned together and `revision` bumped by hand. Until the
-  v4 editor exists, treat that route as unsafe for card/tile edits — and note the drop of
-  `dashboards.descriptor` below is only safe once nothing has been authoring into it unilaterally.
+  ✅ **FIXED in slice A2 (2026-07-28) — but it comes back to bite in THIS phase.** It used to be worse
+  than "accepts only v3": it wrote to the shape that is no longer rendered. `updateDashboard`
+  (`lib/dashboard/dashboards.ts:308`) set `descriptor` and **never regenerated `doc`**, while since the
+  Phase 8/10 cutover the render path is the doc — `app/dashboard/[...slug]/page.tsx:86` takes `doc` when
+  it passes the shape guard, keeping v3 only as a fallback. So a descriptor PATCH was **invisible on
+  screen and silently diverged the two shapes**. Not theoretical: `components/AddAreaDialog.tsx:86` posts
+  `{ descriptor }` to that route, so adding an area section did nothing visible. Confirmed 2026-07-28
+  tidying the Kew dashboard — patching `descriptor` alone would have been a no-op, so both were pruned
+  together and `revision` bumped by hand. A2 makes the PATCH regenerate `doc` via `rewriteV3ToV4` and bump
+  `revision`, exactly as `createDashboard` already did.
+
+  ⚠️ **The A2 fix regenerates UNCONDITIONALLY, which is only safe while `doc` has no independent author.**
+  Today `doc` comes solely from `createDashboard`'s rewrite and this one. **The moment this phase ships a
+  v4 editor that writes `doc` directly, a descriptor PATCH will CLOBBER v4-authored structure** — so the
+  editor work must also turn this into a reject-or-merge decision, not an overwrite. There is a pointer
+  to this paragraph in the code. The drop of `dashboards.descriptor` below remains the real fix, and is
+  only safe once nothing authors into it unilaterally.
 - **Build the 10 missing `/api/v4` mutation endpoints** — `/devices`, `/devices/{id}/points`,
   `/areas/{id}/members|bindings|derivations` (PUT), `/dashboards/{id}/shares|grants|revisions`, `/export`,
   `/import` — then retire the 28 legacy handlers across 15 `/api/dashboards/*` and `/api/areas/*` routes.
