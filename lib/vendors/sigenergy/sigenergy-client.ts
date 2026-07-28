@@ -93,6 +93,72 @@ function pickNumber(obj: unknown, keys: string[]): number | null {
   return null;
 }
 
+/**
+ * Like `pickNumber`, but prefers the first NON-ZERO candidate, falling back to the first present
+ * one (so a genuinely idle reading is still 0, not null).
+ *
+ * Needed where the payload carries several mutually-exclusive variants of the same measurement and
+ * the unused ones are present-and-zero rather than absent — `pickNumber` would stop at the first
+ * key that merely exists. The EV charger is the live case: a Sigen site with an AC charger still
+ * reports `evPower: 0` (the DC field) alongside the real `acPower`, so key order alone can't tell
+ * "this site has no DC charger" from "the DC charger is idle".
+ */
+export function pickNumberPreferNonZero(
+  obj: unknown,
+  keys: string[],
+): number | null {
+  const first = pickNumber(obj, keys);
+  if (first === null || first !== 0) return first;
+  for (const key of keys) {
+    const v = pickNumber(obj, [key]);
+    if (v !== null && v !== 0) return v;
+  }
+  return first;
+}
+
+/**
+ * Extract the headline energy-flow metrics from an already-unwrapped `energyflow` payload body.
+ *
+ * Split out of `getEnergyFlow` (which owns only the HTTP call) so the same extraction can be
+ * replayed over ARCHIVED payloads in `sessions.response` — the repair path in
+ * `scripts/utils/rebuild-sigenergy-readings.ts` rebuilds history through this exact function, so a
+ * future change to the field mapping can never leave replayed history disagreeing with live polls.
+ *
+ * Signs here are the RAW VENDOR convention; `sigenergyFlowToData` normalises them.
+ */
+export function parseEnergyFlow(json: unknown): SigenergyEnergyFlow {
+  // Takes the FULL response (not the unwrapped body) so an archived `sessions.response` row can be
+  // handed straight in — unwrapping here removes the chance of a caller getting that step wrong.
+  const d =
+    json && typeof json === "object" && "data" in json
+      ? ((json as Record<string, unknown>).data as Record<string, unknown>)
+      : ((json ?? {}) as Record<string, unknown>);
+  const raw = json;
+  return {
+    pvKw: pickNumber(d, ["pvPower", "pv_power", "solarPower"]),
+    batteryKw: pickNumber(d, [
+      "batteryPower",
+      "essPower",
+      "batteryChargeDischargePower",
+    ]),
+    // Grid is reported as `buySellPower` (+sell/export, −buy/import — the opposite of what the
+    // name suggests; confirmed by the vendor's own balance identity, see SigenergyEnergyFlow).
+    gridKw: pickNumber(d, ["buySellPower", "gridPower", "gridActivePower"]),
+    loadKw: pickNumber(d, ["loadPower", "consumptionPower"]),
+    // DC chargers report `evPower`; AC chargers report `acPower`. BOTH keys are always present,
+    // with the inapplicable one pinned at 0 — so this must prefer the non-zero candidate rather
+    // than the first key that exists (which silently reported 0 for every AC site).
+    evKw: pickNumberPreferNonZero(d, [
+      "evPower",
+      "acPower",
+      "evsePower",
+      "chargerPower",
+    ]),
+    batterySoc: pickNumber(d, ["batterySoc", "soc", "batterySOC"]),
+    raw,
+  };
+}
+
 /** The statistics endpoint sometimes returns `data` as a JSON-encoded string — re-parse if so. */
 function maybeJson(v: unknown): unknown {
   if (typeof v !== "string") return v;
@@ -448,23 +514,7 @@ export class SigenergyClient {
       this.token!.authMode === "legacy"
         ? `${legacyBase(this.region)}/device/sigen/station/energyflow?id=${encodeURIComponent(stationId)}`
         : `${openapiBase(this.region)}/openapi/systems/${encodeURIComponent(stationId)}/energyFlow?systemId=${encodeURIComponent(stationId)}`;
-    const json = await this.apiGet(url);
-    const d = this.unwrap(json);
-    return {
-      pvKw: pickNumber(d, ["pvPower", "pv_power", "solarPower"]),
-      batteryKw: pickNumber(d, [
-        "batteryPower",
-        "essPower",
-        "batteryChargeDischargePower",
-      ]),
-      // Grid is reported as `buySellPower` (+buy/import, −sell/export).
-      gridKw: pickNumber(d, ["buySellPower", "gridPower", "gridActivePower"]),
-      loadKw: pickNumber(d, ["loadPower", "consumptionPower"]),
-      // DC chargers report `evPower`; AC chargers report `acPower`.
-      evKw: pickNumber(d, ["evPower", "acPower", "evsePower", "chargerPower"]),
-      batterySoc: pickNumber(d, ["batterySoc", "soc", "batterySOC"]),
-      raw: json,
-    };
+    return parseEnergyFlow(await this.apiGet(url));
   }
 
   /**

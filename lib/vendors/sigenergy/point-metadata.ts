@@ -90,19 +90,38 @@ export const SIGENERGY_POINTS: SigenergyPointConfig[] = [
   },
 ];
 
-/** Convert a raw energy-flow response (kW / %) into the normalized snapshot (W / %). */
+/**
+ * Convert a raw energy-flow response (kW / %) into the normalized snapshot (W / %).
+ *
+ * SIGN NORMALISATION — Sigenergy reports its bidirectional channels "outflow positive" (+ = energy
+ * leaving the house: charging the battery, exporting to the grid). LiveOne's canonical `bidi.*`
+ * convention is the opposite, "inflow positive" (+ = battery DISCHARGE, + = grid IMPORT), which is
+ * what `buildFlowSeries` assumes when it splits a signed series into its source and load halves.
+ * Both bidi channels are therefore negated here, at the adapter boundary, so every downstream
+ * consumer (tiles, charts, Sankey, the provenance fold, KV) is correct without knowing that
+ * Sigenergy is unusual.
+ *
+ * Verified against the vendor's own identity `pvPower = buySellPower + batteryPower + loadPower +
+ * acPower`, which holds to a 0.001 kW mean absolute residual over 2329 live samples — it balances
+ * ONLY if positive buySellPower is export and positive batteryPower is charge.
+ *
+ * Solar/load/EV are unidirectional and pass through unchanged.
+ */
 export function sigenergyFlowToData(
   flow: SigenergyEnergyFlow,
   timestamp: Date,
 ): SigenergyData {
   const toW = (kw: number | null) =>
     kw == null ? null : Math.round(kw * 1000);
+  /** Vendor "outflow positive" → canonical "inflow positive". Preserves null; avoids -0. */
+  const toWInverted = (kw: number | null) =>
+    kw == null ? null : Math.round(-kw * 1000) + 0;
   return {
     timestamp,
     solarW: toW(flow.pvKw),
-    batteryW: toW(flow.batteryKw), // + charge / − discharge (vendor sign)
+    batteryW: toWInverted(flow.batteryKw), // vendor + charge → canonical + discharge
     batterySOC: flow.batterySoc,
-    gridW: toW(flow.gridKw), // + import / − export (vendor sign)
+    gridW: toWInverted(flow.gridKw), // vendor + export → canonical + import
     loadW: toW(flow.loadKw),
     evW: toW(flow.evKw),
   };

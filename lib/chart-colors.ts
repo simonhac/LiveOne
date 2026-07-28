@@ -29,6 +29,7 @@ export const CHART_COLORS = {
   // Special load types
   hotWater: "rgb(251, 146, 60)", // orange-400 - Hot Water/HWS/Heat Pump
   pool: "rgb(34, 211, 238)", // cyan-400 - Pool (aqua)
+  ev: "rgb(220, 38, 38)", // red-600 - EV charging (mirrors the mySigen EVAC node)
 
   // Other
   restOfHouse: "rgb(156, 163, 175)", // gray-400 - Rest of House
@@ -126,6 +127,11 @@ export function getColorForPath(path: string, label?: string): string {
   // Grid
   if (type === "bidi" && subtype === "grid") {
     return CHART_COLORS.grid.main;
+  }
+
+  // EV charging — a top-level load stem, so it never reaches the `load` branch below.
+  if (type === "ev") {
+    return CHART_COLORS.ev;
   }
 
   // Loads - match by logical path segments

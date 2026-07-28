@@ -1145,6 +1145,50 @@ async function delete1dRange(
   return { deleted: res.length };
 }
 
+/**
+ * Overwrite the `value` of existing raw readings, keyed on the real PK (point rid, measurement_time).
+ *
+ * REPAIR-ONLY. The ingest pipeline never needs this — it inserts. This exists so a vendor-semantics
+ * defect (a sign convention stored inverted, a field never read) can be corrected in place by
+ * REPLAYING the archived payload in `sessions.response` through the fixed adapter, rather than by
+ * blind arithmetic like `value = -value`, which is neither idempotent nor safe to re-run. See
+ * `scripts/utils/rebuild-sigenergy-readings.ts`.
+ *
+ * Silently ignores rows that don't exist — callers derive the list from a prior read, so a missing
+ * row means it was deleted underneath us, not that the caller is wrong.
+ */
+async function updateRawValues(
+  updates: { point: PointId; measurementTimeMs: number; value: number }[],
+  exec?: ReadingsExec,
+): Promise<{ updated: number }> {
+  if (updates.length === 0) return { updated: 0 };
+  const db = exec ?? requirePlanetscaleDb();
+  const ridByPoint = await RegistryCache.ridsForPoints([
+    ...new Set(updates.map((u) => u.point)),
+  ]);
+  let updated = 0;
+  // Chunked so one statement can't blow the parameter limit on a multi-week repair.
+  for (let i = 0; i < updates.length; i += 500) {
+    const chunk = updates.slice(i, i + 500);
+    const tuples = chunk
+      .map((u) => {
+        const rid = ridByPoint.get(u.point);
+        if (rid == null) return null;
+        return sql`(${rid}::integer, ${new Date(u.measurementTimeMs).toISOString()}::timestamp, ${u.value}::double precision)`;
+      })
+      .filter((t): t is NonNullable<typeof t> => t !== null);
+    if (tuples.length === 0) continue;
+    const res = await db.execute(sql`
+      update point_readings pr
+      set value = v.value
+      from (values ${sql.join(tuples, sql`, `)}) as v(point_rid, measurement_time, value)
+      where pr.point_rid = v.point_rid and pr.measurement_time = v.measurement_time
+    `);
+    updated += res.rowCount ?? 0;
+  }
+  return { updated };
+}
+
 // ── Admin readings views (config-v4 PR-I) ──────────────────────────────────────────────────────────
 // The admin point-readings pivot + single-point ±window drill-downs, relocated VERBATIM from the former
 // `lib/db/planetscale/readings-read-pg.ts`. They are raw `sql.raw(...)` queries — naming the hot tables
@@ -1498,6 +1542,7 @@ export const ReadingsDao = {
   insertRaw,
   insert5m,
   upsert1d,
+  updateRawValues,
   earliestAgg5mMs,
   deviceIdsWithAgg5mSince,
   latestAgg5mIntervalMsForDevice,
