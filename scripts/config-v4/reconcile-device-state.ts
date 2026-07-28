@@ -8,20 +8,38 @@
  * interim. Turning on the dual-write only makes the two tables move together — it cannot close a gap
  * that already exists. This does, with an ABSOLUTE copy of all nine payload columns.
  *
- * Runbook (slice C):
- *   1. run this against prod BEFORE the flip deploys, so device_state is current under the old build
- *      and the flip has nothing to catch up on. Re-run immediately before the merge: prod keeps
- *      writing only polling_status until the deploy lands, so drift re-accumulates at ~1/device/min.
- *   2. after the deploy, run it once more as a post-check — from here on a non-zero drift means a
- *      device_state write has been ERRORING, not that the tables are merely out of step.
+ * 🛑 SPENT TOOL — this was a PRE-flip step, and slice C has deployed (prod 2026-07-28 15:20 AEST).
  *
- * Idempotent and safe to re-run: it is a plain upsert, and it makes no decisions from prior state.
+ * It ran against prod immediately before the merge, so device_state was current under the old build and
+ * the flip had nothing to catch up on. From the moment the flip went live, BOTH halves of this script
+ * stopped meaning what they meant:
  *
- * ⚠️ Direction is one-way, polling_status → device_state. Do NOT invert it after the read-flip.
+ *   - The COPY now runs backwards. polling_status is frozen; device_state is the live table. Committing
+ *     would rewind the live counters and push last_success_time BACKWARDS — and
+ *     `evaluateBoundarySchedule` (lib/vendors/base-adapter.ts) keys off exactly that, so every
+ *     boundary-scheduled vendor would read "window not yet recorded" and re-poll on each tick until it
+ *     next succeeded. main() detects the flip and refuses --commit; see the FLIPPED guard below.
+ *   - The DRIFT report means nothing. Post-flip the two tables are SUPPOSED to diverge (~1 poll per
+ *     device per minute), so a non-zero drift is the expected state, not a fault signal. An earlier
+ *     version of this header claimed the opposite — that post-deploy drift proved a device_state write
+ *     was erroring. It does not. That advice was wrong.
+ *
+ * To check the device_state writer instead, do not come here — read device_state directly:
+ * per-device `last_poll_time` past the polling_status freeze, coverage against the mapped set, and
+ * `grep DEVICE-STATE` in the prod logs (the write swallows its own errors, so the log line and a
+ * stalled last_poll_time are the only two surfaces). Recorded in full under slice C in
+ * docs/plans/config-v4-execution-plan.md.
+ *
+ * Idempotent, in that it is a plain upsert that makes no decisions from prior state — but idempotent is
+ * not the same as harmless once the source table is the stale one.
+ *
+ * ⚠️ Direction is one-way, polling_status → device_state, and there is no reverse. A rollback is
+ * redeploy-the-previous-build: it resumes reading/writing polling_status, stale by the length of the
+ * flip, which over-polls rather than under-polls and self-heals within a tick.
  *
  * Dies with the rest of scripts/config-v4/ at slice L.
  *
- * Usage:
+ * Usage (historical — kept so the prod invocation is on the record):
  *   npx tsx scripts/config-v4/reconcile-device-state.ts                     # dry run (default)
  *   npx tsx scripts/config-v4/reconcile-device-state.ts --commit            # dev (CONFIG_V4_TARGET=dev)
  *   CONFIG_V4_TARGET=prod PLANETSCALE_DATABASE_URL="<prod url>" ALLOW_PROD_DB_IN_DEV=true \
@@ -59,7 +77,17 @@ const UNMAPPED = `
     FROM polling_status ps WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = ps.system_id)
    ORDER BY ps.system_id`;
 
-/** Per-device drift — must be zero before the read-flip deploys, and after. */
+/**
+ * Has the slice C flip already happened? Once it has, polling_status is frozen and device_state
+ * advances, so device_state's newest poll runs ahead — a condition that cannot occur while the old
+ * build is the writer, because then polling_status is the one moving. `coalesce(..., false)` so an
+ * empty table reads as "not flipped" rather than NULL.
+ */
+const FLIPPED = `
+  SELECT coalesce((SELECT max(last_poll_time) FROM device_state)
+                > (SELECT max(last_poll_time) FROM polling_status), false) AS flipped`;
+
+/** Per-device drift — must be zero before the read-flip deploys. Meaningless after it; see the header. */
 const DRIFT = `
   SELECT ps.system_id, ps.total_polls AS ps_total, ds.total_polls AS ds_total,
          ps.successful_polls AS ps_ok, ds.successful_polls AS ds_ok,
@@ -130,6 +158,22 @@ async function main() {
   const driftBefore = await rows(DRIFT);
   console.log(`drift before: ${driftBefore.length} device(s)`);
   for (const r of driftBefore) console.log("   ", JSON.stringify(r));
+
+  // The one guard that makes the destructive direction unmakeable rather than merely undocumented.
+  // Checked in dry-run too, because the drift list printed above is misleading post-flip.
+  const [{ flipped }] = await rows(FLIPPED);
+  if (flipped) {
+    console.log(
+      "\n⚠️  device_state is AHEAD of polling_status — the slice C read/write flip is LIVE.\n" +
+        "    polling_status is frozen, so the drift above is the expected state, not a fault signal.\n" +
+        "    To check the device_state writer, read device_state directly (see this file's header).",
+    );
+    if (commit)
+      throw new Error(
+        "refusing --commit: the flip is live, so this copy would REWIND device_state to the frozen " +
+          "polling_status snapshot (counters lost, last_success_time backwards, boundary vendors re-polling)",
+      );
+  }
 
   if (!commit) {
     console.log("\nDry-run only; rerun with --commit to write.");

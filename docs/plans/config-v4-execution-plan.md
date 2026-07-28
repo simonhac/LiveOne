@@ -12,17 +12,26 @@
 
 ## ▶ NEXT ACTION — Phase 12 slice G (`roles` dies). **Phases 10 + 11 COMPLETE; Phase 12 slices A + B + C shipped 2026-07-28.**
 
-> **DB state (2026-07-28): ✅ 0043 applied to prod `sydney` AND `liveone-dev`; ✅ the prod reconcile has
-> run (9 drifted devices → 0).** The code is not deployed yet.
+> **DB state (2026-07-28): ✅ 0043 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
+> prod ([#267](https://github.com/simonhac/LiveOne/pull/267), live 15:20 AEST) and post-checked clean.**
+> All 9 active devices wrote `device_state` after the flip (`last_poll_time` past the freeze,
+> `consecutive_errors` 0), coverage 11/11, zero unmapped `polling_status` rows, and zero
+> `[DEVICE-STATE] … failed (swallowed)` in the runtime logs. The two `moved: false` devices are systems
+> 2 and 3, `status = 'removed'` — never polled, so correct. `polling_status` is frozen at its last
+> old-build write, **2026-07-28 05:21:51 UTC**, and is not advancing.
 >
-> ⚠️ **Before merging slice C, re-run `scripts/config-v4/reconcile-device-state.ts --commit` against
-> prod.** Prod is still running the pre-flip build, which writes only `polling_status`, so
-> `device_state` re-drifts at roughly one poll per device per minute from the moment of the reconcile.
-> Deploying against a stale `device_state` is fail-safe but ugly: `evaluateBoundarySchedule` keys off
-> `lastSuccessTime`, so every boundary-scheduled vendor would read "window not yet recorded" and poll on
-> each tick until it next succeeds (self-healing within a tick — a stale state over-polls, never
-> under-polls), and the admin table would show a stale last-poll until then. Re-running the reconcile
-> immediately before the merge shrinks that window to the deploy latency.
+> 🛑 **Do NOT run `scripts/config-v4/reconcile-device-state.ts --commit` again.** It was a *pre-flip*
+> tool and its direction is now backwards: `polling_status` is frozen while `device_state` advances, so
+> the absolute copy would rewind the live counters and push `last_success_time` backwards.
+> `evaluateBoundarySchedule` keys off exactly that, so every boundary-scheduled vendor would read
+> "window not yet recorded" and re-poll on each tick until it next succeeded. The script now detects the
+> flip and refuses `--commit`. Its **drift report is equally spent** — post-flip the two tables are
+> *supposed* to diverge, so a non-zero drift is the expected state, not a fault signal. (Both this
+> banner and the script header previously said the opposite; that was wrong.) To check the writer, read
+> `device_state` directly, per the post-check recorded under slice C below.
+>
+> Residue worth knowing: the reconcile ran ~5 minutes before the flip's first poll, so each device's
+> cumulative counters are permanently short by ~5 polls. Nothing reads their absolute value.
 
 Phase 9's PR 1 + PR 2 merged as [#250](https://github.com/simonhac/LiveOne/pull/250). **PR 3 ("aesthetic
 changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the migration is 100% complete
@@ -695,12 +704,15 @@ to be the only bridge across the deploy. It is not: the **reconcile** is, and it
 deploy as easily as after. Running it against prod first (done — 9 drifted devices → 0) leaves
 `device_state` current under the old build, so the flip has nothing to catch up on and the dual-write
 intermediate bridges a gap that no longer exists. The dual-write was still built and verified on dev
-first — it is how the counter and timezone traps below were found — it just never needed to ship. What
-remains to watch is drift re-accumulating between the reconcile and the deploy; see the banner above.
+first — it is how the counter and timezone traps below were found — it just never needed to ship. The
+one cost of that choice is the gap between the reconcile and the deploy, which the old build spends
+writing only `polling_status`: it came in at ~5 minutes, i.e. ~5 polls per device permanently missing
+from the cumulative counters. See the banner above for the measured post-deploy state.
 
-- `lib/polling-utils.ts` grows a `device_state` twin of each upsert; the six call sites are unchanged.
-  Both legs run under `Promise.all` and **each swallows its own error**, so neither can break the other
-  or the caller's session bookkeeping.
+- `lib/polling-utils.ts` writes `device_state` at each upsert; the six call sites are unchanged. The
+  write **swallows its own error** (logged as `[DEVICE-STATE] … failed (swallowed)`), so it cannot break
+  the caller's session bookkeeping — which also means the log line and a stalled `last_poll_time` are
+  the *only* two places a failure surfaces.
 - The twin is hand-written SQL, not the drizzle builder, so the device resolves in the SAME statement
   (`FROM devices d WHERE d.rid = $1`, an index-only probe of `devices_rid_unique`) instead of a second
   round trip on the ingest path. Deliberately **not** `DeviceRegistry.addrForHandle` — uncached, and it
@@ -716,8 +728,8 @@ remains to watch is drift re-accumulating between the reconcile and the deploy; 
   `total_polls`/`successful_polls`/`consecutive_errors` are running totals, so the dual-write alone
   cannot close the gap that opened between the 2026-07-26 cutover seed and now — it only makes the two
   tables move together. This does an absolute copy, asserts coverage, and reports per-device drift.
-  **Run it against prod immediately before slice C merges**; after the deploy, a non-zero drift means a
-  `device_state` write has been erroring.
+  It ran against prod immediately before slice C merged, and is **spent from that moment** — see the 🛑
+  in the banner above for why neither `--commit` nor its drift report means anything post-flip.
 - Also fixed here: `lib/readings/preview-seed.ts`'s `CONFIG_TABLES` went stale at the cutover — it named
   only the legacy six, so a freshly seeded preview got `systems`/`point_info` but no
   `areas`/`devices`/`points`, and the time-series COPY then failed the `point_readings.point_rid` FK.
@@ -759,6 +771,25 @@ baseline must be `device_state`, not `polling_status` — the 2-hourly sync re-i
 `device_state` over dev's reconciled copy, so comparing the two tables measures the missing PROD
 reconcile, not the flip; and pg returns `timestamp` as a `Date` through drizzle but as a bare string
 through `execute()`, so a naive comparator reports every date as mismatched.
+
+**Post-check on prod after the deploy** (2026-07-28, ~33 min in). The check that actually proves the
+flip, and the one to repeat if `device_state` is ever suspect — three reads, no reconcile:
+
+1. A short-TTL `pg_read_all_data` role on `sydney`, then per device
+   `device_state.last_poll_time > polling_status.last_poll_time` — one post-flip write landed. All 9
+   active devices ✅; systems 2 and 3 are `status = 'removed'`, so their `false` is correct. Coverage
+   `11/11`, unmapped `0`, `consecutive_errors 0`, `max(device_state.updated_at)` seconds old,
+   `max(polling_status.updated_at)` 33 minutes stale and static.
+2. `vercel logs <prod deployment> --json | grep -iE "DEVICE-STATE|UnknownDevice"` — zero hits. Required,
+   because the write swallows its own errors.
+3. **Cadence adherence is what proves the READ path**, and it needs no query: the 15-minute and 5-minute
+   vendors were still on their intervals. A broken read returns null → `shouldPoll` sees "never polled"
+   → everything polls every minute. So the failure mode is an over-poll storm, not missing data.
+
+Note the sign trap when reading `total_polls` deltas: `device_state` starts the post-flip era *behind*
+`polling_status` by the reconcile→deploy gap and only crosses over once that many minutes of polling
+accrue. The observed `+2…+28` was consistent with a ~5-minute gap; a negative delta shortly after a flip
+is not a fault.
 
 **Done when:** zero query sites against any dropped table; `SystemsManager` deleted; a real poll →
 publish → receive → aggregate → serve cycle green on `liveone-dev` including a **newly minted point**

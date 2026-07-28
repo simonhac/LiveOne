@@ -82,8 +82,11 @@ export async function updatePollingStatusError(
 // `polling_status` is FROZEN, not dropped: it holds the pre-flip state verbatim as the rollback
 // snapshot until slice N drops it. Nothing writes it and nothing reads it. Do not resurrect the
 // write to "keep it warm" — that is a full vendor-payload jsonb write per poll per device for a
-// table no code touches. If a rollback is ever needed, redeploy the previous build and re-run
-// scripts/config-v4/reconcile-device-state.ts in reverse.
+// table no code touches. A rollback is redeploy-the-previous-build, nothing more: it resumes
+// reading/writing polling_status, stale by the length of the flip, which makes boundary-scheduled
+// vendors over-poll (never under-poll) and self-heals within a tick. Do NOT reach for
+// scripts/config-v4/reconcile-device-state.ts to "sync back" — it only copies
+// polling_status → device_state, the wrong way now, and it refuses --commit once the flip is live.
 //
 // LOG-BUT-DON'T-THROW: a PG write failure here is caught and logged, never rethrown. This runs from
 // the poll's shouldPoll path; if it threw, the caller would treat the poll as failed and re-poll,
