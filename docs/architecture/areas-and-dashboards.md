@@ -1,416 +1,227 @@
 # Areas & Dashboards
 
-> Status: foundation live · Phase 1 (sharing hardening) done · Phase 2a (default dashboard + scope seam)
-> done · Phase 2b-1 (multi-area cards) done · Phase 2b-2 (first-class composition dashboards) done (additive,
-> legacy per-system path kept) · **Composite special-case retired (#105 + #106): an Area is now a grouping
-> of 1..N member devices — resolver unified, `kind` no longer read, `area_devices` membership live.** The
-> `areas.kind` _column_ was **dropped in migration `0019`** (#128); only the create-UX reframe remains of
-> **Phase D** (§5). The unified tile
-> model (§6, #110), composition sharing + settings menu (§7, #112), and the generalized sankey (§8,
-> #116–118) have all shipped. Phase 3 (HA export) planned.
-> Schema source of truth: `lib/db/planetscale/schema.ts` (Drizzle is authoritative — never hand-rolled
-> SQL, never `drizzle-kit push`). This doc holds the _why_ and the invariants; columns and routes live in
-> code.
+> **Status:** current — **rewritten 2026-07-28 for config-v4.** This doc holds the _why_ and the
+> invariants of the three-layer split (physical / semantic / presentation). Columns, types and routes
+> live in code: `lib/db/planetscale/schema.ts` is the schema source of truth (Drizzle is
+> authoritative — never hand-rolled SQL, never `drizzle-kit push`).
+>
+> **Config-v4 supersedes this doc on design decisions.** Where the two disagree,
+> [`../plans/config-v4-clean-sheet.md`](../plans/config-v4-clean-sheet.md) wins; three decisions this
+> doc used to assert have been **overturned** and are recorded as such in §7. This describes the v4
+> model as designed and delivered — for what is live today vs. still finishing, see
+> [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
 
-## 1. Model
+## 1. The three layers
 
 The initiative splits three concerns that the old `systems` table fused (a "composite system" mixed
-physical collection, semantic grouping, and presentation). The split follows Home Assistant's vocabulary
-and the Apple Home / Health model: **a good auto-generated default, customizable on top — not a blank
-canvas.**
+physical collection, semantic grouping, and presentation). The split follows Home Assistant's
+vocabulary and the Apple Home / Health model: **a good auto-generated default, customizable on top —
+not a blank canvas.**
 
-| Layer            | Tables                            | HA analogue          | Responsibility                                                                              |
-| ---------------- | --------------------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
-| **Physical**     | `systems`, `point_info`           | Device / Entity      | Where data is collected. A `system` is a vendor connection; a `point` is a measured signal. |
-| **Semantic**     | `areas`, `area_bindings`, `roles` | Area / Energy config | What the data _means_. Typed role→point edges.                                              |
-| **Presentation** | `dashboards`, dashboard cards     | Dashboard / View     | How a user sees it. Per-user layout.                                                        |
+| Layer            | Tables                                                  | HA analogue          | Responsibility                                                                                   |
+| ---------------- | ------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| **Physical**     | `devices`, `points`, `device_state`                     | Device / Entity      | What exists and what it measures. A device is a vendor connection; a point is a measured signal. |
+| **Semantic**     | `areas`, `area_members`, `area_bindings`, `derivations` | Area / Energy config | What the data _means_ (roles) and where it is.                                                   |
+| **Presentation** | `dashboards`, `dashboard_grants`, `share_tokens`        | Dashboard / View     | What people see and share.                                                                       |
 
-- **Points** are addressed by `(system_id, index)` but also carry a deterministic `point_uid` (uuidv5) —
-  a stable identity that survives re-addressing.
-- **An Area is a grouping of 1..N member devices** (`area_devices`). A **single-device Area** wraps one
-  physical system; a **multi-device Area** (the former "composite") groups several. There is **no special
-  "composite" concept** — a multi-device Area with no real `systems` row of its own is **areas-backed**:
-  `SystemsManager` synthesizes a virtual system on demand, keyed on `areas.legacy_system_id` (the old
-  `systems.id`), preserving integer addressing with no UUID rewrite. The point resolver
-  (`PointManager._resolvePointsForViewable`) dispatches on the **structural** "areas-backed (no real
-  `systems` row)" signal (`SystemsManager.isAreasBackedSystem`), **not** a `kind` string.
-- **Membership + override.** An Area's points resolve under membership + override: **`area_bindings`
-  _select_** the points when present (a curated multi-device Area — every Area that exists today has
-  bindings); with **no bindings** an Area **defaults to the union of its member devices' own points**.
-  `roles` is the single source of truth for role semantics (the HA `device_class`/`state_class`/unit/
-  aggregability registry, projected from `lib/roles/registry.ts`).
-- **Areas are lazy.** A system is **not** given an area-of-one at create-time; one is minted on demand
-  the moment it's needed — when the system forms a complete flow role set (the daily recompute heal) or
-  when its location is set — so bare monitoring-only systems don't accrue pointless Area rows.
-- **`areas.kind` (`'identity'|'composite'`) is gone** — retired in code (#105/#106 — no reader branches on
-  it; the admin list, the resolver, grid, and KV fan-out all derive single-vs-multi from membership) and the
-  _column_ was **dropped in migration `0019`** (#128). The distinction is purely structural (membership),
-  captured in vocabulary as **area-of-one** vs **multi-device area**.
+Two rules hold across all three:
 
-**Invariants.** The flow matrix (`point_readings_flow_1d`) is area-keyed with byte-identical rows — never
-recomputed, never re-keyed, FK never cascaded. The integer `legacy_system_id` handle is **load-bearing
-addressing — kept** (not a cleanup target; see §4). Every resolver-touching change is gated by a per-area
-parity assertion (`getActivePointsForSystem(handle)` byte-identical pre/post).
+- **Capabilities are derived at runtime, never stored.** What an area can show is computed from its
+  points, not persisted and kept in sync.
+- **Store choices and structure only.** Display names, headers, default layout, availability and
+  timezone are resolved at render. This is what keeps documents small and rename-proof.
 
-**Areas are organizational, not the access boundary.** Access is **area/system-granular** (a share's scope
-is the union of its dashboard's card areas); point-level narrowing within an area is a future tightening.
+See [`home-assistant-comparison.md`](home-assistant-comparison.md) for how each layer scores against
+HA — including where HA is ahead.
 
-## 2. Dashboards & sharing
+## 2. Physical: devices and points
 
-A `dashboard` is **first-class** (Phase 2b-2): an owner-scoped, named, id/alias-addressable row whose
-content is an **opaque `descriptor` JSONB** (parsed client-side) — an ordered list of cards, each bound to
-its own Area (`cards[i].areaId`). A **composition dashboard** has **no home system/area** (`system_id` and
-`area_id` are null); it's addressed by `/dashboard/{user}/id/{id}` or `/dashboard/{user}/{shortname}`
-(`alias`, owner-unique). The **legacy per-system dashboards** (one row per `(clerk_user_id, system_id)`,
-reached at `/dashboard/{systemId}`) **coexist** unchanged — they carry `system_id`/`area_id`; composition
-dashboards leave both null (the additive `0017` schema makes `system_id` nullable so both live in one
-table). See §3 for why the card — not a table — is the dashboard↔area junction.
+- **Identity is deterministic.** `points.id` is `uuidv5(vendor : vendor_site_id : physical_path)`, so
+  re-onboarding a device reproduces the same point ids (v7 fallback on collision). The public wire
+  form is a TypeID (`pt_…`); `devices` are `dv_…`. The old per-device `(system_id, index)` address
+  and its allocator are gone.
+- **`rid` is internal only.** `points.rid` / `devices.rid` are compact integers for the hot
+  time-series tables (`point_readings(point_rid, measurement_time)` and the aggregates). The seam
+  rule is absolute: **uuids above, rids below**, with `lib/registry/registry-cache.ts` the only owner
+  of the translation and a prebuild gate enforcing it.
+- **A device belongs to exactly one primary area** (`devices.primary_area_id`, NOT NULL) and may be a
+  member of others. Timezone and location live **only** on the area.
 
-**The dashboard is the unit of sharing** (shipped, no flag): `dashboard_share_tokens` (read-only public
-links, expiry/revoke) and `dashboard_grants` (membership: `owner|admin|viewer`).
+## 3. Semantic: areas, membership, bindings
 
-**Scope.** `resolveDashboardReadPoints` (`lib/dashboard/access.ts`) resolves a share's read scope as the
-**union of the dashboard's card areas**: the dashboard's home area (`dashboards.area_id`, null for a
-composition dashboard) ∪ each card's `areaId`, every area uuid → its `legacy_system_id` → points.
-`requireDashboardAccess` enforces it: a token authorizes `?systemId=X` only when X is in that union — a
-multi-area dashboard exposes exactly its card areas, a legacy single-area dashboard the singleton
-`{systemId}`. This is **area/system-granular**: full point set per area. Point-level narrowing within an
-area (a card binding a single role/point subset) is the remaining future tightening — `points[]` already
-carries the exact refs.
+**An Area is a grouping of 1..N member devices** (`area_members`). An **area-of-one** wraps a single
+device; a **multi-device area** groups several. There is no "composite" concept and no `kind` column
+— the single-vs-multi distinction is purely structural (membership).
 
-**Invariant — scope is recomputed live, never snapshotted.** A token's scope is whatever the dashboard
-binds _now_; consuming routes re-resolve on every read.
+**Areas are eager.** Every device gets or joins an area at onboarding, and the area is the sole home
+for `day_offset_min` / `display_timezone` / `location` / site-level `config`. Areas-of-one are
+filtered out of the user-facing area picker at render time, never deleted — they hold the tz/location
+and they key uuid-addressed history (`point_readings_flow_attr_1d`, `battery_provenance_daily`).
 
-**Edge bypass (hardened, Phase 1).** A `?access=` share link can't be validated inside Clerk middleware
-(the edge runtime has no Postgres), so the token is validated downstream by `requireDashboardAccess`. The
-edge is fail-closed instead: middleware honours `?access=` **only** for GET/HEAD requests to
-share-eligible routes (`isShareableRoute` in `lib/route-matchers.ts` — the dashboard page + the read-only
-data APIs its cards fetch). A stray token on any other route (admin, test, mutations) still hits
-`auth.protect()`. The area/system-level union is enforced in `requireDashboardAccess` (2a); per-card point
-_narrowing_ within an area (returning less than the whole area's point set to a token holder) is the one
-remaining future tightening.
-
-## 3. The multi-area model (shipped, Phase 2b)
-
-A dashboard **composes cards from multiple areas** on one screen (e.g. house, farm, EV, grid region) —
-dashboard↔area is **many-to-many**. Each card self-fetches its own Area's data; there is no privileged
-"home" system on a composition dashboard.
-
-**The junction is the card, carried on the descriptor — not a `dashboard_areas` table, nor a normalized
-`dashboard_cards` table:**
+**Role resolution is per-role and explicit.** An area's _visible point set_ is always the union of
+its members' points. Its _role resolution_ is per-role: if bindings exist for role R they define R;
+otherwise R derives from members' points by stem match. Each `(role, metric)` slot resolves through
+one deterministic chain:
 
 ```
-dashboard.descriptor.cards[i].areaId  →  1 area   (null/absent = the dashboard's default area)
+explicit binding (lowest `priority` wins) → auto shape-match (exactly ONE candidate)
+  → area config producer (areas.config: generatorSource, exportTariff, …) → absent
 ```
 
-A dashboard's areas are the distinct card `areaId`s (∪ its default `dashboards.area_id`). A direct
-`dashboard_areas` junction is wrong because (1) it's redundant — you still need per-card area for
-position/layout; (2) area is too coarse — a card often binds a single role or point subset;
-(3) layout/order/visibility are already per-card.
+Two candidates with no explicit binding is a **"needs your choice"** state surfaced in the editor,
+never a silent pick; `GET /api/v4/areas/{id}/resolution` reports what resolved and how. Binding a
+point whose `(logical_path, metric_type)` doesn't fit the role is **rejected at bind time**, not
+flagged with an advisory dot.
 
-**Why a descriptor field, not a normalized `dashboard_cards` table (Phase 2a decision):** a card's area is
-_composition/presentation_ data that belongs with its layout — which already lives in the descriptor
-JSONB. Normalizing cards into rows buys SQL-queryability that nothing needs (HA export, Phase 3, reads the
-_semantic_ layer — `areas`/`area_bindings`/`roles` — not dashboards), and a _partially_-normalized table
-(area in a row, layout in JSONB) is strictly worse — two sources of truth to sync. So `areaId` is an
-optional field on `ModuleCardInstance`; `dashboards.area_id` stays the default/home area. This also
-eliminated the descriptor→rows dual-read data migration.
+This replaced v3's all-or-nothing cliff, where adding one binding silently switched an area from
+"union of members' points" to "bindings select everything".
 
-**Design commitments (all shipped):**
+**Role vocabulary lives in code** (`lib/roles/registry.ts`), enforced in SQL by
+`area_bindings_role_check`. The `roles` table was a SQL projection of that registry — two sources of
+truth — and is deleted.
 
-- **Addressing decoupled from `systemId`.** A multi-area dashboard can't be keyed on one system, so
-  dashboards are **first-class, id/alias-addressable** (`/dashboard/{user}/id/{id}` and
-  `/dashboard/{user}/{shortname}`). Multi-area and dashboards-as-first-class were the same project.
-- **Sharing scope is the live union across card areas.** An owner can only add a card for an area they can
-  already read (the no-escalation authoring check, enforced server-side on save). _Deferred polish:_ a
-  "shared dashboard exposes data from N areas" surface in the share UI.
-- **The areas model is undisturbed** — every system keeps its identity area; composition dashboards are pure
-  presentation-layer composition on top.
-- **Default dashboard.** `users.default_dashboard_id → dashboards.id` (Phase 2a). `setDefaultDashboardById`
-  (owner-only) points it at a composition dashboard (null `default_system_id`); the `/dashboard` landing
-  resolves it via `resolveDefaultDashboardRoute` → `/dashboard/id/{id}` (composition) or
-  `/dashboard/{systemId}` (legacy, lazily migrated from `default_system_id`).
+**Derived signals have one mechanism.** `derivations` is config that computes a new signal from
+existing points: `output='point'` produces a derived point in the normal readings pipeline (the HWS
+thermal model), `output='intervals'` produces run/event periods in `derived_intervals` (generator
+run-tracking, which also accumulates per-run cost / emissions / renewable). The old
+`device_trackers` / `device_run_periods` pair is gone.
 
-## 4. Roadmap
+**Areas are organizational, not the access boundary.** Access is dashboard-scoped (§5).
 
-Legend: ✅ shipped · ◑ in progress · ⬜ planned. Migration high-water mark: **0018**. All schema work
-follows `docs/migrations.md` (additive/forward-only, `DO`/`RAISE` guards before any drop, never
-`drizzle-kit push`).
+## 4. Presentation: the dashboard document
 
-> ⚠️ **Deploy gate (see `docs/incidents/2026-06-16-…`):** PG migrations are **manual**, not applied at
-> deploy. Apply a schema-dependent PR's migration to prod `sydney` **before** merging the code, or prod
-> 500s. (The composition-dashboard `0017` and the `area_devices` `0018` are both applied to `sydney`.)
+A dashboard is a **named, owner-scoped composition**: `dashboards.doc` is a **recursive node tree**
+(`db_…` public id, owner-unique `slug` for pretty URLs, frozen `legacy_id` backing the
+`/dashboard/id/{n}` 301). There is no home system or area — every node carries its own context.
 
-### Foundation — ✅ shipped
+Two node kinds, and **card and tile are one primitive**:
 
-Semantic schema (`areas`, `area_bindings`, `roles`); composite retirement (composite `systems` rows
-deleted, synthesized as areas-backed virtual systems; `CompositeAdapter` + `AREAS_TABLE` flag retired);
-flow matrix re-keyed to `area_id`; dashboards + sharing (`dashboard_share_tokens`, `dashboard_grants`,
-shared view, `/api/dashboard-share/[token]`); point identity (`point_info.point_uid`); split admin pages.
+- **`group`** — `{id, kind:'group', area?, device?, direction?, wrap?, heading?, size?, children[]}`,
+  a first-class flex layout node.
+- **`card`** — `{id, kind:'card', type, area?, device?, hidden?, size?, config?}`, the leaf. A "tile"
+  is simply a small card; the split tile/card registries merge into one.
 
-### Phase 1 — Harden sharing — ✅ done
+**Context inherits downward.** `area`/`device` on any node is inherited by descendants; a card
+consumes the nearest binding. "Sections" stop being special — a group bound to an area _is_ a
+section and renders the area header by default, so mixed-area composition falls out for free at any
+depth.
 
-Scoped the `?access=` edge bypass: middleware now honours the share-link bypass **only** for GET/HEAD
-requests to share-eligible routes (`isShareableRoute` — the dashboard page + the read-only data APIs its
-cards fetch), so a stray/garbage token can no longer skip Clerk on admin/test/mutation routes (it closed,
-e.g., `/api/test/cache`). The token is validated downstream by `requireDashboardAccess`. No schema change.
-Edge token validation was rejected — the edge runtime has no Postgres. Per-card point narrowing is folded
-into Phase 2 (it's a no-op until cards exist).
+**Layout is order + size**, on a 12-column grid, with group flex semantics — no `(x, y)`
+coordinates. Absolute coordinates rot across breakpoints; order+size is where HA's sections view
+landed after years of grid-layout pain, and it makes programmatic edits trivial ("move the chart
+above the sankey" is one splice). Validation caps depth at ~4: HA's lesson is that arbitrary
+nesting of cards-as-containers is what broke their visual editor.
 
-### Phase 2a — Default dashboard + multi-area scope seam — ✅ done
+**Why one JSONB document rather than normalized card rows.** Nothing queries cards in SQL; saves stay
+atomic; a document is trivially copyable and exportable; and normalization would create two sources
+of truth. What normalization would have bought — granular edits — is delivered more cheaply by
+revisions plus a whole-document PUT.
 
-The forward-correct seams that made the multi-area UI (2b) purely additive, landed as one additive
-migration (`0016`: `users.default_dashboard_id`) + code. Both were inert under the then-single-area UX by
-design (now exercised by 2b). (1) **Default dashboard:** `users.default_dashboard_id → dashboards.id`, lazily migrated from (and
-kept in sync with) the legacy `default_system_id`; the home redirect, preferences API, and settings dialog
-are unchanged (they ride thin wrappers — `getValidDefaultSystemId`/`setDefaultSystem`). (2) **Multi-area
-scope seam:** an optional `ModuleCardInstance.areaId` on the descriptor (no `dashboard_cards` table — see
-§3); `resolveDashboardReadPoints`/`allowedSystemIds` (`lib/dashboard/access.ts`) widened to the union
-across card areas; `requireDashboardAccess` authorizes `?systemId=X` by **membership in that union**
-(covers `/api/data`, `/api/history`, `/api/energy-flow-matrix`). No `dashboard_cards`, no data migration.
+**Editing is whole-doc PUT with optimistic concurrency.** `GET` returns an ETag of the revision;
+`PUT` with `If-Match` returns 412 on a stale revision and echoes the normalized canonical document so
+client state can't drift. `dashboard_revisions` keeps the recent history for cross-session undo;
+restore copies forward, never rewinds. `POST …/validate` is a dry-run for live linting.
 
-### Phase 2b-1 — Multi-area cards (compose other Areas onto a dashboard) — ✅ done
+**Validation posture.** The envelope is strict (zod; malformed ⇒ 422, never persisted, `id` assigned
+when absent). Card `type` is an open string — unknown types persist with their `config` intact and
+render a labelled placeholder, so a newer client or agent never has its config destroyed by an older
+validator. Known types get strict per-type `config` schemas. References are always strict.
 
-The §3 keystone screen value on top of the 2a seams, **no schema change**. A user can **add a card from
-another Area they can read** in the Customize dialog (pick a card type + an Area). Off-area cards carry an
-`areaId` on the descriptor and render in a labelled multi-area section — each a self-contained component
-that fetches its OWN area's data via the existing per-systemId query factories (the Local Grid (NEM) card's
-proven cross-system pattern); v1 composes `tiles`, `chart`, `amber-timeline`, `generator-runs`
-(`lib/dashboard/multi-area.ts`; sankey/grid-signals/amber-now stay page-scoped). Area enumeration is
-`listReadableAreas` → `GET /api/areas/readable` (authed) / a server-resolved sidecar for the shared view.
-The **no-escalation authoring check** is enforced at save (`PUT /api/dashboard/[systemId]` rejects a card
-binding an Area the owner can't read); the runtime read scope was already the live union (2a), so a shared
-multi-area dashboard's per-area fetches are token-authorized with no payload change. The page's own cards
-still render via the existing template (off-area cards append below) — a full template→descriptor-iteration
-re-layout (arbitrary interleave) is deferred.
+## 5. Sharing, scope and access
 
-### Phase 2b-2 — First-class, composition-first dashboards — ✅ done (additive; legacy path kept)
+**The dashboard is the only unit of sharing.** There are no device or area ACLs: a device is readable
+by its owner or platform admin (`owner_user_id IS NULL` means platform-public, e.g. the
+OpenElectricity region devices), and everything else shares through a dashboard —
+`dashboard_grants` (admin/viewer) or a `share_tokens` row (one token → one dashboard). The legacy
+owner-scoped token system was folded into this one at the cutover; token strings survived verbatim,
+so no shared URL broke.
 
-The full §3 model: a dashboard is a **named, owner-scoped composition** — `descriptor` is an ordered list
-of cards, each bound to its OWN Area, with **no home system/area** (the renderer iterates cards and each
-self-fetches; the 2b-1 `MultiAreaCards` mechanism generalized to be _the_ renderer). Addressed by id
-(`/dashboard/{user}/id/{id}`) or `alias` (`/dashboard/{user}/{shortname}`); the legacy
-`/dashboard/{systemId}` per-system view **coexists** (it was not retired — see the decision below).
-Create = "New dashboard" in the header menu (seed from an Area's default cards _or_ start empty);
-configure = add cards (any type, any readable Area) / reorder / rename / delete / set-default.
-`users.default_dashboard_id` (2a) drives the landing redirect.
+Three invariants make that safe:
 
-**Staged additively** so the app stays green at every step (the old per-system path keeps working):
+1. **Scope is recomputed live, never snapshotted.** A token's scope is whatever the dashboard binds
+   _now_ — Dashboard → its nodes' refs → exactly those points. Consuming routes re-resolve on every
+   read (`resolveDashboardReadPoints`, `lib/dashboard/access.ts`).
+2. **Scope-bearing references live only in envelope fields** (`node.area`, `node.device`) — never
+   inside a card's `config`. Share-scope derivation and the authoring no-escalation check are one
+   type-agnostic tree walk over fixed positions, so a future or unknown card type can never smuggle
+   in a reference the resolver doesn't see. Worst case a card 403s on fetch.
+3. **The edge is fail-closed.** A `?access=` share link can't be validated inside Clerk middleware
+   (the edge runtime has no Postgres), so middleware honours `?access=` **only** for GET/HEAD on
+   share-eligible routes (`isShareableRoute`, `lib/route-matchers.ts` — the dashboard page plus the
+   read-only data APIs its cards fetch). Anything else still hits `auth.protect()`; the token is
+   validated downstream.
 
-- **Foundation — ✅ done.** Migration `0017` (additive): `dashboards` gains `display_name` + `alias`
-  (owner-unique), `system_id` made NULLABLE so composition rows (null `system_id`) coexist with legacy
-  rows. Composition descriptor helpers (`lib/dashboard/composition.ts`: `buildSeedDescriptor` /
-  `emptyCompositionDescriptor` / `descriptorAreaIds`); CRUD store (`lib/dashboard/dashboards.ts`) + API
-  (`/api/dashboards`, `/api/dashboards/[id]`) with the no-escalation authoring check; scope/auth
-  (`allowedSystemIds`) generalized to a null home systemId.
-- **Renderer + routing + create/manage UI — ✅ done.** `CompositionDashboard` renders the whole ordered
-  descriptor for ALL card types, each area-bound + self-fetching (tiles, chart lines/stacked, sankey,
-  amber-now, amber-timeline, generator-runs, grid-signals — the last via a server-resolved per-Area NEM
-  region). Addressed by id (`/dashboard/id/{id}` and `/dashboard/{user}/id/{id}`) in the `[...slug]` route.
-  `NewDashboardDialog` (name + optional seed-from-Area) is reachable from the header "New Dashboard…" item;
-  `CompositionDashboardClient` wraps the renderer with Customize (the reused dialog in composition mode —
-  no page tile grid / Reset) + Rename/shortname + Delete. CRUD via `/api/dashboards*`.
-- **Addressing + default landing — ✅ done.** Pretty owner-scoped URL `/dashboard/{user}/{shortname}`
-  (resolves username→owner via Clerk, then `getDashboardByOwnerAlias`; tried before the legacy system
-  username/alias route and falls through when no owned composition dashboard matches). The `/dashboard`
-  landing redirects via `resolveDefaultDashboardRoute` — a composition default → `/dashboard/id/{id}`, a
-  legacy default → `/dashboard/{systemId}`. "Set as my default dashboard" (`setDefaultDashboardById`,
-  owner-only) writes `users.default_dashboard_id` with a null `default_system_id`.
+**No-escalation on authoring:** an owner can only add a node bound to an area or device they can
+already read, enforced server-side on save.
 
-_Known low-severity follow-ups (from the 2b-2 adversarial review, all deferred):_ the
-`/dashboard/{user}/{shortname}` path does a Clerk `getUserList` before falling through to the legacy
-system-alias route (one extra round-trip on that path); `resolveDefaultDashboardRoute` re-reads prefs+dash
-for the legacy-default case; the "exposes data from N areas" share surface; point-level narrowing within an
-area.
+**Remaining tightening:** scope is area-granular — a token holder gets the full point set of each
+area the dashboard binds, not just the points its cards display. Point-level narrowing is a known
+future tightening; the refs needed to do it are already in the document.
 
-**Decision (2026-06-16) — additive coexistence, NOT demolition.** The full retirement of the per-system
-path (deleting `DashboardClient` + the `heatmap/generator/amber/latest` subpages + the systems dropdown +
-`/api/dashboard/[systemId]` + a migration dropping `dashboards.system_id`/`area_id`) was **declined**: it is
-an app-wide demolition that removes the system-viewing UX and is **not required** — the additive `0017`
-schema lets composition dashboards (`display_name` rows) and legacy per-system customizations (`system_id`
-rows) coexist in one table. The per-system `DashboardClient` view stays; composition dashboards are
-first-class additions on top. That deletion is deferred indefinitely (revisit only with a concrete driver).
-(Note: migration `0018` is unrelated — it is the `area_devices` membership table from the composite
-retirement, §5.)
+## 6. Rendering principles
 
-### Phase 3 — Home Assistant export — ⬜
+These survived the v3→v4 transition and still govern the renderer.
 
-Export the semantic model (areas + bindings + role/device_class metadata) into HA-consumable config.
-Read-only over the stable semantic layer; independent of Phase 2.
+- **One render path per card, no special cases.** Every card — whole-area or device-bound — goes
+  through the same cell, self-fetches through the same query factory (React Query dedupes by key, so
+  N cards on one area share one request), shows its own skeleton, then renders. When `oe-grid` was a
+  bespoke self-fetching component beside the shared path, it loaded differently and popped in late;
+  folding it in as a _view case_ removed a whole parallel path.
+- **The skeleton count must equal the rendered count.** A seed that emits cards the device can't
+  support produces a visible reflow when the grid collapses to what's available. Seeding filters to
+  supported views; capability is derived, never stored.
+- **Gates are data-driven, not vendor-driven.** The Sankey is not a "site vendor" feature — the whole
+  pipeline is keyed on logical paths (`source.solar*`, `load`, `bidi.battery`, `bidi.grid`), so any
+  area with both sources and loads qualifies. The renderer is the authority: when generation or load
+  is missing, the flow selector returns null and the card renders nothing.
+- **Resolver changes are gated by parity assertions.** Every change that touches point resolution
+  asserts the per-area resolved point set is byte-identical pre/post. This caught real defects
+  through three waves of composite retirement and the cutover itself.
 
-### Not planned — retiring integer system addressing
+## 7. Decisions this doc used to assert — now overturned
 
-The old roadmap listed "drop `areas.legacy_system_id` + the integer `system_id` handles" as cleanup. It is
-**not** cleanup: `legacy_system_id` is the **load-bearing integer addressing seam** for composites — it
-backs `SystemsManager.getSystem(n)`, the `latest:system:N` KV keyspace, and `dashboards.system_id`.
-Composites have no `systems` row, so this integer
-handle (via `synthesizeCompositeSystem`) is _how they are addressed at all_. Removing it means moving every
-caller to UUID (`area.id`) addressing and re-keying the KV space and those tables — a multi-week
-rearchitecture with no current driver. Treat the integer handle as a deliberate, stable part of the design;
-revisit only if a concrete need (not tidiness) appears.
+Recorded explicitly, because they were stated confidently here and people remember them.
 
-### Dependencies
+| Was                                                                                                                                     | Now                                                                                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **"Not planned — retiring integer system addressing."** `areas.legacy_system_id` was called load-bearing addressing, kept deliberately. | **Overturned.** The integer handle is the clean sheet's _headline deletion_ — a polymorphic address where `≥1,000,000` meant "synthetic area" and nothing in the type system knew. It dies in Phase 13; `legacy_handles` resolves `?systemId=N` forever as a thin compat shim. |
+| **"Areas are lazy"** — no area-of-one at create time, minted on demand.                                                                 | **Overturned (Option A, 2026-07-22).** Areas are **eager**: every device gets one at onboarding, because the area is the sole home for tz/location and keys uuid-addressed history. `retire-implied-areas.ts` is abandoned and must not run.                                   |
+| **"Additive coexistence, NOT demolition"** — legacy per-system dashboards coexist with composition dashboards indefinitely.             | **Overturned.** Config-v4's definition of done is _one shape, not two_: no runtime branch on dashboard shape, no adapter, no rewriter, one card registry, one write surface. Phase 14 drops `descriptor`.                                                                      |
+| Points addressed by `(system_id, index)` with `point_uid` as a secondary stable identity.                                               | **Superseded.** `points.id` _is_ the identity and the address; the separate index and its allocator are gone.                                                                                                                                                                  |
+| `dashboard_share_tokens` + legacy owner-scoped `share_tokens` as two systems.                                                           | **Unified** into one `share_tokens` table, one semantics.                                                                                                                                                                                                                      |
+| `point_readings_flow_1d` as the flow matrix.                                                                                            | **Superseded** by `point_readings_flow_attr_1d`, which carries the attributed emissions / renewable / cost legs alongside energy.                                                                                                                                              |
 
-The foundation gates everything. Phase 2a (done) gates Phase 2b. Phase 3 is independent of Phase 2 and can
-proceed in parallel.
+## 8. What's next
 
-## 5. Composite retirement — Phase D (`kind` column drop) done
+- **HA export bridge (still open).** Export the semantic layer — areas + bindings + role
+  `device_class` / `state_class` / `unit` metadata — as HA-consumable config. Read-only over the
+  stable semantic layer, and `GET /api/v4/export` is most of the payload already. See
+  [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md) #9 for the more ambitious version, which
+  pushes recomputed history _into_ an HA instance rather than just describing config.
+- **Config-v4 Phases 12–14** finish the model: drop `systems` / `point_info` / `roles`, kill the
+  handle, collapse the two dashboard shapes, build the v4 editor and the remaining mutation routes.
+  Tracked in [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
+- **Point-level share narrowing** (§5) — the one remaining access tightening.
+- **Twelve ranked enhancements** measured against Home Assistant:
+  [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md).
 
-The semantic-layer cleanup that makes §1's "an Area is 1..N member devices" literally true in code. Three
-waves got here: **composite `systems` rows deleted** → synthesized as areas-backed virtual systems
-(#89–92, migration `0014`); the **special-case removed from the resolver** (#105 + #106); then the **`kind`
-column dropped** (#128, migration `0019`).
+## 9. History
 
-**Done — #105 + #106 (resolver/membership), then the `kind` column drop (#128):**
+The v3 road to here — composite `systems` rows deleted and synthesized as areas-backed virtual
+systems, the resolver unified on membership, the `kind` column dropped, sharing hardened, the
+multi-area keystone, composition-first dashboards, the unified tile model, the generalized Sankey —
+was documented phase-by-phase in earlier revisions of this file. That narrative is superseded and
+lives in git; the surviving rationale has been folded into the sections above. The config-v4 story
+from the clean sheet onward is in
+[`../plans/config-v4-clean-sheet.md`](../plans/config-v4-clean-sheet.md) and
+[`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
 
-- **Unified resolver.** `PointManager._resolvePointsForViewable` is the one "resolve viewable points" path.
-  A real device loads its own `point_info`; an **areas-backed** handle resolves under membership + override
-  (§1). Dispatch is on the structural `SystemsManager.isAreasBackedSystem(id)` (no real `systems` row),
-  **not** `vendorType === 'composite'` / `kind`.
-- **`area_devices` membership table** (migration **`0018`**, applied to dev + `sydney` prod): `(area_id,
-system_id, ordinal)`. Backfill: a multi-device (composite) Area's members are the distinct
-  `area_bindings.point_system_id`; a single-device area's member is its `source_system_id`. Kept
-  in lockstep on create/edit (`replaceAreaBindings`, `ensureAreaOfOne`). `area_id` CASCADE is safe (the
-  table is rederivable); **no FK to `systems`** (a member may be a child system whose row was deleted in
-  `0014`).
-- **Union-default** (bindings-as-select): a binding-less multi-device Area resolves to the union of its
-  members' points — the capability that makes a plain "several devices in one Area" work with no curation.
-- **`kind` reads collapsed** everywhere: synthesis (`legacy_system_id` with no `systems` row), binding
-  reads, grid-role, admin (one "Areas" list by member count), KV fan-out.
-- **Lazy Areas:** no eager area-of-one at system create; minted on demand (complete-role-set heal, or on
-  location-set).
+## Related docs
 
-Every step is gated by the per-area parity assertion (`getActivePointsForSystem(handle)` byte-identical),
-and `point_readings_flow_1d` + the integer `legacy_system_id` handle are untouched.
-
-### Phase D — drop `areas.kind` — ✅ done (#128, migration `0019`); create-UX reframe — ⬜ (pending)
-
-The `areas.kind` column has been **dropped** (migration `0019`, PR #128, applied to `sydney` prod
-2026-06-18). No code reads or writes `kind` — the pass-through selects/fields, the `sync.ts` writes, the
-`getCompositeAreaId` `kind='composite'` filter, and the constructed `{ kind: 'identity' }` in
-`logical-system.ts` are all gone. The single-vs-multi distinction is purely structural (membership),
-captured in vocabulary as **area-of-one** vs **multi-device area**. The remaining tail:
-
-- **Create-UX reframe** — present the admin "create composite system + `{version:2, mappings}`" flow as
-  "create an Area → add member devices (`area_devices`) → optional role overrides." The backend is already
-  areas-only (#92); this is mostly presentation + writing membership. Keep the `{version:2, mappings}`
-  editor as the **override** editor.
-
-**Not planned:** re-keying the serving path or `flow_1d` to UUID, and dropping `legacy_system_id` — the
-integer handle is load-bearing addressing (see "Not planned" above), kept.
-
-## 6. Tile rendering — the unified tile model — ✅ shipped (#110)
-
-> The descriptor is now the **nested v3** model — `Dashboard → AreaSection → Card → device-bound Tile`
-> (shipped #107; see `docs/plans/dashboard-nested-tile-model.md` §0, which supersedes the flat per-card
-> `areaId` framing in §§2–3: a section binds the Area, a card holds device-bound tiles). This section
-> describes how those tiles render uniformly. **Status:** ✅ shipped in #110 — two follow-ups stay deferred
-> (below): the `renderTileView` extraction from `useTileNodes`, and auto-deriving tile availability from
-> `latest` (today it's supplied explicitly at seed time).
-
-**Why.** The first v3 renderer special-cased the device-bound `oe-grid` (NEM grid) tile. The whole-area
-tiles are built together by `useTileNodes` from the section's **single** `dashboardDataQuery(handle)`,
-while `oe-grid` was a **separate** `DeviceGridTile` that self-fetched its member device and rendered
-`GridSignalsCard` directly. Two parallel tile paths — a DRY violation — and the special-cased tile
-loaded + skeletoned differently (popped in late). The loading skeleton also rendered the **configured**
-tile count, which then collapsed to the **available** count (e.g. Daylesford lists 7 tiles but supports 4) — a visible 2-rows→1-row reflow.
-
-**One tile path.** A tile is `(view, deviceSystemId?)`, and every tile — whole-area or device-bound —
-renders through the same **`<TileCell>`**:
-
-1. **`<TileCell view deviceSystemId? handleSystemId>`** self-fetches `dashboardDataQuery(deviceSystemId ?? handle)`
-   (React Query **dedupes by key**, so the N whole-area tiles share **one** request; a device tile adds one),
-   shows **its own skeleton** while its query is loading, then renders the view.
-2. **One view-render path inside the cell:** standard views go through the existing `useTileNodes`
-   node-builder (`cardNodes[view]`, synthesis helpers — master load, rest-of-house, solar breakdown —
-   untouched); **`oe-grid`** renders `GridSignalsCard` (fed by `gridLatestFromData` + the device's
-   `vendorSiteId` region) — a **view case inside `TileCell`**, not a bespoke `DeviceGridTile`. The separate
-   `DeviceGridTile` / `AreaGridSignalsCard` + the dead server-side `gridContext` plumbing are deleted. So
-   `oe-grid` is **structurally identical** to every other tile (same cell, same fetch, same skeleton); only
-   its leaf card differs (3 grid stats vs 1 value — content, not structure). (A full `renderTileView`
-   extraction from `useTileNodes` — no per-cell recompute — is a deferred clean-up; `useTileNodes`'s 4
-   `useMemo`s + 5 consumers make it a separate, riskier change, and the per-cell recompute is negligible.)
-3. **`TilesGrid` is a stable set of cells** — one `<TileCell>` per descriptor tile, in order. No separate
-   skeleton block that swaps the whole grid wholesale; each cell transitions skeleton → content on its own.
-
-**No reflow.** The skeleton count must equal the rendered count, so the **area strategy can emit only the
-tiles the system supports**: `buildDefaultDashboardV3` takes an optional `availableViews` list and filters
-`TILE_IDS` to it (`lib/dashboard/v3.ts`), so descriptor == rendered set. Today that list is supplied
-**explicitly at seed time** — the `scripts/temp/seed-v3-dashboard.ts` literal re-seeds Daylesford to its 4
-supported tiles (Kinkora matches at 8 unfiltered). Each `TileCell` then goes skeleton → content with **no
-count change** for those seeded dashboards. _Deferred:_ auto-deriving the list from the handle's `latest`
-(the planned `availableViewsForDevice(latest)` helper was not built) and threading it through the runtime
-`buildSeedDescriptor` path — until then a freshly user-seeded composition dashboard gets no `availableViews`.
-
-**Timing caveat (inherent, not a bug).** A device-bound tile reads a _different_ device, whose data can
-resolve a beat after the handle's — unavoidable for a separate data source — but it now behaves like any
-tile (skeleton → fills in), not a bespoke late-pop component.
-
-**Shipped in #110** (gated on the existing whole-area tiles rendering byte-identical): added `TileCell`;
-folded `oe-grid` in as a view case; `TilesGrid` is one cell per tile; gave `buildDefaultDashboardV3` an
-`availableViews` filter and re-seeded Daylesford. **Deferred** (as the first cut intended): the full
-`renderTileView` extraction from `useTileNodes` — its 4 `useMemo`s + 5 consumers make it a separate,
-riskier change and the per-cell recompute is negligible, so `TileCell` still calls `useTileNodes` per cell
-— plus the `availableViewsForDevice(latest)` auto-derivation above.
-
-## 7. Dashboard settings menu + composition sharing — ✅ shipped (#112)
-
-**Context.** The v3 cutover (#107) left the composition dashboard with minimal chrome (switcher /
-rename / new): the v2 customize editor was dropped, and the share UX only ever lived in the legacy
-**system-keyed** `DashboardClient` (`DashboardShareDialog` → `/api/dashboard/[systemId]/share`). The
-per-dashboard sharing **backend (P4) is already complete** — `dashboard_share_tokens` + the full token
-lifecycle in `lib/dashboard/sharing.ts` (`create`/`validate`/`list`/`revoke`/`rename`
-`DashboardShareToken`), `dashboard_grants`, and `resolveDashboardReadPoints` scope (now v3-aware, §"cutover").
-What's missing is only the **API route, the UI, and the composition shared-view render**.
-
-**Shipped in #112:**
-
-1. **API — `app/api/dashboards/[id]/share/route.ts`** (owner/admin only, reusing the `[id]/route.ts`
-   `loadOwned` guard): `POST` mints a token (`createDashboardShareToken`, optional `label`/`expiresInDays`),
-   `GET` lists (`listDashboardShareTokens`), `DELETE`/`PATCH` revoke/rename. Thin wrappers over `sharing.ts`.
-2. **Read-side — `page.tsx`.** A `?access=<token>` for a **composition** dashboard (null `system_id`)
-   now renders `CompositionDashboardClient` **read-only**: validate the token → `getDashboard` → resolve
-   the descriptor's section areas (`descriptorAreaIds` → `resolveAreasByIds`) as `sharedAreas` → render
-   with `canEdit=false`. Per-area data fetches carry the token and are authorized by the live union scope
-   (`requireDashboardAccess`, v3-aware). Replaces the current "composition share → redirect to sign-in" stub.
-3. **UI — a Settings (gear) menu** on the composition dashboard, consolidating the scattered chrome:
-   **Share** (mint a read-only link, copy, list/revoke) and **Rename / Shortname / Set-default / Delete**
-   (the existing `DashboardSettingsDialog`); the header leads with **Share** — the gap the user hit. A
-   **Customize** entry (the v3 configurator, #23) is a deferred follow-up — not yet in the menu.
-
-**Scope:** Share + the Settings menu shipped in #112; the **configurator** (#23) and **`dashboard_grants`**
-(invite a specific person, vs. a public read-only link) are deferred follow-ups. This finishes the §2
-"the dashboard is the unit of sharing" story for composition dashboards (it was previously only wired for
-legacy per-system dashboards).
-
-## 8. The sankey — generalized to any area with loads + sources — ✅ shipped (#116–#118)
-
-**Context.** The energy-flow **sankey** used to be a mondo/composite "site" exclusive, gated everywhere
-on `isSiteVendor (vt === 'mondo' || 'composite')`. But the whole pipeline — `/api/history` →
-`site-data-processor` → `calculateEnergyFlowMatrix` → `EnergyFlowSankey` — is keyed on **logical paths**
-(`source.solar*`, `load`, `bidi.battery`, `bidi.grid`), not on vendor type. A single **selectronic**
-inverter (Daylesford) carries those exact stems, and `/api/history` already aggregates an area across its
-member devices, so the sankey works for **any area with loads + sources** — single-device or multi-device.
-
-**Design.** The sankey is **one of `SiteChartsCard`'s `cardVisible` views** (alongside `chart:load` /
-`chart:generation`), not a separate component — so generalizing means lifting the gate on the _existing_
-card, not forking it:
-
-- **Data-driven gate, not vendor.** `AreaSiteCharts` computes `siteCapable = getLayout(vendorType) ===
-'site' || chartHasData(latest)` and passes it to `SiteChartsCard`, whose history query now enables on
-  `siteCapable ?? isSiteVendor` (the `?? isSiteVendor` keeps the legacy per-system `DashboardClient` page
-  unchanged). A composite stays `site` (renders before `latest` loads, no flash); a selectronic area
-  qualifies via its `latest` carrying solar + load. The true "is there a flow" check is the renderer:
-  `selectFlowMatrix` (shared by every sankey site) returns `null` when generation or load is missing, and
-  the card renders nothing.
-- **Opt-in card, never auto-given.** `buildDefaultDashboardV3` emits **no** sankey in any layout — it's a
-  card you add. `CARD_REGISTRY.sankey.canRender` is now `chartHasData(latest)` (same bar as `chart`), and
-  `isCardTypeVendorCompatible` folds `sankey` into the not-`amber` arm (the v3 PATCH doesn't drop cards
-  anyway; the renderer is the authority).
-- **Period caption.** The sankey shows the window it integrates over underneath the diagram — a time range
-  for 1D/7D, a date range for 30D.
-
-A bare `{ type: "sankey" }` card was added to **Daylesford**'s section. **Deferred:** a _binding-less_
-multi-device area (the union-default resolver) would need per-logical-stem summing in `buildFlowSeries`
-before the matrix; multi-device areas built via the composite editor (typed `area_bindings`, like Kinkora)
-already aggregate correctly.
+- [`home-assistant-comparison.md`](home-assistant-comparison.md) — the scorecard against HA.
+- [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md) — twelve ranked enhancements.
+- [`points.md`](points.md) — the point model, paths, and identity.
+- [`data-model.md`](data-model.md) — data semantics & invariants.
+- [`energy-flow-matrix.md`](energy-flow-matrix.md) — the directional Sankey matrix.
+- [`battery-provenance.md`](battery-provenance.md) — the attributed metric legs.
+- [`authentication.md`](authentication.md) — Clerk, roles, API auth functions.

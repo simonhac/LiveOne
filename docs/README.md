@@ -22,7 +22,7 @@
 
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules
 - [architecture/home-assistant-comparison.md](architecture/home-assistant-comparison.md) — LiveOne vs Home Assistant: object-model mapping, where each is clearer, and where ours is superior (durable pipeline vs in-memory control plane). **Refreshed 2026-07-28** for config-v4 and HA 2026.7
-- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — **foundation live** + roadmap: splits physical/semantic/presentation into Systems → Areas → Dashboards (HA-aligned, Apple-Home UX); composites are now areas-backed virtual systems. Roadmap: sharing hardening (done), the first-class/multi-area dashboards keystone (per-card `area_id` + default-dashboard), HA export
+- [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — the three-layer split (physical `devices`/`points` → semantic `areas`/bindings/`derivations` → presentation `dashboards`), per-role slot resolution, the v4 node-tree document, sharing scope invariants, and the decisions config-v4 **overturned** (the integer handle, lazy areas, dual dashboard shapes). **Rewritten 2026-07-28** for config-v4
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [sync-prod-to-dev.md](sync-prod-to-dev.md) — keeping `liveone-dev` fresh: the 2-hourly prod→dev DB top-up + KV rebuild-from-DB (`db:sync-dev-db` / `db:rebuild-dev-kv`)
@@ -53,6 +53,7 @@
 - [plans/run-period-provenance.md](plans/run-period-provenance.md) — **per-run cost / CO₂ / renewable share** on `derived_intervals`, accumulated by the recompute rather than derived at render time (which is what dissolved the "one fold per run" blocker). _Shipped for `generator`; the remaining work is the **load-side** provider (EV/pump), which needs a per-interval blended load-path intensity that doesn't exist yet_
 - [plans/timestamptz-migration.md](plans/timestamptz-migration.md) — migrate time-series time columns to `timestamptz` (needs schema-change approval)
 - [plans/identity-address-split-and-labels.md](plans/identity-address-split-and-labels.md) — _superseded by config-v4-clean-sheet.md_ — split point identity from address (`point_uid`) + a Label orthogonal tag dimension; kept as the argument record
+- [plans/ha-parity-and-leapfrog.md](plans/ha-parity-and-leapfrog.md) — **twelve ranked enhancements** measured against Home Assistant, tagged _parity_ (close a real gap: point category, labels, time-weighted means, sub-metering containment, unit classes, generated groups, reauth, composable derivations) or _leapfrog_ (use what HA structurally can't: coverage/confidence surfacing, attribution as a product, a portfolio tier, and pushing recomputed history **into** HA via its statistics-import API). Proposal only — no schema change approved
 
 ## Deferred work
 
