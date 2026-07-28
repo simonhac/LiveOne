@@ -1,12 +1,22 @@
 import { cache } from "react";
-import { eq, max, isNotNull, isNull, and, or } from "drizzle-orm";
+import {
+  eq,
+  max,
+  isNotNull,
+  isNull,
+  and,
+  or,
+  getTableColumns,
+} from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 import { isProduction } from "@/lib/env";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   systems as pgSystems,
-  pollingStatus as pgPollingStatus,
+  devices as pgDevices,
+  deviceState as pgDeviceState,
   userSystems as pgUserSystems,
   areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
@@ -15,7 +25,12 @@ import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 
 // Export the type for a system from the database
 export type System = InferSelectModel<typeof pgSystems>;
-export type PollingStatus = InferSelectModel<typeof pgPollingStatus>;
+/**
+ * Operational polling state. Now sourced from `device_state`, not `polling_status` (config-v4 Phase 12
+ * slice C) — so it no longer carries the legacy `id`/`systemId` columns. The name is kept because it
+ * is what the shape MEANS; slice K renames the surface wholesale.
+ */
+export type PollingStatus = InferSelectModel<typeof pgDeviceState>;
 
 export type Area = InferSelectModel<typeof pgAreas>;
 
@@ -23,6 +38,24 @@ export type Area = InferSelectModel<typeof pgAreas>;
 export type SystemWithPolling = System & {
   pollingStatus?: PollingStatus | null;
 };
+
+/**
+ * `device_state` re-keyed onto the legacy integer handle, so the eight `systems` reads below can join
+ * it in ONE call exactly where they used to join `polling_status`.
+ *
+ * `device_state` is keyed by `devices.id` (uuid), and the bridge to `systems.id` is the verbatim-rid
+ * invariant `devices.rid == systems.id` (lib/registry/v4-mirror.ts). Folding that hop into a subquery
+ * keeps it stated once instead of eight times, and keeps the join sites a one-line swap. Both hops are
+ * unique-index probes over a 16-row table.
+ *
+ * Built from a standalone QueryBuilder, not `requirePlanetscaleDb()`, so importing this module never
+ * needs a configured pool.
+ */
+const deviceStateByHandle = new QueryBuilder()
+  .select({ handle: pgDevices.rid, ...getTableColumns(pgDeviceState) })
+  .from(pgDeviceState)
+  .innerJoin(pgDevices, eq(pgDevices.id, pgDeviceState.deviceId))
+  .as("device_state");
 
 /**
  * An "area view" — a SystemWithPolling shape synthesized from a multi-device Area whose integer
@@ -87,12 +120,16 @@ function isPgUniqueViolation(e: unknown): boolean {
   );
 }
 
-/** Flatten a systems⋈polling_status join row (any extra joined tables are ignored). */
+/** Flatten a systems⋈device_state join row (any extra joined tables are ignored). */
 function toSystemWithPolling(row: {
   systems: System;
-  polling_status: PollingStatus | null;
+  device_state: (PollingStatus & { handle: number }) | null;
 }): SystemWithPolling {
-  return { ...row.systems, pollingStatus: row.polling_status };
+  if (!row.device_state) return { ...row.systems, pollingStatus: null };
+  // `handle` exists only to carry the join key out of the subquery — drop it so `pollingStatus` is
+  // exactly a device_state row at runtime as well as in the types.
+  const { handle: _handle, ...state } = row.device_state;
+  return { ...row.systems, pollingStatus: state };
 }
 
 /**
@@ -105,7 +142,10 @@ const fetchSystemById = cache(
     const [row] = await requirePlanetscaleDb()
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .where(eq(pgSystems.id, id))
       .limit(1);
     return row ? toSystemWithPolling(row) : null;
@@ -128,7 +168,10 @@ const fetchSystemByVendorSiteId = cache(
     const [row] = await requirePlanetscaleDb()
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .where(eq(pgSystems.vendorSiteId, vendorSiteId))
       .limit(1);
     return row ? toSystemWithPolling(row) : null;
@@ -199,7 +242,10 @@ export class SystemsManager {
     const [row] = await requirePlanetscaleDb()
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .where(
         and(
           eq(pgSystems.ownerClerkUserId, ownerClerkUserId),
@@ -215,7 +261,10 @@ export class SystemsManager {
     const rows = await requirePlanetscaleDb()
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .where(eq(pgSystems.status, "active"));
     return rows.map(toSystemWithPolling);
   }
@@ -228,7 +277,10 @@ export class SystemsManager {
     const rows = await requirePlanetscaleDb()
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId));
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      );
     return rows.map(toSystemWithPolling);
   }
 
@@ -237,7 +289,10 @@ export class SystemsManager {
     const rows = await requirePlanetscaleDb()
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .where(eq(pgSystems.ownerClerkUserId, userId));
     return rows.map(toSystemWithPolling);
   }
@@ -255,7 +310,10 @@ export class SystemsManager {
     const ownedOrPublic = await db
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .where(
         or(
           eq(pgSystems.ownerClerkUserId, userId),
@@ -265,7 +323,10 @@ export class SystemsManager {
     const granted = await db
       .select()
       .from(pgSystems)
-      .leftJoin(pgPollingStatus, eq(pgSystems.id, pgPollingStatus.systemId))
+      .leftJoin(
+        deviceStateByHandle,
+        eq(deviceStateByHandle.handle, pgSystems.id),
+      )
       .innerJoin(
         pgUserSystems,
         and(

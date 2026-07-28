@@ -10,7 +10,19 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 12 slice B (rid defaults). **Phases 10 + 11 COMPLETE; Phase 12 slice A shipped 2026-07-28.**
+## ▶ NEXT ACTION — Phase 12 slice G (`roles` dies). **Phases 10 + 11 COMPLETE; Phase 12 slices A + B + C shipped 2026-07-28.**
+
+> **DB state (2026-07-28): ✅ 0043 applied to prod `sydney` AND `liveone-dev`; ✅ the prod reconcile has
+> run (9 drifted devices → 0).** The code is not deployed yet.
+>
+> ⚠️ **Before merging slice C, re-run `scripts/config-v4/reconcile-device-state.ts --commit` against
+> prod.** Prod is still running the pre-flip build, which writes only `polling_status`, so
+> `device_state` re-drifts at roughly one poll per device per minute from the moment of the reconcile.
+> Deploying against a stale `device_state` is fail-safe but ugly: `evaluateBoundarySchedule` keys off
+> `lastSuccessTime`, so every boundary-scheduled vendor would read "window not yet recorded" and poll on
+> each tick until it next succeeds (self-healing within a tick — a stale state over-polls, never
+> under-polls), and the admin table would show a stale last-poll until then. Re-running the reconcile
+> immediately before the merge shrinks that window to the deploy latency.
 
 Phase 9's PR 1 + PR 2 merged as [#250](https://github.com/simonhac/LiveOne/pull/250). **PR 3 ("aesthetic
 changes") is SCRAPPED** (Simon, 2026-07-27) — aesthetic work waits until the migration is 100% complete
@@ -111,7 +123,7 @@ model. Those are still v3, with v4 running alongside as a dark mirror.
 
 | Legacy thing still live                          | Evidence                                                                                                                                                                                                                                                    | Retired in  |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| **The config registry is still v3-primary**      | `systems` 28 query sites / 23 files, `point_info` 40/20, `polling_status` 11/11, `area_devices` 11/5. The v4 twins are a dark mirror: `area_members` 1 site, `device_state` **0**, `derivations` **0**.                                                     | Phase 12    |
+| **The config registry is still v3-primary**      | `systems` 28 query sites / 23 files, `point_info` 40/20, `area_devices` 11/5, `area_members` 1, `derivations` **0**. ✅ `polling_status` is DONE — 0 readers, 0 writers as of slice C; it survives only in the sync/preview manifests until slice N drops it.  | Phase 12    |
 | **The dark mirror is load-bearing**              | `lib/registry/v4-mirror.ts` writes `points`/`devices`/`area_members` at every mint from `point-manager` + `systems-manager`. Deleting it re-opens defect C7 (a new point gets no `points` row → the hot FK rejects its first reading → QStash poison pill). | Phase 12    |
 | **The integer handle — "the headline deletion"** | `areas.legacy_system_id`: 186 occurrences, incl. inside `/api/v4/*` routes. `AREA_HANDLE_BASE = 1_000_000` still allocates.                                                                                                                                 | Phase 13    |
 | **Virtual-system synthesis**                     | `synthesizeAreaView` (~50 lines), `getViewableSystem` (6 callers), `isAreaHandle` (2 callers) — all live in `lib/systems-manager.ts`.                                                                                                                       | Phase 13    |
@@ -604,25 +616,27 @@ change the slicing. Recounted:
 
 **Work** — ordered PRs off `main` (the Phase-3 A–L pattern), **not** one long branch: the code/DDL
 interleave has to land at merge points, and a long branch has none. That is the 0037 lesson.
-Migrations start at **0042**. **[A]** additive → prod before the code PR merges. **[D]** drop → code
-merged and deployed first, then prod, then dev. **[C]** code-only.
+Migrations start at **0043** (0042 went to the unrelated run-period provenance work, [#265](https://github.com/simonhac/LiveOne/pull/265) — the
+parallel-workspace collision `docs/migrations.md` warns about; `git fetch origin main` before you
+generate). **[A]** additive → prod before the code PR merges. **[D]** drop → code merged and deployed
+first, then prod, then dev. **[C]** code-only.
 
 | Slice | What | Kind |
 | --- | --- | --- |
 | **A** | ✅ v4 registries into the sync manifest — see below | [C] |
-| **B** | `points.rid`/`devices.rid` get `DEFAULT nextval(…)`; `setval(device_rid_seq, max(systems.id))` | [A] 0042 |
-| **C** | `device_state` becomes the polling writer (dual-write → backfill → read-flip; 2 PRs) | [C] |
-| **G** | `roles` dies (drop the `areaBindings.role` FK; `area_bindings_role_check` already enforces the 6-role set) | [C] → [D] 0043 |
-| **F** | `user_systems` + `isViewer` die (prod table is empty) | [C] → [D] 0044 |
-| **H** | `area_devices` → `area_members` | [C] → [D] 0045 |
+| **B** | ✅ `points.rid`/`devices.rid` get `DEFAULT nextval(…)`; `setval(device_rid_seq, …)` — see below | [A] 0043 |
+| **C** | ✅ `device_state` becomes the polling writer + reader; `polling_status` frozen — see below | [C] |
+| **G** | `roles` dies (drop the `areaBindings.role` FK; `area_bindings_role_check` already enforces the 6-role set) | [C] → [D] 0044 |
+| **F** | `user_systems` + `isViewer` die (prod table is empty) | [C] → [D] 0045 |
+| **H** | `area_devices` → `area_members` | [C] → [D] 0046 |
 | **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain | [C] |
-| **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0046 |
+| **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0047 |
 | **M** | `point-manager` mints `points` directly; the `max(index)+1` allocator dies | [C] |
-| **I** | `sessions.system_id` → `device_rid`, expand/contract | [A] 0047, 0048 → [D] 0049 |
-| **J** | `observations_outbox.system_id` → `device_rid` | [A] 0050 → [D] 0051 |
+| **I** | `sessions.system_id` → `device_rid`, expand/contract | [A] 0048, 0049 → [D] 0050 |
+| **J** | `observations_outbox.system_id` → `device_rid` | [A] 0051 → [D] 0052 |
 | **K** | `SystemsManager` → `DeviceRegistry`, sliced by method | [C] ×7 |
 | **L** | Delete the dark mirror (`v4-mirror.ts`, `/api/health?v4mirror=1`, `scripts/config-v4/`) | [C] |
-| **N** | Terminal drops in FK order: `polling_status` → `point_info` → `systems` | [D] 0052–0054 |
+| **N** | Terminal drops in FK order: `polling_status` → `point_info` → `systems` | [D] 0053–0055 |
 
 **Ordering traps:**
 
@@ -653,6 +667,98 @@ Verified: sync green in 10.8s and **idempotent** on a second run; devices **0/16
 deterministic uuidv5 (0/134 drift). Also closed a pre-existing leak: `legacy_handles` was an `areas`
 idDrift **child** (cleared on realign) but absent from the manifest, so nothing restored it — dev sat
 2 handles short of prod.
+
+**✅ SLICE B DONE (2026-07-28).** Migration **0043** attaches `DEFAULT nextval(…)` to `devices.rid` and
+`points.rid`. Three things the one-line plan entry did not say:
+
+- **`points.rid` shares `point_rid_seq`** rather than getting its own. It must stay equal to
+  `point_info.rid` (`lib/registry/v4-mirror.ts:24-25`), so the two columns have to draw from one counter.
+- **Both DEFAULTs are inert scaffolding until slices M and N**, and the migration says so at length.
+  `systems.id` is a `serial` whose own sequence advances independently, so while `systems` exists a
+  device minted from `device_rid_seq` could later collide with a new `systems.id` on
+  `devices_rid_unique`. `ensureDeviceRow` must keep naming `rid` as `s.id` verbatim; slice N re-asserts
+  the setval after the drop.
+- The setval floor is `greatest(max(systems.id), max(devices.rid), last_value)`, not the planned
+  `max(systems.id)`: `registry-populate` seeded the sequence from `max(devices.rid)`, `systems_id_seq`
+  moves on its own, and **setval is not transactional** — a re-run after a failed apply must never move
+  the sequence backwards. Hence also the guard-before-mutation ordering (a stranded setval is then a
+  no-op, not a corruption).
+
+Verified on dev before applying, by running the migration body inside a rolled-back transaction: guard
+passed (`max(points.rid)` 134 ≤ `point_rid_seq` 142), setval → 10003 = `max(systems.id)` =
+`max(devices.rid)`, both defaults rendered. `db:pg:generate` clean afterwards.
+
+**✅ SLICE C DONE (2026-07-28)** — one PR, not the planned two.
+
+The plan staged this as dual-write → backfill → read-flip because a live `polling_status` was assumed
+to be the only bridge across the deploy. It is not: the **reconcile** is, and it can run *before* the
+deploy as easily as after. Running it against prod first (done — 9 drifted devices → 0) leaves
+`device_state` current under the old build, so the flip has nothing to catch up on and the dual-write
+intermediate bridges a gap that no longer exists. The dual-write was still built and verified on dev
+first — it is how the counter and timezone traps below were found — it just never needed to ship. What
+remains to watch is drift re-accumulating between the reconcile and the deploy; see the banner above.
+
+- `lib/polling-utils.ts` grows a `device_state` twin of each upsert; the six call sites are unchanged.
+  Both legs run under `Promise.all` and **each swallows its own error**, so neither can break the other
+  or the caller's session bookkeeping.
+- The twin is hand-written SQL, not the drizzle builder, so the device resolves in the SAME statement
+  (`FROM devices d WHERE d.rid = $1`, an index-only probe of `devices_rid_unique`) instead of a second
+  round trip on the ingest path. Deliberately **not** `DeviceRegistry.addrForHandle` — uncached, and it
+  throws `UnknownDeviceIdError`, which would breach the LOG-BUT-DON'T-THROW contract. A system with no
+  device row inserts 0 rows.
+- Two traps, both now regression-tested in `lib/__tests__/polling-utils-device-state.test.ts` (6 tests,
+  asserting the *rendered* SQL via `PgDialect.sqlToQuery`): the atomic counters must reference
+  `device_state.total_polls + 1`, not the copied-across `polling_status.total_polls + 1`; and timestamps
+  must be bound as `toISOString()` + an explicit `::timestamp` cast, because handing node-pg a `Date`
+  serialises it with the **local** UTC offset, which a `timestamp without time zone` column then stores
+  verbatim — right on Vercel, 10 hours out on a Sydney laptop.
+- **`scripts/config-v4/reconcile-device-state.ts`** (new; dies with the rest of the directory at slice L).
+  `total_polls`/`successful_polls`/`consecutive_errors` are running totals, so the dual-write alone
+  cannot close the gap that opened between the 2026-07-26 cutover seed and now — it only makes the two
+  tables move together. This does an absolute copy, asserts coverage, and reports per-device drift.
+  **Run it against prod immediately before slice C merges**; after the deploy, a non-zero drift means a
+  `device_state` write has been erroring.
+- Also fixed here: `lib/readings/preview-seed.ts`'s `CONFIG_TABLES` went stale at the cutover — it named
+  only the legacy six, so a freshly seeded preview got `systems`/`point_info` but no
+  `areas`/`devices`/`points`, and the time-series COPY then failed the `point_readings.point_rid` FK.
+  Rebuilt as a topological sort of the live FK graph; the test now asserts the parent-before-child edges
+  instead of a bare file count.
+
+Verified on `liveone-dev` by driving the real `updatePollingStatusSuccess`/`Error` (crons are off there,
+so a throwaway `scripts/temp` driver, not a forced vendor poll): both tables `+1 total_polls`, both
+`+1 successful_polls` on success, both `+1 consecutive_errors` on error with `successful_polls`
+untouched, `last_poll_time` **identical to the millisecond** across the two tables and 1 ms from `now()`
+in UTC, `last_response` round-tripping as jsonb. Reconcile then took dev from **9 drifted devices → 0**,
+coverage 11/11, and is idempotent on a second run.
+
+**The read-flip half**, and `polling_status` retired from the write path too.
+
+- The **eight identical `polling_status` leftJoins** in `systems-manager.ts` became a one-line swap each,
+  against a module-level `deviceStateByHandle` subquery (`device_state ⋈ devices`, projected as
+  `handle: devices.rid`). Folding the uuid hop into the subquery states the verbatim-rid bridge once
+  instead of eight times and keeps the join sites single-call. Built from a standalone drizzle
+  `QueryBuilder`, so importing the module still needs no configured pool.
+- `SystemWithPolling.pollingStatus` is now `InferSelectModel<typeof deviceState>`, dropping the legacy
+  `id`/`systemId`. Nothing broke: every consumer (`serve-data.ts`, `get-systems-data.ts`,
+  `base-adapter.ts`'s `evaluateBoundarySchedule`/`getLastPollTime`, the enphase adapter) reads only
+  payload columns, so the `/api/data` and admin wire shapes are byte-identical.
+- **`polling_status` is now FROZEN, not merely un-read** — PR 2 also drops the write. Slices D, E, M, I,
+  J, K and L all sit between here and the slice-N drop; keeping the leg alive that long is a full
+  vendor-payload jsonb write per poll per device for a table no code touches. The table stays in place,
+  unchanged, as the pre-flip rollback snapshot. Its schema header and `packages/usher/core/pusher.ts`'s
+  heartbeat contract now say so.
+- The test file was rewritten with the flip: it asserts `device_state` is written **and that the drizzle
+  `insert()` builder is never called at all**, so resurrecting the `polling_status` write fails CI.
+
+Verified on `liveone-dev` with a second throwaway driver that compares every flipped path against
+`device_state` read directly — `getPollingStatus`, `getSystem`, `getAllSystems`, `getSystemsByOwner`
+across all 11 stateful devices, field by field: **all match**. `getAllSystems` still returns the 7
+never-polled systems with `pollingStatus: null` (the leftJoin stays LEFT), and all 9 active systems with
+state carry a `lastSuccessTime` (what `shouldPoll` keys off). Two false alarms worth recording: the
+baseline must be `device_state`, not `polling_status` — the 2-hourly sync re-imports prod's still-frozen
+`device_state` over dev's reconciled copy, so comparing the two tables measures the missing PROD
+reconcile, not the flip; and pg returns `timestamp` as a `Date` through drizzle but as a bare string
+through `execute()`, so a naive comparator reports every date as mismatched.
 
 **Done when:** zero query sites against any dropped table; `SystemsManager` deleted; a real poll →
 publish → receive → aggregate → serve cycle green on `liveone-dev` including a **newly minted point**

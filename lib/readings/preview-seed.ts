@@ -60,14 +60,35 @@ function pgEnv(url: string): Record<string, string> {
     PGSSLMODE: "require",
   };
 }
-// All config tables (small; full copy). Order matters for FKs: systems first.
+// All config tables (small; full copy), in FK-parent-first order.
+//
+// This list went stale at the config-v4 cutover: it still named only the legacy six, so a freshly
+// seeded preview got `systems`/`point_info` but no `areas`/`devices`/`points` — and the time-series
+// COPY that follows then failed the point_readings.point_rid → points.rid FK. Rebuilt here from the
+// live FK graph (Phase 12 slice C, which is what put `device_state` on the ingest path).
+//
+// Order is a topological sort of the FK edges: areas/systems/roles/dashboards have no parents;
+// devices → areas; points → devices; area_bindings → areas + point_info + points + roles.
 const CONFIG_TABLES = [
+  "areas",
   "systems",
-  "point_info",
+  "roles",
+  "dashboards",
   "users",
-  "user_systems",
+  "devices",
+  "points",
+  "point_info",
+  "legacy_handles",
+  "area_devices",
+  "area_members",
+  "area_bindings",
+  "derivations",
+  "device_state",
   "polling_status",
+  "user_systems",
   "share_tokens",
+  "dashboard_grants",
+  "dashboard_revisions",
 ];
 
 // Time-series tables -> WHERE clause. The high-frequency tables use the short SEED_DAYS window;

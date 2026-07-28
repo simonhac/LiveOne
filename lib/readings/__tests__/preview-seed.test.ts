@@ -64,7 +64,32 @@ describe("preview readings transfer", () => {
     expect(statements).toContainEqual(
       expect.stringContaining("interval_end >= "),
     );
-    expect(removed).toHaveLength(12);
+    // Every copied table leaves exactly one temp file behind, in copy order — so `removed` IS the
+    // copy order. Assert the FK edges that actually bite rather than a bare count: a parent copied
+    // after its child fails the FK at COPY time, which is how the list went stale at the cutover
+    // (devices/points were missing entirely, so the point_readings copy had nothing to reference).
+    const order = removed.map((p) =>
+      p.replace("/tmp/seed_", "").replace(".bin", ""),
+    );
+    const before = (parent: string, child: string) => {
+      expect(order).toContain(parent);
+      expect(order).toContain(child);
+      expect(order.indexOf(parent)).toBeLessThan(order.indexOf(child));
+    };
+    before("areas", "devices"); // devices.primary_area_id
+    before("devices", "points"); // points.device_id
+    before("devices", "device_state"); // device_state.device_id
+    before("devices", "legacy_handles"); // legacy_handles.device_id
+    before("areas", "area_members");
+    before("devices", "area_members");
+    before("systems", "point_info"); // point_info.system_id
+    before("dashboards", "users"); // users.default dashboard
+    before("points", "point_readings"); // the hot-table rid FK — the copy this fix unblocks
+    before("sessions", "point_readings");
+    // Config first, then the time-series slice.
+    expect(order.indexOf("share_tokens")).toBeLessThan(
+      order.indexOf("sessions"),
+    );
     expect(JSON.stringify(statements)).not.toContain("source_secret");
     expect(JSON.stringify(statements)).not.toContain("target_secret");
     expect(calls.some((call) => call.env?.PGPASSWORD === "source_secret")).toBe(
