@@ -14,12 +14,13 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
 
+// Every entry is a system the user OWNS — the per-system viewer grant (`user_systems`) was dropped in
+// migration 0045, so there is no longer a `role` to distinguish.
 interface SystemAccess {
   systemId: number;
   systemNumber: string;
   displayName: string;
   status?: "active" | "disabled" | "removed";
-  role: "owner" | "viewer";
 }
 
 interface UserData {
@@ -222,33 +223,18 @@ export default function UsersPageClient() {
                                 >
                                   {system.displayName}
                                 </Link>
-                                {system.role === "owner" ? (
-                                  <div className="relative group">
-                                    <Crown
-                                      className={`w-3 h-3 cursor-help ${
-                                        system.status === "removed"
-                                          ? "text-purple-700"
-                                          : "text-purple-400"
-                                      }`}
-                                    />
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
-                                      Owner
-                                    </div>
+                                <div className="relative group">
+                                  <Crown
+                                    className={`w-3 h-3 cursor-help ${
+                                      system.status === "removed"
+                                        ? "text-purple-700"
+                                        : "text-purple-400"
+                                    }`}
+                                  />
+                                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
+                                    Owner
                                   </div>
-                                ) : system.role === "viewer" ? (
-                                  <div className="relative group">
-                                    <Eye
-                                      className={`w-3 h-3 cursor-help ${
-                                        system.status === "removed"
-                                          ? "text-gray-600"
-                                          : "text-gray-400"
-                                      }`}
-                                    />
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
-                                      Viewer
-                                    </div>
-                                  </div>
-                                ) : null}
+                                </div>
                               </div>
                             ))
                         ) : (

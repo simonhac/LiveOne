@@ -4,9 +4,9 @@
  * Public identity comes from `legacy_handles.device_id`; data still addresses the current system
  * through its integer handle until the devices table lands at cutover.
  */
-import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { eq, inArray, isNull, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems, userSystems } from "@/lib/db/planetscale/schema";
+import { systems } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
 import type { DeviceId } from "@/lib/ids";
 
@@ -18,6 +18,13 @@ export interface ReadableDevice {
   status: string;
 }
 
+/**
+ * Devices this user may read: owned, or ownerless-and-therefore-public. A third `user_systems` viewer
+ * grant term was dropped with that table in migration 0045 (slice F) — the grant-based read path is
+ * now `requireDashboardAccess`/`grantedSystemScopeForUser`, and this function's callers
+ * (app/dashboard/[...slug]/page.tsx, lib/dashboard/v4-routes.ts) pass the DASHBOARD OWNER's id, for
+ * whom ownership is the operative term.
+ */
 export async function listReadableDevices(
   userId: string,
 ): Promise<ReadableDevice[]> {
@@ -29,18 +36,10 @@ export async function listReadableDevices(
       status: systems.status,
     })
     .from(systems)
-    .leftJoin(
-      userSystems,
-      and(
-        eq(userSystems.systemId, systems.id),
-        eq(userSystems.clerkUserId, userId),
-      ),
-    )
     .where(
       or(
         eq(systems.ownerClerkUserId, userId),
         isNull(systems.ownerClerkUserId),
-        isNotNull(userSystems.clerkUserId),
       ),
     );
   const mappings = await DeviceRegistry.addrsForHandles(

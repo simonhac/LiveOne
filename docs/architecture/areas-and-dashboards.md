@@ -19,11 +19,11 @@ physical collection, semantic grouping, and presentation). The split follows Hom
 and the Apple Home / Health model: **a good auto-generated default, customizable on top — not a blank
 canvas.**
 
-| Layer            | Tables                            | HA analogue          | Responsibility                                                                              |
-| ---------------- | --------------------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
-| **Physical**     | `systems`, `point_info`           | Device / Entity      | Where data is collected. A `system` is a vendor connection; a `point` is a measured signal. |
-| **Semantic**     | `areas`, `area_bindings`, `roles` | Area / Energy config | What the data _means_. Typed role→point edges.                                              |
-| **Presentation** | `dashboards`, dashboard cards     | Dashboard / View     | How a user sees it. Per-user layout.                                                        |
+| Layer            | Tables                        | HA analogue          | Responsibility                                                                              |
+| ---------------- | ----------------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
+| **Physical**     | `systems`, `point_info`       | Device / Entity      | Where data is collected. A `system` is a vendor connection; a `point` is a measured signal. |
+| **Semantic**     | `areas`, `area_bindings`      | Area / Energy config | What the data _means_. Typed role→point edges.                                              |
+| **Presentation** | `dashboards`, dashboard cards | Dashboard / View     | How a user sees it. Per-user layout.                                                        |
 
 - **Points** are addressed by `(system_id, index)` but also carry a deterministic `point_uid` (uuidv5) —
   a stable identity that survives re-addressing.
@@ -37,8 +37,10 @@ canvas.**
 - **Membership + override.** An Area's points resolve under membership + override: **`area_bindings`
   _select_** the points when present (a curated multi-device Area — every Area that exists today has
   bindings); with **no bindings** an Area **defaults to the union of its member devices' own points**.
-  `roles` is the single source of truth for role semantics (the HA `device_class`/`state_class`/unit/
-  aggregability registry, projected from `lib/roles/registry.ts`).
+  **`lib/roles/registry.ts` (`ROLES`) is the single source of truth for role semantics** — the HA
+  `device_class`/`state_class`/unit/aggregability registry. It is **code, not a table**: the `roles` SQL
+  projection was dropped in migration 0044, leaving only the `area_bindings_role_check` /
+  `derivations_role_check` CHECK constraints to pin the vocabulary in SQL.
 - **Areas are lazy.** A system is **not** given an area-of-one at create-time; one is minted on demand
   the moment it's needed — when the system forms a complete flow role set (the daily recompute heal) or
   when its location is set — so bare monitoring-only systems don't accrue pointless Area rows.
@@ -111,7 +113,7 @@ position/layout; (2) area is too coarse — a card often binds a single role or 
 **Why a descriptor field, not a normalized `dashboard_cards` table (Phase 2a decision):** a card's area is
 _composition/presentation_ data that belongs with its layout — which already lives in the descriptor
 JSONB. Normalizing cards into rows buys SQL-queryability that nothing needs (HA export, Phase 3, reads the
-_semantic_ layer — `areas`/`area_bindings`/`roles` — not dashboards), and a _partially_-normalized table
+_semantic_ layer — `areas`/`area_bindings` — not dashboards), and a _partially_-normalized table
 (area in a row, layout in JSONB) is strictly worse — two sources of truth to sync. So `areaId` is an
 optional field on `ModuleCardInstance`; `dashboards.area_id` stays the default/home area. This also
 eliminated the descriptor→rows dual-read data migration.
@@ -143,7 +145,7 @@ follows `docs/migrations.md` (additive/forward-only, `DO`/`RAISE` guards before 
 
 ### Foundation — ✅ shipped
 
-Semantic schema (`areas`, `area_bindings`, `roles`); composite retirement (composite `systems` rows
+Semantic schema (`areas`, `area_bindings`, and the since-dropped `roles`); composite retirement (composite `systems` rows
 deleted, synthesized as areas-backed virtual systems; `CompositeAdapter` + `AREAS_TABLE` flag retired);
 flow matrix re-keyed to `area_id`; dashboards + sharing (`dashboard_share_tokens`, `dashboard_grants`,
 shared view, `/api/dashboard-share/[token]`); point identity (`point_info.point_uid`); split admin pages.

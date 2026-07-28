@@ -156,7 +156,7 @@ const FULL: FullTable[] = [
       children: [],
     },
   },
-  ...["users", "user_systems", "polling_status", "share_tokens", "roles"].map(
+  ...["users", "polling_status", "share_tokens"].map(
     (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
   ),
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same

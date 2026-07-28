@@ -67,12 +67,11 @@ function pgEnv(url: string): Record<string, string> {
 // COPY that follows then failed the point_readings.point_rid → points.rid FK. Rebuilt here from the
 // live FK graph (Phase 12 slice C, which is what put `device_state` on the ingest path).
 //
-// Order is a topological sort of the FK edges: areas/systems/roles/dashboards have no parents;
-// devices → areas; points → devices; area_bindings → areas + point_info + points + roles.
+// Order is a topological sort of the FK edges: areas/systems/dashboards have no parents;
+// devices → areas; points → devices; area_bindings → areas + point_info + points.
 const CONFIG_TABLES = [
   "areas",
   "systems",
-  "roles",
   "dashboards",
   "users",
   "devices",
@@ -85,7 +84,6 @@ const CONFIG_TABLES = [
   "derivations",
   "device_state",
   "polling_status",
-  "user_systems",
   "share_tokens",
   "dashboard_grants",
   "dashboard_revisions",

@@ -14,6 +14,11 @@
  * planned HA export bridge (docs/architecture/areas-and-dashboards.md) is a publish step, not a
  * remodel. This module is **pure data** — no React, no lucide, no node — so server and client both
  * import it safely.
+ *
+ * ⚠️ There is no SQL copy of this any more. The `roles` table (a projection of `ROLES`) was dropped
+ * by migration 0044; the only thing SQL still knows about the role set is the enumeration in the
+ * `area_bindings_role_check` / `derivations_role_check` CHECK constraints. ADDING A ROLE HERE
+ * therefore needs a migration that widens both CHECKs — nothing derives them from this file.
  */
 
 export type RoleId = "solar" | "battery" | "load" | "grid" | "ev" | "generator";
@@ -57,7 +62,7 @@ export interface RoleDef {
    * lib/run-tracking). `haDeviceClass` is the HA `binary_sensor` device_class for the export
    * bridge ("running" — on means running). The role's own `ha` block still describes the
    * underlying numeric signal (e.g. power/W); the binary entity is a derived view over the
-   * persisted run periods. Code-only — not projected into the `roles` SQL table.
+   * persisted run periods.
    */
   device?: { trackable: true; haDeviceClass: string };
 }
