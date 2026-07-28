@@ -12,14 +12,13 @@
 
 ## ▶ NEXT ACTION — Phase 12 slice H (`area_devices` → `area_members`). **Phases 10 + 11 COMPLETE; Phase 12 slices A + B + C + G + F shipped 2026-07-28.**
 
-> 🛑 **Slices G + F have a MIGRATION DEBT: 0044 + 0045 are written and dry-run-verified but NOT YET
-> APPLIED to either environment.** They are `[D]` drops, so the code deploys first and the DDL follows —
-> apply **prod `sydney` first, then `liveone-dev`**, then tick the two lines here. Until then both
-> environments still carry `roles` and `user_systems` as orphan tables that no code touches: harmless,
-> but slice N's terminal `systems` drop is blocked until 0045 releases
-> `user_systems_system_id_systems_id_fk`. Do not start slice H's DDL until these two are in.
+> ✅ **The slice G + F migration debt is CLEARED. 0044 + 0045 are applied to BOTH environments**
+> (2026-07-28: prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC), post-checked identical. `roles`
+> and `user_systems` are gone; **slice N is unblocked** — FKs into `systems` went **4 → 3**, leaving
+> `point_info.system_id`, `polling_status.system_id`, `sessions.system_id`. Slice H's DDL is free to
+> start. Full apply record under slices G and F below.
 >
-> **DB state (2026-07-28): ✅ 0043 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
+> **DB state (2026-07-28): ✅ 0043, 0044, 0045 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
 > prod ([#267](https://github.com/simonhac/LiveOne/pull/267), live 15:20 AEST) and post-checked clean.**
 > All 9 active devices wrote `device_state` after the flip (`last_poll_time` past the freeze,
 > `consecutive_errors` 0), coverage 11/11, zero unmapped `polling_status` rows, and zero
@@ -150,8 +149,8 @@ model. Those are still v3, with v4 running alongside as a dark mirror.
 | **Zero v4-native renderers**                     | 19 plugins across two split registries (`CARD_RENDERERS` 10 + `TILE_RENDERERS` 9), 100% v3-shaped, reached through `v4-adapt.ts`. `card-types.ts`' 18 unified types have no renderer map.                                                                   | Phase 14    |
 | **All v4 mutation routes missing**               | 10 endpoints unbuilt (`/devices`, `/devices/{id}/points`, `/areas/{id}/members\|bindings\|derivations` PUT, `/dashboards/{id}/shares\|grants\|revisions`, `/export`, `/import`); 28 legacy handlers across 15 routes still serve.                           | Phase 14    |
 | **Derivations unused; two derive mechanisms**    | ✅ **Phase 11 DONE** — run-tracking + HWS now read/write `derivations`/`derived_intervals`; `device_trackers`/`device_run_periods` dropped (0041).                                                                                                | Phase 11    |
-| **`user_systems` / `isViewer`**                  | ✅ **Phase 12 slice F DONE** — table + `isViewer` gone; 0045 written (not yet applied). The admin Viewers UI and `/api/setup` went with it; `getSystemsVisibleByUser`'s granted leg was re-pointed at `dashboard_grants`, not deleted.                        | Phase 12    |
-| **`roles` table**                                | ✅ **Phase 12 slice G DONE** — table + the `area_bindings.role` FK gone; 0044 written (not yet applied). `area_bindings_role_check` is now the sole enforcement of the 6-role set.                                                                            | Phase 12    |
+| **`user_systems` / `isViewer`**                  | ✅ **Phase 12 slice F DONE** — table + `isViewer` gone; 0045 applied to both environments 2026-07-28. The admin Viewers UI and `/api/setup` went with it; `getSystemsVisibleByUser`'s granted leg was re-pointed at `dashboard_grants`, not deleted.          | Phase 12    |
+| **`roles` table**                                | ✅ **Phase 12 slice G DONE** — table + the `area_bindings.role` FK gone; 0044 applied to both environments 2026-07-28. `area_bindings_role_check` is now the sole enforcement of the 6-role set.                                                              | Phase 12    |
 | **Dead weight in `schema.ts`**                   | ✅ **Phase 10 DONE** — `dashboard_share_tokens`, the 5 dead `share_tokens.*_ms`/`owner_clerk_user_id` columns and `dashboard_grants.created_at_ms` all gone.                                                                                                | Phase 10    |
 | **Three `_old` hot tables in the DB**            | ✅ **Phase 10 DONE** — dropped by 0038/0039 (4,216 MB dev / 4,140 MB prod reclaimed).                                                                                                                                                                       | Phase 10    |
 | **~160 KB of cutover scaffolding**               | ✅ **Phase 10 DONE** (mostly) — retired by #251. `registry-sync`/`registry-populate` die in Phase 12 slice L; `rewrite-descriptor-area-refs.ts` still holds the `prebuild` `tsc` step open until then.                                                       | Phase 10/12 |
@@ -585,7 +584,8 @@ applied as its persistent `postgres` role.
 > **The standing lesson: a dev-side check is only evidence about prod when the sync is demonstrably
 > green.** Confirm a green _scheduled_ run before treating `liveone-dev` as a rehearsal result.
 
-**PR 2 (built 2026-07-28, not yet applied to any database).** Code-only removal plus a guarded drop:
+**PR 2 (built 2026-07-28; 0041 since applied to both environments — `device_trackers` and
+`device_run_periods` verified absent).** Code-only removal plus a guarded drop:
 
 - Deleted `scripts/config-v4/{fill,verify}-derivations.ts`, `lib/derivations/fill-map.ts` + its test
   (the fill script was their only consumer), and the `deviceTrackers` / `deviceRunPeriods` tables +
@@ -663,8 +663,9 @@ first, then prod, then dev. **[C]** code-only.
 - Slice M deletes the legacy `"{systemId}.{pointIndex}"` branch in `app/api/observations/receive/route.ts:81-128`
   only after `SELECT count(*) FROM observations_outbox WHERE published_at IS NULL` is 0 — an in-flight
   legacy row is a poison pill.
-- FKs into `systems` that must all go before the drop: `polling_status.system_id`, `user_systems.system_id`,
-  `sessions.system_id`, `point_info.system_id`.
+- FKs into `systems` that must all go before the drop: `polling_status.system_id`, `sessions.system_id`,
+  `point_info.system_id`. (`user_systems.system_id` was the fourth — released by 0045, slice F, so this
+  count is **3** as of 2026-07-28; verified on both environments.)
 - **Teach `updatePoint` to mirror, early — it is a one-line fix that stops the drift accumulating.**
   Adding the `mirrorPoint` call inside `PointManager.updatePoint`'s transaction (correction #10) costs
   nothing now and is worth doing well before slice M, because every day it is missing is more divergence
@@ -829,6 +830,15 @@ were also exercised and both abort *before* any DROP: dropping the CHECK first r
 area_bindings.role unconstrained", and a smuggled-in out-of-set role raises "holds role(s) outside the
 CHECK set: bogus". `db:pg:generate` clean afterwards.
 
+**Applied 2026-07-28** — prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC (with 0045, one
+transaction each). Post-check identical on both: `to_regclass('public.roles')` NULL,
+`area_bindings_role_roles_role_fk` count **0**, and `area_bindings_role_check` still present *as a
+CHECK* with the full 6-role list — asserted via `pg_get_constraintdef`, not a bare count, since a count
+cannot fail given a non-`CASCADE` drop. `area_bindings` unchanged at **72** rows in both. The 6 prod
+role rows were captured before the drop, because `drizzle-kit` attaches no `'notice'` listener and the
+guard's `RAISE NOTICE` is therefore **swallowed** — the "apply log is the record" premise in the
+migration header does not hold under `db:pg:migrate`. Capture first if you want the record.
+
 **✅ SLICE F DONE (2026-07-28).** Migration **0045** drops `user_systems`, releasing one of the four FKs
 into `systems` that block slice N. Three things the one-line entry ("prod table is empty") got wrong or
 did not say:
@@ -868,6 +878,27 @@ dashboard-grant half is deliberately **loose** — "holds any grant", not "a gra
 because the precise question needs `allowedSystemIds` (descriptor parsing), which is app logic; the
 migration header says so rather than implying equivalence. Full unit suite **133/133**, `tsc --noEmit`
 and `build:local` clean (the route manifest confirms `/api/setup` is gone), `db:pg:generate` clean.
+
+**Applied 2026-07-28** — prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC. `user_systems` is NULL
+and **FKs into `systems` are 4 → 3** on both, so slice N is unblocked. Two notes for whoever runs the
+next `[D]` slice:
+
+- **Re-probe the emptiness gate at apply time, not from an earlier reading.** Because 0045's redundancy
+  guard is deliberately loose, "prod holds 0 rows" is the fact actually making the drop safe — so it was
+  re-asserted immediately before the migrate (still 0), rather than trusted from the morning's probe. A
+  row arriving in between whose grantee held any dashboard grant would have passed the guard.
+- **`ALTER TABLE area_bindings DROP CONSTRAINT` (0044) is the only prod-risky statement in either file**
+  — `ACCESS EXCLUSIVE` on a table the flow/battery-provenance read path joins per area
+  (`lib/battery-provenance/load.ts:207-223`). Hold time is trivial at 72 rows; *acquisition* is the risk,
+  since a queued `ALTER` blocks every reader behind it. `lock_timeout` cannot ride on the URL
+  (`drizzle-planetscale.config.ts:27-35` discards search params) — set it on the role instead:
+  `ALTER ROLE CURRENT_USER SET lock_timeout = '5s'`, which persists across that role's sessions. It never
+  contended (the DDL was deliberately run in the quiet window between deploy-live and the accumulator
+  regen), and a timeout would have rolled both migrations back safely — see below.
+
+Both migrations apply in a **single transaction**: `drizzle-orm`'s migrator opens one
+`session.transaction` and loops all pending files inside it. So an exception in 0045's guard rolls back
+0044's drop too — there is no half-applied state, and the abort branch is simply "`applied` stays 44".
 
 **Done when:** zero query sites against any dropped table; `SystemsManager` deleted; a real poll →
 publish → receive → aggregate → serve cycle green on `liveone-dev` including a **newly minted point**

@@ -185,74 +185,33 @@ ADMIN_USER_IDS=user_xxx,user_yyy
 
 ### Database Schema
 
-Systems are linked to Clerk users via the `systems` table:
+A system's only per-user link is **`systems.owner_clerk_user_id`** — one nullable owner. A NULL owner
+means the system is **public**: readable by everyone, writable only by admins. See
+`lib/db/planetscale/schema.ts` for the column set; it is the source of truth and is not reproduced here.
 
-```typescript
-// lib/db/planetscale/schema.ts
-export const systems = pgTable("systems", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  ownerClerkUserId: text("owner_clerk_user_id"), // Clerk user ID
-  vendorType: text("vendor_type").notNull(), // 'selectronic', 'enphase', etc.
-  displayName: text("display_name").notNull(),
-  // ... other fields
-});
-
-export const userSystems = pgTable("user_systems", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  clerkUserId: text("clerk_user_id").notNull(), // Viewer access
-  systemId: integer("system_id").notNull(),
-  role: text("role").notNull().default("viewer"), // 'owner', 'viewer'
-});
-```
+There is no per-system grant table. `user_systems` — the pre-Areas `owner`/`viewer` junction — was
+dropped in migration **0045** (config-v4 Phase 12 slice F) with **no replacement**: sharing is
+per-DASHBOARD, not per-system — `dashboard_grants` (per-person invite) and `share_tokens` (public
+link), both enforced by `requireDashboardAccess`. See
+[areas-and-dashboards.md](./areas-and-dashboards.md).
 
 ### Access Control
 
-```typescript
-import { auth } from "@clerk/nextjs/server";
-import { planetscaleDb as db } from "@/lib/db/planetscale";
-import { systems, userSystems } from "@/lib/db/planetscale/schema";
-import { eq, or } from "drizzle-orm";
+Nothing computes access ad hoc — everything routes through `lib/api-auth.ts`:
 
-// Get systems user has access to
-export async function getUserSystems(userId: string) {
-  const ownedSystems = await db
-    .select()
-    .from(systems)
-    .where(eq(systems.ownerClerkUserId, userId));
+| Helper                     | Answers                                                                    |
+| -------------------------- | -------------------------------------------------------------------------- |
+| `requireSystemAccess`      | may this caller read/write this system? Returns a `SystemAuthContext`.      |
+| `requireDashboardAccess`   | same question for a dashboard, and share-token aware (`userId` may be null) |
+| `requireAdmin`             | platform admin only                                                        |
+| `requireCronOrAdmin`       | cron secret or admin                                                       |
 
-  const sharedSystems = await db
-    .select({ system: systems })
-    .from(userSystems)
-    .innerJoin(systems, eq(userSystems.systemId, systems.id))
-    .where(eq(userSystems.clerkUserId, userId));
-
-  return [...ownedSystems, ...sharedSystems.map((s) => s.system)];
-}
-
-// Check if user can access system
-export async function canAccessSystem(userId: string, systemId: number) {
-  const system = await db
-    .select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
-    .limit(1);
-
-  if (!system.length) return false;
-
-  // Owner check
-  if (system[0].ownerClerkUserId === userId) return true;
-
-  // Shared access check
-  const access = await db
-    .select()
-    .from(userSystems)
-    .where(eq(userSystems.systemId, systemId))
-    .where(eq(userSystems.clerkUserId, userId))
-    .limit(1);
-
-  return access.length > 0;
-}
-```
+`SystemsManager.getSystemsVisibleByUser` (`lib/systems-manager.ts`) builds the device-switcher list:
+systems the user **owns**, systems that are **public**, and systems a **dashboard grant** reaches (via
+`grantedSystemScopeForUser`). That third leg used to be an inner join on `user_systems`; it was
+re-pointed at `dashboard_grants` rather than deleted, because it is load-bearing for Vercel preview —
+preview authenticates against the live prod Clerk instance while `liveone-dev`'s config is reowned to
+the dev id.
 
 ## Client-Side Auth
 
@@ -343,7 +302,6 @@ interface AuthenticatedContext extends AuthContext {
 interface SystemAuthContext extends AuthenticatedContext {
   system: SystemWithPolling;
   isOwner: boolean;
-  isViewer: boolean;
   canRead: boolean;
   canWrite: boolean;
 }
@@ -411,11 +369,18 @@ const authResult = await requireSystemAccess(request, systemId, {
 
 `requireSystemAccess` checks these access levels:
 
-| Level  | canRead | canWrite | Description                            |
-| ------ | ------- | -------- | -------------------------------------- |
-| Admin  | ✅      | ✅       | Platform admin                         |
-| Owner  | ✅      | ✅       | System owner (`ownerClerkUserId`)      |
-| Viewer | ✅      | ❌       | Granted access via `userSystems` table |
+| Level      | canRead | canWrite | Description                                            |
+| ---------- | ------- | -------- | ------------------------------------------------------ |
+| Admin      | ✅      | ✅       | Platform admin                                         |
+| Owner      | ✅      | ✅       | System owner (`ownerClerkUserId`)                      |
+| Public     | ✅      | ❌       | Ownerless system (`ownerClerkUserId IS NULL`)          |
+| Claude dev | ✅      | ❌       | `x-claude` header, development only                    |
+
+Exactly: `canRead = isAdmin || isClaudeDev || isOwner || isPublic` and `canWrite = isAdmin || isOwner`.
+
+There is no **Viewer** level. It was a fourth read term probing `user_systems`, removed with that table
+in migration 0045 — it held 0 rows on prod and never conveyed write, so `canWrite` was unaffected and
+`canRead` only narrowed. A dashboard grantee still gets in, via `requireDashboardAccess`.
 
 ## Cron Job Protection
 

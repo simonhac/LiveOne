@@ -21,13 +21,12 @@
 | `systems`               | One row per monitored physical system (a vendor connection). Owner, vendor, status, timezone, metadata. (Multi-device "composite" areas have NO `systems` row — see below.) |
 | `polling_status`        | Per-system collection health (last poll/success/error, streaks, counters).                                                                                                  |
 | `users`                 | Per-user preferences (default system). Identity itself lives in Clerk.                                                                                                      |
-| `user_systems`          | User↔system access grants (`owner`/`admin`/`viewer`).                                                                                                                      |
 | `sessions`              | One row per vendor communication session. UUIDv7 text PKs (historical ids are stringified ints).                                                                            |
 | `point_info`            | Point registry: identity, physical/logical paths, metric type/unit, display config.                                                                                         |
 | `point_readings`        | Raw time-series, one row per point per measurement time.                                                                                                                    |
 | `point_readings_agg_5m` | 5-minute aggregates (avg/min/max/last/delta).                                                                                                                               |
 | `point_readings_agg_1d` | Daily aggregates, keyed by local-time `day` (YYYY-MM-DD).                                                                                                                   |
-| `share_tokens`          | View-only share links (3-word phrases) scoped to an owner's systems.                                                                                                        |
+| `share_tokens`          | View-only share links (3-word phrases), scoped to ONE dashboard (`dashboard_id`) — not to a system.                                                                         |
 | `observations_outbox`   | Transactional outbox: durable copy of each poll's `QueueMessage`, drained to QStash by the relay cron.                                                                      |
 
 ## Invariants
@@ -58,8 +57,8 @@ These are load-bearing; don't violate them without updating
 
 ### Timestamps & timezones
 
-- PG uses **native UTC `timestamp` columns** (no timezone). `share_tokens` keeps epoch-ms
-  `bigint`s deliberately (the code compares against `Date.now()`).
+- PG uses **native UTC `timestamp` columns** (no timezone) — including `share_tokens`, whose epoch-ms
+  `bigint` columns were dropped by migration 0037 (config-v4 Phase 10).
 - `point_readings` carries three times: `measurement_time` (device clock), `received_time`
   (when we fetched it), `created_at` (when it landed in PG — distinguishes live ingestion
   from backfill).
