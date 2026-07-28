@@ -7,6 +7,7 @@
  */
 
 import { FlowSeries } from "./flow-matrix-core";
+import { classifyEnergyStem } from "@/lib/roles/registry";
 
 export const SOLAR_PARENT_PATH = "source.solar";
 export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
@@ -198,6 +199,42 @@ export interface ClassifiedPoint {
 }
 
 /**
+ * An energy-accumulator point's exact interval energies (kWh), aligned to the shared timeline by
+ * SLOT: `energyKwhBySlot[i]` is the `agg_5m.delta` stamped at `timeline[i]` — the metered energy
+ * over `(timeline[i-1], timeline[i]]`. The slot→interval shift (interval i = delta at slot i+1)
+ * happens ONCE, inside {@link buildFlowSeries}'s attach step — loaders only scatter by interval_end.
+ */
+export interface EnergySeriesInput {
+  /** The energy point's logical-path stem, e.g. "bidi.battery.charge", "load", "bidi.grid". */
+  stem: string;
+  energyKwhBySlot: (number | null)[];
+}
+
+/**
+ * Apply an energy point's `transform` to a signed interval-kWh value before it enters the flow
+ * matrix. Only "i" (invert: ×−1) is meaningful — a NET accumulator wired so import/discharge reads
+ * negative. "d" (differentiate) already happened upstream in the 5m aggregation (`delta` IS the
+ * differenced value), so it's a no-op here. The single home for the rule, mirroring
+ * {@link applyPowerTransform}.
+ */
+export function applyEnergyTransform(
+  value: number | null,
+  transform: string | null,
+): number | null {
+  if (value === null) return null;
+  return transform === "i" ? -value : value;
+}
+
+/** Convert an `agg_5m.delta` value to interval kWh given the point's metric unit (Wh → /1000). */
+export function toIntervalKwh(
+  value: number | null,
+  unit: string | null,
+): number | null {
+  if (value === null) return null;
+  return unit === "Wh" ? value / 1000 : value;
+}
+
+/**
  * Assemble the canonical source/load `FlowSeries` for the energy-flow matrix from a system's
  * power points (each as signed kW on a shared timebase). This is the engine-side equivalent of
  * the browser's split / solar-aggregation / rest-of-house pipeline, kept pure so the two paths
@@ -209,7 +246,10 @@ export interface ClassifiedPoint {
  *  - loads   `load` (master) and `load.<sub>` (children) pass through
  *  - `load.rest-of-house` is derived from the 3-case rule
  */
-export function buildFlowSeries(points: ClassifiedPoint[]): {
+export function buildFlowSeries(
+  points: ClassifiedPoint[],
+  energySeries?: EnergySeriesInput[],
+): {
   sources: FlowSeries[];
   loads: FlowSeries[];
 } {
@@ -300,5 +340,93 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
     loads.push({ path: "load.rest-of-house", power: restOfHouse });
   }
 
+  if (energySeries && energySeries.length > 0) {
+    attachEnergyOverlays(sources, loads, energySeries);
+  }
+
   return { sources, loads };
+}
+
+/**
+ * Attach exact-energy overlays (`FlowSeries.energyKwh`) to the flow nodes the power points created.
+ * Energy points DECORATE existing nodes — they never create them (an accumulator with no power
+ * sibling attaches nowhere; no current vendor is in that state). Per {@link classifyEnergyStem}:
+ *
+ *  - `pair`: the register's interval energy lands on its directional node — BOTH halves of a bidi
+ *    channel can be nonzero in the same interval, preserving the gross flow the signed power
+ *    average nets away. Negative deltas (a counter reset) are defensively nulled.
+ *  - `net`:  the signed exact net splits by sign onto the channel's two halves (exact net, still
+ *    gross-lossy — the meter already destroyed intra-interval reversals).
+ *  - `uni`:  attaches straight onto the same-path node (clamped like `pair`).
+ *
+ * Multiple registers targeting one node (multi-device areas, Amber `.controlled` + `.import`) sum
+ * with null-poisoning — if ANY contributor is missing an interval the node's overlay is null there
+ * and that interval falls back to power integration, matching `sumSeries`' "a missing input makes
+ * the total unknowable" rule. Derived nodes (`load.rest-of-house`, `source.solar.residual`) are
+ * power-only by construction and never receive an overlay.
+ *
+ * This is also the single home of the slot→interval SHIFT: inputs are keyed by timeline SLOT (the
+ * delta stamped at `timeline[i]` covers `(timeline[i-1], timeline[i]]`), while `energyKwh[i]`
+ * means interval `(timeline[i], timeline[i+1]]` — so interval i reads slot i+1.
+ */
+function attachEnergyOverlays(
+  sources: FlowSeries[],
+  loads: FlowSeries[],
+  energySeries: EnergySeriesInput[],
+): void {
+  const n = energySeries[0]?.energyKwhBySlot.length ?? 0;
+  const intervals = Math.max(0, n - 1);
+  // Accumulate per target path with null-poisoning across contributors.
+  const byPath = new Map<string, (number | null)[]>();
+  const addContribution = (
+    path: string,
+    valueAt: (slot: number) => number | null,
+  ): void => {
+    let acc = byPath.get(path);
+    if (!acc) {
+      acc = new Array<number | null>(intervals).fill(null);
+      byPath.set(path, acc);
+      for (let i = 0; i < intervals; i++) acc[i] = valueAt(i + 1);
+      return;
+    }
+    for (let i = 0; i < intervals; i++) {
+      const v = valueAt(i + 1);
+      const prev = acc[i];
+      acc[i] = prev === null || v === null ? null : prev + v;
+    }
+  };
+
+  for (const e of energySeries) {
+    const cls = classifyEnergyStem(e.stem);
+    if (cls === null) continue;
+    const slots = e.energyKwhBySlot;
+    if (cls.kind === "pair" || cls.kind === "uni") {
+      addContribution(cls.targetPath, (slot) => {
+        const v = slots[slot];
+        if (v === null || v === undefined) return null;
+        return v < 0 ? null : v; // negative directional delta = counter reset → unknown
+      });
+    } else {
+      // net: split the signed exact net by sign onto the channel's directional halves.
+      const positivePath =
+        cls.channelStem === "bidi.battery" ? "source.battery" : "source.grid";
+      const negativePath =
+        cls.channelStem === "bidi.battery" ? "load.battery" : "load.grid";
+      addContribution(positivePath, (slot) => {
+        const v = slots[slot];
+        if (v === null || v === undefined) return null;
+        return v > 0 ? v : 0;
+      });
+      addContribution(negativePath, (slot) => {
+        const v = slots[slot];
+        if (v === null || v === undefined) return null;
+        return v < 0 ? -v : 0;
+      });
+    }
+  }
+
+  for (const node of [...sources, ...loads]) {
+    const overlay = byPath.get(node.path);
+    if (overlay) node.energyKwh = overlay;
+  }
 }

@@ -2,14 +2,18 @@
  * Derive per-interval battery charge/discharge energies (and the solar-vs-grid split of the charge)
  * from the same canonical `FlowSeries` the energy-flow matrix uses — NO database, NO IO.
  *
- * The split MUST come from the flow-matrix allocation rule (a source's instantaneous share of total
- * generation), because only that rule knows how much of a charge interval came from solar vs grid.
- * This mirrors `computeFlowMatrix`'s convention exactly (trapezoidal load energy, LEFT-endpoint source
- * proportion) so the fold's charge/discharge totals stay consistent with `point_readings_flow_attr_1d`'s
- * `load.battery` / `source.battery` cells.
+ * The split MUST come from the flow-matrix allocation rule (a source's share of total generation),
+ * because only that rule knows how much of a charge interval came from solar vs grid. This mirrors
+ * `computeFlowAccounting`'s convention exactly — per-interval magnitudes are the exact accumulator
+ * energies (`FlowSeries.energyKwh`) where present, else trapezoidal power integration; attribution
+ * weights are exact energies where present, else left-endpoint power; and `source.battery` is
+ * EXCLUDED from `load.battery`'s pool (the linked-source rule — a battery can't charge itself,
+ * which with directional accumulator pairs is a live case, not just an endpoint quirk). Keeping
+ * this in lock-step with the core is what keeps the fold's charge/discharge totals consistent with
+ * `point_readings_flow_attr_1d`'s `load.battery` / `source.battery` cells.
  *
- * Discharge is taken directly from the `source.battery` series (its integrated energy), not from the
- * allocation row-sum, so it equals the energy that physically left the battery.
+ * Discharge is taken directly from the `source.battery` series (its exact or integrated energy),
+ * not from the allocation row-sum, so it equals the energy that physically left the battery.
  *
  * Output is indexed per interval i = [timestamps[i], timestamps[i+1]] (length = timestamps.length − 1).
  */
@@ -41,23 +45,15 @@ function trapezoidKwh(
   return ((a + b) / 2) * dtHours;
 }
 
-/** Left-endpoint power (kW) at interval i, treating null as 0 for the generation-share DENOMINATOR. */
-function leftPower(series: FlowSeries, i: number): number {
-  const v = series.power[i];
-  return v === null ? 0 : v;
+/** The series' exact interval energy at i, or null when it has no overlay/datum there. */
+function exactAt(series: FlowSeries, i: number): number | null {
+  const e = series.energyKwh?.[i];
+  return e === null || e === undefined ? null : e;
 }
 
-/**
- * Left-endpoint power for the NUMERATOR (a source's allocated share), gated on BOTH endpoints being
- * non-null — matching `computeFlowMatrix`, which skips a source from allocation when either endpoint
- * is null (while still counting its left endpoint in the denominator). Without this gate a source with
- * a valid left / null right endpoint (a mid-interval data gap) would be over-credited into the battery
- * and diverge from `point_readings_flow_attr_1d`'s cells; here that share falls through to `otherChargeKwh`.
- */
-function pairedLeftPower(series: FlowSeries, i: number): number {
-  const a = series.power[i];
-  const b = series.power[i + 1];
-  return a === null || b === null ? 0 : a;
+/** Interval magnitude: exact accumulator energy where present, else the trapezoid. */
+function intervalKwh(series: FlowSeries, i: number, dtHours: number): number {
+  return exactAt(series, i) ?? trapezoidKwh(series.power, i, dtHours);
 }
 
 /**
@@ -86,31 +82,66 @@ export function extractBatteryFlows(
     const dtHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
 
     const dischargeKwh = batterySource
-      ? trapezoidKwh(batterySource.power, i, dtHours)
+      ? intervalKwh(batterySource, i, dtHours)
       : 0;
 
-    const chargeTotal = batteryLoad
-      ? trapezoidKwh(batteryLoad.power, i, dtHours)
-      : 0;
+    const chargeTotal = batteryLoad ? intervalKwh(batteryLoad, i, dtHours) : 0;
 
     let solarChargeKwh = 0;
     let gridChargeKwh = 0;
     let otherChargeKwh = 0;
 
     if (chargeTotal > 0) {
-      // Total instantaneous generation at the interval's left endpoint (matches computeFlowMatrix).
+      // Same per-interval mode switch as computeFlowAccounting: when ANY series carries exact
+      // energy at i, weights are kWh (exact, else left-endpoint × dt); otherwise plain kW left
+      // endpoints — bit-for-bit the legacy arithmetic for power-only inputs.
+      let anyExact = false;
+      for (const s of sources)
+        if (exactAt(s, i) !== null) {
+          anyExact = true;
+          break;
+        }
+      if (!anyExact)
+        for (const l of loads)
+          if (exactAt(l, i) !== null) {
+            anyExact = true;
+            break;
+          }
+
+      // Weight helpers mirroring the core: the DENOMINATOR takes a source's best-known magnitude
+      // (exact, else left endpoint — even when the right endpoint is null); the NUMERATOR
+      // additionally requires both power endpoints when falling back (a mid-interval gap keeps a
+      // source in the pool but out of the allocation → its share falls to `otherChargeKwh`,
+      // unknown provenance, never mis-credited as clean solar).
+      const denomW = (s: FlowSeries): number => {
+        const e = anyExact ? exactAt(s, i) : null;
+        if (e !== null) return e;
+        const p1 = s.power[i];
+        if (p1 === null) return 0;
+        return anyExact ? p1 * dtHours : p1;
+      };
+      const numerW = (s: FlowSeries): number => {
+        const e = anyExact ? exactAt(s, i) : null;
+        if (e !== null) return e;
+        const p1 = s.power[i];
+        const p2 = s.power[i + 1];
+        if (p1 === null || p2 === null) return 0;
+        return anyExact ? p1 * dtHours : p1;
+      };
+
+      // load.battery's pool EXCLUDES its linked source.battery (the core's linked-source rule).
       let totalGen = 0;
-      for (const s of sources) totalGen += leftPower(s, i);
+      for (const s of sources) {
+        if (s === batterySource) continue;
+        totalGen += denomW(s);
+      }
 
       if (totalGen > 0) {
-        // Numerator uses the both-endpoints gate (matches computeFlowMatrix); denominator keeps all
-        // sources' left endpoints. A source with a null right endpoint drops out of solar/grid and its
-        // share falls through to otherChargeKwh (unknown provenance), never mis-credited as clean solar.
-        let solarPower = 0;
-        for (const s of solarSources) solarPower += pairedLeftPower(s, i);
-        const gridPower = gridSource ? pairedLeftPower(gridSource, i) : 0;
-        solarChargeKwh = chargeTotal * (solarPower / totalGen);
-        gridChargeKwh = chargeTotal * (gridPower / totalGen);
+        let solarW = 0;
+        for (const s of solarSources) solarW += numerW(s);
+        const gridW = gridSource ? numerW(gridSource) : 0;
+        solarChargeKwh = chargeTotal * (solarW / totalGen);
+        gridChargeKwh = chargeTotal * (gridW / totalGen);
         otherChargeKwh = Math.max(
           0,
           chargeTotal - solarChargeKwh - gridChargeKwh,

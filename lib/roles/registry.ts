@@ -153,6 +153,55 @@ export const COMPOSITE_VALIDATED_ROLE_IDS: readonly RoleId[] = ROLE_IDS.filter(
 );
 
 /**
+ * How an ENERGY-accumulator point (metric_type "energy", per-interval Wh in `agg_5m.delta`)
+ * participates in the energy-flow matrix. The flow pipeline prefers these exact interval energies
+ * over integrating average power (see `FlowSeries.energyKwh` in flow-matrix-core.ts); this
+ * classifier is the single vendor-free mapping from an energy point's logical-path stem to the
+ * flow node(s) it decorates.
+ *
+ *  - `pair`: one directional half of a bidi channel, metered separately (Sigenergy / Selectronic /
+ *    Fusher / Amber). Both halves of an interval can be nonzero at once — this is what preserves
+ *    GROSS flow where the signed power average nets an intra-interval reversal to ~0.
+ *  - `net`: a SIGNED net accumulator carrying the bidi channel's own stem — split by sign like the
+ *    power series (exact net; gross-lossy, the meter already destroyed the reversal). ⚠️ A
+ *    direction-blind MONOTONIC total (e.g. Mondo's `totalEnergyWh`) must NOT be typed with a bidi
+ *    stem — its non-negative deltas would all land on the source half. (Mondo's are untyped today.)
+ *  - `uni`: a one-direction channel whose energy stem IS the flow node path (solar, load, EV).
+ */
+export type EnergyStemClass =
+  | { kind: "pair"; targetPath: string }
+  | { kind: "net"; channelStem: "bidi.battery" | "bidi.grid" }
+  | { kind: "uni"; targetPath: string };
+
+/** Directional-pair energy stems → the flow node they meter. `.controlled` (Amber controlled load)
+ *  is grid consumption metered on a separate register — summed into the import-side node. */
+const ENERGY_PAIR_TARGETS: Record<string, string> = {
+  "bidi.battery.discharge": "source.battery",
+  "bidi.battery.charge": "load.battery",
+  "bidi.grid.import": "source.grid",
+  "bidi.grid.export": "load.grid",
+  "bidi.grid.controlled": "source.grid",
+};
+
+/** Classify an energy point's stem for flow participation; null = not a flow energy stem. */
+export function classifyEnergyStem(stem: string): EnergyStemClass | null {
+  const pair = ENERGY_PAIR_TARGETS[stem];
+  if (pair !== undefined) return { kind: "pair", targetPath: pair };
+  if (stem === "bidi.battery" || stem === "bidi.grid")
+    return { kind: "net", channelStem: stem };
+  if (
+    stem === "source.solar" ||
+    stem.startsWith("source.solar.") ||
+    stem === "load" ||
+    stem.startsWith("load.") ||
+    stem === "ev.charge" ||
+    stem.startsWith("ev.charge.")
+  )
+    return { kind: "uni", targetPath: stem };
+  return null;
+}
+
+/**
  * Whether a set of logical-path stems forms a complete energy-flow role set (≥1 source and ≥1
  * load). Moved verbatim from logical-system.ts.
  *

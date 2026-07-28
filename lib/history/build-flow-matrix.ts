@@ -19,7 +19,10 @@ import type { LogicalSystem } from "@/lib/aggregation/logical-system";
 import {
   buildFlowSeries,
   applyPowerTransform,
+  applyEnergyTransform,
+  toIntervalKwh,
   ClassifiedPoint,
+  EnergySeriesInput,
 } from "@/lib/aggregation/flow-series";
 import { computeFlowMatrix } from "@/lib/aggregation/flow-matrix-core";
 import { toEnergyFlowMatrix } from "@/lib/aggregation/flow-node-meta";
@@ -42,8 +45,11 @@ export function buildFlowMatrixFromAggRows(
   allRows: AggRow[],
   logicalSystem: LogicalSystem,
 ): EnergyFlowMatrix | null {
-  // Index each point's signed avg by interval_end, and collect the shared 5m timeline.
+  // Index each point's signed avg AND interval delta by interval_end, and collect the shared 5m
+  // timeline (energy points' interval_ends join it too, so an interval the power series dropped
+  // still exists on the timeline).
   const avgByPoint = new Map<string, Map<number, number | null>>();
+  const deltaByPoint = new Map<string, Map<number, number | null>>();
   const timestampSet = new Set<number>();
   for (const r of allRows) {
     if (r.interval_end === undefined) continue; // 1d rows carry `day`, not interval_end — skip
@@ -55,6 +61,12 @@ export function buildFlowMatrixFromAggRows(
       avgByPoint.set(key, series);
     }
     series.set(r.interval_end, r.avg ?? null);
+    let deltas = deltaByPoint.get(key);
+    if (!deltas) {
+      deltas = new Map();
+      deltaByPoint.set(key, deltas);
+    }
+    deltas.set(r.interval_end, r.delta ?? null);
   }
 
   const timestamps = [...timestampSet].sort((a, b) => a - b);
@@ -78,7 +90,27 @@ export function buildFlowMatrixFromAggRows(
 
   if (classified.length === 0) return null;
 
-  const { sources, loads } = buildFlowSeries(classified);
+  // Exact-energy overlays from the logical system's accumulator points (fetched into `allRows`
+  // by the route when a Sankey is requested); slot-aligned — buildFlowSeries owns the shift.
+  const energySeries: EnergySeriesInput[] = [];
+  for (const p of logicalSystem.energyPoints) {
+    const deltas = deltaByPoint.get(`${p.ref.systemId}.${p.ref.pointId}`);
+    if (!deltas) continue; // energy rows absent (older client/fetch) → power fallback, never omit
+    const energyKwhBySlot = new Array<number | null>(timestamps.length).fill(
+      null,
+    );
+    for (const [t, v] of deltas) {
+      const i = tIndex.get(t);
+      if (i !== undefined)
+        energyKwhBySlot[i] = applyEnergyTransform(
+          toIntervalKwh(v, p.metricUnit),
+          p.transform,
+        );
+    }
+    energySeries.push({ stem: p.stem, energyKwhBySlot });
+  }
+
+  const { sources, loads } = buildFlowSeries(classified, energySeries);
   if (sources.length === 0 || loads.length === 0) return null;
 
   const result = computeFlowMatrix({ timestamps, sources, loads });

@@ -148,29 +148,11 @@ export function computeBatteryProvenance(
 ): ProvenanceResult {
   const { timeline, sources, loads } = inputs;
 
-  // Per-interval battery charge split + discharge from the flow allocation (power-integrated), then
-  // PREFER exact energy registers where the Area binds them (config: attach to power OR energy).
-  const bflows = extractBatteryFlows(timeline, sources, loads);
-  const exactCharge = inputs.batteryChargeEnergyKwh;
-  const exactDischarge = inputs.batteryDischargeEnergyKwh;
-  const flows = bflows.map((bf, i) => {
-    let { solarChargeKwh, gridChargeKwh, otherChargeKwh, dischargeKwh } = bf;
-    const ec = exactCharge?.[i];
-    if (ec != null) {
-      const powerTotal = solarChargeKwh + gridChargeKwh + otherChargeKwh;
-      if (powerTotal > 0) {
-        const scale = ec / powerTotal; // keep the solar/grid split ratio, use the exact magnitude
-        solarChargeKwh *= scale;
-        gridChargeKwh *= scale;
-        otherChargeKwh *= scale;
-      } else if (ec > 0) {
-        otherChargeKwh = ec; // charge with no measured generation split → unknown provenance
-      }
-    }
-    const ed = exactDischarge?.[i];
-    if (ed != null) dischargeKwh = ed;
-    return { solarChargeKwh, gridChargeKwh, otherChargeKwh, dischargeKwh };
-  });
+  // Per-interval battery charge split + discharge from the flow allocation. Exact energy registers
+  // (where the area has them) already arrived as `FlowSeries.energyKwh` overlays on sources/loads —
+  // `extractBatteryFlows` consumes them directly, so the magnitudes here are exact per interval
+  // (correctly slot-aligned) with power integration only as the per-interval fallback.
+  const flows = extractBatteryFlows(timeline, sources, loads);
 
   // Physical round-trip totals (raw, before η) for the RTE diagnostic + the "measured" η.
   const chargePerIv = flows.map(

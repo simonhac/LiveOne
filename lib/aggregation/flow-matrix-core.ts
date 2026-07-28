@@ -1,10 +1,13 @@
 /**
  * Pure energy-flow matrix integrator — NO database, NO UI, NO domain knowledge.
  *
- * Given source and load POWER series sampled at shared timestamps, it integrates each
- * load's energy per interval (trapezoidal rule) and allocates that energy across sources
- * in proportion to each source's instantaneous share of total generation, accumulating
- * into cumulative kWh.
+ * Given source and load POWER series sampled at shared timestamps — optionally overlaid with exact
+ * per-interval ENERGY from metered accumulator registers (`FlowSeries.energyKwh`) — it derives each
+ * load's energy per interval (the exact metered value where present, else the trapezoidal rule) and
+ * allocates that energy across sources in proportion to each source's share of total generation
+ * (exact interval energies where present, else left-endpoint power), accumulating into cumulative
+ * kWh. Exact magnitudes are what preserve GROSS flow through an intra-interval reversal of a bidi
+ * channel (battery flip, grid flip) that the signed power average nets to ~0.
  *
  * Two properties this module is built around:
  *  1. Energy is ADDITIVE across intervals — so the matrix of a concatenated window equals
@@ -25,6 +28,15 @@ export interface FlowSeries {
   path: string;
   /** Power at each timestamp (same length/order as `timestamps`); null = no datum. */
   power: (number | null)[];
+  /**
+   * OPTIONAL exact per-interval energy (kWh) from a metered accumulator register.
+   * `energyKwh[i]` is the metered energy over interval i = `(timestamps[i], timestamps[i+1]]` —
+   * i.e. the `agg_5m.delta` stamped at interval_end `timestamps[i+1]`, shifted onto the interval
+   * index ONCE by the attach helper in flow-series.ts (never here, never in loaders). null/absent =
+   * no exact datum → that interval integrates `power` as before. Channels without accumulators
+   * simply never set this — their behaviour is bit-for-bit unchanged.
+   */
+  energyKwh?: (number | null)[];
 }
 
 export interface FlowMatrixResult {
@@ -181,41 +193,93 @@ export function computeFlowAccounting(input: {
     }
     const deltaHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
 
-    let totalGenPower = 0;
-    for (const source of sources) {
-      const power = source.power[i];
-      if (power !== null) totalGenPower += power;
+    // Exact-energy overlay (`FlowSeries.energyKwh`): when ANY series carries a metered interval
+    // energy here, magnitudes and attribution weights switch to kWh — exact where present,
+    // left-endpoint power × dt where not — one coherent weight pool, no renormalisation. When NONE
+    // does, the legacy power arithmetic runs with the SAME code below (weights are kW and dt never
+    // enters), so power-only inputs are bit-for-bit identical to the pre-overlay implementation.
+    let anyExact = false;
+    for (const s of sources) {
+      const e = s.energyKwh?.[i];
+      if (e !== null && e !== undefined) {
+        anyExact = true;
+        break;
+      }
     }
-    if (totalGenPower <= 0) continue;
+    if (!anyExact)
+      for (const l of loads) {
+        const e = l.energyKwh?.[i];
+        if (e !== null && e !== undefined) {
+          anyExact = true;
+          break;
+        }
+      }
+
+    // Per-source attribution weight (kWh in exact mode, kW in legacy mode):
+    //  - `denomW` (the generation pool): every source's best-known magnitude — exact energy, else
+    //    the LEFT endpoint, matching the legacy denominator (which counts a left endpoint even
+    //    when the right endpoint is null);
+    //  - `numerW` (allocation eligibility): exact energy, else BOTH endpoints non-null (the legacy
+    //    gate — a mid-interval gap keeps a source in the pool but out of the allocation).
+    const denomW = new Array<number>(S).fill(0);
+    const numerW = new Array<number | null>(S).fill(null);
+    let totalGenW = 0;
+    for (let s = 0; s < S; s++) {
+      const exact = sources[s].energyKwh?.[i];
+      const p1 = sources[s].power[i];
+      const p2 = sources[s].power[i + 1];
+      if (anyExact) {
+        const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
+        if (d !== null && d !== undefined) {
+          denomW[s] = d;
+          totalGenW += d;
+        }
+        numerW[s] =
+          exact ?? (p1 !== null && p2 !== null ? p1 * deltaHours : null);
+      } else {
+        if (p1 !== null) {
+          denomW[s] = p1;
+          totalGenW += p1;
+        }
+        numerW[s] = p1 !== null && p2 !== null ? p1 : null;
+      }
+    }
+    if (totalGenW <= 0) continue;
 
     let contributed = false;
     for (let l = 0; l < L; l++) {
-      const loadPower1 = loads[l].power[i];
-      const loadPower2 = loads[l].power[i + 1];
-      if (loadPower1 === null || loadPower2 === null) continue;
-
-      const loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
+      // Load magnitude: exact interval energy where metered (needs no endpoints — an interval the
+      // power series dropped still contributes); else the legacy trapezoid with its
+      // both-endpoints-non-null requirement.
+      const exactLoad = anyExact ? loads[l].energyKwh?.[i] : undefined;
+      let loadIntervalEnergy: number;
+      if (exactLoad !== null && exactLoad !== undefined) {
+        loadIntervalEnergy = exactLoad;
+      } else {
+        const loadPower1 = loads[l].power[i];
+        const loadPower2 = loads[l].power[i + 1];
+        if (loadPower1 === null || loadPower2 === null) continue;
+        loadIntervalEnergy = ((loadPower1 + loadPower2) / 2) * deltaHours;
+      }
       if (loadIntervalEnergy === 0) continue;
 
       // Exclude this load's own linked source from the pool it draws from (see `linkedSource`
       // above), so a mid-interval charge/discharge (or import/export) polarity flip can never
-      // allocate energy from a source to its own paired load — the trapezoidal load integral and
-      // the left-endpoint source proportion would otherwise disagree exactly at the flip sample.
+      // allocate energy from a source to its own paired load — with directional accumulator pairs
+      // both halves are legitimately nonzero in a flip interval, making this exclusion (not just
+      // the endpoint quirk it originally patched) the thing that keeps a battery from feeding
+      // itself.
       const excludeIdx = linkedSource[l];
-      let genPowerForLoad = totalGenPower;
-      if (excludeIdx >= 0) {
-        const excludedPower = sources[excludeIdx].power[i];
-        if (excludedPower !== null) genPowerForLoad -= excludedPower;
-      }
-      if (genPowerForLoad <= 0) continue; // nothing valid left to attribute this load's energy to
+      let genWForLoad = totalGenW;
+      if (excludeIdx >= 0) genWForLoad -= denomW[excludeIdx];
+      if (genWForLoad <= 0) continue; // nothing valid left to attribute this load's energy to
 
       for (let s = 0; s < S; s++) {
         if (s === excludeIdx) continue;
-        const power1 = sources[s].power[i];
-        const power2 = sources[s].power[i + 1];
-        if (power1 === null || power2 === null) continue;
+        const w = numerW[s];
+        if (w === null) continue;
 
-        const sourceProportion = power1 / genPowerForLoad;
+        const sourceProportion = w / genWForLoad;
         const contribution = loadIntervalEnergy * sourceProportion;
         energyKwh[s][l] += contribution;
         if (contribution === 0) continue;

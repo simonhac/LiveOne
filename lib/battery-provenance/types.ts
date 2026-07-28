@@ -81,13 +81,9 @@ export interface ProvenanceInputs {
    */
   capacitySeries?: (number | null)[];
 
-  /**
-   * ENERGY-REGISTER seam (config: attach an input to a power OR an energy register). When the Area binds
-   * battery charge/discharge ENERGY points these carry the exact interval energy (kWh) and are preferred
-   * over trapezoidal power integration; undefined → the fold uses the power-integrated split.
-   */
-  batteryChargeEnergyKwh?: (number | null)[];
-  batteryDischargeEnergyKwh?: (number | null)[];
+  // (The old batteryChargeEnergyKwh/batteryDischargeEnergyKwh exact-register seam is gone: exact
+  // interval energies now ride in on `sources`/`loads` as `FlowSeries.energyKwh` overlays — the
+  // single preference implementation shared with the flow matrix; see flow-series.ts.)
 
   /**
    * Persisted round-trip efficiency η(t) per interval (0<η≤1), aligned to `timeline`, read by the loader
