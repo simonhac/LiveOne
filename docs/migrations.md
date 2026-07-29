@@ -75,6 +75,19 @@ cleanly. Still verify row counts after applying.
    grab the same `NNNN`. If `main` already shipped your number, regenerate so yours lands as the
    next free number.
 
+## Deploy ordering — additive vs. drop
+
+PG migrations are **manual**, not applied at deploy (see `docs/incidents/2026-06-16-…`), so the order
+of "apply the migration" vs. "merge the code" matters — and it **inverts** between the two kinds:
+
+- **Additive** (new table/column): apply to prod `sydney` **before** merging the code, or the deployed
+  build queries something that isn't there yet and prod 500s.
+- **Drop**: merge and deploy the code **first**, so nothing live still reads the table, then drop on
+  prod and finally on `liveone-dev`.
+
+(Rehomed here from `architecture/areas-and-dashboards.md`, whose v3 roadmap section was retired in the
+config-v4 rewrite. The rule is general, not specific to that doc's phases.)
+
 ## Deployment Verification
 
 (Folded in from the retired `DEPLOYMENT.md`, 2026-06-10.)
