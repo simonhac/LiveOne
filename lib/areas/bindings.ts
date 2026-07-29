@@ -5,7 +5,12 @@
  * on the same id; only multi-device Areas have bindings, so an identity handle resolves to zero rows.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  areaBindings,
+  devices,
+  points,
+} from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 
 /** An Area's binding point refs, ordered by ordinal. */
@@ -44,7 +49,7 @@ export async function getAreaBindingRefs(
 /** A flat row for rebuilding the KV subscription registry from SQL. */
 export interface AreaBindingRow {
   handle: number; // areas.legacy_system_id
-  /** The SOURCE point's owning `point_info.system_id` — still the `subscriptions:system:N` KV key. */
+  /** The SOURCE point's owning device handle (`devices.rid`) — the `subscriptions:system:N` KV key. */
   sourceSystemId: number;
   /** The bound point's uuid — the subscription map's inner key since slice E PR 2b. */
   pointUid: string;
@@ -53,23 +58,33 @@ export interface AreaBindingRow {
 
 /**
  * Every multi-device Area's bindings, flattened with the Area's `legacy_system_id` (its handle). Drives
- * `buildSubscriptionRegistry` — the reverse `point_uid → subscriber` index, in SQL. The source system
- * id comes from `point_info` (joined on `point_uid`), not from a column on `area_bindings`: the int
- * pair is gone as of migration 0048. Ordered so the per-Area enumeration is deterministic.
+ * `buildSubscriptionRegistry` — the reverse `point_uid → subscriber` index, in SQL. Migration 0048
+ * removed `area_bindings`' own `(point_system_id, point_id)`, so the source system id is recovered by
+ * hopping `points.device_id → devices.rid` — the `devices.rid == systems.id` seam invariant (verified
+ * 72/72 agreeing with `point_info.system_id` on dev).
+ *
+ * NOT via `point_info`, deliberately, for two reasons. (a) Lifetime: slice N drops `point_info` BEFORE
+ * Phase 13 retires the integer KV keyspace, so a `point_info` join would leave this query with no
+ * backing table across the terminal window; `points`/`devices` survive slice N and `rid` dies naturally
+ * with the keyspace. (b) Safety: both hops here are FK-backed (`area_bindings.point_uid → points.id`,
+ * which survived 0047, and `points.device_id → devices.id`, NOT NULL), so neither inner join can drop a
+ * binding — whereas `point_uid` has NO FK into `point_info`, which would have made that join a silent
+ * filter on a missing row and quietly cost the area its subscription edge.
+ *
+ * Ordered so the per-Area enumeration is deterministic.
  */
 export async function getAreaBindings(): Promise<AreaBindingRow[]> {
   const rows = await requirePlanetscaleDb()
     .select({
       handle: areas.legacySystemId,
-      sourceSystemId: pointInfo.systemId,
+      sourceSystemId: devices.rid,
       pointUid: areaBindings.pointUid,
       ordinal: areaBindings.ordinal,
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    // `point_uid` has no FK into `point_info` (0047 dropped it), so this join is also the liveness
-    // filter: a binding whose point has been deleted contributes no subscription edge.
-    .innerJoin(pointInfo, eq(pointInfo.pointUid, areaBindings.pointUid))
+    .innerJoin(points, eq(points.id, areaBindings.pointUid))
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     // The first innerJoin already restricts to Areas that HAVE bindings — exactly the multi-device
     // areas; an area-of-one contributes none.
     .orderBy(areas.legacySystemId, areaBindings.ordinal);

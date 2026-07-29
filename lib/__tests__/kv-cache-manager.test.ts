@@ -21,7 +21,7 @@ jest.mock("../kv", () => ({
 }));
 
 // Mock the database (Postgres). Two query shapes hit this:
-//  - getAreaBindings: select→from→innerJoin×2→orderBy (areas + point_info)
+//  - getAreaBindings: select→from→innerJoin×3→orderBy (areas + points + devices)
 //  - getBindinglessAreaMemberPoints: select→from→innerJoin×3→where→orderBy (slice H added the
 //    `devices` hop that bridges area_members.device_id back to the int point_info.system_id)
 // A recursive chain node (innerJoin/where return itself; orderBy resolves) covers both → [].
@@ -59,6 +59,7 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
   },
   areaMembers: { areaId: "areaId", deviceId: "deviceId", ordinal: "ordinal" },
   devices: { id: "id", rid: "rid" },
+  points: { id: "id", deviceId: "deviceId" },
 }));
 
 // Mock drizzle-orm
@@ -228,14 +229,16 @@ describe("kv-cache-manager", () => {
   });
 
   describe("buildSubscriptionRegistry", () => {
-    // Mock getAreaBindings's query: select→from→innerJoin×2→orderBy → binding rows.
+    // Mock getAreaBindings's query: select→from→innerJoin×3→orderBy → binding rows.
     const mockBindings = (rows: unknown[]) => {
       (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
         from: () => ({
-          // getAreaBindings joins `areas` AND `point_info` (the latter supplies sourceSystemId now
-          // that area_bindings has no point_system_id column).
+          // getAreaBindings joins `areas`, then `points` → `devices` (the latter pair supplies
+          // sourceSystemId now that area_bindings has no point_system_id column).
           innerJoin: () => ({
-            innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
+            innerJoin: () => ({
+              innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
+            }),
           }),
         }),
       });
