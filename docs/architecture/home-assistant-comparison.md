@@ -1,219 +1,367 @@
 # LiveOne vs. Home Assistant — architecture & object model
 
-> **Status:** current as analysis; for design decisions it is superseded by
-> [config-v4-clean-sheet.md](../plans/config-v4-clean-sheet.md) (2026-07-21), which carries the
-> HA-relationship choices forward. An analytical comparison, not a spec.
-> Where it describes LiveOne, the source of truth is `lib/db/planetscale/schema.ts` +
-> `docs/architecture/{overview,data-model,areas-and-dashboards,engine-web-separation}.md`.
-> Where it describes Home Assistant, it reflects the HA developer docs as of mid-2026
-> (HA changes fast — treat HA specifics as indicative).
+> **Status:** current as analysis — **rewritten 2026-07-28** (second pass: deeper HA verification,
+> LiveOne restated as finished config-v4). An analytical scorecard, not a spec.
+>
+> **LiveOne side** describes **config-v4 as designed and delivered**. The cutover ran 2026-07-26 and
+> Phases 0–11 have shipped and Phase 12 is under way (`roles`, `user_systems` and `area_devices`
+> dropped in migrations 0044–0046); Phases 12–14 finish the last of it (drop `systems`/`point_info`,
+> kill the integer handle, collapse the two dashboard shapes). This doc describes the **settled end
+> state** rather than tracking the migration — for what is live _today_ see
+> [config-v4-execution-plan.md](../plans/config-v4-execution-plan.md); for _why_ the model is shaped
+> this way see [config-v4-clean-sheet.md](../plans/config-v4-clean-sheet.md), which supersedes this
+> doc on all design decisions. Schema truth is `lib/db/planetscale/schema.ts`.
+>
+> **Home Assistant side** re-verified against the HA developer docs, user docs and release notes
+> through **2026.7**. HA changes fast; each non-obvious HA claim below names the release or doc it
+> came from so the next refresh can re-check it cheaply.
 
 ## Why this doc exists
 
-LiveOne's own design (`areas-and-dashboards.md`) deliberately borrows Home Assistant
-vocabulary — System→Device, Point→Entity, Area→Area, `area_bindings`→Energy-dashboard
-config — and the role registry (`lib/roles/registry.ts`) literally carries `ha_device_class` /
-`ha_state_class` / `ha_unit` against a planned HA export bridge. So the two systems are worth comparing
-carefully: not to copy HA wholesale, but to know exactly where we mirror it, where we
-diverge, and why. This doc is the honest scorecard.
+LiveOne deliberately borrows Home Assistant vocabulary — Device→Device, Point→Entity, Area→Area,
+`area_bindings`→Energy-dashboard config — and the role registry (`lib/roles/registry.ts`) carries
+`device_class` / `state_class` / `unit` per role against a planned HA export bridge. Config-v4 made
+the debt explicit, stating its goal as _"inspired by Home Assistant's best ideas (registries, areas,
+derived helpers, storage-mode dashboards) without its limitations (single-home, no multi-tenancy,
+nesting-hostile editor)"_ — and it cites HA's sections-view layout and HA's nesting mistakes as
+direct precedents for the v4 document model.
+
+So the two are worth comparing carefully: not to copy HA wholesale, but to know exactly where we
+mirror it, where we diverge, and why. This doc is the honest scorecard — including where the honest
+answer moved against us.
 
 ## The one asymmetry that explains everything
 
-A fair comparison separates the **object model** (where we map onto HA very cleanly — partly
-by design) from the **runtime/storage architecture** (where we diverge because the _problem
-domains_ diverge):
+A fair comparison separates the **object model** (where we map onto HA cleanly — partly by design)
+from the **runtime/storage architecture** (where we diverge because the _problem domains_ diverge):
 
-- **Home Assistant is a real-time _control plane_ for one home.** Thousands of
-  _heterogeneous_ devices and **actuators** (lights, locks, switches), single-tenant, mostly
-  local. It is **write/command-heavy** and **latency-sensitive** ("press button → light turns
-  on"), so its source of truth is an **in-memory state machine**. Durable history
-  (recorder/statistics) is a secondary, best-effort bolt-on.
-- **LiveOne is a durable _observability/metrics pipeline_ for many sites.** A _narrow_,
-  homogeneous signal set (power / energy / SOC / price), multi-tenant, cloud. It is
-  **read/aggregate-heavy** and **durability-critical** (losing a reading is a data-integrity
-  bug, not a missed light), with **no actuators** in the core loop (Tesla charge control is a
-  noted Phase-2 edge). Source of truth is **durable Postgres**; KV is a derived fast-read.
+- **Home Assistant is a real-time _control plane_ for one home.** Thousands of _heterogeneous_
+  devices and **actuators** (lights, locks, switches), single-tenant, mostly local. It is
+  **write/command-heavy** and **latency-sensitive** ("press button → light turns on"), so its source
+  of truth is an **in-memory state machine**. Durable history is a secondary concern: the recorder
+  purges `states` and `statistics_short_term` after ~10 days by default, keeping only hourly
+  long-term statistics indefinitely.
+- **LiveOne is a durable _observability and attribution pipeline_ for many sites.** A _narrow_,
+  homogeneous signal set (power / energy / SOC / price / grid intensity), multi-tenant, cloud. It is
+  **read/aggregate-heavy** and **durability-critical** (losing a reading is a data-integrity bug, not
+  a missed light), with **almost no actuators**. Source of truth is **durable Postgres**, retained in
+  full at every tier; KV is a derived fast-read.
 
-Almost every difference below falls out of that asymmetry. Keep it in mind so the comparison
-stays fair: HA "wins" on generality/identity/control because it must tame _heterogeneity_ and
-_control_ for _end-users_ in _one_ home; LiveOne "wins" on durability/aggregation/sharing
-because it must _not lose data_, _serve aggregates fast to many tenants_, and _partition
-access_.
+The actuator caveat is narrower than it used to be: Tesla charge control ships as a real command path
+(`POST /api/systems/[id]/tesla/command` — `charge_start` / `charge_stop` / `set_charge_limit`, through
+the Fleet client's signer seam). But it is _one route in the web tier_, not a command plane — no
+service registry, no uniform invocation contract, and the engine Control API in
+`engine-web-separation.md` is still unbuilt.
+
+Almost every difference below falls out of that asymmetry. Keep it in mind so the comparison stays
+fair: HA "wins" on generality, identity, semantic vocabulary and control because it must tame
+_heterogeneity_ and _control_ for _end-users_ in _one_ home; LiveOne "wins" on durability,
+recomputability, attribution and multi-tenant sharing because it must _not lose data_, _serve
+aggregates fast to many tenants_, and _partition access for real_.
 
 ## Language & stack
 
-|               | Home Assistant                                                                                                                                                                            | LiveOne                                                                                                           |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Core language | **Python**, entirely on **`asyncio`** (one event loop on the `hass` object; integrations are `async` coroutines, blocking I/O pushed to executor threads). Tracks recent Python releases. | **TypeScript** end-to-end                                                                                         |
-| Frontend      | TypeScript / **Lit** (web components) — Lovelace                                                                                                                                          | TypeScript / **Next.js** (React)                                                                                  |
-| Runtime shape | Long-lived **process you host** — can hold authoritative state in RAM                                                                                                                     | **Stateless serverless** (Vercel, region `syd1`) — no in-RAM authoritative state, so state lives in KV + Postgres |
-| Datastore     | SQLite (default) / MariaDB / PostgreSQL via the _recorder_                                                                                                                                | PostgreSQL (PlanetScale) as the sole datastore; Vercel KV as a derived latest-value cache                         |
-| Distribution  | Core / Supervisor / OS / Container + add-ons                                                                                                                                              | Single Vercel deployment from `main`                                                                              |
+|                   | Home Assistant                                                                                                                                                                            | LiveOne                                                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core language     | **Python**, entirely on **`asyncio`** (one event loop on the `hass` object; integrations are `async` coroutines, blocking I/O pushed to executor threads). Tracks recent Python releases. | **TypeScript** end-to-end                                                                                                                                 |
+| Frontend          | TypeScript / **Lit** (web components) — Lovelace                                                                                                                                          | TypeScript / **Next.js** (React)                                                                                                                          |
+| Runtime shape     | Long-lived **process you host** — can hold authoritative state in RAM                                                                                                                     | **Stateless serverless** (Vercel, `syd1`) — no in-RAM authoritative state, so state lives in KV + Postgres                                                |
+| Time-series store | SQLite (default) / MariaDB / PostgreSQL via the _recorder_, with default purge                                                                                                            | PostgreSQL (PlanetScale) as the sole datastore, retained at every tier; Vercel KV as a derived latest-value cache                                         |
+| Config store      | **JSON documents under `.storage/`** (entity / device / area / floor / label / category registries, Lovelace docs, energy prefs), loaded into memory at boot                              | **SQL tables in the same Postgres** (`devices`, `points`, `areas`, `area_members`, `area_bindings`, `derivations`, `dashboards`) with real FKs and CHECKs |
+| Release cadence   | Monthly (`2026.7` at time of writing), with published deprecation runways                                                                                                                 | Continuous deploy from `main`                                                                                                                             |
+| Distribution      | Core / Supervisor / OS / Container + add-ons                                                                                                                                              | Single Vercel deployment                                                                                                                                  |
 
-The runtime shape alone drives much of the divergence: HA _can_ keep the current world in
-memory and act on it instantly; we can't, so we lean on a durable store plus a fast cache.
+Two structural consequences. **Runtime shape**: HA _can_ keep the current world in memory and act on
+it instantly; we can't, so we lean on a durable store plus a fast cache. **Config store**: HA's
+registries are JSON documents whose referential integrity is code-only and can drift; ours are SQL
+rows that can't dangle — which buys us enforcement and costs us HA's zero-migration schema evolution.
 
 ## Object-model mapping
 
-| LiveOne                                                                                                                    | Home Assistant                                                   | Mapping quality                                                                                                          |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `point_info` row, addressed `(system_id, id)`                                                                              | **Entity** (`unique_id` → `entity_id`)                           | **Clean concept, weaker identity** — see "How ours maps onto theirs"                                                     |
-| `point_info.physical_path_tail` (`selectronic/solar_w`)                                                                    | entity **`unique_id`** (vendor-stable)                           | Clean — both the stable, vendor-derived, non-user identity                                                               |
-| `point_info.logical_path_stem` + `metric_type` (`source.solar`/`power`)                                                    | `device_class` + `state_class` + energy-role                     | **Leaky** — we overload one path to do all three jobs                                                                    |
-| `point_info.display_name` (editable) vs `point_name` (default)                                                             | entity registry **name override** vs device-supplied name        | Clean                                                                                                                    |
-| `point_info.metric_type` / `metric_unit`                                                                                   | **`device_class`** + **`unit_of_measurement`**                   | Mostly clean (we lack model-layer unit conversion W↔kW)                                                                 |
-| `point_info.transform` (`d`=delta) + agg rules keyed on `metric_type`                                                      | **`state_class`** (`measurement` / `total` / `total_increasing`) | Same intent, different mechanism (theirs first-class, ours inferred)                                                     |
-| `lib/roles/registry.ts` (carries `ha_device_class` / `ha_state_class` / `ha_unit`; code, not a table since migration 0044) | _(no native table)_ — Energy-dashboard role slots                | Clean & **explicitly HA-aware** — our bridge-in-waiting                                                                  |
-| `systems` row (integer `id`, `vendor_type`, `vendor_site_id`, `model`/`serial`)                                            | **Config entry + Device** _(fused)_                              | **Leaky/merged** — we fuse connection-instance and device into one row                                                   |
-| `areas` (`kind=identity\|composite`, `legacy_system_id`, `location`)                                                       | **Area** registry                                                | **Overloaded** — ours is room + logical-system + aggregation-scope; `kind=composite` has no HA analog                    |
-| `area_bindings` (typed role→point edges, FK to `point_info`; `role` CHECK-constrained)                                     | Energy "preferences" (role→entity)                               | Clean & direct; **ours constraint-enforced, theirs JSON in `.storage`**                                                  |
-| `dashboards.descriptor` (jsonb) + cards                                                                                    | **Lovelace** dashboard + cards                                   | Clean — presentation referencing points by id; auto-generated default                                                    |
-| KV latest cache + newest `point_readings`                                                                                  | **State machine** `State` (in-memory)                            | Functional analog (theirs authoritative in-RAM, ours a derived cache)                                                    |
-| `point_readings` (raw, durable, SQL)                                                                                       | recorder `states` table                                          | Theirs is best-effort history; ours is the source of truth                                                               |
-| `point_readings_agg_5m` / `agg_1d`                                                                                         | `statistics_short_term` (5m) / `statistics` (hourly)             | **Strikingly parallel**; semantics differ (see below). Cadence mismatch: our coarse tier is **daily**, theirs **hourly** |
-| `point_readings_flow_1d` (directional Sankey matrix)                                                                       | _(none — computed at query time)_                                | No mapping — we materialize, HA derives on the fly                                                                       |
-| `sessions` (poll provenance, vendor response)                                                                              | _(none)_                                                         | No mapping — HA keeps no per-poll record                                                                                 |
-| `observations_outbox` + QStash + receiver                                                                                  | event bus (`state_changed`) + recorder write                     | No mapping — **different reliability model**                                                                             |
-| `derivations` / `derived_intervals`                                                                                        | Threshold helper (`binary_sensor`) + recorder history            | Same intent ("HA-style threshold helper"); we persist richer run-periods + energy attribution                            |
-| `dashboard_grants` / `dashboard_share_tokens`                                                                              | _(none — single-tenant)_                                         | No mapping                                                                                                               |
-| —                                                                                                                          | **Floor** registry                                               | **Absent in ours** (no floor tier)                                                                                       |
-| —                                                                                                                          | **Label** registry                                               | **Absent in ours** (no orthogonal tag dimension)                                                                         |
-| `lib/vendors/*` adapters + registry                                                                                        | **Integration + platform** (`manifest.json`, config-flow)        | Clean structurally; HA `iot_class` ≈ our `dataSource` (poll/push/combined)                                               |
+| LiveOne (config-v4)                                                                    | Home Assistant                                                                                               | Mapping quality                                                                                                                                   |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devices` (uuid, wire `dv_…`; `rid` int; `vendor` + `vendor_site_id`)                  | **Config entry → subentry → Device** _(three tiers)_                                                         | **Ours is flat, deliberately** — and HA has since gone further the other way (subentries). See "Where HA is clearer" #1                           |
+| `points` (uuid `pt_…`; `rid` int)                                                      | **Entity** (`unique_id` → `entity_id`)                                                                       | Clean, and identity is now clean too                                                                                                              |
+| `points.id` = `uuidv5(vendor : vendor_site_id : physical_path)`                        | entity **`unique_id`** (vendor-stable, never user-configurable)                                              | **Clean** — both stable, vendor-derived, reproduced on re-onboarding                                                                              |
+| `points.rid` → `point_readings(point_rid, measurement_time)`                           | `states_meta.metadata_id` / `statistics_meta.id`                                                             | **Convergent evolution** — the same int-surrogate-in-hot-tables trick, reached independently                                                      |
+| `points.physical_path` (`selectronic/solar_w`)                                         | the vendor half of `unique_id`                                                                               | Clean                                                                                                                                             |
+| `points.logical_path` + `metric_type` (`source.solar` / `power`)                       | `device_class` (60+) + `state_class` (4)                                                                     | **Leaky, and far narrower** — one path carries semantic type _and_ aggregation hint, over a vocabulary a fraction of HA's                         |
+| `points.name` / `default_name`                                                         | registry **name override** vs `has_entity_name` composition                                                  | **Ours is flatter** — HA composes `friendly_name` from device name + entity name                                                                  |
+| `points.unit`                                                                          | `native_unit_of_measurement` + `suggested_unit_of_measurement` + `unit_class` converters + per-user override | **HA is much deeper** — we have one fixed string per point and no model-layer conversion                                                          |
+| `points.transform` (`d`=delta) + agg rules keyed on `metric_type`                      | **`state_class`** (`measurement` / `total` / `total_increasing` / `measurement_angle`)                       | Same intent, theirs first-class; theirs also carries `last_reset` and reset detection                                                             |
+| `points.active`                                                                        | `available` + `entity_category` (config / diagnostic)                                                        | **Ours is a single on/off** — HA separates "can't read it right now" from "this is a secondary/diagnostic signal"                                 |
+| `lib/roles/registry.ts` (6 roles, carries `device_class`/`state_class`/`unit`)         | _(no native table)_ — Energy-dashboard role slots                                                            | **Explicitly HA-aware** — our export bridge in waiting. v4 deletes its SQL projection (`roles`); `area_bindings_role_check` holds the vocabulary. |
+| `areas` (uuid `ar_…`; owns `day_offset_min`, `display_timezone`, `location`, `config`) | **Area** registry (+ configured primary temperature/humidity sensors)                                        | Close — and converging: HA areas have started acquiring per-role sensor slots of their own                                                        |
+| `area_members` (area ↔ device, many-to-many)                                           | device's single `area_id`                                                                                    | **Ours is more general** — a device can belong to several areas; HA allows exactly one                                                            |
+| `area_bindings` (role→point, `priority`, shape-validated, FK + CHECK)                  | Energy "preferences" — `energy_sources[]` with `flow_from`/`flow_to`, `stat_cost`, `device_consumption[]`    | Same job. Ours is enforced SQL with deterministic per-slot resolution; theirs is a JSON doc with per-source cost/price fields we lack             |
+| `derivations` / `derived_intervals` (+ per-run cost / emissions / renewable)           | Helper integrations (Threshold, Integration, Derivative, Utility Meter, Template, Group)                     | Same intent — **one mechanism now**, but our kinds are code-typed where HA's are user-composable                                                  |
+| `dashboards.doc` (recursive node tree) + `dashboard_revisions`                         | **Lovelace** storage-mode dashboard, **or a generated _strategy_**                                           | Close in shape; ours adds revisions + `If-Match`. HA additionally generates dashboards from the registries at render time (strategies)            |
+| `share_tokens` (one token → one dashboard) / `dashboard_grants`                        | _(none — `require_admin`, and per-view `visible` is cosmetic hiding)_                                        | No mapping — see "Where ours may be superior" #4                                                                                                  |
+| `device_state` (1:1 with `devices`; per-poll health)                                   | config-entry state + integration diagnostics                                                                 | Ours is a first-class table; HA's is in-memory + downloadable diagnostics                                                                         |
+| `legacy_handles` / `dashboards.legacy_id`                                              | _(none)_                                                                                                     | No mapping — our sanctioned permanent compat shims                                                                                                |
+| KV latest cache + newest `point_readings`                                              | **State machine** `State` (in-memory)                                                                        | Functional analog (theirs authoritative in-RAM, ours a derived cache)                                                                             |
+| `point_readings` (raw, durable, retained)                                              | recorder `states` (+ `states_meta`, `state_attributes`), purged ~10 days                                     | **Different contract** — theirs is a rolling window, ours is the permanent source of truth                                                        |
+| `point_readings_agg_5m` / `agg_1d` (both retained)                                     | `statistics_short_term` (5m, ~10d) / `statistics` (hourly, indefinite)                                       | **Strikingly parallel**; cadence, retention _and_ statistical semantics all differ                                                                |
+| `point_readings_flow_attr_1d` (materialized, attributed, versioned)                    | Sankey energy card + power-flow Sankey (derived at render)                                                   | **Both exist now** — ours persisted and metric-attributed, theirs computed per view but structured by floors/areas/device hierarchy               |
+| `battery_provenance_daily` (learned η / C / fold checkpoints)                          | _(none)_                                                                                                     | No mapping — HA's battery model is round-trip efficiency from in/out sensors                                                                      |
+| `sessions` (poll provenance, vendor response)                                          | _(none)_                                                                                                     | No mapping — HA keeps no per-poll record                                                                                                          |
+| `observations_outbox` + QStash + receiver                                              | event bus (`state_changed`) + recorder write                                                                 | No mapping — **different reliability model**                                                                                                      |
+| —                                                                                      | **Floor** registry (parent of Area)                                                                          | **Absent in ours**                                                                                                                                |
+| —                                                                                      | **Label** registry (areas, devices, entities, automations, scenes, scripts, helpers)                         | **Absent in ours** — v4 kept it as an explicit deferred seam                                                                                      |
+| —                                                                                      | **`via_device`** device hierarchy + energy **upstream device** (2025.4)                                      | **Absent in ours** — no device tree, no sub-metering containment                                                                                  |
+| `lib/vendors/*` adapters + registry                                                    | **Integration + platform** (`manifest.json`, config-flow, coordinators)                                      | Clean structurally; HA `iot_class` ≈ our `dataSource` (poll/push/combined)                                                                        |
+
+_Not in the table: HA's **Category** registry. It looks like a missing dimension but isn't — categories
+are per-table UI grouping for the automation / scene / script / helper lists and "have no effect
+anywhere else". They don't apply to entities or devices, and we have no automation lists to group._
 
 ## Where Home Assistant is clearer / more general
 
-Real design advantages, mostly orthogonal to the domain difference — several we could adopt.
+Real design advantages. The first two are new to this revision and are the sharpest findings in it.
 
-1. **Three-way identity split.** HA separates _durable identity_ (`unique_id`,
-   non-user-configurable, the thing that makes a registry entry exist), _renameable address_
-   (`entity_id` = `domain.object_id`), and _device identity_ (`identifiers`/`connections`,
-   with cross-integration dedup via MAC). We fuse identity **and** address into one composite
-   integer `(system_id, point_id)` — no rename-safe alias, no global namespace.
-   `physical_path_tail` is our only stable token, and it isn't the addressing key. _(This is
-   the motivation for the `point_uid` proposal in
-   `../plans/identity-address-split-and-labels.md`.)_
-2. **`config entry → device → entity` containment.** One HA integration instance owns _many_
-   devices, each many entities, with cascade delete. Our flat `systems → point_info` (one row
-   is connection + device) is _exactly_ why we had to invent `areas`/`area_bindings` — we
-   can't natively model "one logical site spanning multiple physical devices."
-3. **Floor + Label.** Two grouping dimensions we lack entirely: Floor (hierarchical:
-   Floor → Area → device/entity) and Label (orthogonal many-to-many tag on _any_ object —
-   area, device, entity, automation, dashboard). We have a single Area tier. _(Motivates the
-   Label proposal in `../plans/identity-address-split-and-labels.md`.)_
-4. **State = string + open-ended attributes dict.** Any integration attaches arbitrary
-   supplementary data with no schema change. Our reading is fixed-column (`value` /
-   `value_str` / `error` / `data_quality`) — more rigid, though that rigidity is what buys
-   typed aggregation.
-5. **Service/event decoupling.** `call_service` (imperative command) vs
-   `state_changed`/event-bus (observation), uniform across 1000+ integrations. Our FE→engine
-   **command plane is aspirational** (`engine-web-separation.md`); only the observation
-   pipeline is mature.
-6. **Config-flow as a uniform onboarding contract** — `user` / `discovery` / `zeroconf` /
-   `reauth` / `reconfigure` as standard steps, with `async_set_unique_id` dedup. Our
-   add-system flow (`credentialFields`, `credentials`/`oauth-redirect`) is narrower with no
-   discovery/reauth taxonomy.
-7. **The helper / template ecosystem — HA's crown jewel.** _Integration_ (Riemann sum,
-   W→kWh), _Derivative_ (kWh→W), _Utility Meter_ (cycle/tariff), _Template_ (arbitrary typed
-   Jinja sensor), _Group(sum)_ (N entities → 1) let users **compose new typed points purely
-   through config**. Our derived points (`load.rest-of-house`, synthetic totals, HWS model)
-   are **code-defined** — an engineer builds what an HA user just configures.
-8. **`device_class` ⊥ `state_class` ⊥ energy-role.** HA keeps semantic type, aggregation
-   behavior, and energy-dashboard role as three separate axes. We overload
-   `logical_path_stem` + `metric_type` to carry all three.
+1. **Containment — and HA has extended its lead.** HA's chain is now **config entry → config
+   subentry → device → entity**, with cascade delete throughout. Subentries exist precisely to let
+   _one_ connection hold _many_ logical configurations — the canonical example being credentials in
+   the parent entry with one subentry per location. Config-v4 declined the config-entry/device split
+   on the grounds that _"LiveOne's point namespace, credential scope, and polling unit are all 1:1
+   with the vendor connection; a second table buys nothing until one connection yields multiple
+   independently-addressable devices"_ (§4.1). That reasoning still holds for today's adapters — but
+   HA has since built exactly the mechanism for exactly that case, so the decision should be re-read
+   as _deferred_, not settled. The first multi-site vendor connection we onboard is the trigger.
+   (Where we _are_ more general: `area_members` is many-to-many, so one site can span devices and one
+   device can appear in several areas; HA pins a device to exactly one area.)
+2. **Two hierarchies we don't have at all.** `via_device` gives HA a **device tree** (hub → child
+   device, power strip → outlet), and since **2025.4** the energy dashboard has an explicit
+   **upstream device** relation for sub-metering: mark a breaker as upstream of the devices on its
+   circuit and HA stops double-counting them. Our load side is roles plus a synthetic
+   `load.rest-of-house` — there is no way to say "this circuit contains these three loads", so the
+   arithmetic that HA does structurally, we do by subtraction. Of everything in this document, this
+   is the idea most worth stealing.
+3. **Floors and Labels.** Floor is a strict parent of Area (devices and entities attach to areas
+   only). **Labels** are the valuable one: an orthogonal many-to-many tag applicable to areas,
+   devices, entities, automations, scenes, scripts and helpers, usable both as a table filter and as
+   an automation _target_. We have a single Area tier. v4 absorbed the identity half of
+   [`identity-address-split-and-labels.md`](../plans/identity-address-split-and-labels.md) and parked
+   the label half deliberately (§12.7).
+4. **A far richer semantic vocabulary.** HA has 60+ `device_class`es, four `state_class`es (including
+   `measurement_angle`), `entity_category` (config / diagnostic) to demote secondary signals,
+   `has_entity_name` composition so `friendly_name` is derived rather than stored,
+   `suggested_display_precision`, and a real unit model: `native_unit_of_measurement` vs
+   `suggested_unit_of_measurement`, automatic device-class-driven conversion, per-user overrides held
+   in the entity registry, and `unit_class` naming the converter. We have six roles, a handful of
+   `metric_type`s, one fixed unit string per point, flat names, and no conversion anywhere in the
+   model. This is the largest _breadth_ gap between the two systems.
+5. **State = string + open-ended attributes dict.** Any HA integration attaches arbitrary
+   supplementary data with no schema change. Our reading is fixed-column (`value` / `value_str` /
+   `error` / `data_quality`) — more rigid, though that rigidity is what buys typed aggregation.
+   (`devices.adapter_state` gives adapters a per-device escape hatch, not a per-reading one.)
+6. **Service/event decoupling.** `call_service` (imperative) vs `state_changed`/event-bus
+   (observation), uniform across 1000+ integrations. We have one bespoke command route, no registry,
+   and the FE→engine command pattern remains direction-of-travel.
+7. **Config flow as a uniform onboarding contract.** `user` / `discovery` / `zeroconf` / `reauth` /
+   `reconfigure` as standard steps (plus subentry reconfiguration), with `async_set_unique_id` dedup.
+   Ours is narrower with no discovery or reauth taxonomy — notable given Tesla and Enphase tokens
+   expire.
+8. **The helper / template ecosystem — still HA's crown jewel.** _Integration_ (Riemann sum, W→kWh),
+   _Derivative_, _Utility Meter_ (cycle/tariff), _Template_, _Group(sum)_ let users compose new typed
+   entities purely through config. v4's `derivations` closed the embarrassing half of this gap —
+   run-tracking and the HWS thermal model are now one mechanism (`output='point'` → a derived point
+   in the pipeline; `output='intervals'` → run periods) with typed `params`/`source_points` as data.
+   But the **kinds** are code (`run-detector`, `hws-model`): an engineer ships a kind, where an HA
+   user configures one.
+9. **Statistics semantics — HA is ahead, and further ahead than the last revision said.** HA's mean
+   is **time-weighted** (ours is a plain sample mean, biased under irregular sampling); it detects
+   counter resets on `total_increasing` with a >10% tolerance and honours `last_reset` on `total`;
+   and since the Oct-2025 recorder API it carries `mean_type` (`arithmetic` / `circular`, the latter
+   for angle-like quantities) and `unit_class`. **Correction to the previous revision:** HA is _not_
+   forward-only — `async_import_statistics` / `async_add_external_statistics` are first-class APIs for
+   writing statistics at arbitrary past timestamps, and re-importing the same timestamps replaces the
+   existing rows. Backfill is supported and used in production by energy-provider integrations. The
+   real difference is described under "Where ours may be superior" #2, and it isn't "can they
+   backfill" — it's what the backfill is computed _from_.
+10. **Dashboards can be generated, not just stored.** HA _strategies_ build a whole dashboard (or a
+    single view) at render time by querying the registries — the default Home dashboard in 2026.2 is
+    one. A new device appears without anyone editing a document. Our `/areas/{id}/default-group`
+    seeds a stored doc once at creation; after that the doc is authoritative and drifts from reality
+    until someone edits it. Both models have a place — HA's "take control" (snapshot the generated
+    doc and start editing) is the bridge between them, and we have no equivalent.
 
-## How ours maps onto theirs
+## Where we are more constrained
 
-Surprisingly well at the **semantic layer** — because we deliberately borrowed the vocabulary
-and even carry `ha_device_class` / `ha_state_class` / `ha_unit` in the role registry with an
-MQTT-Discovery export bridge planned (areas P5). Point→Entity, Area→Area,
-`area_bindings`→Energy preferences, dashboards→Lovelace all translate directly.
-
-Where we're **more constrained**:
-
-- **Integer composite addressing** `(system_id, point_id)` — efficient and FK-friendly for
-  join-heavy time-series, but no rename-safe identity and no global entity namespace.
-- **`legacy_system_id`** is a permanent compatibility seam HA never carries (it mints opaque
-  IDs freely; we preserved an integer space across the areas migration to avoid a UUID
-  rewrite). See `areas-and-dashboards.md`.
-- **`systems` fuses config-entry + device**, so an HA export must choose; it only cleanly
-  models single-device sites.
-- **Vendor coupling leaks upward** via `physical_path_tail`; HA hides vendor specifics behind
-  the integration boundary so everything above the entity is vendor-agnostic. Our
-  `logical_path_stem` abstraction exists to recover this, but the physical path remains a
-  first-class addressed column.
-- **Composite provenance collapses** at `flow_1d` (path-keyed `(area_id, day, source_path,
-load_path)`, not point-keyed) so aggregated multi-point sources have a stable identity — at
-  the cost of "which physical meter" no longer being recoverable from the flow row. But HA
-  can't express "total solar across 3 inverters" as a first-class persisted entity without a
-  Group helper that collapses provenance the same way — so this is a _fair trade_, not a pure
-  deficiency.
+- **`devices` fuses config entry and device** (see #1 above), so an HA export must choose a level, and
+  we cleanly model only single-device connections.
+- **Vendor coupling leaks upward** via `physical_path`; HA hides vendor specifics behind the
+  integration boundary so everything above the entity is vendor-agnostic. `logical_path` exists to
+  recover this, but the physical path remains a first-class, uniquely-indexed column.
+- **`legacy_handles` and `dashboards.legacy_id` are permanent seams** HA never carries — it mints
+  opaque IDs freely, while we froze the old integer space so `?systemId=N` and `/dashboard/id/{n}`
+  resolve forever. Sanctioned shims, but shims.
+- **`sessions` and `observations_outbox` keep an int `device_rid`** rather than the uuid (§12.1) — a
+  deliberate deviation, the seam working as designed, but it means two tables address devices
+  differently from everything above them.
+- **Composite provenance collapses** at `flow_attr_1d`, which is path-keyed
+  `(area_id, day, source_path, load_path)` rather than point-keyed, so aggregated multi-point sources
+  get a stable identity at the cost of "which physical meter" being unrecoverable from the flow row.
+  HA can't express "total solar across 3 inverters" as a persisted entity without a Group helper that
+  collapses provenance the same way — a fair trade, not a deficiency.
+- **The document is one JSONB blob** (§12.2). Deliberate — nothing queries cards in SQL, and
+  normalization would create two sources of truth — but it does mean no SQL query can answer "which
+  dashboards show this point" without walking documents.
 
 ## Where ours may be superior
 
-Genuine wins — separating real architectural advantages from "different problem domain."
+Genuine wins, with the domain-difference discount applied honestly.
 
-1. **Single-writer + transactional-outbox ingest durability — GENUINE WIN.**
-   `observations_outbox` is committed _before_ the QStash enqueue; an idempotent
-   single-writer receiver (`/api/observations/receive`) materializes it; the relay replays.
-   At-least-once + rebuildable, across a network boundary, without a heavyweight log. **HA's
-   pipeline is fire-and-forget in-process** — a `state_changed` the recorder misses (crash,
-   DB stall) is simply _lost_. For a durable observability pipeline this is a real
-   engineering advantage. (HA doesn't _need_ it — an in-memory control plane has different
-   durability requirements.) See `engine-web-separation.md`.
-2. **Typed aggregation with quality metadata + deterministic recompute — PARTLY a win.** Both
-   downsample (us 5m+1d; HA 5m+hourly). Our agg rows uniquely carry `sample_count` /
-   `error_count` / `data_quality`, and **recompute order-independently** from raw on every
-   insert — so backfill / out-of-order data heals cleanly, whereas HA's statistics compute
-   strictly forward in time and backfill is awkward. _Honest caveat:_ HA has **time-weighted
-   mean** (our `avg` is a plain sample mean, biased under irregular sampling) and **counter
-   reset detection** (~10% tolerance baked into `total_increasing`) that we lack. Roughly
-   parity on the core idea, each with a refinement the other misses.
-3. **Directional energy-flow matrix (`flow_1d`) — GENUINE WIN for the Sankey use case.**
-   Materialized `(area_id, day, source_path, load_path) → energy_kwh`, direction encoded by
-   slot (battery charge→`load.battery`, discharge→`source.battery`; grid import→`source.grid`,
-   export→`load.grid`), built from 5m (not 1d, "whose daily averages cancel direction"), with
-   an algorithm `version` for backfill dedup. HA computes the equivalent **at query time and
-   persists nothing** — fine for one user, wrong for serving many tenants the same history.
-   See `energy-flow-matrix.md`.
-4. **Multi-tenant, capability-scoped sharing — outside HA's domain entirely.**
-   `dashboard_grants` (owner/admin/viewer) + `dashboard_share_tokens` (one token → one
-   dashboard, resolving Dashboard → its cards' bindings → exactly those points):
-   least-privilege, FK-enforced, per-dashboard. HA is single-tenant and has no analog.
-5. **Constraint-enforced typed bindings vs HA's JSON-in-`.storage`.** `area_bindings` is SQL with
-   real constraints (`(point_system_id, point_id) → point_info` FK, `role` CHECKed against the
-   6-role set, composite-unique). Ours can't dangle past a cascade; HA's referential
-   integrity is code-only and can drift. (Tradeoff: HA's looseness buys zero-migration schema
-   evolution — a fair trade, not strictly inferior.)
-6. **Engine/web separation + stable integer addressing — MIXED / domain-appropriate.** The
-   cloud-scaling split (collection vs serving, single-writer contract, KV-as-engine-write /
-   web-read) is something HA has no need for (one process, one box) — calling it "superior"
-   is mostly a category error. Stable integer addressing is a modest, real ergonomic win for
-   join-heavy time-series — but it's _also_ the constraint that forced `legacy_system_id` and
-   lacks HA's rename-safe identity split.
+1. **Single-writer + transactional-outbox ingest durability — GENUINE WIN.** `observations_outbox` is
+   committed _before_ the QStash enqueue; an idempotent single-writer receiver
+   (`/api/observations/receive`) materializes it; the relay replays. At-least-once and rebuildable,
+   across a network boundary, without a heavyweight log — and it is what made the Phase-8 cutover
+   survivable (pausing materialization never stopped collection). **HA's pipeline is fire-and-forget
+   in-process**: a `state_changed` the recorder misses (crash, DB stall) is simply lost. HA doesn't
+   _need_ this — an in-memory control plane has different durability requirements — but for a durable
+   pipeline it is a real advantage.
+2. **Retained raw data + deterministic recompute — GENUINE WIN, and the correct framing of the
+   backfill point.** HA can write past statistics (#9 above), but it cannot _recompute_ them from
+   source: by the time you want to, the underlying states are purged. An import therefore _asserts_
+   history. Ours _derives_ it — every tier is retained permanently, aggregates recompute
+   order-independently from raw on every insert, and `flow_attr_1d` carries an algorithm `version` so
+   a corrected model can be replayed across years of history and dedup itself. Our agg rows also
+   carry `sample_count` / `error_count` / `data_quality`, so a recompute knows what it's standing on.
+   The Sigenergy sign-convention repair (July 2026) was exactly this capability being cashed in;
+   under HA's model it would have been an import script and a leap of faith.
+3. **Materialized, metric-attributed energy flows — NARROWER THAN CLAIMED, still a win.** The
+   previous revision called the Sankey a clear win; that was out of date. HA now ships a **core
+   Sankey energy card**, a real-time **power-flow Sankey**, and a water equivalent, and it structures
+   them better than we can — grouping consumers by floor and area and respecting the upstream-device
+   hierarchy. What actually survives as ours:
+   - **Persistence and shape.** `point_readings_flow_attr_1d` materializes
+     `(area_id, day, source_path, load_path) → energy_kwh` per local day, built from 5-minute data
+     (not daily, whose averages cancel direction), with direction encoded by slot (battery
+     charge→`load.battery`, discharge→`source.battery`; grid import→`source.grid`,
+     export→`load.grid`). A multi-day range is a plain `SUM … GROUP BY`, identical for every viewer.
+     HA recomputes per view in the browser.
+   - **Attribution per edge.** Each flow carries `emissions_g`, `renewable_kwh` and `cost_c`, derived
+     from grid intensity (OpenElectricity / Amber) and a learned battery-provenance blend, plus
+     `estimated_kwh` as a confidence denominator and `finalized_at` for the ~72h estimated→final
+     cutoff. `derived_intervals` accumulates the same three metrics per generator run. HA has
+     per-source **cost** natively (`stat_cost` / `entity_energy_price` / `number_energy_price`) and a
+     whole-home grid fossil-fuel percentage via Electricity Maps — but not per-edge attribution, and
+     nothing that answers _"what did it cost, how green was it, to charge the EV in July"_.
+   - **Verdict:** we are ahead on attribution, determinism and multi-tenant serving; HA is ahead on
+     consumer-side structure. Neither is a superset.
+4. **Multi-tenant sharing that is actually access control — WIN, and bigger than it looked.**
+   `share_tokens` (one token → one dashboard) and `dashboard_grants` (admin/viewer) resolve scope
+   **live from the dashboard document on every read** — Dashboard → its nodes' envelope refs →
+   exactly those points — and v4 makes that safe by construction: scope-bearing references may live
+   _only_ in fixed envelope fields, never inside a card's `config`, so the scope walk is type-agnostic
+   and an unknown card type cannot smuggle a reference past it (§8.3). HA is single-tenant: dashboards
+   offer `require_admin`, and per-view `visible` is **cosmetic hiding, not authorization** — the data
+   remains reachable through the API. This is not a domain-difference discount; it is a different
+   security posture.
+5. **Typed bindings with deterministic slot resolution — WIN on rigour.** `area_bindings` are SQL rows
+   with real FKs and a CHECK on the role vocabulary (the `roles` table, a second source of truth
+   mirroring `lib/roles/registry.ts`, is deleted precisely because the CHECK does the job). On top:
+   **`priority`-ordered per-slot resolution** (explicit binding → unique shape match → area-config
+   producer → absent, with "two candidates, no binding" surfaced as a choice rather than silently
+   picked, and a `/areas/{id}/resolution` report to explain it) and **bind-time shape validation**
+   (a point whose `(logical_path, metric_type)` doesn't fit the role is rejected). HA's energy prefs
+   are one entity per slot in a JSON document with no priority, no validation and no explanation of
+   what auto-connected. Worth noting the convergence, though: HA areas have started acquiring their
+   own per-role sensor slots (configured primary temperature/humidity sensors) — the same idea,
+   arrived at from the other direction.
+6. **Versioned documents with optimistic concurrency — SMALL BUT REAL WIN.** `dashboard_revisions`
+   keeps whole-doc snapshots with `saved_by`/`saved_at`; the v4 PUT is `If-Match`-checked (412 on a
+   stale revision) and echoes the normalized canonical document so client state can't drift; restore
+   copies forward rather than rewinding. Lovelace's storage-mode document has no history and no
+   concurrency check — last write wins.
+7. **Fixed-offset day bucketing, decided rather than defaulted — DOMAIN WIN.** `areas.day_offset_min`
+   is the canonical bucketing key (immutable except via an explicit re-bucket that regenerates
+   `agg_1d` / `flow_attr_1d` / provenance); `display_timezone` is formatting only. **Every day is
+   exactly 24 hours**, so 5m→1d rollups stay idempotent and daily comparisons carry no asterisk — and
+   it matches the domain, since AEMO settles the NEM in fixed AEST year-round. HA stores hourly
+   statistics and derives local days at query time, inheriting 23/25-hour DST days. For home
+   automation that's right; for energy accounting ours is.
+8. **Engine/web separation + the rid seam — MIXED / domain-appropriate.** The cloud-scaling split
+   (collection vs serving, single-writer contract, KV-as-engine-write / web-read) is something HA has
+   no need for — calling it superior is mostly a category error. The `uuid ↔ rid` seam is a real
+   ergonomic win for join-heavy time-series (and at `(point_rid, time)` is 4 bytes per index entry
+   _smaller_ than the v3 composite) but it is convergent with, not ahead of, HA's `metadata_id`.
+   Where we _are_ ahead is enforcement: the boundary is machine-checked (`no-restricted-imports` plus
+   a prebuild gate), uuids above and rids below, permanently.
 
-**Honest deductions:** our command/control plane is aspirational where HA's service registry
-is mature and uniform; our no-code composition is absent where HA's helper ecosystem is its
-crown jewel; our plain-mean aggregation is arguably worse than HA's time-weighted mean.
+**Honest deductions:** our command plane is one bespoke route where HA's service registry is mature
+and uniform; our no-code composition is absent where HA's helper ecosystem is its crown jewel; our
+semantic vocabulary is a fraction of HA's and has no unit conversion at all; our plain-mean
+aggregation is simply worse than HA's time-weighted mean; and we have no answer to sub-metering
+containment.
+
+## The deliberate deviations, HA-side
+
+Config-v4 §12 records seven choices made _against_ the clean sheet. Four are HA-facing, and are the
+places where "we don't do what HA does" is a decision rather than a gap:
+
+| Deviation                                                         | HA does                                                        | Why we don't                                                                                      |
+| ----------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **No device or area ACLs** — the dashboard is the only share unit | no ACLs either, but also no sharing model at all               | a third grant surface is speculative; dashboard scope is derived live and already least-privilege |
+| **The document stays one JSONB blob**                             | Lovelace is also one document                                  | cards are layout-coupled presentation; normalization = two sources of truth                       |
+| **Labels deferred**                                               | Labels across seven object types, usable as automation targets | clean future add; nothing reads them yet — the cheapest HA idea still on the table                |
+| **Fixed-offset days**                                             | DST-aware local days derived from hourly UTC statistics        | market time has no DST; 23/25-hour days break idempotent rollups                                  |
 
 ## Verdict
 
-**Home Assistant is the more general and elegant _object model + control runtime_; LiveOne is
-the more rigorous _durable, multi-tenant, aggregation-first data pipeline_.** Where we
-re-implement HA's semantic layer we're a reasonable (more rigid, integer-addressed) subset;
-where we diverge we're not "behind" HA — we're solving a different problem, and the outbox /
-aggregation / sharing investments are genuine wins _for that problem_.
+**Home Assistant is the more general and elegant object model, semantic vocabulary and control
+runtime; LiveOne is the more rigorous durable, multi-tenant, attribution-first data pipeline.**
 
-Two low-domain-risk borrowings from HA are worth considering, written up separately in
-[`../plans/identity-address-split-and-labels.md`](../plans/identity-address-split-and-labels.md):
-splitting **identity from address** (a stable `point_uid` distinct from the renameable
-`(system_id, point_id)` handle) and adding a **Label-style orthogonal tag dimension**.
+The second pass moved the scorecard in both directions. Against us: HA's containment now goes one
+tier deeper than when we declined it, it has two hierarchies we lack entirely, it ships a core Sankey
+we thought was our differentiator, and its statistics can be backfilled after all. For us: the
+sharing story is stronger than "multi-tenant" made it sound (HA's per-view hiding is not access
+control), and the recompute story is the right way to state the durability advantage — HA can assert
+history, only we can re-derive it.
+
+Remaining borrowings worth considering, in rough order of value-per-risk:
+
+1. **Sub-metering containment** — an upstream/parent relation between points or devices, so circuit
+   totals stop being a subtraction. HA's 2025.4 energy hierarchy is the model.
+2. **Labels** — an orthogonal tag dimension on any object. Already parked as a deferred seam.
+3. **`entity_category`-style demotion** — separate "diagnostic/secondary" points from primary ones so
+   pickers and default dashboards stop showing everything at once.
+4. **Reauth as a first-class onboarding step** — we need it anyway; HA has the taxonomy.
+5. **Unit classes** — model-layer conversion, so display units stop being baked into the point.
+6. **Time-weighted means** in the 5-minute rollup — the one place HA's statistics are plainly more
+   correct than ours.
+7. **A strategy-style generated view** — a dashboard (or one group) rendered live from the registries
+   so newly-onboarded devices appear without a document edit.
+8. **User-composable derivation kinds** — the long pole, and the one that would turn `derivations`
+   from an internal mechanism into a user-facing feature.
 
 ## Related docs
 
-- [`areas-and-dashboards.md`](areas-and-dashboards.md) — the System→Area→Dashboard split and
-  the existing System→Device / Point→Entity / Area→Area HA bridge table.
-- [`engine-web-separation.md`](engine-web-separation.md) — ingest durability (outbox),
-  engine/web split, the (planned) FE→engine command pattern.
+- [`../plans/config-v4-clean-sheet.md`](../plans/config-v4-clean-sheet.md) — the canonical rationale;
+  §4.1 records the non-adoption of HA's config-entry/device split, §8 the document model (with its
+  explicit HA precedents), §12 the deliberate deviations.
+- [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md) — what has landed and
+  what Phases 12–14 still finish.
+- [`areas-and-dashboards.md`](areas-and-dashboards.md) — the Device→Area→Dashboard split and the
+  original HA bridge table (partly overturned by the clean sheet).
 - [`points.md`](points.md) — the point model, paths, and identity.
 - [`data-model.md`](data-model.md) — data semantics & invariants.
+- [`engine-web-separation.md`](engine-web-separation.md) — ingest durability (outbox), engine/web
+  split, the (planned) FE→engine command pattern.
 - [`energy-flow-matrix.md`](energy-flow-matrix.md) — the directional Sankey matrix.
+- [`battery-provenance.md`](battery-provenance.md) — the metric legs attached to those flows.
+
+## Revision history
+
+- **2026-07-28 (second pass)** — deeper HA verification against the developer docs, and LiveOne
+  restated as finished config-v4 rather than a migration in progress. Material corrections: HA config
+  **subentries** (containment went deeper, not away); `via_device` + the **2025.4 energy device
+  hierarchy** (two hierarchies we lack); HA's **core Sankey / power-flow / water Sankey cards**
+  (narrows our flow-matrix claim); **statistics backfill is supported** via
+  `async_import_statistics` (the previous revision was wrong — the real distinction is
+  assert-vs-derive); HA's **unit model and 60+ device classes** (a breadth gap the doc had understated);
+  **Category** demoted to a footnote (per-table UI grouping, not an entity dimension); HA per-view
+  `visible` identified as **cosmetic, not authorization** (strengthens our sharing claim). Added the
+  deliberate-deviations table and dashboard **strategies** as a new axis.
+- **2026-07-28 (first pass)** — refreshed for config-v4 and HA 2026.7.
+- **2026-07-21** — original, written against the v3 model alongside the config-v4 clean sheet.
