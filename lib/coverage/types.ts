@@ -7,7 +7,7 @@
  * (lib/coverage/runner.ts) drives both stages uniformly. See lib/coverage/find-gaps.ts + runner.ts.
  */
 import type { PointId } from "@/lib/ids";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import type { PollCollector } from "@/lib/observations/poll-collector";
 
@@ -68,16 +68,16 @@ export interface CoverageRepairProvider<Ctx = unknown> {
 
   /** Local-day bucket offset (minutes east of UTC): fixed 600 for Amber/OE (NEM AEST, no DST),
    *  station-local `system.timezoneOffsetMin` for Sigenergy. Must match the vendor's write path. */
-  bucketOffsetMin(system: SystemWithPolling): number;
+  bucketOffsetMin(system: DeviceConfigView): number;
 
   /** Load credentials / build a client for a real backfill. Returns an error string if it can't run.
    *  Never called in dry-run. Keeps credential POLICY here so vendor primitives always get real creds. */
-  prepare(system: SystemWithPolling): Promise<PrepareResult<Ctx>>;
+  prepare(system: DeviceConfigView): Promise<PrepareResult<Ctx>>;
 
   /** Backfill ONE local gap-day: re-fetch + publish via the shared collector. Maps the vendor's native
    *  result → repaired (published rows) | unsettled (API had nothing) | error. */
   backfillDay(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     day: string,
     ctx: Ctx,
     session: SessionInfo,
@@ -89,5 +89,5 @@ export interface CoverageRepairProvider<Ctx = unknown> {
    *  it to floor the repair window (so pre-commission days aren't flagged as phantom gaps, and genuine
    *  pre-onboarding history stays in range) and to lazily populate `systems.commissioned_on`. Returns
    *  null if unknown/unavailable. Implement only where the vendor exposes such a date. */
-  commissionDay?(system: SystemWithPolling): Promise<string | null>;
+  commissionDay?(system: DeviceConfigView): Promise<string | null>;
 }

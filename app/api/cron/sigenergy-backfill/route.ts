@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
-import { SystemsManager, type SystemWithPolling } from "@/lib/systems-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getSystemCredentials } from "@/lib/secure-credentials";
@@ -85,7 +86,7 @@ function spanDaysBetween(startYmd: string, endYmd: string): number {
  * only the `days` fallback needs the station's offset, which is why this is per-system.
  */
 function resolveWindow(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   params: BackfillParams,
 ): { startYmd: string; endYmd: string } {
   const days = Math.max(1, Math.floor(params.days ?? DEFAULT_DAYS));
@@ -104,7 +105,7 @@ function resolveWindow(
 
 /** Backfill one system. Never throws — a failure is reported as `{ ok: false, error }`. */
 async function backfillOneSystem(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   params: BackfillParams,
 ): Promise<SystemOutcome> {
   const dryRun = params.dryRun ?? false;
@@ -282,7 +283,7 @@ async function handleBackfill(request: NextRequest) {
   const sigenSystems = (await sm.getActiveSystems()).filter(
     (s) => s.vendorType === "sigenergy",
   );
-  let targets: SystemWithPolling[];
+  let targets: DeviceConfigView[];
   if (params.systemId != null) {
     const one = sigenSystems.find((s) => s.id === params.systemId);
     if (!one)

@@ -13,7 +13,7 @@ import type {
   DayRepair,
   PrepareResult,
 } from "@/lib/coverage/types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 interface SigenCtx {
   client: SigenergyClient;
@@ -22,7 +22,7 @@ interface SigenCtx {
 
 /** Validate owner/station/creds and build a mySigen client. Shared by prepare() + commissionDay(). */
 async function buildSigenCtx(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
 ): Promise<PrepareResult<SigenCtx>> {
   if (!system.ownerClerkUserId)
     return { ok: false, error: "no owner (Sigenergy credentials required)" };

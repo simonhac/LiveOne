@@ -9,7 +9,8 @@
  * Behavior must stay byte-identical to the pre-extraction route: dense-timeline handling, 30m
  * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
  */
-import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { SeriesInfo, getSeriesPath } from "@/lib/point/series-info";
 import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";
@@ -56,7 +57,7 @@ export async function buildSeriesFromAggRows(
   allRows: AggRow[],
   seriesInfos: SeriesInfo[],
   interval: "5m" | "30m" | "1d",
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   firstEpoch: number,
   lastEpoch: number,
   debug?: HistoryDebugInfo,

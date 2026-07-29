@@ -2,9 +2,9 @@ import { describe, it, expect } from "@jest/globals";
 import { buildPollMessages, createPollCollector } from "../poll-collector";
 import type { RawObservationInput } from "../publisher";
 import type { Session } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 
-// Minimal SystemWithPolling fixture. Only the fields read by buildPollMessages
+// Minimal DeviceConfigView fixture. Only the fields read by buildPollMessages
 // / buildObservations matter; everything else is cast away.
 const system = {
   id: 1,
@@ -12,7 +12,7 @@ const system = {
   vendorType: "select.live",
   vendorSiteId: "SITE-123",
   timezoneOffsetMin: 600,
-} as unknown as SystemWithPolling;
+} as unknown as DeviceConfigView;
 
 // Minimal Session fixture.
 const session: Session = {

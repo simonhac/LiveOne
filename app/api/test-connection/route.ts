@@ -5,7 +5,7 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Create a temporary system object for the adapter to use
-    const tempSystem: SystemWithPolling = {
+    const tempSystem: DeviceConfigView = {
       id: systemId || -1, // Use real ID if testing existing system
       vendorType: finalVendorType,
       vendorSiteId: vendorSiteId || "", // Use existing vendorSiteId or let adapter discover

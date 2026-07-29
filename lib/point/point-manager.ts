@@ -21,7 +21,8 @@ import {
 import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
 import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
-import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
@@ -196,7 +197,7 @@ export class PointManager {
    * @param system - The viewable system (a real device or a multi-device area)
    */
   private async getAllSeriesForSystem(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
   ): Promise<SeriesInfo[]> {
     // Check cache first
     const cached = this.seriesCache.get(system.id);
@@ -257,7 +258,7 @@ export class PointManager {
    * PRIVATE: external callers should use getActivePointsForSystem instead.
    */
   private async _resolvePointsForViewable(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
   ): Promise<PointInfo[]> {
     // A real device loads its own point_info. A multi-device area (an area handle with no real
     // `systems` row) resolves area-natively: its typed `area_bindings` SELECT the points (the
@@ -308,7 +309,7 @@ export class PointManager {
    * @returns Series matching the criteria
    */
   async getSeriesForSystem(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     filter?: string[],
     interval?: "5m" | "1d",
     typedOnly: boolean = false,

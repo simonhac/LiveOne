@@ -17,7 +17,7 @@ import type {
   PointReadingAgg5mInput,
   TestConnectionResult,
 } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import { PointManager } from "@/lib/point/point-manager";
@@ -63,7 +63,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
    * Dynamic schedule: poll only inside each interval's learned arrival window.
    */
   async shouldPoll(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     forcePollAll: boolean,
     now: Date,
   ): Promise<{
@@ -88,7 +88,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
   }
 
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     _credentials: unknown,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -247,7 +247,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
 
   /** Validate the API key and (if the region is set) smoke-test a tiny market request. */
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     _credentials: unknown,
   ): Promise<TestConnectionResult> {
     try {

@@ -15,7 +15,7 @@ import {
   getObservationsReceiverUrl,
 } from "@/lib/qstash";
 import { Observation, QueueMessage, Session } from "./types";
-import { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { buildObservations, RawObservationInput } from "./publisher";
 import { persistOutbox } from "./outbox";
@@ -81,7 +81,7 @@ function messageByteLength(message: QueueMessage): number {
  *   alone — data is never dropped.
  */
 export function buildPollMessages(args: {
-  system: SystemWithPolling;
+  system: DeviceConfigView;
   session: Session;
   inputs: RawObservationInput[];
   maxBytes?: number;
@@ -154,7 +154,7 @@ export function buildPollMessages(args: {
  * must not break the main poll flow.
  */
 export async function publishPoll(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   session: Session,
   inputs: RawObservationInput[],
 ): Promise<void> {

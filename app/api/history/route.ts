@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
-import { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
 import {
@@ -306,7 +306,7 @@ function validateTimeRange(
 // ============================================================================
 
 async function getSystemHistoryInOpenNEMFormat(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",

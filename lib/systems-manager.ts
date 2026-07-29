@@ -21,6 +21,10 @@ import {
   areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 
 // Export the type for a system from the database
@@ -64,7 +68,7 @@ const deviceStateByHandle = new QueryBuilder()
  * it is deliberately kept OUT of the systems/devices/admin lists. Owns no points and never polls, so
  * device/polling fields are null.
  */
-function synthesizeAreaView(area: Area): SystemWithPolling | null {
+function synthesizeAreaView(area: Area): DeviceConfigView | null {
   if (area.legacySystemId == null) return null;
   return {
     id: area.legacySystemId,
@@ -76,9 +80,6 @@ function synthesizeAreaView(area: Area): SystemWithPolling | null {
     alias: area.slug,
     model: null,
     serial: null,
-    ratings: null,
-    solarSize: null,
-    batterySize: null,
     location: area.location,
     metadata: null,
     config: null,
@@ -208,8 +209,10 @@ export class SystemsManager {
    * with no `systems` row). Use this — not getSystem — wherever an Area's whole-area data/auth/flow is
    * served. getSystem stays real-only (devices/admin/polling).
    */
-  async getViewableSystem(systemId: number): Promise<SystemWithPolling | null> {
-    const real = await fetchSystemById(systemId);
+  async getViewableSystem(systemId: number): Promise<DeviceConfigView | null> {
+    // config-v4 slice K2: the REAL leg reads `devices` (the config registry), not `systems`. Only the
+    // area-view synthesis below is still v3-shaped, and that is what K3 deletes.
+    const real = await DeviceConfigRegistry.deviceByHandle(systemId);
     if (real) return real; // real row wins (an area-of-one)
     const area = await fetchAreaByHandle(systemId);
     return area ? synthesizeAreaView(area) : null;
@@ -217,7 +220,7 @@ export class SystemsManager {
 
   /** Whether `systemId` is an area view (a multi-device Area handle with no real `systems` row). */
   async isAreaHandle(systemId: number): Promise<boolean> {
-    if (await fetchSystemById(systemId)) return false; // real row wins
+    if (await DeviceConfigRegistry.deviceByHandle(systemId)) return false; // real row wins
     return (await fetchAreaByHandle(systemId)) != null;
   }
 

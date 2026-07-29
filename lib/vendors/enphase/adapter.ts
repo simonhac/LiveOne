@@ -1,6 +1,6 @@
 import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
 import type { TestConnectionResult, FetchContext, FetchResult } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { PointManager } from "@/lib/point/point-manager";
 import { ReadingsDao } from "@/lib/readings";
@@ -102,7 +102,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    * then hourly from 01:00-05:00 for yesterday's data
    */
   protected evaluateSchedule(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
@@ -278,7 +278,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    * Uses fetchEnphaseDay which handles data insertion internally
    */
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -363,7 +363,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   // getMostRecentReadings removed - not used externally
 
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult> {
     try {

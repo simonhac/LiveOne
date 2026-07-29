@@ -9,7 +9,8 @@
 import { sql } from "drizzle-orm";
 import { parseDate } from "@internationalized/date";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { SystemsManager, type SystemWithPolling } from "@/lib/systems-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
