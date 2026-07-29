@@ -27,6 +27,11 @@ concurrency:
   group: preview-alias-${{ github.event.ref }}
   cancel-in-progress: true
 
+# The zone the per-branch alias lives under, in ONE place. Both jobs derive the label cap from it
+# (see sanitize_label), so the push and delete paths can never disagree about the hostname.
+env:
+  PREVIEW_ZONE: preview.liveone.energy
+
 jobs:
   alias:
     if: ${{ github.event_name == 'push' }}
@@ -40,21 +45,27 @@ jobs:
           BRANCH_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # The cap is on the CERTIFICATE COMMON NAME, i.e. the WHOLE hostname (<=64 chars) — not on
+          # the DNS label alone (<=63). Since the zone eats 23 of those 64, the label ceiling is 41,
+          # and capping there satisfies the 63-char DNS limit for free. Deriving it from
+          # PREVIEW_ZONE keeps the two in step if the zone ever changes.
+          max_label=$(( 64 - ${#PREVIEW_ZONE} - 1 ))   # -1 for the dot joining label to zone
           sanitize_label() {
-            local ref="$1" hash s
+            local ref="$1" hash s keep
             hash="$(printf '%s' "$ref" | sha1sum | cut -c1-6)"
             s="$(printf '%s' "$ref" \
                   | tr '[:upper:]' '[:lower:]' \
                   | tr '/' '-' \
                   | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//')"
             if [ -z "$s" ]; then printf 'p-%s' "$hash"; return; fi
-            if [ "${#s}" -gt 63 ]; then
-              s="$(printf '%s' "$s" | cut -c1-56 | sed -E 's/-+$//')-$hash"
+            if [ "${#s}" -gt "$max_label" ]; then
+              keep=$(( max_label - 7 ))                # 6-char hash + the '-' that joins it
+              s="$(printf '%s' "$s" | cut -c1-"$keep" | sed -E 's/-+$//')-$hash"
             fi
             printf '%s' "$s"
           }
           LABEL="$(sanitize_label "$BRANCH_REF")"
-          DOMAIN="${LABEL}.preview.liveone.energy"
+          DOMAIN="${LABEL}.${PREVIEW_ZONE}"
           echo "branch='$BRANCH_REF' label='$LABEL' domain='$DOMAIN'"
           { echo "LABEL=$LABEL"; echo "DOMAIN=$DOMAIN"; } >> "$GITHUB_ENV"
 
@@ -126,21 +137,27 @@ jobs:
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
         run: |
           set -euo pipefail
+          # The cap is on the CERTIFICATE COMMON NAME, i.e. the WHOLE hostname (<=64 chars) — not on
+          # the DNS label alone (<=63). Since the zone eats 23 of those 64, the label ceiling is 41,
+          # and capping there satisfies the 63-char DNS limit for free. Deriving it from
+          # PREVIEW_ZONE keeps the two in step if the zone ever changes.
+          max_label=$(( 64 - ${#PREVIEW_ZONE} - 1 ))   # -1 for the dot joining label to zone
           sanitize_label() {
-            local ref="$1" hash s
+            local ref="$1" hash s keep
             hash="$(printf '%s' "$ref" | sha1sum | cut -c1-6)"
             s="$(printf '%s' "$ref" \
                   | tr '[:upper:]' '[:lower:]' \
                   | tr '/' '-' \
                   | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-+//; s/-+$//')"
             if [ -z "$s" ]; then printf 'p-%s' "$hash"; return; fi
-            if [ "${#s}" -gt 63 ]; then
-              s="$(printf '%s' "$s" | cut -c1-56 | sed -E 's/-+$//')-$hash"
+            if [ "${#s}" -gt "$max_label" ]; then
+              keep=$(( max_label - 7 ))                # 6-char hash + the '-' that joins it
+              s="$(printf '%s' "$s" | cut -c1-"$keep" | sed -E 's/-+$//')-$hash"
             fi
             printf '%s' "$s"
           }
           LABEL="$(sanitize_label "$BRANCH_REF")"
-          DOMAIN="${LABEL}.preview.liveone.energy"
+          DOMAIN="${LABEL}.${PREVIEW_ZONE}"
           echo "branch='$BRANCH_REF' label='$LABEL' domain='$DOMAIN'"
 
           # Resolve the alias UID (GET accepts the hostname). Missing → nothing to do.
