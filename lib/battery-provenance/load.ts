@@ -20,9 +20,8 @@ import {
   pointInfo,
   systems,
 } from "@/lib/db/planetscale/schema";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
 import { ReadingsDao } from "@/lib/readings";
-import type { PointId } from "@/lib/ids";
+import { Point, type PointId } from "@/lib/ids";
 import { applyPowerTransform } from "@/lib/aggregation/flow-series";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
 import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
@@ -57,27 +56,20 @@ interface SeriesPoint {
 
 async function readAgg5m(
   db: PgDb,
-  systemId: number,
-  pointId: number,
+  point: PointId | null,
   startMs: number,
   endMs: number,
   column: "avg" | "delta" = "avg",
 ): Promise<SeriesPoint[]> {
-  // Resolve (systemId, pointId) → PointId and read via the seam. A point with no registry identity
-  // (UnknownIdError) has no rows — return empty, exactly as the old composite-FK'd query did.
-  let id: PointId;
-  try {
-    id = await RegistryCache.pointForAddr(systemId, pointId);
-  } catch (err) {
-    if (err instanceof UnknownIdError) return [];
-    throw err;
-  }
+  // The caller supplies the point's identity, so there is nothing to resolve here — a null `point`
+  // means the caller has no identity for it, which has no rows (empty, as the old lookup-miss did).
+  if (!point) return [];
   const series = await ReadingsDao.read5m(
-    [id],
+    [point],
     { fromMs: startMs, toMs: endMs },
     db,
   );
-  return series.get(id)!.map((r) => ({
+  return series.get(point)!.map((r) => ({
     t: r.intervalEndMs,
     v: column === "delta" ? r.delta : r.avg,
     dq: r.dataQuality,
@@ -112,7 +104,10 @@ async function loadOeRawSeries(
     .limit(1);
   if (!oeSys) return { emissions: null, renewable: null };
   const oePts = await db
-    .select({ pointId: pointInfo.index, stem: pointInfo.logicalPathStem })
+    .select({
+      pointUid: pointInfo.pointUid,
+      stem: pointInfo.logicalPathStem,
+    })
     .from(pointInfo)
     .where(
       and(
@@ -128,8 +123,7 @@ async function loadOeRawSeries(
       stem: op.stem,
       series: await readAgg5m(
         db,
-        oeSys.id,
-        op.pointId,
+        Point.encode(op.pointUid),
         startMs - oeFillMs,
         endMs,
       ),
@@ -181,9 +175,23 @@ export function forwardFill(
   return { value, estimated };
 }
 
+/**
+ * A binding's `point_uid` as a `PointId` — null when the binding carries none.
+ *
+ * `area_bindings.point_uid` names the same point as the legacy `(point_system_id, point_id)` pair it
+ * replaces (verified 72/72 with zero disagreement on both environments), so reading it is a pure
+ * elimination of a `RegistryCache.pointForAddr` round trip. A null inherits the old lookup-miss
+ * semantics exactly — no identity, therefore no rows (config-v4 Phase 12 slice D).
+ */
+export function bindingPoint(pointUid: string | null): PointId | null {
+  return pointUid ? Point.encode(pointUid) : null;
+}
+
 export interface BoundPoint {
   systemId: number;
   pointId: number;
+  /** The point's identity — see `bindingPoint`. Null means the binding carries no uuid (→ no data). */
+  point: PointId | null;
   role: string;
   metric: string;
   stem: string | null;
@@ -200,6 +208,7 @@ export async function boundPoints(
     .select({
       systemId: areaBindings.pointSystemId,
       pointId: areaBindings.pointId,
+      pointUid: areaBindings.pointUid,
       role: areaBindings.role,
       metric: areaBindings.metricType,
       stem: pointInfo.logicalPathStem,
@@ -220,6 +229,7 @@ export async function boundPoints(
   return rows.map((r) => ({
     systemId: r.systemId,
     pointId: r.pointId,
+    point: bindingPoint(r.pointUid),
     role: r.role,
     metric: r.metric,
     stem: r.stem,
@@ -359,24 +369,15 @@ export async function loadProvenanceInputs(
   const [socSeries, oeSeries, rateSeriesResults, batSysRow] = await Promise.all(
     [
       socBind && !opts.noSoc
-        ? readAgg5m(
-            db,
-            socBind.systemId,
-            socBind.pointId,
-            startMs - SOC_FILL_MS,
-            endMs,
-          )
+        ? readAgg5m(db, socBind.point, startMs - SOC_FILL_MS, endMs)
         : Promise.resolve<SeriesPoint[]>([]),
       loadOeRawSeries(db, region, startMs, endMs, OE_FILL_MS),
       Promise.all(
         rateBinds.map((rp) =>
-          readAgg5m(
-            db,
-            rp.systemId,
-            rp.pointId,
-            startMs - RATE_FILL_MS,
-            endMs,
-          ).then((s) => ({ stem: rp.stem, s })),
+          readAgg5m(db, rp.point, startMs - RATE_FILL_MS, endMs).then((s) => ({
+            stem: rp.stem,
+            s,
+          })),
         ),
       ),
       batterySystemId != null
@@ -553,13 +554,7 @@ export async function loadBatteryThroughput(
   );
   if (!powerBind) return null;
 
-  const powerSeries = await readAgg5m(
-    db,
-    powerBind.systemId,
-    powerBind.pointId,
-    startMs,
-    endMs,
-  );
+  const powerSeries = await readAgg5m(db, powerBind.point, startMs, endMs);
   if (powerSeries.length < 2) return null;
   const timeline = powerSeries.map((s) => s.t);
   const tIndex = new Map(timeline.map((t, i) => [t, i]));
@@ -575,18 +570,10 @@ export async function loadBatteryThroughput(
   );
   if (chargeBind && dischargeBind) {
     // Exact energy registers (per-interval delta), scattered onto the timeline.
-    const cs = await readAgg5m(
-      db,
-      chargeBind.systemId,
-      chargeBind.pointId,
-      startMs,
-      endMs,
-      "delta",
-    );
+    const cs = await readAgg5m(db, chargeBind.point, startMs, endMs, "delta");
     const ds = await readAgg5m(
       db,
-      dischargeBind.systemId,
-      dischargeBind.pointId,
+      dischargeBind.point,
       startMs,
       endMs,
       "delta",
@@ -629,7 +616,7 @@ export async function loadBatteryThroughput(
   // SoC (forward-filled ≤30 min) for the capacity-learn pass — null everywhere when no SoC point is bound.
   const socBind = bound.find((b) => b.role === "battery" && b.metric === "soc");
   const socSeries = socBind
-    ? await readAgg5m(db, socBind.systemId, socBind.pointId, startMs, endMs)
+    ? await readAgg5m(db, socBind.point, startMs, endMs)
     : [];
   const soc = forwardFill(timeline, socSeries, 30 * 60 * 1000).value;
 

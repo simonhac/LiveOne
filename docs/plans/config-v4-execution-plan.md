@@ -10,23 +10,15 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — ship slice H, then Phase 12 slice D (`RegistryCache` off `point_info` — the long pole). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H code written 2026-07-29.**
+## ▶ NEXT ACTION — Phase 12 slice D **PR 2**: put `pointUid` on the `PointInfo` class, which unblocks the vendor/flow/labs `pointForAddr` sites (see slice D below). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H shipped 2026-07-29; slice D PR 1 (17 → 9 call sites) 2026-07-29.**
 
-> ⚠️ **Slice H carries migration debt: 0046 is written and rehearsed but NOT applied to either
-> environment.** It is a `[D]` slice, so the order is: re-probe coverage on prod → merge + deploy the
-> code → apply 0046 to prod `sydney` → apply to `liveone-dev`. The re-probe is not optional and must not
-> be taken from an earlier reading (the slice-F lesson); the query is the guard's own predicate:
+> ✅ **No outstanding migration debt.** 0044 + 0045 + 0046 are applied to BOTH environments; every
+> migration through 0046 is live on prod `sydney` and `liveone-dev`.
 >
-> ```sql
-> SELECT count(*) FROM area_devices ad JOIN devices d ON d.rid = ad.system_id
->  WHERE NOT EXISTS (SELECT 1 FROM area_members am
->                     WHERE am.area_id = ad.area_id AND am.device_id = d.id);
-> ```
->
-> Non-zero → backfill (`INSERT INTO area_members … SELECT ad.area_id, d.id, ad.ordinal … ON CONFLICT
-> DO UPDATE SET ordinal = excluded.ordinal`) **before** the deploy, not after: once the new build is
-> live it writes only `area_members`, and a membership that never crossed is simply gone from the area.
-> Full record under slice H below.
+> ✅ **The slice H migration debt is CLEARED. 0046 is applied to BOTH environments** (2026-07-29:
+> prod `sydney` then `liveone-dev`, each post-checked on the database rather than on the migrate
+> output). `area_devices` is gone; `area_members` is the sole membership table. Full record under
+> slice H below.
 >
 > ✅ **The slice G + F migration debt is CLEARED. 0044 + 0045 are applied to BOTH environments**
 > (2026-07-28: prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC), post-checked identical. `roles`
@@ -662,7 +654,7 @@ first, then prod, then dev. **[C]** code-only.
 | **F** | ✅ `user_systems` + `isViewer` die (prod table is empty) — see below | [C] → [D] 0045 |
 | **A2** | ✅ Close the mint-only mirror leaks (`updatePoint`, `updateSystem`, `updateDashboard`) — see below | [C] |
 | **H** | ✅ `area_devices` → `area_members` — see below | [C] → [D] 0046 |
-| **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain | [C] |
+| **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain. **PR 1 landed** (17 → 9 call sites) — see below | [C] |
 | **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0047 |
 | **M** | `point-manager` mints `points` directly; the `max(index)+1` allocator dies | [C] |
 | **I** | `sessions.system_id` → `device_rid`, expand/contract | [A] 0048, 0049 → [D] 0050 |
@@ -689,7 +681,49 @@ first, then prod, then dev. **[C]** code-only.
   `ensureDeviceForHandle` inside its tx (`lib/systems-manager.ts:448`), then `createSystem` calls
   `ensureDeviceRow` outside it (`:333`), which calls it again.
 
-**✅ SLICE H CODE DONE (2026-07-29); migration 0046 written and rehearsed, NOT yet applied.**
+**◑ SLICE D — PR 1 DONE (2026-07-29). `pointForAddr` call sites 17 → 9.**
+
+The headline correction to the sizing note (#3): **the backing store is not the hard part.** Two facts
+found while mapping it:
+
+- `points` has **no counterpart to `point_info.id`** (the per-device index). So `pointForAddr` cannot be
+  served from `points` at all — the call sites must go **first**, and the backing-store swap is the
+  *last* step of slice D, not the first. Sequencing it the other way round is a dead end.
+- Yet `PointAddr.index` has exactly **one** production consumer (`rebuild-dev-kv-from-db.ts:139`, feeding
+  the int-addressed KV keyspace that Phase 13 retires) and `PointAddr.systemId` only two. The 17
+  `pointForAddr` calls are the whole cost; `PointAddr` itself is nearly dead already.
+
+**PR 1's theme: stop asking the registry for an identity the caller already holds.** Every converted site
+had the point's uuid within reach and was round-tripping the registry to rediscover it. Converted:
+
+| Domain | Sites | Uuid source |
+| --- | --- | --- |
+| coverage (`find-gaps.ts`) | 2 | `resolveCoveragePoints` already SELECTed the row — now carries `point_uid` on `CoveragePoint` |
+| battery-provenance (`-pg`, `-daily-pg`, `recompute`, `load`) | 5 | `area_bindings.point_uid`, via a new `BoundPoint.point` |
+| OE raw series (`load.ts:129`) | 1 | its own `point_info` select, `index` → `point_uid` |
+
+Net **−51 lines**: each conversion deletes a `try/catch (UnknownIdError)` scaffold, because "the caller
+holds the row" makes the not-in-registry branch unreachable. `null` (a binding with no uuid) inherits the
+old miss semantics exactly, so the empty-result behaviour is preserved rather than merely re-derived.
+
+**Why this is safe, evidenced not asserted.** The swap is only sound if `area_bindings.point_uid` names
+the same point as the `(point_system_id, point_id)` pair it replaces. Checked on **both** environments:
+**72/72 bindings populated, zero disagreement**, and `point_info.point_uid` 134/134 NOT NULL. Then the
+real gate — `scripts/config-v4/verify-slice-d-parity.ts` drives the **actual** new code paths
+(`boundPoints`, `resolveCoveragePoints`) and compares every identity against what `pointForAddr` would
+have returned: **206 identities, 0 mismatched.** That script is the running gate for the rest of slice D;
+extend it per PR. It dies with `pointForAddr` (no legacy side left to compare against).
+
+**Remaining 9, and the one that gates them.** `PointInfo` (the class, `lib/point/point-info.ts`) does
+**not** carry `pointUid` — only the `PointInfoRow` row shape does. That single omission is why the vendor
+(3), flow (1) and labs (1) sites must round-trip. Adding it is the next PR, and it crosses the
+served-shape/frontend boundary (`ViewDataModal` builds `PointInfo.from()` out of API responses), which is
+why it was kept out of PR 1. The last three are structural, not mechanical: `history/readings-pg.ts:67`
+and `app/api/admin/point/[systemIdDotPointId]/readings/route.ts:139` take `systemId.pointId` from the
+**wire**, and `observations/receive/route.ts:128` is the legacy-grammar branch **slice M owns** (it may
+not be deleted until the outbox drains — see the ordering traps).
+
+**✅ SLICE H DONE (2026-07-29) — code merged (#276) and deployed, migration 0046 applied to both environments.**
 `area_members` is now the membership table — read and written by `lib/areas/members.ts` (renamed from
 `lib/areas/devices.ts`, which was named after the table it queried). Four things the one-line entry did
 not say:
@@ -767,10 +801,20 @@ dependents`, then `to_regclass` NULL after the drop — and **all three abort pa
 aborting *before* the DROP: an unmappable row (handle with no `devices.rid`), an uncovered row (its
 `area_members` twin deleted), and a synthetic FK dependent. `db:pg:generate` reports "No schema changes".
 
-**NOT verified:** `npm run db:sync-dev-db` was not run — it needs `PG_PROD_RO_DATABASE_URL` and
-`LIVEONE_DEV_DATABASE_URL`, which live as GitHub Actions secrets, not in `.env.local`. The manifest
-change is a single deleted leg plus one `idDrift` child, both pinned by `prod-dev-sync.test.ts`, and the
-2-hourly action exercises it on merge — **watch that first run**.
+**✅ Sync manifest change VERIFIED on the real action (2026-07-29).** It could not be exercised locally
+(`PG_PROD_RO_DATABASE_URL` / `LIVEONE_DEV_DATABASE_URL` are Actions secrets, not in `.env.local`), so the
+first post-merge run was watched: legs `20 areas`, **`30 area_members`**, `72 area_bindings`, **no
+`area_devices` leg**, no drift warnings, no errors. Dev after: `area_devices` still absent (the sync does
+not resurrect it), `area_members` 36 = prod's 30 + 6 dev-only (an upsert with no deletes), 0 orphaned
+members, 0 bindings missing `point_uid`.
+
+Two things worth keeping from that watch. The FK worry was **unfounded**: dropping `area_devices` from
+the `areas` `idDrift` child list looked like it could break a drifted-area DELETE, but
+`area_devices_area_id_areas_id_fk` was `ON DELETE cascade`, so the delete always cascaded — check the
+snapshot's `onDelete` before assuming a child removal needs a manual delete. And the **schedule is not
+the clock**: this nominally 2-hourly cron actually fires at 1h38m–4h04m intervals (GitHub throttles
+schedules), so a "missed" slot is normal and is not evidence of breakage — `workflow_dispatch` is the way
+to get a run when you actually need one.
 
 **Prod probed 2026-07-29** under a short-TTL `pg_read_all_data` role (deleted after; it owned nothing,
 so no reassign needed): **30 `area_devices` / 30 `area_members`, and all five gates at 0** — unmappable
@@ -781,9 +825,41 @@ probe that silently hits dev is the failure worth guarding against: the role use
 keys off), and `max(point_readings.measurement_time)` was minutes old, i.e. actively polling (dev's
 crons are off). Prod's 30/16 vs dev's 36/18 is the expected dev-only surplus.
 
-**Still to do, in this order:** re-probe the "uncovered" gate immediately before the deploy (this reading
-ages — the slice-F rule), then merge + deploy, then apply 0046 to prod `sydney` first and `liveone-dev`
-second.
+**✅ APPLIED 2026-07-29, prod `sydney` then `liveone-dev`.** #276 merged 03:06 UTC and the Vercel
+production deploy (`liveone-8fz8cfn7d`, aliased to `liveone.energy`) was `Ready` at 03:06, so the
+deploy-before-drop ordering held.
+
+The re-probe is the part worth carrying forward, because **the deploy inverted its purpose**. The rule
+(slice F) is "never trust an earlier reading". The pre-deploy reading was the anxious one — the old
+build was still writing `area_devices`, so any membership edit between probe and deploy manufactured an
+uncovered row. Probing *after* the deploy is strictly stronger: the live build has no executable
+reference to `area_devices` anywhere (only comments, one negative test assertion, and the self-labelled
+`🛑 SPENT TOOL` `scripts/config-v4/registry-populate.ts`), so the table is **frozen** and a zero stays
+zero. Post-deploy re-probe: **30/30, all gates 0** — identical to the morning's reading, now for a
+structural reason rather than by luck. Full 30-row inventory captured first, since the guard's
+`RAISE NOTICE`s are swallowed by the migrator.
+
+Also worth pinning: prod's journal held **46 rows whose last hash was byte-identical to local 0045**, so
+exactly one migration was pending. Check the *hash*, not the count — the count alone cannot tell you
+whether the pending file is the one you think it is.
+
+**Do NOT reach for `pscale role reset-default` on prod** even though CLAUDE.md offers it as the
+ownership-trap workaround: it rotates the `postgres` password that prod's Production-scope `DB_*` vars
+carry, and Vercel captures env at deploy time — so prod would 500 until redeployed. That is the
+prod DB-env outage, self-inflicted. It is also unnecessary for a `[D]` slice: **a drop migration creates no
+objects**, so a temp `--inherited-roles postgres` role ends up owning nothing and `role delete` succeeds
+without a reassign. `ALTER ROLE CURRENT_USER SET lock_timeout = '5s'` was set on the temp role as usual;
+`DROP TABLE` takes `ACCESS EXCLUSIVE` but never contended, there being no readers left.
+
+Post-checks on **the database, not the migrate output** (the dev-journal-drift trap — on `liveone-dev`
+the migrator reports success while doing nothing if the journal already carries the entry): both
+environments show `to_regclass('public.area_devices')` NULL, a last-applied hash of `03f6bc7b…`
+matching local 0046, `area%` tables down to `areas` / `area_members` / `area_bindings`, and
+`area_members` intact at **30 (prod) / 36 (dev)**. Prod smoke-tested through the live membership path,
+not just `/api/health`: `/admin/areas` resolves all 20 areas with member lists exactly matching the
+pre-drop inventory (`shorty` 6 members, `daylesford-site` 3, `blackburn` 3, `Kutis` 2), and the
+Kinkora Unified dashboard renders live data from every member device with a clean console. Temp roles
+deleted, plus the leftover `recon` probe role from 2026-07-28.
 
 **✅ SLICE A2 DONE (2026-07-28).** Close the mint-only mirror leaks. Correction #10 documented one; the
 same reasoning applied to the sibling writers found **two more**, so this is a defect *class*, not a bug:

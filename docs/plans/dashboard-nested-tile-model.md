@@ -8,6 +8,11 @@ retire the bespoke grid-signals card as a device-bound tile.
 > from it once the constraint relaxed to "it's only us and the current thing is broken — go hard, no
 > migration." **§0 is authoritative**; where §§2.1 / 6 / 7 conflict with §0, §0 wins (they're kept for
 > rationale: the problem statement §1, the grid-signals retirement §4, and the parity proof §4.3 still hold).
+>
+> **Table rename since:** every mention of `area_devices` below is now `area_members`
+> `(area_id, device_id → devices.id, ordinal)` — config-v4 Phase 12 slice H made it primary and migration
+> `0046` dropped the old table. Membership is keyed on the device **uuid**, not the integer handle, so any
+> snippet here that inserts or joins on `system_id` needs translating before it is run.
 
 ---
 

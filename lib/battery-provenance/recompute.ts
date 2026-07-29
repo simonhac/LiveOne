@@ -14,8 +14,8 @@ import {
   pointReadingsFlowAttr1d,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
 import type { PointId } from "@/lib/ids";
+import { bindingPoint } from "@/lib/battery-provenance/load";
 import {
   FLOW_ATTR_VERSION,
   SETTLEMENT_WINDOW_MS,
@@ -122,7 +122,7 @@ type PgDb = ReturnType<typeof requirePlanetscaleDb>;
  */
 async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
   const [bat] = await db
-    .select({ sys: areaBindings.pointSystemId, pid: areaBindings.pointId })
+    .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
     .where(
@@ -134,7 +134,7 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     )
     .limit(1);
   const [out] = await db
-    .select({ sys: areaBindings.pointSystemId, pid: areaBindings.pointId })
+    .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
     .innerJoin(systems, eq(systems.id, areaBindings.pointSystemId))
@@ -148,18 +148,10 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     )
     .limit(1);
   if (!bat || !out) return false; // no battery, or blend never written → recompute
-  // Resolve the two integer addresses to PointIds; an unknown addr → treat as "no data" (the old
-  // MAX over a nonexistent (sys,pid) returned 0 rows → null).
-  const resolve = async (sys: number, pid: number): Promise<PointId | null> => {
-    try {
-      return await RegistryCache.pointForAddr(sys, pid);
-    } catch (e) {
-      if (e instanceof UnknownIdError) return null;
-      throw e;
-    }
-  };
-  const batPoint = await resolve(bat.sys, bat.pid);
-  const outPoint = await resolve(out.sys, out.pid);
+  // Each binding carries the point's uuid, so there is nothing to resolve. A binding without one →
+  // "no data", exactly as the old MAX over a nonexistent (sys,pid) returned 0 rows → null.
+  const batPoint = bindingPoint(bat.uid);
+  const outPoint = bindingPoint(out.uid);
   const maxes = await ReadingsDao.latestAgg5mIntervalMsForPoints(
     [batPoint, outPoint].filter((p): p is PointId => p !== null),
     db,

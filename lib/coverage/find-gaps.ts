@@ -11,8 +11,7 @@ import { sql } from "drizzle-orm";
 import { parseDate } from "@internationalized/date";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
-import type { PointId } from "@/lib/ids";
+import { Point, type PointId } from "@/lib/ids";
 import type { CoveragePoint, CoverageGapDay, PointShortfall } from "./types";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -31,8 +30,10 @@ export async function resolveCoveragePoints(
   tails: readonly string[],
 ): Promise<CoveragePoint[]> {
   if (tails.length === 0) return [];
+  // `point_uid` comes back on the same row as `id`/`tail` — the readings DAO is keyed on it, so the
+  // callers below need no registry lookup at all (slice D).
   const res = await db.execute(sql`
-    SELECT id, physical_path_tail AS tail
+    SELECT id, physical_path_tail AS tail, point_uid
     FROM point_info
     WHERE system_id = ${systemId}
       AND physical_path_tail IN (${sql.join(
@@ -44,6 +45,7 @@ export async function resolveCoveragePoints(
   return (res.rows ?? []).map((r) => ({
     id: Number((r as { id: unknown }).id),
     tail: String((r as { tail: unknown }).tail),
+    point: Point.encode(String((r as { point_uid: unknown }).point_uid)),
   }));
 }
 
@@ -80,19 +82,12 @@ export async function findCoverageGaps(
   const windowStartMs = localMidnightUtcMs(firstDay, bucketOffsetMin) - DAY_MS;
   const windowEndMs = localMidnightUtcMs(lastDay, bucketOffsetMin) + 2 * DAY_MS;
 
-  // Resolve coverage points (indexes) to PointIds; one absent from the registry has no rows (→ 0 present).
-  const pointByIndex = new Map<number, PointId>();
-  const ids: PointId[] = [];
-  for (const p of points) {
-    try {
-      const id = await RegistryCache.pointForAddr(systemId, p.id);
-      pointByIndex.set(p.id, id);
-      ids.push(id);
-    } catch (err) {
-      if (err instanceof UnknownIdError) continue;
-      throw err;
-    }
-  }
+  // Each coverage point already carries its registry identity (resolveCoveragePoints), so there is
+  // nothing to look up and nothing that can be missing.
+  const pointByIndex = new Map<number, PointId>(
+    points.map((p) => [p.id, p.point]),
+  );
+  const ids: PointId[] = points.map((p) => p.point);
   const byPoint = await ReadingsDao.countAgg5mByLocalDay(
     ids,
     { fromMs: windowStartMs, toMs: windowEndMs, offsetMin: bucketOffsetMin },
@@ -149,15 +144,7 @@ export async function countMaxPresent(
   bucketOffsetMin: number,
 ): Promise<number> {
   if (points.length === 0) return 0;
-  const ids: PointId[] = [];
-  for (const p of points) {
-    try {
-      ids.push(await RegistryCache.pointForAddr(systemId, p.id));
-    } catch (err) {
-      if (err instanceof UnknownIdError) continue;
-      throw err;
-    }
-  }
+  const ids: PointId[] = points.map((p) => p.point);
   const byPoint = await ReadingsDao.countAgg5mForLocalDay(
     ids,
     { day, offsetMin: bucketOffsetMin },

@@ -3,7 +3,8 @@
 > Status: foundation live · Phase 1 (sharing hardening) done · Phase 2a (default dashboard + scope seam)
 > done · Phase 2b-1 (multi-area cards) done · Phase 2b-2 (first-class composition dashboards) done (additive,
 > legacy per-system path kept) · **Composite special-case retired (#105 + #106): an Area is now a grouping
-> of 1..N member devices — resolver unified, `kind` no longer read, `area_devices` membership live.** The
+> of 1..N member devices — resolver unified, `kind` no longer read, `area_members` membership live.** That
+> table replaced `area_devices` in config-v4 Phase 12 slice H (migration `0046`); see §5. The
 > `areas.kind` _column_ was **dropped in migration `0019`** (#128); only the create-UX reframe remains of
 > **Phase D** (§5). The unified tile
 > model (§6, #110), composition sharing + settings menu (§7, #112), and the generalized sankey (§8,
@@ -135,13 +136,16 @@ eliminated the descriptor→rows dual-read data migration.
 
 ## 4. Roadmap
 
-Legend: ✅ shipped · ◑ in progress · ⬜ planned. Migration high-water mark: **0018**. All schema work
+Legend: ✅ shipped · ◑ in progress · ⬜ planned. Migration high-water mark **for the work described in
+this document**: `0019`; the schema has since moved well past it under config-v4 (`0046` at the time of
+writing) — `lib/db/planetscale/schema.ts` is the source of truth, not this number. All schema work
 follows `docs/migrations.md` (additive/forward-only, `DO`/`RAISE` guards before any drop, never
 `drizzle-kit push`).
 
 > ⚠️ **Deploy gate (see `docs/incidents/2026-06-16-…`):** PG migrations are **manual**, not applied at
-> deploy. Apply a schema-dependent PR's migration to prod `sydney` **before** merging the code, or prod
-> 500s. (The composition-dashboard `0017` and the `area_devices` `0018` are both applied to `sydney`.)
+> deploy. For an **additive** migration, apply it to prod `sydney` **before** merging the code, or prod
+> 500s. For a **drop**, the order inverts — merge and deploy the code first, so nothing live still reads
+> the table, then drop on prod and finally on `liveone-dev`.
 
 ### Foundation — ✅ shipped
 
@@ -233,7 +237,7 @@ schema lets composition dashboards (`display_name` rows) and legacy per-system c
 rows) coexist in one table. The per-system `DashboardClient` view stays; composition dashboards are
 first-class additions on top. That deletion is deferred indefinitely (revisit only with a concrete driver).
 (Note: migration `0018` is unrelated — it is the `area_devices` membership table from the composite
-retirement, §5.)
+retirement, §5; that table was itself superseded by `area_members` and dropped in `0046`.)
 
 ### Phase 3 — Home Assistant export — ⬜
 
