@@ -35,6 +35,8 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import { Area } from "@/lib/ids";
+// Shared with the mint mirror so the structured-spec parse (slice K1) has exactly ONE implementation.
+import { DEVICE_CONFIG_WITH_SPEC_SQL } from "@/lib/registry/v4-mirror";
 
 /** Runs an SQL query and returns the already-unwrapped result rows. Both `db` and `tx` adapt to this. */
 export type RowsExec = (query: SQL) => Promise<Record<string, unknown>[]>;
@@ -157,8 +159,7 @@ export async function populateRegistries(exec: RowsExec): Promise<void> {
     SELECT lh.device_id, s.id, s.owner_clerk_user_id, s.vendor_type, s.vendor_site_id, s.status,
            s.display_name, s.alias, s.model, s.serial,
            (SELECT a.id FROM areas a WHERE a.legacy_system_id = s.id),
-           coalesce(s.config, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
-             'legacyRatings', s.ratings, 'legacySolarSize', s.solar_size, 'legacyBatterySize', s.battery_size)),
+           ${DEVICE_CONFIG_WITH_SPEC_SQL},
            s.metadata, s.commissioned_on, s.created_at, s.updated_at
       FROM systems s JOIN legacy_handles lh ON lh.handle = s.id
      WHERE lh.device_id IS NOT NULL

@@ -134,6 +134,32 @@ export interface DeviceConfig {
 }
 
 /**
+ * The line chart's y-axis scaling hint (kW) — the SUCCESSOR to `maxPowerHintFromSystemInfo`
+ * (components/dashboard/cards/shared.tsx), which regex-scrapes the same two numbers out of the free-text
+ * `systems.solar_size`/`ratings` on every render. Same rule: the larger of the PV array and the inverter,
+ * whichever of the two is known; undefined when neither is.
+ *
+ * Client-safe (no DB imports) so the card can call it directly once slice K2 puts `config` on the wire.
+ * `config.nameplateKw` still outranks this, exactly as it outranks the regex today.
+ *
+ * ⚠️ Not byte-for-byte the old regex, DELIBERATELY. The old solar pattern was
+ * `/^(\d+(?:\.\d+)?)\s+kW$/` — anchored, and requiring a SPACE — so `solar_size` "11.9kW" (Kutis,
+ * Sigenergy) silently failed to parse and that chart got no hint at all. The structured parse reads 11.9.
+ * Kutis's y-axis therefore changes, and that is the bug being fixed, not a regression. Asserted as a
+ * NAMED expected divergence in `scripts/config-v4/verify-slice-k1-parity.ts`; any OTHER device that
+ * differs is a failure.
+ */
+export function maxPowerHintFromSpec(
+  spec: DeviceSpec | null | undefined,
+): number | undefined {
+  const solar = spec?.solarSizeKw;
+  const inverter = spec?.inverterSizeKw;
+  if (solar !== undefined && inverter !== undefined)
+    return Math.max(solar, inverter);
+  return solar ?? inverter;
+}
+
+/**
  * Apply a device's capability overrides to a derived set: present+true forces the capability on,
  * present+false forces it off, absent leaves derivation untouched. Returns a new set; a null/empty
  * config is a no-op (so an un-configured device behaves exactly as before — parity preserved).
