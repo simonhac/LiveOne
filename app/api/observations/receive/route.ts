@@ -25,7 +25,6 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { sessions, systems } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import type { RawInsert, Agg5mInsert } from "@/lib/readings";
-import { RegistryCache } from "@/lib/registry";
 import { Point } from "@/lib/ids";
 import type { PointId } from "@/lib/ids";
 import type {
@@ -77,55 +76,49 @@ function parseTimestamp(isoString: string): Date {
 }
 
 /**
- * Extract pointId from observation debug.reference
- * Format: "{systemId}.{pointIndex}"
+ * How a batch's observations resolved, so a failure to identify one is COUNTED rather than merely
+ * folded into a generic "skipped".
  */
-function extractPointId(observation: Observation): number | null {
-  if (!observation.debug?.reference) {
-    return null;
-  }
-  const parts = observation.debug.reference.split(".");
-  if (parts.length !== 2) {
-    return null;
-  }
-  const pointId = parseInt(parts[1], 10);
-  return isNaN(pointId) ? null : pointId;
+interface ResolveTally {
+  /** Observations skipped for want of a resolvable point. */
+  skipped: number;
+  /** Observations carrying NO `pointUid` at all — see {@link resolvePointId}. Should always be 0. */
+  noPointUid: number;
 }
 
 /**
- * Resolve an observation to its public PointId (the readings-DAO seam identity), dual-grammar:
- *  - Payload v2: `obs.pointUid` → `Point.encode` (pure). A malformed uuid is an *identification*
- *    failure → return null (skip), matching today's "no valid reference → skip".
- *  - Legacy: `debug.reference` "{systemId}.{index}" → `RegistryCache.pointForAddr`. A genuinely
- *    unknown point throws `UnknownIdError`, which propagates → the message fails → QStash retries,
- *    exactly as today's composite-FK violation aborted the insert. (v2 existence is checked the
- *    same way, later, inside `ReadingsDao.insertRaw`'s address resolution.)
+ * Resolve an observation to its public PointId (the readings-DAO seam identity).
  *
- * `systemId` is the message-level id; the reference's own systemId component is advisory only
- * (the legacy `extractPointId` ignores it, and the write scopes to `message.systemId`).
+ * config-v4 slice M retired the legacy `"{systemId}.{pointIndex}"` grammar (`debug.reference`) and its
+ * producer. `obs.pointUid` is now the ONLY identity on the wire.
+ *
+ * **A missing `pointUid` is loud-but-skipping, deliberately.** It used to throw, which made QStash retry
+ * — correct while a legacy fallback could still succeed, but with no fallback left a throw is a poison
+ * pill retried forever, which is exactly what gate G3 exists to prevent. Skipping silently would be
+ * data loss, so it is logged at ERROR and counted distinctly (`*NoPointUid` in the response stats), where
+ * `monitor-observations` and the ingestion dashboard can see it.
+ *
+ * A malformed uuid is likewise an identification failure → skip. A point whose uid is well-formed but
+ * unknown still fails later, inside `ReadingsDao.insertRaw`'s address resolution, and still retries.
  */
-async function resolvePointId(
-  obs: Observation,
-  systemId: number,
-): Promise<PointId | null> {
-  if (obs.pointUid != null) {
-    try {
-      return Point.encode(obs.pointUid);
-    } catch {
-      console.warn(
-        `[ObservationsReceiver] Skipping observation with malformed pointUid: ${obs.topic}`,
-      );
-      return null;
-    }
-  }
-  const index = extractPointId(obs);
-  if (index === null) {
-    console.warn(
-      `[ObservationsReceiver] Skipping observation without valid pointId: ${obs.topic}`,
+function resolvePointId(obs: Observation, tally: ResolveTally): PointId | null {
+  if (obs.pointUid == null) {
+    tally.noPointUid++;
+    tally.skipped++;
+    console.error(
+      `[ObservationsReceiver] Observation has no pointUid — skipping (DATA LOSS): ${obs.topic}`,
     );
     return null;
   }
-  return RegistryCache.pointForAddr(systemId, index);
+  try {
+    return Point.encode(obs.pointUid);
+  } catch {
+    tally.skipped++;
+    console.error(
+      `[ObservationsReceiver] Skipping observation with malformed pointUid: ${obs.topic}`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -137,16 +130,13 @@ async function insertRawObservations(
   db: Db | Tx,
   systemId: number,
   observations: Observation[],
-): Promise<{ inserted: number; skipped: number }> {
-  let skipped = 0;
+): Promise<{ inserted: number; skipped: number; noPointUid: number }> {
+  const tally: ResolveTally = { skipped: 0, noPointUid: 0 };
   const rows: RawInsert[] = [];
 
   for (const obs of observations) {
-    const point = await resolvePointId(obs, systemId);
-    if (point === null) {
-      skipped++;
-      continue;
-    }
+    const point = resolvePointId(obs, tally);
+    if (point === null) continue;
     rows.push({
       point,
       sessionId: obs.sessionId,
@@ -158,10 +148,10 @@ async function insertRawObservations(
     });
   }
 
-  if (rows.length === 0) return { inserted: 0, skipped };
+  if (rows.length === 0) return { inserted: 0, ...tally };
 
   const { inserted } = await ReadingsDao.insertRaw(rows, db);
-  return { inserted, skipped };
+  return { inserted, ...tally };
 }
 
 /**
@@ -177,7 +167,7 @@ async function insert5mObservations(
   systemId: number,
   observations: Observation[],
   useUpsert: boolean,
-): Promise<{ inserted: number; skipped: number }> {
+): Promise<{ inserted: number; skipped: number; noPointUid: number }> {
   // Postgres self-computes raw-vendor 5m from its own raw point_readings, so the
   // publisher never sends raw-vendor 5m; a straggler that arrives must NOT be
   // inserted (it would race the recompute and is redundant). 5m-NATIVE vendors
@@ -187,18 +177,15 @@ async function insert5mObservations(
     console.log(
       `[ObservationsReceiver] skipping raw-vendor 5m insert for system ${systemId} (PG recomputes from raw); ${observations.length} observation(s) ignored`,
     );
-    return { inserted: 0, skipped: 0 };
+    return { inserted: 0, skipped: 0, noPointUid: 0 };
   }
 
-  let skipped = 0;
+  const tally: ResolveTally = { skipped: 0, noPointUid: 0 };
   const rows: Agg5mInsert[] = [];
 
   for (const obs of observations) {
-    const point = await resolvePointId(obs, systemId);
-    if (point === null) {
-      skipped++;
-      continue;
-    }
+    const point = resolvePointId(obs, tally);
+    if (point === null) continue;
 
     const intervalEndMs = parseTimestamp(obs.measurementTime).getTime();
 
@@ -239,7 +226,7 @@ async function insert5mObservations(
     }
   }
 
-  if (rows.length === 0) return { inserted: 0, skipped };
+  if (rows.length === 0) return { inserted: 0, ...tally };
 
   // 5m-NATIVE vendors (useUpsert=true, Amber/Enphase): there is NO raw and NO recompute — the
   // queue copy IS the value. Amber re-publishes late `updateUsage` refinements (estimated →
@@ -252,7 +239,7 @@ async function insert5mObservations(
     { upsert: useUpsert },
     db,
   );
-  return { inserted: written, skipped };
+  return { inserted: written, ...tally };
 }
 
 /**
@@ -268,7 +255,7 @@ async function insert1dObservations(
   db: Db | Tx,
   systemId: number,
   observations: Observation[],
-): Promise<{ inserted: number; skipped: number }> {
+): Promise<{ inserted: number; skipped: number; noPointUid: number }> {
   // Postgres self-computes 1d from its own 5m (the daily cron), so the 1d publisher
   // is gone and no 1d should arrive. A straggler must NOT be inserted (it would
   // overwrite the PG-computed day). Unconditional no-op.
@@ -278,7 +265,7 @@ async function insert1dObservations(
       `[ObservationsReceiver] skipping 1d insert for system ${systemId} (PG recomputes from 5m); ${observations.length} observation(s) ignored`,
     );
   }
-  return { inserted: 0, skipped: 0 };
+  return { inserted: 0, skipped: 0, noPointUid: 0 };
 }
 
 /**
@@ -356,6 +343,7 @@ async function processQueueMessage(
         );
         stats.rawInserted = result.inserted;
         stats.rawSkipped = result.skipped;
+        if (result.noPointUid > 0) stats.rawNoPointUid = result.noPointUid;
       }
 
       if (agg5mObs.length > 0) {
@@ -367,6 +355,7 @@ async function processQueueMessage(
         );
         stats.agg5mInserted = result.inserted;
         stats.agg5mSkipped = result.skipped;
+        if (result.noPointUid > 0) stats.agg5mNoPointUid = result.noPointUid;
       }
 
       const agg1dObs = message.observations.filter((o) => o.interval === "1d");
@@ -379,6 +368,7 @@ async function processQueueMessage(
         // upsert: RETURNING counts both inserted and overwritten rows.
         stats.agg1dUpserted = result.inserted;
         stats.agg1dSkipped = result.skipped;
+        if (result.noPointUid > 0) stats.agg1dNoPointUid = result.noPointUid;
       }
     }
 

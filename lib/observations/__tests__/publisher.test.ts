@@ -61,7 +61,7 @@ describe("buildObservations", () => {
     ]);
 
     expect(obs.pointUid).toBe("0192f000-0000-7000-8000-0000000000aa");
-    // The legacy reference grammar is still emitted (dual-grammar back-compat).
-    expect(obs.debug?.reference).toBe("6.1");
+    // slice M: the legacy "{systemId}.{pointIndex}" grammar is gone from the payload entirely.
+    expect(obs.debug).not.toHaveProperty("reference");
   });
 });

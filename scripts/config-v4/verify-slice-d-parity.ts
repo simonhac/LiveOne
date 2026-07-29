@@ -6,12 +6,11 @@
  * `resolveLogicalSystem`) rather than re-deriving the mapping in SQL, so a mistake in the mapping
  * code itself is caught, not just a data mismatch. Read only — safe against any environment.
  *
- * Extend the blocks below as later slice-D PRs convert the remaining `pointForAddr` call sites.
- * Two are left, and NEITHER is a mechanical conversion, so this file is probably at its final
- * shape: the admin readings route takes the address from the URL segment itself, and the receiver's
- * legacy `debug.reference` branch belongs to slice M (it may not be deleted until the outbox
- * poison-pill gate is satisfiable). The gate DIES WITH `pointForAddr` itself: once the last caller
- * is gone there is no legacy side left to compare against, and this file goes with it.
+ * This file is at its final shape. Slice M deleted the receiver's legacy `debug.reference` branch,
+ * leaving ONE `pointForAddr` caller: `app/api/admin/point/[systemIdDotPointId]/readings/route.ts`,
+ * which takes the address from the URL segment itself and so is not a mechanical conversion. The gate
+ * DIES WITH `pointForAddr` itself — that is Phase 13, NOT slice M: while that route stands there is
+ * still a legacy side to compare against, and this file must keep running.
  *
  *   npx tsx --env-file=.env.local scripts/config-v4/verify-slice-d-parity.ts
  */

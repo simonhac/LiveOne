@@ -14,7 +14,6 @@ import { Observation, QueueMessage } from "./types";
 import { SystemWithPolling } from "@/lib/systems-manager";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import type { PointInfoRow } from "@/lib/point/point-manager";
-import { PointReference } from "@/lib/identifiers";
 import { persistOutbox } from "./outbox";
 
 // Type for point info (the served point_info row shape).
@@ -77,10 +76,8 @@ export function buildObservations(
       type: input.point.metricType,
       unit: input.point.metricUnit,
       pointName: input.point.displayName,
-      reference: PointReference.fromIds(
-        system.id,
-        input.point.index,
-      ).toString(),
+      // config-v4 slice M: `reference` ("{systemId}.{pointIndex}") is GONE. `pointUid` above is the
+      // sole identity on the wire, and the receiver no longer has a legacy grammar to fall back to.
     },
   }));
 }
