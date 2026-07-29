@@ -138,30 +138,12 @@ export const pollingStatus = pgTable(
   }),
 );
 
-// ============================================================================
-// User-System junction table for many-to-many relationship
-// ============================================================================
-export const userSystems = pgTable(
-  "user_systems",
-  {
-    id: serial("id").primaryKey(),
-    clerkUserId: text("clerk_user_id").notNull(),
-    systemId: integer("system_id")
-      .notNull()
-      .references(() => systems.id, { onDelete: "cascade" }),
-    role: text("role").notNull().default("viewer"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => ({
-    userSystemUnique: uniqueIndex("user_system_unique").on(
-      table.clerkUserId,
-      table.systemId,
-    ),
-    userIdx: index("user_systems_user_idx").on(table.clerkUserId),
-    systemIdx: index("user_systems_system_idx").on(table.systemId),
-  }),
-);
+// The `user_systems` junction table — the pre-Areas per-system access grant — was dropped by
+// migration 0045 (config-v4 Phase 12 slice F), releasing an FK into `systems`. It held ZERO rows on
+// prod, and the clean-sheet retires it with no replacement: sharing is `dashboard_grants` +
+// `share_tokens`. Read access is now exactly owner ∪ ownerless-is-public ∪ admin, plus whatever a
+// dashboard grant implies (`grantedSystemScopeForUser`, lib/dashboard/grants.ts). The grant never
+// conveyed write access, so nothing about `canWrite` changed.
 
 // ============================================================================
 // Users table - stores user preferences
@@ -722,31 +704,19 @@ export const dashboardGrants = pgTable(
 export type DashboardGrant = typeof dashboardGrants.$inferSelect;
 export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 
-// ============================================================================
-// Roles - HA-device_class-aware role registry (P3). A SQL projection of the code
-// source of truth in lib/roles/registry.ts (ROLES). Seeded/kept-in-sync by the
-// backfill script; exists so area_bindings.role has a FK target and so SQL joins
-// (Sankey side, HA export) can read role metadata without the code registry.
-// Do NOT hand-edit role data here — change lib/roles/registry.ts and re-seed.
-// ============================================================================
-export const roles = pgTable("roles", {
-  role: text("role").primaryKey(), // RoleId: 'solar' | 'battery' | 'load' | 'grid' | 'ev'
-  category: text("category").notNull(), // 'source' | 'load' | 'bidi'
-  stem: text("stem").notNull(), // anchor logical_path_stem, e.g. 'source.solar' | 'bidi.battery'
-  label: text("label").notNull(),
-  haDeviceClass: text("ha_device_class").notNull(), // 'power' | 'battery' ...
-  haStateClass: text("ha_state_class").notNull(), // 'measurement' | 'total' | 'total_increasing'
-  haUnit: text("ha_unit").notNull(), // 'W' | '%'
-  summaryMetric: text("summary_metric"), // 'power' | 'soc' — null = not summarised (ev)
-  summaryAggregable: boolean("summary_aggregable"), // null when not summarised
-});
+// The `roles` table — a SQL projection of lib/roles/registry.ts — was dropped by migration 0044
+// (config-v4 Phase 12 slice G). It had no writer and no query site: the registry is CODE, and the
+// only thing the table still did was back the area_bindings.role FK. Enforcement moved to the
+// `area_bindings_role_check` / `derivations_role_check` CHECK constraints below, which 0032 added
+// for exactly this handover. Role METADATA (category/stem/label/ha_*/summary_*) is read from
+// lib/roles/registry.ts — there is no longer a SQL-joinable copy, by design.
 
 // ============================================================================
 // Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
 // into a coherent energy site. Replaced vendor_type='composite' fake systems rows.
 //
-// An Area is a grouping of 1..N member devices (`area_devices`):
-//   area-of-one   → 1:1 wrapper over a single physical system (its sole `area_devices` member).
+// An Area is a grouping of 1..N member devices (`area_members`):
+//   area-of-one   → 1:1 wrapper over a single physical system (its sole `area_members` member).
 //   multi-device  → points drawn from across ≥2 member systems (via `area_bindings`).
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
@@ -830,9 +800,9 @@ export const areaBindings = pgTable(
     areaId: uuid("area_id")
       .notNull()
       .references(() => areas.id, { onDelete: "cascade" }),
-    role: text("role")
-      .notNull()
-      .references(() => roles.role),
+    // Constrained by `area_bindings_role_check` below — the FK to `roles` went with that table in
+    // migration 0044 (slice G).
+    role: text("role").notNull(),
     metricType: text("metric_type").notNull(), // from point_info: 'power' | 'soc' | 'energy' | 'rate' ...
     pointSystemId: integer("point_system_id").notNull(), // the CHILD physical system
     pointId: integer("point_id").notNull(), // (point_system_id, point_id) → point_info(system_id, id)
@@ -873,40 +843,15 @@ export const areaBindings = pgTable(
       foreignColumns: [pointInfo.systemId, pointInfo.index],
       name: "area_bindings_point_info_fk",
     }),
-    // config-v4 (Phase 4, migration 0032): enumerate the 6-role registry (lib/roles/registry.ts)
-    // as a CHECK alongside the existing roles FK, so dropping the `roles` table at cutover leaves
-    // enforcement intact. All 6 incl. 'generator' (ROLE_IDS omits it, but the roles table + this
-    // CHECK need it). Cannot fail on apply — every live role already comes from the registry via the FK.
+    // config-v4 (Phase 4, migration 0032): enumerates the 6-role registry (lib/roles/registry.ts).
+    // Added alongside the then-existing `roles` FK so that dropping the table would leave enforcement
+    // intact — and since migration 0044 (slice G) dropped it, this CHECK is now the SOLE enforcement
+    // of the role set. Keep it in step with `ROLES` by hand; nothing derives it. All 6 incl.
+    // 'generator' (ROLE_IDS omits it, but this CHECK needs it).
     roleCheck: check(
       "area_bindings_role_check",
       sql`${table.role} IN ('solar','battery','load','grid','ev','generator')`,
     ),
-  }),
-);
-
-// ============================================================================
-// Area devices - explicit area→member-device membership (the unified 1..N model, Phase B).
-//
-// Unifies the two implicit membership models into one: an area-of-one has a single member (its
-// `source_system_id`); a multi-device area's members are the DISTINCT `area_bindings.point_system_id`s.
-// Making membership first-class lets an Area be "a grouping of 1..N member devices" and lets roles
-// DEFAULT from each member's own point_info (with area_bindings as an override) — so there is no
-// single-vs-multi special-case. `system_id` is a plain int (like `areas.legacy_system_id`) with NO FK to
-// systems: a member may be a child system whose `systems` row was deleted (migration 0014). The table
-// is fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen point_readings_flow_attr_1d's
-// data-loss firewall (that table is untouched).
-// ============================================================================
-export const areaDevices = pgTable(
-  "area_devices",
-  {
-    areaId: uuid("area_id")
-      .notNull()
-      .references(() => areas.id, { onDelete: "cascade" }),
-    systemId: integer("system_id").notNull(),
-    ordinal: integer("ordinal").notNull().default(0),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.areaId, table.systemId] }),
   }),
 );
 
@@ -1048,8 +993,12 @@ export const legacyHandles = pgTable(
 //
 // These are the v4 successors to systems/point_info/area_devices/polling_status. Created EMPTY by
 // 0035 and populated (idempotently) by scripts/config-v4/registry-sync.ts as a separate dark step.
-// The predecessors are COPIED, not renamed, so both sets coexist until Phase 9 drops the old ones —
-// which is what lets the pre-cutover build keep running unchanged.
+// The predecessors are COPIED, not renamed, so both sets coexist until Phase 12 drops the old ones
+// one at a time — which is what let the pre-cutover build keep running unchanged.
+//
+// No longer dark, and no longer a uniform group: `area_members` and `device_state` are now PRIMARY
+// (slices H and C dropped/froze their predecessors), while `devices` and `points` are still mirrored
+// from `systems`/`point_info` by lib/registry/v4-mirror.ts.
 // ============================================================================
 
 // Global device rid allocator. Seeded at max(systems.id)+1 by registry-sync so devices.rid preserves
@@ -1139,7 +1088,21 @@ export const points = pgTable(
   }),
 );
 
-// area_members ← area_devices (system_id int → device uuid).
+// area_members — explicit area→member-device membership, and since Phase 12 slice H the ONLY one
+// (it replaced `area_devices`, whose `system_id int` had no FK at all).
+//
+// Membership is first-class so an Area is uniformly "a grouping of 1..N member devices" and roles can
+// DEFAULT from each member's own points (with `area_bindings` as an override) — there is no
+// single-vs-multi special-case and no stored `kind`. An area-of-one has exactly one member.
+//
+// Two things carried over from the table this replaced:
+//   • Fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen
+//     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
+//   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
+//     membership, because `deleteSystem` ORPHANS its `devices` row rather than deleting it
+//     (lib/systems-manager.ts, noted there as a known gap). That is what makes a hard `device_id` FK
+//     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE
+//     here means such a member silently leaves its areas — fix the two together.
 export const areaMembers = pgTable(
   "area_members",
   {
@@ -1193,8 +1156,6 @@ export type DeviceState = typeof deviceState.$inferSelect;
 export type NewDeviceState = typeof deviceState.$inferInsert;
 export type PollingStatus = typeof pollingStatus.$inferSelect;
 export type NewPollingStatus = typeof pollingStatus.$inferInsert;
-export type UserSystem = typeof userSystems.$inferSelect;
-export type NewUserSystem = typeof userSystems.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
@@ -1217,8 +1178,6 @@ export type ObservationsOutbox = typeof observationsOutbox.$inferSelect;
 export type NewObservationsOutbox = typeof observationsOutbox.$inferInsert;
 export type Dashboard = typeof dashboards.$inferSelect;
 export type NewDashboard = typeof dashboards.$inferInsert;
-export type Role = typeof roles.$inferSelect;
-export type NewRole = typeof roles.$inferInsert;
 export type Area = typeof areas.$inferSelect;
 export type NewArea = typeof areas.$inferInsert;
 export type AreaBinding = typeof areaBindings.$inferSelect;

@@ -80,7 +80,10 @@ export function labelForFlowPath(
     case "load.grid":
       return "Grid Export";
     case "load.rest-of-house":
-      return "Other"; // mirrors REST_OF_HOUSE_LABEL in site-data-processor
+      // Usually synthetic → "Other" (mirrors REST_OF_HOUSE_LABEL in site-data-processor). Where a
+      // vendor MEASURES the complement the point has a name of its own ("Load"), which wins.
+      return displayNameByStem.get(path) ?? "Other";
+    case "load.ev":
     case "ev.charge":
       return displayNameByStem.get(path) ?? "EV Charging";
   }
@@ -110,9 +113,8 @@ function loadRank(path: string): number {
   if (path === "load.grid") return 1;
   if (path === "load") return 2;
   if (path === "load.rest-of-house") return 9;
+  if (path === "load.ev" || path.startsWith("load.ev.")) return 6;
   if (path.startsWith("load.")) return 5;
-  // EV sits with the sub-meters — a sibling of the master load, not a child of it.
-  if (path === "ev.charge" || path.startsWith("ev.charge.")) return 6;
   return 20;
 }
 

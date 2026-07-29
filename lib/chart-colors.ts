@@ -50,6 +50,9 @@ export const LOAD_COLORS = [
 export const LOAD_TYPE_COLORS: Record<string, string> = {
   hws: CHART_COLORS.hotWater,
   pool: CHART_COLORS.pool,
+  // An EV charger inside the load hierarchy (`load.ev`) keeps the EV colour it had as a top-level
+  // `ev.charge` node, so re-parenting it doesn't recolour the chart.
+  ev: CHART_COLORS.ev,
 } as const;
 
 /**

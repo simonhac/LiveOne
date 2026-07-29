@@ -5,8 +5,10 @@
  * by the prod driver and the offline harness. Keeping this separate from `compute` lets the harness
  * load a window ONCE and sweep many configs.
  *
- * POWER vs ENERGY registers: flow-series inputs read POWER (`avg`), but battery charge/discharge are
- * preferred from ENERGY registers (`delta`, exact interval energy) when the Area binds them.
+ * POWER vs ENERGY registers: the flow-series build itself prefers exact ENERGY accumulators
+ * (`LogicalSystem.energyPoints` → `FlowSeries.energyKwh` overlays) and falls back to integrating
+ * POWER (`avg`) per interval — one preference implementation for the whole pipeline (flow matrix,
+ * Sankey, and the fold's battery flows alike); see flow-series.ts / flow-matrix-core.ts.
  */
 
 import { and, asc, eq, gte, lte, or } from "drizzle-orm";
@@ -179,21 +181,6 @@ export function forwardFill(
   return { value, estimated };
 }
 
-/** Scatter an interval-keyed series onto the exact timeline slots (no fill) — for 5-min-native registers. */
-function scatter(
-  timeline: number[],
-  tIndex: Map<number, number>,
-  src: SeriesPoint[],
-  transform: (v: number | null) => number | null,
-): (number | null)[] {
-  const out = new Array<number | null>(timeline.length).fill(null);
-  for (const s of src) {
-    const i = tIndex.get(s.t);
-    if (i !== undefined) out[i] = transform(s.v);
-  }
-  return out;
-}
-
 export interface BoundPoint {
   systemId: number;
   pointId: number;
@@ -307,7 +294,14 @@ export async function loadProvenanceInputs(
   // points were unbound.
   const [bound, flowBundle, paramRows] = await Promise.all([
     boundPoints(db, area.id),
-    loadFlowSeriesFromAgg5m(db, ls.points, startMs, endMs, opts.avgCache),
+    loadFlowSeriesFromAgg5m(
+      db,
+      ls.points,
+      startMs,
+      endMs,
+      opts.avgCache,
+      ls.energyPoints,
+    ),
     db
       .select({
         t: batteryProvenanceDaily.firstIntervalEnd,
@@ -333,7 +327,6 @@ export async function loadProvenanceInputs(
   const { timeline, sources, loads } = flowBundle;
   if (timeline.length < 2 || sources.length === 0 || loads.length === 0)
     return null;
-  const tIndex = new Map(timeline.map((t, i) => [t, i]));
 
   const batterySystemId =
     bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
@@ -354,78 +347,48 @@ export async function loadProvenanceInputs(
   // Amber rates are 30-min native; up-sampling onto the 5-min timeline is not a gap-fill, so only a
   // gap beyond one native interval (a genuinely missed tick) counts as estimated.
   const RATE_NATIVE_MS = 30 * 60 * 1000;
-  const chargeBind = bound.find(
-    (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
-  );
-  const dischargeBind = bound.find(
-    (b) => b.metric === "energy" && b.stem === "bidi.battery.discharge",
-  );
 
-  // Battery SoC, OE region emissions/renewables, Amber rates, the battery's generator-source config,
-  // and the exact charge/discharge energy registers are all mutually independent RAW reads — fire them
-  // all concurrently, then apply forward-fill/scatter/override (pure, timeline-dependent) synchronously
-  // below once everything has landed. Every forward-filled series reads a LEAD-IN of its own fill limit
-  // before startMs, so the first in-window slots fill from the last pre-window row exactly as a longer
-  // window would — required for the checkpoint-seeded reconcile (its window starts at the checkpoint
-  // anchor) and strictly more correct for every caller.
-  const [
-    socSeries,
-    oeSeries,
-    rateSeriesResults,
-    batSysRow,
-    chargeSeries,
-    dischargeSeries,
-  ] = await Promise.all([
-    socBind && !opts.noSoc
-      ? readAgg5m(
-          db,
-          socBind.systemId,
-          socBind.pointId,
-          startMs - SOC_FILL_MS,
-          endMs,
-        )
-      : Promise.resolve<SeriesPoint[]>([]),
-    loadOeRawSeries(db, region, startMs, endMs, OE_FILL_MS),
-    Promise.all(
-      rateBinds.map((rp) =>
-        readAgg5m(
-          db,
-          rp.systemId,
-          rp.pointId,
-          startMs - RATE_FILL_MS,
-          endMs,
-        ).then((s) => ({ stem: rp.stem, s })),
+  // Battery SoC, OE region emissions/renewables, Amber rates, and the battery's generator-source
+  // config are all mutually independent RAW reads — fire them all concurrently, then apply
+  // forward-fill/override (pure, timeline-dependent) synchronously below once everything has landed.
+  // Every forward-filled series reads a LEAD-IN of its own fill limit before startMs, so the first
+  // in-window slots fill from the last pre-window row exactly as a longer window would — required
+  // for the checkpoint-seeded reconcile (its window starts at the checkpoint anchor) and strictly
+  // more correct for every caller. (Exact battery charge/discharge registers are no longer read
+  // here — they ride in on the flow bundle's `FlowSeries.energyKwh` overlays.)
+  const [socSeries, oeSeries, rateSeriesResults, batSysRow] = await Promise.all(
+    [
+      socBind && !opts.noSoc
+        ? readAgg5m(
+            db,
+            socBind.systemId,
+            socBind.pointId,
+            startMs - SOC_FILL_MS,
+            endMs,
+          )
+        : Promise.resolve<SeriesPoint[]>([]),
+      loadOeRawSeries(db, region, startMs, endMs, OE_FILL_MS),
+      Promise.all(
+        rateBinds.map((rp) =>
+          readAgg5m(
+            db,
+            rp.systemId,
+            rp.pointId,
+            startMs - RATE_FILL_MS,
+            endMs,
+          ).then((s) => ({ stem: rp.stem, s })),
+        ),
       ),
-    ),
-    batterySystemId != null
-      ? db
-          .select({ config: systems.config })
-          .from(systems)
-          .where(eq(systems.id, batterySystemId))
-          .limit(1)
-          .then((r) => r[0])
-      : Promise.resolve(undefined),
-    chargeBind
-      ? readAgg5m(
-          db,
-          chargeBind.systemId,
-          chargeBind.pointId,
-          startMs,
-          endMs,
-          "delta",
-        )
-      : Promise.resolve(undefined),
-    dischargeBind
-      ? readAgg5m(
-          db,
-          dischargeBind.systemId,
-          dischargeBind.pointId,
-          startMs,
-          endMs,
-          "delta",
-        )
-      : Promise.resolve(undefined),
-  ]);
+      batterySystemId != null
+        ? db
+            .select({ config: systems.config })
+            .from(systems)
+            .where(eq(systems.id, batterySystemId))
+            .limit(1)
+            .then((r) => r[0])
+        : Promise.resolve(undefined),
+    ],
+  );
 
   const soc = opts.noSoc
     ? new Array<number | null>(timeline.length).fill(null)
@@ -485,16 +448,6 @@ export async function loadProvenanceInputs(
     }
   }
 
-  // ENERGY-register seam: prefer exact battery charge/discharge energy when the Area binds them.
-  const batteryChargeEnergyKwh = chargeSeries
-    ? scatter(timeline, tIndex, chargeSeries, (v) => toKwh(v, chargeBind!.unit))
-    : undefined;
-  const batteryDischargeEnergyKwh = dischargeSeries
-    ? scatter(timeline, tIndex, dischargeSeries, (v) =>
-        toKwh(v, dischargeBind!.unit),
-      )
-    : undefined;
-
   const paramSeries = (
     pick: (r: (typeof paramRows)[number]) => number | null,
   ): (number | null)[] | undefined => {
@@ -548,8 +501,6 @@ export async function loadProvenanceInputs(
     soc,
     estReservePct,
     reserveFloorPctSeries,
-    batteryChargeEnergyKwh,
-    batteryDischargeEnergyKwh,
     etaSeries,
     capacitySeries,
     chargeEfficiencySeries,
@@ -640,16 +591,27 @@ export async function loadBatteryThroughput(
       endMs,
       "delta",
     );
-    for (const s of cs) {
-      const i = tIndex.get(s.t);
-      if (i !== undefined)
-        chargeKwh[i] = Math.max(0, toKwh(s.v, chargeBind.unit) ?? 0);
-    }
-    for (const s of ds) {
-      const i = tIndex.get(s.t);
-      if (i !== undefined)
-        dischargeKwh[i] = Math.max(0, toKwh(s.v, dischargeBind.unit) ?? 0);
-    }
+    // A counter re-base is a MATCHED PAIR — one negative delta, then a catch-up carrying everything
+    // the counter had accumulated. Clamping the negative to 0 while keeping the catch-up would feed
+    // the η/capacity learners a phantom cycle (the same defect fixed in `attachEnergyOverlays`), so
+    // drop BOTH halves: the interval reads 0 throughput rather than a fabricated one.
+    const scatter = (
+      rows: { t: number; v: number | null }[],
+      unit: string | null,
+      out: number[],
+    ): void => {
+      let prevNegative = false;
+      for (const s of rows) {
+        const kwh = toKwh(s.v, unit);
+        const negative = kwh !== null && kwh < 0;
+        const i = tIndex.get(s.t);
+        if (i !== undefined)
+          out[i] = negative || prevNegative ? 0 : Math.max(0, kwh ?? 0);
+        prevNegative = negative;
+      }
+    };
+    scatter(cs, chargeBind.unit, chargeKwh);
+    scatter(ds, dischargeBind.unit, dischargeKwh);
   } else {
     // Integrate signed battery power over each 5-min interval (negative = charge, positive = discharge).
     const hours = FIVE_MIN_MS / 3_600_000;

@@ -156,13 +156,13 @@ const FULL: FullTable[] = [
       children: [],
     },
   },
-  ...["users", "user_systems", "polling_status", "share_tokens", "roles"].map(
+  ...["users", "polling_status", "share_tokens"].map(
     (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
   ),
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
   // legacy_system_id / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
   // unique index (areas_legacy_system_unique / areas_owner_alias_unique). `idDrift` clears the mismatched
-  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_devices /
+  // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_members /
   // area_bindings / the incremental flow legs re-populate under the correct uuid.
   {
     name: "areas",
@@ -174,7 +174,9 @@ const FULL: FullTable[] = [
         ["owner_user_id", "slug"], // areas_owner_alias_unique — config-v4 renamed owner_clerk_user_id/alias
       ],
       children: [
-        { table: "area_devices", cols: ["area_id"] },
+        // `area_members` is deliberately NOT listed: its `area_id` FK is ON DELETE CASCADE, so a cleared
+        // drifted area takes its membership with it, and the `area_members` leg below repopulates under
+        // prod's uuid. (`area_devices` sat here until slice H dropped it.)
         { table: "area_bindings", cols: ["area_id"] },
         { table: "point_readings_flow_attr_1d", cols: ["area_id"] },
         { table: "battery_provenance_daily", cols: ["area_id"] },
@@ -202,8 +204,9 @@ const FULL: FullTable[] = [
   },
   // ── config-v4 v4 registries (Phase 12 slice A) ──────────────────────────────
   // These were populated on dev by scripts/config-v4/registry-sync.ts — cutover scaffolding that Phase 12
-  // DELETES — so without them here dev's registries freeze at the last manual run (already 4 area_members
-  // short of area_devices when this landed). They are also no longer dark: point_readings and both agg
+  // DELETES — so without them here dev's registries freeze at the last manual run (they were 4 rows short
+  // of the legacy membership table when this landed; slice H has since made `area_members` primary and
+  // dropped that table). They are also no longer dark: point_readings and both agg
   // twins FK point_rid → points.rid, so a point minted on prod that never reaches dev's `points` breaks
   // the incremental readings legs outright — the same class of failure as the areas FK that froze dev for
   // three days. FK order within the group: devices (→ areas) → everything else (→ devices).
@@ -288,9 +291,6 @@ const FULL: FullTable[] = [
       ],
     },
   },
-  // area→device membership. Natural composite PK (area_id, system_id) — no surrogate — so a plain by-PK
-  // full upsert. After areas (FK parent) so a realigned Area re-gets its prod membership.
-  { name: "area_devices", mode: "full", onConflict: "update" },
   // Surrogate-key tables: the PK (uuid/serial `id`) is assigned independently on
   // dev, so dev and prod hold the same row under different ids. Upsert on the
   // NATURAL unique key and exclude `id` (like point_readings) — otherwise the

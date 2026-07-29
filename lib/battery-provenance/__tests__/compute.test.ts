@@ -141,8 +141,11 @@ describe("computeBatteryProvenance", () => {
 
   it("prefers an exact energy register over power integration when provided", () => {
     const inputs = scenario();
-    // Force the battery-charge total via an energy register (exact); split ratio kept from the allocation.
-    inputs.batteryChargeEnergyKwh = [10, 0, 0, 0, 0]; // 10 kWh charged in interval 0
+    // Force the battery-charge magnitude via the exact-energy overlay (`FlowSeries.energyKwh`,
+    // per-interval: energyKwh[i] covers (t[i], t[i+1]]) — 10 kWh charged in interval 0, exact
+    // zeros elsewhere. extractBatteryFlows must take these over the trapezoid.
+    const batteryLoad = inputs.loads.find((l) => l.path === "load.battery")!;
+    batteryLoad.energyKwh = [10, 0, 0, 0];
     const result = computeBatteryProvenance(inputs, { efficiency: 1 });
     // With 10 kWh charged (η=1) and ~6 kWh discharged, the store never empties → capacity ~10.
     expect(result.chargeKwh).toBeGreaterThan(9);

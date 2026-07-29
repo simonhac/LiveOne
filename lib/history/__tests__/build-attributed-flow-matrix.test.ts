@@ -52,6 +52,7 @@ const LS: LogicalSystem = {
   areaId: "area-test-6",
   timezoneOffsetMin: 600,
   points: POINTS,
+  energyPoints: [],
   isComplete: true,
 };
 

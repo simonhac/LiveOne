@@ -48,6 +48,7 @@ const LS: LogicalSystem = {
   areaId: "area-test-6",
   timezoneOffsetMin: 600,
   points: POINTS,
+  energyPoints: [],
   isComplete: true,
 };
 
@@ -135,5 +136,72 @@ describe("buildFlowMatrixFromAggRows", () => {
     // Matches the core run on the INVERTED grid series, and DIFFERS from the un-inverted matrix.
     expect(actual).toEqual(expectedMatrix(points));
     expect(actual).not.toEqual(expectedMatrix(POINTS));
+  });
+});
+
+describe("buildFlowMatrixFromAggRows — exact-energy overlays", () => {
+  // The battery's directional PAIR registers (metric energy, Wh deltas). Their rows carry `delta`.
+  const ENERGY_POINTS: LogicalSystemPoint[] = [
+    {
+      ...mkPoint(20, "bidi.battery.charge", "Battery Charge Wh"),
+      metricType: "energy",
+    },
+    {
+      ...mkPoint(21, "bidi.battery.discharge", "Battery Discharge Wh"),
+      metricType: "energy",
+    },
+  ];
+  const LS_E: LogicalSystem = { ...LS, energyPoints: ENERGY_POINTS };
+
+  /** Wh deltas by slot (aligned to T); slot i = energy over (T[i-1], T[i]]. */
+  function energyRows(deltas: Record<number, (number | null)[]>): AggRow[] {
+    const rows: AggRow[] = [];
+    for (const p of ENERGY_POINTS) {
+      const d = deltas[p.ref.pointId];
+      if (!d) continue;
+      for (let i = 0; i < T.length; i++)
+        rows.push({
+          system_id: p.ref.systemId,
+          point_id: p.ref.pointId,
+          interval_end: T[i],
+          delta: d[i],
+        });
+    }
+    return rows;
+  }
+
+  it("prefers pair deltas: a flip interval keeps gross charge AND discharge", () => {
+    // Interval 0 (T0→T1): the signed power says 0.5 kW net "discharge"; the registers say the
+    // battery BOTH charged 100 Wh and discharged 80 Wh. Gross must survive.
+    const rows = [
+      ...makeAggRows(POINTS),
+      ...energyRows({
+        20: [null, 100, 0], // charge Wh at slot 1 → interval 0
+        21: [null, 80, 0], // discharge Wh at slot 1 → interval 0
+      }),
+    ];
+    const m = buildFlowMatrixFromAggRows(rows, LS_E)!;
+    const chargeCol = m.loads.find((l) => l.label === "Battery Charge")!;
+    const dischargeRow = m.sources.find(
+      (s) => s.label === "Battery Discharge",
+    )!;
+    const lb = m.loads.indexOf(chargeCol);
+    const sb = m.sources.indexOf(dischargeRow);
+    // Exact register magnitudes (Wh → kWh) — interval 1 falls back to the power split.
+    expect(m.loadTotals[lb]).toBeGreaterThanOrEqual(0.1 - 1e-9);
+    expect(m.sourceTotals[sb]).toBeGreaterThan(0);
+    // No battery→battery self-flow even though both halves are nonzero in the flip interval.
+    expect(m.matrix[sb][lb]).toBeCloseTo(0, 12);
+    // The power-only control nets the flip: its charge column total is strictly smaller.
+    const powerOnly = buildFlowMatrixFromAggRows(makeAggRows(POINTS), LS_E)!;
+    const lbP = powerOnly.loads.findIndex((l) => l.label === "Battery Charge");
+    const controlCharge = lbP === -1 ? 0 : powerOnly.loadTotals[lbP];
+    expect(m.loadTotals[lb]).toBeGreaterThan(controlCharge);
+  });
+
+  it("missing energy rows never omit the Sankey — falls back to the power matrix", () => {
+    // energyPoints declared on the logical system, but the fetch returned no delta rows.
+    const actual = buildFlowMatrixFromAggRows(makeAggRows(POINTS), LS_E);
+    expect(actual).toEqual(expectedMatrix(POINTS));
   });
 });

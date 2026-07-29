@@ -14,6 +14,26 @@
  * planned HA export bridge (docs/architecture/areas-and-dashboards.md) is a publish step, not a
  * remodel. This module is **pure data** — no React, no lucide, no node — so server and client both
  * import it safely.
+ *
+ * ── The stems are a HIERARCHY, and that is a modelling rule, not a naming style ──────────────────
+ * `load` and `source.solar` work the same way: the anchor stem is the site TOTAL, and each dotted
+ * child (`load.ev`, `source.solar.local`) is a METERED SUBSET of it. An anchor is therefore a flow
+ * node in its own right only when it has NO children; once it has children it becomes a BUDGET, and
+ * the nodes are the children plus ONE complement absorbing the remainder (`load.rest-of-house`,
+ * `source.solar.residual`) — synthesised, or measured where a vendor publishes that quantity. Emit
+ * both an anchor and its children and you double-count the subsets against the total.
+ *
+ * The corollary is that a role's stem is not automatically a node: `ev` is a real role with real
+ * points, but `ev.charge` is a vehicle's own view of energy already metered by a `load.ev` circuit
+ * or the site meter, so it never becomes a sink. That is what the two "deliberately absent" comments
+ * in `classifyEnergyStem` and `isCompleteRoleSet` below are consequences of. `buildFlowSeries`
+ * (lib/aggregation/flow-series.ts) is where the rule is implemented; the Directional model section
+ * of docs/architecture/energy-flow-matrix.md is the prose version.
+ *
+ * ⚠️ There is no SQL copy of this any more. The `roles` table (a projection of `ROLES`) was dropped
+ * by migration 0044; the only thing SQL still knows about the role set is the enumeration in the
+ * `area_bindings_role_check` / `derivations_role_check` CHECK constraints. ADDING A ROLE HERE
+ * therefore needs a migration that widens both CHECKs — nothing derives them from this file.
  */
 
 export type RoleId = "solar" | "battery" | "load" | "grid" | "ev" | "generator";
@@ -57,7 +77,7 @@ export interface RoleDef {
    * lib/run-tracking). `haDeviceClass` is the HA `binary_sensor` device_class for the export
    * bridge ("running" — on means running). The role's own `ha` block still describes the
    * underlying numeric signal (e.g. power/W); the binary entity is a derived view over the
-   * persisted run periods. Code-only — not projected into the `roles` SQL table.
+   * persisted run periods.
    */
   device?: { trackable: true; haDeviceClass: string };
 }
@@ -148,6 +168,56 @@ export const COMPOSITE_VALIDATED_ROLE_IDS: readonly RoleId[] = ROLE_IDS.filter(
 );
 
 /**
+ * How an ENERGY-accumulator point (metric_type "energy", per-interval Wh in `agg_5m.delta`)
+ * participates in the energy-flow matrix. The flow pipeline prefers these exact interval energies
+ * over integrating average power (see `FlowSeries.energyKwh` in flow-matrix-core.ts); this
+ * classifier is the single vendor-free mapping from an energy point's logical-path stem to the
+ * flow node(s) it decorates.
+ *
+ *  - `pair`: one directional half of a bidi channel, metered separately (Sigenergy / Selectronic /
+ *    Fusher / Amber). Both halves of an interval can be nonzero at once — this is what preserves
+ *    GROSS flow where the signed power average nets an intra-interval reversal to ~0.
+ *  - `net`: a SIGNED net accumulator carrying the bidi channel's own stem — split by sign like the
+ *    power series (exact net; gross-lossy, the meter already destroyed the reversal). ⚠️ A
+ *    direction-blind MONOTONIC total (e.g. Mondo's `totalEnergyWh`) must NOT be typed with a bidi
+ *    stem — its non-negative deltas would all land on the source half. (Mondo's are untyped today.)
+ *  - `uni`: a one-direction channel whose energy stem IS the flow node path (solar, load, EV).
+ */
+export type EnergyStemClass =
+  | { kind: "pair"; targetPath: string }
+  | { kind: "net"; channelStem: "bidi.battery" | "bidi.grid" }
+  | { kind: "uni"; targetPath: string };
+
+/** Directional-pair energy stems → the flow node they meter. `.controlled` (Amber controlled load)
+ *  is grid consumption metered on a separate register — summed into the import-side node. */
+const ENERGY_PAIR_TARGETS: Record<string, string> = {
+  "bidi.battery.discharge": "source.battery",
+  "bidi.battery.charge": "load.battery",
+  "bidi.grid.import": "source.grid",
+  "bidi.grid.export": "load.grid",
+  "bidi.grid.controlled": "source.grid",
+};
+
+/** Classify an energy point's stem for flow participation; null = not a flow energy stem. */
+export function classifyEnergyStem(stem: string): EnergyStemClass | null {
+  const pair = ENERGY_PAIR_TARGETS[stem];
+  if (pair !== undefined) return { kind: "pair", targetPath: pair };
+  if (stem === "bidi.battery" || stem === "bidi.grid")
+    return { kind: "net", channelStem: stem };
+  if (
+    stem === "source.solar" ||
+    stem.startsWith("source.solar.") ||
+    stem === "load" ||
+    stem.startsWith("load.")
+  )
+    return { kind: "uni", targetPath: stem };
+  // `ev.charge` is deliberately absent: an EV charger participates as `load.ev` (a child of the load
+  // hierarchy). An `ev.charge`-stemmed register is the vehicle's own view of energy already metered
+  // elsewhere, so it decorates no node — see `buildFlowSeries`.
+  return null;
+}
+
+/**
  * Whether a set of logical-path stems forms a complete energy-flow role set (≥1 source and ≥1
  * load). Moved verbatim from logical-system.ts.
  *
@@ -163,11 +233,12 @@ export function isCompleteRoleSet(stems: string[]): boolean {
   for (const s of stems) {
     if (isSolar(s) || s === "bidi.battery" || s === "bidi.grid")
       hasSource = true;
+    // `ev.charge` is NOT counted: it is not a flow sink (an EV charger participates as `load.ev`),
+    // so an area whose only "load" was an EV point would be judged complete and then render an
+    // empty sink side.
     if (
       s === "load" ||
       s.startsWith("load.") ||
-      s === "ev.charge" ||
-      s.startsWith("ev.charge.") ||
       s === "bidi.battery" ||
       s === "bidi.grid"
     )

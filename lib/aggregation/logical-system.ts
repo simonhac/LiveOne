@@ -14,9 +14,9 @@
 import { PointReference } from "@/lib/identifiers";
 import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
-import { isCompleteRoleSet } from "@/lib/roles/registry";
+import { classifyEnergyStem, isCompleteRoleSet } from "@/lib/roles/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { listFlowEligibleAreaHandles } from "@/lib/areas/devices";
+import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };
@@ -48,6 +48,14 @@ export interface LogicalSystem {
   timezoneOffsetMin: number;
   /** Participating power points (may span physical systems for a multi-device area). */
   points: LogicalSystemPoint[];
+  /**
+   * Flow-participating ENERGY-accumulator points (metric_type "energy" with a stem
+   * `classifyEnergyStem` recognises) — the exact per-interval registers the flow pipeline prefers
+   * over integrating `points`' average power. An OVERLAY only: role completeness (`isComplete`)
+   * and flow eligibility are judged on the power `points` alone, so surfacing these changes no
+   * area's eligibility.
+   */
+  energyPoints: LogicalSystemPoint[];
   /** Has at least one source role and one load role → a Sankey can be built. */
   isComplete: boolean;
 }
@@ -80,6 +88,25 @@ export async function resolveLogicalSystem(
       displayName: p.name,
     }));
 
+  // Exact-energy overlay points (see `LogicalSystem.energyPoints`) — deliberately a SECOND list so
+  // every existing consumer of `points` (role completeness, coverage checks, series classification)
+  // keeps its power-only semantics untouched.
+  const energyPoints: LogicalSystemPoint[] = pts
+    .filter(
+      (p) =>
+        p.metricType === "energy" &&
+        p.logicalPathStem &&
+        classifyEnergyStem(p.logicalPathStem) !== null,
+    )
+    .map((p) => ({
+      ref: p.getReference(),
+      stem: p.logicalPathStem!,
+      metricType: p.metricType,
+      metricUnit: p.metricUnit,
+      transform: p.transform,
+      displayName: p.name,
+    }));
+
   const isComplete = isCompleteRoleSet(points.map((p) => p.stem));
 
   // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_attr_1d
@@ -94,6 +121,7 @@ export async function resolveLogicalSystem(
     areaId: area.id,
     timezoneOffsetMin: system.timezoneOffsetMin,
     points,
+    energyPoints,
     isComplete,
   };
 }

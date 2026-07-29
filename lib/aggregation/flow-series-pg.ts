@@ -17,7 +17,10 @@ import { ReadingsDao } from "@/lib/readings";
 import {
   buildFlowSeries,
   applyPowerTransform,
+  applyEnergyTransform,
+  toIntervalKwh,
   ClassifiedPoint,
+  EnergySeriesInput,
 } from "@/lib/aggregation/flow-series";
 import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
 import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
@@ -62,6 +65,11 @@ export async function loadFlowSeriesFromAgg5m(
    *  lead-in `[startMs, cache.from)`; uncovered points fall back to a full `[startMs, endMs]` query. The
    *  reconstructed row set is identical to the single-query path — a pure read elimination. */
   cache?: Agg5mAvgCache,
+  /** Exact-energy accumulator points (`LogicalSystem.energyPoints`): their `delta` becomes the
+   *  `FlowSeries.energyKwh` overlays the integrator prefers over power integration. Read on the
+   *  direct-query path (the avg cache never covers them — ≤ a handful of points), and their
+   *  interval_ends JOIN the shared timeline, so an interval the power series dropped still exists. */
+  energyPoints?: FlowSeriesPoint[],
 ): Promise<FlowSeriesBundle> {
   if (points.length === 0) return { timeline: [], sources: [], loads: [] };
 
@@ -70,6 +78,7 @@ export async function loadFlowSeriesFromAgg5m(
     pointId: number;
     t: number;
     avg: number | null;
+    delta: number | null;
   };
   const merged: NormRow[] = [];
 
@@ -118,6 +127,7 @@ export async function loadFlowSeriesFromAgg5m(
           pointId: ref.pointId,
           t: r.intervalEndMs,
           avg: r.avg,
+          delta: r.delta,
         });
     }
   };
@@ -136,6 +146,7 @@ export async function loadFlowSeriesFromAgg5m(
           pointId: p.ref.pointId,
           t: r.t,
           avg: r.avg,
+          delta: null, // cache rows are avg-only; power points never read delta
         });
       // Lead-in only when the window starts before the cache's lower bound (uniform across covered
       // points in one request). A seeded anchor inside the cache window needs no lead-in query.
@@ -149,37 +160,68 @@ export async function loadFlowSeriesFromAgg5m(
   }
   if (leadInPoints.length > 0 && leadInFrom !== undefined)
     await queryInto(leadInPoints, startMs, leadInFrom, false); // [startMs, from)
-  await queryInto(fullPoints, startMs, endMs, true); // [startMs, endMs]
+  // Energy points always take the direct-query path alongside the uncovered power points.
+  await queryInto(
+    [...fullPoints, ...(energyPoints ?? [])],
+    startMs,
+    endMs,
+    true,
+  ); // [startMs, endMs]
 
   if (merged.length === 0) return { timeline: [], sources: [], loads: [] };
 
   const timeline = [...new Set(merged.map((r) => r.t))].sort((a, b) => a - b);
   const tIndex = new Map<number, number>(timeline.map((t, i) => [t, i]));
 
-  const avgByPoint = new Map<string, Map<number, number | null>>();
+  type Cell = { avg: number | null; delta: number | null };
+  const rowsByPoint = new Map<string, Map<number, Cell>>();
   for (const r of merged) {
     const key = `${r.systemId}.${r.pointId}`;
-    let series = avgByPoint.get(key);
+    let series = rowsByPoint.get(key);
     if (!series) {
       series = new Map();
-      avgByPoint.set(key, series);
+      rowsByPoint.set(key, series);
     }
-    series.set(r.t, r.avg);
+    series.set(r.t, { avg: r.avg, delta: r.delta });
   }
 
   const classified: ClassifiedPoint[] = [];
   for (const p of points) {
-    const series = avgByPoint.get(`${p.ref.systemId}.${p.ref.pointId}`);
+    const series = rowsByPoint.get(`${p.ref.systemId}.${p.ref.pointId}`);
     if (!series) continue;
     const power = new Array<number | null>(timeline.length).fill(null);
     for (const [t, v] of series) {
       const i = tIndex.get(t);
       if (i !== undefined)
-        power[i] = applyPowerTransform(toKw(v, p.metricUnit), p.transform);
+        power[i] = applyPowerTransform(toKw(v.avg, p.metricUnit), p.transform);
     }
     classified.push({ stem: p.stem, power });
   }
 
-  const { sources, loads } = buildFlowSeries(classified);
+  // Exact-energy overlays, slot-aligned to the shared timeline (slot i = the delta stamped at
+  // timeline[i]); buildFlowSeries' attach step owns the slot→interval shift.
+  const energySeries: EnergySeriesInput[] = [];
+  for (const p of energyPoints ?? []) {
+    const series = rowsByPoint.get(`${p.ref.systemId}.${p.ref.pointId}`);
+    if (!series) continue;
+    const energyKwhBySlot = new Array<number | null>(timeline.length).fill(
+      null,
+    );
+    for (const [t, v] of series) {
+      const i = tIndex.get(t);
+      if (i !== undefined)
+        energyKwhBySlot[i] = applyEnergyTransform(
+          toIntervalKwh(v.delta, p.metricUnit),
+          p.transform,
+        );
+    }
+    energySeries.push({ stem: p.stem, energyKwhBySlot });
+  }
+
+  const { sources, loads } = buildFlowSeries(
+    classified,
+    energySeries,
+    timeline,
+  );
   return { timeline, sources, loads };
 }

@@ -6,6 +6,7 @@ import {
   isNull,
   and,
   or,
+  inArray,
   getTableColumns,
 } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
@@ -17,7 +18,6 @@ import {
   systems as pgSystems,
   devices as pgDevices,
   deviceState as pgDeviceState,
-  userSystems as pgUserSystems,
   areas as pgAreas,
 } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
@@ -298,15 +298,22 @@ export class SystemsManager {
   }
 
   /**
-   * Systems visible to a user for the switcher: the ones they OWN, are GRANTED (via user_systems), or
-   * that are PUBLIC (ownerless, readable by everyone). Bounded indexed queries — no fleet load and no
-   * admin-sees-all branch: an admin's cross-system reach is the admin systems table, not this list.
-   * Area views are intentionally excluded (the switcher lists real devices only).
+   * Systems visible to a user for the switcher: the ones they OWN, that are PUBLIC (ownerless,
+   * readable by everyone), or that a DASHBOARD GRANT reaches. Bounded indexed queries — no fleet load
+   * and no admin-sees-all branch: an admin's cross-system reach is the admin systems table, not this
+   * list. Area views are intentionally excluded (the switcher lists real devices only).
+   *
+   * The granted leg used to be an inner join on `user_systems`; that table died in migration 0045
+   * (slice F) and the leg was RE-POINTED at `dashboard_grants` via `grantedSystemScopeForUser` rather
+   * than deleted. It is load-bearing for Vercel preview: `scripts/utils/reown-dev-data.ts` reowns the
+   * mirrored systems to the DEV clerk id and grants the PROD id back, and a preview session
+   * authenticates against the LIVE prod Clerk instance — so without a granted leg the preview
+   * switcher, the `/dashboard` landing redirect and the area candidate list all go empty.
    */
   async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
     const db = requirePlanetscaleDb();
 
-    // Owned + public in one indexed pass; granted via the user_systems join.
+    // Owned + public in one indexed pass.
     const ownedOrPublic = await db
       .select()
       .from(pgSystems)
@@ -320,25 +327,31 @@ export class SystemsManager {
           isNull(pgSystems.ownerClerkUserId),
         ),
       );
-    const granted = await db
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .innerJoin(
-        pgUserSystems,
-        and(
-          eq(pgUserSystems.systemId, pgSystems.id),
-          eq(pgUserSystems.clerkUserId, userId),
-        ),
-      );
 
     const byId = new Map<number, SystemWithPolling>();
     for (const r of ownedOrPublic)
       byId.set(r.systems.id, toSystemWithPolling(r));
-    for (const r of granted) byId.set(r.systems.id, toSystemWithPolling(r));
+
+    // Then the dashboard-grant leg, for handles the first pass didn't already cover. Imported
+    // dynamically to break a module cycle: lib/dashboard/grants → lib/dashboard/access →
+    // lib/point/point-manager → back here (same reason lib/vendors/amber/client.ts does it).
+    const { grantedSystemScopeForUser } = await import(
+      "@/lib/dashboard/grants"
+    );
+    const grantedHandles = [
+      ...(await grantedSystemScopeForUser(userId)),
+    ].filter((id) => !byId.has(id));
+    if (grantedHandles.length > 0) {
+      const granted = await db
+        .select()
+        .from(pgSystems)
+        .leftJoin(
+          deviceStateByHandle,
+          eq(deviceStateByHandle.handle, pgSystems.id),
+        )
+        .where(inArray(pgSystems.id, grantedHandles));
+      for (const r of granted) byId.set(r.systems.id, toSystemWithPolling(r));
+    }
 
     return Array.from(byId.values())
       .filter((s) => !activeOnly || s.status === "active")
@@ -432,27 +445,44 @@ export class SystemsManager {
   }
 
   /**
-   * Update an existing system.
+   * Update an existing system, and re-mirror it into the v4 `devices` registry.
    *
    * Updates Postgres only (config writes are Postgres-only). The patch maps 1:1 —
    * PG jsonb/timestamp columns accept plain objects/Dates directly, so no per-field
    * mapping is needed. `updatedAt` is always stamped to now regardless of the patch.
+   *
+   * config-v4: the `systems` write and its `devices` mirror are ONE transaction. Before this, the mirror
+   * was written at mint only, so every edit here drifted `devices.name`/`status`/`slug`/`config`/
+   * `adapter_state` — and `ensureDeviceRow` was `ON CONFLICT DO NOTHING`, so nothing could self-heal it.
+   * Slice K reads `devices` as the config registry, so the drift is not cosmetic.
    */
   async updateSystem(systemId: number, patch: Partial<System>): Promise<void> {
     // Never let the caller override the id or the freshly-stamped updatedAt.
     const { id: _ignoredId, updatedAt: _ignoredUpdatedAt, ...rest } = patch;
     const values = { ...rest, updatedAt: new Date() };
 
-    await requirePlanetscaleDb()
-      .update(pgSystems)
-      .set(values as Partial<InferSelectModel<typeof pgSystems>>)
-      .where(eq(pgSystems.id, systemId));
+    await requirePlanetscaleDb().transaction(async (tx) => {
+      await tx
+        .update(pgSystems)
+        .set(values as Partial<InferSelectModel<typeof pgSystems>>)
+        .where(eq(pgSystems.id, systemId));
+      // Re-copies the mutable columns from the row just written (ensureDeviceRow SELECTs `systems`).
+      await ensureDeviceRow(systemId, tx);
+    });
   }
 
   /**
    * Delete a system.
    *
    * Deletes from Postgres only.
+   *
+   * ⚠️ config-v4 KNOWN GAP (deliberately not closed here): this leaves the mirrored `devices` row
+   * ORPHANED. There is no FK from `devices` to `systems` (`devices.rid` is a plain integer), so nothing
+   * cascades. Not fixed in the mirror-leak pass because deleting a device is not the inverse of this
+   * one-liner — `area_members`, `points.device_id` and the device's area-of-one all hang off it, so the
+   * safe teardown order is slice N's problem, not a side effect of a v3 delete. Low real exposure: the
+   * only caller is the create-rollback path in `app/api/systems/route.ts`, where the device row was just
+   * minted moments earlier. Revisit when `devices` becomes the primary registry (slice K/N).
    */
   async deleteSystem(systemId: number): Promise<void> {
     await requirePlanetscaleDb()

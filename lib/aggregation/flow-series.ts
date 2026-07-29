@@ -7,12 +7,22 @@
  */
 
 import { FlowSeries } from "./flow-matrix-core";
+import { classifyEnergyStem } from "@/lib/roles/registry";
 
 export const SOLAR_PARENT_PATH = "source.solar";
 export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
 /**
+ * The load complement — consumption no sub-meter accounts for. Usually synthesised (master − Σ
+ * sub-meters, or generation − exports − sub-meters), but a vendor can METER it directly, in which
+ * case a point carries this stem and the synthesis is skipped. The load-side twin of
+ * {@link SOLAR_RESIDUAL_PATH}.
+ */
+export const REST_OF_HOUSE_PATH = "load.rest-of-house";
+/**
  * EV charging. A top-level load stem in its own right — NOT under `load.` — because the vendor's
- * house-load figure excludes it; see the sibling-load handling in `buildFlowSeries`.
+ * house-load POWER figure excludes it; see the sibling-load handling in `buildFlowSeries`. Its
+ * ENERGY register is the other way round (the meter counts everything), which `attachEnergyOverlays`
+ * nets out.
  */
 export const EV_PATH = "ev.charge";
 
@@ -198,6 +208,42 @@ export interface ClassifiedPoint {
 }
 
 /**
+ * An energy-accumulator point's exact interval energies (kWh), aligned to the shared timeline by
+ * SLOT: `energyKwhBySlot[i]` is the `agg_5m.delta` stamped at `timeline[i]` — the metered energy
+ * over `(timeline[i-1], timeline[i]]`. The slot→interval shift (interval i = delta at slot i+1)
+ * happens ONCE, inside {@link buildFlowSeries}'s attach step — loaders only scatter by interval_end.
+ */
+export interface EnergySeriesInput {
+  /** The energy point's logical-path stem, e.g. "bidi.battery.charge", "load", "bidi.grid". */
+  stem: string;
+  energyKwhBySlot: (number | null)[];
+}
+
+/**
+ * Apply an energy point's `transform` to a signed interval-kWh value before it enters the flow
+ * matrix. Only "i" (invert: ×−1) is meaningful — a NET accumulator wired so import/discharge reads
+ * negative. "d" (differentiate) already happened upstream in the 5m aggregation (`delta` IS the
+ * differenced value), so it's a no-op here. The single home for the rule, mirroring
+ * {@link applyPowerTransform}.
+ */
+export function applyEnergyTransform(
+  value: number | null,
+  transform: string | null,
+): number | null {
+  if (value === null) return null;
+  return transform === "i" ? -value : value;
+}
+
+/** Convert an `agg_5m.delta` value to interval kWh given the point's metric unit (Wh → /1000). */
+export function toIntervalKwh(
+  value: number | null,
+  unit: string | null,
+): number | null {
+  if (value === null) return null;
+  return unit === "Wh" ? value / 1000 : value;
+}
+
+/**
  * Assemble the canonical source/load `FlowSeries` for the energy-flow matrix from a system's
  * power points (each as signed kW on a shared timebase). This is the engine-side equivalent of
  * the browser's split / solar-aggregation / rest-of-house pipeline, kept pure so the two paths
@@ -209,7 +255,13 @@ export interface ClassifiedPoint {
  *  - loads   `load` (master) and `load.<sub>` (children) pass through
  *  - `load.rest-of-house` is derived from the 3-case rule
  */
-export function buildFlowSeries(points: ClassifiedPoint[]): {
+export function buildFlowSeries(
+  points: ClassifiedPoint[],
+  energySeries?: EnergySeriesInput[],
+  /** Shared slot timeline (epoch ms) — only needed to net sibling loads out of a master-`load`
+   *  energy register (see `attachEnergyOverlays`); omit and that netting falls back to power. */
+  timeline?: number[],
+): {
   sources: FlowSeries[];
   loads: FlowSeries[];
 } {
@@ -218,7 +270,6 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
   let gridPower: (number | null)[] | null = null;
   let masterLoad: (number | null)[] | null = null;
   const childLoads: FlowSeries[] = [];
-  const siblingLoads: FlowSeries[] = [];
 
   for (const p of points) {
     if (
@@ -234,14 +285,13 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
       masterLoad = p.power;
     } else if (p.stem.startsWith("load.")) {
       childLoads.push({ path: p.stem, power: p.power });
-    } else if (p.stem === EV_PATH || p.stem.startsWith(EV_PATH + ".")) {
-      // EV charging is a SIBLING of the master load, not a `load.<sub>` child: the vendor's house-load
-      // figure excludes it (verified on Sigenergy — `pvPower = buySellPower + batteryPower + loadPower
-      // + acPower` balances to ~0.001 kW mean residual). Feeding it through `childLoads` would make
-      // `computeRestOfHouse` subtract it from a master that never contained it, driving rest-of-house
-      // to zero and losing the EV's energy from the matrix entirely.
-      siblingLoads.push({ path: p.stem, power: p.power });
     }
+    // `ev.charge` is NOT a sink. An EV charger participates in the flow matrix as `load.ev` — a
+    // child of the load hierarchy like any other sub-meter. A point stemmed `ev.charge` is the
+    // VEHICLE's own view of the same energy (Tesla), which either duplicates a `load.ev` circuit
+    // (Kinkora metered both: 42.7 vs 33.3 kWh in one week) or sits inside the site meter (Sigenergy)
+    // — either way, counting it as a sink double-counts. It stays a first-class point for cards and
+    // charts; it just isn't a node.
   }
 
   const sources: FlowSeries[] = [...resolveSolarSources(solarInput)];
@@ -271,34 +321,178 @@ export function buildFlowSeries(points: ClassifiedPoint[]): {
     gridExport = negative.power;
   }
 
-  if (masterLoad !== null) loads.push({ path: "load", power: masterLoad });
+  // `load` is a strict HIERARCHY, exactly like `source.solar`: the master is the TOTAL and its
+  // `load.<sub>` children are metered subsets of it. So the master is a sink only when it has no
+  // children; with children it becomes a BUDGET and the sinks are the children plus the COMPLEMENT
+  // (`load.rest-of-house`) — the load no sub-meter covers. Pushing both the master and its children
+  // would count the metered circuits twice.
+  //
+  // The complement is normally synthesised, but a vendor may METER it (Sigenergy's `loadPower` is
+  // house-excluding-charger, which is exactly this quantity). One node either way: a measured
+  // complement is used as-is and nothing is synthesised on top of it, and it is NOT one of the
+  // children the master is reduced by — it IS the remainder.
+  const measuredComplement =
+    childLoads.find((c) => c.path === REST_OF_HOUSE_PATH) ?? null;
+  const subMeters = childLoads.filter((c) => c.path !== REST_OF_HOUSE_PATH);
+  const hasChildren = childLoads.length > 0;
+  if (masterLoad !== null && !hasChildren)
+    loads.push({ path: "load", power: masterLoad });
   for (const c of childLoads) loads.push(c);
-  // Siblings sit alongside the master load and are deliberately absent from `childSum` below.
-  for (const s of siblingLoads) loads.push(s);
 
-  const childSum =
-    childLoads.length > 0 ? sumSeries(childLoads.map((c) => c.power)) : null;
-  const totalGen =
-    sources.length > 0 ? sumSeries(sources.map((s) => s.power)) : null;
-  // With a master load, rest-of-house = master − children, and siblings are correctly excluded (they
-  // were never inside master). WITHOUT one it is derived from generation, so the siblings must be
-  // subtracted there too — otherwise the EV's energy lands in both its own node and rest-of-house.
-  const remainderSubtrahend =
-    masterLoad !== null
-      ? childSum
-      : childLoads.length + siblingLoads.length > 0
-        ? sumSeries([...childLoads, ...siblingLoads].map((s) => s.power))
-        : null;
-  const restOfHouse = computeRestOfHouse(
-    masterLoad,
-    remainderSubtrahend,
-    batteryCharge,
-    gridExport,
-    totalGen,
-  );
-  if (restOfHouse !== null) {
-    loads.push({ path: "load.rest-of-house", power: restOfHouse });
+  if (measuredComplement === null) {
+    const subMeterSum =
+      subMeters.length > 0 ? sumSeries(subMeters.map((c) => c.power)) : null;
+    const totalGen =
+      sources.length > 0 ? sumSeries(sources.map((s) => s.power)) : null;
+    const restOfHouse = computeRestOfHouse(
+      masterLoad,
+      subMeterSum,
+      batteryCharge,
+      gridExport,
+      totalGen,
+    );
+    if (restOfHouse !== null) {
+      loads.push({ path: REST_OF_HOUSE_PATH, power: restOfHouse });
+    }
+  }
+
+  if (energySeries && energySeries.length > 0) {
+    attachEnergyOverlays(sources, loads, energySeries, subMeters, timeline);
   }
 
   return { sources, loads };
+}
+
+/**
+ * Attach exact-energy overlays (`FlowSeries.energyKwh`) to the flow nodes the power points created.
+ * Energy points DECORATE existing nodes — they never create them (an accumulator with no power
+ * sibling attaches nowhere; no current vendor is in that state). Per {@link classifyEnergyStem}:
+ *
+ *  - `pair`: the register's interval energy lands on its directional node — BOTH halves of a bidi
+ *    channel can be nonzero in the same interval, preserving the gross flow the signed power
+ *    average nets away. Negative deltas (a counter reset) are defensively nulled.
+ *  - `net`:  the signed exact net splits by sign onto the channel's two halves (exact net, still
+ *    gross-lossy — the meter already destroyed intra-interval reversals).
+ *  - `uni`:  attaches straight onto the same-path node (clamped like `pair`).
+ *
+ * Multiple registers targeting one node (multi-device areas, Amber `.controlled` + `.import`) sum
+ * with null-poisoning — if ANY contributor is missing an interval the node's overlay is null there
+ * and that interval falls back to power integration, matching `sumSeries`' "a missing input makes
+ * the total unknowable" rule. Derived nodes (`load.rest-of-house`, `source.solar.residual`) are
+ * power-only by construction and never receive an overlay.
+ *
+ * This is also the single home of the slot→interval SHIFT: inputs are keyed by timeline SLOT (the
+ * delta stamped at `timeline[i]` covers `(timeline[i-1], timeline[i]]`), while `energyKwh[i]`
+ * means interval `(timeline[i], timeline[i+1]]` — so interval i reads slot i+1.
+ */
+function attachEnergyOverlays(
+  sources: FlowSeries[],
+  loads: FlowSeries[],
+  energySeries: EnergySeriesInput[],
+  /** The metered sub-loads — NOT including the complement, which is what the master reduces TO. */
+  subMeters: FlowSeries[] = [],
+  timeline?: number[],
+): void {
+  const n = energySeries[0]?.energyKwhBySlot.length ?? 0;
+  const intervals = Math.max(0, n - 1);
+  // Accumulate per target path with null-poisoning across contributors.
+  const byPath = new Map<string, (number | null)[]>();
+  const addContribution = (
+    path: string,
+    valueAt: (slot: number) => number | null,
+  ): void => {
+    let acc = byPath.get(path);
+    if (!acc) {
+      acc = new Array<number | null>(intervals).fill(null);
+      byPath.set(path, acc);
+      for (let i = 0; i < intervals; i++) acc[i] = valueAt(i + 1);
+      return;
+    }
+    for (let i = 0; i < intervals; i++) {
+      const v = valueAt(i + 1);
+      const prev = acc[i];
+      acc[i] = prev === null || v === null ? null : prev + v;
+    }
+  };
+
+  for (const e of energySeries) {
+    const cls = classifyEnergyStem(e.stem);
+    if (cls === null) continue;
+    const slots = e.energyKwhBySlot;
+    if (cls.kind === "pair" || cls.kind === "uni") {
+      addContribution(cls.targetPath, (slot) => {
+        const v = slots[slot];
+        if (v === null || v === undefined) return null;
+        // A counter re-base shows up as a MATCHED PAIR: one negative delta (the counter dropping to
+        // its new base) immediately followed by a catch-up delta carrying everything the counter had
+        // accumulated. Raw sums self-cancel; nulling only the negative half would keep the catch-up
+        // and count that history twice (measured on Sigenergy: −27.3 kWh then +29.3 kWh in adjacent
+        // 5-min slots, inflating the day's load/charge/solar to ~2×). Both halves are unknown — the
+        // intervals fall back to power integration.
+        if (v < 0) return null;
+        const prev = slots[slot - 1];
+        if (prev !== null && prev !== undefined && prev < 0) return null;
+        return v;
+      });
+    } else {
+      // net: split the signed exact net by sign onto the channel's directional halves.
+      const positivePath =
+        cls.channelStem === "bidi.battery" ? "source.battery" : "source.grid";
+      const negativePath =
+        cls.channelStem === "bidi.battery" ? "load.battery" : "load.grid";
+      addContribution(positivePath, (slot) => {
+        const v = slots[slot];
+        if (v === null || v === undefined) return null;
+        return v > 0 ? v : 0;
+      });
+      addContribution(negativePath, (slot) => {
+        const v = slots[slot];
+        if (v === null || v === undefined) return null;
+        return v < 0 ? -v : 0;
+      });
+    }
+  }
+
+  // The master-`load` register is the site TOTAL. With sub-meters present there is no `load` node to
+  // decorate (buildFlowSeries made the master a budget), so the register lands where it belongs: on
+  // the COMPLEMENT, `load.rest-of-house` = total − Σ sub-meters. The complement is the one node
+  // defined as "whatever the sub-meters don't cover", so the exact total is what sizes it — whether
+  // that node was synthesised or measured (a measured one keeps its power series for shape and gains
+  // the exact energy). The sink side then sums to the metered total instead of the register being
+  // discarded for want of a node with a matching path.
+  // A sub-meter's energy is its own overlay where it has one, else the same trapezoid
+  // `computeFlowAccounting` would use; unknown ⇒ the complement's interval falls back to power.
+  const masterOverlay = byPath.get("load");
+  const hasLoadNode = loads.some((l) => l.path === "load");
+  const complement = loads.find((l) => l.path === REST_OF_HOUSE_PATH);
+  if (masterOverlay && !hasLoadNode && complement) {
+    const exact = new Array<number | null>(intervals).fill(null);
+    for (let i = 0; i < intervals; i++) {
+      if (masterOverlay[i] === null) continue;
+      let net: number | null = masterOverlay[i]!;
+      for (const child of subMeters) {
+        const childOverlay = byPath.get(child.path);
+        let e = childOverlay ? childOverlay[i] : null;
+        if (e === null && timeline !== undefined) {
+          const p1 = child.power[i];
+          const p2 = child.power[i + 1];
+          const dtH = (timeline[i + 1] - timeline[i]) / 3_600_000;
+          if (p1 !== null && p2 !== null) e = ((p1 + p2) / 2) * dtH;
+        }
+        if (e === null) {
+          net = null;
+          break;
+        }
+        net -= e;
+      }
+      exact[i] = net === null ? null : Math.max(0, net);
+    }
+    byPath.set(REST_OF_HOUSE_PATH, exact);
+    byPath.delete("load");
+  }
+
+  for (const node of [...sources, ...loads]) {
+    const overlay = byPath.get(node.path);
+    if (overlay) node.energyKwh = overlay;
+  }
 }

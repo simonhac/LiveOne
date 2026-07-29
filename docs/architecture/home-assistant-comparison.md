@@ -4,7 +4,8 @@
 > LiveOne restated as finished config-v4). An analytical scorecard, not a spec.
 >
 > **LiveOne side** describes **config-v4 as designed and delivered**. The cutover ran 2026-07-26 and
-> Phases 0–11 have shipped; Phases 12–14 finish the last of it (drop `systems`/`point_info`/`roles`,
+> Phases 0–11 have shipped and Phase 12 is under way (`roles`, `user_systems` and `area_devices`
+> dropped in migrations 0044–0046); Phases 12–14 finish the last of it (drop `systems`/`point_info`,
 > kill the integer handle, collapse the two dashboard shapes). This doc describes the **settled end
 > state** rather than tracking the migration — for what is live _today_ see
 > [config-v4-execution-plan.md](../plans/config-v4-execution-plan.md); for _why_ the model is shaped

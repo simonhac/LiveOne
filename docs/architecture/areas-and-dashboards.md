@@ -198,7 +198,8 @@ Recorded explicitly, because they were stated confidently here and people rememb
   stable semantic layer, and `GET /api/v4/export` is most of the payload already. See
   [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md) #9 for the more ambitious version, which
   pushes recomputed history _into_ an HA instance rather than just describing config.
-- **Config-v4 Phases 12–14** finish the model: drop `systems` / `point_info` / `roles`, kill the
+- **Config-v4 Phases 12–14** finish the model: drop `systems` / `point_info` (`roles`, `user_systems`
+  and `area_devices` already went in migrations 0044–0046), kill the
   handle, collapse the two dashboard shapes, build the v4 editor and the remaining mutation routes.
   Tracked in [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
 - **Point-level share narrowing** (§5) — the one remaining access tightening.

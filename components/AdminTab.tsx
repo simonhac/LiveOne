@@ -1,8 +1,17 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import { Plus, X, Eye, Crown } from "lucide-react";
-import { createPortal } from "react-dom";
+import { Crown } from "lucide-react";
+
+/**
+ * Per-system admin settings: ownership.
+ *
+ * This tab used to have a second "Viewers" section — an add/remove list of per-system read-only
+ * grantees, persisted to `user_systems`. That table was dropped in migration 0045 (config-v4 Phase 12
+ * slice F): it held zero rows on prod and the clean-sheet retires it with no replacement. Per-person
+ * sharing is `dashboard_grants` (invite) + `share_tokens` (public link), both managed per-DASHBOARD,
+ * not per-system — so do not resurrect this section; the equivalent UI belongs on a dashboard.
+ */
 
 interface User {
   clerkUserId: string;
@@ -12,17 +21,8 @@ interface User {
   username?: string;
 }
 
-interface Viewer {
-  clerkUserId: string;
-  email?: string;
-  firstName?: string;
-  lastName?: string;
-  username?: string;
-}
-
 interface AdminData {
   ownerClerkUserId: string | null;
-  viewers: Viewer[];
 }
 
 interface UsersResponse {
@@ -39,7 +39,6 @@ interface UsersResponse {
 interface AdminSettingsResponse {
   success: boolean;
   ownerClerkUserId: string | null;
-  viewers?: Viewer[];
 }
 
 interface AdminTabProps {
@@ -56,13 +55,7 @@ export default function AdminTab({
   onSaveFunctionReady,
 }: AdminTabProps) {
   const [ownerClerkUserId, setOwnerClerkUserId] = useState<string | null>(null);
-  const [viewers, setViewers] = useState<Viewer[]>([]);
   const [initialOwner, setInitialOwner] = useState<string | null>(null);
-  const [initialViewers, setInitialViewers] = useState<Viewer[]>([]);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const [menuButtonRef, setMenuButtonRef] = useState<HTMLButtonElement | null>(
-    null,
-  );
 
   // Fetch all users
   const usersQuery = useQuery({
@@ -101,19 +94,14 @@ export default function AdminTab({
     if (settingsData?.success) {
       setOwnerClerkUserId(settingsData.ownerClerkUserId);
       setInitialOwner(settingsData.ownerClerkUserId);
-      setViewers(settingsData.viewers || []);
-      setInitialViewers(JSON.parse(JSON.stringify(settingsData.viewers || [])));
     }
   }, [settingsData]);
 
   // Check if data is dirty
-  const isDirty = useMemo(() => {
-    const ownerChanged = ownerClerkUserId !== initialOwner;
-    const viewersChanged =
-      JSON.stringify(viewers.map((v) => v.clerkUserId).sort()) !==
-      JSON.stringify(initialViewers.map((v) => v.clerkUserId).sort());
-    return ownerChanged || viewersChanged;
-  }, [ownerClerkUserId, viewers, initialOwner, initialViewers]);
+  const isDirty = useMemo(
+    () => ownerClerkUserId !== initialOwner,
+    [ownerClerkUserId, initialOwner],
+  );
 
   // Notify parent when dirty state changes
   useEffect(() => {
@@ -122,24 +110,15 @@ export default function AdminTab({
 
   // Provide save function to parent
   const getAdminData = useCallback(async (): Promise<AdminData> => {
-    return {
-      ownerClerkUserId,
-      viewers: viewers.map((v) => ({
-        clerkUserId: v.clerkUserId,
-        email: v.email,
-        firstName: v.firstName,
-        lastName: v.lastName,
-        username: v.username,
-      })),
-    };
-  }, [ownerClerkUserId, viewers]);
+    return { ownerClerkUserId };
+  }, [ownerClerkUserId]);
 
   useEffect(() => {
     onSaveFunctionReady?.(getAdminData);
   }, [onSaveFunctionReady, getAdminData]);
 
   // Get display name for a user
-  const getDisplayName = (user: User | Viewer): string => {
+  const getDisplayName = (user: User): string => {
     if (user.firstName || user.lastName) {
       return [user.firstName, user.lastName].filter(Boolean).join(" ");
     }
@@ -147,118 +126,6 @@ export default function AdminTab({
       return user.username;
     }
     return user.email || user.clerkUserId;
-  };
-
-  const handleAddViewer = (buttonElement: HTMLButtonElement) => {
-    setShowUserMenu(true);
-    setMenuButtonRef(buttonElement);
-  };
-
-  const handleCloseMenu = () => {
-    setShowUserMenu(false);
-    setMenuButtonRef(null);
-  };
-
-  const handleSelectUser = (user: User) => {
-    // Don't add if already a viewer
-    if (viewers.some((v) => v.clerkUserId === user.clerkUserId)) {
-      handleCloseMenu();
-      return;
-    }
-
-    setViewers((prev) => [...prev, user]);
-    handleCloseMenu();
-  };
-
-  const handleRemoveViewer = (index: number) => {
-    setViewers((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // Filter available users for viewer selection (exclude owner and existing viewers)
-  const getAvailableUsers = (): User[] => {
-    const viewerIds = new Set(viewers.map((v) => v.clerkUserId));
-    return allUsers.filter(
-      (u) =>
-        u.clerkUserId !== ownerClerkUserId && !viewerIds.has(u.clerkUserId),
-    );
-  };
-
-  // Render popup menu for adding viewers
-  const renderUserMenu = () => {
-    if (!showUserMenu || !menuButtonRef || typeof document === "undefined") {
-      return null;
-    }
-
-    const availableUsers = getAvailableUsers();
-
-    // Calculate position
-    const rect = menuButtonRef.getBoundingClientRect();
-    const menuWidth = 320;
-    const menuMaxHeight = 300;
-
-    // Position below the button, aligned to the right
-    let left = rect.right - menuWidth;
-    let top = rect.bottom + 4;
-
-    // Ensure menu doesn't go off left edge
-    if (left < 8) {
-      left = 8;
-    }
-
-    // Ensure menu doesn't go off right edge
-    if (left + menuWidth > window.innerWidth - 8) {
-      left = window.innerWidth - menuWidth - 8;
-    }
-
-    // Ensure menu doesn't go off bottom edge
-    if (top + menuMaxHeight > window.innerHeight - 8) {
-      // Position above the button instead
-      top = rect.top - menuMaxHeight - 4;
-      // If still off screen, position at top of viewport
-      if (top < 8) {
-        top = 8;
-      }
-    }
-
-    return createPortal(
-      <>
-        {/* Backdrop */}
-        <div className="fixed inset-0 z-[10002]" onClick={handleCloseMenu} />
-
-        {/* Menu */}
-        <div
-          className="fixed z-[10003] bg-gray-900 border border-gray-700 rounded-lg shadow-xl overflow-hidden"
-          style={{
-            left: `${left}px`,
-            top: `${top}px`,
-            width: `${menuWidth}px`,
-            maxHeight: `${menuMaxHeight}px`,
-          }}
-        >
-          <div className="overflow-y-auto max-h-full">
-            {availableUsers.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-gray-500">
-                No available users to add
-              </div>
-            ) : (
-              availableUsers.map((user) => (
-                <button
-                  key={user.clerkUserId}
-                  onClick={() => handleSelectUser(user)}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 transition-colors border-b border-gray-800 last:border-b-0"
-                >
-                  <div className="font-medium">{getDisplayName(user)}</div>
-                  {user.email && (
-                    <div className="text-xs text-gray-500">{user.email}</div>
-                  )}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      </>,
-      document.body,
-    );
   };
 
   if (loading) {
@@ -269,15 +136,9 @@ export default function AdminTab({
     );
   }
 
-  const currentOwner = allUsers.find((u) => u.clerkUserId === ownerClerkUserId);
-
   return (
     <div className="space-y-5">
-      <p className="text-sm text-gray-400">
-        Manage system ownership and user access permissions.
-      </p>
-
-      {renderUserMenu()}
+      <p className="text-sm text-gray-400">Manage system ownership.</p>
 
       {/* Owner Section */}
       <div className="border border-gray-700 rounded-lg p-4 bg-blue-500/5">
@@ -305,54 +166,6 @@ export default function AdminTab({
             ))}
           </select>
         </div>
-      </div>
-
-      {/* Viewers Section */}
-      <div className="border border-gray-700 rounded-lg p-4 bg-green-500/5">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Eye className="w-5 h-5 text-gray-400" />
-            <h3 className="text-sm font-semibold text-gray-200">Viewers</h3>
-            <span className="text-xs text-gray-500">(read-only access)</span>
-          </div>
-          <button
-            onClick={(e) => handleAddViewer(e.currentTarget)}
-            className="flex items-center gap-1 px-2 py-1 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 rounded transition-colors"
-          >
-            <Plus className="w-3 h-3" />
-            Add
-          </button>
-        </div>
-
-        {viewers.length > 0 ? (
-          <div className="space-y-1">
-            {viewers.map((viewer, index) => (
-              <div
-                key={viewer.clerkUserId}
-                className="flex items-center justify-between bg-gray-900/50 px-3 py-2 rounded-md"
-              >
-                <div>
-                  <div className="text-sm font-medium text-gray-300">
-                    {getDisplayName(viewer)}
-                  </div>
-                  {viewer.email && (
-                    <div className="text-xs text-gray-500">{viewer.email}</div>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleRemoveViewer(index)}
-                  className="text-gray-500 hover:text-red-400 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-sm text-gray-500 italic">
-            No viewers configured
-          </div>
-        )}
       </div>
     </div>
   );

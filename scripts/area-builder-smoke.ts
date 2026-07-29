@@ -9,7 +9,7 @@
  *   4. with bindings, the point set is exactly the BOUND points (override);
  *   5. adding a member grows the union;
  *   6. removing the last member is refused.
- * Then it hard-deletes the area (area_devices + area_bindings cascade).
+ * Then it hard-deletes the area (area_members + area_bindings cascade).
  *
  * Runs directly against the DB in .env.local — DEV only (the DB-env guard refuses a prod-token
  * connection). Bypasses HTTP/Clerk, so it needs no live session.
@@ -35,7 +35,7 @@ async function main() {
   const { planetscaleDb, requirePlanetscaleDb } = await import(
     "@/lib/db/planetscale"
   );
-  const { areas } = await import("@/lib/db/planetscale/schema");
+  const { areas, legacyHandles } = await import("@/lib/db/planetscale/schema");
   const { createArea, addMember, replaceBindings, removeMember } = await import(
     "@/lib/areas/create"
   );
@@ -43,7 +43,11 @@ async function main() {
   const { PointManager } = await import("@/lib/point/point-manager");
   const { SystemsManager } = await import("@/lib/systems-manager");
   const { getAreaBindingRefs } = await import("@/lib/areas/bindings");
-  const { getAreaDeviceSystemIds } = await import("@/lib/areas/devices");
+  const { getAreaMemberDeviceIds } = await import("@/lib/areas/members");
+  const { DeviceRegistry } = await import("@/lib/registry");
+  const { bindingShapeMatches } = await import("@/lib/areas/slots");
+  const { ROLES } = await import("@/lib/roles/registry");
+  type RoleId = import("@/lib/roles/registry").RoleId;
   const { eq } = await import("drizzle-orm");
 
   if (!planetscaleDb) {
@@ -58,6 +62,13 @@ async function main() {
 
   const countPoints = async (id: number) =>
     (await pm.getActivePointsForSystem(id, false, false)).length;
+
+  // Membership is uuid-keyed since slice H; this script asserts in integer handles, so convert.
+  const memberHandles = async (id: string) => {
+    const deviceIds = await getAreaMemberDeviceIds(id);
+    const rids = await DeviceRegistry.ridsForDevices(deviceIds);
+    return deviceIds.map((d) => rids.get(d)!);
+  };
 
   // Choose member devices: --members override, else auto-pick the first 3 active real systems that
   // have points.
@@ -128,12 +139,33 @@ async function main() {
     );
 
     // 4. Bindings override → exactly the bound points.
+    //    The point must SATISFY the role it is bound to — `replaceBindings` enforces shape, so a blind
+    //    `seedPoints[0]` fails whenever the first point happens to be, say, a `proportion` metric.
+    //    Search for a (role, point) pair that actually matches rather than assuming one.
     const seedPoints = await pm.getActivePointsForSystem(seed[0], false, false);
-    const p = seedPoints[0];
+    let chosen: { role: RoleId; point: (typeof seedPoints)[number] } | null =
+      null;
+    for (const point of seedPoints) {
+      const role = (Object.keys(ROLES) as RoleId[]).find((r) =>
+        bindingShapeMatches(r, point.metricType, point),
+      );
+      if (role) {
+        chosen = { role, point };
+        break;
+      }
+    }
+    if (!chosen)
+      throw new Error(
+        `No point on system ${seed[0]} satisfies any role's shape — pass --members with a device that has role-shaped points.`,
+      );
+    const p = chosen.point;
     const [ps, pid] = p.getReference().toString().split(".").map(Number);
+    console.log(
+      `  · binding ${p.logicalPathStem}/${p.metricType} as role "${chosen.role}"`,
+    );
     await replaceBindings(areaId, [
       {
-        role: "load",
+        role: chosen.role,
         metricType: p.metricType,
         pointSystemId: ps,
         pointId: pid,
@@ -154,8 +186,8 @@ async function main() {
     );
     if (extra) {
       await addMember(areaId, extra);
-      const ids = await getAreaDeviceSystemIds(areaId);
-      assert(ids.includes(extra), `area_devices now includes ${extra}`);
+      const ids = await memberHandles(areaId);
+      assert(ids.includes(extra), `area_members now includes ${extra}`);
       const grown = await countPoints(H);
       assert(
         grown === expectedUnion + (await countPoints(extra)),
@@ -164,11 +196,11 @@ async function main() {
     }
 
     // 6. Removing down to the last member is refused.
-    const memberIds = await getAreaDeviceSystemIds(areaId);
+    const memberIds = await memberHandles(areaId);
     for (const m of memberIds.slice(1)) await removeMember(areaId, m);
     let refused = false;
     try {
-      await removeMember(areaId, (await getAreaDeviceSystemIds(areaId))[0]);
+      await removeMember(areaId, (await memberHandles(areaId))[0]);
     } catch {
       refused = true;
     }
@@ -177,10 +209,18 @@ async function main() {
     console.log("\n✅ ALL CHECKS PASSED");
   } finally {
     if (areaId) {
-      await db.delete(areas).where(eq(areas.id, areaId));
-      console.log(
-        `\n🧹 Cleaned up area ${areaId} (members + bindings cascade).`,
-      );
+      // `legacy_handles.area_id` is NO ACTION, not CASCADE, so the handle row must go first — without
+      // this the delete throws and, being in a `finally`, MASKS whatever the body actually failed on.
+      // The cleanup is also wrapped: a cleanup failure must never impersonate a test failure.
+      try {
+        await db.delete(legacyHandles).where(eq(legacyHandles.areaId, areaId));
+        await db.delete(areas).where(eq(areas.id, areaId));
+        console.log(
+          `\n🧹 Cleaned up area ${areaId} (members + bindings cascade).`,
+        );
+      } catch (cleanupErr) {
+        console.error(`\n⚠️  Cleanup of area ${areaId} FAILED:`, cleanupErr);
+      }
     }
   }
 }

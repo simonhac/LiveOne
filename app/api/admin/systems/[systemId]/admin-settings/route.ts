@@ -1,11 +1,12 @@
+/**
+ * Per-system admin settings. This used to carry a `viewers` set as well, read from and written to
+ * `user_systems`; that table (and the AdminTab UI section that drove it) died in migration 0045
+ * (config-v4 Phase 12 slice F). Per-person sharing is `dashboard_grants` + `share_tokens`, so the only
+ * thing left here is the system's owner.
+ */
 import { NextRequest, NextResponse } from "next/server";
-import { clerkClient } from "@clerk/nextjs/server";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { userSystems } from "@/lib/db/planetscale/schema";
-import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
-import { grantUserSystem, revokeAllForSystem } from "@/lib/user-systems";
 
 export async function GET(
   request: NextRequest,
@@ -29,48 +30,9 @@ export async function GET(
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Get all viewers from userSystems table
-    const viewerRecords = await requirePlanetscaleDb()
-      .select()
-      .from(userSystems)
-      .where(
-        and(eq(userSystems.systemId, systemId), eq(userSystems.role, "viewer")),
-      );
-
-    // Fetch user details from Clerk for each viewer
-    const viewers = [];
-    for (const record of viewerRecords) {
-      try {
-        const client = await clerkClient();
-        const clerkUser = await client.users.getUser(record.clerkUserId);
-
-        viewers.push({
-          clerkUserId: record.clerkUserId,
-          email: clerkUser.emailAddresses[0]?.emailAddress,
-          firstName: clerkUser.firstName,
-          lastName: clerkUser.lastName,
-          username: clerkUser.username,
-        });
-      } catch (error) {
-        console.error(
-          `Failed to fetch Clerk user ${record.clerkUserId}:`,
-          error,
-        );
-        // Include viewer even if Clerk fetch fails
-        viewers.push({
-          clerkUserId: record.clerkUserId,
-          email: undefined,
-          firstName: undefined,
-          lastName: undefined,
-          username: undefined,
-        });
-      }
-    }
-
     return NextResponse.json({
       success: true,
       ownerClerkUserId: system.ownerClerkUserId,
-      viewers,
     });
   } catch (error) {
     console.error("Error fetching admin settings:", error);
@@ -100,7 +62,7 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const { ownerClerkUserId, viewers } = body;
+    const { ownerClerkUserId } = body;
 
     // Verify system exists (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
     const system = await SystemsManager.getInstance().getSystem(systemId);
@@ -114,18 +76,6 @@ export async function PATCH(
       await SystemsManager.getInstance().updateSystem(systemId, {
         ownerClerkUserId: ownerClerkUserId || null,
       });
-    }
-
-    // Update viewers: revoke every membership for the system, then re-grant each
-    // viewer. grantUserSystem upserts on (clerkUserId, systemId), so the final
-    // state is the supplied viewer set — the same end state as the prior
-    // incremental add/remove. Both writes honour CONFIG_WRITES_TO_PG.
-    if (viewers !== undefined && Array.isArray(viewers)) {
-      await revokeAllForSystem(systemId);
-
-      for (const viewer of viewers) {
-        await grantUserSystem(viewer.clerkUserId, systemId, "viewer");
-      }
     }
 
     return NextResponse.json({

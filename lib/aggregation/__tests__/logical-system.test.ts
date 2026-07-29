@@ -11,7 +11,7 @@ jest.mock("@/lib/point/point-manager", () => ({
 jest.mock("@/lib/areas/resolve", () => ({
   getAreaForSystem: jest.fn(),
 }));
-jest.mock("@/lib/areas/devices", () => ({
+jest.mock("@/lib/areas/members", () => ({
   listFlowEligibleAreaHandles: jest.fn(),
 }));
 
@@ -23,7 +23,7 @@ import {
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { listFlowEligibleAreaHandles } from "@/lib/areas/devices";
+import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 
 describe("isCompleteRoleSet", () => {
   it("is complete when there is a source and a load role", () => {

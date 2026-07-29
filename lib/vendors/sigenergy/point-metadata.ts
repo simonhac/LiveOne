@@ -66,9 +66,15 @@ export const SIGENERGY_POINTS: SigenergyPointConfig[] = [
   },
   {
     field: "loadW",
+    // `load.rest-of-house`, NOT `load`: the vendor's `loadPower` is house load EXCLUDING the AC
+    // charger (their identity `pvPower = buySellPower + batteryPower + loadPower + acPower` only
+    // balances that way, and their app shows LOAD and EVAC as separate sinks). That quantity IS the
+    // complement — the load no sub-meter covers — which the model otherwise synthesises. Here the
+    // vendor measures it, so it's a measured `load.rest-of-house` rather than a derived one; the
+    // site TOTAL is the `powerUse` energy counter below, carrying the master `load` stem.
     metadata: {
       physicalPathTail: "load_w",
-      logicalPathStem: "load",
+      logicalPathStem: "load.rest-of-house",
       defaultName: "Load",
       subsystem: "load",
       metricType: "power",
@@ -78,9 +84,12 @@ export const SIGENERGY_POINTS: SigenergyPointConfig[] = [
   },
   {
     field: "evW",
+    // `load.ev`, NOT `ev.charge`: this charger sits INSIDE the site load meter, so it is a child of
+    // the load hierarchy. `ev.charge` is reserved for a vehicle's own view of its charging (Tesla),
+    // which is never a flow sink.
     metadata: {
       physicalPathTail: "ev_w",
-      logicalPathStem: "ev.charge",
+      logicalPathStem: "load.ev",
       defaultName: "EV Charger",
       subsystem: "ev",
       metricType: "power",

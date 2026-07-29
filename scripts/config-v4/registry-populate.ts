@@ -1,4 +1,11 @@
 /**
+ * 🛑 SPENT TOOL — do NOT run this. Phase 12 slice H dropped `area_devices` (migration 0046), so stage 2a
+ * (which minted an area-of-one's membership row there) and stage 2f (which DERIVED `area_members` from
+ * it) both reference a table that no longer exists: the run aborts on the first of them. There is
+ * nothing left to derive either way — `area_members` has been the primary membership table since that
+ * slice, written directly by lib/areas/members.ts. Kept only so the cutover record reads intact; the
+ * whole `scripts/config-v4/` directory dies at slice L.
+ *
  * The ADDITIVE, DARK half of the config-v4 cutover transform's stage 2 — the single source of truth for
  * populating the v4 registries (`devices`, `points`, `area_members`, `device_state`) from the legacy ones
  * (`systems`, `point_info`, `area_devices`, `polling_status`), minting the areas-of-one, and backfilling
