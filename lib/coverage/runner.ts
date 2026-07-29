@@ -390,14 +390,21 @@ export async function runCoverageRepair(
         isBattery: boolean;
       }[] = [];
       try {
+        // ⚠️ HAND-WRITTEN `sql` — invisible to `tsc`, and its failure mode is silent
+        // under-resolution (no areas found → no flow refresh, no error). The device test goes
+        // through the binding's `point_uid` since config-v4 Phase 12 slice E PR 2a, hopping
+        // `points.device_id → devices.rid` (the seam invariant `devices.rid == systems.id`).
         const res = await db.execute(sql`
           SELECT DISTINCT a.id,
                  a.legacy_system_id AS handle,
                  a.timezone_offset_min AS tz,
                  EXISTS (SELECT 1 FROM area_bindings b2
                          WHERE b2.area_id = a.id AND b2.role='battery' AND b2.metric_type='power') AS is_battery
-          FROM area_bindings b JOIN areas a ON a.id = b.area_id
-          WHERE b.point_system_id = ${sid}
+          FROM area_bindings b
+          JOIN areas a ON a.id = b.area_id
+          JOIN points p ON p.id = b.point_uid
+          JOIN devices d ON d.id = p.device_id
+          WHERE d.rid = ${sid}
         `);
         areaRows = (res.rows ?? []).map((r) => ({
           id: String((r as { id: unknown }).id),

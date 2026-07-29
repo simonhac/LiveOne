@@ -17,7 +17,9 @@ import {
   areaBindings,
   areas,
   batteryProvenanceDaily,
+  devices,
   pointInfo,
+  points,
   systems,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
@@ -176,22 +178,25 @@ export function forwardFill(
 }
 
 /**
- * A binding's `point_uid` as a `PointId` — null when the binding carries none.
+ * A binding's `point_uid` as a `PointId`.
  *
  * `area_bindings.point_uid` names the same point as the legacy `(point_system_id, point_id)` pair it
- * replaces (verified 72/72 with zero disagreement on both environments), so reading it is a pure
- * elimination of a `RegistryCache.pointForAddr` round trip. A null inherits the old lookup-miss
- * semantics exactly — no identity, therefore no rows (config-v4 Phase 12 slice D).
+ * replaced (verified 72/72 with zero disagreement on both environments), so reading it is a pure
+ * elimination of a `RegistryCache.pointForAddr` round trip (config-v4 Phase 12 slice D). The column is
+ * NOT NULL since migration 0047, so there is no miss branch left: slice E's rule is that nullability
+ * which preserves behaviour also hides a gap, and here the gap it hid was a writer that never set it.
  */
-export function bindingPoint(pointUid: string | null): PointId | null {
-  return pointUid ? Point.encode(pointUid) : null;
+export function bindingPoint(pointUid: string): PointId {
+  return Point.encode(pointUid);
 }
 
 export interface BoundPoint {
+  /** LEGACY address, read from the point_info row `point_uid` joins to — not from the binding. */
   systemId: number;
+  /** LEGACY address (the point's per-device index) — see `systemId`. */
   pointId: number;
-  /** The point's identity — see `bindingPoint`. Null means the binding carries no uuid (→ no data). */
-  point: PointId | null;
+  /** The point's identity — see `bindingPoint`. */
+  point: PointId;
   role: string;
   metric: string;
   stem: string | null;
@@ -199,15 +204,24 @@ export interface BoundPoint {
   transform: string | null;
 }
 
-/** The Area's curated points via `area_bindings` joined to point_info (dedupes overlapping devices). */
+/**
+ * The Area's curated points via `area_bindings` joined to point_info (dedupes overlapping devices).
+ *
+ * The join is on `point_uid` since slice E PR 2a. `systemId`/`pointId` therefore come from the joined
+ * `point_info` row rather than the binding — which is what keeps them a genuine LEGACY side for the
+ * slice-D parity gate (`scripts/config-v4/verify-slice-d-parity.ts` block 1 compares `point` against
+ * `pointForAddr(systemId, pointId)`; sourcing them from the same uuid would make that check circular).
+ * Their remaining production consumers are the two `systems.config` lookups in this module and
+ * `battery-provenance-daily-pg.ts`, both of which read the device through `points`/`devices` instead.
+ */
 export async function boundPoints(
   db: PgDb,
   areaId: string,
 ): Promise<BoundPoint[]> {
   const rows = await db
     .select({
-      systemId: areaBindings.pointSystemId,
-      pointId: areaBindings.pointId,
+      systemId: pointInfo.systemId,
+      pointId: pointInfo.index,
       pointUid: areaBindings.pointUid,
       role: areaBindings.role,
       metric: areaBindings.metricType,
@@ -217,13 +231,7 @@ export async function boundPoints(
       piTransform: pointInfo.transform,
     })
     .from(areaBindings)
-    .innerJoin(
-      pointInfo,
-      and(
-        eq(pointInfo.systemId, areaBindings.pointSystemId),
-        eq(pointInfo.index, areaBindings.pointId),
-      ),
-    )
+    .innerJoin(pointInfo, eq(pointInfo.pointUid, areaBindings.pointUid))
     .where(eq(areaBindings.areaId, areaId))
     .orderBy(asc(areaBindings.ordinal));
   return rows.map((r) => ({
@@ -236,6 +244,30 @@ export async function boundPoints(
     unit: r.unit,
     transform: r.transform ?? r.piTransform,
   }));
+}
+
+/**
+ * The `systems.config` of the DEVICE that owns `point` — the site-level knobs (battery provenance,
+ * generator source, reserve-floor prior) hang off the battery point's device.
+ *
+ * Resolved `points.device_id → devices.rid → systems.id` since slice E PR 2a, replacing a lookup keyed
+ * on `area_bindings.point_system_id`. `devices.rid == systems.id` is the seam invariant
+ * (lib/registry/v4-mirror.ts); slice K/N delete the last `systems` hop, leaving `devices.config`.
+ * Returns undefined when the point (or its device's `systems` row) is gone — the same "no knobs, use
+ * the defaults" outcome the previous `where(systems.id = pointSystemId)` miss produced.
+ */
+export async function ownerDeviceConfig(
+  db: PgDb,
+  point: PointId,
+): Promise<(typeof systems.$inferSelect)["config"] | undefined> {
+  const [row] = await db
+    .select({ config: systems.config })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
+    .innerJoin(systems, eq(systems.id, devices.rid))
+    .where(eq(points.id, Point.toUuid(point)))
+    .limit(1);
+  return row?.config;
 }
 
 export interface LoadOptions {
@@ -338,9 +370,13 @@ export async function loadProvenanceInputs(
   if (timeline.length < 2 || sources.length === 0 || loads.length === 0)
     return null;
 
-  const batterySystemId =
-    bound.find((b) => b.role === "battery" && b.metric === "power")?.systemId ??
-    null;
+  // The battery's power binding drives two things: `batterySystemId` (a legacy id, but consumed ONLY
+  // as a has-a-battery signal — see `ProvenanceInputs`) and, since slice E PR 2a, the device-config
+  // lookup, which now goes through the point's uuid rather than that id.
+  const batteryBind = bound.find(
+    (b) => b.role === "battery" && b.metric === "power",
+  );
+  const batterySystemId = batteryBind?.systemId ?? null;
   const socBind = bound.find((b) => b.role === "battery" && b.metric === "soc");
   const SOC_FILL_MS = 30 * 60 * 1000;
   const region = nemRegionForLocation(
@@ -366,7 +402,7 @@ export async function loadProvenanceInputs(
   // for the checkpoint-seeded reconcile (its window starts at the checkpoint anchor) and strictly
   // more correct for every caller. (Exact battery charge/discharge registers are no longer read
   // here — they ride in on the flow bundle's `FlowSeries.energyKwh` overlays.)
-  const [socSeries, oeSeries, rateSeriesResults, batSysRow] = await Promise.all(
+  const [socSeries, oeSeries, rateSeriesResults, batConfig] = await Promise.all(
     [
       socBind && !opts.noSoc
         ? readAgg5m(db, socBind.point, startMs - SOC_FILL_MS, endMs)
@@ -380,13 +416,8 @@ export async function loadProvenanceInputs(
           })),
         ),
       ),
-      batterySystemId != null
-        ? db
-            .select({ config: systems.config })
-            .from(systems)
-            .where(eq(systems.id, batterySystemId))
-            .limit(1)
-            .then((r) => r[0])
+      batteryBind
+        ? ownerDeviceConfig(db, batteryBind.point)
         : Promise.resolve(undefined),
     ],
   );
@@ -430,12 +461,12 @@ export async function loadProvenanceInputs(
   // NEM region (an off-grid site can still be in VIC without being on the VIC1 grid). (bidi.grid's own `i`
   // transform flips the Selectronic's raw sign so generator supply reads as positive import → source.grid.)
   let exportTariff: ExportTariffConfig | undefined;
-  if (batterySystemId != null) {
+  if (batteryBind) {
     // Solar opportunity-cost source (none/amber/schedule); resolved to a series in `compute`.
-    exportTariff = batSysRow?.config?.batteryProvenance?.exportTariff;
+    exportTariff = batConfig?.batteryProvenance?.exportTariff;
     // Shared with run-period provenance — see lib/battery-provenance/generator-source.ts.
     const gen = resolveGeneratorIntensity(
-      batSysRow?.config?.batteryProvenance?.generatorSource,
+      batConfig?.batteryProvenance?.generatorSource,
     );
     if (gen) {
       gridEmissions = timeline.map(() => gen.gPerKwh);

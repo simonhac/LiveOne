@@ -10,25 +10,24 @@ import { eq } from "drizzle-orm";
 
 /** An Area's binding point refs, ordered by ordinal. */
 export interface BindingRef {
-  pointSystemId: number;
-  pointId: number;
+  /** The bound point's uuid — `area_bindings.point_uid`, NOT NULL since migration 0047. */
+  pointUid: string;
   role: string;
   metricType: string;
   ordinal: number;
 }
 
 /**
- * The (point_system_id, point_id) refs bound to the multi-device Area whose `legacy_system_id` is
- * `handle`, ordered by ordinal. Empty if no such Area / no bindings. Consumed by the area-native branch
- * of `PointManager._resolvePointsForViewable`.
+ * The point refs bound to the multi-device Area whose `legacy_system_id` is `handle`, ordered by
+ * ordinal. Empty if no such Area / no bindings. Consumed by the area-native branch of
+ * `PointManager._resolvePointsForViewable`.
  */
 export async function getAreaBindingRefs(
   handle: number,
 ): Promise<BindingRef[]> {
   const rows = await requirePlanetscaleDb()
     .select({
-      pointSystemId: areaBindings.pointSystemId,
-      pointId: areaBindings.pointId,
+      pointUid: areaBindings.pointUid,
       role: areaBindings.role,
       metricType: areaBindings.metricType,
       ordinal: areaBindings.ordinal,

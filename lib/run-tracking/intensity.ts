@@ -33,6 +33,8 @@ import type { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areaMembers,
+  devices,
+  points,
   systems,
 } from "@/lib/db/planetscale/schema";
 import { resolveGeneratorIntensity } from "@/lib/battery-provenance/generator-source";
@@ -101,7 +103,17 @@ export async function resolveIntensitySeries(
         eq(areaBindings.metricType, "power"),
       ),
     )
-    .innerJoin(systems, eq(systems.id, areaBindings.pointSystemId))
+    // The battery binding's device, reached through the binding's uuid (`points.device_id →
+    // devices.rid`) since slice E PR 2a, replacing a join on the retired
+    // `area_bindings.point_system_id`. `devices.rid == systems.id` is the seam invariant
+    // (lib/registry/v4-mirror.ts); slice K/N delete the `systems` hop, leaving `devices.config`.
+    // All three joins are INNER, exactly as the single one they replace was: `point_uid` is NOT
+    // NULL with an FK into `points`, and `points.device_id` an FK into `devices`, so neither can
+    // drop a row — only the final `devices.rid → systems.id` hop could, and that is the same
+    // unmatched-handle case the old join already had.
+    .innerJoin(points, eq(points.id, areaBindings.pointUid))
+    .innerJoin(devices, eq(devices.id, points.deviceId))
+    .innerJoin(systems, eq(systems.id, devices.rid))
     .where(eq(member.areaId, det.areaId))
     // ORDINAL, not priority — this must agree with the fold, which picks the battery system as the
     // first `role=battery, metric=power` of `boundPoints`, ordered by `ordinal`

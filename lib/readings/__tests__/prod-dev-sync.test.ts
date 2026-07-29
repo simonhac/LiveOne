@@ -428,13 +428,10 @@ describe("prod→dev readings transfer", () => {
       (entry) => entry.name === "area_bindings",
     )!;
     expect(table).toMatchObject({
-      conflictCols: [
-        "area_id",
-        "role",
-        "metric_type",
-        "point_system_id",
-        "point_id",
-      ],
+      // Re-based by migration 0047 onto `area_bindings_unique (area_id, role, metric_type,
+      // point_uid)`. Pinned here because ON CONFLICT names an index BY ITS COLUMNS: if this list and
+      // the live index ever disagree the sync aborts at runtime with "no unique constraint matching".
+      conflictCols: ["area_id", "role", "metric_type", "point_uid"],
       replaceConflicts: [["area_id", "role", "metric_type", "priority"]],
     });
 
@@ -451,8 +448,7 @@ describe("prod→dev readings transfer", () => {
             "area_id",
             "role",
             "metric_type",
-            "point_system_id",
-            "point_id",
+            "point_uid",
             "priority",
           ],
         ],
@@ -467,7 +463,7 @@ describe("prod→dev readings transfer", () => {
       "d.area_id = s.area_id AND d.role = s.role AND d.metric_type = s.metric_type AND d.priority = s.priority",
     );
     expect(reconciliation).toContain(
-      "ON CONFLICT (area_id, role, metric_type, point_system_id, point_id) DO UPDATE",
+      "ON CONFLICT (area_id, role, metric_type, point_uid) DO UPDATE",
     );
     expect(reconciliation).toContain("COMMIT;");
   });

@@ -52,8 +52,10 @@ import {
 // ── Manifest ────────────────────────────────────────────────────────────────
 
 // An FK child of an idDrift parent: `cols` are the child's FK columns, mapped POSITIONALLY onto the
-// parent's PK columns (e.g. parent point_info PK = (system_id, id); area_bindings' (point_system_id,
-// point_id) references it). Children don't all ON DELETE CASCADE, so id-drift clears them by hand.
+// parent's PK columns (e.g. parent point_readings keys on point_rid, which references points.rid).
+// Children don't all ON DELETE CASCADE, so id-drift clears them by hand. `point_info` has NO FK
+// children left at all since migration 0047 (config-v4 Phase 12 slice E PR 2a) released
+// `area_bindings`, the last one.
 type FkChild = { table: string; cols: string[] };
 
 // Resolve a divergent-surrogate collision that the natural-key trick (excludeCols) CAN'T fix because
@@ -284,7 +286,11 @@ const FULL: FullTable[] = [
         { table: "point_readings_agg_5m", cols: ["point_rid"] },
         { table: "point_readings_agg_1d", cols: ["point_rid"] },
         { table: "point_readings", cols: ["point_rid"] },
-        { table: "area_bindings", cols: ["point_system_id", "point_id"] },
+        // config-v4 Phase 12 slice E PR 2a: `area_bindings` no longer keys on the `point_info`
+        // (system_id, id) pair — migration 0047 dropped `area_bindings_point_info_fk` (the LAST FK
+        // into `point_info`) and re-based the binding's identity onto `point_uid`. The remaining
+        // int pair carries no constraint and no reader, so a `point_info` id drift cannot block the
+        // upsert and there is nothing here left to clear.
         // config-v4 Phase 11: derivations cite their source/output points by uuid inside jsonb
         // (`source_points`) and `output_point_id`, neither of which carries an FK or unique index
         // into point_info — so an id drift can't block the upsert and there is nothing to clear.
@@ -300,13 +306,10 @@ const FULL: FullTable[] = [
     name: "area_bindings",
     mode: "full",
     onConflict: "update",
-    conflictCols: [
-      "area_id",
-      "role",
-      "metric_type",
-      "point_system_id",
-      "point_id",
-    ],
+    // Re-based by migration 0047 onto `area_bindings_unique (area_id, role, metric_type, point_uid)`.
+    // ON CONFLICT names an INDEX by its columns, so this list and that index must move together —
+    // which is why this ships in the same PR as the migration rather than trailing it.
+    conflictCols: ["area_id", "role", "metric_type", "point_uid"],
     // Phase 4 added a second identity for a binding's ordered slot. A point can
     // move priority while dev still has another point in that slot; ON CONFLICT
     // can nominate only one unique index, so clear the other collision first.

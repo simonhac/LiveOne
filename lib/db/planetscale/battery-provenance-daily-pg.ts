@@ -19,13 +19,13 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   batteryProvenanceDaily,
-  systems,
   type BatteryProvenanceDailyRow,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import {
   boundPoints,
   loadBatteryThroughput,
+  ownerDeviceConfig,
   type BoundPoint,
 } from "@/lib/battery-provenance/load";
 import {
@@ -341,14 +341,11 @@ export async function learnAllForHandle(
   if (!batteryPowerBind) return { ...NO_DATA, areaId: area.id };
   // Reserve-floor upper clamp: the battery's ASSUMED physical floor (config knob, default 10) — the
   // prior for the unidentifiable case (a site that never discharges deep enough to reveal its floor).
-  const [batConfigSys] = await db
-    .select({ config: systems.config })
-    .from(systems)
-    .where(eq(systems.id, batteryPowerBind.systemId))
-    .limit(1);
+  // The owning device is resolved from the binding's uuid (`points.device_id → devices.rid`) since
+  // slice E PR 2a, not from the retired `area_bindings.point_system_id`.
+  const batConfig = await ownerDeviceConfig(db, batteryPowerBind.point);
   const reserveFloorMaxPct =
-    batConfigSys?.config?.batteryProvenance?.reserveFloorMaxPct ??
-    DEFAULT_RESERVE_PCT;
+    batConfig?.batteryProvenance?.reserveFloorMaxPct ?? DEFAULT_RESERVE_PCT;
   const chargeBind = bound.find(
     (b) => b.metric === "energy" && b.stem === "bidi.battery.charge",
   );

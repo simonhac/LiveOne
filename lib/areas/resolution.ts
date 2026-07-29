@@ -35,8 +35,8 @@ export interface ResolutionCandidate {
 }
 
 export interface ResolutionBinding {
-  pointSystemId: number;
-  pointId: number;
+  /** The bound point's uuid — `area_bindings.point_uid`, NOT NULL since migration 0047. */
+  pointUid: string;
   role: string;
   metricType: string;
   priority: number;
@@ -48,15 +48,16 @@ export function resolveSlotsFromData(
   bindingRows: ResolutionBinding[],
   config: AreaConfig | null,
 ): AreaResolutionSlot[] {
-  const byAddr = new Map(
-    points.map((point) => [`${point.systemId}.${point.index}`, point]),
-  );
+  // Keyed on the candidate's own identity (`ResolutionCandidate.id`, the encoded `point_uid`) rather
+  // than the legacy `systemId.index` address, so a binding resolves through exactly the column it
+  // stores. Encoding the binding's raw uuid is what bridges the two — `Point.encode` is total.
+  const byPoint = new Map(points.map((point) => [point.id, point]));
   return RESOLUTION_SLOTS.map((definition): AreaResolutionSlot => {
     const explicit = bindingRows
       .filter((binding) => binding.role === definition.role)
       .map((binding) => ({
         binding,
-        point: byAddr.get(`${binding.pointSystemId}.${binding.pointId}`),
+        point: byPoint.get(Point.encode(binding.pointUid)),
       }))
       .filter(
         (entry): entry is typeof entry & { point: ResolutionCandidate } =>
@@ -141,8 +142,8 @@ export async function resolveAreaSlots(
     .where(eq(areas.id, areaUuid))
     .limit(1);
   if (!area) throw new Error(`Area not found: ${areaUuid}`);
-  // Membership is uuid-keyed since slice H; `point_info.system_id` and `area_bindings.point_system_id`
-  // are not, so convert. The `!` is safe by the `area_members.device_id` FK.
+  // Membership is uuid-keyed since slice H; `point_info.system_id` is not, so convert. The `!` is safe
+  // by the `area_members.device_id` FK.
   const memberDeviceIds = await getAreaMemberDeviceIds(areaUuid);
   const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
   const members = memberDeviceIds.map((id) => memberRids.get(id)!);
@@ -161,8 +162,7 @@ export async function resolveAreaSlots(
       .where(inArray(pointInfo.systemId, memberIds)),
     db
       .select({
-        pointSystemId: areaBindings.pointSystemId,
-        pointId: areaBindings.pointId,
+        pointUid: areaBindings.pointUid,
         role: areaBindings.role,
         metricType: areaBindings.metricType,
         priority: areaBindings.priority,

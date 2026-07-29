@@ -8,7 +8,7 @@
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
-import { and, asc, eq, max, or } from "drizzle-orm";
+import { and, asc, eq, inArray, max, or } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -16,6 +16,7 @@ import {
   areaBindings,
   areaMembers,
   pointInfo,
+  points,
   systems,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
@@ -237,8 +238,8 @@ export async function addMember(
 
 /**
  * Remove a member device and, in the same transaction, its now-orphaned bindings (so the resolver
- * never dereferences a point on a dropped member — the point_info FK guards nonexistent points but not
- * membership drift). Refuses to remove the last member.
+ * never dereferences a point on a dropped member — the `point_uid → points.id` FK guards nonexistent
+ * points but not membership drift). Refuses to remove the last member.
  */
 export async function removeMember(
   areaId: string,
@@ -253,12 +254,21 @@ export async function removeMember(
     throw new AreaValidationError("Cannot remove the last member of an area");
   const deviceUuid = Device.toUuid(target);
   await db.transaction(async (tx) => {
+    // "Every binding whose point lives on the departing device", by uuid since slice E PR 2a.
+    // `deviceUuid` is already in hand, so this addresses `points.device_id` DIRECTLY and needs no
+    // `devices.rid` hop at all — one fewer legacy-id round trip than the predicate it replaces.
     await tx
       .delete(areaBindings)
       .where(
         and(
           eq(areaBindings.areaId, areaId),
-          eq(areaBindings.pointSystemId, systemId),
+          inArray(
+            areaBindings.pointUid,
+            tx
+              .select({ id: points.id })
+              .from(points)
+              .where(eq(points.deviceId, deviceUuid)),
+          ),
         ),
       );
     await tx
@@ -281,7 +291,16 @@ export interface BindingInput {
   transform?: string | null;
 }
 
-/** An area's current bindings, ordered by ordinal (the editor's GET). */
+/**
+ * An area's current bindings, ordered by ordinal (the editor's GET).
+ *
+ * ⚠️ STILL ON THE INT PAIR — deliberately. `BindingInput` is the area-builder's WIRE grammar
+ * (`components/area-builder/types.ts`), which slice E PR 2b re-grammars onto `pt_` TypeIDs; converting
+ * only this half would break the editor's round trip. The `!`s are load-bearing only in the window
+ * between PR 2a and PR 2b: migration 0047 merely RELAXES the two columns to NULLable, and every
+ * binding writer still names them until PR 2b stops, so no row observed here can carry a NULL.
+ * Migration 0048 drops the columns, by which time this function must already read `point_uid`.
+ */
 export async function getAreaBindingsForEditor(
   areaId: string,
 ): Promise<BindingInput[]> {
@@ -296,7 +315,11 @@ export async function getAreaBindingsForEditor(
     .from(areaBindings)
     .where(eq(areaBindings.areaId, areaId))
     .orderBy(asc(areaBindings.ordinal));
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    pointSystemId: r.pointSystemId!,
+    pointId: r.pointId!,
+  }));
 }
 
 /**

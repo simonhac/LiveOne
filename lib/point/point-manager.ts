@@ -8,7 +8,7 @@
  * - Inserting point readings (insertPointReading, insertPointReadingsRaw, insertPointReadingsAgg5m)
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo as pgPointInfoTable } from "@/lib/db/planetscale/schema";
 import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
@@ -18,7 +18,7 @@ import {
   createSeriesInfos,
   getSeriesPath,
 } from "@/lib/point/series-info";
-import { SystemIdentifier, PointReference } from "@/lib/identifiers";
+import { SystemIdentifier } from "@/lib/identifiers";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
 import { mintPointUid } from "@/lib/point/mint-point-uid";
 import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
@@ -268,20 +268,18 @@ export class PointManager {
       return this._loadOwnPoints(system.id);
     }
 
-    const validPointRefs: PointReference[] = (
-      await getAreaBindingRefs(system.id)
-    ).map((r) => PointReference.fromIds(r.pointSystemId, r.pointId));
+    const boundUids = (await getAreaBindingRefs(system.id)).map(
+      (r) => r.pointUid,
+    );
 
-    if (validPointRefs.length > 0) {
-      // Bindings present (override) → the bound child refs ARE the set. Fetch all in one query:
-      // OR-of-(system_id,id) against Postgres point_info.
-      const pgConditions = validPointRefs.map(
-        (ref) => sql`(system_id = ${ref.systemId} AND id = ${ref.pointId})`,
-      );
+    if (boundUids.length > 0) {
+      // Bindings present (override) → the bound child points ARE the set. Each binding carries the
+      // point's uuid (`area_bindings.point_uid`, NOT NULL since 0047), so this is one indexed
+      // `point_uid IN (…)` rather than the OR-of-(system_id, id) pairs it replaces.
       const pgRows = await requirePlanetscaleDb()
         .select()
         .from(pgPointInfoTable)
-        .where(sql`${sql.join(pgConditions, sql` OR `)}`);
+        .where(inArray(pgPointInfoTable.pointUid, boundUids));
       return pgPointInfoRowsToServed(pgRows).map((row) => PointInfo.from(row));
     }
 

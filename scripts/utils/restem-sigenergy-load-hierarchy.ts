@@ -255,7 +255,7 @@ async function main() {
       id: areaBindings.id,
       role: areaBindings.role,
       metricType: areaBindings.metricType,
-      pointId: areaBindings.pointId,
+      pointUid: areaBindings.pointUid,
       priority: areaBindings.priority,
     })
     .from(areaBindings)
@@ -266,9 +266,12 @@ async function main() {
       ),
     );
 
+  // Bindings address their point by uuid (`area_bindings.point_uid`, NOT NULL since 0047), and the
+  // row this script already read carries it — so match on that rather than the legacy index.
+  const evUid = byTail.get("ev_w")!.pointUid;
   const evIndex = byTail.get("ev_w")!.index;
   const evBindings = bindings.filter(
-    (b) => b.role === "ev" && b.pointId === evIndex,
+    (b) => b.role === "ev" && b.pointUid === evUid,
   );
   const loadAtOne = bindings.filter(
     (b) => b.role === "load" && b.priority === 1,
@@ -281,12 +284,10 @@ async function main() {
     // must be free before the ev binding can land there.
     if (loadAtOne.length > 0)
       die(
-        `load/power priority=1 is already taken by binding ${loadAtOne[0].id} (point ${loadAtOne[0].pointId}).`,
+        `load/power priority=1 is already taken by binding ${loadAtOne[0].id} (point ${loadAtOne[0].pointUid}).`,
       );
     bindingWrite = evBindings[0].id;
-  } else if (
-    !bindings.some((b) => b.role === "load" && b.pointId === evIndex)
-  ) {
+  } else if (!bindings.some((b) => b.role === "load" && b.pointUid === evUid)) {
     die(
       `no ev/power binding on point ${evIndex} and no load/power binding either — investigate.`,
     );
