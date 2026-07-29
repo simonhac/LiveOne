@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
-import { SystemsManager } from "@/lib/systems-manager";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getSystemCredentials } from "@/lib/secure-credentials";
@@ -279,8 +281,7 @@ async function handleBackfill(request: NextRequest) {
   // Resolve the targets: an explicit systemId, else EVERY active sigenergy system. Looping by
   // default is deliberate — the old "exactly one, or 400" rule would have silently broken the
   // nightly cron the day a second Sigenergy site was added.
-  const sm = SystemsManager.getInstance();
-  const sigenSystems = (await sm.getActiveSystems()).filter(
+  const sigenSystems = (await DeviceConfigRegistry.activeDevices()).filter(
     (s) => s.vendorType === "sigenergy",
   );
   let targets: DeviceConfigView[];

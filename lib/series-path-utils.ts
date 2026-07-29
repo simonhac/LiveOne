@@ -1,8 +1,7 @@
-import { SystemsManager } from "@/lib/systems-manager";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
-
-// Load SystemsManager once at module level
-const systemsManager = SystemsManager.getInstance();
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 
 /**
  * Utilities for working with series IDs in the format:
@@ -40,7 +39,7 @@ export async function resolveSystemFromIdentifier(
 ): Promise<DeviceConfigView | null> {
   // Only support numeric ID for now
   if (/^\d+$/.test(systemIdentifier)) {
-    return systemsManager.getSystem(parseInt(systemIdentifier));
+    return DeviceConfigRegistry.deviceByHandle(parseInt(systemIdentifier));
   }
 
   return null;
