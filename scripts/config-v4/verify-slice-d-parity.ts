@@ -12,9 +12,9 @@
  *
  *   npx tsx --env-file=.env.local scripts/config-v4/verify-slice-d-parity.ts
  */
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { areas, pointInfo } from "@/lib/db/planetscale/schema";
+import { areaBindings, areas, pointInfo } from "@/lib/db/planetscale/schema";
 import { boundPoints } from "@/lib/battery-provenance/load";
 import { resolveCoveragePoints } from "@/lib/coverage/find-gaps";
 import { RegistryCache, UnknownIdError } from "@/lib/registry";
@@ -47,6 +47,26 @@ function compare(what: string, got: PointId | null, want: PointId | null) {
 }
 
 async function main() {
+  // 0. Writer coverage. Block 1 below would surface a NULL `point_uid` as a MISMATCH anyway, but it
+  //    would name the symptom (an identity that disagrees) rather than the cause (a writer that never
+  //    set the column). `replaceBindings` is delete-all-then-reinsert, so one un-fixed writer nulls a
+  //    whole area at once — worth its own line.
+  const [{ total, missing }] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      missing: sql<number>`count(*) FILTER (WHERE ${areaBindings.pointUid} IS NULL)::int`,
+    })
+    .from(areaBindings);
+  if (missing > 0) {
+    console.error(
+      `WRITER GAP: ${missing}/${total} area_bindings rows have a NULL point_uid — a binding writer is ` +
+        `not setting it (see lib/areas/__tests__/binding-writers.test.ts).`,
+    );
+    mismatched += missing;
+  } else {
+    console.log(`area_bindings.point_uid populated: ${total}/${total}`);
+  }
+
   // 1. boundPoints() — the battery-provenance membership read, now sourced from area_bindings.point_uid.
   const areaRows = await db.select({ id: areas.id }).from(areas);
   for (const a of areaRows) {

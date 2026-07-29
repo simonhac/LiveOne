@@ -322,6 +322,7 @@ export async function replaceBindings(
           .select({
             systemId: pointInfo.systemId,
             index: pointInfo.index,
+            pointUid: pointInfo.pointUid,
             logicalPathStem: pointInfo.logicalPathStem,
             metricType: pointInfo.metricType,
           })
@@ -341,6 +342,9 @@ export async function replaceBindings(
   );
   const nextPriority = new Map<string, number>();
   const seenPriorities = new Set<string>();
+  // Collected in binding order so the INSERT can name `point_uid` without re-looking-up (and without a
+  // non-null assertion — the loop below has already proven every point resolves).
+  const resolvedUids: string[] = [];
   for (const b of bindings) {
     if (!(b.role in ROLES))
       throw new AreaValidationError(`Unknown role: ${b.role}`);
@@ -385,6 +389,7 @@ export async function replaceBindings(
       );
     seenPriorities.add(priorityKey);
     b.priority = priority;
+    resolvedUids.push(point.pointUid);
   }
   const db = requirePlanetscaleDb();
   const selectedBatterySystemId = bindings.find(
@@ -401,6 +406,7 @@ export async function replaceBindings(
           metricType: b.metricType,
           pointSystemId: b.pointSystemId,
           pointId: b.pointId,
+          pointUid: resolvedUids[i],
           ordinal: i,
           priority: b.priority!,
           transform: b.transform ?? null,

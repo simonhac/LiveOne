@@ -21,7 +21,6 @@ import {
   pointReadingsFlowAttr1d,
 } from "./schema";
 import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
-import { RegistryCache } from "@/lib/registry";
 import { Point, type PointId } from "@/lib/ids";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
@@ -415,6 +414,7 @@ async function writeBlendOutputs(
     inputs.areaId,
     helperSystemId,
     ensure.pointIds,
+    ensure.pointUids,
   );
   if (bind.created > 0) {
     // Best-effort — the KV registry rebuild (fan-out wiring) must never abort the agg_5m write, and it
@@ -431,10 +431,11 @@ async function writeBlendOutputs(
   const rows: Agg5mInsert[] = [];
   const latest = new Map<string, { value: number; tsMs: number }>();
   for (const spec of BLEND_POINTS) {
-    const pointId = ensure.pointIds[spec.metricType];
-    if (pointId === undefined) continue;
-    // The helper point was just ensured (committed on the pool) → it resolves via the registry.
-    const point = await RegistryCache.pointForAddr(helperSystemId, pointId);
+    const pointUid = ensure.pointUids[spec.metricType];
+    if (pointUid === undefined) continue;
+    // `ensureBatteryProvenancePoints` just returned this point's uuid — no registry round-trip needed to
+    // rediscover an identity the caller already holds (slice D).
+    const point = Point.encode(pointUid);
     for (let i = 0; i < result.steps.length; i++) {
       const tsMs = timeline[i + 1];
       if (tsMs < winStartMs || tsMs > winEndMs) continue;
