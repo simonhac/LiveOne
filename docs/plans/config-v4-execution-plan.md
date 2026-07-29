@@ -14,12 +14,12 @@
 > yet done, and every trap that would otherwise be re-learned (**Traps and rules** — read it before
 > touching a migration).
 
-## ▶ NEXT ACTION — Phase 12 slice **E PR 2b**: the wire + KV grammars, the writers, and 0048
+## ▶ NEXT ACTION — Phase 12 slice **M**: `point-manager` mints `points` directly
 
-Phases 10 + 11 COMPLETE. Phase 12 slices A, A2, B, C, F, G shipped 2026-07-28; H, D (both PRs),
-E PR 1 and E PR 2a on 2026-07-29. **✅ No outstanding migration debt — 0047 is applied to BOTH
-environments** (2026-07-29, prod `sydney` then `liveone-dev`), so **FKs into `point_info` are 0 and
-slice N is unblocked.** Remaining: **E PR 2b → 0048 → M → K → the terminal window**.
+Phases 10 + 11 COMPLETE. **✅ SLICE E IS COMPLETE** — all of A, A2, B, C, D, E, F, G, H shipped, and
+**0047 + 0048 are applied to BOTH environments** (2026-07-29). `area_bindings` has exactly one
+address, **FKs into `point_info` are 0, and slice N is unblocked.** No outstanding migration debt.
+Remaining: **M → K → the terminal window**.
 
 ---
 
@@ -104,7 +104,8 @@ and a long branch has none (the 0037 lesson). **[A]** additive → prod before t
 | **H**  | `area_devices` → `area_members`                                                            | 0046      |
 | **D**  | `pointForAddr` **17 → 2** over two PRs; `pointUid` became a field on `PointInfo`           | [C] ×2    |
 | **E1** | The `area_bindings` writers populate `point_uid` — closed a live defect                    | [C]       |
-| **E2a**| 13 server-internal `area_bindings` readers onto `point_uid`; **0047 drafted, not applied**  | [C]       |
+| **E2a**| 13 server-internal `area_bindings` readers onto `point_uid`                                 | 0047      |
+| **E2b**| the area-builder wire → `pt_` TypeIDs, KV map re-keyed by point uuid, writers + contract     | 0048      |
 
 Two of these carry findings that still bind:
 
@@ -160,11 +161,27 @@ table dies at the terminal window. The pair must die inside Phase 12.
   beforehand, since the guard's `RAISE NOTICE`s are swallowed. Temp roles deleted; **no `reassign` was
   needed even though the migration CREATEs indexes — an index's owner always follows its table's**, so
   they came out owned by `postgres`.
-- **PR 2b** [C] — the two external grammars and the writers: `updateLatestPointValue` takes a `pointUid`;
-  the area-builder wire moves to `pt_` TypeIDs; `replaceBindings` + `ensureHelperBindings` stop naming
-  the pair; `schema.ts` drops the columns. **Rebuild the KV subscription registry immediately after
-  deploy** — between deploy and rebuild the map is int-keyed while the lookup is uuid-keyed.
-- **0048** [D] — drop `point_system_id` / `point_id`.
+- ✅ **PR 2b DONE** ([#284](https://github.com/simonhac/LiveOne/pull/284)) — the area-builder wire is
+  `pt_` end to end and `parseReference` is gone; the KV subscription map's **source key** is the point
+  uuid (its outer `subscriptions:system:N` key, `latest:system:N` and the stored `pointReference` stay
+  integer by design until Phase 13, and say so in a comment); `replaceBindings` reads points by uuid and
+  now validates membership against the **resolved** `point_info.system_id` rather than a caller-asserted
+  one. Corrections to the brief: `updateLatestPointValue` keeps `(systemId, pointId, pointUid, …)` —
+  dropping the ints is impossible while `latest:system:N` is integer-keyed; there are **six** production
+  call sites, not three (`hws/recompute` and `run-tracking/running-latest` hold no `PointInfo`); and
+  `getAreaBindings` had to gain a join because the source system id lived on a dropped column — it goes
+  through `points → devices.rid`, **not** `point_info`, because slice N drops `point_info` before Phase
+  13 retires the integer keyspace, and because both hops are FK-backed so neither can silently drop a
+  binding.
+- ✅ **0048 APPLIED to BOTH environments (2026-07-29).** Order matters and is the reusable part:
+  merge → deploy `Ready` → **rebuild the KV registry on both envs** → verify multi-device areas serving
+  fresh → apply prod → post-check → apply dev → post-check. All three guards were also run by hand on
+  prod first. Both envs: pair columns gone, 72 rows, 0 NULL `point_uid`, **0 FKs into `point_info`**,
+  journal hash `97aa697e…` matching local, `db:pg:generate` "No schema changes", parity gate **451/0**,
+  ingest 7 s behind throughout. The KV rebuild was verified by re-running the *same* query before and
+  after — prod's inner keys went `['4','5','6']` → uuids across 12 source systems. Final int-pair
+  inventories are in `.context/backups/`; **unlike 0047, 0048 destroys data not reconstructible from
+  the schema**, so those files plus PITR are the only copies.
 
 **Why two migrations:** both int columns are `NOT NULL` with no default, so the instant the writers stop
 naming them every binding INSERT fails until the drop. Expand/contract, not one flip.
@@ -177,9 +194,16 @@ commit and `uuid` in the next is a history hazard. It belongs with Phase 13/14's
 **The plan under-sized this: there are FOUR `max(index)+1` allocators, not one — and three never call
 `mirrorPoint`.** `point-manager.ts:588-596` (mirrors), `hws/register.ts:80-100`,
 `battery-provenance/register.ts:205-232`, `run-tracking/running-latest.ts:51-77` (none mirror). That is
-slice A2's defect class one level out, and it is a **live, open C7 hole today** — probe
-`/api/health?v4mirror=1` and the `point_info`-without-`points` count on both envs before coding; if
-non-zero, M is a bug fix as well as a refactor. (`point_readings_agg_5m` also FKs `points.rid`.)
+slice A2's defect class one level out.
+
+**Probed 2026-07-29: the hole is ARMED but has NOT FIRED.** `/api/health?v4mirror=1` reads
+`pointsMissing: 0, devicesMissing: 0` on prod, and dev is 134 `point_info` = 134 `points`. The reason
+is timing, not safety: the three unmirrored writers last minted in June (hws ×2, running ×1), before
+the cutover's `registry-populate` backfilled `points` — so their rows have a mirror they did not
+create. **The next mint through any of those three paths orphans a point**, and the hot tables'
+`FK point_rid → points(rid)` still enforces on insert, so that reading fails and QStash retries it
+forever. This is the same shape as slice E PR 1: a writer gap that is invisible until someone
+exercises it. So M is **preventive**, and the probe must be re-run immediately before it starts.
 
 **Invert: `points` becomes primary, `point_info` the write-behind copy until it drops.** 0043's
 `points.rid DEFAULT nextval(…)` exists for exactly this and is inert until now; both columns draw from
@@ -394,6 +418,24 @@ Each was learned by breaking something; they are why the shipped narratives coul
   ones.** Internal readers convert freely; the wire cannot until its grammar changes. That asymmetry is
   why a contract migration **relaxes** the legacy column instead of dropping it — the intervening state
   has to be representable, or two PRs collapse into one un-splittable change.
+- 🛑 **Migration preconditions read the CATALOG, never the drizzle journal.** The journal records
+  intent; the catalog records what is true of *this* branch. 0048 proves 0047 landed by checking that
+  `area_bindings_unique` actually keys on `point_uid`.
+- 🛑 **Re-assert an equivalence inside the migration that destroys your ability to check it.** After a
+  DROP there is no second address left to disagree with, so a divergence introduced since the last
+  check becomes silent and permanent. A check that can only ever run once should run.
+- 🛑 **A column drop is only half the change when a persisted derived store keys off it.** The KV
+  subscription registry had to be rebuilt on both environments *between* the deploy and the drop —
+  that is a deploy step, and it belongs in the PR body and the migration header, not in the reviewer's
+  memory.
+- ⚠️ **Removing a FK turns any join onto the replacement key into a silent filter.** Prefer a
+  replacement join that is itself FK-backed and NOT NULL; if none exists, add a reachability assertion.
+- ⚠️ **When a check becomes DB-enforced, replace it with the next unenforced invariant, or delete it.**
+  A passing tautology reads as coverage. The parity gate's block 0 went from "is `point_uid` non-null"
+  (now enforced by 0047) to binding→`point_info` reachability.
+- ⚠️ **A mocked query-builder chain encodes arity**, so re-shaping a query is a test change by
+  construction — a stale chain returns `undefined` and yields zero rows *silently*. If re-shaping a
+  query did not require touching its mock, the mock is not asserting anything.
 - 🛑 **`scripts/config-v4/reconcile-device-state.ts` is SPENT** — a pre-flip tool whose direction is now
   backwards (`polling_status` is frozen while `device_state` advances), so `--commit` would rewind live
   counters. Its drift report is equally spent: post-flip the tables are _supposed_ to diverge. Check the
