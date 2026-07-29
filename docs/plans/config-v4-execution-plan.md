@@ -10,7 +10,7 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 12 slice D **PR 2**: put `pointUid` on the `PointInfo` class, which unblocks the vendor/flow/labs `pointForAddr` sites (see slice D below). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H shipped 2026-07-29; slice D PR 1 (17 → 9 call sites) + slice E PR 1 (binding writers, 9 → 8) 2026-07-29.**
+## ▶ NEXT ACTION — Phase 12 slice **E PR 2**: `area_bindings` readers off the int pair + the contract (migration 0047), which is what unblocks slice N's `point_info` drop. **Slice D is DONE bar two structural sites that are not mechanical conversions — see the slice D block.** **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H shipped 2026-07-29; slice D PR 1 (17 → 9) + slice E PR 1 (binding writers, 9 → 8) + slice D PR 2 (8 → 2) 2026-07-29.**
 
 > 🚀 **The remaining plan was re-cut for pace on 2026-07-29** (Simon: sole user, tolerates a few hours
 > of dashboard downtime and hand-migration, must not lose polling data). Two changes to what is written
@@ -643,7 +643,7 @@ change the slicing. Recounted:
 | --- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | (silent)                                                          | **The v4 registries were not in the prod→dev sync manifest.** `devices`, `points`, `area_members`, `device_state`, `legacy_handles` were populated on dev by `registry-sync.ts` — scaffolding this phase deletes. And they are no longer dark: `point_readings` + both agg twins FK `point_rid → points.rid`, so a prod-minted point that never reached dev's `points` broke the readings legs. **Fixed in slice A.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 2   | `polling_status` is a read-switch                                 | **`device_state` has zero runtime writers** — only `schema.ts` + the two doomed `scripts/config-v4/` scripts. `lib/polling-utils.ts` still writes `polling_status`. Needs a writer + backfill (slice C), not a read swap.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 3   | "the `systemId.pointIndex` ref grammar in the publisher/receiver" | Understated ~10×. `RegistryCache.pointForAddr` has ~18 call sites in 13 files and `lib/registry/registry-cache.ts:118-123` reads `point_info` as its backing store. **This, not the `SystemsManager` rename, is the long pole.**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 3   | "the `systemId.pointIndex` ref grammar in the publisher/receiver" | Understated ~10×. `RegistryCache.pointForAddr` has ~18 call sites in 13 files and `lib/registry/registry-cache.ts:118-123` reads `point_info` as its backing store. **This, not the `SystemsManager` rename, is the long pole.** ✅ **Over-called in the end: 17 → 2 in two PRs (slice D), because nearly every caller already held the uuid.** The backing store never had to move — see slice D PR 1 on why it _can't_ (`points` has no counterpart to `point_info.id`). `SystemsManager` (slice K) is the real long pole after all.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 4   | `AREA_HANDLE_BASE`/`allocateAreaHandle` → Phase 13                | Forced into Phase 12: `lib/areas/handles.ts:33-35` computes `max(systems.id)`, so `systems` cannot drop while it exists.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 5   | `roles` has 1 query site                                          | **0 query sites.** Residue is the `schema.ts:728` declaration, `Role`/`NewRole`, the `areaBindings.role` FK, and the manifest string. ✅ Confirmed exactly right when slice G shipped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 6   | `user_systems`/`isViewer` = 7 query sites                         | 13 query lines / 9 files. `isViewer` is 5 occurrences, all in `lib/api-auth.ts`, with **zero consumers** of the returned field (✅ exact). **Prod `user_systems` holds 0 rows** (probed 2026-07-28); dev's 22 are `reown-dev-data.ts` debris. ⚠️ **"The drop is free" was wrong about the CODE** — measured at slice F: **9 read sites / 8 files**, plus live writers (`lib/user-systems.ts`), an admin **UI feature** (AdminTab Viewers), and dev's 22 rows are **load-bearing for Vercel preview**, not debris. See the slice-F block.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -668,7 +668,7 @@ first, then prod, then dev. **[C]** code-only.
 | **F**  | ✅ `user_systems` + `isViewer` die (prod table is empty) — see below                                                                                                           | [C] → [D] 0045            |
 | **A2** | ✅ Close the mint-only mirror leaks (`updatePoint`, `updateSystem`, `updateDashboard`) — see below                                                                             | [C]                       |
 | **H**  | ✅ `area_devices` → `area_members` — see below                                                                                                                                 | [C] → [D] 0046            |
-| **D**  | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain. **PR 1 landed** (17 → 9 call sites); PR 2 pending — see below              | [C]                       |
+| **D**  | ✅ `pointForAddr` **17 → 2** over two PRs. The 2 left are structural, not mechanical — see below                                                                               | [C] ×2                    |
 | **E**  | `area_bindings` on `point_uid` + `priority`. **PR 1 landed** — the writers now populate `point_uid` (a live defect, see below); PR 2 = readers off the int pair + the contract | [C] ×2 → [D] 0047         |
 | **M**  | `point-manager` mints `points` directly; the `max(index)+1` allocator dies                                                                                                     | [C]                       |
 | **I**  | `sessions.system_id` → `device_rid`, expand/contract                                                                                                                           | [A] 0048, 0049 → [D] 0050 |
@@ -794,16 +794,85 @@ real gate — `scripts/config-v4/verify-slice-d-parity.ts` drives the **actual**
 have returned: **206 identities, 0 mismatched.** That script is the running gate for the rest of slice D;
 extend it per PR. It dies with `pointForAddr` (no legacy side left to compare against).
 
-**Remaining 8, and the one that gates them.** (Was 9 — slice E PR 1 retired
-`battery-provenance-pg.ts:437` by having `ensureBatteryProvenancePoints` return the uuid it had just
-minted.) `PointInfo` (the class, `lib/point/point-info.ts`) does
-**not** carry `pointUid` — only the `PointInfoRow` row shape does. That single omission is why the vendor
-(3), flow (1) and labs (1) sites must round-trip. Adding it is the next PR, and it crosses the
-served-shape/frontend boundary (`ViewDataModal` builds `PointInfo.from()` out of API responses), which is
-why it was kept out of PR 1. The last three are structural, not mechanical: `history/readings-pg.ts:67`
-and `app/api/admin/point/[systemIdDotPointId]/readings/route.ts:139` take `systemId.pointId` from the
-**wire**, and `observations/receive/route.ts:128` is the legacy-grammar branch **slice M owns** (it may
-not be deleted until the outbox drains — see the ordering traps).
+**◑ SLICE D — PR 2 DONE (2026-07-29). `pointForAddr` call sites 8 → 2.** `pointUid` is now a field on
+the `PointInfo` class, and six sites read the identity they already held.
+
+**Three corrections to PR 1's sizing of the remaining 8** — worth recording because two of them
+inverted the plan's own difficulty ordering:
+
+- **`lib/history/readings-pg.ts:67` was NOT wire-bound.** It was grouped with the "structural, not
+  mechanical" three on the claim that it "takes `systemId.pointId` from the wire". It doesn't:
+  `AggFetchParams.uniquePairs` is assembled server-side at `app/api/history/route.ts` from
+  `seriesInfos.map(s => s.point…)` — and `SeriesInfo.point` **is a `PointInfo` instance** — plus
+  `logicalSystem.energyPoints[].ref`, the same producer as the flow site. The `PointInfo` change
+  unblocked it like the rest, so it converted in this PR rather than never.
+- **The two Enphase sites were never blocked at all.** They hold a `PointInfoRow` (from
+  `getPointByPhysicalPathTail`), not a `PointInfo`, and `PointInfoRow.pointUid` has been NOT NULL
+  since 0030. They could have gone in PR 1.
+- **Labs was independent too** — `app/labs/kinkora-hws/page.tsx` runs its own `point_info` query that
+  projected only `index`. One column widened it.
+
+So the "one omission gates vendor (3) + flow (1) + labs (1)" framing was right about the _existence_ of
+the blocker and wrong about its _extent_: only **amber, flow and history** actually needed the class
+change. **Read the producer, not the consumer, before sizing a conversion** — three of six sites were
+already holding the uuid.
+
+What shipped:
+
+- **`pointUid` is the FIRST constructor param**, ahead of the legacy `(index, systemId)` address, and
+  **required** — not appended as an optional. Slice E's rule is that nullability which preserves
+  behaviour also hides a gap; a `string`-typed field holding `undefined` from JSON is that same defect
+  wearing a type. There was exactly one external `new PointInfo(...)`, so inserting it up front cost one
+  loud compile error and bought an ordering that reads identity-then-address.
+- **`PointInfo.from()` throws on a missing `pointUid`**, and the two `PointInfo.from(x as any)` casts in
+  `ViewDataModal` are gone (the response is typed against a new exported `PointInfoWire`). **That cast
+  was the actual hole**: with it in place the admin route could silently stop projecting the column and
+  nothing would fail to compile. `:990`'s cast was also a no-op re-`from()` of a value already
+  reconstructed by the same Map — deleted rather than retyped.
+- Converted: enphase ×2, amber, flow (`LogicalSystemPoint`/`FlowSeriesPoint` gain `point: PointId`),
+  labs, history. `resolvePairs` in `readings-pg.ts` went from a concurrent `pointForAddr` fan-out to a
+  **pure synchronous** map build.
+- Every conversion deleted a `try/catch (UnknownIdError)` scaffold, as in PR 1. **The one semantic
+  change to know:** those branches _skipped_ an unresolvable address; the DAO _throws_. Since the uuid
+  now comes from a row the caller just read, the only way to reach it is a point deleted mid-request,
+  where throwing beats silently dropping a series. `readings-pg.test.ts`'s
+  "skips a pair with no registry identity" test was retired for that reason and replaced with one
+  asserting the two halves are genuinely decoupled — read by the caller's identity, served rows keyed by
+  the caller's index — which the old lookup made impossible to write.
+
+**Verified.** 137/137 suites (1,341 tests), `tsc` clean on app + `scripts/config-v4`, `check:readings`
+green, `build:local` green. The parity gate grew blocks 3–5 (`getActivePointsForSystem` over every
+handle — which subsumes the amber and flow producers in one sweep; `resolveLogicalSystem` for both
+`points` and `energyPoints`, since a mapper that dropped `point` would still leave block 3 green; and
+`getPointByPhysicalPathTail`) and runs **451 identities, 0 mismatched** on `liveone-dev`, up from 206.
+
+**The check that actually carries this PR is the `/api/history` A/B**, because five of six conversions
+are on serve paths with no unit coverage. Seven pinned-window payloads (1d / 5m+sankey / 30m, across a
+real device, an Amber device and the multi-device area handle 1000002) were captured on the new code,
+then the branch was `git stash`ed so Next hot-reloaded the OLD code, and captured again. **Every data
+leaf is identical — the only two differing fields in all seven are `created_at` and `durationMs`**, i.e.
+the response's own wall clock. Vendors were A/B'd the same way in one process (resolve the same points
+both ways, drive the same DAO call with each, deep-equal the readings): amber 6 usage points / 294
+readings and enphase `solar_w` both **MATCH on ids and on rows**. `/labs/kinkora-hws` renders 1,931
+timeline steps with 374 non-zero power samples. The admin `point-readings` route emits `pointUid` on
+**31/31** headers across two systems, and feeding that real payload back through `PointInfo.from()` —
+the exact client path — rebuilds every header with a uuid matching `point_info`.
+
+> ⚠️ **Not verified: `ViewDataModal` in an actual browser.** The claude-in-chrome extension has no site
+> permission for `localhost:3100` (port 3000 was in use by another workspace), so the modal was proven
+> at the API + reconstruction layer and by `build:local` compiling the component, not visually. The
+> residual risk is a render-time regression from dropping the redundant `pointInfoInstance` binding.
+
+**The 2 that remain, and why neither is a slice-D-shaped conversion:**
+
+- `app/api/admin/point/[systemIdDotPointId]/readings/route.ts:139` — the **URL segment itself** is the
+  legacy address (`{systemId}.{index}`, split and `parseInt`ed). `PointReadingInspectorModal` now has
+  the uuid in hand and could address it as `pt_…`, but that is a wire-grammar change and belongs with
+  Phase 13's serve-path work, not here (Simon's call).
+- `app/api/observations/receive/route.ts:128` — the legacy `debug.reference` branch **slice M owns**.
+  Retiring it is a publisher-drain question (gate G3), not a refactor.
+
+The parity gate is therefore at its final shape; it still dies with `pointForAddr`.
 
 **✅ SLICE H DONE (2026-07-29) — code merged (#276) and deployed, migration 0046 applied to both environments.**
 `area_members` is now the membership table — read and written by `lib/areas/members.ts` (renamed from

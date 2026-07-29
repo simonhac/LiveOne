@@ -12,6 +12,7 @@
  */
 
 import { PointReference } from "@/lib/identifiers";
+import { Point, type PointId } from "@/lib/ids";
 import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { classifyEnergyStem, isCompleteRoleSet } from "@/lib/roles/registry";
@@ -23,7 +24,18 @@ export { isCompleteRoleSet };
 
 /** A power point participating in a logical system, carrying its physical origin. */
 export interface LogicalSystemPoint {
-  /** Physical origin: {systemId, pointId} — for a multi-device area this is the child system. */
+  /**
+   * The point's identity (`point_info.point_uid`, NOT NULL). Carried alongside `ref` so the
+   * readings seam can be addressed directly — `flow-series-pg.ts` used to spend a
+   * `RegistryCache.pointForAddr` round trip per point rediscovering exactly this
+   * (config-v4 Phase 12 slice D).
+   */
+  point: PointId;
+  /**
+   * Physical origin: {systemId, pointId} — for a multi-device area this is the child system.
+   * Still needed: the flow builder's `NormRow`s and the `/api/history` served rows are both
+   * addressed by the integer pair. It dies with the handle in Phase 13.
+   */
   ref: PointReference;
   /** Canonical logical-path stem, e.g. "source.solar.local" | "bidi.battery" | "load.hws". */
   stem: string;
@@ -80,6 +92,7 @@ export async function resolveLogicalSystem(
   const points: LogicalSystemPoint[] = pts
     .filter((p) => p.metricType === "power" && p.logicalPathStem)
     .map((p) => ({
+      point: Point.encode(p.pointUid),
       ref: p.getReference(),
       stem: p.logicalPathStem!,
       metricType: p.metricType,
@@ -99,6 +112,7 @@ export async function resolveLogicalSystem(
         classifyEnergyStem(p.logicalPathStem) !== null,
     )
     .map((p) => ({
+      point: Point.encode(p.pointUid),
       ref: p.getReference(),
       stem: p.logicalPathStem!,
       metricType: p.metricType,

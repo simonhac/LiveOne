@@ -19,7 +19,8 @@ import {
   buildSeriesFromAggRows,
   type AggRow,
 } from "@/lib/history/build-series";
-import { fetchAggRowsPg } from "@/lib/history/readings-pg";
+import { fetchAggRowsPg, type AggFetchPoint } from "@/lib/history/readings-pg";
+import { Point, type PointId } from "@/lib/ids";
 import { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import {
   resolveLogicalSystem,
@@ -360,17 +361,21 @@ async function getSystemHistoryInOpenNEMFormat(
       }
     : undefined;
 
-  // Deduplicate (system_id, point_id) pairs — we select ALL aggregation fields per point.
-  const uniquePairsArray: Array<[number, number]> = Array.from(
-    new Set(
-      seriesInfos.map(
-        (series) => `${series.point.systemId},${series.point.index}`,
-      ),
-    ),
-  ).map((pair) => {
-    const [systemId, pointId] = pair.split(",").map(Number);
-    return [systemId, pointId] as [number, number];
-  });
+  // Deduplicate points — we select ALL aggregation fields per point. Deduped on the point's own
+  // identity (`point_uid` is unique) rather than a stringified address, and each entry carries that
+  // identity through so the fetch needs no registry round trip (config-v4 Phase 12 slice D).
+  const uniquePairsArray: AggFetchPoint[] = [];
+  const seenPoints = new Set<PointId>();
+  for (const series of seriesInfos) {
+    const point = Point.encode(series.point.pointUid);
+    if (seenPoints.has(point)) continue;
+    seenPoints.add(point);
+    uniquePairsArray.push({
+      point,
+      systemId: series.point.systemId,
+      pointId: series.point.index,
+    });
+  }
 
   // Sub-daily Sankey: compute the energy-flow matrix from the SAME signed 5m rows this fetch loads
   // (5m/30m only — for 30m the rows are still raw 5m, bucketed later), so it costs no extra query.
@@ -399,13 +404,14 @@ async function getSystemHistoryInOpenNEMFormat(
   // Sankey (they just fall back to integration), and `buildSeriesFromAggRows` iterates
   // `seriesInfos`, so the extra rows never leak into the chart payload.
   if (computeSankey) {
-    const have = new Set(uniquePairsArray.map(([s, p]) => `${s},${p}`));
     for (const ep of sankey!.logicalSystem.energyPoints) {
-      const key = `${ep.ref.systemId},${ep.ref.pointId}`;
-      if (!have.has(key)) {
-        have.add(key);
-        uniquePairsArray.push([ep.ref.systemId, ep.ref.pointId]);
-      }
+      if (seenPoints.has(ep.point)) continue;
+      seenPoints.add(ep.point);
+      uniquePairsArray.push({
+        point: ep.point,
+        systemId: ep.ref.systemId,
+        pointId: ep.ref.pointId,
+      });
     }
   }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import { PointReference } from "@/lib/identifiers";
+import { Point } from "@/lib/ids";
 import { buildFlowSeries } from "@/lib/aggregation/flow-series";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import type {
@@ -25,12 +26,17 @@ const KW: Record<string, (number | null)[]> = {
   "load.hws": [1, 1.5, 1],
 };
 
+/** A synthetic but VALID uuid per point index — `LogicalSystemPoint.point` is a real `PointId`. */
+const uid = (pointId: number) =>
+  Point.encode(`019ec06c-f635-7000-8000-${String(pointId).padStart(12, "0")}`);
+
 function mkPoint(
   pointId: number,
   stem: string,
   displayName: string,
 ): LogicalSystemPoint {
   return {
+    point: uid(pointId),
     ref: PointReference.fromIds(6, pointId),
     stem,
     metricType: "power",

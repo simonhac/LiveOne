@@ -53,6 +53,8 @@ describe("isCompleteRoleSet", () => {
   });
 });
 
+let nextFakeUid = 0;
+
 function fakePoint(stem: string, name: string) {
   return {
     metricType: "power",
@@ -60,6 +62,9 @@ function fakePoint(stem: string, name: string) {
     metricUnit: "W",
     transform: null,
     name,
+    // A real `point_info.point_uid` — `resolveLogicalSystem` now encodes it onto
+    // `LogicalSystemPoint.point` (config-v4 slice D), so a placeholder string would throw.
+    pointUid: `019ec06c-f635-7000-8000-${String(++nextFakeUid).padStart(12, "0")}`,
     getReference: () => ({ systemId: 1, pointId: 0 }),
   };
 }

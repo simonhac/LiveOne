@@ -36,7 +36,9 @@ import {
   getChannelMetadata,
 } from "./point-metadata";
 import type { PointInfo } from "@/lib/point/point-info";
-import type { PointId } from "@/lib/ids";
+// `lib/ids` is the client-safe leaf codec — no cycle, so unlike the registry/manager imports
+// below it needs no dynamic `await import`.
+import { Point, type PointId } from "@/lib/ids";
 
 /**
  * Flag to control whether sampleRecords are included in sync results
@@ -255,7 +257,6 @@ async function loadLocalRecords(
     const { SystemsManager } = await import("@/lib/systems-manager");
     const { PointManager } = await import("@/lib/point/point-manager");
     const { ReadingsDao } = await import("@/lib/readings");
-    const { RegistryCache, UnknownIdError } = await import("@/lib/registry");
 
     // 0. Verify this is an Amber system
     const systemsManager = SystemsManager.getInstance();
@@ -305,8 +306,7 @@ async function loadLocalRecords(
     // interval IN-list; ReadingsDao.read5m reads a [from,to] range, so we read the enclosing window and
     // re-filter to the exact expected-interval Set client-side. Amber is 30-min-native so stored 5m rows
     // align to this grid → byte-identical to the IN-list (the re-filter also drops any stray off-grid row
-    // that happens to fall inside the window). Identity resolves via the (systemId, index) address; a
-    // point with no registry row (UnknownIdError) simply contributes no local readings.
+    // that happens to fall inside the window). Identity comes off each PointInfo's own `point_uid`.
     const readings: Array<{
       pointId: number;
       intervalEnd: number;
@@ -322,17 +322,16 @@ async function loadLocalRecords(
       const expectedSet = new Set<number>(expectedIntervals);
       const fromMs = expectedIntervals[0];
       const toMs = expectedIntervals[expectedIntervals.length - 1];
+      // The identity comes straight off the PointInfo (`point_uid`, NOT NULL) — no registry
+      // round trip and no not-in-registry branch (config-v4 Phase 12 slice D). `indexByPoint`
+      // stays: the served rows below re-key on the integer `pointId: index`, which the Amber
+      // sync's comparison stages still address by.
       const indexByPoint = new Map<PointId, number>();
       const pointIds: PointId[] = [];
       for (const p of filteredPoints as PointInfo[]) {
-        try {
-          const id = await RegistryCache.pointForAddr(systemId, p.index);
-          indexByPoint.set(id, p.index);
-          pointIds.push(id);
-        } catch (err) {
-          if (err instanceof UnknownIdError) continue;
-          throw err;
-        }
+        const id = Point.encode(p.pointUid);
+        indexByPoint.set(id, p.index);
+        pointIds.push(id);
       }
       const series = await ReadingsDao.read5m(pointIds, { fromMs, toMs });
       for (const [id, rows] of series) {

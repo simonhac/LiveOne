@@ -6,22 +6,36 @@
  * math) rather than via PG `generate_series`, so the grid is identical by construction and never
  * drifts on timestamp/timezone boundary semantics.
  *
- * Reads flow through the config-v4 readings seam (`ReadingsDao`): the `(systemId, pointId)`
- * composite address the caller supplies is resolved to a public `PointId` via `RegistryCache`, the
- * DAO reads by `PointId`, and results are mapped back to the composite address for the served rows.
+ * Reads flow through the config-v4 readings seam (`ReadingsDao`): the caller supplies each point's
+ * `PointId` alongside its `(systemId, pointId)` composite address, the DAO reads by `PointId`, and
+ * results are mapped back to the composite address for the served rows.
  * The transform (densify, `avgCache` reconstruction, `data_quality` mapping) stays byte-identical to
  * the pre-seam direct-`agg` read.
  */
 import { FIVE_MIN_MS } from "@/lib/aggregation/point-aggregates";
 import { ReadingsDao, type Agg5mReading } from "@/lib/readings";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
 import type { PointId } from "@/lib/ids";
 import type { AggRow } from "./build-series";
 import type { Agg5mAvgCache, Agg5mAvgRow } from "./agg5m-cache";
 
+/**
+ * One point to fetch: its identity plus the composite address the SERVED rows are keyed by.
+ *
+ * The caller resolves both — `SeriesInfo.point` is a `PointInfo` (which carries `point_uid`) and
+ * the Sankey's energy overlay comes from `LogicalSystemPoint` — so this fetch no longer spends a
+ * `RegistryCache.pointForAddr` round trip per pair rediscovering an identity that was already in
+ * hand (config-v4 Phase 12 slice D). `systemId`/`pointId` stay because `AggRow.point_id` is still
+ * the integer index on the wire; they die with the handle in Phase 13.
+ */
+export interface AggFetchPoint {
+  point: PointId;
+  systemId: number;
+  pointId: number;
+}
+
 export interface AggFetchParams {
-  /** Distinct `[systemId, pointId]` pairs to fetch. */
-  uniquePairs: Array<[number, number]>;
+  /** Distinct points to fetch (deduped by identity). */
+  uniquePairs: AggFetchPoint[];
   interval: "5m" | "30m" | "1d";
   /** 5m/30m only: dense-timeline bounds in epoch-ms (queryFirstEpoch = firstEpoch − 25m for 30m). */
   queryFirstEpoch?: number;
@@ -31,11 +45,9 @@ export interface AggFetchParams {
   endDate?: string;
 }
 
-function groupPointIdsBySystem(
-  pairs: Array<[number, number]>,
-): Map<number, number[]> {
+function groupPointIdsBySystem(pairs: AggFetchPoint[]): Map<number, number[]> {
   const bySystem = new Map<number, number[]>();
-  for (const [systemId, pointId] of pairs) {
+  for (const { systemId, pointId } of pairs) {
     let arr = bySystem.get(systemId);
     if (!arr) {
       arr = [];
@@ -47,32 +59,27 @@ function groupPointIdsBySystem(
 }
 
 /**
- * Resolve every `[systemId, pointId]` composite address to its public `PointId`, concurrently.
- * `RegistryCache.pointForAddr` is a warm-cache synchronous hit in a live serving process; a cold
- * miss is a single indexed `point_info` lookup that also warms the address the DAO resolves below.
- * An address with no registry identity is skipped (`UnknownIdError`) rather than aborting the whole
- * fetch — the pre-seam read queried the `agg` tables directly and had no such identity dependency.
+ * Build the two lookup maps the fetch below works through. Pure and synchronous: the caller
+ * supplies each point's identity alongside its address, so there is nothing to resolve — this used
+ * to be a concurrent `RegistryCache.pointForAddr` fan-out (config-v4 Phase 12 slice D).
+ *
+ * The old fan-out skipped an address with no registry identity rather than aborting the fetch.
+ * That branch is gone with the lookup: `point_uid` is NOT NULL and the caller read the row, so an
+ * unresolvable point is no longer representable here. A point deleted mid-request now surfaces
+ * from the DAO instead of being silently dropped, which is the better answer.
  */
-async function resolvePairs(pairs: Array<[number, number]>): Promise<{
-  /** `"systemId.pointId"` → PointId, for the resolved subset. */
+function resolvePairs(pairs: AggFetchPoint[]): {
+  /** `"systemId.pointId"` → PointId. */
   pairToPoint: Map<string, PointId>;
   /** PointId → integer `pointId` (the reverse used to rebuild the served rows). */
   pointToInt: Map<PointId, number>;
-}> {
+} {
   const pairToPoint = new Map<string, PointId>();
   const pointToInt = new Map<PointId, number>();
-  await Promise.all(
-    pairs.map(async ([systemId, pointId]) => {
-      try {
-        const id = await RegistryCache.pointForAddr(systemId, pointId);
-        pairToPoint.set(`${systemId}.${pointId}`, id);
-        pointToInt.set(id, pointId);
-      } catch (err) {
-        if (err instanceof UnknownIdError) return; // skip-and-continue
-        throw err;
-      }
-    }),
-  );
+  for (const { point, systemId, pointId } of pairs) {
+    pairToPoint.set(`${systemId}.${pointId}`, point);
+    pointToInt.set(point, pointId);
+  }
   return { pairToPoint, pointToInt };
 }
 
@@ -86,7 +93,7 @@ export async function fetchAggRowsPg(
   avgCache?: Agg5mAvgCache,
 ): Promise<AggRow[]> {
   const idsBySystem = groupPointIdsBySystem(p.uniquePairs);
-  const { pairToPoint, pointToInt } = await resolvePairs(p.uniquePairs);
+  const { pairToPoint, pointToInt } = resolvePairs(p.uniquePairs);
 
   // The resolved PointIds for a system's requested indices, preserving the caller's order (skipping
   // any unresolved address).

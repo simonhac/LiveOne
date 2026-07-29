@@ -4,8 +4,7 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { PointManager } from "@/lib/point/point-manager";
 import { ReadingsDao } from "@/lib/readings";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
-import type { PointId } from "@/lib/ids";
+import { Point, type PointId } from "@/lib/ids";
 import {
   checkAndFetchYesterdayIfNeeded,
   fetchEnphaseDay,
@@ -51,15 +50,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       return null;
     }
 
-    // Get the latest 5-minute aggregate for this point, via the readings seam. A point with no
-    // registry identity (UnknownIdError) has no rows → no reading.
-    let id: PointId;
-    try {
-      id = await RegistryCache.pointForAddr(systemId, solarPoint.index);
-    } catch (err) {
-      if (err instanceof UnknownIdError) return null;
-      throw err;
-    }
+    // Get the latest 5-minute aggregate for this point, via the readings seam. `getPointByPhysicalPathTail`
+    // returned the row, so its `point_uid` (NOT NULL) IS the identity — no registry round trip, and
+    // no not-in-registry branch to take (config-v4 Phase 12 slice D).
+    const id: PointId = Point.encode(solarPoint.pointUid);
     const latestAgg = (await ReadingsDao.latest5mForPoints([id])).get(id);
 
     if (!latestAgg) {

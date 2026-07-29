@@ -21,7 +21,7 @@ import {
 import PointInfoModal from "./PointInfoModal";
 import SessionInfoModal from "./SessionInfoModal";
 import PointReadingInspectorModal from "./PointReadingInspectorModal";
-import { PointInfo } from "@/lib/point/point-info";
+import { PointInfo, type PointInfoWire } from "@/lib/point/point-info";
 import { getContextualUnitDisplay } from "@/lib/point/unit-display";
 import { applyExcelFormat } from "@/lib/point/display/excel-format";
 
@@ -208,11 +208,17 @@ export default function ViewDataModal({
         `/api/admin/systems/${systemId}/point-readings?${params}`,
       );
 
-      // Convert headers object to Map
+      // Convert headers object to Map. Typed as `PointInfoWire` rather than cast through
+      // `any`: `pointUid` is required, and the cast was the one thing that would let the
+      // route stop projecting it without anything failing to compile (config-v4 slice D).
       const headersMap = new Map<string, PointInfo | null>();
       if (result.headers) {
-        Object.entries(result.headers).forEach(([key, value]) => {
-          headersMap.set(key, value ? PointInfo.from(value as any) : null);
+        const wireHeaders = result.headers as Record<
+          string,
+          PointInfoWire | null
+        >;
+        Object.entries(wireHeaders).forEach(([key, value]) => {
+          headersMap.set(key, value ? PointInfo.from(value) : null);
         });
       }
 
@@ -986,10 +992,10 @@ export default function ViewDataModal({
                               key !== "sessionLabel" &&
                               pointInfo
                             ) {
-                              // Convert plain object from API to PointInfo instance
-                              const pointInfoInstance = PointInfo.from(
-                                pointInfo as any,
-                              );
+                              // `pointInfo` is already a PointInfo instance — `filteredHeaders`
+                              // iterates the headers Map, which the fetch built with
+                              // `PointInfo.from()`. The re-`from()` here was a no-op round trip
+                              // through an `as any`.
 
                               // Parse time/date string to typed object
                               const timestamp = row.time
@@ -1000,7 +1006,7 @@ export default function ViewDataModal({
                                 : parseDateISO(row.date); // YYYY-MM-DD → CalendarDate
 
                               setSelectedReading({
-                                pointInfo: pointInfoInstance,
+                                pointInfo,
                                 timestamp,
                               });
                               setIsReadingInspectorOpen(true);
