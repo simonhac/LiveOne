@@ -21,8 +21,8 @@ import {
   pointReadingsFlowAttr1d,
 } from "./schema";
 import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
-import type { PointId } from "@/lib/ids";
+import { RegistryCache } from "@/lib/registry";
+import { Point, type PointId } from "@/lib/ids";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import type {
@@ -33,7 +33,10 @@ import {
   buildSubscriptionRegistry,
   updateLatestPointValue,
 } from "@/lib/kv-cache-manager";
-import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
+import {
+  bindingPoint,
+  loadProvenanceInputs,
+} from "@/lib/battery-provenance/load";
 import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
 import {
@@ -59,20 +62,6 @@ import type { FoldStep, FoldState } from "@/lib/battery-provenance/fold";
 import type { LogicalSystem } from "@/lib/aggregation/logical-system";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
-
-/** Resolve a legacy (system_id, index) address to its PointId, or null if the point is unknown — a
- *  nonexistent address returned 0 agg_5m rows pre-seam, so the staleness probe treats it as "no data". */
-async function pointForAddrOrNull(
-  systemId: number,
-  index: number,
-): Promise<PointId | null> {
-  try {
-    return await RegistryCache.pointForAddr(systemId, index);
-  } catch (e) {
-    if (e instanceof UnknownIdError) return null;
-    throw e;
-  }
-}
 
 /** Fold warm-up lead-in: enough to reach a reset (bottom-out) before the target window. */
 export const WARMUP_MS = 7 * 24 * 3600 * 1000;
@@ -661,8 +650,7 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
   // pre-anchor rate/OE revisions — those heal at the nightly heal; see the PR notes.)
   const [powerBind] = await db
     .select({
-      sys: areaBindings.pointSystemId,
-      pid: areaBindings.pointId,
+      uid: areaBindings.pointUid,
     })
     .from(areaBindings)
     .where(
@@ -674,7 +662,7 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
     )
     .limit(1);
   if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
-  const powerPoint = await pointForAddrOrNull(powerBind.sys, powerBind.pid);
+  const powerPoint = bindingPoint(powerBind.uid);
   const probeMs = powerPoint
     ? await ReadingsDao.latestAgg5mUpdatedAtForPoint(
         powerPoint,
@@ -801,8 +789,7 @@ export async function tryLoadSeededProvenanceInputs(
   // reconcile uses.
   const [powerBind] = await db
     .select({
-      sys: areaBindings.pointSystemId,
-      pid: areaBindings.pointId,
+      uid: areaBindings.pointUid,
     })
     .from(areaBindings)
     .where(
@@ -814,7 +801,7 @@ export async function tryLoadSeededProvenanceInputs(
     )
     .limit(1);
   if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
-  const powerPoint = await pointForAddrOrNull(powerBind.sys, powerBind.pid);
+  const powerPoint = bindingPoint(powerBind.uid);
   const probeMs = powerPoint
     ? await ReadingsDao.latestAgg5mUpdatedAtForPoint(
         powerPoint,

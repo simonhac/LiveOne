@@ -6,14 +6,20 @@
  * (Amber, OpenElectricity, Sigenergy) supplies a `CoverageRepairProvider`; the generic runner
  * (lib/coverage/runner.ts) drives both stages uniformly. See lib/coverage/find-gaps.ts + runner.ts.
  */
+import type { PointId } from "@/lib/ids";
 import type { SystemWithPolling } from "@/lib/systems-manager";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import type { PollCollector } from "@/lib/observations/poll-collector";
 
-/** A coverage point resolved to its per-system point id. */
+/** A coverage point resolved to its per-system point id and its registry identity. */
 export interface CoveragePoint {
   id: number;
   tail: string; // physical_path_tail, e.g. "E1/kwh", "nem/price", "solar_interval_wh"
+  /** The point's registry identity, carried from the same row `id`/`tail` came from. The readings
+   *  DAO is keyed on this, so carrying it removes a `RegistryCache.pointForAddr` round trip per
+   *  point — and with it the "point absent from the registry" branch, which the NOT NULL
+   *  `point_uid` makes unreachable once the row itself is in hand (config-v4 Phase 12 slice D). */
+  point: PointId;
 }
 
 export interface PointShortfall {

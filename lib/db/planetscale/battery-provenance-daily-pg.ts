@@ -22,9 +22,7 @@ import {
   systems,
   type BatteryProvenanceDailyRow,
 } from "@/lib/db/planetscale/schema";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
 import { ReadingsDao } from "@/lib/readings";
-import type { PointId } from "@/lib/ids";
 import {
   boundPoints,
   loadBatteryThroughput,
@@ -242,13 +240,8 @@ async function readAgg1dBaselines(
     [chargeBind, "charge"],
     [dischargeBind, "discharge"],
   ] as const) {
-    let id: PointId;
-    try {
-      id = await RegistryCache.pointForAddr(bind.systemId, bind.pointId);
-    } catch (err) {
-      if (err instanceof UnknownIdError) continue; // no identity → no baseline rows
-      throw err;
-    }
+    const id = bind.point;
+    if (!id) continue; // no uuid on the binding → no baseline rows
     const series = await ReadingsDao.read1d(
       [id],
       { startDay: fromDay, endDay: OPEN_END_DAY },

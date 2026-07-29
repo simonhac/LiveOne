@@ -10,7 +10,7 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 12 slice D (`RegistryCache` off `point_info` — the long pole). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H shipped 2026-07-29.**
+## ▶ NEXT ACTION — Phase 12 slice D **PR 2**: put `pointUid` on the `PointInfo` class, which unblocks the vendor/flow/labs `pointForAddr` sites (see slice D below). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H shipped 2026-07-29; slice D PR 1 (17 → 9 call sites) 2026-07-29.**
 
 > ✅ **No outstanding migration debt.** 0044 + 0045 + 0046 are applied to BOTH environments; every
 > migration through 0046 is live on prod `sydney` and `liveone-dev`.
@@ -654,7 +654,7 @@ first, then prod, then dev. **[C]** code-only.
 | **F** | ✅ `user_systems` + `isViewer` die (prod table is empty) — see below | [C] → [D] 0045 |
 | **A2** | ✅ Close the mint-only mirror leaks (`updatePoint`, `updateSystem`, `updateDashboard`) — see below | [C] |
 | **H** | ✅ `area_devices` → `area_members` — see below | [C] → [D] 0046 |
-| **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain | [C] |
+| **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain. **PR 1 landed** (17 → 9 call sites) — see below | [C] |
 | **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0047 |
 | **M** | `point-manager` mints `points` directly; the `max(index)+1` allocator dies | [C] |
 | **I** | `sessions.system_id` → `device_rid`, expand/contract | [A] 0048, 0049 → [D] 0050 |
@@ -680,6 +680,48 @@ first, then prod, then dev. **[C]** code-only.
 - Fix in K6: `createSystem` writes the `legacy_handles` row **twice** — `insertSystemToPg` calls
   `ensureDeviceForHandle` inside its tx (`lib/systems-manager.ts:448`), then `createSystem` calls
   `ensureDeviceRow` outside it (`:333`), which calls it again.
+
+**◑ SLICE D — PR 1 DONE (2026-07-29). `pointForAddr` call sites 17 → 9.**
+
+The headline correction to the sizing note (#3): **the backing store is not the hard part.** Two facts
+found while mapping it:
+
+- `points` has **no counterpart to `point_info.id`** (the per-device index). So `pointForAddr` cannot be
+  served from `points` at all — the call sites must go **first**, and the backing-store swap is the
+  *last* step of slice D, not the first. Sequencing it the other way round is a dead end.
+- Yet `PointAddr.index` has exactly **one** production consumer (`rebuild-dev-kv-from-db.ts:139`, feeding
+  the int-addressed KV keyspace that Phase 13 retires) and `PointAddr.systemId` only two. The 17
+  `pointForAddr` calls are the whole cost; `PointAddr` itself is nearly dead already.
+
+**PR 1's theme: stop asking the registry for an identity the caller already holds.** Every converted site
+had the point's uuid within reach and was round-tripping the registry to rediscover it. Converted:
+
+| Domain | Sites | Uuid source |
+| --- | --- | --- |
+| coverage (`find-gaps.ts`) | 2 | `resolveCoveragePoints` already SELECTed the row — now carries `point_uid` on `CoveragePoint` |
+| battery-provenance (`-pg`, `-daily-pg`, `recompute`, `load`) | 5 | `area_bindings.point_uid`, via a new `BoundPoint.point` |
+| OE raw series (`load.ts:129`) | 1 | its own `point_info` select, `index` → `point_uid` |
+
+Net **−51 lines**: each conversion deletes a `try/catch (UnknownIdError)` scaffold, because "the caller
+holds the row" makes the not-in-registry branch unreachable. `null` (a binding with no uuid) inherits the
+old miss semantics exactly, so the empty-result behaviour is preserved rather than merely re-derived.
+
+**Why this is safe, evidenced not asserted.** The swap is only sound if `area_bindings.point_uid` names
+the same point as the `(point_system_id, point_id)` pair it replaces. Checked on **both** environments:
+**72/72 bindings populated, zero disagreement**, and `point_info.point_uid` 134/134 NOT NULL. Then the
+real gate — `scripts/config-v4/verify-slice-d-parity.ts` drives the **actual** new code paths
+(`boundPoints`, `resolveCoveragePoints`) and compares every identity against what `pointForAddr` would
+have returned: **206 identities, 0 mismatched.** That script is the running gate for the rest of slice D;
+extend it per PR. It dies with `pointForAddr` (no legacy side left to compare against).
+
+**Remaining 9, and the one that gates them.** `PointInfo` (the class, `lib/point/point-info.ts`) does
+**not** carry `pointUid` — only the `PointInfoRow` row shape does. That single omission is why the vendor
+(3), flow (1) and labs (1) sites must round-trip. Adding it is the next PR, and it crosses the
+served-shape/frontend boundary (`ViewDataModal` builds `PointInfo.from()` out of API responses), which is
+why it was kept out of PR 1. The last three are structural, not mechanical: `history/readings-pg.ts:67`
+and `app/api/admin/point/[systemIdDotPointId]/readings/route.ts:139` take `systemId.pointId` from the
+**wire**, and `observations/receive/route.ts:128` is the legacy-grammar branch **slice M owns** (it may
+not be deleted until the outbox drains — see the ordering traps).
 
 **✅ SLICE H DONE (2026-07-29) — code merged (#276) and deployed, migration 0046 applied to both environments.**
 `area_members` is now the membership table — read and written by `lib/areas/members.ts` (renamed from
