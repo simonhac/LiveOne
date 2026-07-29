@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 // Helper function to map system data
 function mapSystemAccess(system: any) {
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
     // That table died in migration 0045 (slice F), so a user who appeared ONLY via a grant no longer
     // appears at all, and every listed system is one the user owns (hence no `role` field).
     const systemsManager = SystemsManager.getInstance();
-    const allSystems = await systemsManager.getAllSystems();
+    const allSystems = await DeviceConfigRegistry.allDevices();
 
     const uniqueUserIds = [
       ...new Set(

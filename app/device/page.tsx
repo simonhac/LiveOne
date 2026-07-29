@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { SystemsManager } from "@/lib/systems-manager";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * "Go to Devices" target from the dashboards switcher: jump straight to the first system/device the
@@ -18,7 +19,7 @@ export default async function DeviceIndexPage() {
   }
 
   const primary =
-    await SystemsManager.getInstance().getPrimaryVisibleSystem(userId);
+    await DeviceConfigRegistry.primaryVisibleDevice(userId);
   if (primary) {
     redirect(`/device/${primary.id}`);
   }

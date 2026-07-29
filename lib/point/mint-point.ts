@@ -48,6 +48,7 @@ import {
   mirrorPoint,
   toMirrorPointInput,
 } from "@/lib/registry/v4-mirror";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export type PointInfoDbRow = typeof pointInfo.$inferSelect;
 
@@ -92,7 +93,7 @@ async function derivedUidFor(
   systemId: number,
   physicalPathTail: string,
 ): Promise<string> {
-  const sys = await SystemsManager.getInstance().getSystem(systemId);
+  const sys = await DeviceConfigRegistry.deviceByHandle(systemId);
   return sys
     ? derivePointUid(sys.vendorType, sys.vendorSiteId, physicalPathTail)
     : uuidv7(); // no vendor identity to derive from → random uid (point_uid is NOT NULL)

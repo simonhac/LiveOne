@@ -17,6 +17,7 @@ import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import type { AreaLocation } from "@/lib/areas/types";
 import { Area } from "@/lib/ids";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export interface AreaSourceSystem {
   id: number;
@@ -57,7 +58,7 @@ async function resolveSystem(
   systemsManager: SystemsManager,
   systemId: number,
 ): Promise<AreaSourceSystem | null> {
-  const system = await systemsManager.getSystem(systemId);
+  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
   if (!system) return null;
   return {
     id: system.id,

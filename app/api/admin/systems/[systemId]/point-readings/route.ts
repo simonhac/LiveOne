@@ -15,6 +15,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo as pgPointInfo } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
 import { Point } from "@/lib/ids";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -65,7 +66,7 @@ export async function GET(
 
     // Get system from SystemsManager (already cached in memory)
     const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });

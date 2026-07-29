@@ -11,6 +11,7 @@ import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import Timeline from "./Timeline";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DISPLAY_DAYS = 7;
@@ -67,7 +68,7 @@ export default async function KinkoraHwsPage({
   const { access } = await searchParams;
 
   const systemsManager = SystemsManager.getInstance();
-  const system = await systemsManager.getSystemByUsernameAndAlias(
+  const system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
     "simon",
     "kinkora",
   );

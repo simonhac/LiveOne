@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export async function GET(
   request: NextRequest,
@@ -18,7 +19,7 @@ export async function GET(
 
     // Systems owned by this user (excluding composite/area systems and non-active systems)
     const systemsManager = SystemsManager.getInstance();
-    const ownedSystems = await systemsManager.getSystemsByOwner(userId);
+    const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
     const activeSystems = ownedSystems.filter((s) => s.status === "active");
 
     if (activeSystems.length === 0) {

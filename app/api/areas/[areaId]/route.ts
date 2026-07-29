@@ -14,6 +14,7 @@ import {
   AreaAliasTakenError,
 } from "@/lib/areas/create";
 import { Area } from "@/lib/ids";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * Owner/admin edit of a single Area (the area builder's General/Location tab), addressed by its
@@ -123,7 +124,7 @@ export async function DELETE(
   // A legacy Area addressed by a real systems.id may still be load-bearing — never delete it here.
   if (
     area.legacySystemId != null &&
-    (await SystemsManager.getInstance().getSystem(area.legacySystemId))
+    (await DeviceConfigRegistry.deviceByHandle(area.legacySystemId))
   ) {
     return NextResponse.json(
       { error: "This is a device's own area and cannot be deleted" },

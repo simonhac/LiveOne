@@ -3,6 +3,7 @@ import { getEnphaseClient } from "@/lib/vendors/enphase/enphase-client";
 import { storeEnphaseTokens } from "@/lib/vendors/enphase/enphase-auth";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -118,7 +119,7 @@ export async function GET(request: NextRequest) {
     // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
     const systemsManager = SystemsManager.getInstance();
     const existingByVendorSiteId =
-      await systemsManager.getSystemByVendorSiteId(systemId);
+      await DeviceConfigRegistry.deviceByVendorSite(systemId);
     const existingSystem =
       existingByVendorSiteId && existingByVendorSiteId.vendorType === "enphase"
         ? existingByVendorSiteId

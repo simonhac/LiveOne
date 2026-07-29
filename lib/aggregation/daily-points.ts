@@ -22,13 +22,14 @@ import {
   REHEAL_TRAILING_MS,
 } from "@/lib/battery-provenance/recompute";
 import { DeviceRegistry } from "@/lib/registry";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
 
 /** Resolve the timezone offset of the first active system (for today/yesterday math). */
 async function firstSystemTimezoneOffsetMin(): Promise<number> {
-  const systems = await SystemsManager.getInstance().getActiveSystems();
+  const systems = await DeviceConfigRegistry.activeDevices();
   if (systems.length === 0) throw new Error("No systems found");
   return systems[0].timezoneOffsetMin;
 }
@@ -176,7 +177,7 @@ export async function aggregateRange(
 
   for (const deviceId of deviceIds) {
     const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId);
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
     if (!system) {
       console.warn(
         `[Daily Points] System ${systemId} not in the registry — skipping its 1d aggregation.`,

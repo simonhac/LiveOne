@@ -10,6 +10,7 @@
  * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
  */
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { SeriesInfo, getSeriesPath } from "@/lib/point/series-info";
@@ -235,7 +236,7 @@ export async function buildSeriesFromAggRows(
     }
 
     // Get source system for series ID
-    const sourceSystem = await systemsManager.getSystem(series.point.systemId);
+    const sourceSystem = await DeviceConfigRegistry.deviceByHandle(series.point.systemId);
     if (!sourceSystem) continue;
 
     // Build series ID using SeriesPath

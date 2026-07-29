@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export async function GET(request: NextRequest) {
   try {
@@ -8,7 +9,7 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
 
     // Derive from the in-memory systems registry (Postgres-backed) — only ~9 rows.
-    const allSystems = await SystemsManager.getInstance().getAllSystems();
+    const allSystems = await DeviceConfigRegistry.allDevices();
     const systemNames = [
       ...new Set(allSystems.map((s) => s.displayName)),
     ].sort();

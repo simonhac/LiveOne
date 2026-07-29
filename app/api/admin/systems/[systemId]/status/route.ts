@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export async function PATCH(
   request: NextRequest,
@@ -30,7 +31,7 @@ export async function PATCH(
     }
 
     const existingSystem =
-      await SystemsManager.getInstance().getSystem(systemId);
+      await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!existingSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });

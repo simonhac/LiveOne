@@ -5,6 +5,7 @@ import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 export async function POST(request: NextRequest) {
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     else if (systemId) {
       // Use SystemsManager to get the system
       const manager = SystemsManager.getInstance();
-      system = await manager.getSystem(systemId);
+      system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
       if (!system) {
         return NextResponse.json(

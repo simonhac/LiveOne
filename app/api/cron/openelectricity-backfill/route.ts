@@ -6,6 +6,7 @@ import { createPollCollector } from "@/lib/observations/poll-collector";
 import { parseDateISO, calendarDateToUnixRange } from "@/lib/date-utils";
 import { backfillRange } from "@/lib/vendors/openelectricity/backfill";
 import { isNemRegion } from "@/lib/vendors/openelectricity/types";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 // 1d aggregation over a multi-day range can take a while; give the route headroom.
 export const maxDuration = 300;
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
 
   // Resolve the region's system.
   const sm = SystemsManager.getInstance();
-  const systems = await sm.getActiveSystems();
+  const systems = await DeviceConfigRegistry.activeDevices();
   const system = systems.find(
     (s) => s.vendorType === "openelectricity" && s.vendorSiteId === region,
   );

@@ -9,6 +9,7 @@ import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { FUSHER_POINTS } from "@/lib/vendors/fusher/point-metadata";
 import { getSystemCredentials } from "@/lib/secure-credentials";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * Expected request body for Fusher (Fronius Pusher) push data
@@ -118,7 +119,7 @@ export async function POST(request: NextRequest) {
     const siteId = data.siteId || "kinkora";
 
     // Find the system by vendorSiteId
-    const system = await systemsManager.getSystemByVendorSiteId(siteId);
+    const system = await DeviceConfigRegistry.deviceByVendorSite(siteId);
 
     if (!system) {
       console.error(`[Fusher Push] System not found for siteId: ${siteId}`);

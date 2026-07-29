@@ -31,6 +31,7 @@ import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 import { bindingShapeMatches } from "@/lib/areas/slots";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
 
@@ -83,7 +84,7 @@ export async function assertMembersReadable(
 ): Promise<void> {
   const sm = SystemsManager.getInstance();
   for (const sid of systemIds) {
-    const sys = await sm.getSystem(sid);
+    const sys = await DeviceConfigRegistry.deviceByHandle(sid);
     if (!sys) throw new AreaValidationError(`System ${sid} not found`);
     if (
       isAdmin ||

@@ -194,6 +194,17 @@ export function specToDisplayStrings(spec: DeviceSpec | null | undefined): {
 }
 
 /**
+ * A device config record widened with the three legacy display strings — the shape the page chrome
+ * (`DeviceLayout` → `SystemInfoTooltip` / `MobileHeaderMenu`) still declares. A function rather than a
+ * precomputed const so it composes with TypeScript's narrowing at the call site.
+ */
+export function withSpecDisplayStrings<
+  T extends { config: DeviceConfig | null },
+>(device: T): T & ReturnType<typeof specToDisplayStrings> {
+  return { ...device, ...specToDisplayStrings(device.config?.spec) };
+}
+
+/**
  * Apply a device's capability overrides to a derived set: present+true forces the capability on,
  * present+false forces it off, absent leaves derivation untouched. Returns a new set; a null/empty
  * config is a no-op (so an un-configured device behaves exactly as before — parity preserved).

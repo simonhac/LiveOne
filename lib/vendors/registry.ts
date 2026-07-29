@@ -10,6 +10,7 @@ import { SigenergyAdapter } from "./sigenergy/adapter";
 import { DeepSeaAdapter } from "./deepsea/adapter";
 import { HelperAdapter } from "./helper/adapter";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * Registry for all vendor adapters
@@ -116,7 +117,7 @@ export class VendorRegistry {
     systemId: number,
   ): Promise<VendorAdapter | null> {
     const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
       console.error(`[VendorRegistry] System ${systemId} not found`);

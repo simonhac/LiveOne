@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * GET /api/areas/candidate-systems — the real devices the caller may add as Area members (the area
@@ -10,7 +11,7 @@ import { SystemsManager } from "@/lib/systems-manager";
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
-  const systems = await SystemsManager.getInstance().getSystemsVisibleByUser(
+  const systems = await DeviceConfigRegistry.devicesVisibleByUser(
     auth.userId,
     true,
   );

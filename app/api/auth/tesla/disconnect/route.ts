@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     // updateSystem writes), then mark each Tesla system removed via updateSystem (keyed
     // by id).
     const systemsManager = SystemsManager.getInstance();
-    const ownedSystems = await systemsManager.getSystemsByOwner(userId);
+    const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
     const teslaSystems = ownedSystems.filter((s) => s.vendorType === "tesla");
 
     for (const s of teslaSystems) {
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest) {
 
     // Use SystemsManager to get the system
     const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(parseInt(systemId));
+    const system = await DeviceConfigRegistry.deviceByHandle(parseInt(systemId));
 
     if (
       !system ||

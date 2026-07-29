@@ -12,6 +12,7 @@ import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { jsonResponse, transformForStorage } from "@/lib/json";
 import { reconcileTrailingWindow as reconcileBatteryProvenance } from "@/lib/battery-provenance/recompute";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * Helper function to poll all systems with optional progress callbacks.
@@ -365,11 +366,11 @@ export async function GET(request: NextRequest) {
     // Get systems to poll
     let activeSystems;
     if (testSystemId) {
-      const system = await systemsManager.getSystem(parseInt(testSystemId));
+      const system = await DeviceConfigRegistry.deviceByHandle(parseInt(testSystemId));
       activeSystems = system ? [system] : [];
       console.log(`[Cron] Testing single system: ${testSystemId}`);
     } else {
-      activeSystems = await systemsManager.getActiveSystems();
+      activeSystems = await DeviceConfigRegistry.activeDevices();
     }
 
     if (activeSystems.length === 0) {

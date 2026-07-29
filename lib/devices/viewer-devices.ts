@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /** The exact element shape `getSystemsVisibleByUser` returns (a projection, narrower than System). */
 type VisibleSystem = Awaited<
@@ -27,7 +28,7 @@ export interface ViewerDevices {
 export const getViewerDevices = cache(
   async (userId: string): Promise<ViewerDevices> => {
     const availableSystems =
-      await SystemsManager.getInstance().getSystemsVisibleByUser(userId, true);
+      await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
 
     let currentUsername: string | null = null;
     try {

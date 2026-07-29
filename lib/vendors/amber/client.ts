@@ -39,6 +39,7 @@ import type { PointInfo } from "@/lib/point/point-info";
 // `lib/ids` is the client-safe leaf codec — no cycle, so unlike the registry/manager imports
 // below it needs no dynamic `await import`.
 import { Point, type PointId } from "@/lib/ids";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 /**
  * Flag to control whether sampleRecords are included in sync results
@@ -260,7 +261,7 @@ async function loadLocalRecords(
 
     // 0. Verify this is an Amber system
     const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
       throw new Error(`System ${systemId} not found`);

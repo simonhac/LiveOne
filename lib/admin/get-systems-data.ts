@@ -4,6 +4,7 @@
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
+import { specToDisplayStrings } from "@/lib/capabilities/config";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
@@ -14,6 +15,7 @@ import {
   SystemSummary,
   SystemSummariesMap,
 } from "@/lib/system-summary-store";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export interface SystemData {
   systemId: number;
@@ -173,7 +175,7 @@ export async function getAdminSystemsData(
   const systemsManager = SystemsManager.getInstance();
   // Only real (physical, polled) systems belong in the admin Systems list. Areas-backed virtual
   // systems are never in the systems table (synthesized on demand) and live on /admin/areas.
-  const allSystems = await systemsManager.getAllSystems();
+  const allSystems = await DeviceConfigRegistry.allDevices();
 
   // Get unique owner user IDs to fetch user info in batch
   const ownerUserIds = [
@@ -294,9 +296,8 @@ export async function getAdminSystemsData(
       systemInfo: {
         model: system.model,
         serial: system.serial,
-        ratings: system.ratings,
-        solarSize: system.solarSize,
-        batterySize: system.batterySize,
+        // config-v4 slice K2: projected from `config.spec` — no longer columns on `devices`.
+        ...specToDisplayStrings(system.config?.spec),
       },
       polling: {
         isActive: system.status === "active",

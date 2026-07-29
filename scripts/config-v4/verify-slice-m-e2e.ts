@@ -32,6 +32,7 @@ import {
 import { recompute5mForRawObservationsBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 import { ReadingsDao } from "@/lib/readings";
 import { Point } from "@/lib/ids";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 const RUN = Date.now();
 const STEM = `__slice-m-e2e__/${RUN}`;
@@ -50,7 +51,7 @@ async function main() {
     );
 
   const systemId = Number(process.argv[2] ?? 1) || 1;
-  const system = await SystemsManager.getInstance().getSystem(systemId);
+  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
   if (!system) throw new Error(`no system ${systemId}`);
   const fail: string[] = [];
 

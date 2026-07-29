@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { SystemsManager } from "@/lib/systems-manager";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
 import { listAccessibleDashboards } from "@/lib/dashboard/dashboards";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 
 export default async function DashboardPage() {
   const { userId } = await auth();
@@ -33,7 +34,7 @@ export default async function DashboardPage() {
   // 3) No default and no dashboards → a friendly empty state. Offer "Browse devices" when the user
   //    still has a visible system, so a device-only viewer isn't stranded here.
   const primarySystem =
-    await SystemsManager.getInstance().getPrimaryVisibleSystem(userId);
+    await DeviceConfigRegistry.primaryVisibleDevice(userId);
 
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center">

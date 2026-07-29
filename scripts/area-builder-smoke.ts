@@ -19,6 +19,7 @@
  *   npx tsx --env-file=.env.local scripts/area-builder-smoke.ts --members=1,6
  */
 import * as dotenv from "dotenv";
+import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
 dotenv.config({ path: ".env.local" });
 
 function getArg(name: string): string | undefined {
@@ -78,7 +79,7 @@ async function main() {
   if (override) {
     members = override.split(",").map((s) => parseInt(s.trim(), 10));
   } else {
-    const active = await sm.getActiveSystems();
+    const active = await DeviceConfigRegistry.activeDevices();
     const withPoints: number[] = [];
     for (const s of active) {
       if ((await countPoints(s.id)) > 0) withPoints.push(s.id);
@@ -128,7 +129,7 @@ async function main() {
       'getViewableSystem().vendorType === "area"',
     );
     assert(
-      (await sm.getSystem(H)) === null,
+      (await DeviceConfigRegistry.deviceByHandle(H)) === null,
       "no real systems row at the handle",
     );
 
