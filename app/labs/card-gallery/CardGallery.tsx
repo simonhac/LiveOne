@@ -9,6 +9,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import AmberSmallCard from "@/components/AmberSmallCard";
 import TeslaSmallCard from "@/components/TeslaSmallCard";
+import HwsSmallCard from "@/components/HwsSmallCard";
 import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
@@ -22,6 +23,7 @@ import {
   GRID_SCENARIOS,
   AMBER_SCENARIOS,
   TESLA_SCENARIOS,
+  HWS_SCENARIOS,
   GRID_SIGNALS_SCENARIOS,
   BATTERY_CONTENTS_SCENARIOS,
 } from "./fixtures";
@@ -287,6 +289,18 @@ export default function CardGallery() {
           playground={{ w: 200, h: 140 }}
           render={(s) => (
             <TileCell latest={GRID_SCENARIOS[s]} id="house-to-grid" />
+          )}
+        />
+
+        <CardSection
+          title="Hot Water"
+          note="HwsSmallCard (a Tile). The only card with a TIGHT unit — '62.4°C' must read fused and UNMUTED, unlike '5.0 kW'. See docs/architecture/number-typography.md."
+          scenarios={Object.keys(HWS_SCENARIOS)}
+          defaultScenario="hot"
+          presetWidths={POWER_WIDTHS}
+          playground={{ w: 200, h: 140 }}
+          render={(s) => (
+            <HwsSmallCard {...HWS_SCENARIOS[s]} staleThresholdSeconds={300} />
           )}
         />
 

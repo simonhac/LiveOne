@@ -23,6 +23,7 @@
 - [architecture/points.md](architecture/points.md) — point model: paths, identity, composite rules
 - [architecture/home-assistant-comparison.md](architecture/home-assistant-comparison.md) — LiveOne vs Home Assistant: object-model mapping, where each is clearer, and where ours is superior (durable pipeline vs in-memory control plane). **Refreshed 2026-07-28** for config-v4 and HA 2026.7
 - [architecture/areas-and-dashboards.md](architecture/areas-and-dashboards.md) — the three-layer split (physical `devices`/`points` → semantic `areas`/bindings/`derivations` → presentation `dashboards`), per-role slot resolution, the v4 node-tree document, sharing scope invariants, and the decisions config-v4 **overturned** (the integer handle, lazy areas, dual dashboard shapes). **Rewritten 2026-07-28** for config-v4
+- [architecture/number-typography.md](architecture/number-typography.md) — how a hero number binds to its unit on dashboard cards: the tight (`83%`, `40.0°C`) vs hair-spaced-and-muted (`0.0 kW`) split and why, compound units, the no-space-character rule; `classifyUnit` + `<Value>`/`<Stat>` are the source of truth
 - [architecture/authentication.md](architecture/authentication.md) — Clerk, roles, API auth functions
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [sync-prod-to-dev.md](sync-prod-to-dev.md) — keeping `liveone-dev` fresh: the 2-hourly prod→dev DB top-up + KV rebuild-from-DB (`db:sync-dev-db` / `db:rebuild-dev-kv`)

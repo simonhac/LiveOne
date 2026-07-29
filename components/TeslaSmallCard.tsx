@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import Value from "@/components/ui/value";
 import Image from "next/image";
 import {
   Battery,
@@ -248,7 +249,7 @@ export default function TeslaSmallCard({
               />
             )}
             <div className="font-bold leading-none text-[22px] text-white">
-              {Math.round(batterySoc)}%
+              <Value value={Math.round(batterySoc)} unit="%" />
             </div>
           </div>
         </div>
@@ -301,7 +302,7 @@ export default function TeslaSmallCard({
               />
             )}
             <div className="font-bold leading-none text-[32px] text-white">
-              {Math.round(batterySoc)}%
+              <Value value={Math.round(batterySoc)} unit="%" />
             </div>
             <div className="text-gray-400 text-xs mt-1">Battery</div>
           </div>

@@ -361,3 +361,50 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
     STALE,
   ),
 };
+
+// ---------------------------------------------------------------------------
+// Hot Water (HwsSmallCard) — plain props, not a `latest` map. The only card carrying a
+// TIGHT-but-unmuted unit ("°C"), so it is the visual regression surface for that binding.
+// ---------------------------------------------------------------------------
+export interface HwsScenario {
+  faucetC: number | null;
+  sparkValues: number[];
+  measurementTime?: Date;
+  heating: boolean;
+}
+
+/** A plausible 24h faucet-temperature curve, scaled to end at `endC`. */
+function hwsSpark(endC: number): number[] {
+  const shape = [
+    0.62, 0.58, 0.55, 0.52, 0.5, 0.49, 0.52, 0.6, 0.72, 0.85, 0.95, 1.0, 0.98,
+    0.94, 0.9, 0.88, 0.86, 0.84, 0.82, 0.8, 0.78, 0.75, 0.72, 0.7,
+  ];
+  return shape.map((f) => Math.round(endC * f * 10) / 10);
+}
+
+export const HWS_SCENARIOS: Record<string, HwsScenario> = {
+  hot: {
+    faucetC: 62.4,
+    sparkValues: hwsSpark(62.4),
+    measurementTime: new Date(Date.now() - FRESH * 1000),
+    heating: false,
+  },
+  heating: {
+    faucetC: 48.0,
+    sparkValues: hwsSpark(48),
+    measurementTime: new Date(Date.now() - FRESH * 1000),
+    heating: true,
+  },
+  cold: {
+    faucetC: 9.5,
+    sparkValues: hwsSpark(9.5),
+    measurementTime: new Date(Date.now() - FRESH * 1000),
+    heating: false,
+  },
+  stale: {
+    faucetC: 40.0,
+    sparkValues: hwsSpark(40),
+    measurementTime: new Date(Date.now() - STALE * 1000),
+    heating: false,
+  },
+};

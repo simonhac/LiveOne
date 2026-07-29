@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Value from "@/components/ui/value";
 import { useMutation } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
 import {
@@ -25,14 +26,12 @@ const formatPowerJSX = (
   unit: string,
 ): React.JSX.Element => {
   const formatted = formatValue(value, unit);
-  if (!formatted.unit) {
-    return <span className="energy-value">{formatted.value}</span>;
-  }
   return (
-    <>
-      <span className="energy-value">{formatted.value}</span>
-      <span className="energy-unit">{formatted.unit}</span>
-    </>
+    <Value
+      className="font-bold"
+      value={formatted.value}
+      unit={formatted.unit || undefined}
+    />
   );
 };
 
@@ -43,14 +42,12 @@ const formatPairJSX = (
   unit: string,
 ): React.JSX.Element => {
   const formatted = formatValuePair(inValue, outValue, unit);
-  if (!formatted.unit) {
-    return <span className="energy-value">{formatted.value}</span>;
-  }
   return (
-    <>
-      <span className="energy-value">{formatted.value}</span>
-      <span className="energy-unit">{formatted.unit}</span>
-    </>
+    <Value
+      className="font-bold"
+      value={formatted.value}
+      unit={formatted.unit || undefined}
+    />
   );
 };
 

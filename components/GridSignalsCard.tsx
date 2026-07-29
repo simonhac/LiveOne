@@ -1,64 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Clock, Zap } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
+import Stat from "@/components/ui/stat";
 import type { GridLiveValues } from "@/lib/grid/latest";
 
 export interface GridSignalsCardProps {
   regionLabel: string;
   values: GridLiveValues | null;
   staleThresholdSeconds?: number;
-}
-
-/**
- * Unit / suffix text styled like the power cards (e.g. solar's "kW"): small + semibold, sitting
- * next to the value. By default it inherits the value's colour (the power-card look); `muted`
- * recesses it (the trailing "RE"). `gap` adds a thin space before it ("6.9 kW"); omit to attach
- * the symbol to the number ("1.5¢…", "24%").
- */
-function Unit({
-  children,
-  gap = false,
-  muted = false,
-}: {
-  children: ReactNode;
-  gap?: boolean;
-  muted?: boolean;
-}) {
-  return (
-    <>
-      {gap && " "}
-      <span
-        className={`text-sm font-semibold md:text-base${muted ? " text-gray-400" : ""}`}
-      >
-        {children}
-      </span>
-    </>
-  );
-}
-
-/** A compact, label-less stat: bold value + power-card-style unit. Never truncates. */
-function Stat({
-  value,
-  unit,
-  valueClassName,
-}: {
-  value: string;
-  unit?: ReactNode;
-  valueClassName?: string;
-}) {
-  return (
-    <p
-      className={`whitespace-nowrap text-xl font-bold leading-none md:text-2xl ${
-        valueClassName ?? "text-gray-200"
-      }`}
-    >
-      {value}
-      {unit}
-    </p>
-  );
 }
 
 /**
@@ -169,8 +121,9 @@ export default function GridSignalsCard({
 
   // Display values (client-side conversions per the OE stored units). Units render separately
   // (small + non-bold), so these are the bare numbers only.
-  // Price is stored in $/MWh; show it directly as integer dollars ("$2/MWh").
-  const priceText = price != null ? `$${Math.round(price)}` : "—";
+  // Price is stored in $/MWh; show it directly as integer dollars ("$2/MWh"). The "$" rides as a
+  // `prefix` so it renders at unit size, not hero size.
+  const priceText = price != null ? `${Math.round(price)}` : "—";
   // 0 g/kWh is physically impossible for a generating grid (a transient OE artifact); show
   // an em-dash rather than a bogus "0" until the next good reading lands.
   const emissionsText =
@@ -243,44 +196,20 @@ export default function GridSignalsCard({
         <div className="grid grid-cols-1 gap-x-4 gap-y-1 @[180px]:grid-cols-2 @[300px]:grid-cols-3 @[400px]:grid-cols-4">
           <Stat
             value={priceText}
-            unit={price != null ? <Unit muted>/MWh</Unit> : undefined}
+            prefix={price != null ? "$" : undefined}
+            unit={price != null ? "/MWh" : undefined}
           />
           <Stat
             value={emissionsText}
-            unit={
-              emissions != null ? (
-                <Unit gap muted>
-                  EI
-                </Unit>
-              ) : undefined
-            }
+            qualifier={emissions != null ? "EI" : undefined}
           />
           <Stat
             value={renewablesText}
-            unit={
-              renewables != null ? (
-                <>
-                  <Unit>%</Unit>
-                  <Unit gap muted>
-                    RE
-                  </Unit>
-                </>
-              ) : undefined
-            }
-            valueClassName={
-              renewablesGreen ? "text-green-400" : "text-gray-200"
-            }
+            unit={renewables != null ? "%" : undefined}
+            qualifier={renewables != null ? "RE" : undefined}
+            valueClassName={renewablesGreen ? "text-green-400" : undefined}
           />
-          <Stat
-            value={demandText}
-            unit={
-              demand != null ? (
-                <Unit gap muted>
-                  MW
-                </Unit>
-              ) : undefined
-            }
-          />
+          <Stat value={demandText} unit={demand != null ? "MW" : undefined} />
         </div>
       </div>
     </div>

@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Clock } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
+import Value from "@/components/ui/value";
 
 interface TileProps {
   title: string;
   value: string;
-  /** Unit to display after value (e.g., "kW", "%"). Rendered smaller with appropriate spacing. */
+  /** Unit to display after value (e.g. "kW", "%", "°C"). Binding is decided by `classifyUnit`. */
   unit?: string;
   icon: React.ReactNode;
   iconColor: string;
@@ -170,14 +171,8 @@ export default function Tile({
             {icon}
           </div>
         </div>
-        <p className="text-xl md:text-2xl font-bold text-gray-200">
-          {value}
-          {unit && (
-            <>
-              {unit !== "%" && "\u202F"}
-              <span className="text-sm md:text-base font-semibold">{unit}</span>
-            </>
-          )}
+        <p className="text-xl md:text-2xl font-bold text-gray-100">
+          <Value value={value} unit={unit} />
         </p>
         {extraInfo && <p className="text-xs text-gray-400">{extraInfo}</p>}
         {extra && <div className="mt-0.5 md:mt-1">{extra}</div>}

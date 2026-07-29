@@ -11,6 +11,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
+import Value from "@/components/ui/value";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
 
@@ -27,11 +28,7 @@ export function formatPowerValue(watts: number): string {
 
 /** Format a power value with a smaller kW unit (JSX for secondary labels). */
 export function formatPowerSmallUnit(watts: number): React.ReactNode {
-  return (
-    <>
-      {formatPowerValue(watts)} <span className="text-[0.7em]">kW</span>
-    </>
-  );
+  return <Value value={formatPowerValue(watts)} unit="kW" />;
 }
 
 export function getPointValue(

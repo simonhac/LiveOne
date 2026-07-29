@@ -1,62 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect, type ReactNode } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Clock, Battery } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
+import Stat from "@/components/ui/stat";
 import type { BatteryContentsValues } from "@/lib/battery/contents-latest";
 
 export interface BatteryContentsCardProps {
   values: BatteryContentsValues | null;
   title?: string;
   staleThresholdSeconds?: number;
-}
-
-/** A labelled stat: bold value (+ inline unit) over a tiny uppercase caption. Never truncates. */
-function Stat({
-  value,
-  unit,
-  caption,
-  valueClassName,
-}: {
-  value: string;
-  unit?: ReactNode;
-  caption: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div>
-      <p
-        className={`whitespace-nowrap text-xl font-bold leading-none md:text-2xl ${
-          valueClassName ?? "text-gray-100"
-        }`}
-      >
-        {value}
-        {unit}
-      </p>
-      <p className="mt-1 text-[10px] uppercase tracking-wide text-gray-500 md:text-xs">
-        {caption}
-      </p>
-    </div>
-  );
-}
-
-/** Small semibold unit suffix, matching the power/blend cards. */
-function Unit({
-  children,
-  gap = true,
-}: {
-  children: ReactNode;
-  gap?: boolean;
-}) {
-  return (
-    <>
-      {gap && " "}
-      <span className="text-sm font-semibold text-gray-400 md:text-base">
-        {children}
-      </span>
-    </>
-  );
 }
 
 /** ±$ from signed cents. */
@@ -229,19 +183,19 @@ export default function BatteryContentsCard({
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 @[360px]:grid-cols-3 @[520px]:grid-cols-4">
           <Stat
             value={storedEnergyKwh != null ? storedEnergyKwh.toFixed(1) : "—"}
-            unit={storedEnergyKwh != null ? <Unit>kWh</Unit> : undefined}
+            unit={storedEnergyKwh != null ? "kWh" : undefined}
             caption="usable"
           />
           <Stat
             value={priceActual != null ? cents(priceActual) : "—"}
-            unit={priceActual != null ? <Unit gap={false}>¢</Unit> : undefined}
+            unit={priceActual != null ? "¢" : undefined}
             caption="cost / kWh"
           />
           <Stat
             value={
               carbonIntensity != null ? `${Math.round(carbonIntensity)}` : "—"
             }
-            unit={carbonIntensity != null ? <Unit>g</Unit> : undefined}
+            unit={carbonIntensity != null ? "g" : undefined}
             caption="emissions / kWh"
           />
           <Stat
@@ -250,11 +204,9 @@ export default function BatteryContentsCard({
                 ? `${Math.round(renewableFraction)}`
                 : "—"
             }
-            unit={
-              renewableFraction != null ? <Unit gap={false}>%</Unit> : undefined
-            }
+            unit={renewableFraction != null ? "%" : undefined}
             caption="renewable"
-            valueClassName={renewableGreen ? "text-green-400" : "text-gray-100"}
+            valueClassName={renewableGreen ? "text-green-400" : undefined}
           />
         </div>
 

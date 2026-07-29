@@ -3,7 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Gauge } from "lucide-react";
 import Tile from "@/components/Tile";
-import { formatValueWithUnit } from "@/lib/point/format-value";
+import {
+  formatValueWithUnit,
+  formatValueParts,
+} from "@/lib/point/format-value";
 import { latestReadingsQuery } from "@/lib/queries";
 import { useModalContext } from "@/contexts/ModalContext";
 import { TILE_GRID_CONTAINER, tileGridClass } from "@/lib/dashboard/tile-grid";
@@ -132,15 +135,18 @@ export default function DeviceMetricsCard({
     <div className={TILE_GRID_CONTAINER}>
       <div className={tileGridClass(rows.length)}>
         {rows.map((row, i) => {
-          const formatted =
+          // Number and unit stay SEPARATE so Tile can size the unit properly (a concatenated
+          // "1234 rpm" would render entirely at hero size). See number-typography.md.
+          const parts =
             row.value != null
-              ? formatValueWithUnit(row.value, row.metricUnit)
-              : "n/a";
-          // The only ReactElement case (json) is filtered out above, so `formatted` is a string here;
+              ? formatValueParts(row.value, row.metricUnit)
+              : { value: "n/a", unit: undefined };
+          // The only ReactElement case (json) is filtered out above, so this is a string here;
           // guard belt-and-suspenders to satisfy Tile's `value: string` contract.
-          const value = typeof formatted === "string" ? formatted : "n/a";
+          const value = typeof parts.value === "string" ? parts.value : "n/a";
           return (
             <Tile
+              unit={parts.unit}
               key={
                 row.pointReference ??
                 row.logicalPath ??
