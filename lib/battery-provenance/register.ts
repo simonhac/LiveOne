@@ -94,6 +94,12 @@ export interface EnsureBlendResult {
   systemId: number;
   /** metricType → point index, for the recompute to write into. */
   pointIds: Record<string, number>;
+  /**
+   * metricType → `point_info.point_uid`. The identity half of `pointIds`, carried so callers never have
+   * to round-trip the registry for a point they just ensured — it is what `area_bindings.point_uid` and
+   * the agg_5m write both need. Same key set as `pointIds`.
+   */
+  pointUids: Record<string, string>;
 }
 
 /**
@@ -123,12 +129,19 @@ export async function ensureBatteryProvenancePoints(
         ),
       )
       .limit(1);
-    if (!power) return { status: "no-battery-point", systemId, pointIds: {} };
+    if (!power)
+      return {
+        status: "no-battery-point",
+        systemId,
+        pointIds: {},
+        pointUids: {},
+      };
   }
 
   const existing = await db
     .select({
       index: pointInfo.index,
+      pointUid: pointInfo.pointUid,
       metricType: pointInfo.metricType,
       displayName: pointInfo.displayName,
       defaultName: pointInfo.defaultName,
@@ -140,13 +153,17 @@ export async function ensureBatteryProvenancePoints(
         eq(pointInfo.logicalPathStem, BATTERY_STEM),
       ),
     );
-  const byMetric = new Map(existing.map((e) => [e.metricType, e.index]));
+  const byMetric = new Map(existing.map((e) => [e.metricType, e]));
 
   const pointIds: Record<string, number> = {};
+  const pointUids: Record<string, string> = {};
   const missing = BLEND_POINTS.filter((p) => !byMetric.has(p.metricType));
   for (const p of BLEND_POINTS) {
-    const idx = byMetric.get(p.metricType);
-    if (idx !== undefined) pointIds[p.metricType] = idx;
+    const row = byMetric.get(p.metricType);
+    if (row !== undefined) {
+      pointIds[p.metricType] = row.index;
+      pointUids[p.metricType] = row.pointUid;
+    }
   }
 
   // Reconcile display names on EXISTING rows when the spec's name changed — but only rows the user never
@@ -173,12 +190,14 @@ export async function ensureBatteryProvenancePoints(
     }
   }
 
-  if (missing.length === 0) return { status: "exists", systemId, pointIds };
+  if (missing.length === 0)
+    return { status: "exists", systemId, pointIds, pointUids };
   if (!apply) {
     return {
       status: Object.keys(pointIds).length > 0 ? "mixed" : "created",
       systemId,
       pointIds,
+      pointUids,
     };
   }
 
@@ -209,11 +228,12 @@ export async function ensureBatteryProvenancePoints(
         pointUid: await mintPointUid(systemId, physicalPathTail),
         createdAt: new Date(),
       })
-      .returning({ index: pointInfo.index });
+      .returning({ index: pointInfo.index, pointUid: pointInfo.pointUid });
     pointIds[p.metricType] = row.index;
+    pointUids[p.metricType] = row.pointUid;
   }
 
-  return { status: "created", systemId, pointIds };
+  return { status: "created", systemId, pointIds, pointUids };
 }
 
 /**
@@ -228,6 +248,7 @@ export async function ensureHelperBindings(
   areaId: string,
   helperSystemId: number,
   pointIds: Record<string, number>,
+  pointUids: Record<string, string>,
 ): Promise<{ created: number }> {
   const db = requirePlanetscaleDb();
   const values = BLEND_POINTS.filter(
@@ -238,6 +259,7 @@ export async function ensureHelperBindings(
     metricType: p.metricType,
     pointSystemId: helperSystemId,
     pointId: pointIds[p.metricType],
+    pointUid: pointUids[p.metricType],
     ordinal: 100 + i,
     priority: 100 + i,
     transform: null,
