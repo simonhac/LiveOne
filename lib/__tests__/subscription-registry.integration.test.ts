@@ -303,6 +303,7 @@ describeIfKV("Subscription Registry (integration)", () => {
       await updateLatestPointValue(
         testSourceSystemId,
         1, // Point index
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath1,
         5000,
         Date.now(),
@@ -315,6 +316,7 @@ describeIfKV("Subscription Registry (integration)", () => {
       await updateLatestPointValue(
         testSourceSystemId,
         2, // Point index
+        "uid-2", // point uid — the subscription-map key (slice E PR 2b)
         pointPath2,
         85,
         Date.now(),
@@ -360,6 +362,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         updateLatestPointValue(
           testSourceSystemId,
           1,
+          "uid-1", // point uid — the subscription-map key (slice E PR 2b)
           pointPath1,
           6000,
           now,
@@ -370,6 +373,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         updateLatestPointValue(
           testSourceSystemId,
           2,
+          "uid-2", // point uid — the subscription-map key (slice E PR 2b)
           pointPath2,
           90,
           now,

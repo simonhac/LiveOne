@@ -27,6 +27,7 @@ import {
   type ResolvedHwsModel,
 } from "@/lib/derivations/resolve";
 import { updateLatestPointValue } from "@/lib/kv-cache-manager";
+import { Point } from "@/lib/ids";
 
 export const WARMUP_MS = 2 * 24 * 60 * 60 * 1000; // model warmup lead-in (≈6× convergence time)
 export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // minutely-cron trailing window
@@ -101,6 +102,7 @@ async function recomputePairWindow(
     await updateLatestPointValue(
       pair.systemId,
       pair.tempPointIndex,
+      Point.toUuid(pair.tempPoint),
       pair.tempPath,
       last.faucetC,
       last.tsMs,

@@ -22,13 +22,16 @@ export type LatestPointValues = LatestValuesMap;
  */
 export interface SubscriptionRegistryEntry {
   /**
-   * Map of source point ID to array of subscriber point references that subscribe to it
-   * Key: pointId (e.g., "1" for point with id=1)
+   * Map of source point UUID to array of subscriber point references that subscribe to it.
+   * Key: `point_info.point_uid` (canonical uuid) — NOT the integer point index. Config-v4 slice E
+   * PR 2b re-keyed this map when `area_bindings` lost its `(point_system_id, point_id)` pair.
    * Value: array of subscriber point references (format: "systemId.pointIndex")
    *
-   * Example: { "1": ["100.0", "101.2"], "2": ["100.1"] }
-   * Means: source point 1 is subscribed to by subscriber system 100 point 0 and subscriber system 101 point 2
-   *        source point 2 is subscribed to by subscriber system 100 point 1
+   * Example: { "0199…-…": ["100.0", "101.2"] }
+   *
+   * NOTE (deliberate, not an oversight): the enclosing `subscriptions:system:N` / `latest:system:N`
+   * KV keys and the `pointReference` field inside a stored `LatestValue` are STILL integer-addressed.
+   * Those move in Phase 13 with `point_info.system_id` / `systems.id`; only this map's source key moved.
    */
   pointSubscribers: Record<string, string[]>;
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
@@ -52,8 +55,9 @@ function getSubscriptionsKey(systemId: number): string {
  * Update the latest value for a point in a system's cache
  * Also updates all subscriber systems that subscribe to this specific point
  *
- * @param systemId - Source system ID
- * @param pointId - Source point ID (database id/index)
+ * @param systemId - Source system ID (the `latest:system:N` hash key — integer until Phase 13)
+ * @param pointId - Source point index (only for the stored `pointReference` — integer until Phase 13)
+ * @param pointUid - Source point's `point_info.point_uid` — the subscription-map lookup key
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
  * @param value - Latest value (numeric or string for text/json types)
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
@@ -67,6 +71,7 @@ function getSubscriptionsKey(systemId: number): string {
 export async function updateLatestPointValue(
   systemId: number,
   pointId: number,
+  pointUid: string,
   pointPath: string,
   value: number | string | null,
   measurementTimeMs: number,
@@ -94,7 +99,7 @@ export async function updateLatestPointValue(
   await kv.hset(key, { [pointPath]: pointValue });
 
   // Look up subscriber points that subscribe to this specific source point
-  const subscriberPointRefs = await getPointSubscribers(systemId, pointId);
+  const subscriberPointRefs = await getPointSubscribers(systemId, pointUid);
 
   // Update each subscriber system's cache (only for subscribed points)
   if (subscriberPointRefs && subscriberPointRefs.length > 0) {
@@ -144,13 +149,13 @@ export async function getLatestPointValues(
 /**
  * Get point-specific subscribers for a source system point
  *
- * @param sourceSystemId - Source system ID
- * @param sourcePointId - Source point ID
+ * @param sourceSystemId - Source system ID (selects the `subscriptions:system:N` KV entry)
+ * @param sourcePointUid - Source point's `point_info.point_uid`
  * @returns Array of subscriber point references (format: "systemId.pointIndex")
  */
 async function getPointSubscribers(
   sourceSystemId: number,
-  sourcePointId: number,
+  sourcePointUid: string,
 ): Promise<string[]> {
   const key = getSubscriptionsKey(sourceSystemId);
   const entry = await kv.get<SubscriptionRegistryEntry>(key);
@@ -159,7 +164,7 @@ async function getPointSubscribers(
     return [];
   }
 
-  return entry.pointSubscribers[sourcePointId.toString()] || [];
+  return entry.pointSubscribers[sourcePointUid] || [];
 }
 
 /**
@@ -171,21 +176,25 @@ async function getPointSubscribers(
  * - When subscriber system metadata changes
  * - Periodically (e.g., daily) as a safety net
  */
-/** Insert one (source point → subscriber point ref) edge into the reverse-subscription map. */
+/**
+ * Insert one (source point → subscriber point ref) edge into the reverse-subscription map. The map is
+ * `sourceSystemId → sourcePointUid → subscriberPointRefs`: the outer key is still the integer system
+ * (it is the KV key) but the inner key is the point's uuid.
+ */
 function addSubscription(
   subscriptions: Map<number, Map<string, Set<string>>>,
   sourceSystemId: number,
-  sourcePointId: string,
+  sourcePointUid: string,
   subscriberPointRef: string,
 ): void {
   if (!subscriptions.has(sourceSystemId)) {
     subscriptions.set(sourceSystemId, new Map());
   }
   const sourceSystemMap = subscriptions.get(sourceSystemId)!;
-  if (!sourceSystemMap.has(sourcePointId)) {
-    sourceSystemMap.set(sourcePointId, new Set());
+  if (!sourceSystemMap.has(sourcePointUid)) {
+    sourceSystemMap.set(sourcePointUid, new Set());
   }
-  sourceSystemMap.get(sourcePointId)!.add(subscriberPointRef);
+  sourceSystemMap.get(sourcePointUid)!.add(subscriberPointRef);
 }
 
 /**
@@ -201,8 +210,8 @@ async function buildSubscriptionsFromBindings(): Promise<
   for (const b of await getAreaBindings()) {
     addSubscription(
       subscriptions,
-      b.pointSystemId,
-      b.pointId.toString(),
+      b.sourceSystemId,
+      b.pointUid,
       `${b.handle}.${b.ordinal}`,
     );
   }
@@ -214,8 +223,8 @@ async function buildSubscriptionsFromBindings(): Promise<
     ordByHandle.set(m.handle, ord + 1);
     addSubscription(
       subscriptions,
-      m.pointSystemId,
-      m.pointId.toString(),
+      m.sourceSystemId,
+      m.pointUid,
       `${m.handle}.${ord}`,
     );
   }
@@ -223,8 +232,10 @@ async function buildSubscriptionsFromBindings(): Promise<
 }
 
 export async function buildSubscriptionRegistry(): Promise<void> {
-  // Build reverse mapping: sourceSystemId → { pointId → [subscriberPointRefs] }
-  // Example: { 6: { "1": ["100.0", "101.2"], "2": ["100.1"] } }
+  // Build reverse mapping: sourceSystemId → { sourcePointUid → [subscriberPointRefs] }
+  // Example: { 6: { "0199a1…": ["100.0", "101.2"] } }
+  // ⚠️ Re-running this is REQUIRED after deploying slice E PR 2b: entries written by an earlier build
+  // are keyed by the integer point index and will never match a uuid lookup.
   // Edges come from the typed area_bindings (the authoritative subscriber role→point mapping). The
   // subscriberPointRef's index half is vestigial (updateLatestPointValue keys the subscriber's latest
   // hash by logicalPath, not by index).
@@ -261,8 +272,8 @@ export async function buildSubscriptionRegistry(): Promise<void> {
 
     // Convert Map<string, Set<string>> to Record<string, string[]>
     const pointSubscribers: Record<string, string[]> = {};
-    for (const [pointId, subscriberRefs] of pointMap.entries()) {
-      pointSubscribers[pointId] = Array.from(subscriberRefs);
+    for (const [pointUid, subscriberRefs] of pointMap.entries()) {
+      pointSubscribers[pointUid] = Array.from(subscriberRefs);
     }
 
     const entry: SubscriptionRegistryEntry = {

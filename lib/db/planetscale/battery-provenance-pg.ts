@@ -477,11 +477,13 @@ async function writeBlendOutputs(
   if (opts.updateLatest) {
     for (const spec of BLEND_POINTS) {
       const pointId = ensure.pointIds[spec.metricType];
+      const pointUid = ensure.pointUids[spec.metricType];
       const l = latest.get(spec.metricType);
-      if (pointId === undefined || !l) continue;
+      if (pointId === undefined || pointUid === undefined || !l) continue;
       await updateLatestPointValue(
         helperSystemId,
         pointId,
+        pointUid,
         `${BATTERY_STEM}/${spec.metricType}`,
         l.value,
         l.tsMs,

@@ -64,6 +64,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
@@ -92,6 +93,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         firstValue,
         measurementTimeMs,
@@ -106,6 +108,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         secondValue,
         measurementTimeMs + 60000,
@@ -135,6 +138,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         await updateLatestPointValue(
           testSystemId,
           point.id,
+          `uid-${point.id}`, // point uid — the subscription-map key (slice E PR 2b)
           point.path,
           point.value,
           measurementTimeMs,
@@ -171,6 +175,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath1,
         5000,
         measurementTimeMs,
@@ -181,6 +186,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         2, // test point ID
+        "uid-2", // point uid — the subscription-map key (slice E PR 2b)
         pointPath2,
         1200,
         measurementTimeMs,
@@ -228,6 +234,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
@@ -277,6 +284,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         await updateLatestPointValue(
           testSystemId,
           point.id,
+          `uid-${point.id}`, // point uid — the subscription-map key (slice E PR 2b)
           point.path,
           point.value,
           measurementTimeMs,
@@ -334,6 +342,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
@@ -377,6 +386,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await updateLatestPointValue(
         testSystemId,
         1, // test point ID
+        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
