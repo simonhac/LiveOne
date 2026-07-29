@@ -12,7 +12,6 @@ import {
   areas,
   devices,
   points,
-  systems,
   pointReadingsFlowAttr1d,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
@@ -138,18 +137,17 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    // The "is this a helper device?" test hops the binding's uuid through `points.device_id →
-    // devices.rid` (slice E PR 2a), replacing a join on the retired `area_bindings.point_system_id`.
-    // `devices.rid == systems.id` is the seam invariant; slice K/N delete the `systems` hop.
+    // The "is this a helper device?" test hops the binding's uuid through `points.device_id`
+    // (slice E PR 2a). Slice K2 dropped the trailing `devices.rid → systems.id` bridge outright:
+    // `devices.vendor` IS the vendor, so the hop was pure overhead, not a source.
     .innerJoin(points, eq(points.id, areaBindings.pointUid))
     .innerJoin(devices, eq(devices.id, points.deviceId))
-    .innerJoin(systems, eq(systems.id, devices.rid))
     .where(
       and(
         eq(areas.legacySystemId, handle),
         eq(areaBindings.role, "battery"),
         eq(areaBindings.metricType, "carbon-intensity"),
-        eq(systems.vendorType, "helper"),
+        eq(devices.vendor, "helper"),
       ),
     )
     .limit(1);
