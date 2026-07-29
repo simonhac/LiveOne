@@ -8,7 +8,7 @@
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
-import { and, asc, eq, inArray, max, or } from "drizzle-orm";
+import { and, asc, eq, inArray, max } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -20,7 +20,7 @@ import {
   systems,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
-import { Device } from "@/lib/ids";
+import { Device, Point, type PointId } from "@/lib/ids";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -285,21 +285,16 @@ export async function removeMember(
 export interface BindingInput {
   role: string;
   metricType: string;
-  pointSystemId: number;
-  pointId: number;
+  /** The bound point's opaque `pt_` TypeID — decoded to `area_bindings.point_uid` at the seam. */
+  pointId: PointId;
   priority?: number;
   transform?: string | null;
 }
 
 /**
- * An area's current bindings, ordered by ordinal (the editor's GET).
- *
- * ⚠️ STILL ON THE INT PAIR — deliberately. `BindingInput` is the area-builder's WIRE grammar
- * (`components/area-builder/types.ts`), which slice E PR 2b re-grammars onto `pt_` TypeIDs; converting
- * only this half would break the editor's round trip. The `!`s are load-bearing only in the window
- * between PR 2a and PR 2b: migration 0047 merely RELAXES the two columns to NULLable, and every
- * binding writer still names them until PR 2b stops, so no row observed here can carry a NULL.
- * Migration 0048 drops the columns, by which time this function must already read `point_uid`.
+ * An area's current bindings, ordered by ordinal (the editor's GET). Stated in `pt_` TypeIDs — the
+ * same grammar the editor PUTs back, so the round trip is symmetric. `point_uid` is NOT NULL
+ * (migration 0047), so the encode needs no non-null assertion.
  */
 export async function getAreaBindingsForEditor(
   areaId: string,
@@ -308,36 +303,38 @@ export async function getAreaBindingsForEditor(
     .select({
       role: areaBindings.role,
       metricType: areaBindings.metricType,
-      pointSystemId: areaBindings.pointSystemId,
-      pointId: areaBindings.pointId,
+      pointUid: areaBindings.pointUid,
       transform: areaBindings.transform,
     })
     .from(areaBindings)
     .where(eq(areaBindings.areaId, areaId))
     .orderBy(asc(areaBindings.ordinal));
-  return rows.map((r) => ({
+  return rows.map(({ pointUid, ...r }) => ({
     ...r,
-    pointSystemId: r.pointSystemId!,
-    pointId: r.pointId!,
+    pointId: Point.encode(pointUid),
   }));
 }
 
 /**
  * Replace ALL of an area's bindings with the given ordered list (ordinal = array index), in one
- * transaction. Validates each role is known, each point's system is a current member, and there are no
- * duplicate (role, metricType, pointSystemId, pointId) tuples. `metricType` comes from the chosen
- * point's `point_info.metric_type` (the caller sources it from `/api/system/[id]/points`).
+ * transaction. Validates each role is known, each point's owning device is a current member, and there
+ * are no duplicate (role, metricType, pointId) tuples — the same triple `area_bindings_unique` enforces
+ * since migration 0047. `metricType` comes from the chosen point's `point_info.metric_type` (the caller
+ * sources it from `/api/system/[id]/points`).
  */
 export async function replaceBindings(
   areaId: string,
   bindings: BindingInput[],
 ): Promise<void> {
-  // `area_bindings.point_system_id` is still an int handle (slice E moves it to `point_uid`), so the
-  // uuid membership has to come back to handles to validate against it.
+  // Membership is stated in device uuids but `point_info.system_id` is still an int handle
+  // (Phase 13), so the member set has to come back to handles to validate a point's owner against it.
   const memberIds = await getAreaMemberDeviceIds(areaId);
   const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
   const members = new Set<number>(memberRids.values());
   const seen = new Set<string>();
+  // One `IN (uuid, …)` instead of the old OR-of-(system_id, index)-pairs: the wire now names the point
+  // directly, so there is nothing to reconstruct an address from.
+  const wantedUids = bindings.map((b) => Point.toUuid(b.pointId));
   const pointRows =
     bindings.length === 0
       ? []
@@ -350,46 +347,36 @@ export async function replaceBindings(
             metricType: pointInfo.metricType,
           })
           .from(pointInfo)
-          .where(
-            or(
-              ...bindings.map((binding) =>
-                and(
-                  eq(pointInfo.systemId, binding.pointSystemId),
-                  eq(pointInfo.index, binding.pointId),
-                ),
-              ),
-            ),
-          );
-  const pointByAddr = new Map(
-    pointRows.map((point) => [`${point.systemId}.${point.index}`, point]),
-  );
+          .where(inArray(pointInfo.pointUid, wantedUids));
+  const pointByUid = new Map(pointRows.map((point) => [point.pointUid, point]));
   const nextPriority = new Map<string, number>();
   const seenPriorities = new Set<string>();
   // Collected in binding order so the INSERT can name `point_uid` without re-looking-up (and without a
   // non-null assertion — the loop below has already proven every point resolves).
   const resolvedUids: string[] = [];
-  for (const b of bindings) {
+  // The owning system of each resolved point, in binding order — read from `point_info`, not from the
+  // wire, so a caller cannot claim a point belongs to a device it does not.
+  const resolvedSystemIds: number[] = [];
+  for (let bi = 0; bi < bindings.length; bi++) {
+    const b = bindings[bi];
     if (!(b.role in ROLES))
       throw new AreaValidationError(`Unknown role: ${b.role}`);
     if (!b.metricType)
       throw new AreaValidationError("Each binding needs a metricType");
-    if (!members.has(b.pointSystemId))
+    const point = pointByUid.get(wantedUids[bi]);
+    if (!point) throw new AreaValidationError(`Point ${b.pointId} not found`);
+    if (!members.has(point.systemId))
       throw new AreaValidationError(
-        `System ${b.pointSystemId} is not a member of this area`,
-      );
-    const point = pointByAddr.get(`${b.pointSystemId}.${b.pointId}`);
-    if (!point)
-      throw new AreaValidationError(
-        `Point ${b.pointSystemId}.${b.pointId} not found`,
+        `Point ${b.pointId} belongs to system ${point.systemId}, which is not a member of this area`,
       );
     if (
       point.metricType !== b.metricType ||
       !bindingShapeMatches(b.role as RoleId, b.metricType, point)
     )
       throw new AreaValidationError(
-        `Point ${b.pointSystemId}.${b.pointId} does not match ${b.role}/${b.metricType}`,
+        `Point ${b.pointId} does not match ${b.role}/${b.metricType}`,
       );
-    const key = `${b.role}|${b.metricType}|${b.pointSystemId}|${b.pointId}`;
+    const key = `${b.role}|${b.metricType}|${b.pointId}`;
     if (seen.has(key))
       throw new AreaValidationError(`Duplicate binding: ${key}`);
     seen.add(key);
@@ -413,11 +400,17 @@ export async function replaceBindings(
     seenPriorities.add(priorityKey);
     b.priority = priority;
     resolvedUids.push(point.pointUid);
+    resolvedSystemIds.push(point.systemId);
   }
   const db = requirePlanetscaleDb();
-  const selectedBatterySystemId = bindings.find(
+  // The battery/power point's OWNING device, for the area-config carry-over below. Sourced from the
+  // resolved `point_info` row (the wire no longer names a system), so it stays an int `systems.id`
+  // exactly as the `systems.config` lookup needs.
+  const batteryIdx = bindings.findIndex(
     (binding) => binding.role === "battery" && binding.metricType === "power",
-  )?.pointSystemId;
+  );
+  const selectedBatterySystemId =
+    batteryIdx < 0 ? undefined : resolvedSystemIds[batteryIdx];
 
   await db.transaction(async (tx) => {
     await tx.delete(areaBindings).where(eq(areaBindings.areaId, areaId));
@@ -427,8 +420,6 @@ export async function replaceBindings(
           areaId,
           role: b.role as RoleId,
           metricType: b.metricType,
-          pointSystemId: b.pointSystemId,
-          pointId: b.pointId,
           pointUid: resolvedUids[i],
           ordinal: i,
           priority: b.priority!,

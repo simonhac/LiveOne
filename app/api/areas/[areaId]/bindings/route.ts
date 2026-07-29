@@ -7,6 +7,7 @@ import {
   type BindingInput,
   AreaValidationError,
 } from "@/lib/areas/create";
+import { Point } from "@/lib/ids";
 
 /**
  * The typed role→point bindings of an Area (the area builder's Bindings tab), addressed by its opaque
@@ -28,21 +29,22 @@ export async function GET(
   });
 }
 
-/** Coerce one untyped binding entry, or null if it's structurally invalid. */
+/**
+ * Coerce one untyped binding entry, or null if it's structurally invalid. `pointId` is a `pt_` TypeID
+ * (slice E PR 2b): `Point.parse` rejects a wrong prefix / bad base32 / non-uuid payload, so a malformed
+ * id is a 400 here rather than a "not found" from `replaceBindings`.
+ */
 function toBinding(x: unknown): BindingInput | null {
   const b = x as Record<string, unknown>;
-  if (
-    typeof b?.role !== "string" ||
-    typeof b?.metricType !== "string" ||
-    !Number.isInteger(b?.pointSystemId) ||
-    !Number.isInteger(b?.pointId)
-  )
+  if (typeof b?.role !== "string" || typeof b?.metricType !== "string")
     return null;
+  if (typeof b?.pointId !== "string") return null;
+  const parsed = Point.parse(b.pointId);
+  if (!parsed.ok) return null;
   return {
     role: b.role,
     metricType: b.metricType,
-    pointSystemId: b.pointSystemId as number,
-    pointId: b.pointId as number,
+    pointId: parsed.id,
     transform: typeof b.transform === "string" ? b.transform : null,
   };
 }
@@ -69,7 +71,7 @@ export async function PUT(
     if (!parsed)
       return NextResponse.json(
         {
-          error: "Each binding needs role, metricType, pointSystemId, pointId",
+          error: "Each binding needs role, metricType and a pt_ pointId",
         },
         { status: 400 },
       );

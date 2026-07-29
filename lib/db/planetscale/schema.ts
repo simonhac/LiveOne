@@ -789,15 +789,14 @@ export const areas = pgTable(
 // of buildSubscriptionRegistry so KV composite point refs stay stable. `transform` is
 // a per-binding override (nullable → inherit point_info.transform).
 //
-// ⚠️ CONFIG-V4 Phase 12 slice E PR 2a SHAPE (migration 0047). `point_uid` — the uuid
-// address of the bound point — is now the binding's identity: NOT NULL, the key of both
-// `area_bindings_unique` and `area_bindings_point_idx`, and the ONLY thing every
-// server-internal reader addresses the point by. The legacy `(point_system_id, point_id)`
-// pair survives ONLY as the area-builder's wire grammar and the KV subscription map's key
-// (PR 2b converts both); 0047 already dropped its FK into `point_info` — which took FKs
-// into that table from 1 to 0 and is what unblocks slice N's `point_info` drop — and
-// relaxed both columns to NULLable so PR 2b's writers can stop naming them before 0048
-// drops them outright.
+// ⚠️ CONFIG-V4 Phase 12 slice E SHAPE (migrations 0047 + 0048). `point_uid` — the uuid
+// address of the bound point — is the binding's SOLE identity: NOT NULL, the key of both
+// `area_bindings_unique` and `area_bindings_point_idx`, and the only thing any reader,
+// wire, or KV key addresses the point by. The legacy `(point_system_id, point_id)` pair is
+// GONE: 0047 dropped its FK into `point_info` (taking FKs into that table from 1 to 0,
+// which is what unblocks slice N's `point_info` drop) and relaxed both columns to NULLable;
+// PR 2b converted the last two consumers (the area-builder wire → `pt_` TypeIDs, and the KV
+// subscription map's source key → the uuid) and 0048 dropped the columns.
 // ============================================================================
 export const areaBindings = pgTable(
   "area_bindings",
@@ -810,16 +809,11 @@ export const areaBindings = pgTable(
     // migration 0044 (slice G).
     role: text("role").notNull(),
     metricType: text("metric_type").notNull(), // from point_info: 'power' | 'soc' | 'energy' | 'rate' ...
-    // ⚠️ LEGACY, and NULLable since 0047 (slice E PR 2a): the int pair that used to be the binding's
-    // address. No FK any more (`area_bindings_point_info_fk` went with 0047) and no server-internal
-    // reader — the only live consumers are the area-builder wire and the KV subscription map, both of
-    // which PR 2b converts, after which 0048 drops these two columns.
-    pointSystemId: integer("point_system_id"), // the CHILD physical system
-    pointId: integer("point_id"), // (point_system_id, point_id) → point_info(system_id, id)
     // The binding's ADDRESS: the uuid of the bound point. Added ADDITIVELY by config-transform stage 5,
-    // declared here by migration 0036, given an application writer by slice E PR 1, and made NOT NULL by
+    // declared here by migration 0036, given an application writer by slice E PR 1, made NOT NULL by
     // 0047 (slice E PR 2a) once both environments read 72/72 populated with zero disagreement against
-    // the pair it replaces. Plain NO ACTION: deleting a `points` row is BLOCKED, not cascaded.
+    // the pair it replaced, and left as the only address by 0048 (slice E PR 2b). Plain NO ACTION:
+    // deleting a `points` row is BLOCKED, not cascaded.
     pointUid: uuid("point_uid")
       .notNull()
       .references(() => points.id),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { PointManager } from "@/lib/point/point-manager";
+import { Point } from "@/lib/ids";
 
 /**
  * GET /api/system/{systemId}/points
@@ -107,6 +108,11 @@ export async function GET(
           name: point.name,
           metricType: point.metricType,
           metricUnit: point.metricUnit,
+          // The point's opaque identity — what the area builder binds on (slice E PR 2b).
+          pointId: Point.encode(point.pointUid),
+          // Legacy `"{systemId}.{index}"`. ADDED-ALONGSIDE rather than replaced: `HeatmapClient`
+          // and `app/api/system/__tests__/points.integration.test.ts` still read it. Retires with
+          // the rest of the int addressing in Phase 13.
           reference: point.getReference().toString(),
         };
         return showActive ? { ...base, active: point.active } : base;
