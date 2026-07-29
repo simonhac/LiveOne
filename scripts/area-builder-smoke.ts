@@ -43,6 +43,7 @@ async function main() {
   const { PointManager } = await import("@/lib/point/point-manager");
   const { SystemsManager } = await import("@/lib/systems-manager");
   const { getAreaBindingRefs } = await import("@/lib/areas/bindings");
+  const { Point } = await import("@/lib/ids");
   const { getAreaMemberDeviceIds } = await import("@/lib/areas/members");
   const { DeviceRegistry } = await import("@/lib/registry");
   const { bindingShapeMatches } = await import("@/lib/areas/slots");
@@ -159,7 +160,6 @@ async function main() {
         `No point on system ${seed[0]} satisfies any role's shape — pass --members with a device that has role-shaped points.`,
       );
     const p = chosen.point;
-    const [ps, pid] = p.getReference().toString().split(".").map(Number);
     console.log(
       `  · binding ${p.logicalPathStem}/${p.metricType} as role "${chosen.role}"`,
     );
@@ -167,8 +167,8 @@ async function main() {
       {
         role: chosen.role,
         metricType: p.metricType,
-        pointSystemId: ps,
-        pointId: pid,
+        // The wire names the point directly now (slice E PR 2b) — no "{sys}.{index}" to split.
+        pointId: Point.encode(p.pointUid),
       },
     ]);
     const bound = await countPoints(H);

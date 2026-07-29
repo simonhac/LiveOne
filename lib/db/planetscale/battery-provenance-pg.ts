@@ -410,12 +410,7 @@ async function writeBlendOutputs(
   const ensure = await ensureBatteryProvenancePoints(helperSystemId, true, {
     requireBatteryPoint: false,
   });
-  const bind = await ensureHelperBindings(
-    inputs.areaId,
-    helperSystemId,
-    ensure.pointIds,
-    ensure.pointUids,
-  );
+  const bind = await ensureHelperBindings(inputs.areaId, ensure.pointUids);
   if (bind.created > 0) {
     // Best-effort — the KV registry rebuild (fan-out wiring) must never abort the agg_5m write, and it
     // degrades gracefully when KV isn't configured (dev/local). It only matters once per new binding set.
@@ -477,11 +472,13 @@ async function writeBlendOutputs(
   if (opts.updateLatest) {
     for (const spec of BLEND_POINTS) {
       const pointId = ensure.pointIds[spec.metricType];
+      const pointUid = ensure.pointUids[spec.metricType];
       const l = latest.get(spec.metricType);
-      if (pointId === undefined || !l) continue;
+      if (pointId === undefined || pointUid === undefined || !l) continue;
       await updateLatestPointValue(
         helperSystemId,
         pointId,
+        pointUid,
         `${BATTERY_STEM}/${spec.metricType}`,
         l.value,
         l.tsMs,

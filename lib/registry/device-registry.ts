@@ -122,7 +122,8 @@ async function addrForDevice(
  * today (18/18 on dev, zero handle<>rid mismatches); this just makes agreement unnecessary.
  *
  * Callers are the membership consumers that still join int-keyed columns (`point_info.system_id`,
- * `area_bindings.point_system_id`, `systems.id`). Phase 13 moves those to uuid and deletes every one.
+ * `systems.id`). Phase 13 moves those to uuid and deletes every one. (`area_bindings` no longer has an
+ * int pair — slice E PR 2b / migration 0048.)
  */
 async function ridsForDevices(
   ids: DeviceId[],

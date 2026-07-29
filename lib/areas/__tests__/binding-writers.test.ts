@@ -1,8 +1,8 @@
 /**
  * `area_bindings` writers must populate `point_uid` (config-v4 Phase 12 slice E).
  *
- * Why this test exists: `point_uid` is NULLABLE until slice E's contract migration, so omitting it is
- * neither a type error nor a runtime error — the row just lands with NULL. Slice D PR 1 re-pointed
+ * Why this test exists: `point_uid` was NULLABLE until slice E's contract migration, so omitting it was
+ * neither a type error nor a runtime error — the row just landed with NULL. Slice D PR 1 re-pointed
  * `boundPoints` (`lib/battery-provenance/load.ts`) at `point_uid` and maps a NULL to `null`, which
  * inherits the old not-in-registry MISS semantics: the point is silently dropped from the Area's
  * curated set. `replaceBindings` is delete-all-then-reinsert, so a single edit through the admin area
@@ -14,6 +14,11 @@
  *
  * Asserts the values handed to the INSERT rather than rendered SQL: drizzle omits an absent column
  * from the statement entirely, so the values object is where the omission is actually visible.
+ *
+ * Slice E PR 2b turns the assertion around as well: the writers must now name NEITHER
+ * `pointSystemId` NOR `pointId`, because migration 0048 drops those columns and naming a dropped
+ * column is a runtime 42703, not a type error (drizzle's insert type is structural over the schema
+ * object, so a stale writer would only fail in prod).
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 
@@ -44,6 +49,7 @@ jest.mock("@/lib/kv-cache-manager", () => ({
 }));
 
 import { replaceBindings } from "../create";
+import { Point } from "@/lib/ids";
 import {
   ensureHelperBindings,
   BLEND_POINTS,
@@ -121,27 +127,23 @@ describe("area_bindings writers populate point_uid", () => {
     ]);
 
     await replaceBindings("area-a", [
-      { role: "grid", metricType: "power", pointSystemId: 9, pointId: 3 },
+      { role: "grid", metricType: "power", pointId: Point.encode(POINT_UID) },
     ]);
 
     const bindingInsert = inserts.find((i) => i.table === "area_bindings");
     expect(bindingInsert).toBeDefined();
     expect(bindingInsert!.values).toHaveLength(1);
-    // The identity, not just "some uuid": it must be the one belonging to (9, 3).
-    expect(bindingInsert!.values[0]).toMatchObject({
-      pointSystemId: 9,
-      pointId: 3,
-      pointUid: POINT_UID,
-    });
+    // The identity, not just "some uuid": it must be the one off the `point_info` row it read.
+    expect(bindingInsert!.values[0]).toMatchObject({ pointUid: POINT_UID });
+    // …and the retired int pair must not be named at all (migration 0048 drops both columns).
+    expect(bindingInsert!.values[0]).not.toHaveProperty("pointSystemId");
+    expect(bindingInsert!.values[0]).not.toHaveProperty("pointId");
   });
 
   it("ensureHelperBindings carries the uuids returned by ensureBatteryProvenancePoints", async () => {
     mockDb = makeFakeDb([]);
 
     // Keyed off the real spec list so a change to BLEND_POINTS cannot silently empty this test.
-    const pointIds = Object.fromEntries(
-      BLEND_POINTS.map((p, i) => [p.metricType, i + 1]),
-    );
     const pointUids = Object.fromEntries(
       BLEND_POINTS.map((p, i) => [
         p.metricType,
@@ -149,7 +151,7 @@ describe("area_bindings writers populate point_uid", () => {
       ]),
     );
 
-    await ensureHelperBindings("area-a", 1000, pointIds, pointUids);
+    await ensureHelperBindings("area-a", pointUids);
 
     const bindingInsert = inserts.find((i) => i.table === "area_bindings");
     expect(bindingInsert).toBeDefined();
@@ -159,6 +161,8 @@ describe("area_bindings writers populate point_uid", () => {
       // blend points — the loader reads `point_uid` and treats NULL as "no data".
       expect(typeof row.pointUid).toBe("string");
       expect(row.pointUid).toBeTruthy();
+      expect(row).not.toHaveProperty("pointSystemId");
+      expect(row).not.toHaveProperty("pointId");
     }
   });
 });

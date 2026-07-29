@@ -337,6 +337,13 @@
       "when": 1785315878658,
       "tag": "0047_area_bindings_point_uid_contract",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1785326604280,
+      "tag": "0048_area_bindings_drop_int_pair",
+      "breakpoints": true
     }
   ]
 }

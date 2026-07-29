@@ -8,6 +8,7 @@
  */
 
 import type { AreaLocation } from "@/lib/areas/types";
+import type { PointId } from "@/lib/ids";
 
 /** A device the caller may add as a member — one row of `GET /api/areas/candidate-systems`. */
 export interface CandidateSystem {
@@ -28,8 +29,8 @@ export interface CandidateSystemsResponse {
 export interface AreaBinding {
   role: string;
   metricType: string;
-  pointSystemId: number;
-  pointId: number;
+  /** The bound point's `pt_` TypeID — `area_bindings.point_uid`, encoded (slice E PR 2b). */
+  pointId: PointId;
   transform?: string | null;
 }
 
@@ -60,26 +61,15 @@ export interface SystemPoint {
   name: string;
   metricType: string;
   metricUnit: string;
-  /** `"systemId.pointId"` — split on "." for a binding's pointSystemId/pointId. */
+  /** The point's `pt_` TypeID — what a binding is stated in. */
+  pointId: PointId;
+  /** Legacy `"systemId.pointIndex"`. Display/keying only; never bound on. Retires in Phase 13. */
   reference: string;
   active: boolean;
 }
 
 export interface SystemPointsResponse {
   points: SystemPoint[];
-}
-
-/** Split a point `reference` ("systemId.pointId") into its numeric parts, or null if malformed. */
-export function parseReference(
-  reference: string,
-): { pointSystemId: number; pointId: number } | null {
-  const dot = reference.indexOf(".");
-  if (dot < 0) return null;
-  const pointSystemId = Number(reference.slice(0, dot));
-  const pointId = Number(reference.slice(dot + 1));
-  if (!Number.isInteger(pointSystemId) || !Number.isInteger(pointId))
-    return null;
-  return { pointSystemId, pointId };
 }
 
 /** The logical-path stem = the part before the "/" (e.g. "source.solar/power" → "source.solar"). */

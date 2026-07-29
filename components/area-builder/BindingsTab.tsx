@@ -12,17 +12,16 @@ import type {
   SystemPoint,
   SystemPointsResponse,
 } from "./types";
-import { parseReference, stemOfLogicalPath } from "./types";
+import { stemOfLogicalPath } from "./types";
+import type { PointId } from "@/lib/ids";
 
 /** An editable binding row (a point may be unset until chosen). */
 interface Row {
   role: string;
-  pointSystemId: number | null;
-  pointId: number | null;
+  /** The chosen point's `pt_` TypeID, or null until picked. */
+  pointId: PointId | null;
   metricType: string;
 }
-
-const refKey = (ps: number, pid: number) => `${ps}.${pid}`;
 
 /**
  * The typed role→point bindings editor (edit mode only). Fetches each member device's points, lets the
@@ -46,7 +45,6 @@ export default function BindingsTab({
   const [rows, setRows] = useState<Row[]>(() =>
     initialBindings.map((b) => ({
       role: b.role,
-      pointSystemId: b.pointSystemId,
       pointId: b.pointId,
       metricType: b.metricType,
     })),
@@ -73,16 +71,13 @@ export default function BindingsTab({
 
   const nameById = new Map(candidates.map((c) => [c.id, c.displayName]));
 
-  // Fast lookup: "sys.pid" → the point (for metricType + validity).
-  const pointByRef = useMemo(() => {
+  // Fast lookup: `pt_` id → the point (for metricType + validity). Keyed by the point's own opaque
+  // identity, so it no longer depends on the owning device's integer handle.
+  const pointById = useMemo(() => {
     const m = new Map<string, SystemPoint>();
     if (!pointsByMember) return m;
-    for (const [sysId, points] of pointsByMember) {
-      for (const p of points) {
-        const ref = parseReference(p.reference);
-        if (ref && ref.pointSystemId === sysId)
-          m.set(refKey(ref.pointSystemId, ref.pointId), p);
-      }
+    for (const points of pointsByMember.values()) {
+      for (const p of points) m.set(p.pointId, p);
     }
     return m;
   }, [pointsByMember]);
@@ -100,30 +95,23 @@ export default function BindingsTab({
   const addRow = () =>
     setRows((rs) => [
       ...rs,
-      { role: ROLE_IDS[0], pointSystemId: null, pointId: null, metricType: "" },
+      { role: ROLE_IDS[0], pointId: null, metricType: "" },
     ]);
   const removeRow = (i: number) =>
     setRows((rs) => rs.filter((_, idx) => idx !== i));
 
   const onPickPoint = (i: number, value: string) => {
     if (!value) {
-      setRow(i, { pointSystemId: null, pointId: null, metricType: "" });
+      setRow(i, { pointId: null, metricType: "" });
       return;
     }
-    const p = pointByRef.get(value);
-    const ref = parseReference(value);
-    if (!p || !ref) return;
-    setRow(i, {
-      pointSystemId: ref.pointSystemId,
-      pointId: ref.pointId,
-      metricType: p.metricType,
-    });
+    const p = pointById.get(value);
+    if (!p) return;
+    setRow(i, { pointId: p.pointId, metricType: p.metricType });
   };
 
   const save = async () => {
-    const complete = rows.filter(
-      (r) => r.pointSystemId != null && r.pointId != null && r.metricType,
-    );
+    const complete = rows.filter((r) => r.pointId != null && r.metricType);
     setSaving(true);
     setError(null);
     try {
@@ -134,7 +122,6 @@ export default function BindingsTab({
           bindings: complete.map((r) => ({
             role: r.role,
             metricType: r.metricType,
-            pointSystemId: r.pointSystemId,
             pointId: r.pointId,
           })),
         }),
@@ -165,10 +152,7 @@ export default function BindingsTab({
       {rows.length > 0 && (
         <ul className="space-y-2">
           {rows.map((r, i) => {
-            const selectedRef =
-              r.pointSystemId != null && r.pointId != null
-                ? refKey(r.pointSystemId, r.pointId)
-                : "";
+            const selectedPointId = r.pointId ?? "";
             return (
               <li
                 key={i}
@@ -187,7 +171,7 @@ export default function BindingsTab({
                 </select>
                 <span className="text-gray-600">→</span>
                 <select
-                  value={selectedRef}
+                  value={selectedPointId}
                   onChange={(e) => onPickPoint(i, e.target.value)}
                   className="min-w-0 flex-1 rounded-md border border-gray-600 bg-gray-800 px-2 py-1.5 text-sm text-gray-100"
                 >
@@ -201,17 +185,12 @@ export default function BindingsTab({
                         label={nameById.get(sysId) ?? `ID: ${sysId}`}
                       >
                         {points.map((p) => {
-                          const ref = parseReference(p.reference);
-                          if (!ref) return null;
                           const compatible = stemMatchesRole(
                             stemOfLogicalPath(p.logicalPath),
                             r.role as (typeof ROLE_IDS)[number],
                           );
                           return (
-                            <option
-                              key={p.reference}
-                              value={refKey(ref.pointSystemId, ref.pointId)}
-                            >
+                            <option key={p.pointId} value={p.pointId}>
                               {compatible ? "● " : ""}
                               {p.logicalPath} — {p.name}
                             </option>

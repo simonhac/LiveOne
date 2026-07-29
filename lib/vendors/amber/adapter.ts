@@ -253,6 +253,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         await updateLatestPointValue(
           systemId,
           point.index,
+          point.pointUid,
           item.logicalPath,
           item.value,
           measurementTimeMs,

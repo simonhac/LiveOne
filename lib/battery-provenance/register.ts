@@ -246,19 +246,15 @@ export async function ensureBatteryProvenancePoints(
  */
 export async function ensureHelperBindings(
   areaId: string,
-  helperSystemId: number,
-  pointIds: Record<string, number>,
   pointUids: Record<string, string>,
 ): Promise<{ created: number }> {
   const db = requirePlanetscaleDb();
   const values = BLEND_POINTS.filter(
-    (p) => pointIds[p.metricType] !== undefined,
+    (p) => pointUids[p.metricType] !== undefined,
   ).map((p, i) => ({
     areaId,
     role: "battery",
     metricType: p.metricType,
-    pointSystemId: helperSystemId,
-    pointId: pointIds[p.metricType],
     pointUid: pointUids[p.metricType],
     ordinal: 100 + i,
     priority: 100 + i,

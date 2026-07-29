@@ -8,7 +8,8 @@
  * `getAreaMemberDeviceIds` returns `dv_` TypeIDs, and callers that still join int-keyed columns convert
  * explicitly through `DeviceRegistry.ridsForDevices`. There is deliberately NO handle-returning variant
  * here — the conversion is meant to be visible at each site, because Phase 13 deletes them all when
- * `point_info.system_id` / `area_bindings.point_system_id` / `systems.id` move to uuid.
+ * `point_info.system_id` / `systems.id` move to uuid. (`area_bindings`' own int pair is already gone —
+ * slice E PR 2b / migration 0048.)
  *
  * The `sql` fragments below are invisible to `tsc`; `__tests__/members.test.ts` asserts their rendered
  * SQL so a stale table or column name fails CI rather than at runtime.
@@ -98,22 +99,23 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
 /**
  * The member-device points to fan out for **binding-less** areas-backed handles — i.e. multi-device
  * areas that resolve under union-default (no `area_bindings` to select). For each such handle, every
- * member device's `point_info` point, as `(handle, pointSystemId, pointId)`. Multi-device areas WITH
+ * member device's `point_info` point, as `(handle, sourceSystemId, pointUid)`. Multi-device areas WITH
  * bindings are covered by `getAllCompositeBindings` instead, so this is empty for today's data (both
  * prod multi-device areas have bindings) — it only lights up when a binding-less multi-device area
  * appears. SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
  *
- * Still emits integer handles: it feeds the legacy KV subscription registry, whose ref grammar stays
- * `{systemId}.{pointIndex}` until slice M.
+ * Still emits integer handles: the subscriber ref grammar stays `{systemId}.{pointIndex}` (Phase 13),
+ * and `sourceSystemId` remains the `subscriptions:system:N` KV key. Only the map's SOURCE-point key
+ * moved to `point_uid` (slice E PR 2b).
  */
 export async function getBindinglessAreaMemberPoints(): Promise<
-  { handle: number; pointSystemId: number; pointId: number }[]
+  { handle: number; sourceSystemId: number; pointUid: string }[]
 > {
   const rows = await requirePlanetscaleDb()
     .select({
       handle: areas.legacySystemId,
-      pointSystemId: pointInfo.systemId,
-      pointId: pointInfo.index,
+      sourceSystemId: pointInfo.systemId,
+      pointUid: pointInfo.pointUid,
     })
     .from(areas)
     .innerJoin(areaMembers, eq(areaMembers.areaId, areas.id))
@@ -133,7 +135,7 @@ export async function getBindinglessAreaMemberPoints(): Promise<
     .filter((r): r is typeof r & { handle: number } => r.handle != null)
     .map((r) => ({
       handle: r.handle,
-      pointSystemId: r.pointSystemId,
-      pointId: r.pointId,
+      sourceSystemId: r.sourceSystemId,
+      pointUid: r.pointUid,
     }));
 }

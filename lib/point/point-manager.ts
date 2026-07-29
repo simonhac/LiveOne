@@ -1016,7 +1016,8 @@ export class PointManager {
 
           return updateLatestPointValue(
             systemId,
-            val.pointId, // Pass point index for subscription lookup
+            val.pointId, // integer index — only for the stored `pointReference`
+            point.pointUid, // uuid — the subscription-map lookup key
             logicalPath,
             cacheValue,
             val.measurementTimeMs,

@@ -21,7 +21,7 @@ jest.mock("../kv", () => ({
 }));
 
 // Mock the database (Postgres). Two query shapes hit this:
-//  - getAllCompositeBindings: select→from→innerJoin→orderBy
+//  - getAreaBindings: select→from→innerJoin×3→orderBy (areas + points + devices)
 //  - getBindinglessAreaMemberPoints: select→from→innerJoin×3→where→orderBy (slice H added the
 //    `devices` hop that bridges area_members.device_id back to the int point_info.system_id)
 // A recursive chain node (innerJoin/where return itself; orderBy resolves) covers both → [].
@@ -46,16 +46,20 @@ jest.mock("@/lib/db/planetscale", () => ({
 // Mock the schema
 jest.mock("@/lib/db/planetscale/schema", () => ({
   systems: { vendorType: "vendorType" },
-  pointInfo: { systemId: "systemId", index: "index" },
+  pointInfo: {
+    systemId: "systemId",
+    index: "index",
+    pointUid: "pointUid",
+  },
   areas: { id: "id", legacySystemId: "legacySystemId" },
   areaBindings: {
     areaId: "areaId",
-    pointSystemId: "pointSystemId",
-    pointId: "pointId",
+    pointUid: "pointUid",
     ordinal: "ordinal",
   },
   areaMembers: { areaId: "areaId", deviceId: "deviceId", ordinal: "ordinal" },
   devices: { id: "id", rid: "rid" },
+  points: { id: "id", deviceId: "deviceId" },
 }));
 
 // Mock drizzle-orm
@@ -90,7 +94,8 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
-        1, // point ID
+        1, // point index (pointReference only)
+        "0199aaaa-0000-7000-8000-00000000000a", // point uid (subscription key)
         "source.solar.local/power",
         5234.5,
         1731627600000, // measurementTimeMs
@@ -120,7 +125,8 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
-        1, // point ID
+        1, // point index (pointReference only)
+        "0199aaaa-0000-7000-8000-00000000000a", // point uid (subscription key)
         "source.solar.local/power",
         5234.5,
         1731627600000, // measurementTimeMs
@@ -141,14 +147,16 @@ describe("kv-cache-manager", () => {
       // Mock getPointSubscribers to return subscription registry with point-to-point mappings
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
         pointSubscribers: {
-          "1": ["100.0", "101.0"], // Point 1 subscribed by composite systems 100 and 101
+          // keyed by the SOURCE POINT UUID since slice E PR 2b (was the integer index)
+          "0199aaaa-0000-7000-8000-00000000000a": ["100.0", "101.0"],
         },
         lastUpdatedTimeMs: Date.now(),
       });
 
       await updateLatestPointValue(
         10,
-        1, // point ID
+        1, // point index (pointReference only)
+        "0199aaaa-0000-7000-8000-00000000000a", // point uid (subscription key)
         "source.solar.local/power",
         5234.5,
         1731627600000, // measurementTimeMs
@@ -221,11 +229,17 @@ describe("kv-cache-manager", () => {
   });
 
   describe("buildSubscriptionRegistry", () => {
-    // Mock getAllCompositeBindings's query: select→from→innerJoin→orderBy → binding rows.
+    // Mock getAreaBindings's query: select→from→innerJoin×3→orderBy → binding rows.
     const mockBindings = (rows: unknown[]) => {
       (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
         from: () => ({
-          innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
+          // getAreaBindings joins `areas`, then `points` → `devices` (the latter pair supplies
+          // sourceSystemId now that area_bindings has no point_system_id column).
+          innerJoin: () => ({
+            innerJoin: () => ({
+              innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
+            }),
+          }),
         }),
       });
     };
@@ -233,15 +247,16 @@ describe("kv-cache-manager", () => {
     it("builds the reverse source→composite map from area_bindings", async () => {
       const { kv } = await import("../kv");
 
-      // composite 100: solar from sys6 (pts 17,7) + battery from sys5 (pts 7,10);
-      // composite 101: solar from sys6 (17) + load from sys7 (3). → source systems 5, 6, 7.
+      // handle 100: solar from sys6 (2 pts) + battery from sys5 (2 pts);
+      // handle 101: solar from sys6 (1) + load from sys7 (1). → source systems 5, 6, 7.
+      // Rows are keyed by point uuid; sourceSystemId comes from the point_info join.
       mockBindings([
-        { compositeSystemId: 100, pointSystemId: 6, pointId: 17, ordinal: 0 },
-        { compositeSystemId: 100, pointSystemId: 6, pointId: 7, ordinal: 1 },
-        { compositeSystemId: 100, pointSystemId: 5, pointId: 7, ordinal: 2 },
-        { compositeSystemId: 100, pointSystemId: 5, pointId: 10, ordinal: 3 },
-        { compositeSystemId: 101, pointSystemId: 6, pointId: 17, ordinal: 0 },
-        { compositeSystemId: 101, pointSystemId: 7, pointId: 3, ordinal: 1 },
+        { handle: 100, sourceSystemId: 6, pointUid: "uid-6-17", ordinal: 0 },
+        { handle: 100, sourceSystemId: 6, pointUid: "uid-6-7", ordinal: 1 },
+        { handle: 100, sourceSystemId: 5, pointUid: "uid-5-7", ordinal: 2 },
+        { handle: 100, sourceSystemId: 5, pointUid: "uid-5-10", ordinal: 3 },
+        { handle: 101, sourceSystemId: 6, pointUid: "uid-6-17", ordinal: 0 },
+        { handle: 101, sourceSystemId: 7, pointUid: "uid-7-3", ordinal: 1 },
       ]);
 
       await buildSubscriptionRegistry();

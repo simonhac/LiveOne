@@ -32,6 +32,7 @@
 import { getEnvironment } from "@/lib/env";
 import { ReadingsDao } from "@/lib/readings";
 import { RegistryCache } from "@/lib/registry";
+import { Point } from "@/lib/ids";
 import {
   buildSubscriptionRegistry,
   updateLatestPointValue,
@@ -137,6 +138,7 @@ async function main(): Promise<void> {
         updateLatestPointValue(
           systemId,
           address.index,
+          Point.toUuid(row.point),
           logicalPath,
           cacheValue,
           measurementTimeMs,

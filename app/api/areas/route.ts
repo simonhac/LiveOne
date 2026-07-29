@@ -15,7 +15,7 @@ import {
   AreaValidationError,
 } from "@/lib/areas/create";
 import { locationPatchFromBody } from "@/lib/areas/http";
-import { Area } from "@/lib/ids";
+import { Area, Point } from "@/lib/ids";
 
 /**
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.
@@ -68,8 +68,7 @@ export async function GET(request: NextRequest) {
     .select({
       role: areaBindings.role,
       metricType: areaBindings.metricType,
-      pointSystemId: areaBindings.pointSystemId,
-      pointId: areaBindings.pointId,
+      pointUid: areaBindings.pointUid,
       ordinal: areaBindings.ordinal,
       transform: areaBindings.transform,
     })
@@ -79,7 +78,11 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     area: area ? { ...area, id: Area.encode(area.id) } : area,
-    bindings,
+    // Bindings go out in the same `pt_` grammar the editor PUTs back (slice E PR 2b).
+    bindings: bindings.map(({ pointUid, ...b }) => ({
+      ...b,
+      pointId: Point.encode(pointUid),
+    })),
   });
 }
 

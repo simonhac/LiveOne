@@ -27,17 +27,18 @@ import {
 
 /**
  * Ensure a derived `<stem>/running` `point_info` row exists for `systemId`, returning its index
- * (the pointId used as the KV pointReference). Idempotent; inserts at the next free index. No
+ * (the pointId used as the KV pointReference) AND its uuid (the KV subscription-map key). Idempotent;
+ * inserts at the next free index. No
  * migration — `point_info` is a config table. Mirrors `ensureHwsTemperaturePoint`.
  */
 async function ensureRunningPoint(
   systemId: number,
   stem: string,
   displayName: string,
-): Promise<number> {
+): Promise<{ index: number; pointUid: string }> {
   const db = requirePlanetscaleDb();
   const [existing] = await db
-    .select({ index: pointInfo.index })
+    .select({ index: pointInfo.index, pointUid: pointInfo.pointUid })
     .from(pointInfo)
     .where(
       and(
@@ -47,7 +48,7 @@ async function ensureRunningPoint(
       ),
     )
     .limit(1);
-  if (existing) return existing.index;
+  if (existing) return existing;
 
   const all = await db
     .select({ index: pointInfo.index })
@@ -57,6 +58,7 @@ async function ensureRunningPoint(
     all.length > 0 ? Math.max(...all.map((p) => p.index)) + 1 : 0;
 
   const physicalPathTail = `derived/${stem}/${RUNNING_METRIC}`;
+  const newPointUid = await mintPointUid(systemId, physicalPathTail);
   const [row] = await db
     .insert(pointInfo)
     .values({
@@ -71,11 +73,11 @@ async function ensureRunningPoint(
       subsystem: null,
       transform: null,
       active: true,
-      pointUid: await mintPointUid(systemId, physicalPathTail),
+      pointUid: newPointUid,
       createdAt: new Date(),
     })
-    .returning({ index: pointInfo.index });
-  return row.index;
+    .returning({ index: pointInfo.index, pointUid: pointInfo.pointUid });
+  return row;
 }
 
 /**
@@ -92,11 +94,12 @@ export async function publishRunningLatest(
     const path = runningPathForRole(t.role);
     if (!stem || !path) continue; // role without a registry stem → skip
     try {
-      const pointId = await ensureRunningPoint(t.legacyHandle, stem, t.name);
+      const point = await ensureRunningPoint(t.legacyHandle, stem, t.name);
       const running = await isRunningNow(t.id);
       await updateLatestPointValue(
         t.legacyHandle,
-        pointId,
+        point.index,
+        point.pointUid,
         path,
         running ? 1 : 0,
         nowMs,
