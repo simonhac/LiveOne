@@ -1,6 +1,7 @@
 "use client";
 
 import { ttInterphases } from "@/lib/fonts/amber";
+import Value from "@/components/ui/value";
 import {
   type LatestValue,
   getNumericValue,
@@ -97,7 +98,7 @@ export default function AmberNow({ latest }: AmberNowProps) {
               lineHeight: 1,
             }}
           >
-            {Math.round(importPrice)}¢
+            <Value value={Math.round(importPrice)} unit="¢" />
           </div>
           <div
             style={{
@@ -120,7 +121,7 @@ export default function AmberNow({ latest }: AmberNowProps) {
                   fontWeight: 700,
                 }}
               >
-                {Math.round(renewables)}%
+                <Value value={Math.round(renewables)} unit="%" />
               </span>
               <div
                 style={{
@@ -163,14 +164,10 @@ export default function AmberNow({ latest }: AmberNowProps) {
                 fontWeight: 700,
               }}
             >
-              {feedInPrice < 0 ? "" : "-"}
-              {Math.abs(Math.round(feedInPrice))}¢
-            </span>
-            <span
-              className="text-gray-400 ml-1"
-              style={{ fontSize: "14px", fontWeight: 400 }}
-            >
-              /kWh
+              <Value
+                value={`${feedInPrice < 0 ? "" : "-"}${Math.abs(Math.round(feedInPrice))}`}
+                unit="¢/kWh"
+              />
             </span>
           </div>
         </div>

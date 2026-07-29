@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import Value from "@/components/ui/value";
 import { Zap } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
 import {
@@ -137,7 +138,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
               className="font-bold leading-none text-[22px]"
               style={{ color: "rgb(0, 11, 36)" }}
             >
-              {Math.round(importPrice)}¢
+              <Value value={Math.round(importPrice)} unit="¢" />
             </div>
             <div className="text-[7px]" style={{ color: "rgb(0, 0, 0)" }}>
               /kWh
@@ -152,8 +153,10 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
         <div className="absolute bottom-1.5 right-1.5 @[120px]:bottom-2 @[120px]:right-2 @[180px]:bottom-2.5 @[180px]:right-2.5 flex flex-col items-center">
           <SunIcon className="w-2.5 h-2.5 @[180px]:w-4 @[180px]:h-4 mb-0.5 hidden @[90px]:block" />
           <span className="text-white text-[10px] @[180px]:text-sm font-medium @[120px]:font-bold">
-            {feedInPrice < 0 ? "" : "-"}
-            {Math.abs(Math.round(feedInPrice))}¢
+            <Value
+              value={`${feedInPrice < 0 ? "" : "-"}${Math.abs(Math.round(feedInPrice))}`}
+              unit="¢"
+            />
           </span>
           <span className="hidden @[300px]:block text-gray-500 text-[10px]">
             /kWh
@@ -192,7 +195,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
               className="font-bold leading-none text-[36px]"
               style={{ color: "rgb(0, 11, 36)" }}
             >
-              {Math.round(importPrice)}¢
+              <Value value={Math.round(importPrice)} unit="¢" />
             </div>
             <div className="text-[10px]" style={{ color: "rgb(0, 0, 0)" }}>
               /kWh
@@ -208,7 +211,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
                     fontSize: "16px",
                   }}
                 >
-                  {Math.round(renewables)}%
+                  <Value value={Math.round(renewables)} unit="%" />
                 </span>
                 <div
                   className="text-[8px] -mt-[4px]"

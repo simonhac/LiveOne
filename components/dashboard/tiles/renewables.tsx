@@ -1,6 +1,7 @@
 "use client";
 
 import { Leaf } from "lucide-react";
+import Value from "@/components/ui/value";
 import { useQuery } from "@tanstack/react-query";
 import Tile from "@/components/Tile";
 import type { LatestPointValues } from "@/lib/types/api";
@@ -26,11 +27,8 @@ import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
  * "today so far" is real; M/Y read the daily rollup.
  */
 
-const fmtPct = (x: number | null | undefined): string =>
-  x == null ? "—" : `${Math.round(x * 100)}%`;
-
-/** The headline value only — no "%": the Tile renders the (small) "%" via its `unit` prop, so a "%"
- *  here too would double it up ("21%%"). The `extra` MetricRows keep `fmtPct` (single, inline "%"). */
+/** Bare rounded percent — never includes the "%". Both the Tile hero and the MetricRows render the
+ *  "%" via `<Value unit="%">` so it is sized and bound per docs/architecture/number-typography.md. */
 const fmtPctValue = (x: number | null | undefined): string =>
   x == null ? "—" : `${Math.round(x * 100)}`;
 
@@ -61,7 +59,9 @@ function MetricRow({
       title={tip}
     >
       <span className="text-gray-400 truncate">{label}</span>
-      <span className="text-gray-200 font-semibold tabular-nums">{value}</span>
+      <span className="text-gray-200 font-semibold">
+        <Value value={value} unit={/\d/.test(value) ? "%" : undefined} />
+      </span>
     </div>
   );
 }
@@ -118,17 +118,17 @@ function RenewablesTile({
         <div className="text-xs space-y-0.5">
           <MetricRow
             label="Autarky"
-            value={loading ? "…" : fmtPct(m?.renewableAutarky)}
+            value={loading ? "…" : fmtPctValue(m?.renewableAutarky)}
             tip={AUTARKY_TIP}
           />
           <MetricRow
             label="Self-use"
-            value={loading ? "…" : fmtPct(m?.ownRenewableSelfConsumption)}
+            value={loading ? "…" : fmtPctValue(m?.ownRenewableSelfConsumption)}
             tip={SELF_CONSUMPTION_TIP}
           />
           <MetricRow
             label="Renewable"
-            value={loading ? "…" : fmtPct(m?.renewableShare)}
+            value={loading ? "…" : fmtPctValue(m?.renewableShare)}
             tip={SHARE_TIP}
           />
         </div>

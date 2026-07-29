@@ -26,9 +26,26 @@ export function formatGramsPerKwh(g: number | null): string {
   return g != null ? `${Math.round(g)}` : "—";
 }
 
-/** Rounded whole percent (0-100), or "—" when unknown. */
+/** Rounded whole percent (0-100), or "—" when unknown. Includes the "%" — for inline/tooltip text
+ *  only. Hero values should use `formatRenewablePctBare` + `<Value unit="%">` so the "%" is sized
+ *  and bound per docs/architecture/number-typography.md. */
 export function formatRenewablePct(p: number | null): string {
   return p != null ? `${Math.round(p)}%` : "—";
+}
+
+/** Rounded whole percent with NO "%", to pair with `<Value unit="%">`. */
+export function formatRenewablePctBare(p: number | null): string {
+  return p != null ? `${Math.round(p)}` : "—";
+}
+
+/** The sign-carrying "$" prefix for `formatDollarsBare` — "$" or "−$" (a real minus, not a hyphen). */
+export function dollarPrefix(costC: number): string {
+  return costC / 100 < 0 ? "−$" : "$";
+}
+
+/** Absolute dollar magnitude with NO "$", to pair with `<Value prefix={dollarPrefix(c)}>`. */
+export function formatDollarsBare(costC: number): string {
+  return Math.abs(costC / 100).toFixed(2);
 }
 
 /** "X.Y" (1dp kWh), dropping the decimal once the value reaches 100 (see formatFlowMagnitude). */

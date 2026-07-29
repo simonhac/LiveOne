@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
+import { classifyUnit } from "@/lib/point/unit-typography";
 import { useQuery } from "@tanstack/react-query";
 import { HttpError } from "@/lib/queries";
 import {
@@ -620,10 +621,14 @@ export default function HeatmapChart({
               displayValue = dataPoint.v.toFixed(2);
               displayUnit = pointUnit;
             }
+            // Tight for %/°C/¢, hair-spaced for kW/kWh/… — same rule as <Value>, so the tooltip
+            // agrees with the tiles instead of reading "3.4kW". See number-typography.md.
             const bodyText =
               displayValue === "No data"
                 ? displayValue
-                : `${displayValue}${displayUnit}`;
+                : `${displayValue}${
+                    classifyUnit(displayUnit).headGap === "hair" ? " " : ""
+                  }${displayUnit}`;
 
             tooltipEl.innerHTML = `
               <div style="

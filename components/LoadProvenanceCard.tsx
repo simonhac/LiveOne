@@ -2,13 +2,15 @@
 
 import { Car } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
+import Stat from "@/components/ui/stat";
 import type { LoadProvenanceSummary } from "@/lib/energy-flow-matrix";
 import {
   formatCentsPerKwh,
-  formatDollars,
+  formatDollarsBare,
+  dollarPrefix,
   formatGramsPerKwh,
   formatKwh,
-  formatRenewablePct,
+  formatRenewablePctBare,
 } from "@/lib/provenance-format";
 
 export interface LoadProvenanceCardProps {
@@ -18,32 +20,6 @@ export interface LoadProvenanceCardProps {
   /** Overrides the summary's load label (e.g. "EV Charging"). */
   title?: string;
   loading?: boolean;
-}
-
-/** A labelled stat: big value + tiny caption underneath. */
-function Stat({
-  value,
-  caption,
-  valueClassName,
-}: {
-  value: string;
-  caption: string;
-  valueClassName?: string;
-}) {
-  return (
-    <div>
-      <p
-        className={`whitespace-nowrap text-xl font-bold leading-none md:text-2xl ${
-          valueClassName ?? "text-gray-100"
-        }`}
-      >
-        {value}
-      </p>
-      <p className="mt-1 text-[10px] uppercase tracking-wide text-gray-500 md:text-xs">
-        {caption}
-      </p>
-    </div>
-  );
 }
 
 /**
@@ -95,8 +71,7 @@ export default function LoadProvenanceCard({
     );
   }
 
-  const dollarsText = formatDollars(summary.costC);
-  const renewableText = formatRenewablePct(summary.pctRenewable);
+  const renewableText = formatRenewablePctBare(summary.pctRenewable);
   const renewableGreen =
     summary.pctRenewable != null && summary.pctRenewable > 50;
   const emissionsText = formatGramsPerKwh(summary.avgGramsPerKwh);
@@ -115,18 +90,19 @@ export default function LoadProvenanceCard({
   return shell(
     <div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 @[360px]:grid-cols-4">
-        <Stat value={dollarsText} caption="cost" />
+        <Stat
+          value={formatDollarsBare(summary.costC)}
+          prefix={dollarPrefix(summary.costC)}
+          caption="cost"
+        />
         <Stat
           value={renewableText}
+          unit="%"
           caption="renewable"
-          valueClassName={renewableGreen ? "text-green-400" : "text-gray-100"}
+          valueClassName={renewableGreen ? "text-green-400" : undefined}
         />
-        <Stat
-          value={emissionsText}
-          caption="g CO₂ / kWh"
-          valueClassName="text-gray-100"
-        />
-        <Stat value={energyText} caption="kWh" />
+        <Stat value={emissionsText} unit="g" caption="CO₂ / kWh" />
+        <Stat value={energyText} unit="kWh" caption="energy" />
       </div>
 
       {/* Source split (solar / battery / grid) */}

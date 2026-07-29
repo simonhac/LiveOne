@@ -1,4 +1,5 @@
 import React from "react";
+import Value from "@/components/ui/value";
 
 interface ChartTooltipProps {
   solar: number | null;
@@ -29,20 +30,16 @@ export default function ChartTooltip({
           style={{
             minWidth: "48px",
             display: "inline-flex",
-            gap: "0.125rem",
+            fontFamily: "DM Sans, system-ui, sans-serif",
             justifyContent: "flex-end",
           }}
         >
           {solar !== null && solar !== undefined ? (
-            <>
-              <span
-                className="text-white"
-                style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-              >
-                {solar.toFixed(1)}
-              </span>
-              <span className="text-gray-400">{unit}</span>
-            </>
+            <Value
+              className="text-white"
+              value={solar.toFixed(1)}
+              unit={unit}
+            />
           ) : null}
         </span>
       </div>
@@ -55,20 +52,12 @@ export default function ChartTooltip({
           style={{
             minWidth: "48px",
             display: "inline-flex",
-            gap: "0.125rem",
+            fontFamily: "DM Sans, system-ui, sans-serif",
             justifyContent: "flex-end",
           }}
         >
           {load !== null && load !== undefined ? (
-            <>
-              <span
-                className="text-white"
-                style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-              >
-                {load.toFixed(1)}
-              </span>
-              <span className="text-gray-400">{unit}</span>
-            </>
+            <Value className="text-white" value={load.toFixed(1)} unit={unit} />
           ) : null}
         </span>
       </div>
@@ -82,17 +71,15 @@ export default function ChartTooltip({
             style={{
               minWidth: "48px",
               display: "inline-flex",
-              gap: "0.125rem",
+              fontFamily: "DM Sans, system-ui, sans-serif",
               justifyContent: "flex-end",
             }}
           >
-            <span
+            <Value
               className="text-white"
-              style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-            >
-              {battery.toFixed(1)}
-            </span>
-            <span className="text-gray-400">{unit}</span>
+              value={battery.toFixed(1)}
+              unit={unit}
+            />
           </span>
         </div>
       )}
@@ -106,17 +93,11 @@ export default function ChartTooltip({
             style={{
               minWidth: "48px",
               display: "inline-flex",
-              gap: "0.125rem",
+              fontFamily: "DM Sans, system-ui, sans-serif",
               justifyContent: "flex-end",
             }}
           >
-            <span
-              className="text-white"
-              style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-            >
-              {grid.toFixed(1)}
-            </span>
-            <span className="text-gray-400">{unit}</span>
+            <Value className="text-white" value={grid.toFixed(1)} unit={unit} />
           </span>
         </div>
       )}
@@ -129,20 +110,16 @@ export default function ChartTooltip({
           style={{
             minWidth: "48px",
             display: "inline-flex",
-            gap: "0.125rem",
+            fontFamily: "DM Sans, system-ui, sans-serif",
             justifyContent: "flex-end",
           }}
         >
           {batterySOC !== null && batterySOC !== undefined ? (
-            <>
-              <span
-                className="text-white"
-                style={{ fontFamily: "DM Sans, system-ui, sans-serif" }}
-              >
-                {batterySOC.toFixed(1)}
-              </span>
-              <span className="text-gray-400">%</span>
-            </>
+            <Value
+              className="text-white"
+              value={batterySOC.toFixed(1)}
+              unit={"%"}
+            />
           ) : null}
         </span>
       </div>

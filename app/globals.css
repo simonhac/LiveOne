@@ -3,23 +3,6 @@
 /* Font is applied via Next.js font optimization in layout.tsx */
 /* This ensures consistent font loading and prevents preload warnings */
 
-/* Energy Panel Styles */
-.energy-value {
-  font-weight: bold;
-  font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-.energy-unit::before {
-  content: '\00A0'; /* Non-breaking space */
-  font-size: 8px;
-}
-
-.energy-unit {
-  font-size: 12px;
-  font-weight: normal;
-  opacity: 0.8;
-}
-
 .energy-table th:first-child,
 .energy-table td:first-child {
   width: 1%; /* Minimal width for row labels */
@@ -82,10 +65,10 @@
 
 /* Hide scrollbar but keep scroll functionality */
 .scrollbar-hide {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
 }
 
 .scrollbar-hide::-webkit-scrollbar {
-  display: none;  /* Chrome, Safari and Opera */
+  display: none; /* Chrome, Safari and Opera */
 }
