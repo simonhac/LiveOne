@@ -63,6 +63,12 @@ async function main() {
     defaultName: "slice-M e2e probe",
   });
   console.log(`minted: index=${pt.index} rid=${pt.rid} uid=${pt.pointUid}`);
+  // `buildObservations` takes the served (epoch-ms) point shape, not the raw DB row.
+  const servedPoint = {
+    ...pt,
+    createdAtMs: pt.createdAt?.getTime() ?? 0,
+    updatedAtMs: pt.updatedAt?.getTime() ?? null,
+  };
 
   const [mirror] = await db
     .select()
@@ -79,7 +85,7 @@ async function main() {
   const obs = buildObservations(system, [
     {
       sessionId,
-      point: pt,
+      point: servedPoint,
       value: 111,
       measurementTimeMs: base,
       receivedTimeMs: base,
@@ -87,7 +93,7 @@ async function main() {
     },
     {
       sessionId,
-      point: pt,
+      point: servedPoint,
       value: 333,
       measurementTimeMs: base + 60000,
       receivedTimeMs: base + 60000,
