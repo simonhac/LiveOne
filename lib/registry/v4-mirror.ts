@@ -97,6 +97,45 @@ export function toMirrorPointInput(
 }
 
 /**
+ * Extract the first positive number preceding `unit` from a free-text spec column, as SQL.
+ *
+ * Lower-cased so "kW"/"kw"/"KWh" all match; the pattern uses `[ ]*` / `[.]` rather than `\s` / `\.`
+ * ON PURPOSE — a `\` inside a JS template literal is an unknown string escape that silently drops to
+ * the bare character, so `\s` would reach Postgres as `s` and match "9 skW". No backslashes, no trap.
+ *
+ * `nullif(greatest(coalesce(…,0),0),0)` collapses "no match" and "not a positive number" to NULL, which
+ * `jsonb_strip_nulls` then removes: an absent spec field must mean exactly what an unparseable free-text
+ * value meant. System 3 carries the literal `solar_size` "-0.0 kW" — the capture group is unsigned so it
+ * reads 0.0, and this filters it. (The retiring regex also rejected it, via its `^` anchor.)
+ */
+function specNum(col: string, unit: "kw" | "kwh" | "v"): string {
+  return `nullif(greatest(coalesce((substring(lower(${col}) from '([0-9]+([.][0-9]+)?)[ ]*${unit}'))::numeric, 0), 0), 0)`;
+}
+
+/**
+ * `devices.config`, built from `systems.config` plus the STRUCTURED device spec (`DeviceConfig.spec`,
+ * lib/capabilities/config.ts) parsed out of the three free-text `systems` columns.
+ *
+ * Replaces the earlier `legacyRatings`/`legacySolarSize`/`legacyBatterySize` string stash, and DELETES
+ * those keys on the way through so a re-mirrored device is never left carrying both shapes. `devices`
+ * has no counterpart to the three columns by design (clean-sheet §4.8), and the only behavioural reader
+ * of the free text was a regex re-deriving these very numbers on every render
+ * (`maxPowerHintFromSystemInfo`) — a number that must be re-parsed on each read was never stored.
+ *
+ * This is the SOLE implementation of the parse. The backfill
+ * (`scripts/config-v4/backfill-device-spec.ts`) re-runs `ensureDeviceRow` rather than reimplementing it
+ * in TypeScript, so there is no second copy to drift.
+ */
+export const DEVICE_CONFIG_WITH_SPEC_SQL = `
+  ((coalesce(s.config, '{}'::jsonb) - 'legacyRatings' - 'legacySolarSize' - 'legacyBatterySize')
+   || jsonb_strip_nulls(jsonb_build_object('spec', nullif(jsonb_strip_nulls(jsonb_build_object(
+        'solarSizeKw',     ${specNum("s.solar_size", "kw")},
+        'batterySizeKwh',  ${specNum("s.battery_size", "kwh")},
+        'inverterSizeKw',  ${specNum("s.ratings", "kw")},
+        'batteryVoltageV', ${specNum("s.ratings", "v")}
+      )), '{}'::jsonb))))`;
+
+/**
  * Ensure the area-of-one for a device handle, minting it if absent.
  *
  * `devices.primary_area_id` is tightened to NOT NULL by registry-sync, and v3's `createSystem` does not
@@ -167,7 +206,8 @@ async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
  *
  * Column mapping mirrors the cutover transform exactly: `vendor_type→vendor`, `display_name→name`,
  * `alias→slug`, `owner_clerk_user_id→owner_user_id`, `metadata→adapter_state`, and the free-text
- * ratings/solar/battery fields stashed under `config.legacy*`.
+ * ratings/solar/battery fields PARSED into the structured `config.spec` (slice K1 — they used to be
+ * stashed verbatim under `config.legacy*`, which `deviceConfigWithSpecSql` now deletes).
  *
  * `ON CONFLICT (id) DO UPDATE` (not `DO NOTHING`) is what makes this a *mirror* rather than a one-shot
  * mint, matching `mirrorPoint` below. It previously did nothing on conflict, so `devices` was written at
@@ -195,8 +235,7 @@ export async function ensureDeviceRow(
     SELECT ${addr.uuid}::uuid, s.id, s.owner_clerk_user_id, s.vendor_type, s.vendor_site_id, s.status,
            s.display_name, s.alias, s.model, s.serial,
            ${areaId}::uuid,
-           coalesce(s.config, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
-             'legacyRatings', s.ratings, 'legacySolarSize', s.solar_size, 'legacyBatterySize', s.battery_size)),
+           ${sql.raw(DEVICE_CONFIG_WITH_SPEC_SQL)},
            s.metadata, s.commissioned_on, s.created_at, s.updated_at
     FROM systems s
     WHERE s.id = ${systemId}
