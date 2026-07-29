@@ -32,7 +32,7 @@ import { alias } from "drizzle-orm/pg-core";
 import type { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
-  areaDevices,
+  areaMembers,
   systems,
 } from "@/lib/db/planetscale/schema";
 import { resolveGeneratorIntensity } from "@/lib/battery-provenance/generator-source";
@@ -87,12 +87,12 @@ export async function resolveIntensitySeries(
   // detector's area → its member devices → every area those devices belong to → the battery
   // binding → that system's config. One place to configure: a site that prices its Sankey prices
   // its runs.
-  const member = alias(areaDevices, "member");
-  const sibling = alias(areaDevices, "sibling");
+  const member = alias(areaMembers, "member");
+  const sibling = alias(areaMembers, "sibling");
   const [row] = await db
     .select({ config: systems.config })
     .from(member)
-    .innerJoin(sibling, eq(sibling.systemId, member.systemId))
+    .innerJoin(sibling, eq(sibling.deviceId, member.deviceId))
     .innerJoin(
       areaBindings,
       and(

@@ -6,10 +6,12 @@
  */
 import { and, asc, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areaDevices, areas, systems } from "@/lib/db/planetscale/schema";
+import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
+import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
+import { Device } from "@/lib/ids";
 import { helperSiteId } from "./helper-site-id";
-import { ensureAreaMember } from "./devices";
+import { ensureAreaMember } from "./members";
 
 const HELPER_MEMBER_ORDINAL = 99; // sorts after the real member devices
 
@@ -34,16 +36,17 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
     .limit(1);
   if (!area) throw new Error(`ensureHelperDevice: no area ${areaId}`);
 
+  // Membership is uuid-keyed since slice H, so this reads `devices` rather than `systems`, and returns
+  // `devices.rid` — the same integer by the `devices.rid == systems.id` seam invariant. `devices.vendor`
+  // mirrors `systems.vendor_type` and has been self-healing since slice A2.
   const existing = await db
-    .select({ id: systems.id })
-    .from(systems)
-    .innerJoin(areaDevices, eq(areaDevices.systemId, systems.id))
-    .where(
-      and(eq(areaDevices.areaId, areaId), eq(systems.vendorType, "helper")),
-    )
-    .orderBy(asc(systems.id))
+    .select({ rid: devices.rid })
+    .from(devices)
+    .innerJoin(areaMembers, eq(areaMembers.deviceId, devices.id))
+    .where(and(eq(areaMembers.areaId, areaId), eq(devices.vendor, "helper")))
+    .orderBy(asc(devices.rid))
     .limit(1);
-  if (existing.length > 0) return existing[0].id;
+  if (existing.length > 0) return existing[0].rid;
 
   const helper = await SystemsManager.getInstance().createHelperDevice({
     ownerClerkUserId: area.owner,
@@ -52,6 +55,9 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
     timezoneOffsetMin: area.tzOff,
     displayTimezone: area.tz,
   });
-  await ensureAreaMember(db, areaId, helper.id, HELPER_MEMBER_ORDINAL);
+  // `createHelperDevice` already mints the `devices` row via the mirror; this re-asserts it so the
+  // membership FK cannot fail on a mirror hiccup (idempotent, and self-healing since slice A2).
+  const helperDeviceId = Device.encode(await ensureDeviceRow(helper.id));
+  await ensureAreaMember(db, areaId, helperDeviceId, HELPER_MEMBER_ORDINAL);
   return helper.id;
 }

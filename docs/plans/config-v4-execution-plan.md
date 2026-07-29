@@ -10,13 +10,28 @@
 > doc lives on `main`, so the next workspace always has the current plan. Each future phase below is
 > deliberately one page — the owning agent develops the detail.
 
-## ▶ NEXT ACTION — Phase 12 slice H (`area_devices` → `area_members`). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28.**
+## ▶ NEXT ACTION — ship slice H, then Phase 12 slice D (`RegistryCache` off `point_info` — the long pole). **Phases 10 + 11 COMPLETE; Phase 12 slices A + A2 + B + C + G + F shipped 2026-07-28; slice H code written 2026-07-29.**
 
+> ⚠️ **Slice H carries migration debt: 0046 is written and rehearsed but NOT applied to either
+> environment.** It is a `[D]` slice, so the order is: re-probe coverage on prod → merge + deploy the
+> code → apply 0046 to prod `sydney` → apply to `liveone-dev`. The re-probe is not optional and must not
+> be taken from an earlier reading (the slice-F lesson); the query is the guard's own predicate:
+>
+> ```sql
+> SELECT count(*) FROM area_devices ad JOIN devices d ON d.rid = ad.system_id
+>  WHERE NOT EXISTS (SELECT 1 FROM area_members am
+>                     WHERE am.area_id = ad.area_id AND am.device_id = d.id);
+> ```
+>
+> Non-zero → backfill (`INSERT INTO area_members … SELECT ad.area_id, d.id, ad.ordinal … ON CONFLICT
+> DO UPDATE SET ordinal = excluded.ordinal`) **before** the deploy, not after: once the new build is
+> live it writes only `area_members`, and a membership that never crossed is simply gone from the area.
+> Full record under slice H below.
+>
 > ✅ **The slice G + F migration debt is CLEARED. 0044 + 0045 are applied to BOTH environments**
 > (2026-07-28: prod `sydney` 11:26:13 UTC, `liveone-dev` 11:27:23 UTC), post-checked identical. `roles`
 > and `user_systems` are gone; **slice N is unblocked** — FKs into `systems` went **4 → 3**, leaving
-> `point_info.system_id`, `polling_status.system_id`, `sessions.system_id`. Slice H's DDL is free to
-> start. Full apply record under slices G and F below.
+> `point_info.system_id`, `polling_status.system_id`, `sessions.system_id`.
 >
 > **DB state (2026-07-28): ✅ 0043, 0044, 0045 applied to prod `sydney` AND `liveone-dev`. ✅ Slice C is DEPLOYED to
 > prod ([#267](https://github.com/simonhac/LiveOne/pull/267), live 15:20 AEST) and post-checked clean.**
@@ -138,8 +153,8 @@ model. Those are still v3, with v4 running alongside as a dark mirror.
 
 | Legacy thing still live                          | Evidence                                                                                                                                                                                                                                                    | Retired in  |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| **The config registry is still v3-primary**      | `systems` 28 query sites / 23 files, `point_info` 40/20, `area_devices` 11/5, `area_members` 1, `derivations` **0**. ✅ `polling_status` is DONE — 0 readers, 0 writers as of slice C; it survives only in the sync/preview manifests until slice N drops it.  | Phase 12    |
-| **The dark mirror is load-bearing**              | `lib/registry/v4-mirror.ts` writes `points`/`devices`/`area_members` at every mint from `point-manager` + `systems-manager`. Deleting it re-opens defect C7 (a new point gets no `points` row → the hot FK rejects its first reading → QStash poison pill). | Phase 12    |
+| **The config registry is still v3-primary**      | `systems` 28 query sites / 23 files, `point_info` 40/20, `derivations` **0**. ✅ `polling_status` DONE (0 readers/writers since slice C; survives only in the sync/preview manifests until slice N). ✅ `area_devices` DONE — `area_members` is primary since slice H, and 0046 drops the table. | Phase 12    |
+| **The dark mirror is load-bearing**              | `lib/registry/v4-mirror.ts` writes `points`/`devices` at every mint from `point-manager` + `systems-manager` (slice H took `area_members` out of its remit — that table is primary now). Deleting it re-opens defect C7 (a new point gets no `points` row → the hot FK rejects its first reading → QStash poison pill). | Phase 12    |
 | **The integer handle — "the headline deletion"** | `areas.legacy_system_id`: 186 occurrences, incl. inside `/api/v4/*` routes. `AREA_HANDLE_BASE = 1_000_000` still allocates.                                                                                                                                 | Phase 13    |
 | **Virtual-system synthesis**                     | `synthesizeAreaView` (~50 lines), `getViewableSystem` (6 callers), `isAreaHandle` (2 callers) — all live in `lib/systems-manager.ts`.                                                                                                                       | Phase 13    |
 | **`SystemsManager`**                             | 464 lines, **72 importers, 75 `getInstance()` call sites** — the single largest blast radius in the codebase.                                                                                                                                               | Phase 12    |
@@ -646,7 +661,7 @@ first, then prod, then dev. **[C]** code-only.
 | **G** | ✅ `roles` dies (drop the `areaBindings.role` FK; `area_bindings_role_check` already enforces the 6-role set) — see below | [C] → [D] 0044 |
 | **F** | ✅ `user_systems` + `isViewer` die (prod table is empty) — see below | [C] → [D] 0045 |
 | **A2** | ✅ Close the mint-only mirror leaks (`updatePoint`, `updateSystem`, `updateDashboard`) — see below | [C] |
-| **H** | `area_devices` → `area_members` | [C] → [D] 0046 |
+| **H** | ✅ `area_devices` → `area_members` — see below | [C] → [D] 0046 |
 | **D** | `RegistryCache` off `point_info`; retire `pointForAddr` — **the long pole**, several PRs by domain | [C] |
 | **E** | `area_bindings` on `point_uid` + `priority` (no backfill — `point_uid` is 72/72 on both envs) | [C] ×2 → [D] 0047 |
 | **M** | `point-manager` mints `points` directly; the `max(index)+1` allocator dies | [C] |
@@ -673,6 +688,102 @@ first, then prod, then dev. **[C]** code-only.
 - Fix in K6: `createSystem` writes the `legacy_handles` row **twice** — `insertSystemToPg` calls
   `ensureDeviceForHandle` inside its tx (`lib/systems-manager.ts:448`), then `createSystem` calls
   `ensureDeviceRow` outside it (`:333`), which calls it again.
+
+**✅ SLICE H CODE DONE (2026-07-29); migration 0046 written and rehearsed, NOT yet applied.**
+`area_members` is now the membership table — read and written by `lib/areas/members.ts` (renamed from
+`lib/areas/devices.ts`, which was named after the table it queried). Four things the one-line entry did
+not say:
+
+- **This was another mint-only mirror leak — the fourth of the slice-A2 class, and nobody had counted
+  it.** `area_members`' only writer was `ensureDeviceRow` (`v4-mirror.ts:216`), which mirrors the
+  **area-of-one edge and nothing else**. Every multi-device path — `createArea`, `addMember`,
+  `removeMember`, `ensureAreaMember` — wrote `area_devices` with **no mirror call at all**, and there was
+  no DELETE mirror either. So slice A2's closing sentence ("when a later slice adds a mirrored column,
+  ask which writers touch it") understated it: ask which writers touch the mirrored **table**. The swap
+  makes the leak moot rather than patching it — there is no mirror left to leak.
+- **The tables happened to be in sync, by luck, and that luck was the window.** Measured on
+  `liveone-dev` before touching anything: 36 rows each, **0** missing, **0** extra, **0** ordinal drift,
+  **0** unmappable, `legacy_handles` covering `devices` 18/18 with 0 handle≠rid mismatches. They agreed
+  only because `registry-populate` derived `area_members` wholesale at cutover and nobody has edited
+  multi-device membership since. One `addMember` through the admin UI would have broken it silently.
+- **The DAO returns device uuids, and deliberately offers no handle-returning variant** (Simon's call).
+  Seven of eight consumers still join int-keyed columns (`point_info.system_id`,
+  `area_bindings.point_system_id`, `systems.id`), so each converts explicitly through the new
+  `DeviceRegistry.ridsForDevices`. That is one extra batched lookup per membership read, and every one of
+  them is deleted in Phase 13 — the visible conversion is the point, so the debt is countable.
+  `ridsForDevices` reads **`devices.rid`**, not `legacy_handles` like its sibling `addrsForDevices`:
+  `area_members.device_id` FKs `devices.id`, so that source cannot come up short, whereas
+  `legacy_handles` carries no such constraint and slice A found dev two handles behind prod. A miss there
+  would **silently drop a member** from an area's point set rather than raise.
+- **Two call sites got shorter, not longer.** `/api/v4/areas/[id]` and `.../eligibility` were calling
+  `addrsForHandles` purely to turn ints back into the `dv_` TypeIDs they emit; they now read those
+  straight off the membership rows. Both `device-mapping-incomplete` **503 branches are deleted** — the
+  FK makes the condition unrepresentable. `intensity.ts`'s member/sibling self-join also lost its bridge
+  (both sides key on the same uuid now), and `helper.ts` stopped joining `systems` at all (it reads
+  `devices.vendor`, a slice-N win).
+
+Smaller notes worth keeping:
+
+- **Member ORDER is preserved by ordering on `devices.rid`, not `device_id`.** uuid order is not int
+  order, so the obvious `ORDER BY ordinal, device_id` would silently reshuffle members sharing an
+  ordinal. Pinned in the new test.
+- **`addMember` was a read-then-write race** (`max(ordinal)` then insert, two round trips) and is now one
+  transaction. Fixed in passing because the statement was being rewritten anyway.
+- **`ensureAreaOfOne` no longer writes membership at all.** It ran *before* `ensureDeviceRow`'s INSERT
+  into `devices`, which was fine for the FK-less `area_devices` and would be an FK violation now. The
+  area-of-one edge is written after the device row, where it already was.
+- **`lib/areas/__tests__/members.test.ts` is new and renders the SQL** through the real `PgDialect`
+  (the slice-C trick), because two of the four queries are hand-written `sql` fragments `tsc` cannot see
+  into — and their failure mode is silent under-resolution, not an error.
+
+**Two pre-existing defects in `scripts/area-builder-smoke.ts`, found by running it and fixed in passing**
+— neither caused by slice H, but the first is why nobody had noticed the second:
+
+1. **Its `finally` MASKED every failure.** Cleanup did `DELETE FROM areas` while
+   `legacy_handles.area_id` is **NO ACTION, not CASCADE**, so the delete always threw — and being in a
+   `finally`, that exception replaced whatever the body had actually failed on. The script therefore
+   reported an opaque `DrizzleQueryError` on the *cleanup* statement no matter what went wrong. It now
+   clears the handle row first and wraps cleanup in its own `try`, so a cleanup failure can never
+   impersonate a test failure. (The script's header still claims "members + bindings cascade" — true of
+   `area_members`/`area_bindings`, never of `legacy_handles`.)
+2. **Step 4 bound `seedPoints[0]` to role `load` regardless of shape.** With current dev data that first
+   point is `bidi.grid.renewables/proportion`, so `replaceBindings` correctly threw
+   `Point 9.3 does not match load/proportion`. It now searches for a `(role, point)` pair satisfying
+   `bindingShapeMatches` rather than assuming one. Worth noting *where* it failed: the membership check
+   (`members.has(b.pointSystemId)`) sits **before** the shape check and passed — i.e. the uuid→handle
+   conversion was already proven correct by the failure itself.
+
+With both fixed the script is green end to end on `liveone-dev`, including "adding a member grows the
+union" now reading through `area_members` (21 → 25 points).
+
+Verified: `type-check` + `build:local` clean, **135/135** suites (1,336 tests); the real writers driven
+against `liveone-dev` through a throwaway driver (crons are off there) — `createArea` → `area_members`
+at ordinals 0,1 with **zero** rows written to `area_devices`; `addMember` → `max+1` and idempotent;
+`removeMember` → row gone; last-member removal still `AreaValidationError`; both tables back to their
+starting counts afterwards. `scripts/area-builder-smoke.ts` green end to end. The migration body was
+rehearsed on `liveone-dev` inside a rolled-back
+transaction — guard NOTICE `area_devices has 36 row(s), all covered by area_members (36 row(s)); no FK
+dependents`, then `to_regclass` NULL after the drop — and **all three abort paths exercised**, each
+aborting *before* the DROP: an unmappable row (handle with no `devices.rid`), an uncovered row (its
+`area_members` twin deleted), and a synthetic FK dependent. `db:pg:generate` reports "No schema changes".
+
+**NOT verified:** `npm run db:sync-dev-db` was not run — it needs `PG_PROD_RO_DATABASE_URL` and
+`LIVEONE_DEV_DATABASE_URL`, which live as GitHub Actions secrets, not in `.env.local`. The manifest
+change is a single deleted leg plus one `idDrift` child, both pinned by `prod-dev-sync.test.ts`, and the
+2-hourly action exercises it on merge — **watch that first run**.
+
+**Prod probed 2026-07-29** under a short-TTL `pg_read_all_data` role (deleted after; it owned nothing,
+so no reassign needed): **30 `area_devices` / 30 `area_members`, and all five gates at 0** — unmappable
+0, uncovered 0, extra 0, ordinal drift 0, `devices` without a `legacy_handles` row 0/16. No FK
+dependents on `area_devices`. **No backfill required.** Confirmed it really was prod two ways, because a
+probe that silently hits dev is the failure worth guarding against: the role username carried the
+`PLANETSCALE_PROD_BRANCH_ID` token (`…91nbdvyn5o2z` — the same identity `assertDbEnvironmentMatches`
+keys off), and `max(point_readings.measurement_time)` was minutes old, i.e. actively polling (dev's
+crons are off). Prod's 30/16 vs dev's 36/18 is the expected dev-only surplus.
+
+**Still to do, in this order:** re-probe the "uncovered" gate immediately before the deploy (this reading
+ages — the slice-F rule), then merge + deploy, then apply 0046 to prod `sydney` first and `liveone-dev`
+second.
 
 **✅ SLICE A2 DONE (2026-07-28).** Close the mint-only mirror leaks. Correction #10 documented one; the
 same reasoning applied to the sibling writers found **two more**, so this is a defect *class*, not a bug:

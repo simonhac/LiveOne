@@ -17,7 +17,8 @@
 import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
+import { DeviceRegistry } from "@/lib/registry";
 import { hasEnabledRunDetector } from "@/lib/derivations/resolve";
 import { resolveGridContextForSystem } from "@/lib/grid/context";
 import {
@@ -33,12 +34,21 @@ import { buildAreaStrategy } from "@/lib/capabilities/strategy";
 import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 
-/** The member systemIds behind a handle: an area's `area_devices`, or the handle itself (a real device). */
+/**
+ * The member systemIds behind a handle: an area's `area_members`, or the handle itself (a real device).
+ *
+ * Membership is uuid-keyed since slice H, but every consumer here still joins int-keyed columns
+ * (`systems.id`, the run-detector lookup), so it converts back. The `!` is safe by the
+ * `area_members.device_id` FK — see `DeviceRegistry.ridsForDevices`.
+ */
 export async function memberSystemIds(handle: number): Promise<number[]> {
   const area = await getAreaForSystem(handle);
   if (area) {
-    const members = await getAreaDeviceSystemIds(area.id);
-    if (members.length) return members;
+    const memberIds = await getAreaMemberDeviceIds(area.id);
+    if (memberIds.length) {
+      const rids = await DeviceRegistry.ridsForDevices(memberIds);
+      return memberIds.map((id) => rids.get(id)!);
+    }
   }
   return [handle];
 }

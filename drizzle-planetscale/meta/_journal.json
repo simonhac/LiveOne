@@ -323,6 +323,13 @@
       "when": 1785224050073,
       "tag": "0045_drop_user_systems",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1785251950214,
+      "tag": "0046_drop_area_devices",
+      "breakpoints": true
     }
   ]
 }

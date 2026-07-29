@@ -21,7 +21,7 @@ import { Area } from "@/lib/ids";
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.
  *
  * Returns the Area whose view is `systemId` — a single-device Area (a 1:1 wrapper over the physical
- * system) or a multi-device Area (points drawn across its `area_devices` members), plus the typed
+ * system) or a multi-device Area (points drawn across its `area_members`), plus the typed
  * `area_bindings`. A single-device Area carries NO bindings — its points are the system's own points
  * (resolved from `point_info`), so `bindings` is empty for it; multi-device Areas return their
  * role→point edges.

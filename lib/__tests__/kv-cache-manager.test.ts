@@ -22,7 +22,8 @@ jest.mock("../kv", () => ({
 
 // Mock the database (Postgres). Two query shapes hit this:
 //  - getAllCompositeBindings: select→from→innerJoin→orderBy
-//  - getBindinglessAreaMemberPoints: select→from→innerJoin→innerJoin→where→orderBy
+//  - getBindinglessAreaMemberPoints: select→from→innerJoin×3→where→orderBy (slice H added the
+//    `devices` hop that bridges area_members.device_id back to the int point_info.system_id)
 // A recursive chain node (innerJoin/where return itself; orderBy resolves) covers both → [].
 const chainNode = (): any => {
   const node: any = {
@@ -53,7 +54,8 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
     pointId: "pointId",
     ordinal: "ordinal",
   },
-  areaDevices: { areaId: "areaId", systemId: "systemId", ordinal: "ordinal" },
+  areaMembers: { areaId: "areaId", deviceId: "deviceId", ordinal: "ordinal" },
+  devices: { id: "id", rid: "rid" },
 }));
 
 // Mock drizzle-orm

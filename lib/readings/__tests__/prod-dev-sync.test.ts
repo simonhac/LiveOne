@@ -101,7 +101,6 @@ describe("prod→dev readings transfer", () => {
       "device_state",
       "legacy_handles",
       "point_info",
-      "area_devices",
       "area_bindings",
       "derivations",
       "sessions",

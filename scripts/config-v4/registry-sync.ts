@@ -92,7 +92,6 @@ async function main() {
     areasOfOneToMint: await scalar(
       "SELECT count(*) FROM systems s WHERE NOT EXISTS (SELECT 1 FROM areas a WHERE a.legacy_system_id = s.id)",
     ),
-    areaDevices: await scalar("SELECT count(*) FROM area_devices"),
     areaMembers: await scalar("SELECT count(*) FROM area_members"),
     pollingStatus: await scalar("SELECT count(*) FROM polling_status"),
     deviceState: await scalar("SELECT count(*) FROM device_state"),

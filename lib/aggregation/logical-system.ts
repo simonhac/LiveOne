@@ -16,7 +16,7 @@ import { PointManager } from "@/lib/point/point-manager";
 import { SystemsManager } from "@/lib/systems-manager";
 import { classifyEnergyStem, isCompleteRoleSet } from "@/lib/roles/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { listFlowEligibleAreaHandles } from "@/lib/areas/devices";
+import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };

@@ -68,7 +68,8 @@ function pgEnv(url: string): Record<string, string> {
 // live FK graph (Phase 12 slice C, which is what put `device_state` on the ingest path).
 //
 // Order is a topological sort of the FK edges: areas/systems/dashboards have no parents;
-// devices → areas; points → devices; area_bindings → areas + point_info + points.
+// devices → areas; points → devices; area_members → areas + devices;
+// area_bindings → areas + point_info + points.
 const CONFIG_TABLES = [
   "areas",
   "systems",
@@ -78,7 +79,6 @@ const CONFIG_TABLES = [
   "points",
   "point_info",
   "legacy_handles",
-  "area_devices",
   "area_members",
   "area_bindings",
   "derivations",

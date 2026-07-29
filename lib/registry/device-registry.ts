@@ -7,7 +7,7 @@
  */
 import { eq, inArray, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { legacyHandles } from "@/lib/db/planetscale/schema";
+import { devices, legacyHandles } from "@/lib/db/planetscale/schema";
 import { Device, type DeviceId } from "@/lib/ids";
 import type { DeviceRid } from "./registry-cache";
 
@@ -112,6 +112,35 @@ async function addrForDevice(
 }
 
 /**
+ * Device uuid -> integer handle, read from `devices.rid` rather than `legacy_handles`.
+ *
+ * Same direction as `addrsForDevices`, different source, and the difference is load-bearing for
+ * `area_members` (config-v4 Phase 12 slice H). `area_members.device_id` FKs `devices.id`, so a member's
+ * `devices` row is guaranteed to exist and this lookup can never come up short. `legacy_handles` carries
+ * NO constraint tying it to either table — slice A found dev sitting two handles behind prod — and a
+ * miss there would silently DROP a member from an area's point set rather than raise. The two agree
+ * today (18/18 on dev, zero handle<>rid mismatches); this just makes agreement unnecessary.
+ *
+ * Callers are the membership consumers that still join int-keyed columns (`point_info.system_id`,
+ * `area_bindings.point_system_id`, `systems.id`). Phase 13 moves those to uuid and deletes every one.
+ */
+async function ridsForDevices(
+  ids: DeviceId[],
+  exec: DeviceRegistryExec = requirePlanetscaleDb(),
+): Promise<Map<DeviceId, DeviceRid>> {
+  const uuidToId = new Map(ids.map((id) => [Device.toUuid(id), id] as const));
+  const uuids = [...uuidToId.keys()];
+  if (uuids.length === 0) return new Map();
+  const rows = await exec
+    .select({ id: devices.id, rid: devices.rid })
+    .from(devices)
+    .where(inArray(devices.id, uuids));
+  return new Map(
+    rows.map((r) => [uuidToId.get(r.id)!, asDeviceRid(r.rid)] as const),
+  );
+}
+
+/**
  * Fill a handle's device column without overwriting an existing identity. Returns the authoritative
  * mapping, which may pre-date the supplied candidate.
  */
@@ -192,6 +221,7 @@ export const DeviceRegistry = {
   addrsForHandles,
   addrForDevice,
   addrsForDevices,
+  ridsForDevices,
   resolveHandle,
   ensureDeviceForHandle,
   ensureAreaForHandle,

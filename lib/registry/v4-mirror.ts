@@ -1,6 +1,10 @@
 /**
- * config-v4 forward mirror: keep the v4 registries (`devices`, `points`, `area_members`) in step with
- * every write to the legacy registries (`systems`, `point_info`, `area_devices`).
+ * config-v4 forward mirror: keep the v4 registries (`devices`, `points`) in step with every write to
+ * the legacy registries (`systems`, `point_info`).
+ *
+ * `area_members` is no longer mirrored — since slice H it is the membership table itself, written
+ * directly by `lib/areas/members.ts`. The only write left here is the area-of-one edge, which is minted
+ * alongside the device rather than copied from anywhere.
  *
  * ## Why this exists (guardrail C7)
  *
@@ -37,7 +41,6 @@ import { Area } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
-  areaDevices,
   areaMembers,
   pointInfo,
   points,
@@ -144,11 +147,9 @@ async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
     })
     .onConflictDoNothing();
 
-  // Keep the legacy membership table in step too — registry-sync derives `area_members` from it.
-  await exec
-    .insert(areaDevices)
-    .values({ areaId, systemId, ordinal: 0 })
-    .onConflictDoNothing();
+  // The area-of-one's membership edge is NOT written here: `area_members.device_id` FKs `devices.id`,
+  // and this runs BEFORE `ensureDeviceRow`'s INSERT into `devices`. It is written there instead, once
+  // the row exists (slice H — `area_devices`, which had no FK, used to be written at this point).
   await DeviceRegistry.ensureAreaForHandle(systemId, areaId, exec);
 
   // Re-read rather than trusting `areaId`: a concurrent mint may have won the ON CONFLICT.

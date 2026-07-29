@@ -87,7 +87,8 @@ on demand (runtime `vendor_type = 'composite'`, never polled, no credentials, no
 `areas.legacy_system_id` (its stable integer handle). Membership and the role→point mapping live in the
 **semantic layer**, not `systems.metadata` (that JSON blob is retired):
 
-- **`area_devices`** — the Area's 1..N member devices.
+- **`area_members`** — the Area's 1..N member devices, `(area_id, device_id → devices.id, ordinal)`.
+  (Was `area_devices`, keyed on the integer handle with no FK, until config-v4 Phase 12 slice H.)
 - **`area_bindings`** — typed role→point **overrides**; when present they _select_ the Area's points,
   otherwise the Area defaults to the **union** of its members' own points.
 

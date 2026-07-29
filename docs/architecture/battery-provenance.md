@@ -485,7 +485,7 @@ area" pattern; see [home-assistant-comparison.md](home-assistant-comparison.md))
 - A real `systems` row, `vendor_type = 'helper'`, **owned by the Area's owner** (the blend is private
   household data — NOT ownerless), `status = 'active'`, never polled (a no-op push adapter,
   `lib/vendors/helper/adapter.ts`, so the minutely poll loop skips it). Created lazily + idempotently
-  by `ensureHelperDevice(areaId)` (`lib/areas/helper.ts`), added as an `area_devices` member.
+  by `ensureHelperDevice(areaId)` (`lib/areas/helper.ts`), added as an `area_members` member.
 - It owns the 5 derived **blend points** (`bidi.battery/carbon-intensity` gCO₂/kWh,
   `/renewable-fraction` %, `/price` + `/price-opportunity` c/kWh, `/stored-energy` kWh) — ordinary
   `point_info` rows (the HWS/run-tracking derived-point pattern: written to their own `agg_5m` + KV

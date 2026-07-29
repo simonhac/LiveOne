@@ -2,7 +2,7 @@ import { kv, kvKey } from "./kv";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
 import { getAreaBindings } from "@/lib/areas/bindings";
-import { getBindinglessAreaMemberPoints } from "@/lib/areas/devices";
+import { getBindinglessAreaMemberPoints } from "@/lib/areas/members";
 
 // Re-export canonical types for backwards compatibility
 export type { LatestValue, LatestValuesMap };

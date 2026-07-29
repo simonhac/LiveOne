@@ -4,7 +4,8 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
 import { mergeAreaLocation } from "@/lib/areas/location";
-import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
+import { DeviceRegistry } from "@/lib/registry";
 import { loadAreaForOwner, locationPatchFromBody } from "@/lib/areas/http";
 import {
   updateAreaMeta,
@@ -53,7 +54,11 @@ export async function GET(
   if (!row)
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
 
-  const memberSystemIds = await getAreaDeviceSystemIds(uuid);
+  // The editor's wire shape is still integer systemIds (its POST/DELETE bodies are too), so the uuid
+  // membership converts back. The `!` is safe by the `area_members.device_id` FK.
+  const memberDeviceIds = await getAreaMemberDeviceIds(uuid);
+  const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
+  const memberSystemIds = memberDeviceIds.map((id) => memberRids.get(id)!);
   const bindings = await getAreaBindingsForEditor(uuid);
   return NextResponse.json({
     area: { ...row, id: Area.encode(row.id) },
