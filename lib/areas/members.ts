@@ -104,9 +104,10 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
  * prod multi-device areas have bindings) — it only lights up when a binding-less multi-device area
  * appears. SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
  *
- * Still emits integer handles: the subscriber ref grammar stays `{systemId}.{pointIndex}` (Phase 13),
- * and `sourceSystemId` remains the `subscriptions:system:N` KV key. Only the map's SOURCE-point key
- * moved to `point_uid` (slice E PR 2b).
+ * Still emits integer handles: the subscriber ref grammar stays `{systemId}.{pointIndex}` until
+ * Phase 13, and `sourceSystemId` remains the `subscriptions:system:N` KV key. The map's SOURCE-point
+ * key moved to `point_uid` in slice E PR 2b. (Slice M retired the same grammar on the OBSERVATIONS
+ * wire; the KV subscriber grammar is a separate keyspace and is untouched.)
  */
 export async function getBindinglessAreaMemberPoints(): Promise<
   { handle: number; sourceSystemId: number; pointUid: string }[]

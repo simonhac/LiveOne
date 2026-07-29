@@ -13,9 +13,14 @@ export interface Observation {
   sessionId: string;
 
   /**
-   * Payload v2: the point's stable public identity (`point_uid` uuid). The receiver resolves
-   * this via the DAO seam (`Point.encode` → `ReadingsDao`). Optional because buffered/in-flight
-   * pre-v2 messages lack it — the receiver falls back to the legacy `debug.reference` grammar.
+   * The point's stable public identity (`point_uid` uuid) — since config-v4 slice M the SOLE identity
+   * on the wire; the receiver resolves it via the DAO seam (`Point.encode` → `ReadingsDao`).
+   *
+   * Still optional in the TYPE only, because the receiver parses untrusted JSON: an in-flight message
+   * from a pre-slice-M publisher would otherwise be a lie the compiler endorses. The receiver treats a
+   * missing value as a loud, counted skip (`*NoPointUid`), never a throw — a throw would be a poison
+   * pill, and gate G3 (0 unpublished outbox rows lacking `pointUid`, an empty DLQ) is what establishes
+   * at merge time that no such message exists.
    */
   pointUid?: string;
 
@@ -65,8 +70,8 @@ export interface Observation {
     unit: string;
     /** Point display name */
     pointName: string;
-    /** Standard point reference: "{systemId}.{pointIndex}" */
-    reference: string;
+    // `reference` ("{systemId}.{pointIndex}") was removed by config-v4 slice M along with the
+    // receiver's legacy grammar. `pointUid` is the identity; this block is display-only debug.
   };
 }
 

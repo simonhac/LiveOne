@@ -223,8 +223,13 @@ export const pointInfo = pgTable(
     index: integer("id").notNull(), // Sequential per system
 
     // Global integer identity, sequence-allocated (see pointRidSeq). Additive — the per-system
-    // (system_id, id) ADDRESS and all composite FKs are untouched. Auto-filled by the DB DEFAULT, so
-    // writers must NEVER name it in insert .values(...); introduce no max(rid)+1 pattern.
+    // (system_id, id) ADDRESS and all composite FKs are untouched.
+    //
+    // Since config-v4 slice M `point_info` is the WRITE-BEHIND copy: `points` is written first and
+    // allocates the rid from its own DEFAULT on the SAME sequence, and `mintPoint` then names BOTH
+    // `rid` and `index` here with that value (index == rid). So the old "writers must NEVER name rid"
+    // rule is superseded — what remains absolute is that the value comes from `point_rid_seq` (via the
+    // `points` row), NEVER from a scan: introduce no max(rid)+1 / max(index)+1 pattern.
     rid: integer("rid")
       .notNull()
       .default(sql`nextval('point_rid_seq')`),
@@ -1057,8 +1062,10 @@ export const points = pgTable(
   {
     id: uuid("id").primaryKey(), // = point_info.point_uid
     // = point_info.rid, and DELIBERATELY the same sequence (0043): the two columns must stay equal,
-    // so they must draw from one counter. Inert until slice M — mirrorPoint still names rid
-    // explicitly with the value point_info's own default returned.
+    // so they must draw from one counter. LIVE since slice M — this DEFAULT is the sole allocator of
+    // point identity; `mintPoint` reads the rid back from here and writes it into `point_info`.
+    // (`mirrorPoint` still names rid explicitly, because it also serves `updatePoint`, which mirrors an
+    // already-identified row.)
     rid: integer("rid")
       .notNull()
       .default(sql`nextval('point_rid_seq')`),

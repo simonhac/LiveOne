@@ -15,7 +15,8 @@
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
-import { mintPointUid } from "@/lib/point/mint-point-uid";
+import { mintPoint } from "@/lib/point/mint-point";
+import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
 
 const BATTERY_STEM = "bidi.battery";
 
@@ -177,15 +178,21 @@ export async function ensureBatteryProvenancePoints(
         row.displayName === row.defaultName &&
         row.defaultName !== p.displayName
       ) {
-        await db
-          .update(pointInfo)
-          .set({ displayName: p.displayName, defaultName: p.displayName })
-          .where(
-            and(
-              eq(pointInfo.systemId, systemId),
-              eq(pointInfo.index, row.index),
-            ),
-          );
+        // config-v4 slice M: this rename used to write `point_info` ONLY — the third instance of slice
+        // A2's leak class (an unmirrored point_info UPDATE), which silently drifted `points.name`.
+        await db.transaction(async (tx) => {
+          const [updated] = await tx
+            .update(pointInfo)
+            .set({ displayName: p.displayName, defaultName: p.displayName })
+            .where(
+              and(
+                eq(pointInfo.systemId, systemId),
+                eq(pointInfo.index, row.index),
+              ),
+            )
+            .returning();
+          if (updated) await mirrorPoint(toMirrorPointInput(updated), tx);
+        });
       }
     }
   }
@@ -201,34 +208,18 @@ export async function ensureBatteryProvenancePoints(
     };
   }
 
-  // Allocate contiguous next indices for the missing points — from the max index over ALL points on the
-  // system (not just bidi.battery), since (system_id, id) is the primary key. Point indices are 1-based
-  // (PointReference.fromIds rejects <= 0), so a FRESH system (e.g. a new helper device) starts at 1.
-  const allIdx = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
-  let nextIndex = Math.max(...allIdx.map((p) => p.index), 0) + 1;
+  // config-v4 slice M: no allocator. `mintPoint` takes identity (uid + rid) from `points`' own sequence
+  // and writes `point_info` behind it with index == rid — so these indices are no longer contiguous, and
+  // the max(index)+1 scan this replaced (which never mirrored into `points`) is gone.
   for (const p of missing) {
-    const physicalPathTail = `derived/${BATTERY_STEM}/${p.metricType}`;
-    const [row] = await db
-      .insert(pointInfo)
-      .values({
-        systemId,
-        index: nextIndex++,
-        physicalPathTail,
-        logicalPathStem: BATTERY_STEM,
-        metricType: p.metricType,
-        metricUnit: p.metricUnit,
-        defaultName: p.displayName,
-        displayName: p.displayName,
-        subsystem: "battery",
-        transform: null,
-        active: true,
-        pointUid: await mintPointUid(systemId, physicalPathTail),
-        createdAt: new Date(),
-      })
-      .returning({ index: pointInfo.index, pointUid: pointInfo.pointUid });
+    const row = await mintPoint(systemId, {
+      physicalPathTail: `derived/${BATTERY_STEM}/${p.metricType}`,
+      logicalPathStem: BATTERY_STEM,
+      metricType: p.metricType,
+      metricUnit: p.metricUnit,
+      defaultName: p.displayName,
+      subsystem: "battery",
+    });
     pointIds[p.metricType] = row.index;
     pointUids[p.metricType] = row.pointUid;
   }

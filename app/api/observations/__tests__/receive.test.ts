@@ -25,13 +25,13 @@ import type {
 } from "@/lib/observations/types";
 import type { WithProcessQueueMessage } from "../receive/route";
 
-// The receiver now resolves each observation to a PointId through the readings DAO seam, which
-// reads point identity from `@/lib/registry` (RegistryCache) on the REAL pooled connection — not
-// the injected fake `db`. Mock the registry with a CONSISTENT factory so `pointForAddr` (old-grammar
-// resolution) and `addrsForPoints` (the DAO's internal address lookup) agree on the same fake
-// PointId: the DAO then still calls `tx.insert(pointReadings)` on the fake tx, so the write-order /
-// dual-shape assertions below are unchanged. Without this, loading `@/lib/registry` pulls in
-// `requirePlanetscaleDb()` ("not configured" in a unit test) and `addrs.get(point)` is undefined.
+// The receiver resolves each observation to a PointId from its `pointUid` (pure `Point.encode` since
+// slice M retired the "{systemId}.{index}" grammar), then the readings DAO looks that PointId's address
+// up via `@/lib/registry` (RegistryCache) on the REAL pooled connection — not the injected fake `db`.
+// Mock the registry so `addrsForPoints` resolves any id: the DAO then still calls
+// `tx.insert(pointReadings)` on the fake tx, so the write-order / dual-shape assertions below are
+// unchanged. Without this, loading `@/lib/registry` pulls in `requirePlanetscaleDb()`
+// ("not configured" in a unit test) and `addrs.get(point)` is undefined.
 jest.mock("@/lib/registry", () => {
   const fakePoint = (systemId: number, index: number) =>
     `pt_fake${systemId}${index}`;
@@ -172,7 +172,7 @@ const SESSION: Session = {
   startTime: "2025-01-15T20:30:00+10:00",
 };
 
-/** A raw observation with a resolvable pointId via debug.reference "1.0". */
+/** A raw observation with a resolvable pointId via its `pointUid` (the only wire grammar since slice M). */
 function rawObs(): Observation {
   return {
     sessionId: SESSION.sessionId,
@@ -181,11 +181,11 @@ function rawObs(): Observation {
     receivedTime: "2025-01-15T20:30:01+10:00",
     value: 42,
     interval: "raw",
+    pointUid: "00000000-0000-7000-8000-000000000001",
     debug: {
       type: "power",
       unit: "W",
       pointName: "Power",
-      reference: "1.0",
     },
   };
 }
@@ -307,7 +307,7 @@ describe.skip("processQueueMessage (5m conflict mode depends on vendor)", () => 
     ...rawObs(),
     interval: "5m",
     agg,
-    debug: { ...rawObs().debug!, reference: `${systemId}.0` },
+    debug: { ...rawObs().debug! },
   });
 
   // Distinct systemIds per case: isSystemFiveMinuteNative caches by systemId across the module,

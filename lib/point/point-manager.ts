@@ -19,11 +19,9 @@ import {
   getSeriesPath,
 } from "@/lib/point/series-info";
 import { SystemIdentifier } from "@/lib/identifiers";
-import { derivePointUid } from "@/lib/identifiers/point-uid";
-import { mintPointUid } from "@/lib/point/mint-point-uid";
+import { mintPoint } from "@/lib/point/mint-point";
 import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
 import { SystemWithPolling, SystemsManager } from "@/lib/systems-manager";
-import { uuidv7 } from "uuidv7";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
@@ -451,48 +449,6 @@ export class PointManager {
     this.invalidateSeriesCache(systemId);
   }
 
-  /**
-   * Create a new point
-   * Automatically invalidates the series cache for the affected system
-   */
-  async createPoint(pointData: {
-    systemId: number;
-    index: number; // Database field is 'id', but we call it 'index' in TS code
-    physicalPathTail: string;
-    logicalPathStem: string | null;
-    metricType: string;
-    metricUnit: string;
-    defaultName: string;
-    displayName: string;
-    subsystem?: string | null;
-    active: boolean;
-    transform: string | null;
-  }): Promise<void> {
-    await requirePlanetscaleDb()
-      .insert(pgPointInfoTable)
-      .values({
-        systemId: pointData.systemId,
-        index: pointData.index,
-        physicalPathTail: pointData.physicalPathTail,
-        logicalPathStem: pointData.logicalPathStem,
-        metricType: pointData.metricType,
-        metricUnit: pointData.metricUnit,
-        defaultName: pointData.defaultName,
-        displayName: pointData.displayName,
-        subsystem: pointData.subsystem ?? null,
-        active: pointData.active,
-        transform: pointData.transform,
-        pointUid: await mintPointUid(
-          pointData.systemId,
-          pointData.physicalPathTail,
-        ),
-        createdAt: new Date(), // PG native timestamp
-      });
-
-    // Invalidate cache for this system
-    this.invalidateSeriesCache(pointData.systemId);
-  }
-
   // ============================================================================
   // Point Info Map Operations (for batch reading insertions)
   // ============================================================================
@@ -543,22 +499,6 @@ export class PointManager {
    * Get or create a point_info entry
    * Automatically invalidates cache when a new point is created
    */
-  /** A unique violation specifically on pi_point_uid_unique (the deterministic-uid duplicate-site case). */
-  private isPointUidCollision(e: unknown): boolean {
-    if (!e || typeof e !== "object") return false;
-    const err = e as {
-      code?: unknown;
-      constraint?: unknown;
-      message?: unknown;
-    };
-    if (err.code !== "23505") return false;
-    return (
-      err.constraint === "pi_point_uid_unique" ||
-      (typeof err.message === "string" &&
-        err.message.includes("pi_point_uid_unique"))
-    );
-  }
-
   async ensurePointInfo(
     systemId: number,
     pointMap: PointInfoMap,
@@ -576,112 +516,39 @@ export class PointManager {
       `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPathTail}`,
     );
 
-    let newPoint: PointInfoRow;
+    // config-v4 slice M: `points` is PRIMARY. `mintPoint` allocates identity from `points.rid`'s own
+    // sequence DEFAULT and writes `point_info` behind it with index == rid — so the old max(index)+1
+    // scan (which read the same store it wrote) and its race are both gone, and the C7 invariant
+    // "no `point_info` row without a `points` row" is structural rather than mirrored after the fact.
+    const pgRow = await mintPoint(systemId, {
+      physicalPathTail: metadata.physicalPathTail,
+      logicalPathStem: metadata.logicalPathStem,
+      metricType: metadata.metricType,
+      metricUnit: metadata.metricUnit,
+      defaultName: metadata.defaultName,
+      displayName: metadata.defaultName, // Initially same as defaultName
+      subsystem: metadata.subsystem || null,
+      transform: metadata.transform,
+    });
 
-    {
-      // Allocate the next index and create the row in Postgres. The max-index
-      // scan reads the same store it writes.
-      const pg = requirePlanetscaleDb();
-
-      const existingPoints = await pg
-        .select()
-        .from(pgPointInfoTable)
-        .where(eq(pgPointInfoTable.systemId, systemId));
-      const maxIndex =
-        existingPoints.length > 0
-          ? Math.max(...existingPoints.map((p) => p.index))
-          : 0;
-      const nextIndex = maxIndex + 1;
-
-      // Mint the stable point IDENTITY (point_uid) from the system's vendor identity. Deterministic so
-      // re-onboarding the same physical point reproduces the same uid; on the rare duplicate-site
-      // collision (pi_point_uid_unique) retry once with a random uid. A non-point_uid unique error
-      // (e.g. stem/metric) is rethrown unchanged.
-      const sys = await SystemsManager.getInstance().getSystem(systemId);
-      const derivedUid = sys
-        ? derivePointUid(
-            sys.vendorType,
-            sys.vendorSiteId,
-            metadata.physicalPathTail,
-          )
-        : uuidv7(); // no vendor identity to derive from → random uid (point_uid is NOT NULL)
-
-      const insertValues = (pointUid: string) => ({
-        systemId,
-        index: nextIndex,
-        physicalPathTail: metadata.physicalPathTail,
-        logicalPathStem: metadata.logicalPathStem,
-        metricType: metadata.metricType,
-        metricUnit: metadata.metricUnit,
-        defaultName: metadata.defaultName,
-        displayName: metadata.defaultName, // Initially same as defaultName
-        subsystem: metadata.subsystem || null,
-        transform: metadata.transform,
-        pointUid,
-        createdAt: new Date(), // PG native timestamp
-      });
-      const onConflict = {
-        target: [pgPointInfoTable.systemId, pgPointInfoTable.physicalPathTail],
-        set: {
-          // Update default name from source if it changed
-          defaultName: metadata.defaultName,
-          // Update transform if it changed
-          transform: metadata.transform,
-          updatedAt: new Date(),
-          // point_uid is identity — deliberately NOT overwritten on conflict.
-        },
-      };
-      // config-v4 (C7): the `point_info` upsert and its `points` mirror are ONE transaction, so there is
-      // never an instant where a point has a `rid` but no `points` row. The cutover's hot tables carry
-      // `FK point_rid → points(rid) NOT VALID`, which still enforces on new inserts — a gap here becomes a
-      // QStash poison pill retried forever. `rid` is taken from the `point_info` write (which owns the
-      // `point_rid_seq` default); a second nextval would desynchronise the two tables.
-      const doInsert = async (pointUid: string) => {
-        return pg.transaction(async (tx) => {
-          const [row] = await tx
-            .insert(pgPointInfoTable)
-            .values(insertValues(pointUid))
-            .onConflictDoUpdate(onConflict)
-            .returning();
-          await mirrorPoint(toMirrorPointInput(row), tx);
-          return row;
-        });
-      };
-
-      const pgRow = await (async () => {
-        try {
-          return await doInsert(derivedUid);
-        } catch (e) {
-          if (derivedUid && this.isPointUidCollision(e)) {
-            const randomUid = uuidv7();
-            console.warn(
-              `[PointManager] point_uid collision for system ${systemId} "${metadata.physicalPathTail}" — using random uid ${randomUid}`,
-            );
-            return await doInsert(randomUid);
-          }
-          throw e;
-        }
-      })();
-
-      // Map the PG-shaped row back to the legacy row shape this method returns
-      // (epoch-ms columns) so downstream callers/pointMap are unchanged.
-      newPoint = {
-        systemId: pgRow.systemId,
-        index: pgRow.index,
-        pointUid: pgRow.pointUid,
-        physicalPathTail: pgRow.physicalPathTail,
-        logicalPathStem: pgRow.logicalPathStem,
-        metricType: pgRow.metricType,
-        metricUnit: pgRow.metricUnit,
-        defaultName: pgRow.defaultName,
-        displayName: pgRow.displayName,
-        subsystem: pgRow.subsystem,
-        transform: pgRow.transform,
-        active: pgRow.active,
-        createdAtMs: pgRow.createdAt ? pgRow.createdAt.getTime() : 0,
-        updatedAtMs: pgRow.updatedAt ? pgRow.updatedAt.getTime() : null,
-      };
-    }
+    // Map the PG-shaped row back to the legacy row shape this method returns
+    // (epoch-ms columns) so downstream callers/pointMap are unchanged.
+    const newPoint: PointInfoRow = {
+      systemId: pgRow.systemId,
+      index: pgRow.index,
+      pointUid: pgRow.pointUid,
+      physicalPathTail: pgRow.physicalPathTail,
+      logicalPathStem: pgRow.logicalPathStem,
+      metricType: pgRow.metricType,
+      metricUnit: pgRow.metricUnit,
+      defaultName: pgRow.defaultName,
+      displayName: pgRow.displayName,
+      subsystem: pgRow.subsystem,
+      transform: pgRow.transform,
+      active: pgRow.active,
+      createdAtMs: pgRow.createdAt ? pgRow.createdAt.getTime() : 0,
+      updatedAtMs: pgRow.updatedAt ? pgRow.updatedAt.getTime() : null,
+    };
 
     // Add to cache
     pointMap[key] = newPoint;
