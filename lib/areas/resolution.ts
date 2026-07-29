@@ -2,7 +2,8 @@ import { asc, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaBindings, areas, pointInfo } from "@/lib/db/planetscale/schema";
 import { Area, Point, type AreaId, type PointId } from "@/lib/ids";
-import { getAreaDeviceSystemIds } from "./devices";
+import { DeviceRegistry } from "@/lib/registry";
+import { getAreaMemberDeviceIds } from "./members";
 import { RESOLUTION_SLOTS } from "./slots";
 import type { AreaConfig } from "./types";
 
@@ -140,7 +141,11 @@ export async function resolveAreaSlots(
     .where(eq(areas.id, areaUuid))
     .limit(1);
   if (!area) throw new Error(`Area not found: ${areaUuid}`);
-  const members = await getAreaDeviceSystemIds(areaUuid);
+  // Membership is uuid-keyed since slice H; `point_info.system_id` and `area_bindings.point_system_id`
+  // are not, so convert. The `!` is safe by the `area_members.device_id` FK.
+  const memberDeviceIds = await getAreaMemberDeviceIds(areaUuid);
+  const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
+  const members = memberDeviceIds.map((id) => memberRids.get(id)!);
   const memberIds = members.length > 0 ? members : [legacyHandle];
   const [pointRows, bindingRows] = await Promise.all([
     db

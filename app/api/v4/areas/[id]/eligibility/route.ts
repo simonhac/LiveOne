@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadReadableArea } from "@/lib/areas/http";
-import {
-  capabilitiesForSystem,
-  memberSystemIds,
-} from "@/lib/capabilities/server";
+import { capabilitiesForSystem } from "@/lib/capabilities/server";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import {
   availableAreaCards,
   availableDeviceCards,
@@ -44,18 +42,17 @@ export async function GET(
 
   // Per-member device-scoped cards. Best-effort: a per-member failure degrades that member to `cards: []`
   // (same posture as `listReadableAreas`' chartCapable enrichment), never failing the whole route.
-  const members = await memberSystemIds(handle);
-  const mappings = await DeviceRegistry.addrsForHandles(members);
-  if (members.some((systemId) => !mappings.has(systemId))) {
-    return NextResponse.json(
-      { error: "device-mapping-incomplete" },
-      { status: 503 },
-    );
-  }
+  //
+  // Membership arrives as device ids (slice H), so the `dv_` TypeIDs this route emits come straight off
+  // the membership rows — no `legacy_handles` round trip. That also retires the `device-mapping-incomplete`
+  // 503: `area_members.device_id` FKs `devices.id`, so a member without a device row is unrepresentable.
+  // The rid hop remains only because `capabilitiesForSystem` is still int-keyed (Phase 13 removes it).
+  const memberIds = await getAreaMemberDeviceIds(r.area.id);
+  const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
   const deviceCards = await Promise.all(
-    members.map(async (systemId) => {
+    memberIds.map(async (deviceId) => {
       try {
-        const caps = await capabilitiesForSystem(systemId);
+        const caps = await capabilitiesForSystem(memberRids.get(deviceId)!);
         const cards = availableDeviceCards(caps).map((cid) => {
           const entry = CARD_CATALOG[cid];
           return entry.bindsCapability
@@ -66,10 +63,10 @@ export async function GET(
               }
             : { id: cid, label: entry.label };
         });
-        return { deviceId: mappings.get(systemId)!.deviceId, cards };
+        return { deviceId, cards };
       } catch {
         return {
-          deviceId: mappings.get(systemId)!.deviceId,
+          deviceId,
           cards: [] as { id: string; label: string }[],
         };
       }

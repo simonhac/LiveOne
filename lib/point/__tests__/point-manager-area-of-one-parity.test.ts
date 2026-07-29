@@ -8,7 +8,7 @@
  * through the area/union path. This test pins it so a future change to the union loop (a dedup, sort, or
  * filter) can't silently diverge for the single-member case.
  *
- * NB: the OTHER N=1 hazard — a legacy area with ZERO `area_devices` members resolving to an empty set —
+ * NB: the OTHER N=1 hazard — a legacy area with ZERO `area_members` rows resolving to an empty set —
  * is a DATA problem fixed by the membership heal (scripts/temp/heal-area-of-one-members.sql), not by this
  * code path. The last test documents that empty-membership returns [] so the heal's importance is explicit.
  *
@@ -39,9 +39,20 @@ jest.mock("@/lib/areas/resolve", () => ({
   getAreaForSystem: (id: number) => getAreaForSystem(id),
 }));
 
-const getAreaDeviceSystemIds = jest.fn<(areaId: string) => Promise<number[]>>();
-jest.mock("@/lib/areas/devices", () => ({
-  getAreaDeviceSystemIds: (areaId: string) => getAreaDeviceSystemIds(areaId),
+// Membership is uuid-keyed since slice H, so the mock returns `dv_` ids and the manager converts them
+// back through DeviceRegistry.ridsForDevices. Both are mocked, and the fake ids encode their own rid so
+// the conversion stays honest rather than collapsing to a constant.
+const getAreaMemberDeviceIds = jest.fn<(areaId: string) => Promise<string[]>>();
+jest.mock("@/lib/areas/members", () => ({
+  getAreaMemberDeviceIds: (areaId: string) => getAreaMemberDeviceIds(areaId),
+}));
+
+const deviceIdFor = (rid: number) => `dv_fake_${rid}`;
+jest.mock("@/lib/registry", () => ({
+  DeviceRegistry: {
+    ridsForDevices: async (ids: string[]) =>
+      new Map(ids.map((id) => [id, Number(id.replace("dv_fake_", ""))])),
+  },
 }));
 
 import { PointManager } from "../point-manager";
@@ -89,7 +100,7 @@ describe("PointManager._resolvePointsForViewable — area-of-one parity (union-o
     isAreaHandle.mockResolvedValue(true);
     getAreaBindingRefs.mockResolvedValue([]);
     getAreaForSystem.mockResolvedValue({ id: "area-a" });
-    getAreaDeviceSystemIds.mockResolvedValue([1]);
+    getAreaMemberDeviceIds.mockResolvedValue([deviceIdFor(1)]);
     const viaUnion = await resolve(1);
 
     isAreaHandle.mockResolvedValue(false);
@@ -103,7 +114,7 @@ describe("PointManager._resolvePointsForViewable — area-of-one parity (union-o
     isAreaHandle.mockResolvedValue(true);
     getAreaBindingRefs.mockResolvedValue([]);
     getAreaForSystem.mockResolvedValue({ id: "area-a" });
-    getAreaDeviceSystemIds.mockResolvedValue([]); // zero members → union-of-nothing
+    getAreaMemberDeviceIds.mockResolvedValue([]); // zero members → union-of-nothing
     const points = await resolve(1);
     expect(points).toEqual([]);
   });

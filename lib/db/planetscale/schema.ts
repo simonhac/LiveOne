@@ -715,8 +715,8 @@ export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 // Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
 // into a coherent energy site. Replaced vendor_type='composite' fake systems rows.
 //
-// An Area is a grouping of 1..N member devices (`area_devices`):
-//   area-of-one   → 1:1 wrapper over a single physical system (its sole `area_devices` member).
+// An Area is a grouping of 1..N member devices (`area_members`):
+//   area-of-one   → 1:1 wrapper over a single physical system (its sole `area_members` member).
 //   multi-device  → points drawn from across ≥2 member systems (via `area_bindings`).
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
@@ -852,32 +852,6 @@ export const areaBindings = pgTable(
       "area_bindings_role_check",
       sql`${table.role} IN ('solar','battery','load','grid','ev','generator')`,
     ),
-  }),
-);
-
-// ============================================================================
-// Area devices - explicit area→member-device membership (the unified 1..N model, Phase B).
-//
-// Unifies the two implicit membership models into one: an area-of-one has a single member (its
-// `source_system_id`); a multi-device area's members are the DISTINCT `area_bindings.point_system_id`s.
-// Making membership first-class lets an Area be "a grouping of 1..N member devices" and lets roles
-// DEFAULT from each member's own point_info (with area_bindings as an override) — so there is no
-// single-vs-multi special-case. `system_id` is a plain int (like `areas.legacy_system_id`) with NO FK to
-// systems: a member may be a child system whose `systems` row was deleted (migration 0014). The table
-// is fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen point_readings_flow_attr_1d's
-// data-loss firewall (that table is untouched).
-// ============================================================================
-export const areaDevices = pgTable(
-  "area_devices",
-  {
-    areaId: uuid("area_id")
-      .notNull()
-      .references(() => areas.id, { onDelete: "cascade" }),
-    systemId: integer("system_id").notNull(),
-    ordinal: integer("ordinal").notNull().default(0),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.areaId, table.systemId] }),
   }),
 );
 
@@ -1019,8 +993,12 @@ export const legacyHandles = pgTable(
 //
 // These are the v4 successors to systems/point_info/area_devices/polling_status. Created EMPTY by
 // 0035 and populated (idempotently) by scripts/config-v4/registry-sync.ts as a separate dark step.
-// The predecessors are COPIED, not renamed, so both sets coexist until Phase 9 drops the old ones —
-// which is what lets the pre-cutover build keep running unchanged.
+// The predecessors are COPIED, not renamed, so both sets coexist until Phase 12 drops the old ones
+// one at a time — which is what let the pre-cutover build keep running unchanged.
+//
+// No longer dark, and no longer a uniform group: `area_members` and `device_state` are now PRIMARY
+// (slices H and C dropped/froze their predecessors), while `devices` and `points` are still mirrored
+// from `systems`/`point_info` by lib/registry/v4-mirror.ts.
 // ============================================================================
 
 // Global device rid allocator. Seeded at max(systems.id)+1 by registry-sync so devices.rid preserves
@@ -1110,7 +1088,21 @@ export const points = pgTable(
   }),
 );
 
-// area_members ← area_devices (system_id int → device uuid).
+// area_members — explicit area→member-device membership, and since Phase 12 slice H the ONLY one
+// (it replaced `area_devices`, whose `system_id int` had no FK at all).
+//
+// Membership is first-class so an Area is uniformly "a grouping of 1..N member devices" and roles can
+// DEFAULT from each member's own points (with `area_bindings` as an override) — there is no
+// single-vs-multi special-case and no stored `kind`. An area-of-one has exactly one member.
+//
+// Two things carried over from the table this replaced:
+//   • Fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen
+//     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
+//   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
+//     membership, because `deleteSystem` ORPHANS its `devices` row rather than deleting it
+//     (lib/systems-manager.ts, noted there as a known gap). That is what makes a hard `device_id` FK
+//     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE
+//     here means such a member silently leaves its areas — fix the two together.
 export const areaMembers = pgTable(
   "area_members",
   {

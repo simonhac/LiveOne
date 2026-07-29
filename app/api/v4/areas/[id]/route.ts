@@ -8,10 +8,8 @@ import {
   systems,
 } from "@/lib/db/planetscale/schema";
 import { loadReadableArea } from "@/lib/areas/http";
-import {
-  capabilitiesForSystem,
-  memberSystemIds,
-} from "@/lib/capabilities/server";
+import { capabilitiesForSystem } from "@/lib/capabilities/server";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import { areaDetailResponse } from "@/lib/areas/v4-shapes";
 
@@ -46,8 +44,13 @@ export async function GET(
   if (!row)
     return NextResponse.json({ error: "Area not found" }, { status: 404 });
 
-  const memberIds = await memberSystemIds(r.area.legacySystemId);
-  const [memberRows, mappings, areaCaps, bindingRows] = await Promise.all([
+  // Membership arrives as device ids (slice H), so the `dv_` TypeIDs this route emits come straight off
+  // the membership rows — no `legacy_handles` round trip, and no `device-mapping-incomplete` 503, since
+  // `area_members.device_id` FKs `devices.id`. The rid hop remains only because `systems` and
+  // `capabilitiesForSystem` are still int-keyed (Phase 13 removes it).
+  const memberIds = await getAreaMemberDeviceIds(r.area.id);
+  const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
+  const [memberRows, areaCaps, bindingRows] = await Promise.all([
     db
       .select({
         id: systems.id,
@@ -56,8 +59,7 @@ export async function GET(
         status: systems.status,
       })
       .from(systems)
-      .where(inArray(systems.id, memberIds)),
-    DeviceRegistry.addrsForHandles(memberIds),
+      .where(inArray(systems.id, [...memberRids.values()])),
     capabilitiesForSystem(r.area.legacySystemId),
     db
       .select({
@@ -84,22 +86,15 @@ export async function GET(
         asc(areaBindings.id),
       ),
   ]);
-  const missingMappings = memberIds.filter((member) => !mappings.has(member));
-  if (missingMappings.length > 0) {
-    return NextResponse.json(
-      { error: "device-mapping-incomplete" },
-      { status: 503 },
-    );
-  }
   const memberById = new Map(memberRows.map((member) => [member.id, member]));
   const members = await Promise.all(
-    memberIds.map(async (memberId) => {
-      const member = memberById.get(memberId);
-      const mapping = mappings.get(memberId)!;
-      if (!member) throw new Error(`Area member system not found: ${memberId}`);
-      const capabilities = await capabilitiesForSystem(memberId);
+    memberIds.map(async (deviceId) => {
+      const rid = memberRids.get(deviceId)!;
+      const member = memberById.get(rid);
+      if (!member) throw new Error(`Area member system not found: ${rid}`);
+      const capabilities = await capabilitiesForSystem(rid);
       return {
-        id: mapping.deviceId,
+        id: deviceId,
         name: member.name,
         vendor: member.vendor,
         status: member.status,

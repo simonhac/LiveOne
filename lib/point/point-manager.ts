@@ -28,7 +28,8 @@ import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
+import { DeviceRegistry } from "@/lib/registry";
 import {
   updateSystemSummary,
   updateSubscriberSummaries,
@@ -287,7 +288,11 @@ export class PointManager {
     // No bindings → default to the union of the area's member devices' own points.
     const area = await getAreaForSystem(system.id);
     if (!area) return [];
-    const memberSystemIds = await getAreaDeviceSystemIds(area.id);
+    // Membership is uuid-keyed since slice H; `point_info.system_id` is not, so convert. The `!` is
+    // safe by `area_members.device_id`'s FK into `devices` — see DeviceRegistry.ridsForDevices.
+    const memberIds = await getAreaMemberDeviceIds(area.id);
+    const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
+    const memberSystemIds = memberIds.map((id) => memberRids.get(id)!);
     const unioned: PointInfo[] = [];
     for (const sid of memberSystemIds) {
       unioned.push(...(await this._loadOwnPoints(sid)));

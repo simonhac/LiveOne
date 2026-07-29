@@ -27,7 +27,7 @@ canvas.**
 
 - **Points** are addressed by `(system_id, index)` but also carry a deterministic `point_uid` (uuidv5) —
   a stable identity that survives re-addressing.
-- **An Area is a grouping of 1..N member devices** (`area_devices`). A **single-device Area** wraps one
+- **An Area is a grouping of 1..N member devices** (`area_members`). A **single-device Area** wraps one
   physical system; a **multi-device Area** (the former "composite") groups several. There is **no special
   "composite" concept** — a multi-device Area with no real `systems` row of its own is **areas-backed**:
   `SystemsManager` synthesizes a virtual system on demand, keyed on `areas.legacy_system_id` (the old
@@ -269,7 +269,9 @@ column dropped** (#128, migration `0019`).
   A real device loads its own `point_info`; an **areas-backed** handle resolves under membership + override
   (§1). Dispatch is on the structural `SystemsManager.isAreasBackedSystem(id)` (no real `systems` row),
   **not** `vendorType === 'composite'` / `kind`.
-- **`area_devices` membership table** (migration **`0018`**, applied to dev + `sydney` prod): `(area_id,
+- **`area_devices` membership table** (migration **`0018`**) — **SUPERSEDED** by `area_members`
+  `(area_id, device_id → devices.id, ordinal)` in config-v4 Phase 12 slice H (migration `0046` dropped
+  it). The design notes below are the historical record of the table it replaced: `(area_id,
 system_id, ordinal)`. Backfill: a multi-device (composite) Area's members are the distinct
   `area_bindings.point_system_id`; a single-device area's member is its `source_system_id`. Kept
   in lockstep on create/edit (`replaceAreaBindings`, `ensureAreaOfOne`). `area_id` CASCADE is safe (the
@@ -294,7 +296,7 @@ The `areas.kind` column has been **dropped** (migration `0019`, PR #128, applied
 captured in vocabulary as **area-of-one** vs **multi-device area**. The remaining tail:
 
 - **Create-UX reframe** — present the admin "create composite system + `{version:2, mappings}`" flow as
-  "create an Area → add member devices (`area_devices`) → optional role overrides." The backend is already
+  "create an Area → add member devices (`area_members`) → optional role overrides." The backend is already
   areas-only (#92); this is mostly presentation + writing membership. Keep the `{version:2, mappings}`
   editor as the **override** editor.
 

@@ -1,10 +1,10 @@
 /**
  * Shared function to fetch admin areas data (server-side rendering + API).
  *
- * Areas are the SEMANTIC layer: an Area is a grouping of 1..N **member devices** (`area_devices`). A
+ * Areas are the SEMANTIC layer: an Area is a grouping of 1..N **member devices** (`area_members`). A
  * single-device Area wraps one physical system; a multi-device Area draws points from several (the
  * former vendor_type='composite' fake systems, now areas-backed virtual systems). Membership is read
- * uniformly from `area_devices` — there is no `kind` branch. This powers /admin/areas (all areas)
+ * uniformly from `area_members` — there is no `kind` branch. This powers /admin/areas (all areas)
  * and the owner-facing /areas page (the caller's own active areas).
  */
 
@@ -13,7 +13,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { SystemsManager } from "@/lib/systems-manager";
-import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
+import { DeviceRegistry } from "@/lib/registry";
 import type { AreaLocation } from "@/lib/areas/types";
 import { Area } from "@/lib/ids";
 
@@ -40,7 +41,7 @@ export interface AdminAreaData {
   };
   /** Number of `area_bindings` (role→point overrides). 0 for a plain membership-only Area. */
   bindingCount: number;
-  /** The Area's member devices (from `area_devices`); length 1 = single-device, >1 = multi-device. */
+  /** The Area's member devices (from `area_members`); length 1 = single-device, >1 = multi-device. */
   memberSystems: AreaSourceSystem[];
 }
 
@@ -123,8 +124,12 @@ async function shapeAreas(
   for (const area of allAreas) {
     const userInfo = area.ownerUserId ? userCache.get(area.ownerUserId) : null;
 
-    // Uniform: an Area's member devices are its `area_devices` rows — no single-vs-multi branch.
-    const memberIds = await getAreaDeviceSystemIds(area.id);
+    // Uniform: an Area's member devices are its `area_members` rows — no single-vs-multi branch.
+    // `resolveSystem` is int-keyed, so the uuid membership converts back; the `!` is safe by the
+    // `area_members.device_id` FK.
+    const memberDeviceIds = await getAreaMemberDeviceIds(area.id);
+    const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
+    const memberIds = memberDeviceIds.map((id) => memberRids.get(id)!);
     const memberSystems: AreaSourceSystem[] = (
       await Promise.all(
         memberIds.map(

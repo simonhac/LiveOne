@@ -14,19 +14,21 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   areaBindings,
-  areaDevices,
+  areaMembers,
   pointInfo,
   systems,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
+import { Device } from "@/lib/ids";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
 import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
-import { getAreaDeviceSystemIds } from "@/lib/areas/devices";
+import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
+import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 import { bindingShapeMatches } from "@/lib/areas/slots";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
@@ -99,7 +101,7 @@ export interface CreateAreaInput {
   timezoneOffsetMin: number;
   displayTimezone: string;
   location?: AreaLocation | null;
-  /** ≥1 member device systemIds; ordered → `area_devices.ordinal`. */
+  /** ≥1 member device systemIds; ordered → `area_members.ordinal`. */
   memberSystemIds: number[];
 }
 
@@ -135,10 +137,19 @@ export async function createArea(
         });
         await DeviceRegistry.ensureAreaForHandle(handle, id, tx);
         if (members.length > 0) {
-          await tx.insert(areaDevices).values(
-            members.map((systemId, i) => ({
+          // `area_members.device_id` is a hard FK, so each member's `devices` row must exist before its
+          // membership row. `ensureDeviceRow` is idempotent and self-healing (slice A2), and rides this
+          // tx — so a member whose device row was somehow missing is minted and joined atomically.
+          // Sequential, not Promise.all: a drizzle tx is ONE pg client, so overlapping statements on it
+          // are serialised anyway and only make the ordering harder to reason about.
+          const deviceIds: string[] = [];
+          for (const systemId of members) {
+            deviceIds.push(await ensureDeviceRow(systemId, tx));
+          }
+          await tx.insert(areaMembers).values(
+            deviceIds.map((deviceId, i) => ({
               areaId: id,
-              systemId,
+              deviceId,
               ordinal: i,
             })),
           );
@@ -200,20 +211,28 @@ export async function updateAreaMeta(
   }
 }
 
-/** Add a member device (append at the next ordinal; idempotent on the PK). */
+/**
+ * Add a member device (append at the next ordinal; idempotent on the PK).
+ *
+ * The `max(ordinal)` read and the insert share a transaction: they were two round trips before, so two
+ * concurrent adds could both read the same max and collide on the ordinal. `ensureDeviceRow` rides the
+ * same tx because `area_members.device_id` is a hard FK.
+ */
 export async function addMember(
   areaId: string,
   systemId: number,
 ): Promise<void> {
-  const db = requirePlanetscaleDb();
-  const [{ maxOrd }] = await db
-    .select({ maxOrd: max(areaDevices.ordinal) })
-    .from(areaDevices)
-    .where(eq(areaDevices.areaId, areaId));
-  await db
-    .insert(areaDevices)
-    .values({ areaId, systemId, ordinal: (maxOrd ?? -1) + 1 })
-    .onConflictDoNothing();
+  await requirePlanetscaleDb().transaction(async (tx) => {
+    const deviceId = await ensureDeviceRow(systemId, tx);
+    const [{ maxOrd }] = await tx
+      .select({ maxOrd: max(areaMembers.ordinal) })
+      .from(areaMembers)
+      .where(eq(areaMembers.areaId, areaId));
+    await tx
+      .insert(areaMembers)
+      .values({ areaId, deviceId, ordinal: (maxOrd ?? -1) + 1 })
+      .onConflictDoNothing();
+  });
 }
 
 /**
@@ -226,10 +245,13 @@ export async function removeMember(
   systemId: number,
 ): Promise<void> {
   const db = requirePlanetscaleDb();
-  const members = await getAreaDeviceSystemIds(areaId);
-  if (!members.includes(systemId)) return; // not a member — no-op
-  if (members.length <= 1)
+  const memberIds = await getAreaMemberDeviceIds(areaId);
+  const rids = await DeviceRegistry.ridsForDevices(memberIds);
+  const target = memberIds.find((id) => rids.get(id) === systemId);
+  if (!target) return; // not a member — no-op
+  if (memberIds.length <= 1)
     throw new AreaValidationError("Cannot remove the last member of an area");
+  const deviceUuid = Device.toUuid(target);
   await db.transaction(async (tx) => {
     await tx
       .delete(areaBindings)
@@ -240,9 +262,12 @@ export async function removeMember(
         ),
       );
     await tx
-      .delete(areaDevices)
+      .delete(areaMembers)
       .where(
-        and(eq(areaDevices.areaId, areaId), eq(areaDevices.systemId, systemId)),
+        and(
+          eq(areaMembers.areaId, areaId),
+          eq(areaMembers.deviceId, deviceUuid),
+        ),
       );
   });
 }
@@ -284,7 +309,11 @@ export async function replaceBindings(
   areaId: string,
   bindings: BindingInput[],
 ): Promise<void> {
-  const members = new Set(await getAreaDeviceSystemIds(areaId));
+  // `area_bindings.point_system_id` is still an int handle (slice E moves it to `point_uid`), so the
+  // uuid membership has to come back to handles to validate against it.
+  const memberIds = await getAreaMemberDeviceIds(areaId);
+  const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
+  const members = new Set<number>(memberRids.values());
   const seen = new Set<string>();
   const pointRows =
     bindings.length === 0
