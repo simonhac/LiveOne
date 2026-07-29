@@ -22,7 +22,10 @@ import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
 import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
 import { SystemsManager } from "@/lib/systems-manager";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
@@ -623,8 +626,7 @@ export class PointManager {
     }
 
     // Publish observations to queue (before database insert)
-    const systemsManager = await SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
     if (system) {
       const inputs = valuesToInsert.map((v) => ({
         sessionId: session.id,
@@ -739,8 +741,7 @@ export class PointManager {
 
     // Publish observations to queue (before database insert)
     // Only publish if we have a session (skip historical backfills)
-    const systemsManager = await SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     // 5m-native vendors (Amber, Enphase) have NO raw point_readings, so their 5m
     // is authoritative and must be published to the queue (→ Postgres via the
@@ -856,8 +857,7 @@ export class PointManager {
       const points = await this.getActivePointsForSystem(systemId, false);
 
       // Get system name for sourceSystemName in KV cache
-      const systemsManager = SystemsManager.getInstance();
-      const system = await systemsManager.getSystem(systemId);
+      const system = await DeviceConfigRegistry.deviceByHandle(systemId);
       const sourceSystemName = system?.displayName;
 
       // Build summary values and cache updates together

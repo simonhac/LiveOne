@@ -5,11 +5,11 @@ import type { SessionInfo } from "@/lib/point/point-manager";
 import { buildSessionPayload } from "@/lib/observations/session-publisher";
 import { publishPoll } from "@/lib/observations/poll-collector";
 import type { RawObservationInput } from "@/lib/observations/publisher";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   sessions as pgSessions,
-  systems as pgSystems,
+  devices as pgDevices,
 } from "@/lib/db/planetscale/schema";
 
 export type SessionCause =
@@ -203,9 +203,7 @@ export class SessionManager {
       // Emit a single combined message (session + all readings) to the queue,
       // which the receiver materialises into Postgres. The session is included
       // even when there are zero readings.
-      const system = await SystemsManager.getInstance().getSystem(
-        pending.systemId,
-      );
+      const system = await DeviceConfigRegistry.deviceByHandle(pending.systemId);
       if (system) {
         await publishPoll(
           system,
@@ -259,9 +257,7 @@ export class SessionManager {
 
       // Publish the completed session to the queue (→ Postgres via the receiver);
       // a session-only message with no readings.
-      const system = await SystemsManager.getInstance().getSystem(
-        data.systemId,
-      );
+      const system = await DeviceConfigRegistry.deviceByHandle(data.systemId);
       if (system) {
         await publishPoll(
           system,
@@ -322,7 +318,7 @@ export class SessionManager {
     systemId: number,
   ): Promise<{ vendorType: string; systemName: string } | null> {
     try {
-      const system = await SystemsManager.getInstance().getSystem(systemId);
+      const system = await DeviceConfigRegistry.deviceByHandle(systemId);
       if (!system) {
         return null;
       }
@@ -338,20 +334,20 @@ export class SessionManager {
   }
 
   /**
-   * Map a joined Postgres (sessions ⋈ systems) row to SessionWithSystem.
+   * Map a joined Postgres (sessions ⋈ devices) row to SessionWithSystem.
    * Postgres has no `started` column — `createdAt` holds the legacy store's
    * `started` value, so both `started` and `createdAt` are derived from it.
    */
   private mapPgRow(r: {
     sessions: typeof pgSessions.$inferSelect;
-    systems: typeof pgSystems.$inferSelect;
+    devices: typeof pgDevices.$inferSelect;
   }): SessionWithSystem {
     return {
       id: r.sessions.id,
       sessionLabel: r.sessions.sessionLabel,
       systemId: r.sessions.systemId,
-      vendorType: r.systems.vendorType,
-      systemName: r.systems.displayName,
+      vendorType: r.devices.vendor,
+      systemName: r.devices.name,
       cause: r.sessions.cause,
       started: r.sessions.createdAt,
       duration: r.sessions.duration,
@@ -382,7 +378,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
         .where(before ? lt(pgSessions.createdAt, before) : undefined)
         .orderBy(desc(pgSessions.createdAt))
         .limit(limit);
@@ -409,7 +405,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
         .orderBy(desc(pgSessions.createdAt))
         .limit(limit);
 
@@ -433,7 +429,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
         .where(eq(pgSessions.sessionLabel, label))
         .orderBy(desc(pgSessions.createdAt))
         .limit(100); // Cap at 100 results per label
@@ -458,7 +454,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
         .where(eq(pgSessions.id, sessionId))
         .limit(1);
 
@@ -518,11 +514,11 @@ export class SessionManager {
       const conditions = [];
 
       if (params.systemNames && params.systemNames.length > 0) {
-        conditions.push(inArray(pgSystems.displayName, params.systemNames));
+        conditions.push(inArray(pgDevices.name, params.systemNames));
       }
 
       if (params.vendorTypes && params.vendorTypes.length > 0) {
-        conditions.push(inArray(pgSystems.vendorType, params.vendorTypes));
+        conditions.push(inArray(pgDevices.vendor, params.vendorTypes));
       }
 
       if (params.causes && params.causes.length > 0) {
@@ -556,10 +552,10 @@ export class SessionManager {
           orderByClause = sortOrder(pgSessions.duration);
           break;
         case "systemName":
-          orderByClause = sortOrder(pgSystems.displayName);
+          orderByClause = sortOrder(pgDevices.name);
           break;
         case "vendorType":
-          orderByClause = sortOrder(pgSystems.vendorType);
+          orderByClause = sortOrder(pgDevices.vendor);
           break;
         case "cause":
           orderByClause = sortOrder(pgSessions.cause);
@@ -582,7 +578,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgSystems, eq(pgSessions.systemId, pgSystems.id))
+        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
         .where(whereClause)
         .orderBy(orderByClause)
         .limit(pageSize)
@@ -593,8 +589,8 @@ export class SessionManager {
         id: r.sessions.id,
         sessionLabel: r.sessions.sessionLabel,
         systemId: r.sessions.systemId,
-        vendorType: r.systems.vendorType,
-        systemName: r.systems.displayName,
+        vendorType: r.devices.vendor,
+        systemName: r.devices.name,
         cause: r.sessions.cause,
         started: r.sessions.createdAt,
         duration: r.sessions.duration,
