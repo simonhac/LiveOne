@@ -58,24 +58,30 @@ function compare(what: string, got: PointId | null, want: PointId | null) {
 }
 
 async function main() {
-  // 0. Writer coverage. Block 1 below would surface a NULL `point_uid` as a MISMATCH anyway, but it
-  //    would name the symptom (an identity that disagrees) rather than the cause (a writer that never
-  //    set the column). `replaceBindings` is delete-all-then-reinsert, so one un-fixed writer nulls a
-  //    whole area at once — worth its own line.
-  const [{ total, missing }] = await db
+  // 0. Binding reachability. This USED to count NULL `point_uid`s, which migration 0047 made
+  //    unrepresentable — a check the DB now enforces is a check this script should stop pretending to
+  //    perform. What is still NOT enforced anywhere is that a binding's point exists in `point_info`:
+  //    `point_uid` FKs `points`, and 0047 dropped the last FK into `point_info`, so the two tables can
+  //    diverge silently. That divergence is load-bearing since slice E PR 2b, because
+  //    `getAreaBindings` now joins `point_info` on `point_uid` to recover the source system — an
+  //    unreachable binding contributes NO KV subscription edge and the area just stops updating, with
+  //    no error anywhere. Cheap to assert, invisible otherwise.
+  const [{ total, unreachable }] = await db
     .select({
       total: sql<number>`count(*)::int`,
-      missing: sql<number>`count(*) FILTER (WHERE ${areaBindings.pointUid} IS NULL)::int`,
+      unreachable: sql<number>`count(*) FILTER (WHERE NOT EXISTS (
+        SELECT 1 FROM point_info pi WHERE pi.point_uid = ${areaBindings.pointUid}
+      ))::int`,
     })
     .from(areaBindings);
-  if (missing > 0) {
+  if (unreachable > 0) {
     console.error(
-      `WRITER GAP: ${missing}/${total} area_bindings rows have a NULL point_uid — a binding writer is ` +
-        `not setting it (see lib/areas/__tests__/binding-writers.test.ts).`,
+      `UNREACHABLE BINDINGS: ${unreachable}/${total} area_bindings rows name a point_uid with no ` +
+        `point_info row — those bindings resolve to nothing and drop out of the KV subscription map.`,
     );
-    mismatched += missing;
+    mismatched += unreachable;
   } else {
-    console.log(`area_bindings.point_uid populated: ${total}/${total}`);
+    console.log(`area_bindings → point_info reachable: ${total}/${total}`);
   }
 
   // 1. boundPoints() — the battery-provenance membership read, now sourced from area_bindings.point_uid.
