@@ -5,9 +5,10 @@
  * per-device knobs the capability cleanup is data-driving instead of hardcoding — it grows WITHOUT
  * migrations (the HA `.storage` model), because the column already exists.
  *
- * Today: capability on/off overrides. Forward seams (fold legacy in over time): `nameplateKw` retires
- * the regex that scrapes `systems.solar_size`/`ratings` free text; `updateCadenceSeconds` retires the
- * hardcoded `vendorType === 'enphase' ? 2100 : 300` stale-threshold branch.
+ * Today: capability on/off overrides, the structured device `spec` (config-v4 slice K1 — the successor
+ * to the free-text `systems.ratings`/`solar_size`/`battery_size` columns, which `devices` does not
+ * have), and `nameplateKw`/`updateCadenceSeconds`. `updateCadenceSeconds` is still a forward seam to
+ * retire the hardcoded `vendorType === 'enphase' ? 2100 : 300` stale-threshold branch.
  *
  * NOTE (scope): `capabilities` here is a PRESENTATION on/off — force a derived card capability on or off.
  * It is NOT a semantic role remap ("this grid point is really the generator"): that must also flow into
@@ -93,9 +94,37 @@ export interface BatteryProvenanceConfig {
   reserveFloorMaxPct?: number;
 }
 
+/**
+ * The device's PHYSICAL SPEC, structured — the successor to the three free-text `systems` columns
+ * `ratings` / `solar_size` / `battery_size` (clean-sheet §4.8 "what dies": `devices` has no counterpart
+ * to any of them, deliberately).
+ *
+ * Why structured rather than carried across verbatim: the only *behavioural* consumer of the free text
+ * is `maxPowerHintFromSystemInfo`, which regex-scrapes a number back out of strings a vendor scraper
+ * happened to produce ("9 kW", "7.5kW, 48V", "11.9kW"). A number that has to be re-parsed on every read
+ * is a number that was never stored. Every field here is the value that regex was trying to recover, so
+ * the regex retires (config-v4 Phase 12 slice K1) and the strings stop being an interface.
+ *
+ * All fields optional and absent-when-unknown: absent must keep meaning exactly what an unparseable
+ * free-text value meant, or the chart's y-axis hint moves. Non-positive values are never stored (system
+ * 3 carries the literal `solar_size` "-0.0 kW", which the old regex also rejected).
+ */
+export interface DeviceSpec {
+  /** PV array nameplate (kW DC) — was `systems.solar_size` ("9 kW"). */
+  solarSizeKw?: number;
+  /** Battery nominal capacity (kWh) — was `systems.battery_size` ("63.6 kWh"). */
+  batterySizeKwh?: number;
+  /** Inverter continuous rating (kW) — was the first half of `systems.ratings` ("7.5kW, 48V"). */
+  inverterSizeKw?: number;
+  /** Battery nominal DC bus voltage (V) — the second half of `systems.ratings`. Display-only. */
+  batteryVoltageV?: number;
+}
+
 export interface DeviceConfig {
   /** Force a derived capability ON (true) or OFF (false); absent ⇒ derive from points as normal. */
   capabilities?: Partial<Record<CapabilityId, boolean>>;
+  /** Structured physical spec — replaces the free-text `ratings`/`solar_size`/`battery_size`. */
+  spec?: DeviceSpec;
   /** Nameplate size (kW) — forward seam to retire the free-text `solar_size`/`ratings` scraping. */
   nameplateKw?: number;
   /** Expected update cadence (seconds) — forward seam to retire the hardcoded vendor stale threshold. */
