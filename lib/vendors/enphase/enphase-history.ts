@@ -1,7 +1,7 @@
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { systems } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { Point } from "@/lib/ids";
 import { ReadingsDao } from "@/lib/readings";
 import { fetchWithEnphaseAuth } from "./enphase-auth";
 import { CalendarDate } from "@internationalized/date";
@@ -301,18 +301,14 @@ export async function hasCompleteEveningData(
   const eveningEndMs = (dayEndUnix - 300) * 1000; // 23:55 (5 minutes before midnight)
 
   // Query for existing data in this range for the solar power point, via the readings seam.
-  // A point with no registry identity (UnknownIdError) has no rows → treat as 0 present.
-  let existingCount = 0;
-  try {
-    const id = await RegistryCache.pointForAddr(systemId, solarPoint.index);
-    const series = await ReadingsDao.read5m([id], {
-      fromMs: eveningStartMs,
-      toMs: eveningEndMs,
-    });
-    existingCount = series.get(id)!.length;
-  } catch (err) {
-    if (!(err instanceof UnknownIdError)) throw err;
-  }
+  // `solarPoint` came from `getPointByPhysicalPathTail`, so its `point_uid` (NOT NULL) IS the
+  // identity — no registry round trip (config-v4 Phase 12 slice D).
+  const id = Point.encode(solarPoint.pointUid);
+  const series = await ReadingsDao.read5m([id], {
+    fromMs: eveningStartMs,
+    toMs: eveningEndMs,
+  });
+  const existingCount = series.get(id)!.length;
 
   // We expect 72 intervals from 18:00 to 23:55 (6 hours * 12 intervals per hour)
   const expectedIntervals = 72;

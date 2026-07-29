@@ -201,8 +201,11 @@ export async function GET(
         p.subsystem,
         p.physicalPathTail,
       );
-      // Create PointInfo for the header
+      // Create PointInfo for the header. `pointUid` rides along to the client so
+      // `ViewDataModal` can rebuild a full-identity PointInfo (config-v4 slice D) — the same
+      // uuid the pivot query below already keys on.
       const pointInfoObj = new PointInfo(
+        p.pointUid,
         p.index,
         systemId,
         p.physicalPathTail,

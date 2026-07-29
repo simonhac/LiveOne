@@ -2,23 +2,34 @@
  * Slice-D parity gate: every point identity the new code reads from a uuid must equal the one the
  * retired `RegistryCache.pointForAddr(system_id, index)` lookup would have returned.
  *
- * Drives the REAL code paths (`boundPoints`, `resolveCoveragePoints`) rather than re-deriving the
- * mapping in SQL, so a mistake in the mapping code itself is caught, not just a data mismatch. Read
- * only — safe against any environment.
+ * Drives the REAL code paths (`boundPoints`, `resolveCoveragePoints`, `PointManager`,
+ * `resolveLogicalSystem`) rather than re-deriving the mapping in SQL, so a mistake in the mapping
+ * code itself is caught, not just a data mismatch. Read only — safe against any environment.
  *
- * Extend the two blocks below as later slice-D PRs convert the remaining `pointForAddr` call sites
- * (vendors, flow, history, the receiver). The gate DIES WITH `pointForAddr` itself: once the last
- * caller is gone there is no legacy side left to compare against, and this file goes with it.
+ * Extend the blocks below as later slice-D PRs convert the remaining `pointForAddr` call sites.
+ * Two are left, and NEITHER is a mechanical conversion, so this file is probably at its final
+ * shape: the admin readings route takes the address from the URL segment itself, and the receiver's
+ * legacy `debug.reference` branch belongs to slice M (it may not be deleted until the outbox
+ * poison-pill gate is satisfiable). The gate DIES WITH `pointForAddr` itself: once the last caller
+ * is gone there is no legacy side left to compare against, and this file goes with it.
  *
  *   npx tsx --env-file=.env.local scripts/config-v4/verify-slice-d-parity.ts
  */
-import { eq, sql } from "drizzle-orm";
+import { eq, isNotNull, sql } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { areaBindings, areas, pointInfo } from "@/lib/db/planetscale/schema";
+import {
+  areaBindings,
+  areas,
+  pointInfo,
+  systems,
+} from "@/lib/db/planetscale/schema";
 import { boundPoints } from "@/lib/battery-provenance/load";
 import { resolveCoveragePoints } from "@/lib/coverage/find-gaps";
+import { PointManager } from "@/lib/point/point-manager";
+import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
+import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 import { RegistryCache, UnknownIdError } from "@/lib/registry";
-import type { PointId } from "@/lib/ids";
+import { Point, type PointId } from "@/lib/ids";
 
 const db = planetscaleDb!;
 
@@ -97,6 +108,78 @@ async function main() {
         await legacy(systemId, cp.id),
       );
     }
+  }
+
+  // 3. PointManager.getActivePointsForSystem() — the producer behind the amber vendor site AND
+  //    (via resolveLogicalSystem) the flow site and /api/history's series. `PointInfo` now carries
+  //    `pointUid`, so this one sweep covers every consumer of the class at once. Run over every
+  //    viewable handle, real devices and area handles alike, since the area branch resolves points
+  //    through a different query (the area_bindings OR-of-pairs) than the own-points branch.
+  const handles = [
+    ...new Set([
+      ...(await db.select({ id: systems.id }).from(systems)).map((r) => r.id),
+      ...(
+        await db
+          .select({ h: areas.legacySystemId })
+          .from(areas)
+          .where(isNotNull(areas.legacySystemId))
+      ).map((r) => r.h!),
+    ]),
+  ].sort((a, b) => a - b);
+
+  const pm = PointManager.getInstance();
+  for (const handle of handles) {
+    let pts;
+    try {
+      pts = await pm.getActivePointsForSystem(handle, false);
+    } catch {
+      continue; // not a viewable handle (e.g. a removed device) — nothing to compare
+    }
+    for (const p of pts) {
+      compare(
+        `point handle=${handle} ${p.systemId}.${p.index} (${p.name})`,
+        Point.encode(p.pointUid),
+        await legacy(p.systemId, p.index),
+      );
+    }
+  }
+
+  // 4. resolveLogicalSystem() — proves the threading of the identity onto `LogicalSystemPoint`,
+  //    which block 3 does not: a mapper that dropped `point` would still leave block 3 green.
+  //    Both lists, because `energyPoints` is a separate map with its own copy of the expression.
+  for (const handle of await listFlowEligibleAreaHandles()) {
+    const ls = await resolveLogicalSystem(handle);
+    if (!ls) continue;
+    for (const [kind, list] of [
+      ["points", ls.points],
+      ["energyPoints", ls.energyPoints],
+    ] as const) {
+      for (const lp of list) {
+        compare(
+          `ls ${handle}/${kind} ${lp.ref.systemId}.${lp.ref.pointId} (${lp.stem})`,
+          lp.point,
+          await legacy(lp.ref.systemId, lp.ref.pointId),
+        );
+      }
+    }
+  }
+
+  // 5. getPointByPhysicalPathTail() — the enphase producer. It returns a `PointInfoRow`, which has
+  //    always carried `pointUid`; the two enphase sites were round-tripping anyway.
+  for (const { systemId, tail } of await db
+    .selectDistinct({
+      systemId: pointInfo.systemId,
+      tail: pointInfo.physicalPathTail,
+    })
+    .from(pointInfo)
+    .where(eq(pointInfo.physicalPathTail, "solar_w"))) {
+    const row = await pm.getPointByPhysicalPathTail(systemId, tail);
+    if (!row) continue;
+    compare(
+      `physicalPathTail ${systemId}/${tail}`,
+      Point.encode(row.pointUid),
+      await legacy(systemId, row.index),
+    );
   }
 
   console.log(

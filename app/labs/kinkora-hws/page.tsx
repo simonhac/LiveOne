@@ -3,9 +3,8 @@ import { redirect, notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo } from "@/lib/db/planetscale/schema";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
 import { ReadingsDao } from "@/lib/readings";
-import type { PointId } from "@/lib/ids";
+import { Point, type PointId } from "@/lib/ids";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { SystemsManager } from "@/lib/systems-manager";
 import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
@@ -17,13 +16,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DISPLAY_DAYS = 7;
 const ON_THRESHOLD_W = DEFAULT_HWS_MODEL_OPTIONS.onThresholdW;
 
-/** The point index for the `load.hws` stem + given metric, or null. */
-async function hwsPointIndex(
+/**
+ * The `load.hws` point for the given metric, as its identity, or null.
+ *
+ * Projects `point_uid` rather than the `index` this used to return: the readings seam keys on the
+ * identity, so selecting the address and then resolving it back through
+ * `RegistryCache.pointForAddr` was a round trip against the row we had already read
+ * (config-v4 Phase 12 slice D).
+ */
+async function hwsPoint(
   systemId: number,
   metricType: string,
-): Promise<number | null> {
+): Promise<PointId | null> {
   const [row] = await requirePlanetscaleDb()
-    .select({ index: pointInfo.index })
+    .select({ pointUid: pointInfo.pointUid })
     .from(pointInfo)
     .where(
       and(
@@ -33,7 +39,7 @@ async function hwsPointIndex(
       ),
     )
     .limit(1);
-  return row ? row.index : null;
+  return row ? Point.encode(row.pointUid) : null;
 }
 
 /**
@@ -43,19 +49,11 @@ async function hwsPointIndex(
  * (lib/hws/recompute.ts), which only models completed buckets.
  */
 async function readAgg5m(
-  systemId: number,
-  pointId: number,
+  id: PointId,
   fromMs: number,
   toMs: number,
 ): Promise<Map<number, number | null>> {
   const m = new Map<number, number | null>();
-  let id: PointId;
-  try {
-    id = await RegistryCache.pointForAddr(systemId, pointId);
-  } catch (err) {
-    if (err instanceof UnknownIdError) return m; // no registry identity → no rows
-    throw err;
-  }
   const series = await ReadingsDao.read5m([id], { fromMs, toMs });
   for (const r of series.get(id)!) m.set(r.intervalEndMs, r.avg);
   return m;
@@ -97,9 +95,9 @@ export default async function KinkoraHwsPage({
     if (!isOwner && !isAdmin) redirect("/dashboard");
   }
 
-  const tempPointId = await hwsPointIndex(system.id, "temperature");
-  const powerPointId = await hwsPointIndex(system.id, "power");
-  if (tempPointId === null) {
+  const tempPoint = await hwsPoint(system.id, "temperature");
+  const powerPoint = await hwsPoint(system.id, "power");
+  if (tempPoint === null) {
     return (
       <main className="min-h-screen bg-gray-900 text-gray-100 p-8">
         <h1 className="text-xl font-semibold mb-2">Kinkora HWS</h1>
@@ -120,15 +118,10 @@ export default async function KinkoraHwsPage({
   // Read the persisted modelled temperature + the source power (for the on/off row).
   // Cap at `now`: the in-progress 5m bucket is future-dated, and the model has not yet
   // produced a temperature for it — including it would surface a fabricated value.
-  const tempByTs = await readAgg5m(
-    system.id,
-    tempPointId,
-    displayStartMs,
-    nowMs,
-  );
+  const tempByTs = await readAgg5m(tempPoint, displayStartMs, nowMs);
   const powerByTs =
-    powerPointId !== null
-      ? await readAgg5m(system.id, powerPointId, displayStartMs, nowMs)
+    powerPoint !== null
+      ? await readAgg5m(powerPoint, displayStartMs, nowMs)
       : new Map<number, number | null>();
 
   const tsSet = new Set<number>([...tempByTs.keys(), ...powerByTs.keys()]);

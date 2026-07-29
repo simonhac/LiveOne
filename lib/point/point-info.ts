@@ -5,11 +5,50 @@
 import { PointReference } from "@/lib/identifiers";
 
 /**
+ * The plain-object shape `PointInfo.from()` accepts — a DB row, a served row, or a JSON API
+ * response, which is exactly what `NextResponse.json(pointInfoInstance)` emits (the class's own
+ * properties; the `name` getter lives on the prototype and is not serialized).
+ *
+ * Exported so a client can TYPE an API response against it rather than casting. That matters:
+ * `pointUid` is required, and an `as any` at the fetch boundary is precisely the hole that would
+ * let a route stop projecting it without anything failing to compile.
+ */
+export interface PointInfoWire {
+  /** `point_info.point_uid` (NOT NULL). See the constructor doc. */
+  pointUid: string;
+  index: number; // Database field name is 'id', exposed as 'index' in TypeScript
+  systemId: number;
+  physicalPathTail: string;
+  logicalPathStem: string | null;
+  metricType: string;
+  metricUnit: string;
+  defaultName: string;
+  displayName: string | null;
+  subsystem: string | null;
+  transform: string | null;
+  active: boolean;
+  createdAtMs: number;
+  updatedAtMs: number | null;
+  displayUnit?: string | null;
+  displayFormat?: string | null;
+}
+
+/**
  * Point information with helper methods
  * This class is safe to use on both frontend and backend
  */
 export class PointInfo {
   constructor(
+    /**
+     * The point's stable public identity — the `point_info.point_uid` column (NOT NULL).
+     *
+     * FIRST, ahead of the legacy `(index, systemId)` address, because that is what this
+     * identity replaces: `Point.encode(pointUid)` is the `PointId` every readings path keys
+     * on, so a holder of a `PointInfo` never needs `RegistryCache.pointForAddr` to rediscover
+     * it (config-v4 Phase 12 slice D). `index`/`systemId` are the renameable ADDRESS and die
+     * with the handle in Phase 13.
+     */
+    public readonly pointUid: string,
     public readonly index: number,
     public readonly systemId: number,
     public readonly physicalPathTail: string, // "/" separated suffix, e.g., "solar_w", "B1/kwh"
@@ -127,24 +166,20 @@ export class PointInfo {
   /**
    * Create a PointInfo from a plain object (e.g., from database row or API response)
    */
-  static from(data: {
-    index: number; // Database field name is 'id', exposed as 'index' in TypeScript
-    systemId: number;
-    physicalPathTail: string;
-    logicalPathStem: string | null;
-    metricType: string;
-    metricUnit: string;
-    defaultName: string;
-    displayName: string | null;
-    subsystem: string | null;
-    transform: string | null;
-    active: boolean;
-    createdAtMs: number;
-    updatedAtMs: number | null;
-    displayUnit?: string | null;
-    displayFormat?: string | null;
-  }): PointInfo {
+  static from(data: PointInfoWire): PointInfo {
+    // `pointUid` is NOT NULL in `point_info`, so an absent one never means "this point has no
+    // identity" — it means a producer dropped it (a route that didn't project the column, or a
+    // wire shape that predates it). That is the config-v4 "wired at MINT, not at EDIT" failure
+    // class in its cross-boundary form: a silently-undefined field typed `string` reads as
+    // working right up until something calls `Point.encode()` on it. Fail here instead.
+    if (!data.pointUid) {
+      throw new Error(
+        "PointInfo.from: pointUid is required (point_info.point_uid is NOT NULL) — " +
+          "the producer dropped the point's identity",
+      );
+    }
     return new PointInfo(
+      data.pointUid,
       data.index,
       data.systemId,
       data.physicalPathTail,

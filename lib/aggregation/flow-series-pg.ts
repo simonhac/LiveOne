@@ -12,7 +12,6 @@
  */
 
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
 import { ReadingsDao } from "@/lib/readings";
 import {
   buildFlowSeries,
@@ -30,6 +29,13 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 
 /** A logical power point to integrate: its physical origin (may be a child system) + its semantics. */
 export interface FlowSeriesPoint {
+  /**
+   * The point's identity, supplied by the caller (`LogicalSystemPoint.point`). Reading it here
+   * removes a `RegistryCache.pointForAddr` round trip per point per batch — the caller resolved
+   * the row, so it already holds the uuid (config-v4 Phase 12 slice D).
+   */
+  point: PointId;
+  /** Physical origin — still the key the emitted `NormRow`s carry downstream. */
   ref: { systemId: number; pointId: number };
   stem: string;
   metricUnit: string | null;
@@ -83,9 +89,8 @@ export async function loadFlowSeriesFromAgg5m(
   const merged: NormRow[] = [];
 
   // Read `batch`'s agg_5m over [lo, hi) (hiInclusive=false) or [lo, hi] (true) via the readings seam
-  // and append normalized rows. Identity resolves (systemId, pointId) → PointId; a point with no
-  // registry identity (UnknownIdError) is skipped — it contributes no rows, exactly as the old
-  // composite-FK'd query returned none for it.
+  // and append normalized rows. Each point carries its own identity, so `refByPoint` is just the
+  // reverse map back to the composite address the emitted `NormRow`s are keyed by.
   const queryInto = async (
     batch: FlowSeriesPoint[],
     lo: number,
@@ -98,21 +103,10 @@ export async function loadFlowSeriesFromAgg5m(
       { systemId: number; pointId: number }
     >();
     const pointIds: PointId[] = [];
-    await Promise.all(
-      batch.map(async (p) => {
-        try {
-          const id = await RegistryCache.pointForAddr(
-            p.ref.systemId,
-            p.ref.pointId,
-          );
-          refByPoint.set(id, p.ref);
-          pointIds.push(id);
-        } catch (err) {
-          if (err instanceof UnknownIdError) return; // skip-and-continue
-          throw err;
-        }
-      }),
-    );
+    for (const p of batch) {
+      refByPoint.set(p.point, p.ref);
+      pointIds.push(p.point);
+    }
     if (pointIds.length === 0) return;
     const series = await ReadingsDao.read5m(
       pointIds,
