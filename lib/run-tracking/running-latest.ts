@@ -11,10 +11,7 @@
  * `point_info` and the KV keyspace stay integer-addressed until Phase 13, so this still writes
  * under the detector's `legacyHandle` — byte-identical to the pre-derivations behaviour.
  */
-import { and, eq } from "drizzle-orm";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
-import { mintPointUid } from "@/lib/point/mint-point-uid";
+import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
 import { updateLatestPointValue } from "@/lib/kv-cache-manager";
 import { ROLES } from "@/lib/roles/registry";
 import { listEnabledRunDetectors } from "@/lib/derivations/resolve";
@@ -27,57 +24,26 @@ import {
 
 /**
  * Ensure a derived `<stem>/running` `point_info` row exists for `systemId`, returning its index
- * (the pointId used as the KV pointReference) AND its uuid (the KV subscription-map key). Idempotent;
- * inserts at the next free index. No
- * migration — `point_info` is a config table. Mirrors `ensureHwsTemperaturePoint`.
+ * (the pointId used as the KV pointReference) AND its uuid (the KV subscription-map key). Idempotent.
+ * No migration — `point_info` is a config table. Mirrors `ensureHwsTemperaturePoint`.
  */
 async function ensureRunningPoint(
   systemId: number,
   stem: string,
   displayName: string,
 ): Promise<{ index: number; pointUid: string }> {
-  const db = requirePlanetscaleDb();
-  const [existing] = await db
-    .select({ index: pointInfo.index, pointUid: pointInfo.pointUid })
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, stem),
-        eq(pointInfo.metricType, RUNNING_METRIC),
-      ),
-    )
-    .limit(1);
+  const existing = await findPointByStemMetric(systemId, stem, RUNNING_METRIC);
   if (existing) return existing;
 
-  const all = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
-  const nextIndex =
-    all.length > 0 ? Math.max(...all.map((p) => p.index)) + 1 : 0;
-
-  const physicalPathTail = `derived/${stem}/${RUNNING_METRIC}`;
-  const newPointUid = await mintPointUid(systemId, physicalPathTail);
-  const [row] = await db
-    .insert(pointInfo)
-    .values({
-      systemId,
-      index: nextIndex,
-      physicalPathTail,
-      logicalPathStem: stem,
-      metricType: RUNNING_METRIC,
-      metricUnit: RUNNING_UNIT,
-      defaultName: displayName,
-      displayName,
-      subsystem: null,
-      transform: null,
-      active: true,
-      pointUid: newPointUid,
-      createdAt: new Date(),
-    })
-    .returning({ index: pointInfo.index, pointUid: pointInfo.pointUid });
-  return row;
+  // config-v4 slice M: `mintPoint` owns identity + index (points-primary). The max(index)+1 scan this
+  // replaced never mirrored into `points`, so it was a live C7 hole.
+  return mintPoint(systemId, {
+    physicalPathTail: `derived/${stem}/${RUNNING_METRIC}`,
+    logicalPathStem: stem,
+    metricType: RUNNING_METRIC,
+    metricUnit: RUNNING_UNIT,
+    defaultName: displayName,
+  });
 }
 
 /**

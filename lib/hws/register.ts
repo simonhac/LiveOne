@@ -11,7 +11,7 @@
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { derivations, pointInfo } from "@/lib/db/planetscale/schema";
-import { mintPointUid } from "@/lib/point/mint-point-uid";
+import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
 import { deriveDerivationId } from "@/lib/derivations/ids";
 import {
   HWS_MODEL_KIND,
@@ -55,17 +55,11 @@ export async function ensureHwsTemperaturePoint(
     .limit(1);
   if (!power) return { status: "no-power-point", systemId };
 
-  const [existing] = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, HWS_STEM),
-        eq(pointInfo.metricType, "temperature"),
-      ),
-    )
-    .limit(1);
+  const existing = await findPointByStemMetric(
+    systemId,
+    HWS_STEM,
+    "temperature",
+  );
   if (existing) {
     return {
       status: "exists",
@@ -79,31 +73,15 @@ export async function ensureHwsTemperaturePoint(
     return { status: "created", systemId, powerPointId: power.index };
   }
 
-  const all = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
-  const nextIndex =
-    all.length > 0 ? Math.max(...all.map((p) => p.index)) + 1 : 0;
-
-  const [row] = await db
-    .insert(pointInfo)
-    .values({
-      systemId,
-      index: nextIndex,
-      physicalPathTail: TEMP_PHYSICAL_PATH,
-      logicalPathStem: HWS_STEM,
-      metricType: "temperature",
-      metricUnit: TEMP_UNIT,
-      defaultName: TEMP_DISPLAY_NAME,
-      displayName: TEMP_DISPLAY_NAME,
-      subsystem: null,
-      transform: null,
-      active: true,
-      pointUid: await mintPointUid(systemId, TEMP_PHYSICAL_PATH),
-      createdAt: new Date(),
-    })
-    .returning({ index: pointInfo.index });
+  // config-v4 slice M: identity + index come from `mintPoint` (points-primary). The local
+  // max(index)+1 scan this replaced also never mirrored into `points`, so it was a live C7 hole.
+  const row = await mintPoint(systemId, {
+    physicalPathTail: TEMP_PHYSICAL_PATH,
+    logicalPathStem: HWS_STEM,
+    metricType: "temperature",
+    metricUnit: TEMP_UNIT,
+    defaultName: TEMP_DISPLAY_NAME,
+  });
 
   return {
     status: "created",
