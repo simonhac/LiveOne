@@ -330,6 +330,13 @@
       "when": 1785251950214,
       "tag": "0046_drop_area_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1785315878658,
+      "tag": "0047_area_bindings_point_uid_contract",
+      "breakpoints": true
     }
   ]
 }

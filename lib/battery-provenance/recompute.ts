@@ -10,11 +10,12 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areas,
+  devices,
+  points,
   systems,
   pointReadingsFlowAttr1d,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
-import type { PointId } from "@/lib/ids";
 import { bindingPoint } from "@/lib/battery-provenance/load";
 import {
   FLOW_ATTR_VERSION,
@@ -137,7 +138,12 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    .innerJoin(systems, eq(systems.id, areaBindings.pointSystemId))
+    // The "is this a helper device?" test hops the binding's uuid through `points.device_id →
+    // devices.rid` (slice E PR 2a), replacing a join on the retired `area_bindings.point_system_id`.
+    // `devices.rid == systems.id` is the seam invariant; slice K/N delete the `systems` hop.
+    .innerJoin(points, eq(points.id, areaBindings.pointUid))
+    .innerJoin(devices, eq(devices.id, points.deviceId))
+    .innerJoin(systems, eq(systems.id, devices.rid))
     .where(
       and(
         eq(areas.legacySystemId, handle),
@@ -148,16 +154,16 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     )
     .limit(1);
   if (!bat || !out) return false; // no battery, or blend never written → recompute
-  // Each binding carries the point's uuid, so there is nothing to resolve. A binding without one →
-  // "no data", exactly as the old MAX over a nonexistent (sys,pid) returned 0 rows → null.
+  // Each binding carries the point's uuid (NOT NULL since 0047), so there is nothing to resolve and
+  // no miss branch: the only "no data" outcome left is a genuinely empty agg_5m read below.
   const batPoint = bindingPoint(bat.uid);
   const outPoint = bindingPoint(out.uid);
   const maxes = await ReadingsDao.latestAgg5mIntervalMsForPoints(
-    [batPoint, outPoint].filter((p): p is PointId => p !== null),
+    [batPoint, outPoint],
     db,
   );
-  const inMax = batPoint ? (maxes.get(batPoint) ?? null) : null;
-  const outMax = outPoint ? (maxes.get(outPoint) ?? null) : null;
+  const inMax = maxes.get(batPoint) ?? null;
+  const outMax = maxes.get(outPoint) ?? null;
   if (inMax == null) return true; // no input data at all → nothing to do
   if (outMax == null) return false; // blend never written → recompute
   return outMax >= inMax;

@@ -48,7 +48,6 @@ import {
   index,
   uniqueIndex,
   primaryKey,
-  foreignKey,
   timestamp,
   date,
   pgSequence,
@@ -790,8 +789,15 @@ export const areas = pgTable(
 // of buildSubscriptionRegistry so KV composite point refs stay stable. `transform` is
 // a per-binding override (nullable → inherit point_info.transform).
 //
-// The (point_system_id, point_id) index IS the KV subscription registry's reverse
-// lookup (source point → composites that subscribe), now in SQL.
+// ⚠️ CONFIG-V4 Phase 12 slice E PR 2a SHAPE (migration 0047). `point_uid` — the uuid
+// address of the bound point — is now the binding's identity: NOT NULL, the key of both
+// `area_bindings_unique` and `area_bindings_point_idx`, and the ONLY thing every
+// server-internal reader addresses the point by. The legacy `(point_system_id, point_id)`
+// pair survives ONLY as the area-builder's wire grammar and the KV subscription map's key
+// (PR 2b converts both); 0047 already dropped its FK into `point_info` — which took FKs
+// into that table from 1 to 0 and is what unblocks slice N's `point_info` drop — and
+// relaxed both columns to NULLable so PR 2b's writers can stop naming them before 0048
+// drops them outright.
 // ============================================================================
 export const areaBindings = pgTable(
   "area_bindings",
@@ -804,14 +810,19 @@ export const areaBindings = pgTable(
     // migration 0044 (slice G).
     role: text("role").notNull(),
     metricType: text("metric_type").notNull(), // from point_info: 'power' | 'soc' | 'energy' | 'rate' ...
-    pointSystemId: integer("point_system_id").notNull(), // the CHILD physical system
-    pointId: integer("point_id").notNull(), // (point_system_id, point_id) → point_info(system_id, id)
-    // config-v4 forward seam: the uuid address of the same point the (point_system_id, point_id) pair
-    // names. Added ADDITIVELY by config-transform stage 5 and fully populated (72/72 on both dev and
-    // prod), but it went in out-of-band, so it was a LIVE column drizzle knew nothing about until
-    // migration 0036 declared it here. Nullable until Phase 12 re-points the binding at `points` by
-    // uuid and drops the int pair. Plain NO ACTION: deleting a `points` row is BLOCKED, not cascaded.
-    pointUid: uuid("point_uid").references(() => points.id),
+    // ⚠️ LEGACY, and NULLable since 0047 (slice E PR 2a): the int pair that used to be the binding's
+    // address. No FK any more (`area_bindings_point_info_fk` went with 0047) and no server-internal
+    // reader — the only live consumers are the area-builder wire and the KV subscription map, both of
+    // which PR 2b converts, after which 0048 drops these two columns.
+    pointSystemId: integer("point_system_id"), // the CHILD physical system
+    pointId: integer("point_id"), // (point_system_id, point_id) → point_info(system_id, id)
+    // The binding's ADDRESS: the uuid of the bound point. Added ADDITIVELY by config-transform stage 5,
+    // declared here by migration 0036, given an application writer by slice E PR 1, and made NOT NULL by
+    // 0047 (slice E PR 2a) once both environments read 72/72 populated with zero disagreement against
+    // the pair it replaces. Plain NO ACTION: deleting a `points` row is BLOCKED, not cascaded.
+    pointUid: uuid("point_uid")
+      .notNull()
+      .references(() => points.id),
     ordinal: integer("ordinal").notNull(),
     // Config-v4 selection order. Unlike ordinal (which stabilizes the legacy KV subscriber index),
     // priority is scoped to one (area, role, metric) slot and survives cutover. Lowest wins.
@@ -820,12 +831,14 @@ export const areaBindings = pgTable(
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (table) => ({
+    // Re-based onto the uuid by 0047. Fully enforcing because `point_uid` is NOT NULL — had the
+    // column stayed nullable, Postgres would treat two NULL-pointed bindings in the same slot as
+    // distinct and the index would quietly stop constraining anything.
     bindingUnique: uniqueIndex("area_bindings_unique").on(
       table.areaId,
       table.role,
       table.metricType,
-      table.pointSystemId,
-      table.pointId,
+      table.pointUid,
     ),
     slotPriorityUnique: uniqueIndex("area_bindings_slot_priority_unique").on(
       table.areaId,
@@ -833,16 +846,10 @@ export const areaBindings = pgTable(
       table.metricType,
       table.priority,
     ),
-    pointIdx: index("area_bindings_point_idx").on(
-      table.pointSystemId,
-      table.pointId,
-    ),
+    // The reverse "source point → the areas that bind it" lookup, on the uuid since 0047. Every
+    // server-internal reader (lib/areas/config.ts, lib/coverage/runner.ts, …) probes it this way.
+    pointIdx: index("area_bindings_point_idx").on(table.pointUid),
     areaIdx: index("area_bindings_area_idx").on(table.areaId),
-    pointFk: foreignKey({
-      columns: [table.pointSystemId, table.pointId],
-      foreignColumns: [pointInfo.systemId, pointInfo.index],
-      name: "area_bindings_point_info_fk",
-    }),
     // config-v4 (Phase 4, migration 0032): enumerates the 6-role registry (lib/roles/registry.ts).
     // Added alongside the then-existing `roles` FK so that dropping the table would leave enforcement
     // intact — and since migration 0044 (slice G) dropped it, this CHECK is now the SOLE enforcement

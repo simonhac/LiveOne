@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areas,
-  pointInfo,
   systems,
 } from "@/lib/db/planetscale/schema";
 import { loadReadableArea } from "@/lib/areas/http";
@@ -66,18 +65,13 @@ export async function GET(
         id: areaBindings.id,
         role: areaBindings.role,
         metricType: areaBindings.metricType,
-        pointUid: pointInfo.pointUid,
+        // `area_bindings` holds the uuid itself (`point_uid`, NOT NULL since 0047), so the
+        // `point_info` join this projection used to need is gone — it produced nothing else.
+        pointUid: areaBindings.pointUid,
         priority: areaBindings.priority,
         transform: areaBindings.transform,
       })
       .from(areaBindings)
-      .innerJoin(
-        pointInfo,
-        and(
-          eq(pointInfo.systemId, areaBindings.pointSystemId),
-          eq(pointInfo.index, areaBindings.pointId),
-        ),
-      )
       .where(eq(areaBindings.areaId, r.area.id))
       .orderBy(
         asc(areaBindings.role),

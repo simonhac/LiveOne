@@ -24,6 +24,21 @@ function candidate(
   };
 }
 
+/**
+ * A binding pointing AT a candidate. Bindings address their point by uuid (`area_bindings.point_uid`,
+ * NOT NULL since migration 0047), so the test states "bind THIS point" directly instead of relying on
+ * a `systemId.index` address coinciding with a candidate's — which is what the resolver used to match
+ * on, and what made it possible to write a binding no candidate could ever satisfy.
+ */
+function bindTo(
+  point: ResolutionCandidate,
+  role: string,
+  metricType: string,
+  priority: number,
+): ResolutionBinding {
+  return { pointUid: Point.toUuid(point.id), role, metricType, priority };
+}
+
 function slot(
   points: ResolutionCandidate[],
   bindings: ResolutionBinding[],
@@ -42,20 +57,8 @@ describe("deterministic area information resolution", () => {
     const result = slot(
       [first, preferred],
       [
-        {
-          pointSystemId: 1,
-          pointId: 1,
-          role: "battery",
-          metricType: "soc",
-          priority: 5,
-        },
-        {
-          pointSystemId: 2,
-          pointId: 1,
-          role: "battery",
-          metricType: "soc",
-          priority: 0,
-        },
+        bindTo(first, "battery", "soc", 5),
+        bindTo(preferred, "battery", "soc", 0),
       ],
       "battery/soc",
     );
@@ -71,15 +74,7 @@ describe("deterministic area information resolution", () => {
     expect(
       slot(
         [point],
-        [
-          {
-            pointSystemId: 1,
-            pointId: 1,
-            role: "battery",
-            metricType: "power",
-            priority: 0,
-          },
-        ],
+        [bindTo(point, "battery", "power", 0)],
         "battery/soc",
       ),
     ).toMatchObject({

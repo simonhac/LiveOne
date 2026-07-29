@@ -663,17 +663,17 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
     )
     .limit(1);
   if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
+  // `point_uid` is NOT NULL since 0047, so there is no "binding without an identity" branch left
+  // to guard (slice E PR 2a) — the probe either finds a rewrite or it doesn't.
   const powerPoint = bindingPoint(powerBind.uid);
-  const probeMs = powerPoint
-    ? await ReadingsDao.latestAgg5mUpdatedAtForPoint(
-        powerPoint,
-        {
-          afterIntervalEndMs: env.anchorMs - PROBE_LOOKBACK_MS,
-          throughIntervalEndMs: env.anchorMs,
-        },
-        db,
-      )
-    : null;
+  const probeMs = await ReadingsDao.latestAgg5mUpdatedAtForPoint(
+    powerPoint,
+    {
+      afterIntervalEndMs: env.anchorMs - PROBE_LOOKBACK_MS,
+      throughIntervalEndMs: env.anchorMs,
+    },
+    db,
+  );
   if (probeMs != null && probeMs > cp.writtenAt.getTime())
     return { seeded: false, reason: "pre-anchor-rewrite" };
 
@@ -802,17 +802,17 @@ export async function tryLoadSeededProvenanceInputs(
     )
     .limit(1);
   if (!powerBind) return { seeded: false, reason: "no-battery-bind" };
+  // `point_uid` is NOT NULL since 0047, so there is no "binding without an identity" branch left
+  // to guard (slice E PR 2a) — the probe either finds a rewrite or it doesn't.
   const powerPoint = bindingPoint(powerBind.uid);
-  const probeMs = powerPoint
-    ? await ReadingsDao.latestAgg5mUpdatedAtForPoint(
-        powerPoint,
-        {
-          afterIntervalEndMs: env.anchorMs - PROBE_LOOKBACK_MS,
-          throughIntervalEndMs: env.anchorMs,
-        },
-        db,
-      )
-    : null;
+  const probeMs = await ReadingsDao.latestAgg5mUpdatedAtForPoint(
+    powerPoint,
+    {
+      afterIntervalEndMs: env.anchorMs - PROBE_LOOKBACK_MS,
+      throughIntervalEndMs: env.anchorMs,
+    },
+    db,
+  );
   if (probeMs != null && probeMs > cp.writtenAt.getTime())
     return { seeded: false, reason: "pre-anchor-rewrite" };
 
