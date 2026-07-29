@@ -9,7 +9,6 @@
  * Behavior must stay byte-identical to the pre-extraction route: dense-timeline handling, 30m
  * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
  */
-import { SystemsManager } from "@/lib/systems-manager";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
@@ -103,7 +102,6 @@ export async function buildSeriesFromAggRows(
   }
 
   // Build series for each SeriesInfo
-  const systemsManager = SystemsManager.getInstance();
   const allSeries: OpenNEMDataSeries[] = [];
 
   const intervalMs =

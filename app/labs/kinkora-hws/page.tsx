@@ -6,12 +6,11 @@ import { pointInfo } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import Timeline from "./Timeline";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DISPLAY_DAYS = 7;
@@ -67,7 +66,6 @@ export default async function KinkoraHwsPage({
 }) {
   const { access } = await searchParams;
 
-  const systemsManager = SystemsManager.getInstance();
   const system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
     "simon",
     "kinkora",

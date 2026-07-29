@@ -3,7 +3,7 @@ import { getEnphaseClient } from "@/lib/vendors/enphase/enphase-client";
 import { storeEnphaseTokens } from "@/lib/vendors/enphase/enphase-auth";
 import { clerkClient } from "@clerk/nextjs/server";
 import { SystemsManager } from "@/lib/systems-manager";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {

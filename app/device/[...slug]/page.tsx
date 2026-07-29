@@ -10,7 +10,6 @@ import AmberSync from "@/components/AmberSync";
 import LatestReadingsClient from "@/components/LatestReadingsClient";
 import DeviceLayout from "@/components/DeviceLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
@@ -20,7 +19,7 @@ import { getViewerDevices } from "@/lib/devices/viewer-devices";
 import { hasTimeTravelingCard } from "@/lib/dashboard/temporal-cards";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 interface PageProps {
   params: Promise<{
@@ -43,7 +42,6 @@ export default async function DevicePage({ params }: PageProps) {
   }
 
   const isAdmin = await isUserAdmin();
-  const systemsManager = SystemsManager.getInstance();
 
   const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
 

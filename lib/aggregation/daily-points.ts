@@ -11,7 +11,6 @@ import { CalendarDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
@@ -22,7 +21,7 @@ import {
   REHEAL_TRAILING_MS,
 } from "@/lib/battery-provenance/recompute";
 import { DeviceRegistry } from "@/lib/registry";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
@@ -170,7 +169,6 @@ export async function aggregateRange(
   console.log(`[Daily Points] Aggregating ${allDays.length} days`);
 
   const db = requirePlanetscaleDb();
-  const systemsManager = SystemsManager.getInstance();
   const results = [];
   let totalPoints = 0;
   let totalRowsCreated = 0;

@@ -6,7 +6,7 @@ import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
 import { isValidTimezone } from "@/lib/timezones";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export async function GET(
   request: NextRequest,

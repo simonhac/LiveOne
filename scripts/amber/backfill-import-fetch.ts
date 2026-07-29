@@ -25,12 +25,11 @@ dotenv.config({ path: ".env.local" });
 import * as fs from "fs";
 import * as path from "path";
 import type { CalendarDate } from "@internationalized/date";
-import { SystemsManager } from "../../lib/systems-manager";
 import { getSystemCredentials } from "../../lib/secure-credentials";
 import { fetchAmberUsage } from "../../lib/vendors/amber/client";
 import { parseDateISO, getYesterdayInTimezone } from "../../lib/date-utils";
 import type { AmberCredentials } from "../../lib/vendors/amber/types";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 function arg(name: string): string | undefined {
   const p = process.argv.find((a) => a.startsWith(`--${name}=`));

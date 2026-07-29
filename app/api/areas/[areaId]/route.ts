@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
-import { SystemsManager } from "@/lib/systems-manager";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
@@ -14,7 +13,7 @@ import {
   AreaAliasTakenError,
 } from "@/lib/areas/create";
 import { Area } from "@/lib/ids";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * Owner/admin edit of a single Area (the area builder's General/Location tab), addressed by its

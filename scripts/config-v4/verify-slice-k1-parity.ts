@@ -36,7 +36,7 @@ import { SystemsManager, type SystemWithPolling } from "@/lib/systems-manager";
 import { DeviceConfigRegistry, type DeviceRecord } from "@/lib/registry";
 import { maxPowerHintFromSpec } from "@/lib/capabilities/config";
 import { maxPowerHintFromSystemInfo } from "@/components/dashboard/cards/shared";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const db = planetscaleDb!;
 const sm = SystemsManager.getInstance();

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SystemsManager } from "@/lib/systems-manager";
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
@@ -9,7 +8,7 @@ import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { FUSHER_POINTS } from "@/lib/vendors/fusher/point-metadata";
 import { getSystemCredentials } from "@/lib/secure-credentials";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * Expected request body for Fusher (Fronius Pusher) push data
@@ -113,7 +112,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Get SystemsManager instance
-    const systemsManager = SystemsManager.getInstance();
 
     // Use siteId to find system, defaulting to "kinkora" for backwards compatibility
     const siteId = data.siteId || "kinkora";

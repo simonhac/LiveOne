@@ -19,7 +19,7 @@
  *   npx tsx --env-file=.env.local scripts/area-builder-smoke.ts --members=1,6
  */
 import * as dotenv from "dotenv";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 dotenv.config({ path: ".env.local" });
 
 function getArg(name: string): string | undefined {

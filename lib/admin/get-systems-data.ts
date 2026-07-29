@@ -8,14 +8,13 @@ import { specToDisplayStrings } from "@/lib/capabilities/config";
 import { formatTimeAEST } from "@/lib/date-utils";
 import { fromDate } from "@internationalized/date";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { SystemsManager } from "@/lib/systems-manager";
 import { getLatestValues, LatestValuesMap } from "@/lib/latest-values-store";
 import {
   getAllSystemSummaries,
   SystemSummary,
   SystemSummariesMap,
 } from "@/lib/system-summary-store";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export interface SystemData {
   systemId: number;
@@ -172,7 +171,6 @@ export async function getAdminSystemsData(
 ): Promise<AdminSystemsResult> {
   const { latestValuesTimeoutMs = 100, skipLatestValues = false } = options;
 
-  const systemsManager = SystemsManager.getInstance();
   // Only real (physical, polled) systems belong in the admin Systems list. Areas-backed virtual
   // systems are never in the systems table (synthesized on demand) and live on /admin/areas.
   const allSystems = await DeviceConfigRegistry.allDevices();

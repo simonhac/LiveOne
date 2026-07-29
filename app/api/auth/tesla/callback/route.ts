@@ -8,7 +8,7 @@ import {
   teslaOAuthStateKey,
   type TeslaOAuthState,
 } from "@/lib/vendors/tesla/tesla-oauth-state";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {

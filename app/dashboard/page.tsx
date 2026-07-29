@@ -1,10 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { SystemsManager } from "@/lib/systems-manager";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
 import { listAccessibleDashboards } from "@/lib/dashboard/dashboards";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export default async function DashboardPage() {
   const { userId } = await auth();

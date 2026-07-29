@@ -1,8 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { SystemsManager } from "@/lib/systems-manager";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * "Go to Devices" target from the dashboards switcher: jump straight to the first system/device the

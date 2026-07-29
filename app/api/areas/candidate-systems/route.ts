@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { SystemsManager } from "@/lib/systems-manager";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * GET /api/areas/candidate-systems — the real devices the caller may add as Area members (the area

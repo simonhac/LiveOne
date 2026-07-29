@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SystemsManager } from "@/lib/systems-manager";
 import { formatSystemId } from "@/lib/system-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
@@ -12,7 +11,7 @@ import { formatTimeAEST } from "@/lib/date-utils";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { jsonResponse, transformForStorage } from "@/lib/json";
 import { reconcileTrailingWindow as reconcileBatteryProvenance } from "@/lib/battery-provenance/recompute";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * Helper function to poll all systems with optional progress callbacks.
@@ -361,7 +360,6 @@ export async function GET(request: NextRequest) {
     console.log("[Cron] Starting system polling...");
 
     // Config (incl. polling status) is loaded fresh per request, so no cache to clear.
-    const systemsManager = SystemsManager.getInstance();
 
     // Get systems to poll
     let activeSystems;

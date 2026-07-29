@@ -4,8 +4,7 @@ import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
-import { SystemsManager } from "@/lib/systems-manager";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 // Headroom for the daily heal: the flow_attr settlement-window recompute + the bounded scattered-backlog
 // reheal run here (matches repair-coverage). Without this the route falls back to the platform default.
@@ -156,7 +155,6 @@ async function handleAggregation(request: NextRequest) {
     const startTime = Date.now();
 
     // Get timezone offset from first system (needed for date calculations)
-    const systemsManager = SystemsManager.getInstance();
     const systems = await DeviceConfigRegistry.activeDevices();
 
     if (systems.length === 0) {

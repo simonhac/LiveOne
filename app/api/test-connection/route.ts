@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -38,8 +37,6 @@ export async function POST(request: NextRequest) {
     }
     // Use case 2: Testing an existing system by systemId
     else if (systemId) {
-      // Use SystemsManager to get the system
-      const manager = SystemsManager.getInstance();
       system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
       if (!system) {

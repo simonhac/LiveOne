@@ -42,13 +42,12 @@ import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo, points } from "@/lib/db/planetscale/schema";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
-import { SystemsManager } from "@/lib/systems-manager";
 import {
   ensureDeviceRow,
   mirrorPoint,
   toMirrorPointInput,
 } from "@/lib/registry/v4-mirror";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export type PointInfoDbRow = typeof pointInfo.$inferSelect;
 

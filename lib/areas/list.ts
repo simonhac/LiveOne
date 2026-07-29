@@ -10,9 +10,8 @@
 import { and, eq, inArray, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
-import { SystemsManager } from "@/lib/systems-manager";
 import { hasChartCapability } from "@/lib/capabilities/server";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export interface ReadableArea {
   /** Area uuid (what a card's `areaId` holds). */

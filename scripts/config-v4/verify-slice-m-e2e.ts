@@ -24,7 +24,6 @@ import {
 } from "@/lib/db/planetscale/schema";
 import { mintPoint } from "@/lib/point/mint-point";
 import { buildObservations } from "@/lib/observations/publisher";
-import { SystemsManager } from "@/lib/systems-manager";
 import {
   POST,
   type WithProcessQueueMessage,
@@ -32,7 +31,7 @@ import {
 import { recompute5mForRawObservationsBestEffort } from "@/lib/db/planetscale/aggregate-points-pg";
 import { ReadingsDao } from "@/lib/readings";
 import { Point } from "@/lib/ids";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const RUN = Date.now();
 const STEM = `__slice-m-e2e__/${RUN}`;

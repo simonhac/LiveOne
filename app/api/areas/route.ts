@@ -4,7 +4,6 @@ import { requireAuth, requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { SystemsManager } from "@/lib/systems-manager";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import {
   createArea,
@@ -16,7 +15,7 @@ import {
 } from "@/lib/areas/create";
 import { locationPatchFromBody } from "@/lib/areas/http";
 import { Area, Point } from "@/lib/ids";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.

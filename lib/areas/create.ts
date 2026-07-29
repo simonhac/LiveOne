@@ -23,7 +23,6 @@ import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
 import { Device, Point, type PointId } from "@/lib/ids";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
-import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
@@ -31,7 +30,7 @@ import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 import { bindingShapeMatches } from "@/lib/areas/slots";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
 
@@ -82,7 +81,6 @@ export async function assertMembersReadable(
   isAdmin: boolean,
   systemIds: number[],
 ): Promise<void> {
-  const sm = SystemsManager.getInstance();
   for (const sid of systemIds) {
     const sys = await DeviceConfigRegistry.deviceByHandle(sid);
     if (!sys) throw new AreaValidationError(`System ${sid} not found`);

@@ -15,7 +15,6 @@
  * `capabilitiesFromLatest` there.
  */
 import { PointManager } from "@/lib/point/point-manager";
-import { SystemsManager } from "@/lib/systems-manager";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
@@ -33,7 +32,7 @@ import {
 import { buildAreaStrategy } from "@/lib/capabilities/strategy";
 import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
-import { DeviceConfigRegistry } from "\@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * The member systemIds behind a handle: an area's `area_members`, or the handle itself (a real device).
@@ -64,7 +63,6 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
   overrides: DeviceConfig["capabilities"];
 }> {
   const pm = PointManager.getInstance();
-  const sm = SystemsManager.getInstance();
   const points = await pm.getActivePointsForSystem(handle, false, false);
   const caps = capabilitiesFromPoints(points);
 
