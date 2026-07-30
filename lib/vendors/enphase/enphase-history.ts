@@ -1,6 +1,6 @@
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
-import { devices, systems } from "@/lib/db/planetscale/schema";
+import { devices } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { Point } from "@/lib/ids";
 import { ReadingsDao } from "@/lib/readings";

@@ -2,9 +2,8 @@
 /**
  * Seed OpenElectricity region systems — one liveone `system` per NEM region.
  *
- * Idempotent: a region that already has an `openelectricity` system is skipped.
- * point_info rows are NOT created here; they auto-create on the first poll via
- * PointManager.ensurePointInfo().
+ * Idempotent: a region that already has an `openelectricity` device is skipped.
+ * Point rows are NOT created here; they auto-create on the first poll via PointManager.
  *
  * Usage:
  *   npx tsx scripts/openelectricity/seed-systems.ts                  # all 5 NEM regions (default)
@@ -29,8 +28,8 @@ const REGION_NAMES: Record<string, string> = {
 
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { systems, devices } = await import("@/lib/db/planetscale/schema");
-  const { ensureDeviceRow } = await import("@/lib/registry/v4-mirror");
+  const { devices } = await import("@/lib/db/planetscale/schema");
+  const { DeviceWriter } = await import("@/lib/registry/device-writer");
 
   if (!planetscaleDb) {
     console.error(
@@ -70,24 +69,20 @@ async function main() {
       continue;
     }
 
-    const row = await planetscaleDb.transaction(async (tx) => {
-      const [inserted] = await tx
-        .insert(systems)
-        .values({
-          ownerClerkUserId: null,
-          vendorType: "openelectricity",
-          vendorSiteId: region,
-          status: "active",
-          displayName: `OpenElectricity NEM — ${name}`,
-          timezoneOffsetMin: 600, // AEST (UTC+10), no DST
-          displayTimezone: "Australia/Brisbane",
-          metadata: { network: "NEM" },
-        })
-        .returning({ id: devices.rid });
-      // `ensureDeviceRow`, not `ensureDeviceForHandle`: the handle mapping FKs `devices(id)`, so the
-      // device row must be inserted first (same defect as `insertSystemToPg` had).
-      await ensureDeviceRow(inserted.id, tx);
-      return inserted;
+    // Slice 1a: routed through `DeviceWriter.createSystem` instead of a hand-written `insert(systems)`
+    // plus a mirror call. This was the LAST `systems` writer outside `DeviceWriter` — a raw INSERT that
+    // `tsc` could see but no reviewer would think to look for, and the reason `devices.rid`'s `nextval`
+    // DEFAULT could not be trusted (two independent counters were live). Going through the writer also
+    // gets the load-bearing four-step insert order for free rather than re-deriving it here.
+    const row = await DeviceWriter.createSystem({
+      ownerClerkUserId: null,
+      vendorType: "openelectricity",
+      vendorSiteId: region,
+      status: "active",
+      displayName: `OpenElectricity NEM — ${name}`,
+      timezoneOffsetMin: 600, // AEST (UTC+10), no DST
+      displayTimezone: "Australia/Brisbane",
+      metadata: { network: "NEM" },
     });
 
     console.log(`✓ ${region}: created system ${row.id}`);

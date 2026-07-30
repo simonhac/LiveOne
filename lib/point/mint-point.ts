@@ -46,7 +46,7 @@ import {
   ensureDeviceRow,
   mirrorPoint,
   toMirrorPointInput,
-} from "@/lib/registry/v4-mirror";
+} from "@/lib/registry/point-mirror";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export type PointInfoDbRow = typeof pointInfo.$inferSelect;

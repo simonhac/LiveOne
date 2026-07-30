@@ -1,23 +1,74 @@
-import { eq, max } from "drizzle-orm";
-import type { InferSelectModel } from "drizzle-orm";
+import { eq, max, sql } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems as pgSystems } from "@/lib/db/planetscale/schema";
-import {
-  ensureDeviceRow,
-  mirrorPlacementToAreaOfOne,
-} from "@/lib/registry/v4-mirror";
+import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
+import type { AreaLocation } from "@/lib/areas/types";
+import type { DeviceConfig } from "@/lib/capabilities/config";
+import { Area, Device, type DeviceId } from "@/lib/ids";
+import { DeviceRegistry, type DeviceRegistryExec } from "./device-registry";
 
 /**
- * A `systems` row. The only type this module exports, and only because it is the patch shape of
- * {@link updateSystem}. Config READS are `DeviceConfigRegistry` (./device-config.ts) —
- * `SystemWithPolling`, `PollingStatus` and `Area` were deleted with the readers in slice K3.
+ * The four device writers. Since config-v4 Phase 12 slice 1a they write **`devices` + `areas`**, and
+ * `systems` is not referenced anywhere in this file — this was the last writer of that table.
+ *
+ * ## What changed, and why the mirror had to die with it
+ *
+ * Until 1a these four wrote `systems` and then called `ensureDeviceRow` (`lib/registry/v4-mirror.ts`) to
+ * COPY the row into `devices`. That mirror is not separable from the writer: `ensureDeviceRow` and
+ * `ensureAreaOfOne` both resolved their values with `SELECT … FROM systems`, so the moment `systems`
+ * stops being written there is nothing for them to read. Converting the writer therefore deletes the
+ * mirror in the same change, and every value it used to copy is now supplied directly by the caller.
+ *
+ * Placement (tz / location) lives on the **area-of-one**, which is its permanent home — `devices` has no
+ * tz or location columns by design (clean-sheet §4.8). So a placement edit is an `areas` UPDATE here,
+ * not the `mirrorPlacementToAreaOfOne` intent-propagation hop it used to need. That hop existed only to
+ * chase a value written to `systems`; with no `systems` write there is no drift to chase, which retires
+ * the ninth "wired at MINT, not at EDIT" leak by construction rather than by patch.
+ *
+ * The free-text `ratings`/`solar_size`/`battery_size` parse (`DEVICE_CONFIG_WITH_SPEC_SQL`) is gone for
+ * the same reason: it existed to derive `devices.config.spec` FROM those `systems` columns. `config.spec`
+ * is now written directly, and the one-shot backfill that populated it historically
+ * (`scripts/config-v4/backfill-device-spec.ts`) is deleted — it reports `0 would change` on both
+ * environments and its input cannot recur.
  */
-export type System = InferSelectModel<typeof pgSystems>;
 
-// Input shape for creating a system (shared by createSystem and its routed inserts).
-type CreateSystemData = {
-  ownerClerkUserId: string;
+/**
+ * A patch for {@link updateSystem}.
+ *
+ * ⚠️ **The field names are deliberately the v3 `systems` ones** (`displayName`, `alias`,
+ * `ownerClerkUserId`, `metadata`, …) even though each now writes a differently-named `devices`/`areas`
+ * column. That is not laziness: these names are the vocabulary of all ten call sites and of the JSON
+ * request bodies those routes parse, so renaming them here would churn ten unrelated files and their
+ * tests to no benefit. The mapping to storage is done once, below, where it can be read.
+ *
+ * It is also a CLOSED shape rather than the old `Partial<System>`, which accepted any `systems` column —
+ * including ones with no `devices` counterpart, which it would have silently dropped.
+ */
+export type DevicePatch = {
+  ownerClerkUserId?: string | null;
+  displayName?: string;
+  alias?: string | null;
+  status?: string;
+  vendorSiteId?: string;
+  model?: string | null;
+  serial?: string | null;
+  config?: DeviceConfig | null;
+  metadata?: unknown;
+  commissionedOn?: string | null;
+  /** Placement — written to the device's area-of-one, the sole home for it. */
+  location?: AreaLocation | null;
+  timezoneOffsetMin?: number;
+  displayTimezone?: string;
+  /**
+   * Accepted and IGNORED: `updated_at` is always stamped to now. Present so callers that build one
+   * generic patch object (the admin settings route) still type-check.
+   */
+  updatedAt?: Date;
+};
+
+/** Input shape for creating a device (shared by createSystem and createHelperDevice). */
+export type CreateDeviceData = {
+  ownerClerkUserId: string | null;
   vendorType: string;
   vendorSiteId: string;
   status?: string;
@@ -25,17 +76,45 @@ type CreateSystemData = {
   alias?: string | null;
   model?: string | null;
   serial?: string | null;
-  ratings?: string | null;
-  solarSize?: string | null;
-  batterySize?: string | null;
-  location?: any;
-  metadata?: any;
+  config?: DeviceConfig | null;
+  location?: AreaLocation | null;
+  metadata?: unknown;
   timezoneOffsetMin?: number;
   displayTimezone?: string;
 };
 
 /**
- * Detect a Postgres unique_violation (SQLSTATE '23505'), e.g. the alias-unique collision.
+ * What a create returns.
+ *
+ * 🛑 **`id` is the INTEGER HANDLE (`devices.rid`) — NOT `devices.id`, which is a uuid.** Every caller
+ * uses the returned `.id` as a handle: `POST /api/systems` passes it to {@link deleteSystem} on the
+ * rollback path, and the Tesla and Enphase OAuth callbacks pass it to `storeTeslaTokens` /
+ * `storeEnphaseTokens` as the system id the credentials are filed under. Returning a `devices` row here
+ * would swap an int for a uuid at those sites, and because several forward `.id` into `number`-shaped
+ * parameters only via inference, **`tsc` does not catch all of them** — it would compile and fail at
+ * runtime, which is exactly the shape of the create-path FK defect fixed on 2026-07-27. `deviceUuid` is
+ * exposed separately for anything that genuinely wants the v4 identity.
+ *
+ * Pinned by `lib/registry/__tests__/device-writer-contract.test.ts`.
+ */
+export type CreatedDevice = {
+  /** 🛑 `devices.rid` — the integer handle. Read the type docstring before changing this. */
+  id: number;
+  /** `devices.id` — the v4 uuid identity. */
+  deviceUuid: string;
+  deviceId: DeviceId;
+  /** The area-of-one minted alongside the device. */
+  areaId: string;
+  ownerClerkUserId: string | null;
+  vendorType: string;
+  vendorSiteId: string;
+  status: string;
+  displayName: string;
+  alias: string | null;
+};
+
+/**
+ * Detect a Postgres unique_violation (SQLSTATE '23505'), e.g. the slug-unique collision.
  * `pg` puts the SQLSTATE on the error's `code` field.
  */
 function isPgUniqueViolation(e: unknown): boolean {
@@ -45,70 +124,165 @@ function isPgUniqueViolation(e: unknown): boolean {
 }
 
 /**
- * The WRITE residue of the v3 config registry: four writers against `systems`, and nothing else.
+ * Allocate the integer handle for a new device.
  *
- * ## Why this file exists (and why it is not `SystemsManager` any more)
+ * Prod draws from `device_rid_seq` EXPLICITLY rather than letting the `devices.rid` column DEFAULT fire,
+ * because the value is needed up front: the area-of-one is inserted first and keys on it
+ * (`areas.legacy_system_id`). Migration 0049 floored the sequence above `max(systems.id)`, so a value
+ * from it cannot collide with a historical handle. (Pre-1a this came from `systems_id_seq` and was copied
+ * into `devices.rid` verbatim; `devices.rid`'s own DEFAULT was documented inert precisely because two
+ * independent counters were live. 1a leaves exactly one.)
  *
- * Slice K2 moved every config READ to `DeviceConfigRegistry`; slice K3 moved the last two (the
- * polymorphic-handle area views, `getViewableSystem`/`isAreaHandle`) and deleted `getSystem`, its
- * `deviceStateByHandle` subquery and `fetchSystemById` outright. That emptied `lib/systems-manager.ts` of
- * everything except these four writers — so K3 relocated them here VERBATIM and deleted the file.
- *
- * The writers could not be CONVERTED in K3: `systems_id_seq` still allocates the integer handle while
- * `devices.rid` is documented inert, so `devices` cannot become the write target until `systems` drops.
- * Relocating them is not converting them — the SQL is unchanged, `systems` is still the author and
- * `devices` still the mirror. The point is that the terminal window inherits a small file in the registry
- * folder with a name that says what it is, instead of a class named after a registry that no longer
- * exists. This whole module goes when `systems` drops.
- *
- * Nothing here reads config — `insertSystemToPg`'s `max(systems.id)` dev-id probe is a WRITE-path
- * allocation, not a read. Callers use `DeviceConfigRegistry` for every read, including read-back.
- *
- * ⚠️ Do NOT "fix" {@link deleteSystem}'s orphaned `devices` row: the terminal window's FK-coverage guard
- * depends on that orphaning. See the method comment.
+ * Dev keeps the explicit-ids-from-10000 policy, re-based on `max(devices.rid)` now that `systems` is not
+ * written. The two allocators cannot cross: dev's floor is 10000 and the sequence sits near
+ * `max(systems.id)`, far below it.
  */
-/**
- * Create a new system in the database.
- * @param systemData - The system data to insert
- * @returns The created system
- */
-async function createSystem(systemData: CreateSystemData): Promise<System> {
-  const newSystem = await insertSystemToPg(systemData);
-
-  console.log(
-    `[DeviceWriter] Created system ${newSystem.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
+async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
+  if (!isProduction()) {
+    const DEV_RID_START = 10000;
+    const [{ maxRid }] = await exec
+      .select({ maxRid: max(devices.rid) })
+      .from(devices);
+    return maxRid && maxRid >= DEV_RID_START ? maxRid + 1 : DEV_RID_START;
+  }
+  const res = await exec.execute(
+    sql`SELECT nextval('device_rid_seq')::int AS rid`,
   );
-
-  // Areas are EXPLICIT: a device does NOT get an auto-minted area-of-one. A device renders on its own
-  // /device view straight from `point_info` + capabilities (no backing Area), and flow is an
-  // area-only concept — a device gets a flow matrix only once a user groups it into an Area
-  // (createArea). No cache to invalidate: config is read per-request.
-  //
-  // config-v4: the `devices` mirror is minted INSIDE `insertSystemToPg`'s transaction (see there), so
-  // the standing C7 invariant (`systems` with no `devices` row == 0) holds atomically and there is no
-  // best-effort mirror call here any more. It could not stay best-effort: `legacy_handles.device_id`
-  // FKs `devices(id)`, so the mirror is no longer optional bookkeeping that a create can skip — a
-  // create either lands whole or not at all. Note this DOES mint the v4 area-of-one — post-cutover the
-  // area is the sole home for tz/location and `devices.primary_area_id` is NOT NULL, so it is a
-  // structural requirement of the v4 shape, not a reversal of the explicit-areas model above (which
-  // governs the v3 rendering path).
-  return newSystem;
+  const rows = (res as unknown as { rows?: Array<{ rid: number }> }).rows ?? [];
+  const rid = Number(rows[0]?.rid);
+  if (!Number.isFinite(rid))
+    throw new Error("allocateRid: device_rid_seq returned no value");
+  return rid;
 }
 
 /**
- * Create a HELPER device — a derived, non-physical, never-polled `systems` row (vendor_type='helper')
- * that lives in an Area and owns the Area's COMPUTED points (battery-provenance blend, …). Its
- * SEMANTIC home is an existing Area, of which it is a MEMBER (wired by
- * `lib/areas/helper.ts::ensureHelperDevice`). Owned by the Area's owner for access control (NOT
- * ownerless — the blend is private household-derived data).
+ * Insert a device, its area-of-one, its handle mapping and its membership edge — one transaction.
  *
- * ⚠️ It nonetheless gets a v4 area-of-one, exactly like {@link createSystem}. This comment used to
- * claim it did NOT; the tree disagreed — `ensureHelperDevice` calls `ensureDeviceRow`, which always
- * mints one, and all six helpers on `liveone-dev` have had an `areas` row keyed by their handle since
- * they were created. `devices.primary_area_id` is NOT NULL post-cutover, so a device with no
- * area-of-one is not a representable shape; the helper's Area membership is the SECOND edge, not a
- * substitute for it. So the FK fix deliberately did NOT give this path a no-area variant — that would
- * have been a behaviour change dressed as a hotfix.
+ * ⚠️⚠️ **THE FOUR-STEP ORDER BELOW IS LOAD-BEARING. Each step is required by the NEXT one's foreign
+ * key, and getting it wrong has broken device creation three times.** Read this before reordering:
+ *
+ *   1. **`areas`** — must precede `devices` because `devices.primary_area_id` is `NOT NULL` and FKs
+ *      `areas(id)`. (Also why the rid is allocated before any insert: the area keys on it via
+ *      `areas.legacy_system_id`.)
+ *   2. **`devices`** — must precede `legacy_handles` because `legacy_handles.device_id` FKs `devices(id)`
+ *      (migration 0036). Violating *this* edge is the 2026-07-27 prod defect: the writer opened by
+ *      filling the handle row for a uuid no `devices` row carried yet, so **every first mint of a device
+ *      raised 23503** and `POST /api/systems` plus both OAuth connect callbacks 500'd. Re-mints masked
+ *      it, because the `ON CONFLICT` `coalesce` preserved the already-valid uuid.
+ *   3. **`legacy_handles`** — both columns, device and area, now that both targets exist.
+ *   4. **`area_members`** — last, because `area_members.device_id` FKs `devices(id)` AND `area_id` FKs
+ *      `areas(id)`; it is the only step needing both rows present.
+ *
+ * Steps 2-4 are the pre-1a mirror's order, preserved exactly. Step 1 was previously a separate
+ * `ensureAreaOfOne` call that read `systems` for the values it is now handed directly.
+ */
+async function insertDeviceToPg(
+  data: CreateDeviceData,
+): Promise<CreatedDevice> {
+  const pg = requirePlanetscaleDb();
+  try {
+    return await pg.transaction(async (tx) => {
+      const rid = await allocateRid(tx);
+      const uuid = Device.toUuid(Device.generate());
+      const areaId = Area.toUuid(Area.generate());
+      const now = new Date();
+      const tzOffset = data.timezoneOffsetMin ?? 600; // AEST
+      const tz = data.displayTimezone ?? "Australia/Melbourne";
+      const status = data.status || "active";
+      const slug = data.alias ?? null;
+
+      // ---- 1. areas (the area-of-one; sole home for tz + location) -------------------------------
+      await tx.insert(areas).values({
+        id: areaId,
+        ownerUserId: data.ownerClerkUserId,
+        legacySystemId: rid,
+        name: data.displayName,
+        slug: null,
+        timezoneOffsetMin: tzOffset,
+        displayTimezone: tz,
+        dayOffsetMin: tzOffset, // canonical fixed-offset day key == the device's offset
+        location: data.location ?? null,
+        status: "active",
+      });
+
+      // ---- 2. devices ---------------------------------------------------------------------------
+      await tx.insert(devices).values({
+        id: uuid,
+        rid,
+        ownerUserId: data.ownerClerkUserId,
+        vendor: data.vendorType,
+        vendorSiteId: data.vendorSiteId,
+        status,
+        name: data.displayName,
+        slug,
+        model: data.model ?? null,
+        serial: data.serial ?? null,
+        primaryAreaId: areaId,
+        config: data.config ?? null,
+        adapterState: (data.metadata ?? null) as never,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // ---- 3. legacy_handles --------------------------------------------------------------------
+      await DeviceRegistry.ensureDeviceForHandle(rid, tx, Device.encode(uuid));
+      await DeviceRegistry.ensureAreaForHandle(rid, areaId, tx);
+
+      // ---- 4. area_members ----------------------------------------------------------------------
+      await tx
+        .insert(areaMembers)
+        .values({ areaId, deviceId: uuid, ordinal: 0 })
+        .onConflictDoNothing();
+
+      return {
+        id: rid, // 🛑 the INTEGER handle — see CreatedDevice's docstring
+        deviceUuid: uuid,
+        deviceId: Device.encode(uuid),
+        areaId,
+        ownerClerkUserId: data.ownerClerkUserId,
+        vendorType: data.vendorType,
+        vendorSiteId: data.vendorSiteId,
+        status,
+        displayName: data.displayName,
+        alias: slug,
+      };
+    });
+  } catch (e) {
+    if (isPgUniqueViolation(e)) {
+      console.warn(
+        `[DeviceWriter] Postgres slug-unique collision (23505) creating device for user ${data.ownerClerkUserId}`,
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * Create a new device.
+ *
+ * Unlike v3's `createSystem` this DOES mint an area (the area-of-one), because `devices.primary_area_id`
+ * is `NOT NULL` — a device with no area is not a representable shape. That is a structural requirement,
+ * not a reversal of the "areas are explicit" model, which governs whether a device gets a user-visible
+ * grouping and a flow matrix.
+ */
+async function createSystem(
+  systemData: CreateDeviceData,
+): Promise<CreatedDevice> {
+  const created = await insertDeviceToPg(systemData);
+  console.log(
+    `[DeviceWriter] Created device ${created.id} (${systemData.vendorType}) for user ${systemData.ownerClerkUserId}`,
+  );
+  return created;
+}
+
+/**
+ * Create a HELPER device — a derived, non-physical, never-polled device (`vendor='helper'`) that lives
+ * in an Area and owns the Area's COMPUTED points (battery-provenance blend, …). Its SEMANTIC home is an
+ * existing Area, of which it is a MEMBER (wired by `lib/areas/helper.ts::ensureHelperDevice`). Owned by
+ * the Area's owner for access control (NOT ownerless — the blend is private household-derived data).
+ *
+ * It nonetheless gets its own area-of-one, exactly like {@link createSystem}, for the `primary_area_id`
+ * reason above. The Area membership is the SECOND edge, not a substitute for it.
  */
 async function createHelperDevice(params: {
   ownerClerkUserId: string | null;
@@ -116,8 +290,8 @@ async function createHelperDevice(params: {
   displayName: string;
   timezoneOffsetMin: number;
   displayTimezone: string;
-}): Promise<System> {
-  const sys = await insertSystemToPg({
+}): Promise<CreatedDevice> {
+  const created = await insertDeviceToPg({
     ownerClerkUserId: params.ownerClerkUserId,
     vendorType: "helper",
     vendorSiteId: params.vendorSiteId,
@@ -126,148 +300,114 @@ async function createHelperDevice(params: {
     alias: null,
     timezoneOffsetMin: params.timezoneOffsetMin,
     displayTimezone: params.displayTimezone,
-  } as CreateSystemData);
+  });
   console.log(
-    `[DeviceWriter] Created helper device ${sys.id} (${params.vendorSiteId})`,
+    `[DeviceWriter] Created helper device ${created.id} (${params.vendorSiteId})`,
   );
-  return sys;
+  return created;
 }
 
 /**
- * Update an existing system, and re-mirror it into the v4 `devices` registry.
+ * Update a device, addressed by its integer handle.
  *
- * Updates Postgres only (config writes are Postgres-only). The patch maps 1:1 —
- * PG jsonb/timestamp columns accept plain objects/Dates directly, so no per-field
- * mapping is needed. `updatedAt` is always stamped to now regardless of the patch.
+ * Splits across the two tables that now hold what `systems` used to: descriptive/config columns go to
+ * `devices`, placement (tz + location) to the device's area-of-one. Both in ONE transaction, so a
+ * placement edit can never be half-applied. `updatedAt` is always stamped to now; a caller-supplied one
+ * is ignored.
  *
- * config-v4: the `systems` write and its `devices` mirror are ONE transaction. Before this, the mirror
- * was written at mint only, so every edit here drifted `devices.name`/`status`/`slug`/`config`/
- * `adapter_state` — and `ensureDeviceRow` was `ON CONFLICT DO NOTHING`, so nothing could self-heal it.
- * Slice K reads `devices` as the config registry, so the drift is not cosmetic.
- *
- * The same is true one level out for tz: `devices` has no tz/location columns (the area-of-one is their
- * sole home by design), so `ensureDeviceRow` cannot carry a timezone edit anywhere a reader will find
- * it. `mirrorPlacementToAreaOfOne` closes that — in the SAME transaction, so a tz edit can never be
- * half-applied. See its header for why this is intent propagation and not the blanket copy-down
- * `ensureAreaOfOne` deliberately refuses.
+ * ⚠️ `areas.name` is deliberately NOT updated when `displayName` changes. The pre-1a mirror copied
+ * `systems.display_name` into `devices.name` only; the area's name was set at mint and never re-copied,
+ * and `/api/areas/*` can rename an area independently. Following `displayName` through to `areas.name`
+ * would be a NEW behaviour that silently overwrites a user-set area name — out of scope for a
+ * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
  */
 async function updateSystem(
   systemId: number,
-  patch: Partial<System>,
+  patch: DevicePatch,
 ): Promise<void> {
-  // Never let the caller override the id or the freshly-stamped updatedAt.
-  const { id: _ignoredId, updatedAt: _ignoredUpdatedAt, ...rest } = patch;
-  const values = { ...rest, updatedAt: new Date() };
+  const deviceSet: Partial<typeof devices.$inferInsert> = {};
+  if (patch.ownerClerkUserId !== undefined)
+    deviceSet.ownerUserId = patch.ownerClerkUserId;
+  if (patch.displayName !== undefined) deviceSet.name = patch.displayName;
+  if (patch.alias !== undefined) deviceSet.slug = patch.alias;
+  if (patch.status !== undefined) deviceSet.status = patch.status;
+  if (patch.vendorSiteId !== undefined)
+    deviceSet.vendorSiteId = patch.vendorSiteId;
+  if (patch.model !== undefined) deviceSet.model = patch.model;
+  if (patch.serial !== undefined) deviceSet.serial = patch.serial;
+  if (patch.config !== undefined) deviceSet.config = patch.config;
+  if (patch.metadata !== undefined)
+    deviceSet.adapterState = patch.metadata as never;
+  if (patch.commissionedOn !== undefined)
+    deviceSet.commissionedOn = patch.commissionedOn;
+  deviceSet.updatedAt = new Date();
+
+  const areaSet: Partial<typeof areas.$inferInsert> = {};
+  if (patch.timezoneOffsetMin !== undefined) {
+    areaSet.timezoneOffsetMin = patch.timezoneOffsetMin;
+    // `dayOffsetMin` moves with the tz offset, matching `updateAreaMeta` (lib/areas/create.ts) — the
+    // area's own writer — rather than inventing a second coupling rule.
+    areaSet.dayOffsetMin = patch.timezoneOffsetMin;
+  }
+  if (patch.displayTimezone !== undefined)
+    areaSet.displayTimezone = patch.displayTimezone;
+  if (patch.location !== undefined) areaSet.location = patch.location;
 
   await requirePlanetscaleDb().transaction(async (tx) => {
-    await tx
-      .update(pgSystems)
-      .set(values as Partial<InferSelectModel<typeof pgSystems>>)
-      .where(eq(pgSystems.id, systemId));
-    // Re-copies the mutable columns from the row just written (ensureDeviceRow SELECTs `systems`).
-    await ensureDeviceRow(systemId, tx);
-    await mirrorPlacementToAreaOfOne(
-      systemId,
-      {
-        ...(values.timezoneOffsetMin != null && {
-          timezoneOffsetMin: values.timezoneOffsetMin,
-        }),
-        ...(values.displayTimezone != null && {
-          displayTimezone: values.displayTimezone,
-        }),
-      },
-      tx,
-    );
+    await tx.update(devices).set(deviceSet).where(eq(devices.rid, systemId));
+    if (Object.keys(areaSet).length > 0) {
+      areaSet.updatedAt = new Date();
+      await tx
+        .update(areas)
+        .set(areaSet)
+        .where(eq(areas.legacySystemId, systemId));
+    }
   });
 }
 
 /**
- * Delete a system.
+ * Delete a device, addressed by its integer handle.
  *
- * Deletes from Postgres only.
+ * ⚠️ **Behaviour CHANGED in 1a, deliberately — read this rather than assuming continuity.** Pre-1a this
+ * deleted the `systems` row and left the mirrored `devices` row ORPHANED, and that orphan was recorded as
+ * load-bearing for the terminal window's FK-coverage gate. Post-1a there is no `systems` row to delete,
+ * so "preserve the orphaning" has no referent: `devices` IS the row. Nor is the gate weakened —
+ * `devices`-without-`systems` is now the state of EVERY newly created device, since nothing writes
+ * `systems` at all, which is exactly why PR 2's G2 treats that direction as report-only rather than
+ * fatal. The orphan G2 must tolerate is generic, not this function's.
  *
- * ⚠️ config-v4 KNOWN GAP (deliberately not closed here): this leaves the mirrored `devices` row
- * ORPHANED. There is no FK from `devices` to `systems` (`devices.rid` is a plain integer), so nothing
- * cascades. Not fixed in the mirror-leak pass because deleting a device is not the inverse of this
- * one-liner — `area_members`, `points.device_id` and the device's area-of-one all hang off it, so the
- * safe teardown order is slice N's problem, not a side effect of a v3 delete. Low real exposure: the
- * only caller is the create-rollback path in `app/api/systems/route.ts`, where the device row was just
- * minted moments earlier. Revisit when `devices` becomes the primary registry (slice K/N).
+ * So this now performs the real inverse of {@link insertDeviceToPg}, in reverse FK order: membership
+ * edge, then the handle's `device_id`, then the device. Safe because the sole caller is the
+ * create-rollback path in `POST /api/systems`, where the device was minted moments earlier.
+ *
+ * The **area-of-one is intentionally left behind.** Deleting it is not needed for a correct rollback (the
+ * slug and the handle's device column are both freed above), and `areas` is referenced by
+ * `point_readings_flow_attr_1d` — a table with a deliberate data-loss firewall. Widening a rollback path
+ * into that blast radius is slice N's call to make explicitly, not a side effect of this conversion. A
+ * stranded area-of-one with no member is inert.
  */
 async function deleteSystem(systemId: number): Promise<void> {
-  await requirePlanetscaleDb()
-    .delete(pgSystems)
-    .where(eq(pgSystems.id, systemId));
+  await requirePlanetscaleDb().transaction(async (tx) => {
+    const [row] = await tx
+      .select({ id: devices.id })
+      .from(devices)
+      .where(eq(devices.rid, systemId))
+      .limit(1);
+    if (!row) return;
+    await tx.delete(areaMembers).where(eq(areaMembers.deviceId, row.id));
+    await tx.execute(
+      sql`UPDATE legacy_handles SET device_id = NULL WHERE device_id = ${row.id}::uuid`,
+    );
+    await tx.delete(devices).where(eq(devices.rid, systemId));
+  });
 }
 
 /**
- * Insert the system into Postgres. The alias-unique collision is a unique_violation,
- * surfaced with SQLSTATE '23505'; rethrown unchanged so callers keep their handling.
- */
-async function insertSystemToPg(systemData: CreateSystemData): Promise<System> {
-  const pg = requirePlanetscaleDb();
-
-  // Dev-id policy: explicit ids from 10000 in dev, serial in prod.
-  let systemId: number | undefined = undefined;
-  if (!isProduction()) {
-    const DEV_SYSTEM_ID_START = 10000;
-    const [{ maxId }] = await pg
-      .select({ maxId: max(pgSystems.id) })
-      .from(pgSystems);
-    systemId =
-      maxId && maxId >= DEV_SYSTEM_ID_START ? maxId + 1 : DEV_SYSTEM_ID_START;
-  }
-
-  try {
-    const newSystem = await pg.transaction(async (tx) => {
-      const [inserted] = await tx
-        .insert(pgSystems)
-        .values({
-          ...(systemId !== undefined ? { id: systemId } : {}),
-          ownerClerkUserId: systemData.ownerClerkUserId,
-          vendorType: systemData.vendorType,
-          vendorSiteId: systemData.vendorSiteId,
-          status: systemData.status || "active",
-          displayName: systemData.displayName,
-          alias: systemData.alias,
-          model: systemData.model,
-          serial: systemData.serial,
-          ratings: systemData.ratings,
-          solarSize: systemData.solarSize,
-          batterySize: systemData.batterySize,
-          location: systemData.location,
-          metadata: systemData.metadata,
-          timezoneOffsetMin: systemData.timezoneOffsetMin ?? 600, // Default to AEST
-          displayTimezone: systemData.displayTimezone ?? "Australia/Melbourne", // Default timezone
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
-      // ONE transaction, `devices` before `legacy_handles`. This used to be a bare
-      // `DeviceRegistry.ensureDeviceForHandle`, which writes `legacy_handles.device_id` — FK'd to
-      // `devices(id)` since migration 0036 — for a uuid that no `devices` row carried yet, so EVERY
-      // device creation raised 23503. `ensureDeviceRow` is the ordered writer (devices → handle →
-      // area-of-one → membership) and is idempotent, so it is also correct on the re-mirror paths.
-      await ensureDeviceRow(inserted.id, tx);
-      return inserted;
-    });
-
-    // PG createdAt/updatedAt are Date-typed; the row is structurally the System
-    // shape the caller expects.
-    return newSystem as unknown as System;
-  } catch (e) {
-    if (isPgUniqueViolation(e)) {
-      console.warn(
-        `[DeviceWriter] Postgres alias-unique collision (23505) creating system for user ${systemData.ownerClerkUserId}`,
-      );
-    }
-    throw e;
-  }
-}
-
-/**
- * The four surviving `systems` writers. A plain object, like `DeviceRegistry` / `DeviceConfigRegistry`:
- * the old `SystemsManager` singleton held no state, so `getInstance()` bought nothing.
+ * The four device writers. A plain object, like `DeviceRegistry` / `DeviceConfigRegistry`.
+ *
+ * The names keep their v3 spelling (`createSystem`, `updateSystem`, `deleteSystem`) for the same reason
+ * {@link DevicePatch} keeps its field names: renaming them is churn across ten call sites that says
+ * nothing about storage. Phase 13 re-grammars the whole handle vocabulary at once.
  */
 export const DeviceWriter = {
   createSystem,

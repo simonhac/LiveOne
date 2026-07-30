@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { devices, systems } from "@/lib/db/planetscale/schema";
+import { devices } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { getValidEnphaseToken } from "@/lib/vendors/enphase/enphase-auth";
 

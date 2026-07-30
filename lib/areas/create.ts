@@ -28,7 +28,6 @@ import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
-import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 import { bindingShapeMatches } from "@/lib/areas/slots";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -138,13 +137,15 @@ export async function createArea(
         await DeviceRegistry.ensureAreaForHandle(handle, id, tx);
         if (members.length > 0) {
           // `area_members.device_id` is a hard FK, so each member's `devices` row must exist before its
-          // membership row. `ensureDeviceRow` is idempotent and self-healing (slice A2), and rides this
-          // tx — so a member whose device row was somehow missing is minted and joined atomically.
+          // membership row. Slice 1a: this RESOLVES the uuid (`uuidForRid`) instead of ensuring the row
+          // (`ensureDeviceRow`). It is not a weakening — `devices` is the registry now, not a mirror, so a
+          // member handle with no `devices` row is a genuine error and `uuidForRid` THROWS, aborting the
+          // tx. Previously it would have silently minted a device from a `systems` row.
           // Sequential, not Promise.all: a drizzle tx is ONE pg client, so overlapping statements on it
           // are serialised anyway and only make the ordering harder to reason about.
           const deviceIds: string[] = [];
           for (const systemId of members) {
-            deviceIds.push(await ensureDeviceRow(systemId, tx));
+            deviceIds.push(await DeviceRegistry.uuidForRid(systemId, tx));
           }
           await tx.insert(areaMembers).values(
             deviceIds.map((deviceId, i) => ({
@@ -215,15 +216,15 @@ export async function updateAreaMeta(
  * Add a member device (append at the next ordinal; idempotent on the PK).
  *
  * The `max(ordinal)` read and the insert share a transaction: they were two round trips before, so two
- * concurrent adds could both read the same max and collide on the ordinal. `ensureDeviceRow` rides the
- * same tx because `area_members.device_id` is a hard FK.
+ * concurrent adds could both read the same max and collide on the ordinal. The member's uuid lookup rides
+ * the same tx because `area_members.device_id` is a hard FK.
  */
 export async function addMember(
   areaId: string,
   systemId: number,
 ): Promise<void> {
   await requirePlanetscaleDb().transaction(async (tx) => {
-    const deviceId = await ensureDeviceRow(systemId, tx);
+    const deviceId = await DeviceRegistry.uuidForRid(systemId, tx);
     const [{ maxOrd }] = await tx
       .select({ maxOrd: max(areaMembers.ordinal) })
       .from(areaMembers)

@@ -3,7 +3,6 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { requireAuth } from "@/lib/api-auth";
 import { eq, desc } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { DeviceWriter } from "@/lib/registry/device-writer";
