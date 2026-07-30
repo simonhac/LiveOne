@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { kv, kvKey } from "@/lib/kv";
+import { kv } from "@/lib/kv";
+import { subscriptionsKeyPattern } from "@/lib/kv-keys";
 import {
   SubscriptionRegistryEntry,
   buildSubscriptionRegistry,
@@ -57,9 +58,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Scan KV for all subscription keys
-    // Pattern: {namespace}:subscriptions:system:*
-    const pattern = kvKey("subscriptions:system:*");
-    const keys = await kv.keys(pattern);
+    const keys = await kv.keys(subscriptionsKeyPattern());
 
     // Fetch all subscription lists with timestamps
     const subscriptions: Record<

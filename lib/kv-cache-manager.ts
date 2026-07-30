@@ -1,12 +1,24 @@
-import { kv, kvKey } from "./kv";
+import { kv } from "./kv";
+import {
+  latestValuesKey,
+  subscriptionsKey,
+  subscriptionsKeyPattern,
+} from "./kv-keys";
 import { Point } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { LatestValue, LatestValuesMap } from "./latest-values-store";
+import {
+  getLatestValues,
+  LatestValue,
+  LatestValuesMap,
+} from "./latest-values-store";
 import { getAreaBindings } from "@/lib/areas/bindings";
 import { getBindinglessAreaMemberPoints } from "@/lib/areas/members";
 
 // Re-export canonical types for backwards compatibility
 export type { LatestValue, LatestValuesMap };
+// The single reader of the latest-values hash lives in `latest-values-store`; re-exported here so the
+// propagation writer and its reader can still be imported from one place.
+export { getLatestValues };
 
 /**
  * @deprecated Use LatestValue instead
@@ -39,20 +51,6 @@ export interface SubscriptionRegistryEntry {
    */
   pointSubscribers: Record<string, string[]>;
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
-}
-
-/**
- * Get the KV key for a system's latest point values
- */
-function getLatestValuesKey(systemId: number): string {
-  return kvKey(`latest:system:${systemId}`);
-}
-
-/**
- * Get the KV key for a system's subscription registry
- */
-function getSubscriptionsKey(systemId: number): string {
-  return kvKey(`subscriptions:system:${systemId}`);
 }
 
 /**
@@ -107,7 +105,7 @@ export async function updateLatestPointValue(
   };
 
   // Update source system's cache
-  const key = getLatestValuesKey(systemId);
+  const key = latestValuesKey(systemId);
   await kv.hset(key, { [pointPath]: pointValue });
 
   // Look up subscriber points that subscribe to this specific source point
@@ -134,28 +132,13 @@ export async function updateLatestPointValue(
     // Execute batched updates per subscriber system
     const updates = Array.from(updatesBySystem.entries()).map(
       ([subscriberSystemId, pointValues]) => {
-        const subscriberKey = getLatestValuesKey(subscriberSystemId);
+        const subscriberKey = latestValuesKey(subscriberSystemId);
         return kv.hset(subscriberKey, pointValues);
       },
     );
 
     await Promise.all(updates);
   }
-}
-
-/**
- * Get all latest point values for a system
- *
- * @param systemId - System ID
- * @returns Map of point paths to their latest values
- */
-export async function getLatestPointValues(
-  systemId: number,
-): Promise<LatestValuesMap> {
-  const key = getLatestValuesKey(systemId);
-  const values = await kv.hgetall(key);
-
-  return (values as LatestValuesMap) || {};
 }
 
 /**
@@ -169,7 +152,7 @@ async function getPointSubscribers(
   sourceSystemId: number,
   sourcePointUid: string,
 ): Promise<string[]> {
-  const key = getSubscriptionsKey(sourceSystemId);
+  const key = subscriptionsKey(sourceSystemId);
   const entry = await kv.get<SubscriptionRegistryEntry>(key);
 
   if (!entry?.pointSubscribers) {
@@ -254,8 +237,7 @@ export async function buildSubscriptionRegistry(): Promise<void> {
   const subscriptions = await buildSubscriptionsFromBindings();
 
   // First, scan for existing subscription keys and delete any that are no longer needed
-  const pattern = kvKey("subscriptions:system:*");
-  const existingKeys = await kv.keys(pattern);
+  const existingKeys = await kv.keys(subscriptionsKeyPattern());
   const validSystemIds = new Set(subscriptions.keys());
 
   // Delete stale subscription keys (systems that no longer have subscribers)
@@ -280,7 +262,7 @@ export async function buildSubscriptionRegistry(): Promise<void> {
   const now = Date.now();
 
   for (const [sourceSystemId, pointMap] of subscriptions.entries()) {
-    const key = getSubscriptionsKey(sourceSystemId);
+    const key = subscriptionsKey(sourceSystemId);
 
     // Convert Map<string, Set<string>> to Record<string, string[]>
     const pointSubscribers: Record<string, string[]> = {};
@@ -313,7 +295,7 @@ export async function invalidateSubscriptionRegistry(
 ): Promise<void> {
   if (systemId) {
     // Delete specific subscription key
-    const key = getSubscriptionsKey(systemId);
+    const key = subscriptionsKey(systemId);
     await kv.del(key);
   } else {
     // Delete all subscription keys

@@ -1,7 +1,7 @@
 import { getPollingStatus } from "@/lib/polling-utils";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { getLatestPointValues } from "@/lib/kv-cache-manager";
+import { getLatestValues } from "@/lib/latest-values-store";
 import { transformDates } from "@/lib/json";
 import { PointManager } from "@/lib/point/point-manager";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
@@ -125,8 +125,8 @@ export async function buildSystemPayload(
       ? timer.time("polling", () => getPollingStatus(handle))
       : getPollingStatus(handle),
     timer
-      ? timer.time("kv", () => getLatestPointValues(handle))
-      : getLatestPointValues(handle),
+      ? timer.time("kv", () => getLatestValues(handle))
+      : getLatestValues(handle),
     wantsReadings
       ? PointManager.getInstance().getActivePointsForSystem(handle)
       : Promise.resolve(undefined),

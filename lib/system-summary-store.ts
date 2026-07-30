@@ -10,7 +10,8 @@
  * Values: SystemSummary objects
  */
 
-import { kv, kvKey } from "./kv";
+import { kv } from "./kv";
+import { subscriptionsKey, summariesField, summariesKey } from "./kv-keys";
 import { getLatestValues, LatestValuesMap } from "./latest-values-store";
 import { ROLE_IDS, ROLES } from "@/lib/roles/registry";
 
@@ -42,13 +43,6 @@ export interface SystemSummary {
  * Map of system ID to summary
  */
 export type SystemSummariesMap = Record<string, SystemSummary>;
-
-/**
- * Get the KV key for the system summaries hash
- */
-function getSummariesKey(): string {
-  return kvKey("system-summaries");
-}
 
 /**
  * Aggregate readings from point values into summary format, driven by the role registry
@@ -116,8 +110,8 @@ export async function updateSystemSummary(
     readings,
   };
 
-  const key = getSummariesKey();
-  await kv.hset(key, { [systemId.toString()]: summary });
+  const key = summariesKey();
+  await kv.hset(key, { [summariesField(systemId)]: summary });
 }
 
 /**
@@ -129,8 +123,8 @@ export async function updateSystemSummary(
 export async function getSystemSummary(
   systemId: number,
 ): Promise<SystemSummary | null> {
-  const key = getSummariesKey();
-  const value = await kv.hget(key, systemId.toString());
+  const key = summariesKey();
+  const value = await kv.hget(key, summariesField(systemId));
   return (value as SystemSummary) || null;
 }
 
@@ -140,7 +134,7 @@ export async function getSystemSummary(
  * @returns Map of system ID to summary, or empty object if none cached
  */
 export async function getAllSystemSummaries(): Promise<SystemSummariesMap> {
-  const key = getSummariesKey();
+  const key = summariesKey();
   const values = await kv.hgetall(key);
   return (values as SystemSummariesMap) || {};
 }
@@ -157,7 +151,7 @@ export async function getSystemSummariesPaginated(
   cursor: number = 0,
   count: number = 100,
 ): Promise<{ cursor: number; summaries: SystemSummariesMap }> {
-  const key = getSummariesKey();
+  const key = summariesKey();
   const [nextCursor, results] = await kv.hscan(key, cursor, { count });
 
   // HSCAN returns flat array: [field1, value1, field2, value2, ...]
@@ -177,15 +171,8 @@ export async function getSystemSummariesPaginated(
  * @param systemId - System ID
  */
 export async function clearSystemSummary(systemId: number): Promise<void> {
-  const key = getSummariesKey();
-  await kv.hdel(key, systemId.toString());
-}
-
-/**
- * Get the KV key for a system's subscription registry
- */
-function getSubscriptionsKey(systemId: number): string {
-  return kvKey(`subscriptions:system:${systemId}`);
+  const key = summariesKey();
+  await kv.hdel(key, summariesField(systemId));
 }
 
 /**
@@ -197,7 +184,7 @@ function getSubscriptionsKey(systemId: number): string {
 export async function getSubscriberSystemIds(
   sourceSystemId: number,
 ): Promise<number[]> {
-  const key = getSubscriptionsKey(sourceSystemId);
+  const key = subscriptionsKey(sourceSystemId);
   const entry = await kv.get<{
     pointSubscribers: Record<string, string[]>;
     lastUpdatedTimeMs: number;
@@ -271,8 +258,8 @@ export async function updateSubscriberSummary(
     readings,
   };
 
-  const key = getSummariesKey();
-  await kv.hset(key, { [subscriberSystemId.toString()]: summary });
+  const key = summariesKey();
+  await kv.hset(key, { [summariesField(subscriberSystemId)]: summary });
 }
 
 /**

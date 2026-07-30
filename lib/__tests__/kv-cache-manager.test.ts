@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import {
   updateLatestPointValue,
-  getLatestPointValues,
+  getLatestValues,
   buildSubscriptionRegistry,
 } from "../kv-cache-manager";
 
@@ -189,7 +189,7 @@ describe("kv-cache-manager", () => {
     });
   });
 
-  describe("getLatestPointValues", () => {
+  describe("getLatestValues", () => {
     it("should retrieve latest values from KV cache", async () => {
       const { kv } = await import("../kv");
 
@@ -214,7 +214,7 @@ describe("kv-cache-manager", () => {
         mockValues,
       );
 
-      const result = await getLatestPointValues(10);
+      const result = await getLatestValues(10);
 
       expect(kv.hgetall).toHaveBeenCalledWith("test:latest:system:10");
       expect(result).toEqual(mockValues);
@@ -225,7 +225,7 @@ describe("kv-cache-manager", () => {
 
       (kv.hgetall as jest.MockedFunction<any>).mockResolvedValueOnce(null);
 
-      const result = await getLatestPointValues(10);
+      const result = await getLatestValues(10);
 
       expect(result).toEqual({});
     });

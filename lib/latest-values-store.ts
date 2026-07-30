@@ -3,9 +3,15 @@
  *
  * This abstraction hides KV implementation details and provides a simple
  * key-value interface for "latest" values per system.
+ *
+ * This module owns the {@link LatestValue} SHAPE and the read/write primitives over the latest-values
+ * hash. It does NOT own the key string — `lib/kv-keys.ts` does, for every family (it used to hold a
+ * second, independent copy of the `latest:system:N` builder; see that module's header for why that is
+ * a silent-cache-split hazard rather than harmless duplication).
  */
 
-import { kv, kvKey } from "./kv";
+import { kv } from "./kv";
+import { latestValuesKey } from "./kv-keys";
 
 /**
  * A latest value entry stored in the cache
@@ -39,40 +45,10 @@ export interface LatestValue {
 export type LatestValuesMap = Record<string, LatestValue>;
 
 /**
- * Get the KV key for a system's latest values
- */
-function getLatestValuesKey(systemId: number): string {
-  return kvKey(`latest:system:${systemId}`);
-}
-
-/**
- * Store multiple latest values for a system
+ * Get all latest values for a system.
  *
- * Values are merged with existing values (does not delete existing keys).
- * Uses Redis hash for efficient batch operations.
- *
- * @param systemId - System ID
- * @param values - Array of LatestValue objects to store
- */
-export async function setLatestValues(
-  systemId: number,
-  values: LatestValue[],
-): Promise<void> {
-  if (values.length === 0) return;
-
-  const key = getLatestValuesKey(systemId);
-
-  // Convert array to hash fields (logicalPath -> LatestValue)
-  const fields: Record<string, LatestValue> = {};
-  for (const value of values) {
-    fields[value.logicalPath] = value;
-  }
-
-  await kv.hset(key, fields);
-}
-
-/**
- * Get all latest values for a system
+ * This is the ONLY reader of the latest-values hash. `kv-cache-manager.getLatestPointValues` was a
+ * byte-identical second copy of it (same key builder, same `hgetall`, same cast) and is gone.
  *
  * @param systemId - System ID
  * @returns Map of logicalPath to LatestValue, or empty object if none cached
@@ -80,35 +56,8 @@ export async function setLatestValues(
 export async function getLatestValues(
   systemId: number,
 ): Promise<LatestValuesMap> {
-  const key = getLatestValuesKey(systemId);
+  const key = latestValuesKey(systemId);
   const values = await kv.hgetall(key);
 
   return (values as LatestValuesMap) || {};
-}
-
-/**
- * Get a single latest value by logicalPath
- *
- * @param systemId - System ID
- * @param logicalPath - The path to retrieve (e.g., "bidi.grid.import/rate")
- * @returns The LatestValue or null if not found
- */
-export async function getLatestValue(
-  systemId: number,
-  logicalPath: string,
-): Promise<LatestValue | null> {
-  const key = getLatestValuesKey(systemId);
-  const value = await kv.hget(key, logicalPath);
-
-  return (value as LatestValue) || null;
-}
-
-/**
- * Clear all latest values for a system
- *
- * @param systemId - System ID
- */
-export async function clearLatestValues(systemId: number): Promise<void> {
-  const key = getLatestValuesKey(systemId);
-  await kv.del(key);
 }

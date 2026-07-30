@@ -11,7 +11,8 @@
  * can be unit-tested without KV or a clock.
  */
 
-import { kv, kvKey } from "@/lib/kv";
+import { kv } from "@/lib/kv";
+import { oeSchedulerStateKey } from "@/lib/kv-keys";
 import { ReadingsDao } from "@/lib/readings";
 import { DeviceRegistry } from "@/lib/registry";
 
@@ -171,13 +172,9 @@ export function applyObservation(
   return { ...state, delaySec, lastSeenIntervalEndMs: capturedIntervalEndMs };
 }
 
-function stateKey(systemId: number): string {
-  return kvKey(`oe:sched:system:${systemId}`);
-}
-
 /** Load KV state, or seed it (delay default + lastSeen from the newest stored interval). */
 export async function loadState(systemId: number): Promise<OeSchedState> {
-  const existing = await kv.get<OeSchedState>(stateKey(systemId));
+  const existing = await kv.get<OeSchedState>(oeSchedulerStateKey(systemId));
   if (existing && typeof existing.delaySec === "number") return existing;
 
   let lastSeenIntervalEndMs = 0;
@@ -203,7 +200,7 @@ export async function saveState(
   systemId: number,
   state: OeSchedState,
 ): Promise<void> {
-  await kv.set(stateKey(systemId), state);
+  await kv.set(oeSchedulerStateKey(systemId), state);
 }
 
 /** Record a freshly-captured interval, updating the learned delay (EWMA). */

@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
 import {
   updateLatestPointValue,
-  getLatestPointValues,
+  getLatestValues,
   buildSubscriptionRegistry,
   invalidateSubscriptionRegistry,
 } from "../kv-cache-manager";
@@ -76,7 +76,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       );
 
       // Verify it was stored
-      const result = await getLatestPointValues(testSystemId);
+      const result = await getLatestValues(testSystemId);
 
       expect(result[pointPath]).toBeDefined();
       expect(result[pointPath].value).toBe(value);
@@ -102,7 +102,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         "W",
         "Test Point",
       );
-      let result = await getLatestPointValues(testSystemId);
+      let result = await getLatestValues(testSystemId);
       expect(result[pointPath].value).toBe(firstValue);
 
       // Second update (should overwrite)
@@ -116,7 +116,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         "W",
         "Test Point",
       );
-      result = await getLatestPointValues(testSystemId);
+      result = await getLatestValues(testSystemId);
       expect(result[pointPath].value).toBe(secondValue);
       expect(result[pointPath].measurementTimeMs).toBe(
         measurementTimeMs + 60000,
@@ -148,7 +148,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       }
 
       // Verify all were stored
-      const result = await getLatestPointValues(testSystemId);
+      const result = await getLatestValues(testSystemId);
 
       for (const point of points) {
         expect(result[point.path]).toBeDefined();
@@ -158,9 +158,9 @@ describeIfKV("kv-cache-manager (integration)", () => {
     });
   });
 
-  describe("getLatestPointValues", () => {
+  describe("getLatestValues", () => {
     it("should return empty object for non-existent system", async () => {
-      const result = await getLatestPointValues(88888); // Non-existent test system
+      const result = await getLatestValues(88888); // Non-existent test system
       expect(result).toEqual({});
     });
 
@@ -192,7 +192,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
         "Test Point",
       );
 
-      const result = await getLatestPointValues(testSystemId);
+      const result = await getLatestValues(testSystemId);
 
       expect(Object.keys(result).length).toBeGreaterThanOrEqual(2);
       expect(result[pointPath1]).toBeDefined();
@@ -240,16 +240,16 @@ describeIfKV("kv-cache-manager (integration)", () => {
       );
 
       // Verify source system has the value
-      const sourceResult = await getLatestPointValues(testSystemId);
+      const sourceResult = await getLatestValues(testSystemId);
       expect(sourceResult[pointPath]).toBeDefined();
       expect(sourceResult[pointPath].value).toBe(value);
 
       // Verify composite systems also have the value
-      const composite1Result = await getLatestPointValues(testCompositeId1);
+      const composite1Result = await getLatestValues(testCompositeId1);
       expect(composite1Result[pointPath]).toBeDefined();
       expect(composite1Result[pointPath].value).toBe(value);
 
-      const composite2Result = await getLatestPointValues(testCompositeId2);
+      const composite2Result = await getLatestValues(testCompositeId2);
       expect(composite2Result[pointPath]).toBeDefined();
       expect(composite2Result[pointPath].value).toBe(value);
     }, 20000);
@@ -290,8 +290,8 @@ describeIfKV("kv-cache-manager (integration)", () => {
       }
 
       // Verify all points are in both composite systems
-      const composite1Result = await getLatestPointValues(testCompositeId1);
-      const composite2Result = await getLatestPointValues(testCompositeId2);
+      const composite1Result = await getLatestValues(testCompositeId1);
+      const composite2Result = await getLatestValues(testCompositeId2);
 
       for (const point of points) {
         expect(composite1Result[point.path]).toBeDefined();
@@ -346,12 +346,12 @@ describeIfKV("kv-cache-manager (integration)", () => {
       );
 
       // Verify source has the value
-      const sourceResult = await getLatestPointValues(testSystemId);
+      const sourceResult = await getLatestValues(testSystemId);
       expect(sourceResult[pointPath]).toBeDefined();
       expect(sourceResult[pointPath].value).toBe(value);
 
       // Verify composites do NOT have the value (no subscription)
-      const composite1Result = await getLatestPointValues(testCompositeId1);
+      const composite1Result = await getLatestValues(testCompositeId1);
       expect(composite1Result[pointPath]).toBeUndefined();
     });
 
@@ -389,9 +389,9 @@ describeIfKV("kv-cache-manager (integration)", () => {
       );
 
       // Read multiple times
-      const result1 = await getLatestPointValues(testSystemId);
-      const result2 = await getLatestPointValues(testSystemId);
-      const result3 = await getLatestPointValues(testSystemId);
+      const result1 = await getLatestValues(testSystemId);
+      const result2 = await getLatestValues(testSystemId);
+      const result3 = await getLatestValues(testSystemId);
 
       // All reads should return the same data
       expect(result1[pointPath]).toEqual(result2[pointPath]);
