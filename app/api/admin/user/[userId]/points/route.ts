@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { devices, points as pointsTable } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
 import { PointInfo } from "@/lib/point/point-info";
@@ -30,10 +30,29 @@ export async function GET(
 
     // Get all active points from these systems
     const systemIds = activeSystems.map((s) => s.id);
+    // `points ⋈ devices` since slice 1b. Projected explicitly rather than `select()`-ing the row,
+    // because the served shape PointInfo.from() wants is no longer one table's columns: `systemId` is
+    // the owning device's handle and `index` is the global `points.rid`.
     const pgPoints = await requirePlanetscaleDb()
-      .select()
-      .from(pointInfo)
-      .where(and(eq(pointInfo.active, true)));
+      .select({
+        systemId: devices.rid,
+        index: pointsTable.rid,
+        pointUid: pointsTable.id,
+        physicalPathTail: pointsTable.physicalPath,
+        logicalPathStem: pointsTable.logicalPath,
+        metricType: pointsTable.metricType,
+        metricUnit: pointsTable.unit,
+        defaultName: pointsTable.defaultName,
+        displayName: pointsTable.name,
+        subsystem: pointsTable.subsystem,
+        transform: pointsTable.transform,
+        active: pointsTable.active,
+        createdAt: pointsTable.createdAt,
+        updatedAt: pointsTable.updatedAt,
+      })
+      .from(pointsTable)
+      .innerJoin(devices, eq(devices.id, pointsTable.deviceId))
+      .where(and(eq(pointsTable.active, true)));
     // Map PG rows (native timestamps) to the served shape PointInfo.from() expects.
     const points = pgPoints.map((p) => ({
       ...p,

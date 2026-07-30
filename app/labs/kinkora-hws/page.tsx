@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { devices, points } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
 import { isUserAdmin } from "@/lib/auth-utils";
@@ -29,13 +29,14 @@ async function hwsPoint(
   metricType: string,
 ): Promise<PointId | null> {
   const [row] = await requirePlanetscaleDb()
-    .select({ pointUid: pointInfo.pointUid })
-    .from(pointInfo)
+    .select({ pointUid: points.id })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, "load.hws"),
-        eq(pointInfo.metricType, metricType),
+        eq(devices.rid, systemId),
+        eq(points.logicalPath, "load.hws"),
+        eq(points.metricType, metricType),
       ),
     )
     .limit(1);

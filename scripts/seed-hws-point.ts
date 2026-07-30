@@ -21,7 +21,7 @@ dotenv.config({ path: ".env.local" });
 
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "../lib/db/planetscale";
-import { pointInfo } from "../lib/db/planetscale/schema";
+import { devices, points } from "../lib/db/planetscale/schema";
 import {
   ensureHwsDerivation,
   ensureHwsTemperaturePoint,
@@ -37,13 +37,11 @@ async function main() {
 
   if (systemId === null) {
     const candidates = await db
-      .select({ systemId: pointInfo.systemId })
-      .from(pointInfo)
+      .select({ systemId: devices.rid })
+      .from(points)
+      .innerJoin(devices, eq(devices.id, points.deviceId))
       .where(
-        and(
-          eq(pointInfo.logicalPathStem, "load.hws"),
-          eq(pointInfo.metricType, "power"),
-        ),
+        and(eq(points.logicalPath, "load.hws"), eq(points.metricType, "power")),
       );
     const ids = [...new Set(candidates.map((c) => c.systemId))].sort(
       (a, b) => a - b,
