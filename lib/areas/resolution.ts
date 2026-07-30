@@ -1,6 +1,11 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areaBindings, areas, pointInfo } from "@/lib/db/planetscale/schema";
+import {
+  areaBindings,
+  areas,
+  devices,
+  points as pointsTable,
+} from "@/lib/db/planetscale/schema";
 import { Area, Point, type AreaId, type PointId } from "@/lib/ids";
 import { DeviceRegistry } from "@/lib/registry";
 import { getAreaMemberDeviceIds } from "./members";
@@ -27,7 +32,6 @@ export interface AreaResolutionSlot {
 
 export interface ResolutionCandidate {
   systemId: number;
-  index: number;
   id: PointId;
   logicalPathStem: string | null;
   metricType: string;
@@ -142,7 +146,7 @@ export async function resolveAreaSlots(
     .where(eq(areas.id, areaUuid))
     .limit(1);
   if (!area) throw new Error(`Area not found: ${areaUuid}`);
-  // Membership is uuid-keyed since slice H; `point_info.system_id` is not, so convert. The `!` is safe
+  // Membership is uuid-keyed since slice H; the device HANDLE is not, so convert. The `!` is safe
   // by the `area_members.device_id` FK.
   const memberDeviceIds = await getAreaMemberDeviceIds(areaUuid);
   const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
@@ -151,15 +155,15 @@ export async function resolveAreaSlots(
   const [pointRows, bindingRows] = await Promise.all([
     db
       .select({
-        systemId: pointInfo.systemId,
-        index: pointInfo.index,
-        pointUid: pointInfo.pointUid,
-        logicalPathStem: pointInfo.logicalPathStem,
-        metricType: pointInfo.metricType,
-        active: pointInfo.active,
+        systemId: devices.rid,
+        pointUid: pointsTable.id,
+        logicalPathStem: pointsTable.logicalPath,
+        metricType: pointsTable.metricType,
+        active: pointsTable.active,
       })
-      .from(pointInfo)
-      .where(inArray(pointInfo.systemId, memberIds)),
+      .from(pointsTable)
+      .innerJoin(devices, eq(devices.id, pointsTable.deviceId))
+      .where(inArray(devices.rid, memberIds)),
     db
       .select({
         pointUid: areaBindings.pointUid,
@@ -178,7 +182,6 @@ export async function resolveAreaSlots(
   ]);
   const points: ResolutionCandidate[] = pointRows.map((point) => ({
     systemId: point.systemId,
-    index: point.index,
     id: Point.encode(point.pointUid),
     logicalPathStem: point.logicalPathStem,
     metricType: point.metricType,

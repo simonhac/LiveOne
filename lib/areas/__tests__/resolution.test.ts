@@ -9,14 +9,12 @@ import { bindingShapeMatches } from "../slots";
 
 function candidate(
   systemId: number,
-  index: number,
   logicalPathStem: string,
   metricType: string,
   active = true,
 ): ResolutionCandidate {
   return {
     systemId,
-    index,
     id: Point.generate(),
     logicalPathStem,
     metricType,
@@ -52,8 +50,8 @@ function slot(
 
 describe("deterministic area information resolution", () => {
   it("uses the lowest-priority valid explicit binding", () => {
-    const first = candidate(1, 1, "bidi.battery", "soc");
-    const preferred = candidate(2, 1, "bidi.battery", "soc");
+    const first = candidate(1, "bidi.battery", "soc");
+    const preferred = candidate(2, "bidi.battery", "soc");
     const result = slot(
       [first, preferred],
       [
@@ -70,13 +68,9 @@ describe("deterministic area information resolution", () => {
   });
 
   it("ignores an explicit binding whose stored metric does not match its point", () => {
-    const point = candidate(1, 1, "bidi.battery", "soc");
+    const point = candidate(1, "bidi.battery", "soc");
     expect(
-      slot(
-        [point],
-        [bindTo(point, "battery", "power", 0)],
-        "battery/soc",
-      ),
+      slot([point], [bindTo(point, "battery", "power", 0)], "battery/soc"),
     ).toMatchObject({
       mode: "auto",
       producer: { kind: "point", id: point.id },
@@ -84,7 +78,7 @@ describe("deterministic area information resolution", () => {
   });
 
   it("auto-connects exactly one candidate and reports an inactive producer", () => {
-    const point = candidate(1, 1, "source.solar.local", "power", false);
+    const point = candidate(1, "source.solar.local", "power", false);
     expect(slot([point], [], "solar/power")).toMatchObject({
       mode: "auto",
       available: false,
@@ -94,8 +88,8 @@ describe("deterministic area information resolution", () => {
   });
 
   it("reports multiple auto candidates as an ordered needs-choice state", () => {
-    const a = candidate(1, 1, "bidi.grid", "power");
-    const b = candidate(2, 1, "bidi.grid", "power");
+    const a = candidate(1, "bidi.grid", "power");
+    const b = candidate(2, "bidi.grid", "power");
     const result = slot([a, b], [], "grid/power");
     expect(result).toMatchObject({
       mode: "absent",
@@ -107,8 +101,8 @@ describe("deterministic area information resolution", () => {
   });
 
   it("does not hide automatic ambiguity behind a config fallback", () => {
-    const a = candidate(1, 1, "grid.emissionsIntensity", "intensity");
-    const b = candidate(2, 1, "grid.emissionsIntensity", "intensity");
+    const a = candidate(1, "grid.emissionsIntensity", "intensity");
+    const b = candidate(2, "grid.emissionsIntensity", "intensity");
     expect(
       slot([a, b], [], "grid/emissions-intensity", {
         batteryProvenance: {

@@ -79,6 +79,8 @@ function makeFakeDb(pointRows: unknown[]) {
   const readChain = (rows: unknown[]): any => {
     const chain: any = {
       from: () => chain,
+      // slice 1b: the point read is now `points ⋈ devices`.
+      innerJoin: () => chain,
       where: () => chain,
       limit: () => Promise.resolve(rows),
       then: (res: any) => Promise.resolve(rows).then(res),
