@@ -13,19 +13,19 @@ import {
   Sun,
   PlayCircle,
 } from "lucide-react";
-import SystemInfoTooltip from "@/components/SystemInfoTooltip";
-import SystemActionsMenu from "@/components/SystemActionsMenu";
+import DeviceInfoTooltip from "@/components/DeviceInfoTooltip";
+import DeviceActionsMenu from "@/components/DeviceActionsMenu";
 import PollingStatsModal from "@/components/PollingStatsModal";
 import TestConnectionModal from "@/components/TestConnectionModal";
-import SystemSettingsDialog from "@/components/SystemSettingsDialog";
+import DeviceSettingsDialog from "@/components/DeviceSettingsDialog";
 import PollNowModal from "@/components/PollNowModal";
 import ViewDataModal from "@/components/ViewDataModal";
 import { PollAllModal } from "@/components/PollAllModal";
 import { formatDateTime, formatTime } from "@/lib/fe-date-format";
-import type { SystemData as ServerSystemData } from "@/lib/admin/get-systems-data";
+import type { DeviceData as ServerDeviceData } from "@/lib/admin/get-devices-data";
 import { usePollingState } from "@/hooks/usePollingState";
 
-interface SystemInfo {
+interface DeviceInfo {
   model?: string;
   serial?: string;
   ratings?: string;
@@ -33,7 +33,7 @@ interface SystemInfo {
   batterySize?: string;
 }
 
-interface SystemData {
+interface DeviceData {
   systemId: number; // Our internal ID
   owner: {
     clerkId: string;
@@ -50,11 +50,11 @@ interface SystemData {
     userId: string | null; // Vendor-specific user ID
     supportsPolling?: boolean;
   };
-  status: "active" | "disabled" | "removed"; // System status
+  status: "active" | "disabled" | "removed"; // Device status
   location?: any; // Location data
   metadata?: any; // Vendor-specific metadata
   timezoneOffsetMin: number; // Timezone offset in minutes
-  systemInfo?: SystemInfo | null;
+  deviceInfo?: DeviceInfo | null;
   polling: {
     isActive: boolean;
     lastPollTime: string | null;
@@ -79,12 +79,12 @@ interface SystemData {
 }
 
 interface AdminDashboardClientProps {
-  initialSystems: ServerSystemData[];
+  initialDevices: ServerDeviceData[];
   latestValuesIncluded: boolean;
 }
 
 export default function AdminDashboardClient({
-  initialSystems,
+  initialDevices,
   latestValuesIncluded,
 }: AdminDashboardClientProps) {
   const queryClient = useQueryClient();
@@ -106,24 +106,24 @@ export default function AdminDashboardClient({
   const [pollingStatsModal, setPollingStatsModal] = useState<{
     isOpen: boolean;
     systemId: number | null;
-    systemName: string;
+    deviceName: string;
     vendorType: string;
     status: "active" | "disabled" | "removed" | null;
-    stats: SystemData["polling"] | null;
+    stats: DeviceData["polling"] | null;
   }>({
     isOpen: false,
     systemId: null,
-    systemName: "",
+    deviceName: "",
     vendorType: "",
     status: null,
     stats: null,
   });
   const [settingsModal, setSettingsDialog] = useState<{
     isOpen: boolean;
-    system: SystemData | null;
+    device: DeviceData | null;
   }>({
     isOpen: false,
-    system: null,
+    device: null,
   });
   const [pollNowModal, setPollNowModal] = useState<{
     isOpen: boolean;
@@ -141,14 +141,14 @@ export default function AdminDashboardClient({
   const [viewDataModal, setViewDataModal] = useState<{
     isOpen: boolean;
     systemId: number | null;
-    systemName: string | null;
+    deviceName: string | null;
     vendorType: string | null;
     vendorSiteId: string | null;
     timezoneOffsetMin: number | null;
   }>({
     isOpen: false,
     systemId: null,
-    systemName: null,
+    deviceName: null,
     vendorType: null,
     vendorSiteId: null,
     timezoneOffsetMin: null,
@@ -159,7 +159,7 @@ export default function AdminDashboardClient({
   // Hook for managing polling state via SSE
   const {
     state: pollingState,
-    systems: pollingSystems,
+    devices: pollingDevices,
     isConnected: isPollingConnected,
     isComplete: isPollingComplete,
     startPolling,
@@ -167,12 +167,12 @@ export default function AdminDashboardClient({
     reset: resetPolling,
   } = usePollingState();
 
-  const openTestModal = (system: SystemData) => {
+  const openTestModal = (device: DeviceData) => {
     setTestModal({
       isOpen: true,
-      systemId: system.systemId,
-      displayName: system.displayName,
-      vendorType: system.vendor.type,
+      systemId: device.systemId,
+      displayName: device.displayName,
+      vendorType: device.vendor.type,
     });
   };
 
@@ -185,12 +185,12 @@ export default function AdminDashboardClient({
     });
   };
 
-  const openPollNowModal = (system: SystemData, dryRun: boolean = false) => {
+  const openPollNowModal = (device: DeviceData, dryRun: boolean = false) => {
     setPollNowModal({
       isOpen: true,
-      systemId: system.systemId,
-      displayName: system.displayName,
-      vendorType: system.vendor.type,
+      systemId: device.systemId,
+      displayName: device.displayName,
+      vendorType: device.vendor.type,
       dryRun,
     });
   };
@@ -214,8 +214,8 @@ export default function AdminDashboardClient({
     setPollAllModalOpen(false);
     disconnectPolling();
     resetPolling();
-    // Refresh systems list after poll
-    refetchSystems();
+    // Refresh devices list after poll
+    refetchDevices();
   };
 
   // Track if any modal is open
@@ -239,13 +239,13 @@ export default function AdminDashboardClient({
 
   const modalOpen = isAnyModalOpen();
 
-  // Auto-refreshing systems list (30s), seeded from server-rendered data. The poll
+  // Auto-refreshing devices list (30s), seeded from server-rendered data. The poll
   // is paused while any modal is open (refetchInterval false) so an open dialog
   // isn't disturbed by a background refresh — matching the legacy interval logic.
-  const { data: systemsData, error: queryError } = useQuery({
+  const { data: devicesData, error: queryError } = useQuery({
     queryKey: ["admin", "systems"],
     queryFn: async () => {
-      const response = await fetch("/api/admin/systems");
+      const response = await fetch("/api/admin/devices");
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -260,14 +260,14 @@ export default function AdminDashboardClient({
         throw new Error(data.error || "Failed to load systems");
       }
 
-      return (data.systems || []) as SystemData[];
+      return (data.devices || []) as DeviceData[];
     },
-    initialData: initialSystems as unknown as SystemData[],
+    initialData: initialDevices as unknown as DeviceData[],
     refetchInterval: modalOpen ? false : 30000,
     refetchOnWindowFocus: false,
   });
 
-  const systems = systemsData ?? [];
+  const devices = devicesData ?? [];
   const fetchError = queryError
     ? queryError instanceof Error &&
       queryError.message !== "Failed to fetch systems"
@@ -276,7 +276,7 @@ export default function AdminDashboardClient({
     : null;
   const displayError = fetchError;
 
-  const refetchSystems = useCallback(() => {
+  const refetchDevices = useCallback(() => {
     if (isAnyModalOpen()) {
       console.log("[AdminDashboard] Skipping fetch - modal is open");
       return;
@@ -284,12 +284,12 @@ export default function AdminDashboardClient({
     queryClient.invalidateQueries({ queryKey: ["admin", "systems"] });
   }, [isAnyModalOpen, queryClient]);
 
-  const updateSystemStatus = async (
+  const updateDeviceStatus = async (
     systemId: number,
     newStatus: "active" | "disabled" | "removed",
   ) => {
     try {
-      const response = await fetch(`/api/admin/systems/${systemId}/status`, {
+      const response = await fetch(`/api/admin/devices/${systemId}/status`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -304,8 +304,8 @@ export default function AdminDashboardClient({
 
       const result = await response.json();
 
-      // Optimistically patch the cached systems list (matches the legacy local update)
-      queryClient.setQueryData<SystemData[]>(["admin", "systems"], (prev) =>
+      // Optimistically patch the cached devices list (matches the legacy local update)
+      queryClient.setQueryData<DeviceData[]>(["admin", "systems"], (prev) =>
         (prev ?? []).map((sys) =>
           sys.systemId === systemId ? { ...sys, status: newStatus } : sys,
         ),
@@ -320,9 +320,9 @@ export default function AdminDashboardClient({
     }
   };
 
-  const updateSystem = async () => {
-    // Refetch systems after update
-    refetchSystems();
+  const updateDevice = async () => {
+    // Refetch devices after update
+    refetchDevices();
   };
 
   // Fetch latest values once if the server-side render timed out before including them.
@@ -356,7 +356,7 @@ export default function AdminDashboardClient({
             </div>
           )}
 
-          {/* Systems Table */}
+          {/* Devices Table */}
           <div className="bg-gray-800 border-t md:border border-gray-700 md:rounded-t overflow-hidden flex flex-col">
             <div className="border-b border-gray-700">
               <div className="flex items-stretch justify-between -mb-px">
@@ -369,7 +369,7 @@ export default function AdminDashboardClient({
                         : "text-gray-400 border-transparent hover:text-gray-300 hover:border-gray-600"
                     }`}
                   >
-                    Active Systems
+                    Active Devices
                   </button>
                   <button
                     onClick={() => setActiveTab("removed")}
@@ -399,7 +399,7 @@ export default function AdminDashboardClient({
                   <tr className="border-b border-gray-700">
                     <th className="w-5"></th>
                     <th className="text-left px-1.5 md:px-1.5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                      System
+                      Device
                     </th>
                     <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                       Owner
@@ -413,23 +413,23 @@ export default function AdminDashboardClient({
                   </tr>
                 </thead>
                 <tbody>
-                  {systems
-                    .filter((system) =>
+                  {devices
+                    .filter((device) =>
                       activeTab === "active"
-                        ? system.status === "active" ||
-                          system.status === "disabled"
-                        : system.status === "removed",
+                        ? device.status === "active" ||
+                          device.status === "disabled"
+                        : device.status === "removed",
                     )
-                    .map((system, index, filteredSystems) => (
+                    .map((device, index, filteredDevices) => (
                       <tr
-                        key={system.systemId}
+                        key={device.systemId}
                         className={`${
                           index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"
                         } hover:bg-gray-700/50 transition-colors border-b border-gray-700 relative ${
-                          system.status === "disabled" ? "opacity-40" : ""
+                          device.status === "disabled" ? "opacity-40" : ""
                         }`}
                         style={
-                          system.status === "removed"
+                          device.status === "removed"
                             ? {
                                 backgroundImage:
                                   "repeating-linear-gradient(135deg, transparent, transparent 10px, rgba(251,146,60,0.15) 10px, rgba(251,146,60,0.15) 20px)",
@@ -438,69 +438,69 @@ export default function AdminDashboardClient({
                         }
                       >
                         <td className="w-5 align-top pt-3 text-center">
-                          <SystemActionsMenu
-                            systemId={system.systemId}
-                            systemName={system.displayName}
-                            status={system.status}
-                            vendorType={system.vendor.type}
-                            supportsPolling={system.vendor.supportsPolling}
-                            onTest={() => openTestModal(system)}
+                          <DeviceActionsMenu
+                            systemId={device.systemId}
+                            deviceName={device.displayName}
+                            status={device.status}
+                            vendorType={device.vendor.type}
+                            supportsPolling={device.vendor.supportsPolling}
+                            onTest={() => openTestModal(device)}
                             onPollNow={(dryRun) =>
-                              openPollNowModal(system, dryRun)
+                              openPollNowModal(device, dryRun)
                             }
                             onStatusChange={(newStatus) =>
-                              updateSystemStatus(system.systemId, newStatus)
+                              updateDeviceStatus(device.systemId, newStatus)
                             }
                             onPollingStats={() => {
                               setPollingStatsModal({
                                 isOpen: true,
-                                systemId: system.systemId,
-                                systemName: system.displayName,
-                                vendorType: system.vendor.type,
-                                status: system.status,
-                                stats: system.polling,
+                                systemId: device.systemId,
+                                deviceName: device.displayName,
+                                vendorType: device.vendor.type,
+                                status: device.status,
+                                stats: device.polling,
                               });
                             }}
                             onSettings={() => {
                               setSettingsDialog({
                                 isOpen: true,
-                                system: system,
+                                device: device,
                               });
                             }}
                             onViewData={() => {
                               setViewDataModal({
                                 isOpen: true,
-                                systemId: system.systemId,
-                                systemName: system.displayName,
-                                vendorType: system.vendor.type,
-                                vendorSiteId: system.vendor.siteId,
-                                timezoneOffsetMin: system.timezoneOffsetMin,
+                                systemId: device.systemId,
+                                deviceName: device.displayName,
+                                vendorType: device.vendor.type,
+                                vendorSiteId: device.vendor.siteId,
+                                timezoneOffsetMin: device.timezoneOffsetMin,
                               });
                             }}
                           />
                         </td>
                         <td className="px-1.5 md:px-1.5 py-4 whitespace-nowrap align-top">
                           <Link
-                            href={`/device/${system.systemId}`}
+                            href={`/device/${device.systemId}`}
                             className="block group"
                           >
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium text-white group-hover:text-blue-400 transition-colors">
-                                {system.displayName}
+                                {device.displayName}
                               </span>
-                              {system.shortName && (
+                              {device.shortName && (
                                 <span className="text-sm text-gray-400">
-                                  ({system.shortName})
+                                  ({device.shortName})
                                 </span>
                               )}
                               <span className="text-sm text-gray-500">
-                                ID: {system.systemId}
+                                ID: {device.systemId}
                               </span>
-                              {system.status === "disabled" && (
+                              {device.status === "disabled" && (
                                 <div className="relative group/pause">
                                   <PauseCircle className="w-4 h-4 text-orange-400" />
                                   <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-gray-900 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover/pause:opacity-100 pointer-events-none transition-opacity z-10 border border-gray-700">
-                                    System Disabled
+                                    Device Disabled
                                   </div>
                                 </div>
                               )}
@@ -508,20 +508,20 @@ export default function AdminDashboardClient({
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-gray-400 group-hover:text-blue-400 transition-colors">
-                                  {`${system.vendor.type}/${system.vendor.siteId}`}
+                                  {`${device.vendor.type}/${device.vendor.siteId}`}
                                 </span>
-                                {system.systemInfo && (
+                                {device.deviceInfo && (
                                   <div onClick={(e) => e.preventDefault()}>
-                                    <SystemInfoTooltip
-                                      systemInfo={system.systemInfo}
-                                      systemNumber={system.vendor.siteId}
+                                    <DeviceInfoTooltip
+                                      deviceInfo={device.deviceInfo}
+                                      systemNumber={device.vendor.siteId}
                                     />
                                   </div>
                                 )}
                               </div>
-                              {system.vendor.userId && (
+                              {device.vendor.userId && (
                                 <span className="text-xs text-gray-500">
-                                  {system.vendor.userId}
+                                  {device.vendor.userId}
                                 </span>
                               )}
                             </div>
@@ -530,57 +530,57 @@ export default function AdminDashboardClient({
                         <td className="px-2 md:px-6 py-4 whitespace-nowrap align-top">
                           <div className="text-sm">
                             <div className="text-gray-300">
-                              {system.owner.userName ||
-                                system.owner.clerkId ||
+                              {device.owner.userName ||
+                                device.owner.clerkId ||
                                 "unknown"}
-                              {(system.owner.firstName ||
-                                system.owner.lastName) && (
+                              {(device.owner.firstName ||
+                                device.owner.lastName) && (
                                 <span className="text-gray-400 hidden xl:inline">
                                   {" "}
-                                  ({system.owner.firstName || ""}
-                                  {system.owner.firstName &&
-                                  system.owner.lastName
+                                  ({device.owner.firstName || ""}
+                                  {device.owner.firstName &&
+                                  device.owner.lastName
                                     ? " "
                                     : ""}
-                                  {system.owner.lastName || ""})
+                                  {device.owner.lastName || ""})
                                 </span>
                               )}
                             </div>
-                            {(system.owner.firstName ||
-                              system.owner.lastName) && (
+                            {(device.owner.firstName ||
+                              device.owner.lastName) && (
                               <div className="text-xs text-gray-400 xl:hidden">
-                                {system.owner.firstName || ""}
-                                {system.owner.firstName && system.owner.lastName
+                                {device.owner.firstName || ""}
+                                {device.owner.firstName && device.owner.lastName
                                   ? " "
                                   : ""}
-                                {system.owner.lastName || ""}
+                                {device.owner.lastName || ""}
                               </div>
                             )}
-                            {system.owner.email && (
+                            {device.owner.email && (
                               <a
-                                href={`mailto:${system.owner.email}`}
+                                href={`mailto:${device.owner.email}`}
                                 className="text-xs text-blue-400 hover:text-blue-300 hover:underline"
                               >
-                                {system.owner.email}
+                                {device.owner.email}
                               </a>
                             )}
                           </div>
                         </td>
                         <td className="px-2 md:px-6 py-4 whitespace-nowrap">
-                          {system.data &&
-                          (system.data.solarPower != null ||
-                            system.data.loadPower != null ||
-                            system.data.batterySOC != null) ? (
+                          {device.data &&
+                          (device.data.solarPower != null ||
+                            device.data.loadPower != null ||
+                            device.data.batterySOC != null) ? (
                             <div className="text-sm">
                               <div className="flex flex-col items-start gap-1 xl:flex-row xl:items-center xl:gap-0">
                                 {/* Solar - fixed width */}
                                 <div className="min-w-[70px] xl:min-w-[75px]">
-                                  {system.data.solarPower != null ? (
+                                  {device.data.solarPower != null ? (
                                     <div className="flex items-center gap-1.5">
                                       <Sun className="w-3.5 h-3.5 text-yellow-400" />
                                       <span className="text-yellow-400">
                                         {(
-                                          system.data.solarPower / 1000
+                                          device.data.solarPower / 1000
                                         ).toFixed(1)}{" "}
                                         kW
                                       </span>
@@ -591,11 +591,11 @@ export default function AdminDashboardClient({
                                 </div>
                                 {/* Load - fixed width */}
                                 <div className="min-w-[70px] xl:min-w-[75px]">
-                                  {system.data.loadPower != null ? (
+                                  {device.data.loadPower != null ? (
                                     <div className="flex items-center gap-1.5">
                                       <Home className="w-3.5 h-3.5 text-blue-400" />
                                       <span className="text-blue-400">
-                                        {(system.data.loadPower / 1000).toFixed(
+                                        {(device.data.loadPower / 1000).toFixed(
                                           1,
                                         )}{" "}
                                         kW
@@ -607,11 +607,11 @@ export default function AdminDashboardClient({
                                 </div>
                                 {/* Battery SOC - fixed width */}
                                 <div className="min-w-[65px] xl:min-w-[70px]">
-                                  {system.data.batterySOC != null ? (
+                                  {device.data.batterySOC != null ? (
                                     <div className="flex items-center gap-1.5">
                                       <Battery className="w-3.5 h-3.5 text-green-400" />
                                       <span className="text-green-400">
-                                        {system.data.batterySOC.toFixed(1)}%
+                                        {device.data.batterySOC.toFixed(1)}%
                                       </span>
                                     </div>
                                   ) : (
@@ -627,25 +627,25 @@ export default function AdminDashboardClient({
                         <td className="px-2 md:px-6 py-4 whitespace-nowrap align-baseline">
                           <div className="sm:block flex flex-col">
                             <div>
-                              {!system.polling.isActive ? (
+                              {!device.polling.isActive ? (
                                 <div>
                                   <span className="text-sm text-red-400">
                                     Polling disabled
                                   </span>
                                 </div>
-                              ) : system.polling.lastPollTime ? (
+                              ) : device.polling.lastPollTime ? (
                                 <div className="text-xs text-gray-400">
                                   <div>
                                     <Clock className="w-3 h-3 inline mr-1" />
                                     {(() => {
                                       const result = formatDateTime(
-                                        system.polling.lastPollTime,
+                                        device.polling.lastPollTime,
                                       );
                                       if (result.isToday) {
                                         return result.time;
                                       } else {
                                         const pollDate = new Date(
-                                          system.polling.lastPollTime,
+                                          device.polling.lastPollTime,
                                         );
                                         // Use fixed locale to avoid SSR hydration mismatch
                                         return pollDate.toLocaleDateString(
@@ -657,7 +657,7 @@ export default function AdminDashboardClient({
                                   </div>
                                   {(() => {
                                     const result = formatDateTime(
-                                      system.polling.lastPollTime,
+                                      device.polling.lastPollTime,
                                     );
                                     if (!result.isToday) {
                                       return (
@@ -674,12 +674,12 @@ export default function AdminDashboardClient({
                                   Never
                                 </span>
                               )}
-                              {system.polling.lastError && (
+                              {device.polling.lastError && (
                                 <p
                                   className="text-xs text-red-400 mt-1 max-w-xs truncate"
-                                  title={system.polling.lastError}
+                                  title={device.polling.lastError}
                                 >
-                                  {system.polling.lastError}
+                                  {device.polling.lastError}
                                 </p>
                               )}
                             </div>
@@ -712,30 +712,30 @@ export default function AdminDashboardClient({
             setPollingStatsModal({
               isOpen: false,
               systemId: null,
-              systemName: "",
+              deviceName: "",
               vendorType: "",
               status: null,
               stats: null,
             })
           }
           systemId={pollingStatsModal.systemId}
-          systemName={pollingStatsModal.systemName}
+          deviceName={pollingStatsModal.deviceName}
           vendorType={pollingStatsModal.vendorType}
           status={pollingStatsModal.status}
           stats={pollingStatsModal.stats}
         />
       )}
 
-      {/* System Settings Dialog */}
-      <SystemSettingsDialog
+      {/* Device Settings Dialog */}
+      <DeviceSettingsDialog
         isOpen={settingsModal.isOpen}
-        onClose={() => setSettingsDialog({ isOpen: false, system: null })}
-        systemId={settingsModal.system?.systemId ?? null}
-        vendorType={settingsModal.system?.vendor.type}
-        metadata={settingsModal.system?.metadata}
-        ownerClerkUserId={settingsModal.system?.owner.clerkId}
+        onClose={() => setSettingsDialog({ isOpen: false, device: null })}
+        systemId={settingsModal.device?.systemId ?? null}
+        vendorType={settingsModal.device?.vendor.type}
+        metadata={settingsModal.device?.metadata}
+        ownerClerkUserId={settingsModal.device?.owner.clerkId}
         isAdmin={true}
-        onUpdate={updateSystem}
+        onUpdate={updateDevice}
       />
 
       {/* Poll Now Modal */}
@@ -752,7 +752,7 @@ export default function AdminDashboardClient({
       {/* View Data Modal */}
       {viewDataModal.isOpen &&
         viewDataModal.systemId &&
-        viewDataModal.systemName &&
+        viewDataModal.deviceName &&
         viewDataModal.vendorType &&
         viewDataModal.vendorSiteId &&
         viewDataModal.timezoneOffsetMin !== null && (
@@ -762,14 +762,14 @@ export default function AdminDashboardClient({
               setViewDataModal({
                 isOpen: false,
                 systemId: null,
-                systemName: null,
+                deviceName: null,
                 vendorType: null,
                 vendorSiteId: null,
                 timezoneOffsetMin: null,
               })
             }
             systemId={viewDataModal.systemId}
-            systemName={viewDataModal.systemName}
+            deviceName={viewDataModal.deviceName}
             vendorType={viewDataModal.vendorType}
             vendorSiteId={viewDataModal.vendorSiteId}
             timezoneOffsetMin={viewDataModal.timezoneOffsetMin}

@@ -26,7 +26,7 @@ interface PollingStatsModalProps {
   isOpen: boolean;
   onClose: () => void;
   systemId: number | null;
-  systemName: string;
+  deviceName: string;
   vendorType: string;
   status: "active" | "disabled" | "removed" | null;
   stats: PollingStats;
@@ -36,7 +36,7 @@ export default function PollingStatsModal({
   isOpen,
   onClose,
   systemId,
-  systemName,
+  deviceName,
   vendorType,
   status,
   stats,
@@ -74,7 +74,7 @@ export default function PollingStatsModal({
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <h3 className="text-lg font-semibold text-white">
-            Statistics for {systemName}{" "}
+            Statistics for {deviceName}{" "}
             <span className="text-gray-500">ID: {systemId}</span> — {vendorType}
           </h3>
           <button

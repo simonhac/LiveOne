@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
-import { invalidateSystem } from "@/lib/queries";
+import { invalidateDevice } from "@/lib/queries";
 import {
   X,
   Check,
@@ -49,8 +49,8 @@ export default function PollNowModal({
     reset,
   } = usePollingState();
 
-  // Get system-specific state from the polling session
-  const systemState = pollingState.systems.get(systemId);
+  // Get device-specific state from the polling session
+  const deviceState = pollingState.devices.get(systemId);
 
   // Register this modal with the global modal context
   const { registerModal, unregisterModal } = useModalContext();
@@ -81,7 +81,7 @@ export default function PollNowModal({
   // Refresh the dashboard's queries when polling completes (replaces the old event bus).
   useEffect(() => {
     if (isComplete && !dryRun) {
-      invalidateSystem(queryClient, systemId);
+      invalidateDevice(queryClient, systemId);
     }
   }, [isComplete, dryRun, queryClient, systemId]);
 
@@ -104,8 +104,8 @@ export default function PollNowModal({
     );
   };
 
-  // Derive status from system state
-  const status = systemState?.status || (isConnected ? "polling" : "pending");
+  // Derive status from device state
+  const status = deviceState?.status || (isConnected ? "polling" : "pending");
   const isPolling = status === "polling" || status === "pending";
 
   // Get status color
@@ -155,7 +155,7 @@ export default function PollNowModal({
           <h3 className="text-lg font-semibold text-white">
             Poll {displayName || "System"}{" "}
             <span className="text-gray-500">ID: {systemId}</span> —{" "}
-            {vendorType || systemState?.vendorType || "System"}
+            {vendorType || deviceState?.vendorType || "System"}
           </h3>
           <button
             onClick={onClose}
@@ -187,7 +187,7 @@ export default function PollNowModal({
             <span className="text-xs text-gray-500">Timeline</span>
           </div>
           <div className="h-8">
-            {systemState?.stages && systemState.stages.length > 0 ? (
+            {deviceState?.stages && deviceState.stages.length > 0 ? (
               <PollTimeline sessionState={pollingState} systemId={systemId} />
             ) : (
               <div className="h-full bg-gray-800 rounded animate-pulse" />
@@ -203,7 +203,7 @@ export default function PollNowModal({
               <div>
                 <p className="text-xs text-gray-500">Session</p>
                 <p className="text-sm font-medium text-white font-mono">
-                  {systemState?.sessionLabel || "—"}
+                  {deviceState?.sessionLabel || "—"}
                 </p>
               </div>
             </div>
@@ -225,8 +225,8 @@ export default function PollNowModal({
               <div>
                 <p className="text-xs text-gray-500">Records</p>
                 <p className="text-sm font-medium text-white">
-                  {systemState?.recordsProcessed !== undefined
-                    ? systemState.recordsProcessed
+                  {deviceState?.recordsProcessed !== undefined
+                    ? deviceState.recordsProcessed
                     : "—"}
                 </p>
               </div>
@@ -237,8 +237,8 @@ export default function PollNowModal({
               <div>
                 <p className="text-xs text-gray-500">Duration</p>
                 <p className="text-sm font-medium text-white">
-                  {systemState?.durationMs !== undefined
-                    ? formatDuration(systemState.durationMs)
+                  {deviceState?.durationMs !== undefined
+                    ? formatDuration(deviceState.durationMs)
                     : "—"}
                 </p>
               </div>
@@ -249,8 +249,8 @@ export default function PollNowModal({
               <div>
                 <p className="text-xs text-gray-500">Next Poll</p>
                 <p className="text-sm font-medium text-white">
-                  {systemState?.nextPollTime
-                    ? formatDateTime(systemState.nextPollTime, {
+                  {deviceState?.nextPollTime
+                    ? formatDateTime(deviceState.nextPollTime, {
                         includeSeconds: true,
                       }).time
                     : "—"}
@@ -270,11 +270,11 @@ export default function PollNowModal({
                   {status === "skipped" && "Skipped"}
                   {status === "error" && "Error"}
                 </p>
-                {status === "skipped" && systemState?.reason && (
-                  <p className="text-sm text-gray-400">{systemState.reason}</p>
+                {status === "skipped" && deviceState?.reason && (
+                  <p className="text-sm text-gray-400">{deviceState.reason}</p>
                 )}
-                {status === "error" && systemState?.error && (
-                  <p className="text-sm text-gray-400">{systemState.error}</p>
+                {status === "error" && deviceState?.error && (
+                  <p className="text-sm text-gray-400">{deviceState.error}</p>
                 )}
               </div>
             </div>
@@ -282,8 +282,8 @@ export default function PollNowModal({
         )}
 
         {/* Raw Comms Section - Always visible, disabled when no data */}
-        {systemState?.rawResponse ? (
-          <JsonViewer data={systemState.rawResponse} />
+        {deviceState?.rawResponse ? (
+          <JsonViewer data={deviceState.rawResponse} />
         ) : (
           <div className="flex items-center gap-2 text-sm text-gray-600 cursor-not-allowed">
             <ChevronRight className="w-4 h-4" />

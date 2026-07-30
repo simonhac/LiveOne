@@ -19,7 +19,7 @@ function tileKeyV3(t: TileV3, i: number): string {
 }
 
 /**
- * One tile — self-fetches its system (`deviceSystemId ?? handle` — React Query dedupes, so all
+ * One tile — self-fetches its device (`deviceSystemId ?? handle` — React Query dedupes, so all
  * whole-area tiles share one request; a device tile adds one), shows its own skeleton while
  * loading, then mounts the view's plugin when its `isAvailable` predicate passes.
  */

@@ -17,7 +17,7 @@ import ShareLinksPanel, {
 } from "@/components/ShareLinksPanel";
 import GrantsPanel from "@/components/GrantsPanel";
 import { recomputeAreaFlow } from "@/lib/areas/recompute-flow";
-import { isSystemQuery } from "@/lib/queries/keys";
+import { isDeviceQuery } from "@/lib/queries/keys";
 
 /**
  * Rename / set shortname / set-or-unset default / delete a composition dashboard. Extracted from
@@ -203,12 +203,12 @@ export default function DashboardSettingsDialog({
           failed += 1;
         }
       }
-      // Blow away the cached chart/sankey data for the recomputed systems so the corrected Sankey shows
+      // Blow away the cached chart/sankey data for the recomputed devices so the corrected Sankey shows
       // immediately — siteData/flowMatrix are settled, long-`staleTime` queries that would otherwise
       // serve the pre-recompute matrix until a hard refresh.
       for (const systemId of systemIds) {
         await queryClient.invalidateQueries({
-          predicate: (q) => isSystemQuery(systemId, q.queryKey),
+          predicate: (q) => isDeviceQuery(systemId, q.queryKey),
         });
       }
       const days = `${total} day${total === 1 ? "" : "s"}`;

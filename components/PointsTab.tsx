@@ -32,7 +32,7 @@ export default function PointsTab({
 }: PointsTabProps) {
   const { data, isPending } = useQuery({
     queryKey: ["system", systemId, "points"],
-    queryFn: () => fetchJson<PointsResponse>(`/api/system/${systemId}/points`),
+    queryFn: () => fetchJson<PointsResponse>(`/api/device/${systemId}/points`),
     enabled: shouldLoad,
   });
 
@@ -130,7 +130,7 @@ export default function PointsTab({
   if (points.length === 0) {
     return (
       <div className="flex items-center justify-center py-8">
-        <div className="text-gray-400">No points found for this system.</div>
+        <div className="text-gray-400">No points found for this device.</div>
       </div>
     );
   }
@@ -138,7 +138,7 @@ export default function PointsTab({
   return (
     <div className="space-y-[15px]">
       <p className="text-sm text-gray-400">
-        System points organized by subsystem. Points can be activated or
+        Device points organized by subsystem. Points can be activated or
         deactivated via the View Data modal.
       </p>
 

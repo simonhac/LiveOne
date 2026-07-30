@@ -1,11 +1,11 @@
 "use client";
 
 import { Plus, X, Cpu } from "lucide-react";
-import type { CandidateSystem } from "./types";
+import type { CandidateDevice } from "./types";
 
 /**
  * The member-devices editor for the Area builder (create + edit modes). Lists the area's current
- * member devices (names joined from `candidate-systems`) with remove buttons, plus an "add device"
+ * member devices (names joined from `candidate-devices`) with remove buttons, plus an "add device"
  * picker over the candidates not already members. The parent owns the member list + the add/remove
  * side effects (local state in create mode; the `.../devices` endpoints in edit mode).
  */
@@ -17,7 +17,7 @@ export default function MembersTab({
   onAdd,
   onRemove,
 }: {
-  candidates: CandidateSystem[];
+  candidates: CandidateDevice[];
   memberIds: number[];
   /** A member that can't be removed (the seed device in "create from this device"). */
   lockedId?: number;

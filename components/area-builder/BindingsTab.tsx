@@ -8,9 +8,9 @@ import { fetchJson } from "@/lib/queries";
 import { ROLE_IDS, ROLES, stemMatchesRole } from "@/lib/roles/registry";
 import type {
   AreaBinding,
-  CandidateSystem,
-  SystemPoint,
-  SystemPointsResponse,
+  CandidateDevice,
+  DevicePoint,
+  DevicePointsResponse,
 } from "./types";
 import { stemOfLogicalPath } from "./types";
 import type { PointId } from "@/lib/ids";
@@ -38,7 +38,7 @@ export default function BindingsTab({
 }: {
   areaId: string;
   memberIds: number[];
-  candidates: CandidateSystem[];
+  candidates: CandidateDevice[];
   initialBindings: AreaBinding[];
   onSaved: () => void;
 }) {
@@ -59,13 +59,13 @@ export default function BindingsTab({
     queryFn: async () => {
       const entries = await Promise.all(
         memberIds.map(async (id) => {
-          const resp = await fetchJson<SystemPointsResponse>(
-            `/api/system/${id}/points?showActive=true`,
+          const resp = await fetchJson<DevicePointsResponse>(
+            `/api/device/${id}/points?showActive=true`,
           );
           return [id, resp.points] as const;
         }),
       );
-      return new Map<number, SystemPoint[]>(entries);
+      return new Map<number, DevicePoint[]>(entries);
     },
   });
 
@@ -74,7 +74,7 @@ export default function BindingsTab({
   // Fast lookup: `pt_` id → the point (for metricType + validity). Keyed by the point's own opaque
   // identity, so it no longer depends on the owning device's integer handle.
   const pointById = useMemo(() => {
-    const m = new Map<string, SystemPoint>();
+    const m = new Map<string, DevicePoint>();
     if (!pointsByMember) return m;
     for (const points of pointsByMember.values()) {
       for (const p of points) m.set(p.pointId, p);

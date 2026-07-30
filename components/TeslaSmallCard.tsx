@@ -25,7 +25,7 @@ interface TeslaSmallCardProps {
    * Latest values from KV cache, keyed by logical path
    */
   latest: Record<string, LatestValue | null> | null;
-  /** System id — required to enable the charge-control dialog. */
+  /** Device id — required to enable the charge-control dialog. */
   systemId?: number;
   /** Whether the current user may issue charge commands (owner or admin). */
   canControl?: boolean;

@@ -14,9 +14,9 @@ import {
   Database,
 } from "lucide-react";
 
-interface SystemActionsMenuProps {
+interface DeviceActionsMenuProps {
   systemId: number;
-  systemName: string;
+  deviceName: string;
   status: "active" | "disabled" | "removed";
   vendorType?: string;
   supportsPolling?: boolean;
@@ -28,9 +28,9 @@ interface SystemActionsMenuProps {
   onViewData?: () => void;
 }
 
-export default function SystemActionsMenu({
+export default function DeviceActionsMenu({
   systemId,
-  systemName,
+  deviceName,
   status,
   vendorType,
   supportsPolling = false,
@@ -40,7 +40,7 @@ export default function SystemActionsMenu({
   onPollingStats,
   onSettings,
   onViewData,
-}: SystemActionsMenuProps) {
+}: DeviceActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [isPositioned, setIsPositioned] = useState(false);
@@ -197,7 +197,7 @@ export default function SystemActionsMenu({
               opacity: isPositioned ? 1 : 0,
             }}
           >
-            {/* View Data - Available for all systems */}
+            {/* View Data - Available for all devices */}
             {onViewData && (
               <button
                 onClick={() => handleMenuClick(onViewData)}
@@ -217,7 +217,7 @@ export default function SystemActionsMenu({
                 Test Connection
               </button>
             )}
-            {/* Poll Now - Always show if available, disabled for systems that don't support polling */}
+            {/* Poll Now - Always show if available, disabled for devices that don't support polling */}
             {onPollNow && (
               <button
                 onClick={() =>

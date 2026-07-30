@@ -4,13 +4,13 @@ import { fetchJson } from "@/lib/queries";
 import { Crown } from "lucide-react";
 
 /**
- * Per-system admin settings: ownership.
+ * Per-device admin settings: ownership.
  *
- * This tab used to have a second "Viewers" section — an add/remove list of per-system read-only
+ * This tab used to have a second "Viewers" section — an add/remove list of per-device read-only
  * grantees, persisted to `user_systems`. That table was dropped in migration 0045 (config-v4 Phase 12
  * slice F): it held zero rows on prod and the clean-sheet retires it with no replacement. Per-person
  * sharing is `dashboard_grants` (invite) + `share_tokens` (public link), both managed per-DASHBOARD,
- * not per-system — so do not resurrect this section; the equivalent UI belongs on a dashboard.
+ * not per-device — so do not resurrect this section; the equivalent UI belongs on a dashboard.
  */
 
 interface User {
@@ -64,12 +64,12 @@ export default function AdminTab({
     enabled: shouldLoad,
   });
 
-  // Fetch current admin settings for this system
+  // Fetch current admin settings for this device
   const settingsQuery = useQuery({
     queryKey: ["system", systemId, "admin-config"],
     queryFn: () =>
       fetchJson<AdminSettingsResponse>(
-        `/api/admin/systems/${systemId}/admin-settings`,
+        `/api/admin/devices/${systemId}/admin-settings`,
       ),
     enabled: shouldLoad,
   });
@@ -138,7 +138,7 @@ export default function AdminTab({
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-gray-400">Manage system ownership.</p>
+      <p className="text-sm text-gray-400">Manage device ownership.</p>
 
       {/* Owner Section */}
       <div className="border border-gray-700 rounded-lg p-4 bg-blue-500/5">
@@ -150,7 +150,7 @@ export default function AdminTab({
 
         <div className="space-y-2">
           <label className="block text-xs text-gray-400">
-            Select system owner
+            Select device owner
           </label>
           <select
             value={ownerClerkUserId || ""}

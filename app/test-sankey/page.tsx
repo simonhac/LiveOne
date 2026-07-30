@@ -10,7 +10,7 @@ export default function TestSankeyPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Fetch and process data for system 6, 1 day period
+    // Fetch and process data for device 6, 1 day period
     (async () => {
       try {
         const { fetchAndProcessSiteData } = await import(
@@ -70,7 +70,7 @@ export default function TestSankeyPage() {
     <div className="container mx-auto p-8">
       <h1 className="text-3xl font-bold mb-6">Energy Flow Sankey Diagram</h1>
       <p className="text-gray-600 mb-6">
-        System 6 - Last 24 Hours | Total: {matrix.totalEnergy.toFixed(1)} kWh
+        Device 6 - Last 24 Hours | Total: {matrix.totalEnergy.toFixed(1)} kWh
       </p>
 
       <EnergyFlowSankey matrix={matrix} width={600} height={680} />

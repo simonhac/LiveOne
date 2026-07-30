@@ -9,7 +9,7 @@ import { useModalContext } from "@/contexts/ModalContext";
 import SessionInfoModal from "./SessionInfoModal";
 import type {
   PollingSessionState,
-  SystemPollingState,
+  DevicePollingState,
 } from "@/lib/polling-state-manager";
 
 interface PollAllModalProps {
@@ -30,21 +30,21 @@ interface ErrorTooltipState {
  * TimeCell component that shows live elapsed time during polling
  * and final duration when complete.
  */
-function TimeCell({ system }: { system: SystemPollingState }) {
+function TimeCell({ device }: { device: DevicePollingState }) {
   const [, setTick] = useState(0);
 
-  // Check if this system is in progress
+  // Check if this device is in progress
   const isInProgress =
-    system.status === "polling" ||
-    (system.stages &&
-      system.stages.length > 0 &&
-      system.stages.length < 3 &&
-      system.status !== "completed" &&
-      system.status !== "error" &&
-      system.status !== "skipped");
+    device.status === "polling" ||
+    (device.stages &&
+      device.stages.length > 0 &&
+      device.stages.length < 3 &&
+      device.status !== "completed" &&
+      device.status !== "error" &&
+      device.status !== "skipped");
 
   // Get the start time from first stage
-  const startMs = system.stages?.[0]?.startMs;
+  const startMs = device.stages?.[0]?.startMs;
 
   // Trigger re-renders while in progress
   useEffect(() => {
@@ -58,8 +58,8 @@ function TimeCell({ system }: { system: SystemPollingState }) {
   }, [isInProgress, startMs]);
 
   // Show final duration if available
-  if (system.durationMs !== undefined) {
-    return <>{formatDuration(system.durationMs)}</>;
+  if (device.durationMs !== undefined) {
+    return <>{formatDuration(device.durationMs)}</>;
   }
 
   // Show live elapsed time if in progress
@@ -86,10 +86,10 @@ export function PollAllModal({
     null,
   );
 
-  // Convert systems Map to array for rendering
-  const systems = useMemo(
-    () => Array.from(sessionState.systems.values()),
-    [sessionState.systems],
+  // Convert devices Map to array for rendering
+  const devices = useMemo(
+    () => Array.from(sessionState.devices.values()),
+    [sessionState.devices],
   );
 
   useEffect(() => {
@@ -127,29 +127,29 @@ export function PollAllModal({
   if (!isOpen) return null;
 
   // Calculate totals
-  const totalRowsInserted = systems.reduce((sum, sys) => {
+  const totalRowsInserted = devices.reduce((sum, sys) => {
     return sum + (sys.recordsProcessed || 0);
   }, 0);
 
-  const totalDuration = systems.reduce((sum, sys) => {
+  const totalDuration = devices.reduce((sum, sys) => {
     return sum + (sys.durationMs || 0);
   }, 0);
 
   // Minimum number of empty rows to show when no data
   const minEmptyRows = 5;
-  const emptyRowsNeeded = Math.max(0, minEmptyRows - systems.length);
+  const emptyRowsNeeded = Math.max(0, minEmptyRows - devices.length);
 
-  const getStatusText = (system: SystemPollingState) => {
+  const getStatusText = (device: DevicePollingState) => {
     // Check if waiting to start (no stages yet)
     if (
-      (!system.stages || system.stages.length === 0) &&
-      system.status === "pending"
+      (!device.stages || device.stages.length === 0) &&
+      device.status === "pending"
     ) {
       return <span className="text-gray-500">-</span>;
     }
 
     // Check if in progress
-    if (system.status === "polling") {
+    if (device.status === "polling") {
       return (
         <span className="inline-flex items-center gap-1 text-blue-400">
           <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
@@ -169,10 +169,10 @@ export function PollAllModal({
       onMouseEnter?: (e: React.MouseEvent) => void;
       onMouseLeave?: () => void;
     }) => {
-      if (system.sessionLabel && system.sessionId) {
+      if (device.sessionLabel && device.sessionId) {
         return (
           <button
-            onClick={() => handleSessionClick(system.sessionId!)}
+            onClick={() => handleSessionClick(device.sessionId!)}
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
             className={`${className} session-col-narrow-link`}
@@ -192,7 +192,7 @@ export function PollAllModal({
       );
     };
 
-    switch (system.status) {
+    switch (device.status) {
       case "completed":
         return (
           <StatusContent className="inline-flex items-center gap-1 text-green-400">
@@ -207,10 +207,10 @@ export function PollAllModal({
           <StatusContent
             className="inline-flex items-center gap-1 text-red-400 cursor-help"
             onMouseEnter={(e) => {
-              if (system.error) {
+              if (device.error) {
                 const rect = e.currentTarget.getBoundingClientRect();
                 setErrorTooltip({
-                  error: system.error,
+                  error: device.error,
                   x: rect.left,
                   y: rect.bottom + 4,
                 });
@@ -235,7 +235,7 @@ export function PollAllModal({
         {/* Header */}
         <div className="flex justify-between items-start mb-4 mobile-header">
           <h3 className="text-lg font-semibold text-white">
-            Polling All Systems
+            Polling All Devices
           </h3>
           <button
             onClick={onClose}
@@ -245,7 +245,7 @@ export function PollAllModal({
           </button>
         </div>
 
-        {/* System Details Table */}
+        {/* Device Details Table */}
         <div className="bg-gray-800 border border-gray-700 rounded overflow-hidden">
           {/* Header - fixed */}
           <div className="overflow-hidden">
@@ -268,7 +268,7 @@ export function PollAllModal({
               <thead className="bg-gray-800">
                 <tr className="border-b border-gray-700">
                   <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    System
+                    Device
                   </th>
                   <th className="vendor-col px-4 py-2.5 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Vendor
@@ -315,55 +315,55 @@ export function PollAllModal({
                 <col style={{ minWidth: "175px", width: "25%" }} />
               </colgroup>
               <tbody>
-                {systems.map((system, index) => (
+                {devices.map((device, index) => (
                   <tr
-                    key={system.systemId}
+                    key={device.systemId}
                     className={`${index % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"} hover:bg-gray-700 transition-colors`}
                   >
                     <td className="px-4 py-2.5 text-sm">
                       <div>
                         <span className="text-gray-300">
-                          {system.displayName || `System ${system.systemId}`}
+                          {device.displayName || `System ${device.systemId}`}
                         </span>
                         <span className="text-gray-500">
                           {"\u00A0"}
                           ID:{"\u00A0"}
-                          {system.systemId}
+                          {device.systemId}
                         </span>
                       </div>
                     </td>
                     <td className="vendor-col px-4 py-2.5 text-sm text-gray-400">
-                      {system.vendorType}
+                      {device.vendorType}
                     </td>
                     <td className="px-4 py-2.5 text-sm">
-                      {getStatusText(system)}
+                      {getStatusText(device)}
                     </td>
                     <td className="session-col px-4 py-2.5 text-sm">
-                      {system.sessionLabel && system.sessionId ? (
+                      {device.sessionLabel && device.sessionId ? (
                         <button
-                          onClick={() => handleSessionClick(system.sessionId!)}
+                          onClick={() => handleSessionClick(device.sessionId!)}
                           className="font-mono text-xs text-gray-400 hover:text-gray-200 hover:underline transition-colors"
                         >
-                          {system.sessionLabel}
+                          {device.sessionLabel}
                         </button>
                       ) : (
                         <span className="text-gray-600">-</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-300 text-right">
-                      {system.recordsProcessed !== undefined
-                        ? system.recordsProcessed
+                      {device.recordsProcessed !== undefined
+                        ? device.recordsProcessed
                         : "-"}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-300 text-right">
-                      <TimeCell system={system} />
+                      <TimeCell device={device} />
                     </td>
                     <td className="px-4 py-2.5 text-sm h-12">
                       <div className="h-6">
-                        {system.stages && system.stages.length > 0 ? (
+                        {device.stages && device.stages.length > 0 ? (
                           <PollTimeline
                             sessionState={sessionState}
-                            systemId={system.systemId}
+                            systemId={device.systemId}
                           />
                         ) : (
                           <span className="text-gray-600">-</span>
@@ -376,7 +376,7 @@ export function PollAllModal({
                 {Array.from({ length: emptyRowsNeeded }).map((_, index) => (
                   <tr
                     key={`empty-${index}`}
-                    className={`${(systems.length + index) % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
+                    className={`${(devices.length + index) % 2 === 0 ? "bg-gray-900/50" : "bg-gray-800/50"}`}
                   >
                     <td className="px-4 py-2.5 text-sm h-12">&nbsp;</td>
                     <td className="vendor-col px-4 py-2.5 text-sm h-12">

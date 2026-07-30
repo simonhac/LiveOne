@@ -14,9 +14,9 @@ import type { LatestPointValues } from "@/lib/types/api";
 /**
  * The slice of the `dashboardDataQuery` payload this chrome reads.
  *
- * 🛑 config-v4 Phase 13 PR 1: the payload key moved `system` -> `device`/`area`, and this cast is why
+ * 🛑 config-v4 Phase 13 PR 1: the payload key moved `device` -> `device`/`area`, and this cast is why
  * `tsc` could not see it — `dashboardDataQuery` returns `unknown`, so the OLD key would have compiled
- * clean and silently stopped rendering the viewer's dashboard (`data?.system` forever falsy). `/device`
+ * clean and silently stopped rendering the viewer's dashboard (`data?.device` forever falsy). `/device`
  * routes are device-only, but the area leg is accepted rather than assumed away.
  */
 interface DashboardData {
@@ -37,14 +37,14 @@ interface DashboardData {
 
 interface DeviceViewerProps {
   systemId: string;
-  system?: any; // System object from database
+  device?: any; // Device object from database
   hasAccess: boolean;
-  systemExists: boolean;
+  deviceExists: boolean;
   isAdmin: boolean;
   userId?: string;
   /**
    * The device's default v3 view, built SERVER-SIDE from `buildAreaStrategyForHandle` — the single
-   * server/config capability path, grid + generator + config overrides folded in. Null when the system
+   * server/config capability path, grid + generator + config overrides folded in. Null when the device
    * is inaccessible/absent (Access-Denied render).
    */
   descriptor: DashboardV3 | null;
@@ -53,7 +53,7 @@ interface DeviceViewerProps {
 }
 
 /**
- * Read-only per-system viewer ("Device"), served at /device/{id}. Renders the SERVER-built default
+ * Read-only per-device viewer ("Device"), served at /device/{id}. Renders the SERVER-built default
  * descriptor via the SAME v3 renderer the composition dashboards use (`<Dashboard>`): a single
  * section over the device handle. No Customise / Share / Location controls (those live on Dashboards).
  * This component owns only the device-level chrome (loading / error / removed banners); every card
@@ -61,15 +61,15 @@ interface DeviceViewerProps {
  */
 export default function DeviceViewer({
   systemId,
-  system,
+  device,
   hasAccess,
-  systemExists,
+  deviceExists,
   descriptor,
   area,
 }: DeviceViewerProps) {
   const { isAnyModalOpen } = useModalContext();
 
-  // Device-level chrome payload via React Query (latest values + system). Polls every 30s and on
+  // Device-level chrome payload via React Query (latest values + device). Polls every 30s and on
   // focus; paused while a modal is open. Used here only for the loading/error/removed banners — the
   // cards inside <Dashboard> self-fetch the same (deduped) query. The descriptor comes from the server.
   const {
@@ -86,8 +86,8 @@ export default function DeviceViewer({
     [area],
   );
 
-  // Derive the display error: connection failure, an explicit `error` body, or the "system exists but
-  // no charts" marker (a system with no readings yet).
+  // Derive the display error: connection failure, an explicit `error` body, or the "device exists but
+  // no charts" marker (a device with no readings yet).
   const error = useMemo(() => {
     if (isError) {
       return dataError instanceof TypeError
@@ -98,10 +98,10 @@ export default function DeviceViewer({
     const r = queryData as { latest?: unknown; error?: string };
     if (r.latest) return "";
     if (r.error) return r.error;
-    return system?.status !== "removed" ? "POINT_READINGS_NO_CHARTS" : "";
-  }, [isError, dataError, queryData, system?.status]);
+    return device?.status !== "removed" ? "POINT_READINGS_NO_CHARTS" : "";
+  }, [isError, dataError, queryData, device?.status]);
 
-  if (!hasAccess || !systemExists) {
+  if (!hasAccess || !deviceExists) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center max-w-md">
@@ -110,8 +110,8 @@ export default function DeviceViewer({
             Access Denied
           </h2>
           <p className="text-gray-400 mb-6">
-            You don&apos;t have permission to view this system. Please contact
-            your system administrator if you believe this is an error.
+            You don&apos;t have permission to view this device. Please contact
+            your device administrator if you believe this is an error.
           </p>
           <Link
             href="/dashboard"
@@ -138,13 +138,13 @@ export default function DeviceViewer({
 
   return (
     <main className="max-w-7xl mx-auto px-1 py-4">
-      {/* Removed System Banner — shown regardless of data availability. */}
-      {system?.status === "removed" && (
+      {/* Removed Device Banner — shown regardless of data availability. */}
+      {device?.status === "removed" && (
         <div className="mb-4 p-4 bg-orange-900/50 border border-orange-700 text-orange-300 rounded-lg flex items-center gap-3">
           <AlertTriangle className="w-5 h-5 flex-shrink-0" />
           <div>
             <span className="font-semibold">
-              This system has been marked as removed.
+              This device has been marked as removed.
             </span>
           </div>
         </div>

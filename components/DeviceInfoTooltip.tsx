@@ -1,102 +1,105 @@
-'use client'
+"use client";
 
-import { useState, useRef, useEffect } from 'react'
-import { Info } from 'lucide-react'
+import { useState, useRef, useEffect } from "react";
+import { Info } from "lucide-react";
 
-interface SystemInfo {
-  model?: string | null
-  serial?: string | null
-  ratings?: string | null
-  solarSize?: string | null
-  batterySize?: string | null
+interface DeviceInfo {
+  model?: string | null;
+  serial?: string | null;
+  ratings?: string | null;
+  solarSize?: string | null;
+  batterySize?: string | null;
 }
 
-interface SystemInfoTooltipProps {
-  systemInfo: SystemInfo
-  systemNumber: string
+interface DeviceInfoTooltipProps {
+  deviceInfo: DeviceInfo;
+  systemNumber: string;
 }
 
-export default function SystemInfoTooltip({ systemInfo, systemNumber }: SystemInfoTooltipProps) {
-  const [isVisible, setIsVisible] = useState(false)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
-  const iconRef = useRef<HTMLDivElement>(null)
+export default function DeviceInfoTooltip({
+  deviceInfo,
+  systemNumber,
+}: DeviceInfoTooltipProps) {
+  const [isVisible, setIsVisible] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const iconRef = useRef<HTMLDivElement>(null);
 
   const handleMouseEnter = () => {
     if (iconRef.current) {
-      const rect = iconRef.current.getBoundingClientRect()
+      const rect = iconRef.current.getBoundingClientRect();
       setPosition({
         x: rect.right + 8,
-        y: rect.top
-      })
+        y: rect.top,
+      });
     }
-    setIsVisible(true)
-  }
+    setIsVisible(true);
+  };
 
   const handleMouseLeave = () => {
-    setIsVisible(false)
-  }
+    setIsVisible(false);
+  };
 
   // Check if there's any info to display
-  const hasInfo = systemInfo && (
-    systemInfo.model || 
-    systemInfo.serial || 
-    systemInfo.ratings || 
-    systemInfo.solarSize || 
-    systemInfo.batterySize
-  )
+  const hasInfo =
+    deviceInfo &&
+    (deviceInfo.model ||
+      deviceInfo.serial ||
+      deviceInfo.ratings ||
+      deviceInfo.solarSize ||
+      deviceInfo.batterySize);
 
-  if (!hasInfo) return null
+  if (!hasInfo) return null;
 
   return (
     <>
       <div ref={iconRef} className="relative inline-block">
-        <Info 
+        <Info
           className="w-3 h-3 text-gray-500 hover:text-gray-300 cursor-help transition-colors"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         />
       </div>
-      
+
       {isVisible && (
-        <div 
+        <div
           className="fixed z-[100] bg-gray-900 border border-gray-700 rounded-lg p-3 shadow-lg whitespace-nowrap min-w-[200px]"
-          style={{ 
+          style={{
             left: `${position.x}px`,
-            top: `${position.y}px`
+            top: `${position.y}px`,
           }}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
           <table className="text-xs">
             <tbody>
-              {systemInfo.model && (
+              {deviceInfo.model && (
                 <tr>
                   <td className="text-gray-500 pr-3">Model:</td>
-                  <td className="text-gray-300">{systemInfo.model}</td>
+                  <td className="text-gray-300">{deviceInfo.model}</td>
                 </tr>
               )}
-              {systemInfo.serial && (
+              {deviceInfo.serial && (
                 <tr>
                   <td className="text-gray-500 pr-3">Serial:</td>
-                  <td className="text-gray-300">{systemInfo.serial}</td>
+                  <td className="text-gray-300">{deviceInfo.serial}</td>
                 </tr>
               )}
-              {systemInfo.ratings && (
+              {deviceInfo.ratings && (
                 <tr>
                   <td className="text-gray-500 pr-3">Ratings:</td>
-                  <td className="text-gray-300">{systemInfo.ratings}</td>
+                  <td className="text-gray-300">{deviceInfo.ratings}</td>
                 </tr>
               )}
-              {systemInfo.solarSize && (
+              {deviceInfo.solarSize && (
                 <tr>
                   <td className="text-gray-500 pr-3">Solar:</td>
-                  <td className="text-gray-300">{systemInfo.solarSize}</td>
+                  <td className="text-gray-300">{deviceInfo.solarSize}</td>
                 </tr>
               )}
-              {systemInfo.batterySize && (
+              {deviceInfo.batterySize && (
                 <tr>
                   <td className="text-gray-500 pr-3">Battery:</td>
-                  <td className="text-gray-300">{systemInfo.batterySize}</td>
+                  <td className="text-gray-300">{deviceInfo.batterySize}</td>
                 </tr>
               )}
             </tbody>
@@ -104,5 +107,5 @@ export default function SystemInfoTooltip({ systemInfo, systemNumber }: SystemIn
         </div>
       )}
     </>
-  )
+  );
 }

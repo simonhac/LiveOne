@@ -30,7 +30,7 @@ const AU_STATES = [
   "NT",
 ] as const;
 
-interface SystemSettingsDialogProps {
+interface DeviceSettingsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   systemId: number | null;
@@ -44,7 +44,7 @@ interface SystemSettingsDialogProps {
   }) => Promise<void>;
 }
 
-export default function SystemSettingsDialog({
+export default function DeviceSettingsDialog({
   isOpen,
   onClose,
   systemId,
@@ -52,7 +52,7 @@ export default function SystemSettingsDialog({
   metadata,
   isAdmin = false,
   onUpdate,
-}: SystemSettingsDialogProps) {
+}: DeviceSettingsDialogProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState("");
@@ -114,7 +114,7 @@ export default function SystemSettingsDialog({
           alias?: string | null;
           displayTimezone?: string | null;
         };
-      }>(`/api/admin/systems/${systemId}/settings`);
+      }>(`/api/admin/devices/${systemId}/settings`);
 
       return { settings };
     },
@@ -164,7 +164,7 @@ export default function SystemSettingsDialog({
     queryFn: () =>
       fetchJson<{
         location?: { state?: string | null; postcode?: string | null };
-      }>(`/api/systems/${systemId}/location`),
+      }>(`/api/devices/${systemId}/location`),
     enabled: isOpen && !!systemId,
   });
 
@@ -243,7 +243,7 @@ export default function SystemSettingsDialog({
         console.log("Settings to save:", settings);
 
         const response = await fetch(
-          `/api/admin/systems/${systemId}/settings`,
+          `/api/admin/devices/${systemId}/settings`,
           {
             method: "PATCH",
             headers: {
@@ -260,12 +260,12 @@ export default function SystemSettingsDialog({
         }
       }
 
-      // Save Tesla config via the generic per-system metadata route
+      // Save Tesla config via the generic per-device metadata route
       if (isTeslaDirty && teslaSaveRef.current) {
         const teslaConfig = await teslaSaveRef.current();
 
         const response = await fetch(
-          `/api/admin/systems/${systemId}/metadata`,
+          `/api/admin/devices/${systemId}/metadata`,
           {
             method: "PATCH",
             headers: {
@@ -286,7 +286,7 @@ export default function SystemSettingsDialog({
       if (isConfigDirty && configSaveRef.current) {
         const deviceConfig = await configSaveRef.current();
 
-        const response = await fetch(`/api/admin/systems/${systemId}/config`, {
+        const response = await fetch(`/api/admin/devices/${systemId}/config`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
@@ -310,7 +310,7 @@ export default function SystemSettingsDialog({
         console.log("Admin data to save:", adminData);
 
         const response = await fetch(
-          `/api/admin/systems/${systemId}/admin-settings`,
+          `/api/admin/devices/${systemId}/admin-settings`,
           {
             method: "PATCH",
             headers: {
@@ -330,7 +330,7 @@ export default function SystemSettingsDialog({
       // Save the site's location (state + optional postcode → NEM region for the Local Grid card).
       // "" clears the field (see mergeAreaLocation). country is AU for the NEM.
       if (isLocationDirty) {
-        const response = await fetch(`/api/systems/${systemId}/location`, {
+        const response = await fetch(`/api/devices/${systemId}/location`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -381,7 +381,7 @@ export default function SystemSettingsDialog({
         queryKey: ["system", systemId, "location"],
       });
       // Config edits change capability eligibility + stale/sizing — refresh the config query and the
-      // system's live dashboard data so open cards re-derive.
+      // device's live dashboard data so open cards re-derive.
       queryClient.invalidateQueries({
         queryKey: ["system", systemId, "config"],
       });
@@ -618,7 +618,7 @@ export default function SystemSettingsDialog({
                     </label>
                     <p className="text-xs text-gray-400 mb-2">
                       Used as an alias in URLs. Aliases must be unique across
-                      all of the owner&apos;s systems, and contain only letters,
+                      all of the owner&apos;s devices, and contain only letters,
                       digits, and underscores and at least one non-numeric
                       character.
                     </p>

@@ -11,7 +11,7 @@ interface Session {
   sessionLabel?: string;
   systemId: number;
   vendorType: string;
-  systemName: string;
+  deviceName: string;
   cause: string;
   started: string;
   duration: number;
@@ -106,7 +106,7 @@ export default function SessionInfoModal({
                   href={`/device/${session.systemId}`}
                   className="hover:text-blue-400 hover:underline transition-colors"
                 >
-                  {session.systemName}{" "}
+                  {session.deviceName}{" "}
                   <span className="text-gray-500">ID: {session.systemId}</span>
                 </a>{" "}
                 — {session.vendorType}

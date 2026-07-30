@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
 import { PointInfo } from "@/lib/point/point-info";
 
-interface SystemInfo {
+interface DeviceInfo {
   id: number;
   vendorType: string;
   vendorSiteId: string;
@@ -17,7 +17,7 @@ interface SystemInfo {
 interface PointInfoModalProps {
   isOpen: boolean;
   onClose: () => void;
-  system: SystemInfo | null;
+  device: DeviceInfo | null;
   point: PointInfo | null;
   onUpdate: (
     pointIndex: number,
@@ -33,7 +33,7 @@ interface PointInfoModalProps {
 export default function PointInfoModal({
   isOpen,
   onClose,
-  system,
+  device,
   point,
   onUpdate,
 }: PointInfoModalProps) {
@@ -147,7 +147,7 @@ export default function PointInfoModal({
     }
   };
 
-  if (!isOpen || !point || !system || typeof document === "undefined")
+  if (!isOpen || !point || !device || typeof document === "undefined")
     return null;
 
   // Handle Enter key to save
@@ -179,7 +179,7 @@ export default function PointInfoModal({
             <h2 className="text-lg font-medium text-gray-100">
               Point Information{" "}
               <span className="text-gray-500">
-                ID: {system.id}.{point.index}
+                ID: {device.id}.{point.index}
               </span>
             </h2>
             <button
@@ -196,12 +196,12 @@ export default function PointInfoModal({
             <div className="space-y-2 text-sm">
               <div className="flex items-start gap-3">
                 <span className="w-28 shrink-0 text-gray-400">
-                  Original System:
+                  Original Device:
                 </span>
                 <span className="text-gray-300">
-                  {system.displayName}
+                  {device.displayName}
                   <span className="text-gray-500">
-                    {system.alias && ` (${system.alias})`} ID: {system.id}
+                    {device.alias && ` (${device.alias})`} ID: {device.id}
                   </span>
                 </span>
               </div>
@@ -211,7 +211,7 @@ export default function PointInfoModal({
                 </span>
                 <span className="font-mono break-all">
                   <span className="text-gray-500">
-                    liveone/{system.vendorType}/{system.vendorSiteId}/
+                    liveone/{device.vendorType}/{device.vendorSiteId}/
                   </span>
                   <span className="text-gray-300">
                     {point.physicalPathTail}

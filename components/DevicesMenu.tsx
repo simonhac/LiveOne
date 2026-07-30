@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, Layers } from "lucide-react";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -15,12 +15,12 @@ interface AvailableSystem {
   ownerUsername?: string | null;
 }
 
-interface SystemsMenuProps {
-  availableSystems: AvailableSystem[];
+interface DevicesMenuProps {
+  availableDevices: AvailableDevice[];
   currentSystemId?: string;
   userId?: string;
   isAdmin?: boolean;
-  onSystemSelect?: (systemId: number) => void;
+  onDeviceSelect?: (systemId: number) => void;
   /** Close the parent dropdown after picking the "Go to Dashboards" cross-nav row. */
   onNavigate?: () => void;
   /** Only fetch the dashboards/default for the "Go to Dashboards" footer when this is a real owner. */
@@ -32,12 +32,12 @@ interface SystemsMenuProps {
   isMobile?: boolean;
 }
 
-export default function SystemsMenu({
-  availableSystems,
+export default function DevicesMenu({
+  availableDevices,
   currentSystemId,
   userId,
   isAdmin = false,
-  onSystemSelect,
+  onDeviceSelect,
   onNavigate,
   enabled = true,
   preserveQueryParams = ["period"],
@@ -45,7 +45,7 @@ export default function SystemsMenu({
   itemClassName = "block px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 transition-colors",
   activeItemClassName = "bg-gray-700",
   isMobile = false,
-}: SystemsMenuProps) {
+}: DevicesMenuProps) {
   // "Go to Dashboards" cross-nav: jump to the user's default composition dashboard if set (and still
   // in the list), else the first one. Same queries the header prefetches (usePrefetchDashboardsMenu)
   // → deduped, no extra fetch. Hidden when the user has no composition dashboards.
@@ -56,41 +56,41 @@ export default function SystemsMenu({
   const goToDashboardId = dashboards.some((d) => d.id === defaultDashboardId)
     ? defaultDashboardId
     : (dashboards[0]?.id ?? null);
-  // Physical devices. Areas-backed virtual systems are already excluded upstream (never in the
-  // systems/devices lists); public grid-data sources (e.g. OpenElectricity) count as physical and stay.
-  const devices = availableSystems;
+  // Physical devices. Areas-backed virtual devices are already excluded upstream (never in the
+  // device lists); public grid-data sources (e.g. OpenElectricity) count as physical and stay.
+  const devices = availableDevices;
 
-  // Separate owned vs granted systems
-  const ownedSystems = devices
+  // Separate owned vs granted devices
+  const ownedDevices = devices
     .filter((s) => s.ownerClerkUserId === userId)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  // Public (ownerless) systems are visible to everyone.
-  const publicSystems = devices
+  // Public (ownerless) devices are visible to everyone.
+  const publicDevices = devices
     .filter((s) => s.ownerClerkUserId == null)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  const grantedSystems = devices
+  const grantedDevices = devices
     .filter((s) => s.ownerClerkUserId != null && s.ownerClerkUserId !== userId)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   const handleClick = (systemId: number) => {
-    if (onSystemSelect) {
-      onSystemSelect(systemId);
+    if (onDeviceSelect) {
+      onDeviceSelect(systemId);
     }
   };
 
-  const renderSystemItem = (system: AvailableSystem) => {
-    const isActive = currentSystemId && system.id === parseInt(currentSystemId);
-    const displayText = system.displayName || `System ${system.vendorSiteId}`;
+  const renderDeviceItem = (device: AvailableDevice) => {
+    const isActive = currentSystemId && device.id === parseInt(currentSystemId);
+    const displayText = device.displayName || `System ${device.vendorSiteId}`;
 
     if (isMobile) {
       return (
         <button
-          key={system.id}
-          onClick={() => handleClick(system.id)}
+          key={device.id}
+          onClick={() => handleClick(device.id)}
           className={`${itemClassName} ${isActive ? activeItemClassName : ""} ${
-            system.id.toString() === currentSystemId
+            device.id.toString() === currentSystemId
               ? "text-blue-400 bg-gray-700/50"
               : ""
           } flex items-center gap-2`}
@@ -111,7 +111,7 @@ export default function SystemsMenu({
               .map((param) => `${param}=${searchParams.get(param)}`)
               .join("&");
 
-            // Extract subpage from current path (e.g., /heatmap from /device/user/system/heatmap)
+            // Extract subpage from current path (e.g., /heatmap from /device/user/device/heatmap)
             const pathParts = window.location.pathname
               .split("/")
               .filter(Boolean);
@@ -119,9 +119,9 @@ export default function SystemsMenu({
             // Subpages are: heatmap, generator, amber, latest
             const knownSubpages = ["heatmap", "generator", "amber", "latest"];
             const lastPart = pathParts[pathParts.length - 1];
-            // Only preserve /amber subpage if target system is amber vendorType
+            // Only preserve /amber subpage if target device is amber vendorType
             const sp = knownSubpages.includes(lastPart)
-              ? lastPart === "amber" && system.vendorType !== "amber"
+              ? lastPart === "amber" && device.vendorType !== "amber"
                 ? ""
                 : `/${lastPart}`
               : "";
@@ -130,20 +130,20 @@ export default function SystemsMenu({
           })()
         : { queryString: "", subpage: "" };
 
-    // Prefer username/shortname path if available, otherwise use system ID
+    // Prefer username/shortname path if available, otherwise use device ID
     const basePath =
-      system.ownerUsername && system.alias
-        ? `/device/${system.ownerUsername}/${system.alias}`
-        : `/device/${system.id}`;
+      device.ownerUsername && device.alias
+        ? `/device/${device.ownerUsername}/${device.alias}`
+        : `/device/${device.id}`;
     const fullPath = `${basePath}${subpage}`;
     const href = queryString ? `${fullPath}?${queryString}` : fullPath;
 
     return (
       <Link
-        key={system.id}
+        key={device.id}
         href={href}
         className={`${itemClassName} ${isActive ? activeItemClassName : ""} flex items-center gap-2`}
-        onClick={() => handleClick(system.id)}
+        onClick={() => handleClick(device.id)}
       >
         <span>{displayText}</span>
       </Link>
@@ -152,21 +152,21 @@ export default function SystemsMenu({
 
   return (
     <div className={className}>
-      {/* Owned systems */}
-      {ownedSystems.map(renderSystemItem)}
+      {/* Owned devices */}
+      {ownedDevices.map(renderDeviceItem)}
 
-      {/* Public (ownerless) systems */}
-      {ownedSystems.length > 0 && publicSystems.length > 0 && (
+      {/* Public (ownerless) devices */}
+      {ownedDevices.length > 0 && publicDevices.length > 0 && (
         <div className="border-t border-gray-700 my-1"></div>
       )}
-      {publicSystems.map(renderSystemItem)}
+      {publicDevices.map(renderDeviceItem)}
 
-      {/* Granted systems */}
-      {(ownedSystems.length > 0 || publicSystems.length > 0) &&
-        grantedSystems.length > 0 && (
+      {/* Granted devices */}
+      {(ownedDevices.length > 0 || publicDevices.length > 0) &&
+        grantedDevices.length > 0 && (
           <div className="border-t border-gray-700 my-1"></div>
         )}
-      {grantedSystems.map(renderSystemItem)}
+      {grantedDevices.map(renderDeviceItem)}
 
       {/* Manage the owner's Areas/sites (the /areas list — browse, edit, create). */}
       <div className="border-t border-gray-700 my-1"></div>

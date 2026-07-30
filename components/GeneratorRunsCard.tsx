@@ -18,7 +18,7 @@ import { formatDollars } from "@/lib/provenance-format";
  * be meaningfully clipped). Such a run is marked with an asterisk and a footnote appears under the
  * table explaining it (only when at least one run is marked).
  *
- * Shown on dashboards whose system has an enabled generator tracker (see lib/dashboard/cards.ts
+ * Shown on dashboards whose device has an enabled generator tracker (see lib/dashboard/cards.ts
  * "generator-runs"). In live mode (D/W) it requests period mode (`1d`/`7d`, stable query key);
  * in historical mode (and always for M/Y) it requests the explicit `start`/`end` range from the URL.
  *

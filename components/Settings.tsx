@@ -170,7 +170,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                           Status: Connected
                         </p>
                         <p className="text-sm text-gray-400">
-                          System ID: {enphaseStatus.systemId}
+                          Device ID: {enphaseStatus.systemId}
                         </p>
                         {enphaseStatus.expiresAt && (
                           <p className="text-sm text-gray-400">
@@ -197,17 +197,17 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                       ) : (
                         <Power className="w-4 h-4" />
                       )}
-                      Disconnect Enphase System
+                      Disconnect Enphase Device
                     </button>
                   </div>
                 ) : (
                   <div className="space-y-4">
                     <div>
                       <p className="text-white font-medium mb-2">
-                        Connect Your Enphase System
+                        Connect Your Enphase Device
                       </p>
                       <p className="text-sm text-gray-400 mb-4">
-                        Connect your Enphase solar system to monitor production,
+                        Connect your Enphase solar device to monitor production,
                         consumption, and battery data.
                       </p>
 
@@ -221,7 +221,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                           </li>
                           <li>Review and approve access permissions</li>
                           <li>You&apos;ll be redirected back here</li>
-                          <li>Your system will start syncing data</li>
+                          <li>Your device will start syncing data</li>
                         </ol>
                       </div>
 
@@ -231,7 +231,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                             Development Mode
                           </p>
                           <p className="text-sm text-blue-300">
-                            Using mock Enphase service. No real system required.
+                            Using mock Enphase service. No real device required.
                           </p>
                         </div>
                       )}
@@ -247,7 +247,7 @@ export default function Settings({ isOpen, onClose }: SettingsProps) {
                       ) : (
                         <>
                           <Zap className="w-4 h-4" />
-                          Connect Enphase System
+                          Connect Enphase Device
                         </>
                       )}
                     </button>

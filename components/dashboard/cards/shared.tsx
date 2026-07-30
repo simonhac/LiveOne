@@ -14,7 +14,7 @@ import type { DeviceConfig } from "@/lib/capabilities/config";
  * The slice of the `dashboardDataQuery` payload the cards read.
  *
  * config-v4 Phase 13 PR 1: the payload is DISCRIMINATED — `device` for a real device, `area` for an
- * Area served as an Area (previously both arrived as `system`, an Area via `synthesizeAreaView`'s
+ * Area served as an Area (previously both arrived as `device`, an Area via `synthesizeAreaView`'s
  * device-shaped fabrication). Cards read the shared fields through {@link subjectOf}; only a card that
  * genuinely needs device hardware (`vendorType`, `vendorSiteId`, `config`) narrows on `datum.device`,
  * and those fields are simply ABSENT for an area — as they were `null`/`"area"` filler before.
@@ -38,7 +38,7 @@ export interface AreaDatum {
   latest?: LatestPointValues;
 }
 
-/** The subject fields common to both legs — the drop-in replacement for the old `datum?.system`. */
+/** The subject fields common to both legs — the drop-in replacement for the old `datum?.device`. */
 export interface AreaDatumSubject {
   id: number;
   timezoneOffsetMin: number;
@@ -62,7 +62,7 @@ export function subjectOf(
 }
 
 /**
- * A card's view of its system's live data: the shared `dashboardDataQuery` (React Query dedupes,
+ * A card's view of its device's live data: the shared `dashboardDataQuery` (React Query dedupes,
  * so all whole-area cards share one request; a device-bound card adds one), paused while any
  * modal is open. `paused` is exposed for plugins with a second query of their own (ev-provenance)
  * so modal-open pauses that too.
@@ -87,7 +87,7 @@ export function useAreaDatum(systemId: number): {
 
 /**
  * Seconds a tile can go without an update before it dims. Prefers the device's configured
- * `updateCadenceSeconds` (from `systems.config`); falls back to the vendor default (Enphase's slow
+ * `updateCadenceSeconds` (from `devices.config`); falls back to the vendor default (Enphase's slow
  * cloud cadence, else 5 min) when unconfigured.
  */
 export function staleThreshold(
@@ -98,17 +98,17 @@ export function staleThreshold(
 }
 
 /**
- * The line chart's y-axis scaling hint, derived from the system's nameplate solar/inverter sizing
- * (`systemInfo.solarSize` "9 kW" / `ratings` "7.5kW, 48V"). Used by the per-device viewer historically;
+ * The line chart's y-axis scaling hint, derived from the device's nameplate solar/inverter sizing
+ * (`deviceInfo.solarSize` "9 kW" / `ratings` "7.5kW, 48V"). Used by the per-device viewer historically;
  * resolved here so every section's lines chart scales the same. Undefined when no sizing is known.
  */
-export function maxPowerHintFromSystemInfo(systemInfo?: {
+export function maxPowerHintFromDeviceInfo(deviceInfo?: {
   solarSize?: string;
   ratings?: string;
 }): number | undefined {
-  const solarMatch = systemInfo?.solarSize?.match(/^(\d+(?:\.\d+)?)\s+kW$/i);
+  const solarMatch = deviceInfo?.solarSize?.match(/^(\d+(?:\.\d+)?)\s+kW$/i);
   const solarKW = solarMatch ? parseFloat(solarMatch[1]) : undefined;
-  const ratingMatch = systemInfo?.ratings?.match(/(\d+(?:\.\d+)?)kW/i);
+  const ratingMatch = deviceInfo?.ratings?.match(/(\d+(?:\.\d+)?)kW/i);
   const inverterKW = ratingMatch ? parseFloat(ratingMatch[1]) : undefined;
   if (solarKW !== undefined && inverterKW !== undefined) {
     return Math.max(solarKW, inverterKW);

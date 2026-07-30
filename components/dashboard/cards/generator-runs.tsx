@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The generator-runs panel — self-fetches its system's timezone (the runs panel reads the temporal
+ * The generator-runs panel — self-fetches its device's timezone (the runs panel reads the temporal
  * navigator, which needs it), then renders GeneratorRunsCard. Device-bound: reads
  * `card.deviceSystemId ?? handle` (run periods are keyed by a member system_id, not the synthetic
  * area handle).

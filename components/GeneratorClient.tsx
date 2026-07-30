@@ -33,7 +33,7 @@ const TH_LEFT = "px-4 py-3 text-left text-sm font-medium text-gray-200";
 const TH_RIGHT = "px-4 py-3 text-right text-sm font-medium text-gray-200";
 const TD_NUM = "px-4 py-3 text-sm text-right tabular-nums";
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -44,23 +44,23 @@ interface AvailableSystem {
 
 interface GeneratorClientProps {
   systemIdentifier: string; // For display/routing purposes
-  system: {
+  device: {
     id: number;
     displayName: string;
   };
   userId: string;
   isAdmin: boolean;
-  availableSystems: AvailableSystem[];
+  availableDevices: AvailableDevice[];
 }
 
 export default function GeneratorClient({
   systemIdentifier,
-  system,
+  device,
   userId,
   isAdmin,
-  availableSystems,
+  availableDevices,
 }: GeneratorClientProps) {
-  const propSystemId = system.id;
+  const propSystemId = device.id;
 
   // Bounded read of persisted run periods (replaces the old unbounded generator-events scan), via
   // the shared run-periods query factory. A non-ok response surfaces as `isError`.

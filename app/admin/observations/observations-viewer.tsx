@@ -46,7 +46,7 @@ interface Stats {
     raw24h: number;
     agg5m24h: number;
     sessions24h: number;
-    systems24h: number;
+    devices24h: number;
     lastIngestedAt: string | null;
   };
 }
@@ -644,7 +644,7 @@ function StatCards({
       />
       <Stat
         label="Systems active (24h)"
-        value={summary ? summary.systems24h.toLocaleString() : "—"}
+        value={summary ? summary.devices24h.toLocaleString() : "—"}
         hint="distinct systems"
         loading={!summary}
       />
@@ -748,7 +748,7 @@ function PendingTable({
             <thead className="text-gray-400 text-left border-b border-gray-700">
               <tr>
                 <th className="pb-2 pr-4 font-medium">Time</th>
-                <th className="pb-2 pr-4 font-medium">System</th>
+                <th className="pb-2 pr-4 font-medium">Device</th>
                 <th className="pb-2 pr-4 font-medium">Topics</th>
                 <th className="pb-2 pr-4 font-medium text-right">Obs</th>
                 <th className="pb-2 pr-4 font-medium text-right">Retries</th>

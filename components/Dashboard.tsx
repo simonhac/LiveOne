@@ -18,7 +18,7 @@ import type { ReadableArea } from "@/lib/areas/list";
 /**
  * The nested dashboard renderer. Consumes the v3 definition (Dashboard -> AreaSection -> Card -> Tile,
  * see lib/dashboard/v3.ts) and renders each AreaSection against its Area's handle. There is NO home
- * system: every card self-fetches via the per-systemId query factories (see the plugin modules under
+ * device: every card self-fetches via the per-systemId query factories (see the plugin modules under
  * components/dashboard/cards/ and /tiles/), and every tile/chart reads either the section's own
  * handle (whole-area) or a named member device.
  *
@@ -61,11 +61,11 @@ export default function Dashboard({
   // immediately, so there's no "Loading…" gate before the skeletons appear.
   const sections = descriptor.sections.filter((s) => !s.hidden);
 
-  // Best-effort prefetch: when this dashboard's sections span 2+ distinct systems (e.g. a household
+  // Best-effort prefetch: when this dashboard's sections span 2+ distinct devices (e.g. a household
   // area + an oe-grid region section), fire ONE /api/data request for all of them and seed each
-  // system's own dashboardDataQuery cache — see dashboardDataBatchQuery. Purely additive: every card
+  // device's own dashboardDataQuery cache — see dashboardDataBatchQuery. Purely additive: every card
   // still self-fetches via useAreaDatum as before, so a slow/absent batch just means no saving, never
-  // a regression. No-ops (disabled) below 2 systems.
+  // a regression. No-ops (disabled) below 2 devices.
   const queryClient = useQueryClient();
   const handles = [
     ...new Set(
@@ -133,7 +133,7 @@ function AreaSectionView({
   const visible = section.cards.filter((c) => !c.hidden);
 
   // Once the readable-Area set has resolved (no longer loading) and this section STILL can't map to
-  // a system handle — the Area was removed, or the viewer can't read it (common in local dev, where
+  // a device handle — the Area was removed, or the viewer can't read it (common in local dev, where
   // you sign in as a Clerk *dev* user who may not own/have the synced Areas shared to them) — surface
   // a clear notice. Without this the cards below would draw skeletons that spin forever, silently
   // (the failure mode that made this look like a mysterious blank dashboard).

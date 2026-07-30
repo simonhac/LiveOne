@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { getAdminSystemsData } from "@/lib/admin/get-systems-data";
+import { getAdminDevicesData } from "@/lib/admin/get-devices-data";
 import AdminDashboardClient from "./AdminDashboardClient";
 
 export default async function AdminDashboard() {
@@ -18,13 +18,13 @@ export default async function AdminDashboard() {
     redirect("/dashboard");
   }
 
-  // Fetch systems data server-side with 100ms timeout for latest values
+  // Fetch devices data server-side with 100ms timeout for latest values
   // If KV is slow, page renders immediately and client fetches latest values
-  const initialData = await getAdminSystemsData({ latestValuesTimeoutMs: 100 });
+  const initialData = await getAdminDevicesData({ latestValuesTimeoutMs: 100 });
 
   return (
     <AdminDashboardClient
-      initialSystems={initialData.systems}
+      initialDevices={initialData.devices}
       latestValuesIncluded={initialData.latestValuesIncluded}
     />
   );

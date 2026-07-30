@@ -44,21 +44,21 @@ interface VendorInfo {
   vendorType: string;
   displayName: string;
   credentialFields: CredentialField[];
-  addSystemFlow?: "credentials" | "oauth-redirect";
+  addDeviceFlow?: "credentials" | "oauth-redirect";
 }
 
-interface AddSystemDialogProps {
+interface AddDeviceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
+export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
   const router = useRouter();
   const [selectedVendor, setSelectedVendor] = useState<string>("");
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [testSuccess, setTestSuccess] = useState(false);
-  const [systemInfo, setSystemInfo] = useState<any>(null);
+  const [deviceInfo, setDeviceInfo] = useState<any>(null);
 
   // Register this modal with the global modal context
   const { registerModal, unregisterModal } = useModalContext();
@@ -83,7 +83,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       setCredentials({});
       setError(null);
       setTestSuccess(false);
-      setSystemInfo(null);
+      setDeviceInfo(null);
     }
     onOpenChange(newOpen);
   };
@@ -97,7 +97,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
   const vendors = (vendorsData?.vendors ?? []).filter(
     (v) =>
-      v.addSystemFlow === "oauth-redirect" ||
+      v.addDeviceFlow === "oauth-redirect" ||
       (v.credentialFields && v.credentialFields.length > 0),
   );
 
@@ -108,7 +108,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       setCredentials({});
       setError(null);
       setTestSuccess(false);
-      setSystemInfo(null);
+      setDeviceInfo(null);
     }
   }, [open]);
 
@@ -121,11 +121,11 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     setCredentials({});
     setError(null);
     setTestSuccess(false);
-    setSystemInfo(null);
+    setDeviceInfo(null);
   };
 
   const isOAuthRedirect =
-    selectedVendorInfo?.addSystemFlow === "oauth-redirect";
+    selectedVendorInfo?.addDeviceFlow === "oauth-redirect";
 
   const handleOAuthConnected = (systemId: number) => {
     onOpenChange(false);
@@ -175,7 +175,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     },
     onSuccess: (data) => {
       setTestSuccess(true);
-      setSystemInfo(data.systemInfo);
+      setDeviceInfo(data.deviceInfo);
     },
     onError: (err) => {
       setError(
@@ -188,13 +188,13 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch("/api/systems", {
+      const response = await fetch("/api/devices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           vendorType: selectedVendor,
           credentials,
-          systemInfo,
+          deviceInfo,
         }),
       });
 
@@ -209,7 +209,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
       setError(null);
     },
     onSuccess: (data) => {
-      // Success! Navigate to the new system
+      // Success! Navigate to the new device
       onOpenChange(false);
       router.push(`/device/${data.systemId}`);
       router.refresh();
@@ -231,7 +231,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
     testMutation.mutate();
   };
 
-  const handleCreateSystem = () => {
+  const handleCreateDevice = () => {
     if (!testSuccess || !selectedVendorInfo) return;
     createMutation.mutate();
   };
@@ -246,9 +246,9 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
         }}
       >
         <DialogHeader>
-          <DialogTitle>Add System</DialogTitle>
+          <DialogTitle>Add Device</DialogTitle>
           <DialogDescription>
-            Connect a new energy system to monitor its performance
+            Connect a new energy device to monitor its performance
           </DialogDescription>
         </DialogHeader>
 
@@ -256,7 +256,7 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
           {/* Vendor Selection */}
           <div>
             <Label htmlFor="vendor" className="block mb-[10px]">
-              System Type
+              Device Type
             </Label>
             <Select value={selectedVendor} onValueChange={handleVendorChange}>
               <SelectTrigger id="vendor">
@@ -327,17 +327,17 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
               <CheckCircle className="h-4 w-4 text-green-600" />
               <AlertDescription className="text-green-600">
                 Connection successful!
-                {systemInfo && (
+                {deviceInfo && (
                   <div className="mt-2 text-sm">
-                    {systemInfo.model && <div>Model: {systemInfo.model}</div>}
-                    {systemInfo.serial && (
-                      <div>Serial: {systemInfo.serial}</div>
+                    {deviceInfo.model && <div>Model: {deviceInfo.model}</div>}
+                    {deviceInfo.serial && (
+                      <div>Serial: {deviceInfo.serial}</div>
                     )}
-                    {systemInfo.solarSize && (
-                      <div>Solar: {systemInfo.solarSize}</div>
+                    {deviceInfo.solarSize && (
+                      <div>Solar: {deviceInfo.solarSize}</div>
                     )}
-                    {systemInfo.batterySize && (
-                      <div>Battery: {systemInfo.batterySize}</div>
+                    {deviceInfo.batterySize && (
+                      <div>Battery: {deviceInfo.batterySize}</div>
                     )}
                   </div>
                 )}
@@ -374,14 +374,14 @@ export function AddSystemDialog({ open, onOpenChange }: AddSystemDialogProps) {
               </Button>
             ) : (
               <Button
-                onClick={handleCreateSystem}
+                onClick={handleCreateDevice}
                 disabled={isCreating}
                 className="bg-green-600 hover:bg-green-700 w-[140px]"
               >
                 {isCreating ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Creating System
+                    Creating Device
                   </>
                 ) : (
                   "Create System"

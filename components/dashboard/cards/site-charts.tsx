@@ -10,7 +10,7 @@
  * (`chartCapable`) is CONFIG-derived server-side (`hasChartCapability`, threaded through the Area
  * lookup — see `lib/areas/list.ts`'s `withChartCapability`) and passed in as a prop, so this can fire
  * SiteChartsCard's history/sankey fetch immediately instead of waiting on `/api/data`'s live `latest`
- * map to run the client-side capability check. `system` (vendorType/tz) still comes from the shared
+ * map to run the client-side capability check. `device` (vendorType/tz) still comes from the shared
  * `useAreaDatum` cache for display — SiteChartsCard tolerates it being unresolved yet (tz-dependent
  * bits fall back/blank until it lands).
  */
@@ -31,12 +31,12 @@ export function SiteChartsGroup({
   chartCapable?: boolean;
 }) {
   const { datum } = useAreaDatum(systemId);
-  const system = subjectOf(datum);
+  const device = subjectOf(datum);
   if (!chartCapable) return null;
   return (
     <SiteChartsCard
       systemId={String(systemId)}
-      system={system}
+      device={device}
       siteCapable={chartCapable}
       cardVisible={(k) => keys.has(k)}
       sankeyOptionsKey={sankeyOptionsKey}

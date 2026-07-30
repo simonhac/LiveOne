@@ -41,7 +41,7 @@ interface Session {
   sessionLabel?: string;
   systemId: number;
   vendorType: string;
-  systemName: string;
+  deviceName: string;
   cause: string;
   started: string;
   duration: number;
@@ -236,12 +236,12 @@ export default function ActivityViewer() {
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() => {
     const filters: ColumnFiltersState = [];
     const vendor = searchParams.get("vendor");
-    const system = searchParams.get("system");
+    const device = searchParams.get("system");
     const cause = searchParams.get("cause");
     const status = searchParams.get("status");
 
     if (vendor) filters.push({ id: "vendorType", value: vendor.split(",") });
-    if (system) filters.push({ id: "systemName", value: system.split(",") });
+    if (device) filters.push({ id: "systemName", value: device.split(",") });
     if (cause) filters.push({ id: "cause", value: cause.split(",") });
     if (status)
       filters.push({
@@ -298,7 +298,7 @@ export default function ActivityViewer() {
       if (Array.isArray(filter.value) && filter.value.length > 0) {
         const key = {
           vendorType: "vendor",
-          systemName: "system",
+          deviceName: "system",
           cause: "cause",
           successful: "status",
         }[filter.id];
@@ -394,7 +394,7 @@ export default function ActivityViewer() {
               onClick={(e) => e.stopPropagation()}
               className="text-gray-300 hover:text-blue-400 hover:underline cursor-pointer transition-colors"
             >
-              {row.original.systemName}
+              {row.original.deviceName}
             </a>
             <span className="text-gray-500">
               {" "}
@@ -503,7 +503,7 @@ export default function ActivityViewer() {
       if (Array.isArray(filter.value) && filter.value.length > 0) {
         const key = {
           vendorType: "vendor",
-          systemName: "system",
+          deviceName: "system",
           cause: "cause",
           successful: "status",
         }[filter.id];
@@ -570,7 +570,7 @@ export default function ActivityViewer() {
     queryFn: () =>
       fetchJson<{
         filterOptions: {
-          systemName: string[];
+          deviceName: string[];
           vendorType: string[];
           cause: string[];
           successful: boolean[];
@@ -579,7 +579,7 @@ export default function ActivityViewer() {
   });
 
   const filterOptions = filterOptionsQuery.data?.filterOptions ?? {
-    systemName: [],
+    deviceName: [],
     vendorType: [],
     cause: [],
     successful: [],

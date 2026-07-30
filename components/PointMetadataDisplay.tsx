@@ -2,7 +2,7 @@ interface PointMetadataDisplayProps {
   vendorType?: string;
   vendorSiteId?: string | number;
   ownerUsername?: string;
-  systemShortName?: string | null;
+  deviceShortName?: string | null;
   systemId: number;
   originId: string;
   originSubId?: string | null;
@@ -18,7 +18,7 @@ export default function PointMetadataDisplay({
   vendorType,
   vendorSiteId,
   ownerUsername,
-  systemShortName,
+  deviceShortName,
   systemId,
   originId,
   originSubId,
@@ -35,11 +35,11 @@ export default function PointMetadataDisplay({
         Original Metadata
       </div>
 
-      {/* System */}
+      {/* Device */}
       {(vendorType || vendorSiteId || ownerUsername) && (
         <div className="flex items-center gap-3">
           <label className="text-sm font-medium text-gray-300 w-32 flex-shrink-0">
-            System:
+            Device:
           </label>
           <div className="px-2 font-mono text-sm flex-1 whitespace-nowrap">
             <span className="text-gray-300">
@@ -48,7 +48,7 @@ export default function PointMetadataDisplay({
             {ownerUsername && (
               <span className="text-gray-400">
                 {" "}
-                ({ownerUsername}/{systemShortName || systemId})
+                ({ownerUsername}/{deviceShortName || systemId})
               </span>
             )}
           </div>

@@ -281,7 +281,7 @@ export function enrichLatest(latest: LatestPointValues): LatestPointValues {
 
 /**
  * Calculate all load values including master, children, and rest-of-house.
- * (See the original SystemTiles docblock for the two calculation cases.)
+ * (See the original DeviceTiles docblock for the two calculation cases.)
  */
 export function calculateAllLoads(latest: LatestPointValues): LoadPoint[] {
   let masterLoad: number | null = null;

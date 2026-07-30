@@ -4,8 +4,8 @@ import { fetchJson } from "@/lib/queries";
 import { CAPABILITIES, type CapabilityId } from "@/lib/capabilities/registry";
 import type { DeviceConfig } from "@/lib/capabilities/config";
 
-// Editor for the typed per-device `systems.config` (DeviceConfig) blob: capability on/off overrides
-// + nameplateKw + updateCadenceSeconds. Mirrors TeslaConfigTab's shape — the parent SystemSettingsDialog
+// Editor for the typed per-device `devices.config` (DeviceConfig) blob: capability on/off overrides
+// + nameplateKw + updateCadenceSeconds. Mirrors TeslaConfigTab's shape — the parent DeviceSettingsDialog
 // drives it via the onDirtyChange / onSaveFunctionReady handshake and PATCHes the returned config.
 
 interface ConfigResponse {
@@ -67,7 +67,7 @@ export default function DeviceConfigTab({
   const configQuery = useQuery({
     queryKey: ["system", systemId, "config"],
     queryFn: () =>
-      fetchJson<ConfigResponse>(`/api/admin/systems/${systemId}/config`),
+      fetchJson<ConfigResponse>(`/api/admin/devices/${systemId}/config`),
     enabled: shouldLoad && systemId !== -1,
   });
 

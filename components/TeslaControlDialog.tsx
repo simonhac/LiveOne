@@ -58,7 +58,7 @@ const AMPS_MAX = 48;
 /**
  * Compact Tesla charge-control dialog (opened from the cog on the Tesla card).
  * Start/stop charging, set the charge limit (50–100%), and set the charging amps.
- * Each action posts to /api/systems/{id}/tesla/command and refetches the dashboard.
+ * Each action posts to /api/devices/{id}/tesla/command and refetches the dashboard.
  */
 export default function TeslaControlDialog({
   systemId,
@@ -84,7 +84,7 @@ export default function TeslaControlDialog({
 
   const mutation = useMutation({
     mutationFn: async (cmd: Command) => {
-      const response = await fetch(`/api/systems/${systemId}/tesla/command`, {
+      const response = await fetch(`/api/devices/${systemId}/tesla/command`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cmd),

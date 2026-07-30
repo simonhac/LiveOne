@@ -16,8 +16,8 @@ import MembersTab from "./MembersTab";
 import BindingsTab from "./BindingsTab";
 import type {
   AreaEditPayload,
-  CandidateSystem,
-  CandidateSystemsResponse,
+  CandidateDevice,
+  CandidateDevicesResponse,
 } from "./types";
 
 const AU_STATES = [
@@ -100,9 +100,9 @@ export default function AreaBuilderDialog({
     queryKey: ["area-builder", "candidates"],
     enabled: isOpen,
     queryFn: () =>
-      fetchJson<CandidateSystemsResponse>("/api/areas/candidate-systems"),
+      fetchJson<CandidateDevicesResponse>("/api/areas/candidate-devices"),
   });
-  const candidates: CandidateSystem[] = candidatesResp?.systems ?? [];
+  const candidates: CandidateDevice[] = candidatesResp?.devices ?? [];
 
   const { data: detail, refetch: refetchDetail } = useQuery({
     queryKey: ["area-builder", "detail", activeAreaId],

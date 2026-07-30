@@ -25,8 +25,8 @@ const EMPTY_STAGES: PollStage[] = [];
  */
 export function PollTimeline({ sessionState, systemId }: PollTimelineProps) {
   // Extract data from session state
-  const systemState = sessionState.systems.get(systemId);
-  const stages = systemState?.stages ?? EMPTY_STAGES;
+  const deviceState = sessionState.devices.get(systemId);
+  const stages = deviceState?.stages ?? EMPTY_STAGES;
   const sessionStartMs = sessionState.sessionStartTime?.getTime() || Date.now();
   const sessionEndMs = sessionState.sessionEndTime?.getTime() || Date.now();
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(

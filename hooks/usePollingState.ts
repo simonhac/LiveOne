@@ -5,10 +5,10 @@ import {
   PollingStateManager,
   getPollingStateManager,
   type PollingSessionState,
-  type SystemPollingState,
+  type DevicePollingState,
 } from "@/lib/polling-state-manager";
 
-export type { PollingSessionState, SystemPollingState };
+export type { PollingSessionState, DevicePollingState };
 
 interface UsePollingStateOptions {
   /** Use a shared singleton instance (default: true) */
@@ -20,8 +20,8 @@ interface UsePollingStateOptions {
 interface UsePollingStateReturn {
   /** Current polling session state */
   state: PollingSessionState;
-  /** Systems as array for easy rendering */
-  systems: SystemPollingState[];
+  /** Devices as array for easy rendering */
+  devices: DevicePollingState[];
   /** Whether SSE is connected */
   isConnected: boolean;
   /** Whether polling session is complete */
@@ -34,21 +34,21 @@ interface UsePollingStateReturn {
   disconnect: () => void;
   /** Reset state */
   reset: () => void;
-  /** Get a specific system's state */
-  getSystem: (systemId: number) => SystemPollingState | undefined;
+  /** Get a specific device's state */
+  getDevice: (systemId: number) => DevicePollingState | undefined;
 }
 
 /**
  * React hook for consuming PollingStateManager
  *
  * Usage:
- *   const { state, systems, startPolling, disconnect } = usePollingState();
+ *   const { state, devices, startPolling, disconnect } = usePollingState();
  *
  *   // Start polling
  *   startPolling('/api/cron/minutely?realTime=true&systemId=1');
  *
- *   // Render systems
- *   {systems.map(sys => <SystemRow key={sys.systemId} system={sys} />)}
+ *   // Render devices
+ *   {devices.map(sys => <DeviceRow key={sys.systemId} device={sys} />)}
  */
 export function usePollingState(
   options: UsePollingStateOptions = {},
@@ -82,10 +82,10 @@ export function usePollingState(
     };
   }, [manager, autoSubscribe, shared]);
 
-  // Memoized systems array
-  const systems = useMemo(() => {
-    return Array.from(state.systems.values());
-  }, [state.systems]);
+  // Memoized devices array
+  const devices = useMemo(() => {
+    return Array.from(state.devices.values());
+  }, [state.devices]);
 
   // Callbacks
   const startPolling = useCallback(
@@ -103,38 +103,38 @@ export function usePollingState(
     manager.reset();
   }, [manager]);
 
-  const getSystem = useCallback(
+  const getDevice = useCallback(
     (systemId: number) => {
-      return state.systems.get(systemId);
+      return state.devices.get(systemId);
     },
-    [state.systems],
+    [state.devices],
   );
 
   return {
     state,
-    systems,
+    devices,
     isConnected: state.isConnected,
     isComplete: state.isComplete,
     error: state.error,
     startPolling,
     disconnect,
     reset,
-    getSystem,
+    getDevice,
   };
 }
 
 /**
- * Hook for polling a single system
- * Convenience wrapper that extracts just the relevant system's state
+ * Hook for polling a single device
+ * Convenience wrapper that extracts just the relevant device's state
  */
-export function useSingleSystemPolling(systemId: number | null) {
-  const { state, startPolling, disconnect, reset, getSystem } =
+export function useSingleDevicePolling(systemId: number | null) {
+  const { state, startPolling, disconnect, reset, getDevice } =
     usePollingState();
 
-  const systemState = useMemo(() => {
+  const deviceState = useMemo(() => {
     if (systemId === null) return null;
-    return getSystem(systemId) || null;
-  }, [systemId, getSystem]);
+    return getDevice(systemId) || null;
+  }, [systemId, getDevice]);
 
   const startSinglePoll = useCallback(
     (force = false, dryRun = false) => {
@@ -152,10 +152,10 @@ export function useSingleSystemPolling(systemId: number | null) {
 
   return {
     sessionState: state,
-    systemState,
+    deviceState,
     isConnected: state.isConnected,
     isComplete: state.isComplete,
-    error: state.error || systemState?.error,
+    error: state.error || deviceState?.error,
     startPolling: startSinglePoll,
     disconnect,
     reset,
