@@ -21,7 +21,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { systems } = await import("@/lib/db/planetscale/schema");
+  const { devices } = await import("@/lib/db/planetscale/schema");
   const { storeSystemCredentials } = await import("@/lib/secure-credentials");
   const { SystemsManager } = await import("@/lib/systems-manager");
 
@@ -42,12 +42,12 @@ async function main() {
   if (!owner) {
     const owned = await planetscaleDb
       .select({
-        id: systems.id,
-        displayName: systems.displayName,
-        owner: systems.ownerClerkUserId,
+        id: devices.rid,
+        displayName: devices.name,
+        owner: devices.ownerUserId,
       })
-      .from(systems)
-      .where(isNotNull(systems.ownerClerkUserId))
+      .from(devices)
+      .where(isNotNull(devices.ownerUserId))
       .limit(100);
     const pick =
       owned.find((s) => s.id === 1) ??
@@ -67,10 +67,10 @@ async function main() {
 
   // Idempotent: reuse an existing deepsea/<siteId> system.
   const existing = await planetscaleDb
-    .select({ id: systems.id })
-    .from(systems)
+    .select({ id: devices.rid })
+    .from(devices)
     .where(
-      and(eq(systems.vendorType, vendorType), eq(systems.vendorSiteId, siteId)),
+      and(eq(devices.vendor, vendorType), eq(devices.vendorSiteId, siteId)),
     )
     .limit(1);
 

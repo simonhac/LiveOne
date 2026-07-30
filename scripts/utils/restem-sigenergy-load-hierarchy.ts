@@ -125,7 +125,7 @@ async function main() {
 
   const { and, eq, inArray } = await import("drizzle-orm");
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { systems, pointInfo, points, areas, areaBindings } = await import(
+  const { devices, pointInfo, points, areas, areaBindings } = await import(
     "@/lib/db/planetscale/schema"
   );
   if (!planetscaleDb) die("Postgres not configured.");
@@ -133,9 +133,9 @@ async function main() {
 
   // ── Resolve the system ────────────────────────────────────────────────────────────────────────
   const sigen = await db
-    .select({ id: systems.id, displayName: systems.displayName })
-    .from(systems)
-    .where(eq(systems.vendorType, "sigenergy"));
+    .select({ id: devices.rid, displayName: devices.name })
+    .from(devices)
+    .where(eq(devices.vendor, "sigenergy"));
   if (sigen.length !== 1)
     die(
       `expected exactly one sigenergy system, found ${sigen.length} — resolve by hand.`,

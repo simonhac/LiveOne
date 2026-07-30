@@ -29,7 +29,7 @@ const REGION_NAMES: Record<string, string> = {
 
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { systems } = await import("@/lib/db/planetscale/schema");
+  const { systems, devices } = await import("@/lib/db/planetscale/schema");
   const { DeviceRegistry } = await import("@/lib/registry");
 
   if (!planetscaleDb) {
@@ -53,12 +53,12 @@ async function main() {
     const name = REGION_NAMES[region] ?? region;
 
     const existing = await planetscaleDb
-      .select({ id: systems.id })
-      .from(systems)
+      .select({ id: devices.rid })
+      .from(devices)
       .where(
         and(
-          eq(systems.vendorType, "openelectricity"),
-          eq(systems.vendorSiteId, region),
+          eq(devices.vendor, "openelectricity"),
+          eq(devices.vendorSiteId, region),
         ),
       )
       .limit(1);
@@ -83,7 +83,7 @@ async function main() {
           displayTimezone: "Australia/Brisbane",
           metadata: { network: "NEM" },
         })
-        .returning({ id: systems.id });
+        .returning({ id: devices.rid });
       await DeviceRegistry.ensureDeviceForHandle(inserted.id, tx);
       return inserted;
     });

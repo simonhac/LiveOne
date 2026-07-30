@@ -29,7 +29,7 @@ const NEW_PREFIX = "source.generator.";
 async function main() {
   const dry = process.argv.includes("--dry");
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { systems, pointInfo } = await import("@/lib/db/planetscale/schema");
+  const { devices, pointInfo } = await import("@/lib/db/planetscale/schema");
 
   if (!planetscaleDb) {
     console.error(
@@ -41,10 +41,10 @@ async function main() {
   const siteId = process.env.MUSHER_SITE_ID ?? "sheephouse";
 
   const sys = await planetscaleDb
-    .select({ id: systems.id, displayName: systems.displayName })
-    .from(systems)
+    .select({ id: devices.rid, displayName: devices.name })
+    .from(devices)
     .where(
-      and(eq(systems.vendorType, "deepsea"), eq(systems.vendorSiteId, siteId)),
+      and(eq(devices.vendor, "deepsea"), eq(devices.vendorSiteId, siteId)),
     )
     .limit(1);
   if (sys.length === 0) {
