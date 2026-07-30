@@ -27,6 +27,13 @@ const publicRoutes = [
   "/api/areas/(.*)/recompute-provenance",
   "/api/areas/(.*)/provenance-summary",
   "/api/areas/by-handle/(.*)",
+  // …and their config-v4 `/api/v4` twins (Phase 14 stage 12). SEPARATE entries, not a widened pattern:
+  // middleware runs BEFORE next.config's rewrites and matches the ORIGINAL path, so `/api/v4/...` is
+  // simply a different path and inherits nothing from the lines above. Same surgical suffixes, same
+  // in-handler owner/admin/CRON_SECRET gate; the sibling v4 area routes stay Clerk-gated. (There is no
+  // v4 `recompute-provenance` yet — it is a mutation and belongs to the area-writes PR.)
+  "/api/v4/areas/(.*)/provenance-summary",
+  "/api/v4/areas/by-handle/(.*)",
   // All other routes (pages + APIs) require Clerk auth, except share links (?access=, below)
 ];
 
@@ -58,6 +65,13 @@ const shareableRoutes = [
   "/api/history", // time series + sankey (?include=sankey) — requireDashboardAccess
   "/api/device/(.*)", // per-device read endpoints the cards use (latest, run-periods)
   "/api/areas/(.*)/provenance-daily", // battery-provenance history panel — requireDashboardAccess
+  // Its config-v4 twin (Phase 14 stage 12). Same handler-side gate (`requireDashboardAccess`), same
+  // scope. It needs its OWN entry — middleware sees the original path — and it belongs HERE rather
+  // than in publicRoutes because its caller is an anonymous `?access=` viewer, not a CRON_SECRET
+  // bearer: a publicRoutes entry would hand every unauthenticated request past the edge, where the
+  // handler's own share-token check is the only thing left. Deliberately the ONLY shareable route on
+  // the /api/v4 tree; everything else there is owner-facing management.
+  "/api/v4/areas/(.*)/provenance-daily",
   // ── COMPATIBILITY SHIM WITH AN EXPIRY — delete with the next.config rewrites ─────────
   // The pre-Phase-13 spelling of the line above. Middleware runs BEFORE next.config
   // rewrites and sees the ORIGINAL path, so a stale bundle in an already-open SHARED
