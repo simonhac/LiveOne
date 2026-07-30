@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
-import { getAreaForSystem } from "@/lib/areas/resolve";
+import { getAreaForDevice } from "@/lib/areas/resolve";
 import {
   mergeAreaLocation,
   type AreaLocationPatch,
@@ -23,7 +23,7 @@ import type { AreaLocation } from "@/lib/areas/types";
 
 /** The current location for `systemId`'s Area (null if the handle has no Area). Read-only. */
 async function readLocation(systemId: number): Promise<AreaLocation | null> {
-  const area = await getAreaForSystem(systemId);
+  const area = await getAreaForDevice(systemId);
   if (!area) return null;
   const [row] = await requirePlanetscaleDb()
     .select({ location: areas.location })
@@ -42,7 +42,7 @@ export async function GET(
   if (isNaN(systemId)) {
     return NextResponse.json({ error: "Invalid system id" }, { status: 400 });
   }
-  const auth = await requireSystemAccess(request, systemId);
+  const auth = await requireDeviceAccess(request, systemId);
   if (auth instanceof NextResponse) return auth;
 
   const location = await readLocation(systemId);
@@ -78,14 +78,14 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid system id" }, { status: 400 });
   }
   // Setting a site's location is an owner action → require write access.
-  const auth = await requireSystemAccess(request, systemId, {
+  const auth = await requireDeviceAccess(request, systemId, {
     requireWrite: true,
   });
   if (auth instanceof NextResponse) return auth;
 
   // Location is an Area/site property. Never mint an Area here — areas are explicit: if this handle is
   // not a real Area, refuse. Group the device into a site (createArea) to give it a location.
-  const area = await getAreaForSystem(systemId);
+  const area = await getAreaForDevice(systemId);
   if (!area)
     return NextResponse.json(
       {

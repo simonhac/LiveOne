@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import { DeviceWriter } from "@/lib/registry/device-writer";
-import { derivedCapabilitiesForSystem } from "@/lib/capabilities/server";
+import { derivedCapabilitiesForDevice } from "@/lib/capabilities/server";
 import { CAPABILITIES, type CapabilityId } from "@/lib/capabilities/registry";
 import type {
   DeviceConfig,
@@ -12,10 +12,10 @@ import type {
 } from "@/lib/capabilities/config";
 import { syncAreaBatteryConfigFromDevice } from "@/lib/areas/config";
 
-// Per-device CONFIG endpoint — reads/writes the typed `systems.config` (DeviceConfig) jsonb blob that
+// Per-device CONFIG endpoint — reads/writes the typed `devices.config` (DeviceConfig) jsonb blob that
 // data-drives capability on/off overrides + nameplateKw + updateCadenceSeconds (see
-// lib/capabilities/config.ts). Owner/admin editable (requireSystemAccess), so it lives alongside the
-// other per-system settings routes but is NOT admin-only. The whole blob is the DeviceConfig, so PATCH
+// lib/capabilities/config.ts). Owner/admin editable (requireDeviceAccess), so it lives alongside the
+// other per-device settings routes but is NOT admin-only. The whole blob is the DeviceConfig, so PATCH
 // REPLACES it with the cleaned config the configurator sends (empty → null), rather than shallow-merging
 // (that's how a toggle set back to "default" removes its key).
 
@@ -160,15 +160,15 @@ export async function GET(
   if (isNaN(systemId))
     return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
 
-  const auth = await requireSystemAccess(request, systemId);
+  const auth = await requireDeviceAccess(request, systemId);
   if (auth instanceof NextResponse) return auth;
 
   // `derived` is the capability set BEFORE this device's own overrides — the "Default" baseline the
   // configurator annotates each toggle with.
-  const derived = await derivedCapabilitiesForSystem(systemId);
+  const derived = await derivedCapabilitiesForDevice(systemId);
   return NextResponse.json({
     success: true,
-    config: auth.system.config ?? {},
+    config: auth.device.config ?? {},
     derived: [...derived],
   });
 }
@@ -182,7 +182,7 @@ export async function PATCH(
   if (isNaN(systemId))
     return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
 
-  const auth = await requireSystemAccess(request, systemId, {
+  const auth = await requireDeviceAccess(request, systemId, {
     requireWrite: true,
   });
   if (auth instanceof NextResponse) return auth;
@@ -192,7 +192,7 @@ export async function PATCH(
   if ("error" in parsed)
     return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  await DeviceWriter.updateSystem(systemId, {
+  await DeviceWriter.updateDevice(systemId, {
     config: parsed.config,
   });
   await syncAreaBatteryConfigFromDevice(

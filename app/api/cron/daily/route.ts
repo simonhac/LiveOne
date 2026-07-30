@@ -154,14 +154,14 @@ async function handleAggregation(request: NextRequest) {
 
     const startTime = Date.now();
 
-    // Get timezone offset from first system (needed for date calculations)
-    const systems = await DeviceConfigRegistry.activeDevices();
+    // Get timezone offset from first device (needed for date calculations)
+    const devices = await DeviceConfigRegistry.activeDevices();
 
-    if (systems.length === 0) {
+    if (devices.length === 0) {
       return NextResponse.json({ error: "No systems found" }, { status: 404 });
     }
 
-    const timezoneOffsetMin = systems[0].timezoneOffsetMin;
+    const timezoneOffsetMin = devices[0].timezoneOffsetMin;
 
     // Parse date parameters for all actions (including no action = default cron)
     let parsedDates: {

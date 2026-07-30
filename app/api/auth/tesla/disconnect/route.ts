@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -31,13 +31,13 @@ export async function POST(request: NextRequest) {
     console.log("TESLA: User disconnecting Tesla:", userDisplay);
 
     // The read is the config registry (`devices`); each Tesla device is then marked removed through
-    // the `systems` writer, keyed by handle.
+    // the `devices` writer, keyed by handle.
 
-    const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
-    const teslaSystems = ownedSystems.filter((s) => s.vendorType === "tesla");
+    const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
+    const teslaDevices = ownedDevices.filter((s) => s.vendorType === "tesla");
 
-    for (const s of teslaSystems) {
-      await DeviceWriter.updateSystem(s.id, {
+    for (const s of teslaDevices) {
+      await DeviceWriter.updateDevice(s.id, {
         ownerClerkUserId: null,
         status: "removed",
       });
@@ -78,26 +78,26 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const system = await DeviceConfigRegistry.deviceByHandle(
+    const device = await DeviceConfigRegistry.deviceByHandle(
       parseInt(systemId),
     );
 
     if (
-      !system ||
-      system.ownerClerkUserId !== userId ||
-      system.vendorType !== "tesla" ||
-      system.status !== "active"
+      !device ||
+      device.ownerClerkUserId !== userId ||
+      device.vendorType !== "tesla" ||
+      device.status !== "active"
     ) {
       return NextResponse.json({ connected: false });
     }
 
-    // Check if credentials exist for this system
-    const credentials = await getSystemCredentials(userId, system.id);
+    // Check if credentials exist for this device
+    const credentials = await getDeviceCredentials(userId, device.id);
 
     return NextResponse.json({
       connected: credentials !== null,
-      systemId: system.id,
-      systemName: system.displayName,
+      systemId: device.id,
+      deviceName: device.displayName,
       expiresAt: (credentials as any)?.expires_at,
     });
   } catch (error) {

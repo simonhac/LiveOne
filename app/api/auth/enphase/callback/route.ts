@@ -92,51 +92,51 @@ export async function GET(request: NextRequest) {
 
     console.log("ENPHASE: Fetching systems from Enphase API");
 
-    // Get user's Enphase systems
-    const enphaseSystems = await client.getSystems(tokens.access_token);
+    // Get user's Enphase devices
+    const enphaseDevices = await client.getDevices(tokens.access_token);
 
-    if (!enphaseSystems || enphaseSystems.length === 0) {
+    if (!enphaseDevices || enphaseDevices.length === 0) {
       console.error("ENPHASE: No systems found for user:", userDisplay);
       return NextResponse.redirect(
         new URL("/auth/enphase/result?error=no_systems", request.url),
       );
     }
 
-    // Log all available systems
+    // Log all available devices
     console.log("ENPHASE: Found systems for user:", userDisplay);
-    enphaseSystems.forEach((sys, index) => {
+    enphaseDevices.forEach((sys, index) => {
       console.log(
         `ENPHASE: System ${index + 1}:`,
         JSON.stringify(sys, null, 2),
       );
     });
 
-    // Use the first system (in future, allow user to select)
-    const enphaseSystem = enphaseSystems[0];
-    const systemId = String(enphaseSystem.system_id);
-    console.log("ENPHASE: Using system:", systemId, enphaseSystem.name);
+    // Use the first device (in future, allow user to select)
+    const enphaseDevice = enphaseDevices[0];
+    const systemId = String(enphaseDevice.system_id);
+    console.log("ENPHASE: Using system:", systemId, enphaseDevice.name);
 
-    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
+    // Existence check reads the config registry (`devices`); the writers below are still `devices`.
 
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(systemId);
-    const existingSystem =
+    const existingDevice =
       existingByVendorSiteId && existingByVendorSiteId.vendorType === "enphase"
         ? existingByVendorSiteId
         : null;
 
-    if (!existingSystem) {
-      // Create new system in database
+    if (!existingDevice) {
+      // Create new device in database
       console.log("ENPHASE: Creating new system in database");
 
       // Calculate timezone offset from timezone string
       let timezoneOffsetMin = 600; // Default to AEST (UTC+10)
       let displayTimezone = "Australia/Melbourne"; // Default timezone
-      if (enphaseSystem.timezone) {
+      if (enphaseDevice.timezone) {
         // This is simplified - in production, use a proper timezone library
         if (
-          enphaseSystem.timezone.includes("Melbourne") ||
-          enphaseSystem.timezone.includes("Sydney")
+          enphaseDevice.timezone.includes("Melbourne") ||
+          enphaseDevice.timezone.includes("Sydney")
         ) {
           timezoneOffsetMin = 600; // UTC+10
           displayTimezone = "Australia/Melbourne";
@@ -144,12 +144,12 @@ export async function GET(request: NextRequest) {
         // Add more timezone mappings as needed
       }
 
-      const newSystem = await DeviceWriter.createSystem({
+      const newDevice = await DeviceWriter.createDevice({
         ownerClerkUserId: userId,
         vendorType: "enphase",
         vendorSiteId: systemId,
         status: "active",
-        displayName: enphaseSystem.name || "Enphase System",
+        displayName: enphaseDevice.name || "Enphase System",
         model: "Enphase IQ",
         // Slice 1a: goes straight to the structured `config.spec`. Enphase reports `system_size` in
         // WATTS, so pre-1a this formatted it into the free text `"5.4 kW"` purely so the mirror's SQL
@@ -158,59 +158,59 @@ export async function GET(request: NextRequest) {
         // every Enphase device (5432 W read 5.4, not 5.432), which is a data change dressed as a
         // cleanup. `> 0` reproduces `specNum`'s rejection of non-positive values.
         config:
-          enphaseSystem.system_size && enphaseSystem.system_size > 0
+          enphaseDevice.system_size && enphaseDevice.system_size > 0
             ? {
                 spec: {
                   solarSizeKw: Number(
-                    (enphaseSystem.system_size / 1000).toFixed(1),
+                    (enphaseDevice.system_size / 1000).toFixed(1),
                   ),
                 },
               }
             : null,
         // See the cast note on the update path below — same reason, same pre-1a behaviour.
-        location: (enphaseSystem.address ?? null) as AreaLocation | null,
+        location: (enphaseDevice.address ?? null) as AreaLocation | null,
         timezoneOffsetMin,
         displayTimezone,
       });
 
       console.log(
         "ENPHASE: System created successfully with ID:",
-        newSystem.id,
+        newDevice.id,
       );
 
-      // Now store tokens with the new system ID
+      // Now store tokens with the new device ID
       const storeResult = await storeEnphaseTokens(
         userId,
         tokens,
-        newSystem.id,
+        newDevice.id,
       );
       if (!storeResult.success) {
         throw new Error(storeResult.error || "Failed to store tokens");
       }
       console.log("ENPHASE: Tokens stored for new system");
     } else {
-      // Update existing system (reactivate if it was removed)
+      // Update existing device (reactivate if it was removed)
       console.log("ENPHASE: Updating existing system");
 
-      await DeviceWriter.updateSystem(existingSystem.id, {
+      await DeviceWriter.updateDevice(existingDevice.id, {
         ownerClerkUserId: userId,
-        displayName: enphaseSystem.name || existingSystem.displayName,
+        displayName: enphaseDevice.name || existingDevice.displayName,
         // Slice 1a: `location` is now typed `AreaLocation` (it lands on `areas.location`) whereas it
-        // used to land in the untyped `systems.location` jsonb. Enphase's address has every field
+        // used to land in the untyped `devices.location` jsonb. Enphase's address has every field
         // optional, so it does not satisfy `AreaLocation.country: string`. The cast preserves the exact
         // pre-1a behaviour — `ensureAreaOfOne` cast this same value `as AreaLocation | null` when it
         // copied it down — rather than inventing a country here. A partial address still reads fine:
         // `region.ts` infers from `state`/`postcode` and tolerates a missing country.
-        location: (enphaseSystem.address ||
-          existingSystem.location) as AreaLocation | null,
-        status: "active", // Reactivate the system if it was removed
+        location: (enphaseDevice.address ||
+          existingDevice.location) as AreaLocation | null,
+        status: "active", // Reactivate the device if it was removed
       });
 
-      // Store tokens with the existing system ID
+      // Store tokens with the existing device ID
       const storeResult = await storeEnphaseTokens(
         userId,
         tokens,
-        existingSystem.id,
+        existingDevice.id,
       );
       if (!storeResult.success) {
         throw new Error(storeResult.error || "Failed to store tokens");
@@ -226,7 +226,7 @@ export async function GET(request: NextRequest) {
     successUrl.searchParams.set("status", "success");
     successUrl.searchParams.set(
       "message",
-      `Successfully connected ${enphaseSystem.name || "Enphase System"}`,
+      `Successfully connected ${enphaseDevice.name || "Enphase System"}`,
     );
 
     return NextResponse.redirect(successUrl);

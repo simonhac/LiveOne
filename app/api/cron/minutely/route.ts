@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatSystemId } from "@/lib/system-utils";
+import { formatSystemId } from "@/lib/device-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { vendorUsesAppCredentials } from "@/lib/vendors/ownership";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type { PollingResult, PollStage } from "@/lib/vendors/types";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
@@ -14,15 +14,15 @@ import { reconcileTrailingWindow as reconcileBatteryProvenance } from "@/lib/bat
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
- * Helper function to poll all systems with optional progress callbacks.
+ * Helper function to poll all devices with optional progress callbacks.
  * This function handles the login stage (credential fetch) and delegates
  * the rest (session creation, fetch, insert, session update) to the adapter.
  *
- * @param onSessionStart - Callback called when a system's session is assigned (before polling starts)
+ * @param onSessionStart - Callback called when a device's session is assigned (before polling starts)
  * @param onProgress - Callback called after each stage completes (login, fetch, process)
  */
-async function pollAllSystems(params: {
-  activeSystems: any[];
+async function pollAllDevices(params: {
+  activeDevices: any[];
   sessionLabelPrefix: string;
   forcePollAll: boolean;
   pollReason: string;
@@ -37,7 +37,7 @@ async function pollAllSystems(params: {
   onProgress?: (result: PollingResult) => void;
 }): Promise<PollingResult[]> {
   const {
-    activeSystems,
+    activeDevices,
     sessionLabelPrefix,
     forcePollAll,
     pollReason,
@@ -51,8 +51,8 @@ async function pollAllSystems(params: {
   const results: PollingResult[] = [];
   let subSequence = 0;
 
-  // Poll each system using the vendor adapter architecture
-  for (const system of activeSystems) {
+  // Poll each device using the vendor adapter architecture
+  for (const device of activeDevices) {
     const pollStartTime = Date.now();
     const loginStages: PollStage[] = [];
     let capturedSessionId: string | undefined;
@@ -60,22 +60,22 @@ async function pollAllSystems(params: {
     const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
 
     // Get the vendor adapter first to check if it supports polling
-    const adapter = VendorRegistry.getAdapter(system.vendorType);
+    const adapter = VendorRegistry.getAdapter(device.vendorType);
 
     if (!adapter) {
-      console.error(`[Cron] Unknown vendor type: ${system.vendorType}`);
+      console.error(`[Cron] Unknown vendor type: ${device.vendorType}`);
       const errorResult: PollingResult = {
         action: "ERROR",
-        systemId: system.id,
-        displayName: system.displayName || undefined,
-        vendorType: system.vendorType,
-        error: `Unknown vendor type: ${system.vendorType}`,
+        systemId: device.id,
+        displayName: device.displayName || undefined,
+        vendorType: device.vendorType,
+        error: `Unknown vendor type: ${device.vendorType}`,
         durationMs: Date.now() - pollStartTime,
         startMs: pollStartTime,
         endMs: Date.now(),
-        lastPoll: system.pollingStatus?.lastPollTime
+        lastPoll: device.pollingStatus?.lastPollTime
           ? formatTimeAEST(
-              fromDate(system.pollingStatus.lastPollTime, "Australia/Brisbane"),
+              fromDate(device.pollingStatus.lastPollTime, "Australia/Brisbane"),
             )
           : null,
       };
@@ -83,33 +83,33 @@ async function pollAllSystems(params: {
       continue;
     }
 
-    // Skip push-only systems (they don't need polling)
+    // Skip push-only devices (they don't need polling)
     if (adapter.dataSource === "push") {
       continue;
     }
 
     console.log(
-      `[Cron] Processing systemId=${system.id} (${system.vendorType}/${system.vendorSiteId} '${system.displayName}') with session ${sessionLabel}`,
+      `[Cron] Processing systemId=${device.id} (${device.vendorType}/${device.vendorSiteId} '${device.displayName}') with session ${sessionLabel}`,
     );
 
-    // Public/ownerless systems are allowed when the vendor authenticates with an app-wide
+    // Public/ownerless devices are allowed when the vendor authenticates with an app-wide
     // credential (e.g. openelectricity reads an env key). Per-user vendors still need an owner.
     if (
-      !system.ownerClerkUserId &&
-      !vendorUsesAppCredentials(system.vendorType)
+      !device.ownerClerkUserId &&
+      !vendorUsesAppCredentials(device.vendorType)
     ) {
       const errorResult: PollingResult = {
         action: "ERROR",
-        systemId: system.id,
-        displayName: system.displayName || undefined,
-        vendorType: system.vendorType,
+        systemId: device.id,
+        displayName: device.displayName || undefined,
+        vendorType: device.vendorType,
         error: "No owner configured",
         durationMs: Date.now() - pollStartTime,
         startMs: pollStartTime,
         endMs: Date.now(),
-        lastPoll: system.pollingStatus?.lastPollTime
+        lastPoll: device.pollingStatus?.lastPollTime
           ? formatTimeAEST(
-              fromDate(system.pollingStatus.lastPollTime, "Australia/Brisbane"),
+              fromDate(device.pollingStatus.lastPollTime, "Australia/Brisbane"),
             )
           : null,
       };
@@ -133,9 +133,9 @@ async function pollAllSystems(params: {
           loginStages[0].endMs = Date.now();
           onProgress({
             action: "POLLED",
-            systemId: system.id,
-            displayName: system.displayName || undefined,
-            vendorType: system.vendorType,
+            systemId: device.id,
+            displayName: device.displayName || undefined,
+            vendorType: device.vendorType,
             sessionLabel,
             durationMs: Date.now() - pollStartTime,
             startMs: pollStartTime,
@@ -146,9 +146,9 @@ async function pollAllSystems(params: {
         }, 200);
       }
 
-      const credentials = await getSystemCredentials(
-        system.ownerClerkUserId,
-        system.id,
+      const credentials = await getDeviceCredentials(
+        device.ownerClerkUserId,
+        device.id,
       );
 
       // Finalize login stage
@@ -159,9 +159,9 @@ async function pollAllSystems(params: {
       if (onProgress) {
         onProgress({
           action: "POLLED",
-          systemId: system.id,
-          displayName: system.displayName || undefined,
-          vendorType: system.vendorType,
+          systemId: device.id,
+          displayName: device.displayName || undefined,
+          vendorType: device.vendorType,
           startMs: pollStartTime,
           endMs: Date.now(),
           stages: [...loginStages],
@@ -178,22 +178,22 @@ async function pollAllSystems(params: {
         adapter.vendorType !== "openelectricity"
       ) {
         console.error(
-          `[Cron] No credentials found for ${system.vendorType} system ${system.id}`,
+          `[Cron] No credentials found for ${device.vendorType} system ${device.id}`,
         );
         const errorResult: PollingResult = {
           action: "ERROR",
-          systemId: system.id,
-          displayName: system.displayName || undefined,
-          vendorType: system.vendorType,
+          systemId: device.id,
+          displayName: device.displayName || undefined,
+          vendorType: device.vendorType,
           error: "No credentials found",
           durationMs: Date.now() - pollStartTime,
           startMs: pollStartTime,
           endMs: Date.now(),
           stages: loginStages,
-          lastPoll: system.pollingStatus?.lastPollTime
+          lastPoll: device.pollingStatus?.lastPollTime
             ? formatTimeAEST(
                 fromDate(
-                  system.pollingStatus.lastPollTime,
+                  device.pollingStatus.lastPollTime,
                   "Australia/Brisbane",
                 ),
               )
@@ -204,7 +204,7 @@ async function pollAllSystems(params: {
       }
 
       // Call adapter.poll() with new PollOptions - adapter handles session, fetch, insert
-      const result = await adapter.poll(system, credentials, {
+      const result = await adapter.poll(device, credentials, {
         forcePollAll,
         pollReason,
         sessionLabel,
@@ -213,7 +213,7 @@ async function pollAllSystems(params: {
         onSessionStart: (data) => {
           // Capture sessionId for final result
           capturedSessionId = data.sessionId;
-          // Forward session-start with system metadata if callback provided
+          // Forward session-start with device metadata if callback provided
           if (onSessionStart) {
             onSessionStart({
               systemId: data.systemId,
@@ -227,9 +227,9 @@ async function pollAllSystems(params: {
               // Merge login stage with adapter's stages for progress updates
               onProgress({
                 ...partial,
-                systemId: system.id,
-                displayName: system.displayName || undefined,
-                vendorType: system.vendorType,
+                systemId: device.id,
+                displayName: device.displayName || undefined,
+                vendorType: device.vendorType,
                 durationMs: Date.now() - pollStartTime,
                 startMs: pollStartTime,
                 endMs: Date.now(),
@@ -246,9 +246,9 @@ async function pollAllSystems(params: {
       const now = new Date();
       const finalResult: PollingResult = {
         ...result,
-        systemId: system.id,
-        displayName: system.displayName || undefined,
-        vendorType: system.vendorType,
+        systemId: device.id,
+        displayName: device.displayName || undefined,
+        vendorType: device.vendorType,
         sessionLabel,
         sessionId: capturedSessionId,
         durationMs: Date.now() - pollStartTime,
@@ -261,10 +261,10 @@ async function pollAllSystems(params: {
         lastPoll:
           result.action === "POLLED"
             ? formatTimeAEST(fromDate(now, "Australia/Brisbane"))
-            : system.pollingStatus?.lastPollTime
+            : device.pollingStatus?.lastPollTime
               ? formatTimeAEST(
                   fromDate(
-                    system.pollingStatus.lastPollTime,
+                    device.pollingStatus.lastPollTime,
                     "Australia/Brisbane",
                   ),
                 )
@@ -282,35 +282,35 @@ async function pollAllSystems(params: {
       switch (result.action) {
         case "POLLED":
           console.log(
-            `[Cron] ${formatSystemId(system)} - Success (${result.recordsProcessed} records)`,
+            `[Cron] ${formatSystemId(device)} - Success (${result.recordsProcessed} records)`,
           );
           break;
         case "SKIPPED":
           console.log(
-            `[Cron] ${formatSystemId(system)} - Skipped: ${result.reason}`,
+            `[Cron] ${formatSystemId(device)} - Skipped: ${result.reason}`,
           );
           break;
         case "ERROR":
           console.error(
-            `[Cron] ${formatSystemId(system)} - Error: ${result.error}`,
+            `[Cron] ${formatSystemId(device)} - Error: ${result.error}`,
           );
           break;
       }
     } catch (error) {
-      console.error(`[Cron] Error polling ${system.id}:`, error);
+      console.error(`[Cron] Error polling ${device.id}:`, error);
       const errorResult: PollingResult = {
         action: "ERROR",
-        systemId: system.id,
-        displayName: system.displayName || undefined,
-        vendorType: system.vendorType,
+        systemId: device.id,
+        displayName: device.displayName || undefined,
+        vendorType: device.vendorType,
         error: error instanceof Error ? error.message : "Unknown error",
         durationMs: Date.now() - pollStartTime,
         startMs: pollStartTime,
         endMs: Date.now(),
         stages: loginStages,
-        lastPoll: system.pollingStatus?.lastPollTime
+        lastPoll: device.pollingStatus?.lastPollTime
           ? formatTimeAEST(
-              fromDate(system.pollingStatus.lastPollTime, "Australia/Brisbane"),
+              fromDate(device.pollingStatus.lastPollTime, "Australia/Brisbane"),
             )
           : null,
       };
@@ -361,19 +361,19 @@ export async function GET(request: NextRequest) {
 
     // Config (incl. polling status) is loaded fresh per request, so no cache to clear.
 
-    // Get systems to poll
-    let activeSystems;
+    // Get devices to poll
+    let activeDevices;
     if (testSystemId) {
-      const system = await DeviceConfigRegistry.deviceByHandle(
+      const device = await DeviceConfigRegistry.deviceByHandle(
         parseInt(testSystemId),
       );
-      activeSystems = system ? [system] : [];
+      activeDevices = device ? [device] : [];
       console.log(`[Cron] Testing single system: ${testSystemId}`);
     } else {
-      activeSystems = await DeviceConfigRegistry.activeDevices();
+      activeDevices = await DeviceConfigRegistry.activeDevices();
     }
 
-    if (activeSystems.length === 0) {
+    if (activeDevices.length === 0) {
       console.log("[Cron] No active systems to poll");
       return NextResponse.json({
         success: true,
@@ -383,7 +383,7 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(
-      `[Cron] Starting polling session ${sessionId} with ${activeSystems.length} systems`,
+      `[Cron] Starting polling session ${sessionId} with ${activeDevices.length} systems`,
     );
 
     // Check if real-time SSE streaming is requested
@@ -397,8 +397,8 @@ export async function GET(request: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            // Send initial metadata with list of systems to be polled
-            const systemsList = activeSystems
+            // Send initial metadata with list of devices to be polled
+            const devicesList = activeDevices
               .filter((sys) => {
                 const adapter = VendorRegistry.getAdapter(sys.vendorType);
                 return adapter && adapter.dataSource !== "push";
@@ -412,8 +412,8 @@ export async function GET(request: NextRequest) {
             const metadata = {
               sessionId,
               sessionStartTimeMs: apiStartTime,
-              totalSystems: activeSystems.length,
-              systems: systemsList,
+              totalDevices: activeDevices.length,
+              devices: devicesList,
             };
             controller.enqueue(
               encoder.encode(
@@ -421,10 +421,10 @@ export async function GET(request: NextRequest) {
               ),
             );
 
-            // Poll all systems with progress callbacks
+            // Poll all devices with progress callbacks
             // Note: session-start is merged into progress events (first progress includes sessionLabel/sessionId)
-            const results = await pollAllSystems({
-              activeSystems,
+            const results = await pollAllDevices({
+              activeDevices,
               sessionLabelPrefix: sessionId,
               forcePollAll,
               pollReason,
@@ -500,8 +500,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Normal JSON Response Mode
-    const results = await pollAllSystems({
-      activeSystems,
+    const results = await pollAllDevices({
+      activeDevices,
       sessionLabelPrefix: sessionId,
       forcePollAll,
       pollReason,

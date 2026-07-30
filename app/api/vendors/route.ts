@@ -6,19 +6,19 @@ export async function GET() {
     // Get all vendor adapters
     const allVendors = VendorRegistry.getAllAdapters();
 
-    // Filter to vendors that support the Add System flow. Credential vendors expose
-    // credentialFields; OAuth vendors (Tesla) expose addSystemFlow === "oauth-redirect".
+    // Filter to vendors that support the Add Device flow. Credential vendors expose
+    // credentialFields; OAuth vendors (Tesla) expose addDeviceFlow === "oauth-redirect".
     const supportedVendors = allVendors
       .filter(
         (adapter) =>
-          adapter.supportsAddSystem &&
-          (adapter.addSystemFlow === "oauth-redirect" ||
+          adapter.supportsAddDevice &&
+          (adapter.addDeviceFlow === "oauth-redirect" ||
             (adapter.credentialFields?.length ?? 0) > 0),
       )
       .map((adapter) => ({
         vendorType: adapter.vendorType,
         displayName: adapter.displayName,
-        addSystemFlow: adapter.addSystemFlow ?? "credentials",
+        addDeviceFlow: adapter.addDeviceFlow ?? "credentials",
         credentialFields: adapter.credentialFields ?? [],
       }));
 

@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
-import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
+import { requireAdmin, requireDeviceAccess } from "@/lib/api-auth";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { isValidTimezone } from "@/lib/timezones";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -20,15 +20,15 @@ export async function GET(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDeviceAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
     return NextResponse.json({
       success: true,
       settings: {
-        displayName: authResult.system.displayName,
-        alias: authResult.system.alias,
-        displayTimezone: authResult.system.displayTimezone,
+        displayName: authResult.device.displayName,
+        alias: authResult.device.alias,
+        displayTimezone: authResult.device.displayTimezone,
       },
     });
   } catch (error) {
@@ -185,12 +185,12 @@ export async function PATCH(
       updates.displayTimezone = displayTimezone.trim();
     }
 
-    const existingSystem = await DeviceConfigRegistry.deviceByHandle(systemId);
-    if (!existingSystem) {
+    const existingDevice = await DeviceConfigRegistry.deviceByHandle(systemId);
+    if (!existingDevice) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Check if the alias is already taken by another system.
+    // Check if the alias is already taken by another device.
     if (updates.alias) {
       const conflict = await requirePlanetscaleDb()
         .select({ displayName: devices.name })
@@ -208,7 +208,7 @@ export async function PATCH(
       }
     }
 
-    await DeviceWriter.updateSystem(systemId, updates);
+    await DeviceWriter.updateDevice(systemId, updates);
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");
@@ -216,13 +216,13 @@ export async function PATCH(
     return NextResponse.json({
       success: true,
       message: "System updated successfully",
-      system: {
+      device: {
         id: systemId,
-        displayName: updates.displayName ?? existingSystem.displayName,
+        displayName: updates.displayName ?? existingDevice.displayName,
         alias:
-          updates.alias !== undefined ? updates.alias : existingSystem.alias,
+          updates.alias !== undefined ? updates.alias : existingDevice.alias,
         displayTimezone:
-          updates.displayTimezone ?? existingSystem.displayTimezone,
+          updates.displayTimezone ?? existingDevice.displayTimezone,
       },
     });
   } catch (error) {

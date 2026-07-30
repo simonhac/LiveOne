@@ -85,12 +85,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Resolve the region's system.
-  const systems = await DeviceConfigRegistry.activeDevices();
-  const system = systems.find(
+  // Resolve the region's device.
+  const devices = await DeviceConfigRegistry.activeDevices();
+  const device = devices.find(
     (s) => s.vendorType === "openelectricity" && s.vendorSiteId === region,
   );
-  if (!system) {
+  if (!device) {
     return NextResponse.json(
       { error: `No active openelectricity system for region ${region}` },
       { status: 404 },
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
 
   const session = await sessionManager.createSession({
     sessionLabel: "oe-backfill",
-    systemId: system.id,
+    systemId: device.id,
     cause: dryRun ? "ADMIN-DRYRUN" : "ADMIN",
     started: new Date(),
   });
@@ -114,9 +114,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const result = await backfillRange({
-      systemId: system.id,
+      systemId: device.id,
       region,
-      network: (system.metadata as { network?: string } | null)?.network,
+      network: (device.metadata as { network?: string } | null)?.network,
       dateStart,
       dateEnd,
       session,
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: result.errors.length === 0,
-      systemId: system.id,
+      systemId: device.id,
       sessionId: session.id,
       dryRun,
       ...result,

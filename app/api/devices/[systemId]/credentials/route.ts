@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import {
-  storeSystemCredentials,
+  storeDeviceCredentials,
   type VendorType,
 } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 
 /**
- * Owner/admin editor for an existing system's vendor credentials (e.g. rotating an Amber API key).
+ * Owner/admin editor for an existing device's vendor credentials (e.g. rotating an Amber API key).
  *
  * Credentials live in the OWNER's Clerk private metadata — the same store the minutely poll reads
- * (lib/secure-credentials.ts) — so an admin editing someone else's system writes under the owner,
- * not themselves. The vendor type is taken from the system, never the client. OAuth vendors (Tesla)
+ * (lib/secure-credentials.ts) — so an admin editing someone else's device writes under the owner,
+ * not themselves. The vendor type is taken from the device, never the client. OAuth vendors (Tesla)
  * and push/app-key vendors (fusher/fronius/openelectricity) have no editable credential fields and
  * are rejected — Tesla re-auth is its own OAuth flow.
  *
@@ -28,12 +28,12 @@ export async function PUT(
   }
 
   // Editing credentials is an owner action → require write access.
-  const auth = await requireSystemAccess(request, systemId, {
+  const auth = await requireDeviceAccess(request, systemId, {
     requireWrite: true,
   });
   if (auth instanceof NextResponse) return auth;
 
-  const { ownerClerkUserId, vendorType } = auth.system;
+  const { ownerClerkUserId, vendorType } = auth.device;
   if (!ownerClerkUserId) {
     return NextResponse.json(
       { error: "Ownerless systems have no per-user credentials to update" },
@@ -50,7 +50,7 @@ export async function PUT(
   }
 
   const fields = adapter.credentialFields ?? [];
-  if (adapter.addSystemFlow === "oauth-redirect" || fields.length === 0) {
+  if (adapter.addDeviceFlow === "oauth-redirect" || fields.length === 0) {
     return NextResponse.json(
       { error: `${adapter.displayName} credentials cannot be edited here` },
       { status: 400 },
@@ -84,11 +84,11 @@ export async function PUT(
     }
   }
 
-  const result = await storeSystemCredentials(
+  const result = await storeDeviceCredentials(
     ownerClerkUserId,
     systemId,
     // The adapter was resolved from this vendorType above, so it's a known vendor;
-    // the system record types it only as `string`.
+    // the device record types it only as `string`.
     vendorType as VendorType,
     credentials,
   );

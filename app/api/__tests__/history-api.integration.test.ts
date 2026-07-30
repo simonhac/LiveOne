@@ -64,7 +64,7 @@ describe("History API Integration Tests - Multiple Interval Support", () => {
       url.searchParams.set(key, value);
     });
 
-    // Add default test system ID if not provided
+    // Add default test device ID if not provided
     // Use the database ID (1), not the vendor site ID (1586)
     if (!params.systemId) {
       url.searchParams.set("systemId", "1");

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import { getValidTeslaToken } from "@/lib/vendors/tesla/tesla-auth";
 import { getTeslaClient } from "@/lib/vendors/tesla/tesla-client";
 import { TeslaCommandProtocolError } from "@/lib/vendors/tesla/command-signer";
@@ -30,10 +30,10 @@ interface CommandBody {
 }
 
 /**
- * Issue a Tesla charge-control command for a system.
+ * Issue a Tesla charge-control command for a device.
  *
- * Auth: caller must own the system or be an admin (requireWrite). Credentials are
- * always loaded under the system OWNER (admins act on the owner's stored tokens).
+ * Auth: caller must own the device or be an admin (requireWrite). Credentials are
+ * always loaded under the device OWNER (admins act on the owner's stored tokens).
  * Wakes the vehicle if asleep, then dispatches through the Fleet client's signer seam
  * (direct/unsigned for signing-exempt cars; a 403 surfaces as a clear error).
  */
@@ -48,13 +48,13 @@ export async function POST(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    const authResult = await requireSystemAccess(request, systemId, {
+    const authResult = await requireDeviceAccess(request, systemId, {
       requireWrite: true,
     });
     if (authResult instanceof NextResponse) return authResult;
-    const { system } = authResult;
+    const { device } = authResult;
 
-    if (system.vendorType !== "tesla") {
+    if (device.vendorType !== "tesla") {
       return NextResponse.json(
         { error: "System is not a Tesla system" },
         { status: 400 },
@@ -100,7 +100,7 @@ export async function POST(
       }
     }
 
-    if (!system.ownerClerkUserId) {
+    if (!device.ownerClerkUserId) {
       return NextResponse.json(
         { error: "System has no owner" },
         { status: 400 },
@@ -109,7 +109,7 @@ export async function POST(
 
     // Load the owner's token + regional host
     const { accessToken, credentials } = await getValidTeslaToken(
-      system.ownerClerkUserId,
+      device.ownerClerkUserId,
       systemId,
     );
     const teslaCredentials = credentials as TeslaCredentials;

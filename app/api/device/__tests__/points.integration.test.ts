@@ -1,9 +1,9 @@
 /**
- * Integration tests for /api/system/[systemId]/points endpoint
+ * Integration tests for /api/device/[systemId]/points endpoint
  *
  * Tests:
  * - Authentication and authorization
- * - System ID validation (numeric ID)
+ * - Device ID validation (numeric ID)
  * - Short mode (array of paths)
  * - Full mode (detailed point information)
  * - PointPath formats (typed paths vs fallback numeric paths)
@@ -26,7 +26,7 @@ async function getPointsEndpoint(
   systemIdentifier: string | number,
   short?: boolean,
 ) {
-  const url = new URL(`${BASE_URL}/api/system/${systemIdentifier}/points`);
+  const url = new URL(`${BASE_URL}/api/device/${systemIdentifier}/points`);
 
   if (short !== undefined) {
     url.searchParams.set("short", short.toString());
@@ -44,18 +44,18 @@ async function getPointsEndpoint(
   };
 }
 
-describe("GET /api/system/[systemId]/points", () => {
+describe("GET /api/device/[systemId]/points", () => {
   let testSystemId: number;
 
   beforeAll(async () => {
-    // Get a test system from the database
-    const systems = await DeviceConfigRegistry.allDevices();
+    // Get a test device from the database
+    const devices = await DeviceConfigRegistry.allDevices();
 
-    if (systems.length === 0) {
+    if (devices.length === 0) {
       throw new Error("No systems in database for testing");
     }
 
-    testSystemId = systems[0].id;
+    testSystemId = devices[0].id;
   });
 
   describe("Authentication and Authorization", () => {
@@ -65,7 +65,7 @@ describe("GET /api/system/[systemId]/points", () => {
     });
 
     it("should return 401 without x-claude header in development", async () => {
-      const url = new URL(`${BASE_URL}/api/system/${testSystemId}/points`);
+      const url = new URL(`${BASE_URL}/api/device/${testSystemId}/points`);
 
       const response = await fetch(url.toString(), {
         headers: {
@@ -343,11 +343,11 @@ describe("GET /api/system/[systemId]/points", () => {
 
   describe("Edge Cases", () => {
     it("should handle system with no points gracefully", async () => {
-      // Create or find a system with no active points
+      // Create or find a device with no active points
       // For now, just test that the endpoint returns an empty array
       const { status, data } = await getPointsEndpoint(10000, true);
 
-      // Should either be 404 (system not found) or 200 with empty array
+      // Should either be 404 (device not found) or 200 with empty array
       if (status === 200) {
         expect(Array.isArray(data)).toBe(true);
       } else {
@@ -357,14 +357,14 @@ describe("GET /api/system/[systemId]/points", () => {
 
     it("should return 404 for zero system ID", async () => {
       const { status, data } = await getPointsEndpoint(0);
-      // Zero is a valid numeric ID but no system exists with ID 0
+      // Zero is a valid numeric ID but no device exists with ID 0
       expect(status).toBe(404);
       expect(data.error).toBeDefined();
     });
 
     it("should return 404 for negative system ID", async () => {
       const { status, data } = await getPointsEndpoint(-1);
-      // Negative is a valid numeric ID but no system exists with negative ID
+      // Negative is a valid numeric ID but no device exists with negative ID
       expect(status).toBe(404);
       expect(data.error).toBeDefined();
     });

@@ -3,9 +3,9 @@ import { requireAdmin } from "@/lib/api-auth";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
-// Generic per-system metadata config endpoint.
+// Generic per-device metadata config endpoint.
 //
-// Reads/writes a namespaced section of the `systems.metadata` JSONB column so any vendor or
+// Reads/writes a namespaced section of the `devices.metadata` JSONB column so any vendor or
 // feature can persist its own config blob without a bespoke route. It is intentionally NOT
 // vendor-specific: callers pass a `key` (the namespace, e.g. "tesla") and a `value` object,
 // and we shallow-merge `{ [key]: value }` into the existing metadata, leaving sibling keys
@@ -19,7 +19,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Read a system's metadata, tolerating the legacy double-encoded (stringified) shape.
+// Read a device's metadata, tolerating the legacy double-encoded (stringified) shape.
 function readMetadata(raw: unknown): Record<string, unknown> {
   let metadata = raw ?? {};
   if (typeof metadata === "string") {
@@ -32,8 +32,8 @@ function readMetadata(raw: unknown): Record<string, unknown> {
   return isPlainObject(metadata) ? metadata : {};
 }
 
-async function loadSystem(systemId: number) {
-  // Resolves a composite to its areas-backed virtual system (metadata is null there).
+async function loadDevice(systemId: number) {
+  // Resolves a composite to its areas-backed virtual device (metadata is null there).
   return DeviceConfigRegistry.deviceByHandle(systemId);
 }
 
@@ -51,12 +51,12 @@ export async function GET(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    const system = await loadSystem(systemId);
-    if (!system) {
+    const device = await loadDevice(systemId);
+    if (!device) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    const metadata = readMetadata(system.metadata);
+    const metadata = readMetadata(device.metadata);
     const key = request.nextUrl.searchParams.get("key");
 
     // With ?key=, return just that namespace's value; otherwise the whole metadata object.
@@ -107,16 +107,16 @@ export async function PATCH(
       );
     }
 
-    const system = await loadSystem(systemId);
-    if (!system) {
+    const device = await loadDevice(systemId);
+    if (!device) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
     // Shallow-merge the namespaced value into existing metadata (preserve sibling keys).
-    const existing = readMetadata(system.metadata);
+    const existing = readMetadata(device.metadata);
     const metadata = { ...existing, [key]: value };
 
-    await DeviceWriter.updateSystem(systemId, {
+    await DeviceWriter.updateDevice(systemId, {
       metadata: metadata as never,
     });
 

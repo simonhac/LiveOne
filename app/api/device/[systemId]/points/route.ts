@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import { PointManager } from "@/lib/point/point-manager";
 import { Point } from "@/lib/ids";
 
 /**
- * GET /api/system/{systemId}/points
+ * GET /api/device/{systemId}/points
  *
- * Returns all points for a system with their PointPath identifiers
+ * Returns all points for a device with their PointPath identifiers
  *
- * @param systemId - Numeric system ID
+ * @param systemId - Numeric device ID
  * @param short - Optional boolean parameter. If "true", returns just an array of path strings
  * @param showActive - Optional boolean. If "true", includes inactive points and adds "active" field
  *
  * Examples:
- * - GET /api/system/3/points
+ * - GET /api/device/3/points
  *   Returns active points only (no "active" field):
  *   {
  *     "points": [
@@ -27,7 +27,7 @@ import { Point } from "@/lib/ids";
  *     ]
  *   }
  *
- * - GET /api/system/3/points?showActive=true
+ * - GET /api/device/3/points?showActive=true
  *   Returns all points with "active" field:
  *   {
  *     "points": [
@@ -42,7 +42,7 @@ import { Point } from "@/lib/ids";
  *     ]
  *   }
  *
- * - GET /api/system/3/points?short=true
+ * - GET /api/device/3/points?short=true
  *   Returns just the paths (active only):
  *   [
  *     "source.solar/power",
@@ -67,20 +67,20 @@ export async function GET(
     }
 
     // Authenticate and authorize
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDeviceAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
-    // Extract system info for constructing full physical path
-    const { system } = authResult;
+    // Extract device info for constructing full physical path
+    const { device } = authResult;
 
     // Parse query parameters
     const { searchParams } = new URL(request.url);
     const shortMode = searchParams.get("short") === "true";
     const showActive = searchParams.get("showActive") === "true";
 
-    // Get points for the system using PointManager
+    // Get points for the device using PointManager
     const pointManager = PointManager.getInstance();
-    const points = await pointManager.getActivePointsForSystem(
+    const points = await pointManager.getActivePointsForDevice(
       systemId,
       false, // typedOnly = false means include fallback paths
       showActive, // includeInactive = true when showActive is requested
@@ -101,7 +101,7 @@ export async function GET(
       // Only include "active" field when showActive=true
       const pointsData = validPoints.map((point) => {
         // Construct full physical path: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
-        const fullPhysicalPath = `liveone/${system.vendorType}/${system.vendorSiteId}/${point.physicalPathTail}`;
+        const fullPhysicalPath = `liveone/${device.vendorType}/${device.vendorSiteId}/${point.physicalPathTail}`;
         const base = {
           logicalPath: point.getLogicalPath(),
           physicalPath: fullPhysicalPath,
@@ -111,7 +111,7 @@ export async function GET(
           // The point's opaque identity — what the area builder binds on (slice E PR 2b).
           pointId: Point.encode(point.pointUid),
           // Legacy `"{systemId}.{index}"`. ADDED-ALONGSIDE rather than replaced: `HeatmapClient`
-          // and `app/api/system/__tests__/points.integration.test.ts` still read it. Retires with
+          // and `app/api/device/__tests__/points.integration.test.ts` still read it. Retires with
           // the rest of the int addressing in Phase 13.
           reference: point.getReference().toString(),
         };

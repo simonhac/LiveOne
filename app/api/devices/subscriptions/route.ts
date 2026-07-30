@@ -10,7 +10,7 @@ import { jsonResponse } from "@/lib/json";
 import { getEnvironment } from "@/lib/env";
 
 /**
- * GET /api/systems/subscriptions
+ * GET /api/devices/subscriptions
  *
  * Returns all subscription mappings showing which source points are watched by composite points
  *
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
       // The source device's `dv_` TypeID is the last colon-separated segment of
       // "{namespace}:subscriptions:device:{dv_…}". Taken positionally rather than by stripping two
       // prefixes: the old code did `key.replace(namespace + ":", "")` then
-      // `.replace("subscriptions:system:", "")`, which is two literal key fragments duplicated outside
+      // `.replace("subscriptions:device:", "")`, which is two literal key fragments duplicated outside
       // `lib/kv-keys.ts` — exactly the split-brain this PR closed.
       const deviceId = key.slice(key.lastIndexOf(":") + 1);
 

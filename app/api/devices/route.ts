@@ -3,7 +3,7 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { requireAuth } from "@/lib/api-auth";
 import { eq, desc } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { storeSystemCredentials } from "@/lib/secure-credentials";
+import { storeDeviceCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { specFromLegacyText } from "@/lib/capabilities/config";
@@ -16,10 +16,10 @@ export async function POST(request: NextRequest) {
     const { userId } = authResult;
 
     // Get request data
-    const { vendorType, credentials, systemInfo } = await request.json();
+    const { vendorType, credentials, deviceInfo } = await request.json();
 
-    // Handle regular systems
-    if (!credentials || !systemInfo?.vendorSiteId) {
+    // Handle regular devices
+    if (!credentials || !deviceInfo?.vendorSiteId) {
       return NextResponse.json(
         {
           error: "Credentials and system info with vendorSiteId are required",
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!adapter.supportsAddSystem) {
+    if (!adapter.supportsAddDevice) {
       return NextResponse.json(
         {
           error: `${adapter.displayName} does not support automatic system addition`,
@@ -51,26 +51,26 @@ export async function POST(request: NextRequest) {
       `[Create System] Creating ${vendorType} system for user ${userId}`,
     );
 
-    // Allow multiple systems for the same vendor site
+    // Allow multiple devices for the same vendor site
     // This is useful for testing, multiple users monitoring the same site, etc.
 
-    const newSystem = await DeviceWriter.createSystem({
+    const newDevice = await DeviceWriter.createDevice({
       ownerClerkUserId: userId,
       vendorType,
-      vendorSiteId: systemInfo.vendorSiteId,
+      vendorSiteId: deviceInfo.vendorSiteId,
       status: "active",
-      displayName: systemInfo.displayName || `${adapter.displayName} System`,
-      model: systemInfo.model || null,
-      serial: systemInfo.serial || null,
+      displayName: deviceInfo.displayName || `${adapter.displayName} System`,
+      model: deviceInfo.model || null,
+      serial: deviceInfo.serial || null,
       // Slice 1a: the adapter still reports the vendor's free-text ratings/sizes, but `devices` has no
       // counterpart to those three columns by design — they are parsed into the structured
-      // `config.spec` here instead of being staged in `systems` for the mirror's SQL to parse. Same
+      // `config.spec` here instead of being staged in `devices` for the mirror's SQL to parse. Same
       // parse, same rejection rules; see `specFromLegacyText`.
       config: (() => {
         const spec = specFromLegacyText({
-          ratings: systemInfo.ratings,
-          solarSize: systemInfo.solarSize,
-          batterySize: systemInfo.batterySize,
+          ratings: deviceInfo.ratings,
+          solarSize: deviceInfo.solarSize,
+          batterySize: deviceInfo.batterySize,
         });
         return spec ? { spec } : null;
       })(),
@@ -78,17 +78,17 @@ export async function POST(request: NextRequest) {
     });
 
     // Store the credentials in Clerk
-    const credentialResult = await storeSystemCredentials(
+    const credentialResult = await storeDeviceCredentials(
       userId,
-      newSystem.id,
+      newDevice.id,
       vendorType,
       credentials,
     );
 
     if (!credentialResult.success) {
-      // If credential storage failed, delete the system.
-      // Routed through the `systems` writer so the rollback matches the insert.
-      await DeviceWriter.deleteSystem(newSystem.id);
+      // If credential storage failed, delete the device.
+      // Routed through the `devices` writer so the rollback matches the insert.
+      await DeviceWriter.deleteDevice(newDevice.id);
 
       return NextResponse.json(
         { error: credentialResult.error || "Failed to store credentials" },
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
     // Success!
     return NextResponse.json({
       success: true,
-      systemId: newSystem.id,
+      systemId: newDevice.id,
     });
   } catch (error) {
     console.error("[Create System] Error:", error);
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET endpoint to list user's systems
+// GET endpoint to list user's devices
 export async function GET(request: NextRequest) {
   try {
     // Authenticate user
@@ -124,12 +124,12 @@ export async function GET(request: NextRequest) {
     // Get all devices for this user. config-v4 slice K2: reads `devices`; the payload is now the
     // `DeviceRecord` shape (v4 identity added, the three free-text spec strings gone — they are
     // `config.spec`). No in-repo consumer reads this listing, so the shape change is contained.
-    const userSystems = (
+    const userDevices = (
       await DeviceConfigRegistry.devicesByOwner(userId)
     ).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     return NextResponse.json({
-      systems: userSystems,
+      devices: userDevices,
     });
   } catch (error) {
     console.error("[List Systems] Error:", error);

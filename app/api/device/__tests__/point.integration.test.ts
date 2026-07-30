@@ -1,5 +1,5 @@
 /**
- * Integration tests for /api/system/[systemId]/point/[pointId] endpoint
+ * Integration tests for /api/device/[systemId]/point/[pointId] endpoint
  *
  * Tests:
  * - GET: Fetching point info
@@ -25,7 +25,7 @@ const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
  */
 async function getPointEndpoint(systemId: number, pointId: number) {
   const response = await fetch(
-    `${BASE_URL}/api/system/${systemId}/point/${pointId}`,
+    `${BASE_URL}/api/device/${systemId}/point/${pointId}`,
     {
       headers: {
         "x-claude": "true", // Development auth bypass
@@ -45,7 +45,7 @@ async function patchPointEndpoint(
   updates: Record<string, any>,
 ) {
   const response = await fetch(
-    `${BASE_URL}/api/system/${systemId}/point/${pointId}`,
+    `${BASE_URL}/api/device/${systemId}/point/${pointId}`,
     {
       method: "PATCH",
       headers: {
@@ -62,25 +62,25 @@ async function patchPointEndpoint(
   };
 }
 
-describe("GET /api/system/[systemId]/point/[pointId]", () => {
+describe("GET /api/device/[systemId]/point/[pointId]", () => {
   let testSystemId: number;
   let testPointId: number;
 
   beforeAll(async () => {
-    // Get a test system from the database
-    const systems = await DeviceConfigRegistry.allDevices();
+    // Get a test device from the database
+    const deviceRows = await DeviceConfigRegistry.allDevices();
 
-    if (systems.length === 0) {
+    if (deviceRows.length === 0) {
       throw new Error("No systems in database for testing");
     }
 
-    testSystemId = systems[0].id;
+    testSystemId = deviceRows[0].id;
 
     if (!planetscaleDb) {
       throw new Error("Postgres not configured for integration test");
     }
 
-    // Find a point for this system
+    // Find a point for this device
     const [row] = await planetscaleDb
       .select({ points })
       .from(points)
@@ -104,7 +104,7 @@ describe("GET /api/system/[systemId]/point/[pointId]", () => {
 
     it("should return 401 without x-claude header", async () => {
       const response = await fetch(
-        `${BASE_URL}/api/system/${testSystemId}/point/${testPointId}`,
+        `${BASE_URL}/api/device/${testSystemId}/point/${testPointId}`,
       );
       expect(response.status).toBe(401);
     });
@@ -139,26 +139,26 @@ describe("GET /api/system/[systemId]/point/[pointId]", () => {
   });
 });
 
-describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
+describe("PATCH /api/device/[systemId]/point/[pointId]", () => {
   let testSystemId: number;
   let testPointId: number;
   let originalPointData: any;
 
   beforeAll(async () => {
-    // Get a test system from the database
-    const systems = await DeviceConfigRegistry.allDevices();
+    // Get a test device from the database
+    const deviceRows = await DeviceConfigRegistry.allDevices();
 
-    if (systems.length === 0) {
+    if (deviceRows.length === 0) {
       throw new Error("No systems in database for testing");
     }
 
-    testSystemId = systems[0].id;
+    testSystemId = deviceRows[0].id;
 
     if (!planetscaleDb) {
       throw new Error("Postgres not configured for integration test");
     }
 
-    // Find a point for this system
+    // Find a point for this device
     const [row] = await planetscaleDb
       .select({ points })
       .from(points)

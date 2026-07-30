@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadReadableArea } from "@/lib/areas/http";
-import { capabilitiesForSystem } from "@/lib/capabilities/server";
+import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import {
   availableAreaCards,
@@ -30,7 +30,7 @@ export async function GET(
   if ("error" in r) return r.error;
   const handle = r.area.legacySystemId;
 
-  const areaCaps = await capabilitiesForSystem(handle);
+  const areaCaps = await capabilitiesForDevice(handle);
   const areaCards = availableAreaCards(areaCaps).map((cid) => ({
     id: cid,
     label: CARD_CATALOG[cid].label,
@@ -46,13 +46,13 @@ export async function GET(
   // Membership arrives as device ids (slice H), so the `dv_` TypeIDs this route emits come straight off
   // the membership rows — no `legacy_handles` round trip. That also retires the `device-mapping-incomplete`
   // 503: `area_members.device_id` FKs `devices.id`, so a member without a device row is unrepresentable.
-  // The rid hop remains only because `capabilitiesForSystem` is still int-keyed (Phase 13 removes it).
+  // The rid hop remains only because `capabilitiesForDevice` is still int-keyed (Phase 13 removes it).
   const memberIds = await getAreaMemberDeviceIds(r.area.id);
   const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
   const deviceCards = await Promise.all(
     memberIds.map(async (deviceId) => {
       try {
-        const caps = await capabilitiesForSystem(memberRids.get(deviceId)!);
+        const caps = await capabilitiesForDevice(memberRids.get(deviceId)!);
         const cards = availableDeviceCards(caps).map((cid) => {
           const entry = CARD_CATALOG[cid];
           return entry.bindsCapability

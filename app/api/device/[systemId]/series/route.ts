@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import { PointManager } from "@/lib/point/point-manager";
 import { splitBraceAware } from "@/lib/series-filter-utils";
 
@@ -69,33 +69,33 @@ function validatePattern(pattern: string): {
 }
 
 /**
- * GET /api/system/{systemId}/series
+ * GET /api/device/{systemId}/series
  *
- * Returns all available series for a system with database mapping information
+ * Returns all available series for a device with database mapping information
  * Supports optional filtering by glob patterns and interval
  *
- * @param systemId - Numeric system ID
+ * @param systemId - Numeric device ID
  * @param filter - Optional comma-separated glob patterns to filter series (e.g., "source.solar/*,bidi.battery/*")
  * @param interval - Optional interval to filter by ("5m" or "1d")
  *
  * Examples:
- * - GET /api/system/3/series
- *   Returns all series for system 3
+ * - GET /api/device/3/series
+ *   Returns all series for device 3
  *
- * - GET /api/system/3/series?interval=5m
+ * - GET /api/device/3/series?interval=5m
  *   Returns only series that support 5m interval
  *
- * - GET /api/system/3/series?filter=source.solar/*,load/*
+ * - GET /api/device/3/series?filter=source.solar/*,load/*
  *   Returns only series matching the patterns
  *
- * - GET /api/system/3/series?filter=bidi.battery/power.*&interval=5m
+ * - GET /api/device/3/series?filter=bidi.battery/power.*&interval=5m
  *   Returns battery power series that support 5m interval
  *
  * Response:
  * {
  *   "series": [
  *     {
- *       "id": "system.3/source.solar/power.avg",
+ *       "id": "device.3/source.solar/power.avg",
  *       "intervals": ["5m", "1d"],
  *       "label": "Solar Power",
  *       "metricUnit": "W",
@@ -123,7 +123,7 @@ export async function GET(
     }
 
     // Authenticate and authorize
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDeviceAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
 
     // Parse and validate query parameters
@@ -181,9 +181,9 @@ export async function GET(
       filter = rawPatterns;
     }
 
-    // Get filtered series for the system
+    // Get filtered series for the device
     const pointManager = PointManager.getInstance();
-    const seriesInfos = await pointManager.getSeriesForSystem(
+    const seriesInfos = await pointManager.getSeriesForDevice(
       systemId,
       filter,
       interval,

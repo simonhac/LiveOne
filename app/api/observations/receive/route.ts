@@ -38,14 +38,14 @@ import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 type Db = NonNullable<typeof planetscaleDb>;
 
 /**
- * Cache of systemId → whether the system's vendor is 5m-native (Amber/Enphase). Vendor type is
- * effectively immutable, so caching avoids a `systems` lookup on every message. Used to decide
+ * Cache of systemId → whether the device's vendor is 5m-native (Amber/Enphase). Vendor type is
+ * effectively immutable, so caching avoids a `devices` lookup on every message. Used to decide
  * whether `insert5mObservations` UPSERTS (5m-native: late re-published refinements must overwrite)
  * or first-write-wins (raw vendors: the PG recompute owns their 5m).
  */
 const fiveMinNativeCache = new Map<number, boolean>();
 
-async function isSystemFiveMinuteNative(
+async function isDeviceFiveMinuteNative(
   db: Db,
   systemId: number,
 ): Promise<boolean> {
@@ -56,7 +56,7 @@ async function isSystemFiveMinuteNative(
     .from(devices)
     .where(eq(devices.rid, systemId))
     .limit(1);
-  // Unknown system (not yet mirrored) → treat as raw-vendor (safe default; first-write-wins).
+  // Unknown device (not yet mirrored) → treat as raw-vendor (safe default; first-write-wins).
   const isNative = isFiveMinuteNativeVendor(rows[0]?.vendorType);
   fiveMinNativeCache.set(systemId, isNative);
   return isNative;
@@ -246,7 +246,7 @@ async function insert5mObservations(
  * Insert daily aggregated observations into point_readings_agg_1d (single batched statement).
  *
  * The day key (YYYY-MM-DD) is the local date portion of `measurementTime`, which the
- * publisher sets to local midnight of the day (ISO with the system tz offset). The daily
+ * publisher sets to local midnight of the day (ISO with the device tz offset). The daily
  * table has no `sessionId`/`valueStr`/`dataQuality` columns, so those parts of the tuple
  * are ignored. Upsert (overwrite) on the PK so a day re-published after late readings
  * arrive replaces the prior aggregate.
@@ -287,7 +287,7 @@ async function insertSession(
       id: session.sessionId,
       sessionLabel: session.sessionLabel,
       // config-v4 Phase 12 terminal window: the column is `device_rid` now, FK -> `devices.rid`. The
-      // value is unchanged — the handle IS the device rid (`devices.rid == systems.id` verbatim).
+      // value is unchanged — the handle IS the device rid (`devices.rid == devices.id` verbatim).
       deviceRid: systemId,
       cause: session.cause,
       duration: session.durationMs,
@@ -321,9 +321,9 @@ async function processQueueMessage(
   db: Db,
   message: QueueMessage,
 ): Promise<Record<string, number>> {
-  // Resolve (cached) whether this system's 5m is queue-owned (5m-native → upsert) or
+  // Resolve (cached) whether this device's 5m is queue-owned (5m-native → upsert) or
   // recompute-owned (raw vendor → first-write-wins). Done outside the tx; vendor type is immutable.
-  const fiveMinUpsert = await isSystemFiveMinuteNative(db, message.systemId);
+  const fiveMinUpsert = await isDeviceFiveMinuteNative(db, message.systemId);
   return db.transaction(async (tx) => {
     const stats: Record<string, number> = {};
 

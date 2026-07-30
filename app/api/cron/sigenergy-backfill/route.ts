@@ -7,7 +7,7 @@ import {
 } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { parseDateISO } from "@/lib/date-utils";
 import { aggregateRange } from "@/lib/aggregation/daily-points";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
@@ -38,7 +38,7 @@ const MAX_RANGE_DAYS = 31;
  *
  * Params (GET query string, or POST JSON body):
  *   { systemId?: number, start?: "YYYY-MM-DD", end?: "YYYY-MM-DD", days?: number, dryRun?: boolean }
- *   - systemId: one sigenergy system; omit to run EVERY active sigenergy system (the cron default).
+ *   - systemId: one sigenergy device; omit to run EVERY active sigenergy device (the cron default).
  *   - start/end: inclusive station-local calendar dates; if omitted, the last `days` (default 7).
  *
  * The default 7-day window makes each run self-healing over the trailing week, so a single missed
@@ -57,8 +57,8 @@ interface BackfillParams {
   dryRun?: boolean;
 }
 
-/** One system's outcome. `ok: false` carries `error` instead of a backfill result. */
-type SystemOutcome = {
+/** One device's outcome. `ok: false` carries `error` instead of a backfill result. */
+type DeviceOutcome = {
   systemId: number;
   ok: boolean;
   error?: string;
@@ -84,15 +84,15 @@ function spanDaysBetween(startYmd: string, endYmd: string): number {
 }
 
 /**
- * Resolve the station-local calendar window for one system. Explicit start/end are timezone-free;
- * only the `days` fallback needs the station's offset, which is why this is per-system.
+ * Resolve the station-local calendar window for one device. Explicit start/end are timezone-free;
+ * only the `days` fallback needs the station's offset, which is why this is per-device.
  */
 function resolveWindow(
-  system: DeviceConfigView,
+  device: DeviceConfigView,
   params: BackfillParams,
 ): { startYmd: string; endYmd: string } {
   const days = Math.max(1, Math.floor(params.days ?? DEFAULT_DAYS));
-  const localNow = new Date(Date.now() + system.timezoneOffsetMin * 60 * 1000);
+  const localNow = new Date(Date.now() + device.timezoneOffsetMin * 60 * 1000);
   if (params.start || params.end) {
     const endYmd = params.end ? parseToYmd(params.end) : ymd(localNow);
     return {
@@ -105,49 +105,49 @@ function resolveWindow(
   return { startYmd: ymd(startD), endYmd: ymd(localNow) };
 }
 
-/** Backfill one system. Never throws — a failure is reported as `{ ok: false, error }`. */
-async function backfillOneSystem(
-  system: DeviceConfigView,
+/** Backfill one device. Never throws — a failure is reported as `{ ok: false, error }`. */
+async function backfillOneDevice(
+  device: DeviceConfigView,
   params: BackfillParams,
-): Promise<SystemOutcome> {
+): Promise<DeviceOutcome> {
   const dryRun = params.dryRun ?? false;
 
-  if (!system.vendorSiteId)
+  if (!device.vendorSiteId)
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: false,
       error: "no Sigenergy station id (vendorSiteId)",
     };
-  if (!system.ownerClerkUserId)
+  if (!device.ownerClerkUserId)
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: false,
       error: "no owner (Sigenergy credentials required)",
     };
 
-  const { startYmd, endYmd } = resolveWindow(system, params);
+  const { startYmd, endYmd } = resolveWindow(device, params);
   if (endYmd < startYmd)
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: false,
       error: "end must be on or after start",
     };
   const span = spanDaysBetween(startYmd, endYmd);
   if (span > MAX_RANGE_DAYS)
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: false,
       error: `Range ${span}d exceeds ${MAX_RANGE_DAYS}d cap`,
     };
 
-  // getSystemCredentials swallows its own failures and returns null, so this can't throw.
-  const credentials = (await getSystemCredentials(
-    system.ownerClerkUserId,
-    system.id,
+  // getDeviceCredentials swallows its own failures and returns null, so this can't throw.
+  const credentials = (await getDeviceCredentials(
+    device.ownerClerkUserId,
+    device.id,
   )) as SigenergyCredentials | null;
   if (!credentials?.username || !credentials?.password)
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: false,
       error: "no Sigenergy credentials",
     };
@@ -160,7 +160,7 @@ async function backfillOneSystem(
 
   const session = await sessionManager.createSession({
     sessionLabel: "sigen-energy-backfill",
-    systemId: system.id,
+    systemId: device.id,
     cause: dryRun ? "ADMIN-DRYRUN" : "ADMIN",
     started: new Date(),
   });
@@ -170,11 +170,11 @@ async function backfillOneSystem(
   try {
     const result = await backfillEnergyRange({
       client,
-      systemId: system.id,
-      stationId: system.vendorSiteId,
+      systemId: device.id,
+      stationId: device.vendorSiteId,
       startDate: startYmd,
       endDate: endYmd,
-      tzOffsetMin: system.timezoneOffsetMin,
+      tzOffsetMin: device.timezoneOffsetMin,
       session,
       collector,
     });
@@ -193,7 +193,7 @@ async function backfillOneSystem(
     );
 
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: result.errors.length === 0,
       error: result.errors.length ? result.errors.join("; ") : undefined,
       sessionId: session.id,
@@ -213,7 +213,7 @@ async function backfillOneSystem(
       dryRun ? [] : collector.observations,
     );
     return {
-      systemId: system.id,
+      systemId: device.id,
       ok: false,
       error: message,
       sessionId: session.id,
@@ -256,7 +256,7 @@ async function handleBackfill(request: NextRequest) {
     );
 
   // Request-level range validation (timezone-free cases) so client mistakes get a 400, not a
-  // per-system error. The tz-dependent cases are re-checked inside backfillOneSystem.
+  // per-device error. The tz-dependent cases are re-checked inside backfillOneDevice.
   if (params.start && params.end) {
     const s = parseToYmd(params.start);
     const e = parseToYmd(params.end);
@@ -278,15 +278,15 @@ async function handleBackfill(request: NextRequest) {
       { status: 400 },
     );
 
-  // Resolve the targets: an explicit systemId, else EVERY active sigenergy system. Looping by
+  // Resolve the targets: an explicit systemId, else EVERY active sigenergy device. Looping by
   // default is deliberate — the old "exactly one, or 400" rule would have silently broken the
   // nightly cron the day a second Sigenergy site was added.
-  const sigenSystems = (await DeviceConfigRegistry.activeDevices()).filter(
+  const sigenDevices = (await DeviceConfigRegistry.activeDevices()).filter(
     (s) => s.vendorType === "sigenergy",
   );
   let targets: DeviceConfigView[];
   if (params.systemId != null) {
-    const one = sigenSystems.find((s) => s.id === params.systemId);
+    const one = sigenDevices.find((s) => s.id === params.systemId);
     if (!one)
       return NextResponse.json(
         { error: `No active sigenergy system with id ${params.systemId}` },
@@ -294,27 +294,27 @@ async function handleBackfill(request: NextRequest) {
       );
     targets = [one];
   } else {
-    targets = sigenSystems;
+    targets = sigenDevices;
   }
 
-  // No sigenergy systems is a benign no-op for a scheduled run, not an error.
+  // No sigenergy devices is a benign no-op for a scheduled run, not an error.
   if (targets.length === 0)
     return NextResponse.json({
       ok: true,
-      systems: [],
+      devices: [],
       aggregated1d: false,
       message: "No active sigenergy systems",
     });
 
   const dryRun = params.dryRun ?? false;
-  const outcomes: SystemOutcome[] = [];
-  for (const system of targets) {
-    outcomes.push(await backfillOneSystem(system, params));
+  const outcomes: DeviceOutcome[] = [];
+  for (const device of targets) {
+    outcomes.push(await backfillOneDevice(device, params));
   }
 
   // Rebuild 1d aggregates once, over the union of the touched windows. aggregateRange is fleet-wide
   // (and runs the HWS / run-period / battery-provenance + flow_attr heal passes), so calling it per
-  // system would just repeat the same work.
+  // device would just repeat the same work.
   const succeeded = outcomes.filter((o) => o.ok && o.range);
   let aggregated1d = false;
   let aggregatedRange: { start: string; end: string } | undefined;
@@ -335,9 +335,9 @@ async function handleBackfill(request: NextRequest) {
 
   const ok = outcomes.every((o) => o.ok);
   return NextResponse.json(
-    { ok, dryRun, aggregated1d, aggregatedRange, systems: outcomes },
+    { ok, dryRun, aggregated1d, aggregatedRange, devices: outcomes },
     // Every target failed ⇒ 500 so a scheduled run surfaces as a failure. A partial failure stays
-    // 200 with `ok: false` — the successful systems really were written.
+    // 200 with `ok: false` — the successful devices really were written.
     { status: succeeded.length === 0 ? 500 : 200 },
   );
 }

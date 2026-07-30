@@ -67,9 +67,9 @@ export async function GET(
     let dbElapsedMs = 0;
 
     // Get the device from the config registry (per-request memoized)
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-    if (!system) {
+    if (!device) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
@@ -94,19 +94,19 @@ export async function GET(
       }
     }
 
-    // Get username from system owner
+    // Get username from device owner
     let username: string | null = null;
-    if (system.ownerClerkUserId) {
+    if (device.ownerClerkUserId) {
       try {
         const clerk = await clerkClient();
-        const owner = await clerk.users.getUser(system.ownerClerkUserId);
+        const owner = await clerk.users.getUser(device.ownerClerkUserId);
         username = owner.username || null;
       } catch (error) {
         console.error("Error fetching owner username:", error);
       }
     }
 
-    // Get all point info for this system
+    // Get all point info for this device
     const pointsStartTime = Date.now();
     // `points ⋈ devices` (slice 1b), projected explicitly: the served shape this route feeds into
     // `new PointInfo(...)` is no longer one table's columns — `systemId` is the owning device's handle
@@ -147,9 +147,9 @@ export async function GET(
         data: [],
         metadata: {
           systemId,
-          systemShortName: system.alias || null,
+          deviceShortName: device.alias || null,
           ownerUsername: username,
-          timezoneOffsetMin: system.timezoneOffsetMin,
+          timezoneOffsetMin: device.timezoneOffsetMin,
           pointCount: 0,
           rowCount: 0,
           dbElapsedMs,
@@ -218,7 +218,7 @@ export async function GET(
     sortedPoints.forEach((p) => {
       // Resolve display metadata (unit + Excel number format) from the central registry.
       const display = resolvePointDisplay(
-        system.vendorType,
+        device.vendorType,
         p.subsystem,
         p.physicalPathTail,
       );
@@ -247,7 +247,7 @@ export async function GET(
       headers[`point_${p.index}`] = pointInfoObj;
     });
 
-    const device = await DeviceRegistry.addrForHandle(systemId);
+    const deviceAddr = await DeviceRegistry.addrForHandle(systemId);
     const pivotPoints = points.map((p) => {
       const valueColumn: AdminPivotValueColumn =
         source === "raw"
@@ -283,7 +283,7 @@ export async function GET(
           // Convert Unix timestamp (ms) to ISO8601 with timezone
           transformed.time = formatTime_fromJSDate(
             new Date(row.measurement_time),
-            system.timezoneOffsetMin,
+            device.timezoneOffsetMin,
           ); // ISO8601 string (e.g., "2025-11-09T14:30:00+10:00")
         }
 
@@ -312,7 +312,7 @@ export async function GET(
     // Serve the pivot from Postgres via the readings seam.
     const t0 = Date.now();
     const result = await ReadingsDao.readAdminPivot({
-      device: device.deviceId,
+      device: deviceAddr.deviceId,
       source,
       cursor,
       direction,
@@ -329,7 +329,7 @@ export async function GET(
       const altStore: ReadingStore = source === "raw" ? "agg5m" : "raw";
       const checkStartTime = Date.now();
       hasAlternativeData = await ReadingsDao.hasReadingsForDevice(
-        device.deviceId,
+        deviceAddr.deviceId,
         altStore,
       );
       dbElapsedMs += Date.now() - checkStartTime;
@@ -352,7 +352,7 @@ export async function GET(
           ? firstTimestamp // YYYY-MM-DD string
           : formatTime_fromJSDate(
               new Date(firstTimestamp),
-              system.timezoneOffsetMin,
+              device.timezoneOffsetMin,
             ) // ISO8601 string
         : null;
     const lastCursor =
@@ -361,7 +361,7 @@ export async function GET(
           ? lastTimestamp // YYYY-MM-DD string
           : formatTime_fromJSDate(
               new Date(lastTimestamp),
-              system.timezoneOffsetMin,
+              device.timezoneOffsetMin,
             ) // ISO8601 string
         : null;
 
@@ -377,13 +377,13 @@ export async function GET(
       // `lastTimestamp`/`firstTimestamp` are epoch-ms (raw/5m) or YYYY-MM-DD strings (daily); the seam
       // reproduces the legacy `< to_timestamp(ms/1000.0)` / `< 'YYYY-MM-DD'` comparison per store.
       hasOlder = await ReadingsDao.hasReadingsForDeviceBeyond(
-        device.deviceId,
+        deviceAddr.deviceId,
         store,
         lastTimestamp,
         "older",
       );
       hasNewer = await ReadingsDao.hasReadingsForDeviceBeyond(
-        device.deviceId,
+        deviceAddr.deviceId,
         store,
         firstTimestamp,
         "newer",
@@ -396,9 +396,9 @@ export async function GET(
       data,
       metadata: {
         systemId,
-        systemShortName: system.alias || null,
+        deviceShortName: device.alias || null,
         ownerUsername: username,
-        timezoneOffsetMin: system.timezoneOffsetMin,
+        timezoneOffsetMin: device.timezoneOffsetMin,
         pointCount: points.length,
         rowCount: data.length,
         dbElapsedMs,

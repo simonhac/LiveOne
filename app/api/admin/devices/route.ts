@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { getAdminSystemsData } from "@/lib/admin/get-systems-data";
+import { getAdminDevicesData } from "@/lib/admin/get-devices-data";
 
 export async function GET(request: NextRequest) {
   try {
@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
 
     // API always includes latest values (longer timeout - client can wait)
-    const result = await getAdminSystemsData({ latestValuesTimeoutMs: 5000 });
+    const result = await getAdminDevicesData({ latestValuesTimeoutMs: 5000 });
 
     return NextResponse.json(result);
   } catch (error) {

@@ -1,8 +1,8 @@
 /**
- * Per-system admin settings. This used to carry a `viewers` set as well, read from and written to
+ * Per-device admin settings. This used to carry a `viewers` set as well, read from and written to
  * `user_systems`; that table (and the AdminTab UI section that drove it) died in migration 0045
  * (config-v4 Phase 12 slice F). Per-person sharing is `dashboard_grants` + `share_tokens`, so the only
- * thing left here is the system's owner.
+ * thing left here is the device's owner.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
@@ -25,15 +25,15 @@ export async function GET(
     }
 
     // Get the device to find the owner (config registry read)
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-    if (!system) {
+    if (!device) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
     return NextResponse.json({
       success: true,
-      ownerClerkUserId: system.ownerClerkUserId,
+      ownerClerkUserId: device.ownerClerkUserId,
     });
   } catch (error) {
     console.error("Error fetching admin settings:", error);
@@ -66,15 +66,15 @@ export async function PATCH(
     const { ownerClerkUserId } = body;
 
     // Verify the device exists (config registry read)
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-    if (!system) {
+    if (!device) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
     // Update owner if changed
     if (ownerClerkUserId !== undefined) {
-      await DeviceWriter.updateSystem(systemId, {
+      await DeviceWriter.updateDevice(systemId, {
         ownerClerkUserId: ownerClerkUserId || null,
       });
     }

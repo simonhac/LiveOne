@@ -1,9 +1,9 @@
 /**
- * Integration tests for /api/system/[systemId]/series endpoint
+ * Integration tests for /api/device/[systemId]/series endpoint
  *
  * Tests:
  * - Authentication and authorization
- * - System resolution (numeric ID)
+ * - Device resolution (numeric ID)
  * - Filter parameter validation and matching
  * - Interval parameter validation and filtering
  * - Combined filter + interval filtering
@@ -26,7 +26,7 @@ async function getSeriesEndpoint(
     interval?: "5m" | "1d";
   },
 ) {
-  const url = new URL(`${BASE_URL}/api/system/${systemIdentifier}/series`);
+  const url = new URL(`${BASE_URL}/api/device/${systemIdentifier}/series`);
 
   if (params?.filter) {
     url.searchParams.set("filter", params.filter);
@@ -47,19 +47,19 @@ async function getSeriesEndpoint(
   };
 }
 
-describe("GET /api/system/[systemId]/series", () => {
+describe("GET /api/device/[systemId]/series", () => {
   let testSystemId: number;
   let testSystemIdentifier: string;
 
   beforeAll(async () => {
-    // Get a test system from the database
-    const systems = await DeviceConfigRegistry.allDevices();
+    // Get a test device from the database
+    const devices = await DeviceConfigRegistry.allDevices();
 
-    if (systems.length === 0) {
+    if (devices.length === 0) {
       throw new Error("No systems in database for testing");
     }
 
-    testSystemId = systems[0].id;
+    testSystemId = devices[0].id;
 
     // Use numeric ID only (shortnames not supported yet)
     testSystemIdentifier = testSystemId.toString();
@@ -161,7 +161,7 @@ describe("GET /api/system/[systemId]/series", () => {
 
     it("should return 400 for invalid interval", async () => {
       const url = new URL(
-        `${BASE_URL}/api/system/${testSystemIdentifier}/series?interval=30m`,
+        `${BASE_URL}/api/device/${testSystemIdentifier}/series?interval=30m`,
       );
       const response = await fetch(url.toString(), {
         headers: { "x-claude": "true" },
@@ -185,7 +185,7 @@ describe("GET /api/system/[systemId]/series", () => {
 
       // All returned series should match the pattern
       data.series.forEach((series: any) => {
-        // Extract path after system identifier
+        // Extract path after device identifier
         const path = series.id.substring(series.id.indexOf("/") + 1);
         expect(path).toMatch(/^source\.solar\//);
       });
@@ -314,7 +314,7 @@ describe("GET /api/system/[systemId]/series", () => {
   describe("Filter Validation", () => {
     it("should treat empty filter parameter as no filter", async () => {
       const url = new URL(
-        `${BASE_URL}/api/system/${testSystemIdentifier}/series?filter=`,
+        `${BASE_URL}/api/device/${testSystemIdentifier}/series?filter=`,
       );
       const response = await fetch(url.toString(), {
         headers: { "x-claude": "true" },
@@ -469,7 +469,7 @@ describe("GET /api/system/[systemId]/series", () => {
       });
 
       // Should be reasonably fast (cache should help)
-      // This is a soft check - may vary by system
+      // This is a soft check - may vary by device
       expect(elapsed).toBeLessThan(2000);
     });
   });

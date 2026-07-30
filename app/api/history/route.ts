@@ -137,7 +137,7 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
 function parseTimeRangeParams(
   searchParams: URLSearchParams,
   interval: "5m" | "30m" | "1d",
-  systemTimezoneOffsetMin: number,
+  deviceTimezoneOffsetMin: number,
 ): ValidationResult & {
   startTime?: ZonedDateTime | CalendarDate;
   endTime?: ZonedDateTime | CalendarDate;
@@ -156,13 +156,13 @@ function parseTimeRangeParams(
       [startTime, endTime] = parseRelativeTime(
         lastParam,
         interval,
-        systemTimezoneOffsetMin,
+        deviceTimezoneOffsetMin,
       );
     } else if (startTimeParam && endTimeParam) {
-      // Parse timezone offset if provided, otherwise use system timezone
+      // Parse timezone offset if provided, otherwise use device timezone
       const offsetMin = timezoneOffsetParam
         ? parseInt(timezoneOffsetParam)
-        : systemTimezoneOffsetMin;
+        : deviceTimezoneOffsetMin;
 
       // Decode URL-safe strings to CalendarDate or ZonedDateTime
       // The function automatically determines the format based on the string
@@ -294,7 +294,7 @@ function validateTimeRange(
 // Data Fetching using new abstraction
 // ============================================================================
 
-async function getSystemHistoryInOpenNEMFormat(
+async function getDeviceHistoryInOpenNEMFormat(
   /**
    * The integer addressing handle, and the subject's UTC offset. Phase 13 PR 2: this took the legacy
    * device-shaped view (`synthesizeAreaView`'s fabrication for an Area) and read only `.id` and
@@ -322,7 +322,7 @@ async function getSystemHistoryInOpenNEMFormat(
   // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
   const intervalForFiltering = interval === "30m" ? "5m" : interval;
 
-  const seriesInfos = await pointManager.getSeriesForSystem(
+  const seriesInfos = await pointManager.getSeriesForDevice(
     handle,
     filterPatterns,
     intervalForFiltering,
@@ -393,7 +393,7 @@ async function getSystemHistoryInOpenNEMFormat(
   const computeSankey =
     sankey !== undefined && flowMatrixOmittedReason === undefined;
 
-  // Exact-energy overlay: also fetch the logical system's energy-accumulator points so the Sankey
+  // Exact-energy overlay: also fetch the logical device's energy-accumulator points so the Sankey
   // can prefer metered interval energies over power integration (`FlowSeries.energyKwh`). Additive
   // only — the coverage check above stays POWER-only, so missing energy rows can never omit the
   // Sankey (they just fall back to integration), and `buildSeriesFromAggRows` iterates
@@ -598,7 +598,7 @@ export async function GET(request: NextRequest) {
     );
     if (authResult instanceof NextResponse) return authResult;
     // `subject` is the area-native identity — the ONLY identity this route now carries. Phase 13 PR 2
-    // removed the legacy device-shaped `system` view: the series layer takes the bare handle and the
+    // removed the legacy device-shaped `device` view: the series layer takes the bare handle and the
     // timezone comes off the subject, so there is no longer a second, device-first identity to disagree
     // with it.
     const { subject } = authResult;
@@ -679,7 +679,7 @@ export async function GET(request: NextRequest) {
       flowMatrixOmittedReason,
       avgCache,
     } = await t.time("fetch", () =>
-      getSystemHistoryInOpenNEMFormat(
+      getDeviceHistoryInOpenNEMFormat(
         handle,
         tzOffsetMin,
         timeRange.startTime!,
@@ -707,8 +707,8 @@ export async function GET(request: NextRequest) {
             try {
               const startYMD = (timeRange.startTime as CalendarDate).toString();
               const endYMD = (timeRange.endTime as CalendarDate).toString();
-              // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
-              // it handles null/incomplete internally (→ reason "not-a-logical-system").
+              // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical device;
+              // it handles null/incomplete internally (→ reason "not-a-logical-device").
               const logicalSystem = await resolveLogicalSystem(handle);
               const attr = await readAttributedDailyMatrices(
                 planetscaleDb,

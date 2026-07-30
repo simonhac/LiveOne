@@ -3,7 +3,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices, areaBindings, areas } from "@/lib/db/planetscale/schema";
 import { loadReadableArea } from "@/lib/areas/http";
-import { capabilitiesForSystem } from "@/lib/capabilities/server";
+import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import { areaDetailResponse } from "@/lib/areas/v4-shapes";
@@ -41,8 +41,8 @@ export async function GET(
 
   // Membership arrives as device ids (slice H), so the `dv_` TypeIDs this route emits come straight off
   // the membership rows — no `legacy_handles` round trip, and no `device-mapping-incomplete` 503, since
-  // `area_members.device_id` FKs `devices.id`. The rid hop remains only because `systems` and
-  // `capabilitiesForSystem` are still int-keyed (Phase 13 removes it).
+  // `area_members.device_id` FKs `devices.id`. The rid hop remains only because `devices` and
+  // `capabilitiesForDevice` are still int-keyed (Phase 13 removes it).
   const memberIds = await getAreaMemberDeviceIds(r.area.id);
   const memberRids = await DeviceRegistry.ridsForDevices(memberIds);
   const [memberRows, areaCaps, bindingRows] = await Promise.all([
@@ -55,7 +55,7 @@ export async function GET(
       })
       .from(devices)
       .where(inArray(devices.rid, [...memberRids.values()])),
-    capabilitiesForSystem(r.area.legacySystemId),
+    capabilitiesForDevice(r.area.legacySystemId),
     db
       .select({
         id: areaBindings.id,
@@ -82,7 +82,7 @@ export async function GET(
       const rid = memberRids.get(deviceId)!;
       const member = memberById.get(rid);
       if (!member) throw new Error(`Area member system not found: ${rid}`);
-      const capabilities = await capabilitiesForSystem(rid);
+      const capabilities = await capabilitiesForDevice(rid);
       return {
         id: deviceId,
         name: member.name,

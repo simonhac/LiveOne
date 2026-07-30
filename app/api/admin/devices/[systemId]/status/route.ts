@@ -30,23 +30,23 @@ export async function PATCH(
       );
     }
 
-    const existingSystem = await DeviceConfigRegistry.deviceByHandle(systemId);
+    const existingDevice = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-    if (!existingSystem) {
+    if (!existingDevice) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    await DeviceWriter.updateSystem(systemId, { status });
+    await DeviceWriter.updateDevice(systemId, { status });
 
-    // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); a removed system
-    // leaves its dashboards intact, so there is no per-system default to clear here.
+    // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); a removed device
+    // leaves its dashboards intact, so there is no per-device default to clear here.
     console.log(
       `System ${systemId} status changed to ${status} by admin ${authResult.userId}`,
     );
 
     return NextResponse.json({
       success: true,
-      system: { ...existingSystem, status, updatedAt: new Date() },
+      device: { ...existingDevice, status, updatedAt: new Date() },
       message: `System status updated to ${status}`,
     });
   } catch (error) {

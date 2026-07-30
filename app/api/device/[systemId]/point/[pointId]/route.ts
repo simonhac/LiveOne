@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices, points } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
-import { requireSystemAccess } from "@/lib/api-auth";
+import { requireDeviceAccess } from "@/lib/api-auth";
 import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
 import { PointManager } from "@/lib/point/point-manager";
 
 /**
  * One point of `{systemId}`, by the `pointId` URL segment, from `points ⋈ devices` (slice 1b).
  *
- * `pointId` is a **`points.rid`** — a global integer, not the old per-system `point_info.index`. This
+ * `pointId` is a **`points.rid`** — a global integer, not the old per-device `point_info.index`. This
  * route is the pair to `PointManager.updatePoint`, whose WHERE moved to `rid` in the seam commit, so
  * reading on anything else here would 404 (or, worse, address a different point) for the 117-of-134
  * rows on dev where the two integers differ.
@@ -36,7 +36,7 @@ function pointByRid(systemId: number, pointRid: number) {
 }
 
 /**
- * PATCH /api/system/{systemId}/point/{pointId}
+ * PATCH /api/device/{systemId}/point/{pointId}
  *
  * Updates user-modifiable fields on a point_info record.
  *
@@ -64,9 +64,9 @@ export async function PATCH(
     }
 
     // Authenticate and authorize
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDeviceAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
-    const { system } = authResult;
+    const { device } = authResult;
 
     // Parse request body
     const body = await request.json();
@@ -130,7 +130,7 @@ export async function PATCH(
 
     // Perform the update.
     // Routed through PointManager.updatePoint so the write honours
-    // CONFIG_WRITES_TO_PG and the series cache is invalidated for this system.
+    // CONFIG_WRITES_TO_PG and the series cache is invalidated for this device.
     const pointManager = PointManager.getInstance();
     await pointManager.updatePoint(systemId, pointId, updateData);
 
@@ -143,7 +143,7 @@ export async function PATCH(
     );
 
     // Construct full physical path: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
-    const fullPhysicalPath = `liveone/${system.vendorType}/${system.vendorSiteId}/${updatedPoint.physicalPathTail}`;
+    const fullPhysicalPath = `liveone/${device.vendorType}/${device.vendorSiteId}/${updatedPoint.physicalPathTail}`;
 
     return NextResponse.json({
       success: true,
@@ -169,7 +169,7 @@ export async function PATCH(
 }
 
 /**
- * GET /api/system/{systemId}/point/{pointId}
+ * GET /api/device/{systemId}/point/{pointId}
  *
  * Returns detailed information about a specific point.
  */
@@ -191,9 +191,9 @@ export async function GET(
     }
 
     // Authenticate and authorize
-    const authResult = await requireSystemAccess(request, systemId);
+    const authResult = await requireDeviceAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
-    const { system } = authResult;
+    const { device } = authResult;
 
     const [point] = await pointByRid(systemId, pointId);
 
@@ -205,7 +205,7 @@ export async function GET(
     }
 
     // Construct full physical path: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
-    const fullPhysicalPath = `liveone/${system.vendorType}/${system.vendorSiteId}/${point.physicalPathTail}`;
+    const fullPhysicalPath = `liveone/${device.vendorType}/${device.vendorSiteId}/${point.physicalPathTail}`;
 
     return NextResponse.json({
       systemId: point.systemId,

@@ -11,8 +11,8 @@ import { jsonResponse } from "@/lib/json";
 /**
  * GET /api/admin/latest
  *
- * - GET /api/admin/latest - Returns all system summaries
- * - GET /api/admin/latest?systemId=1 - Returns single system summary
+ * - GET /api/admin/latest - Returns all device summaries
+ * - GET /api/admin/latest?systemId=1 - Returns single device summary
  * - GET /api/admin/latest?action=clear - Clears latest values cache
  */
 export async function GET(request: NextRequest) {

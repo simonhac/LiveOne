@@ -5,7 +5,7 @@ import { Area } from "@/lib/ids";
 
 /**
  * config-v4 areas collection (§9.2), DARK, TypeID-native. The readable set (areas the caller owns ∪ areas
- * whose handle is a system they can see) a v4 editor lists to add an area or pick a seed source.
+ * whose handle is a device they can see) a v4 editor lists to add an area or pick a seed source.
  *   GET → { areas: [{ id: ar_…, displayName, chartCapable }] }
  * Ids are `ar_` TypeIDs (areas are uuid-PK'd today — no cutover needed to speak the public id).
  */

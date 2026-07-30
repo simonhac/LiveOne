@@ -123,24 +123,24 @@ export async function GET(request: NextRequest) {
     const vehicleId = String(teslaVehicle.id);
     console.log("TESLA: Using vehicle:", vehicleId, teslaVehicle.display_name);
 
-    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
+    // Existence check reads the config registry (`devices`); the writers below are still `devices`.
 
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(vehicleId);
-    const existingSystem =
+    const existingDevice =
       existingByVendorSiteId && existingByVendorSiteId.vendorType === "tesla"
         ? existingByVendorSiteId
         : null;
 
-    if (!existingSystem) {
-      // Create new system in database
+    if (!existingDevice) {
+      // Create new device in database
       console.log("TESLA: Creating new system in database");
 
       // Default to Melbourne timezone (can be updated later)
       const timezoneOffsetMin = 600; // UTC+10
       const displayTimezone = "Australia/Melbourne";
 
-      const newSystem = await DeviceWriter.createSystem({
+      const newDevice = await DeviceWriter.createDevice({
         ownerClerkUserId: userId,
         vendorType: "tesla",
         vendorSiteId: vehicleId,
@@ -152,13 +152,13 @@ export async function GET(request: NextRequest) {
         displayTimezone,
       });
 
-      console.log("TESLA: System created successfully with ID:", newSystem.id);
+      console.log("TESLA: System created successfully with ID:", newDevice.id);
 
-      // Store tokens with the new system ID
+      // Store tokens with the new device ID
       const storeResult = await storeTeslaTokens(
         userId,
         tokens,
-        newSystem.id,
+        newDevice.id,
         vehicleId,
         fleetApiBaseUrl,
       );
@@ -167,20 +167,20 @@ export async function GET(request: NextRequest) {
       }
       console.log("TESLA: Tokens stored for new system");
     } else {
-      // Update existing system (reactivate if it was removed)
+      // Update existing device (reactivate if it was removed)
       console.log("TESLA: Updating existing system");
 
-      await DeviceWriter.updateSystem(existingSystem.id, {
+      await DeviceWriter.updateDevice(existingDevice.id, {
         ownerClerkUserId: userId,
-        displayName: teslaVehicle.display_name || existingSystem.displayName,
-        status: "active", // Reactivate the system if it was removed
+        displayName: teslaVehicle.display_name || existingDevice.displayName,
+        status: "active", // Reactivate the device if it was removed
       });
 
-      // Store tokens with the existing system ID
+      // Store tokens with the existing device ID
       const storeResult = await storeTeslaTokens(
         userId,
         tokens,
-        existingSystem.id,
+        existingDevice.id,
         vehicleId,
         fleetApiBaseUrl,
       );
