@@ -83,10 +83,12 @@ Readings can carry `value` (numeric), `value_str` (e.g. tariff codes), or `error
 
 A **multi-device Area** groups several physical systems' points into one view (the former "composite").
 It is **not** a `systems` row — it is an **areas-backed virtual system**:
-`DeviceConfigRegistry.viewableByHandle` (`lib/registry/device-config.ts`) synthesizes one on demand
-(runtime `vendor_type = 'area'`, never polled, no credentials, no nesting) for any integer handle that
-names an Area but no device. Precedence is **device-first**: a handle that names both resolves to the
-device. The handle→area mapping is read from `legacy_handles` (config-v4 Phase 12 slice K3; it was
+it is served **area-natively** as its own `areas` row (`ServingSubject`, `lib/dashboard/subject.ts`) for
+any integer handle that names an Area. It is never polled, has no credentials and does not nest.
+Precedence is **device-first**: a handle that names both an area and a device resolves to the device for
+its points, and an explicit `?areaId=` is authorized against the AREA's own scope before it is served
+(config-v4 Phase 13 PR 2 — before which a device-shaped view was _synthesized_ on demand with a runtime
+`vendor_type = 'area'`). The handle→area mapping is read from `legacy_handles` (config-v4 Phase 12 slice K3; it was
 `areas.legacy_system_id`, which Phase 13 drops). Membership and the role→point mapping live in the
 **semantic layer**, not `systems.metadata` (that JSON blob is retired):
 

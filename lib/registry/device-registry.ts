@@ -187,8 +187,8 @@ export interface HandleTargets {
  *
  * ⚠️ **This function states no precedence, and the one live caller is DEVICE-first.** An earlier draft of
  * this comment asserted "area-first, matching today's dispatch order" — that was WRONG about the tree:
- * the v3 resolver was real-row-first, and `DeviceConfigRegistry.viewableByHandle` (slice K3, the only
- * caller) keeps that. Resolving area-first would silently widen handle 13 from its device's own points to
+ * the v3 resolver was real-row-first, and the serving path keeps that — since Phase 13 PR 2 by asking
+ * `deviceByHandle` before `areaByHandle` explicitly (`PointManager._resolvePointsForHandle`). Resolving area-first would silently widen handle 13 from its device's own points to
  * its area's bindings; see trap D-l in `docs/plans/config-v4-phase8-cutover.md`. Any future caller must
  * choose deliberately — the returned `HandleTargets` can carry BOTH.
  */

@@ -30,9 +30,11 @@
  * handle here, at the edge, and the handle is passed inward exactly as before — the KV latest cache
  * (PR 3), `point_readings` addressing, `PointManager` dispatch and `resolveLogicalSystem` are all still
  * handle-keyed. A consequence worth stating: for a COLLIDING handle, `?areaId=ar_…` yields the area's
- * metadata but the interior still dispatches device-first for its points (`PointManager`'s
- * `isAreaHandle` gate, which PR 2 re-grammars). For the four handles that are areas ONLY — 7, 8,
- * 1000001, 1000002 — there is no collision and nothing to disagree about.
+ * metadata but the interior still dispatches device-first for its points — now stated explicitly in
+ * `PointManager._resolvePointsForHandle` rather than carried by the deleted `isAreaHandle` gate. PR 2
+ * also made the AREA leg authorize against the area's own scope, so that device-first interior is no
+ * longer what keeps the wider entity safe. For the four handles that are areas ONLY — 7, 8, 1000001,
+ * 1000002 — there is no collision and nothing to disagree about.
  */
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { DeviceRecord } from "@/lib/registry/device-config";
@@ -67,7 +69,14 @@ export function subjectTimezoneOffsetMin(s: ServingSubject): number {
     : s.area.timezoneOffsetMin;
 }
 
-export function subjectDisplayTimezone(s: ServingSubject): string | null {
+/**
+ * The subject's IANA display timezone. Non-null for BOTH kinds: `areas.display_timezone` is `NOT NULL`
+ * in the schema, and a device's own `displayTimezone` is projected from its area-of-one's column by
+ * `deviceByHandle`. The annotation was widened to `string | null` until Phase 13 PR 2 gave it a caller
+ * (`/api/system/{id}/run-periods`, moved off the deleted legacy view's non-null `displayTimezone`) that
+ * needs the true type.
+ */
+export function subjectDisplayTimezone(s: ServingSubject): string {
   return s.kind === "device"
     ? s.device.displayTimezone
     : s.area.displayTimezone;

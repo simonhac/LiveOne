@@ -125,7 +125,6 @@ export async function GET(
     // Authenticate and authorize
     const authResult = await requireSystemAccess(request, systemId);
     if (authResult instanceof NextResponse) return authResult;
-    const { system } = authResult;
 
     // Parse and validate query parameters
     const { searchParams } = new URL(request.url);
@@ -185,7 +184,7 @@ export async function GET(
     // Get filtered series for the system
     const pointManager = PointManager.getInstance();
     const seriesInfos = await pointManager.getSeriesForSystem(
-      system,
+      systemId,
       filter,
       interval,
     );

@@ -10,7 +10,6 @@
  * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
  */
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { SeriesInfo, getSeriesPath } from "@/lib/point/series-info";
 import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";
@@ -57,7 +56,12 @@ export async function buildSeriesFromAggRows(
   allRows: AggRow[],
   seriesInfos: SeriesInfo[],
   interval: "5m" | "30m" | "1d",
-  system: DeviceConfigView,
+  /**
+   * The subject's UTC offset in minutes — the ONLY thing this builder ever read off the legacy
+   * device-shaped view it used to take (Phase 13 PR 2). An Area has a real offset of its own, so
+   * passing the number decouples this from `synthesizeAreaView`.
+   */
+  timezoneOffsetMin: number,
   firstEpoch: number,
   lastEpoch: number,
   debug?: HistoryDebugInfo,
@@ -260,8 +264,7 @@ export async function buildSeriesFromAggRows(
       `${series.point.index}/${series.point.metricType}`;
     const fullPath = `${pointPath}.${series.aggregationField}`;
 
-    // Format timestamps
-    const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
+    // Format timestamps (`timezoneOffsetMin` is now a parameter — see the signature)
     const startFormatted = formatTime_fromJSDate(
       new Date(firstEpoch),
       timezoneOffsetMin,
