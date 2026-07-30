@@ -151,7 +151,14 @@ function CardNodeView({
     ? resolver.device(context.device)
     : null;
   if (context.device && device == null) return <DeviceUnavailable />;
-  const handle = area?.handle ?? null;
+  // The addressing handle a v3 card plugin fetches with: the inherited AREA's handle, or — when the
+  // node inherits no area at all — the inherited DEVICE's. The device fallback is what makes a
+  // device-scoped subtree work: `/device/{id}` binds only `device` on its root (there is no area
+  // envelope for a device page), and without this every `pending: "host-skeleton"` plugin would be
+  // gated off by `handle == null` and render nothing. Area wins where both are bound, which is the
+  // v3 rule (`deviceSystemId` was a per-card pin, never the section handle) — see `systemId` below,
+  // which is the tile/`synthCardV3` pin and does prefer the device.
+  const handle = area?.handle ?? device?.systemId ?? null;
   const systemId = context.device ? (device?.systemId ?? null) : handle;
   const renderKind = v4CardRenderKind(node.type);
 
@@ -209,7 +216,9 @@ function GroupNodeView({
   const device: ResolvedDevice | null = nodeContext.device
     ? resolver.device(nodeContext.device)
     : null;
-  const handle = area?.handle ?? null;
+  // Same rule as CardNodeView: area handle, else the inherited device's. This is the handle the
+  // collapsed <SiteChartsGroup> fetches with, so a device-scoped group (`/device/{id}`) charts too.
+  const handle = area?.handle ?? device?.systemId ?? null;
 
   if (nodeContext.device && device == null) return <DeviceUnavailable />;
 
