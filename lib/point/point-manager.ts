@@ -10,7 +10,11 @@
 
 import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo as pgPointInfoTable } from "@/lib/db/planetscale/schema";
+import {
+  devices as pgDevices,
+  pointInfo as pgPointInfoTable,
+  points as pgPoints,
+} from "@/lib/db/planetscale/schema";
 import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 import { PointInfo } from "@/lib/point/point-info";
 import {
@@ -94,15 +98,97 @@ export interface SessionInfo {
 // ============================================================================
 
 /**
- * Map a single PG point_info row to the served row shape.
+ * The SINGLE projection every served-point read goes through — config-v4 Phase 12 slice 1b.
  *
- * PG has native `createdAt`/`updatedAt` (Date); the served shape exposes epoch-ms
- * integer columns `createdAtMs`/`updatedAtMs` (number). Every other field passes
- * through. A missing `createdAt` collapses to 0, a missing `updatedAt` to null.
+ * ## `index` is now `points.rid`, and that is the whole point of this slice
+ *
+ * `points` has neither `point_info.system_id` nor `point_info.id` (the per-system sequential
+ * "index"). The handle comes back via the `devices` join; the index is re-sourced from
+ * `points.rid`.
+ *
+ * That re-sourcing is deliberately done HERE, at the one seam, rather than by re-grammaring
+ * `PointInfo.getReference()` and then chasing its consumers. `index` and the reference derived from
+ * it are used as an in-memory correlation key in four places that the migration brief did not name
+ * — `app/api/history/route.ts:377,394`, `lib/history/readings-pg.ts:120,192,220`,
+ * `lib/history/build-series.ts:116`, `lib/aggregation/flow-series-pg.ts:135` — where one side of the
+ * comparison is built from `.index` and the other from `.getReference()`. Today those are the same
+ * integer, so they agree by accident. Re-grammaring only the reference would have split them into
+ * TWO keyspaces, and the failure is SILENT: `coversRoleSet` (`history/route.ts:394`) simply goes
+ * false and the Sankey is omitted with reason `"incomplete-series-set"` — no error, no log. Worse,
+ * the energy overlay is already reference-keyed on both sides, so the two legs could not merely
+ * miss each other but COLLIDE — one point's old `index` can equal another point's `rid` on the same
+ * system, which yields plausible-but-wrong numbers.
+ *
+ * Sourcing both from one integer makes that divergence UNREPRESENTABLE instead of merely tested
+ * for. Two addresses that must agree is the most expensive pattern in this phase; this collapses
+ * them to one.
+ *
+ * ## Consequences, stated deliberately
+ *
+ * `point_info.id` was per-system sequential (1..19 on dev); `points.rid` is global (1..134). They
+ * are equal only for points minted since slice M — 17 of 134 rows on dev, so **117 change value**.
+ * Nothing persists a point reference (`PointReference.parse` has no production caller, no DB column
+ * or dashboard descriptor stores one, and the KV `pointReference` is already a `pt_` TypeID), so
+ * the change cannot invalidate stored data. Two wire fields carry the new integer —
+ * `/api/system/[id]/points`'s `reference` and `/api/history`'s `path` fallback — both display/keying
+ * only; see the PR body.
+ *
+ * ⚠️ WRITERS ARE NOT CONVERTED BY THIS SLICE. `point_info` is still written (as the write-behind
+ * copy it became in slice M) so the `verify-slice-m-*` parity oracles keep working until PR 2 drops
+ * the table. But `updatePoint`'s WHERE had to move from `point_info.id` to `point_info.rid`, because
+ * its `pointIndex` argument now arrives as a rid from these reads. See there.
  */
-function pgPointInfoToServed(
-  pgRow: typeof pgPointInfoTable.$inferSelect,
-): PointInfoRow {
+const SERVED_POINT_COLUMNS = {
+  systemId: pgDevices.rid,
+  index: pgPoints.rid,
+  pointUid: pgPoints.id,
+  physicalPathTail: pgPoints.physicalPath,
+  logicalPathStem: pgPoints.logicalPath,
+  metricType: pgPoints.metricType,
+  metricUnit: pgPoints.unit,
+  defaultName: pgPoints.defaultName,
+  displayName: pgPoints.name,
+  subsystem: pgPoints.subsystem,
+  transform: pgPoints.transform,
+  active: pgPoints.active,
+  createdAt: pgPoints.createdAt,
+  updatedAt: pgPoints.updatedAt,
+} as const;
+
+/** A row as projected by {@link SERVED_POINT_COLUMNS}. */
+type ServedPointDbRow = {
+  systemId: number;
+  index: number;
+  pointUid: string;
+  physicalPathTail: string;
+  logicalPathStem: string | null;
+  metricType: string;
+  metricUnit: string;
+  defaultName: string;
+  displayName: string;
+  subsystem: string | null;
+  transform: string | null;
+  active: boolean;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+};
+
+/** `points ⋈ devices`, the only source of a served point since slice 1b. */
+function servedPointQuery() {
+  return requirePlanetscaleDb()
+    .select(SERVED_POINT_COLUMNS)
+    .from(pgPoints)
+    .innerJoin(pgDevices, eq(pgDevices.id, pgPoints.deviceId));
+}
+
+/**
+ * Map a projected row to the served row shape.
+ *
+ * PG has native `createdAt`/`updatedAt` (Date); the served shape exposes epoch-ms integer columns
+ * `createdAtMs`/`updatedAtMs` (number). A missing `createdAt` collapses to 0, a missing `updatedAt`
+ * to null.
+ */
+function pgPointInfoToServed(pgRow: ServedPointDbRow): PointInfoRow {
   return {
     systemId: pgRow.systemId,
     index: pgRow.index,
@@ -121,10 +207,8 @@ function pgPointInfoToServed(
   };
 }
 
-/** Map an array of PG point_info rows to the served shape. */
-function pgPointInfoRowsToServed(
-  pgRows: (typeof pgPointInfoTable.$inferSelect)[],
-): PointInfoRow[] {
+/** Map an array of projected rows to the served shape. */
+function pgPointInfoRowsToServed(pgRows: ServedPointDbRow[]): PointInfoRow[] {
   return pgRows.map(pgPointInfoToServed);
 }
 
@@ -178,14 +262,11 @@ export class PointManager {
   }
 
   /**
-   * Load a device's own points directly from its `point_info`.
+   * Load a device's own points directly from `points` (joined to `devices` for the handle).
    * PRIVATE: External callers should use getActivePointsForSystem instead.
    */
   private async _loadOwnPoints(systemId: number): Promise<PointInfo[]> {
-    const pgRows = await requirePlanetscaleDb()
-      .select()
-      .from(pgPointInfoTable)
-      .where(eq(pgPointInfoTable.systemId, systemId));
+    const pgRows = await servedPointQuery().where(eq(pgDevices.rid, systemId));
     const rows = pgPointInfoRowsToServed(pgRows);
 
     return rows.map((row) => PointInfo.from(row));
@@ -277,10 +358,9 @@ export class PointManager {
       // Bindings present (override) → the bound child points ARE the set. Each binding carries the
       // point's uuid (`area_bindings.point_uid`, NOT NULL since 0047), so this is one indexed
       // `point_uid IN (…)` rather than the OR-of-(system_id, id) pairs it replaces.
-      const pgRows = await requirePlanetscaleDb()
-        .select()
-        .from(pgPointInfoTable)
-        .where(inArray(pgPointInfoTable.pointUid, boundUids));
+      const pgRows = await servedPointQuery().where(
+        inArray(pgPoints.id, boundUids),
+      );
       return pgPointInfoRowsToServed(pgRows).map((row) => PointInfo.from(row));
     }
 
@@ -434,10 +514,14 @@ export class PointManager {
           ...updates,
           updatedAt: new Date(), // PG native timestamp
         })
+        // ⚠️ slice 1b: `rid`, NOT `index`. Every read now serves `index = points.rid`, so the
+        // `pointIndex` a caller hands back is a rid. `point_info.rid == points.rid` verbatim, so
+        // this addresses the same row — but matching on `point_info.id` here would silently update
+        // the WRONG point (or none) for the 117-of-134 rows where the two integers differ.
         .where(
           and(
             eq(pgPointInfoTable.systemId, systemId),
-            eq(pgPointInfoTable.index, pointIndex),
+            eq(pgPointInfoTable.rid, pointIndex),
           ),
         )
         .returning();
@@ -460,10 +544,7 @@ export class PointManager {
    * Uses physicalPathTail as the key
    */
   async loadPointInfoMap(systemId: number): Promise<PointInfoMap> {
-    const pgRows = await requirePlanetscaleDb()
-      .select()
-      .from(pgPointInfoTable)
-      .where(eq(pgPointInfoTable.systemId, systemId));
+    const pgRows = await servedPointQuery().where(eq(pgDevices.rid, systemId));
     const points = pgPointInfoRowsToServed(pgRows);
 
     const pointMap: PointInfoMap = {};
@@ -483,13 +564,11 @@ export class PointManager {
     systemId: number,
     physicalPathTail: string,
   ): Promise<PointInfoRow | null> {
-    const [pgRow] = await requirePlanetscaleDb()
-      .select()
-      .from(pgPointInfoTable)
+    const [pgRow] = await servedPointQuery()
       .where(
         and(
-          eq(pgPointInfoTable.systemId, systemId),
-          eq(pgPointInfoTable.physicalPathTail, physicalPathTail),
+          eq(pgDevices.rid, systemId),
+          eq(pgPoints.physicalPath, physicalPathTail),
         ),
       )
       .limit(1);
