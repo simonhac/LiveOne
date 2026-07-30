@@ -41,9 +41,7 @@ export async function listReadableDevices(
       status: devices.status,
     })
     .from(devices)
-    .where(
-      or(eq(devices.ownerUserId, userId), isNull(devices.ownerUserId)),
-    );
+    .where(or(eq(devices.ownerUserId, userId), isNull(devices.ownerUserId)));
   const mappings = await DeviceRegistry.addrsForHandles(
     visible.map((s) => s.id),
   );

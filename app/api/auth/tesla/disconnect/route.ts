@@ -81,7 +81,9 @@ export async function GET(request: NextRequest) {
 
     // Use SystemsManager to get the system
     const systemsManager = SystemsManager.getInstance();
-    const system = await DeviceConfigRegistry.deviceByHandle(parseInt(systemId));
+    const system = await DeviceConfigRegistry.deviceByHandle(
+      parseInt(systemId),
+    );
 
     if (
       !system ||

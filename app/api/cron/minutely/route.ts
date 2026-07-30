@@ -364,7 +364,9 @@ export async function GET(request: NextRequest) {
     // Get systems to poll
     let activeSystems;
     if (testSystemId) {
-      const system = await DeviceConfigRegistry.deviceByHandle(parseInt(testSystemId));
+      const system = await DeviceConfigRegistry.deviceByHandle(
+        parseInt(testSystemId),
+      );
       activeSystems = system ? [system] : [];
       console.log(`[Cron] Testing single system: ${testSystemId}`);
     } else {

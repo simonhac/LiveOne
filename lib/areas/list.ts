@@ -50,10 +50,7 @@ export async function listReadableAreas(
   userId: string,
   opts: { withChartCapability?: boolean } = {},
 ): Promise<ReadableArea[]> {
-  const systems = await DeviceConfigRegistry.devicesVisibleByUser(
-    userId,
-    true,
-  );
+  const systems = await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
   const systemIds = systems.map((s) => s.id);
 
   // Areas a user can read: explicit Areas they own, plus legacy explicit Areas still addressed by a

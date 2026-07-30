@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { asc, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  devices,
-  areaBindings,
-  areas,
-} from "@/lib/db/planetscale/schema";
+import { devices, areaBindings, areas } from "@/lib/db/planetscale/schema";
 import { loadReadableArea } from "@/lib/areas/http";
 import { capabilitiesForSystem } from "@/lib/capabilities/server";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";

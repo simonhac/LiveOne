@@ -203,7 +203,9 @@ export class SessionManager {
       // Emit a single combined message (session + all readings) to the queue,
       // which the receiver materialises into Postgres. The session is included
       // even when there are zero readings.
-      const system = await DeviceConfigRegistry.deviceByHandle(pending.systemId);
+      const system = await DeviceConfigRegistry.deviceByHandle(
+        pending.systemId,
+      );
       if (system) {
         await publishPoll(
           system,

@@ -234,7 +234,9 @@ export async function buildSeriesFromAggRows(
     }
 
     // Get source system for series ID
-    const sourceSystem = await DeviceConfigRegistry.deviceByHandle(series.point.systemId);
+    const sourceSystem = await DeviceConfigRegistry.deviceByHandle(
+      series.point.systemId,
+    );
     if (!sourceSystem) continue;
 
     // Build series ID using SeriesPath

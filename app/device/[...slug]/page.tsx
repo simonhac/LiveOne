@@ -71,7 +71,10 @@ export default async function DevicePage({ params }: PageProps) {
   } else if (subPageRoute && slug.length === 3) {
     // Special route with username/alias: /device/username/alias/[heatmap|generator|amber|latest]
     const [username, alias] = slug;
-    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(username, alias);
+    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+      username,
+      alias,
+    );
     systemId = system?.id?.toString() || `${username}/${alias}`;
     systemIdentifier = `${username}/${alias}`;
   } else if (slug.length === 1) {
@@ -109,7 +112,8 @@ export default async function DevicePage({ params }: PageProps) {
       // another user's device list; the rail always reflects the viewer's own devices anyway).
       const ownerId = await getUserIdByUsername(segment);
       if (ownerId && (ownerId === userId || isAdmin)) {
-        const primary = await DeviceConfigRegistry.primaryVisibleDevice(ownerId);
+        const primary =
+          await DeviceConfigRegistry.primaryVisibleDevice(ownerId);
         if (primary) {
           redirect(`/device/${primary.id}`);
         }
@@ -120,7 +124,10 @@ export default async function DevicePage({ params }: PageProps) {
   } else if (slug.length === 2 && !subPageRoute) {
     // Two segments: username/alias format
     const [username, alias] = slug;
-    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(username, alias);
+    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+      username,
+      alias,
+    );
     systemId = system?.id?.toString() || `${username}/${alias}`;
   } else {
     // Invalid route

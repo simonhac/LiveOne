@@ -30,8 +30,7 @@ export async function PATCH(
       );
     }
 
-    const existingSystem =
-      await DeviceConfigRegistry.deviceByHandle(systemId);
+    const existingSystem = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!existingSystem) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });

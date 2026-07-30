@@ -63,10 +63,7 @@ async function main() {
       })
       .from(devices)
       .where(
-        and(
-          eq(devices.vendor, vendorType),
-          eq(devices.vendorSiteId, siteId),
-        ),
+        and(eq(devices.vendor, vendorType), eq(devices.vendorSiteId, siteId)),
       )
       .limit(1);
     if (rows.length === 0) {

@@ -136,9 +136,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Timezone defaults from the first member device.
-  const first = await DeviceConfigRegistry.deviceByHandle(
-    memberSystemIds[0],
-  );
+  const first = await DeviceConfigRegistry.deviceByHandle(memberSystemIds[0]);
   const timezoneOffsetMin =
     typeof body?.timezoneOffsetMin === "number"
       ? body.timezoneOffsetMin

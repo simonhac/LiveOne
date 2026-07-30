@@ -27,8 +27,10 @@ export interface ViewerDevices {
  */
 export const getViewerDevices = cache(
   async (userId: string): Promise<ViewerDevices> => {
-    const availableSystems =
-      await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
+    const availableSystems = await DeviceConfigRegistry.devicesVisibleByUser(
+      userId,
+      true,
+    );
 
     let currentUsername: string | null = null;
     try {

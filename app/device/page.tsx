@@ -17,8 +17,7 @@ export default async function DeviceIndexPage() {
     redirect("/sign-in");
   }
 
-  const primary =
-    await DeviceConfigRegistry.primaryVisibleDevice(userId);
+  const primary = await DeviceConfigRegistry.primaryVisibleDevice(userId);
   if (primary) {
     redirect(`/device/${primary.id}`);
   }

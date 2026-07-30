@@ -12,7 +12,12 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { devices, areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
+import {
+  devices,
+  areas,
+  pointInfo,
+  systems,
+} from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 

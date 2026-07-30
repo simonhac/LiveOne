@@ -43,9 +43,7 @@ async function main() {
   const sys = await planetscaleDb
     .select({ id: devices.rid, displayName: devices.name })
     .from(devices)
-    .where(
-      and(eq(devices.vendor, "deepsea"), eq(devices.vendorSiteId, siteId)),
-    )
+    .where(and(eq(devices.vendor, "deepsea"), eq(devices.vendorSiteId, siteId)))
     .limit(1);
   if (sys.length === 0) {
     console.error(`❌ No deepsea/${siteId} system found in this DB.`);

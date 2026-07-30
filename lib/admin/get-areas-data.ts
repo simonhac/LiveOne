@@ -53,7 +53,9 @@ export interface AdminAreasResult {
 }
 
 /** Resolve a physical device handle to its display fields (null if no such device). */
-async function resolveSystem(systemId: number): Promise<AreaSourceSystem | null> {
+async function resolveSystem(
+  systemId: number,
+): Promise<AreaSourceSystem | null> {
   const system = await DeviceConfigRegistry.deviceByHandle(systemId);
   if (!system) return null;
   return {
