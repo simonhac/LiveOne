@@ -12,7 +12,12 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { devices, areas, points } from "@/lib/db/planetscale/schema";
+import {
+  devices,
+  areas,
+  legacyHandles,
+  points,
+} from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 
@@ -49,10 +54,14 @@ export async function resolveGridContextForSystem(
     // b. The Area for this handle carries the location we derive the region from — a multi-device site
     //    ("Kinkora Unified") or a genuine single-device Area (e.g. "Kutis"). Location is an Area-only
     //    property (areas are explicit — no area-of-one), so a bare device with no Area has no grid card.
+    // config-v4 Phase 13 PR 5: located via `legacy_handles`, not the dropped
+    // `areas.legacy_system_id`. INNER join — the old predicate could not match a NULL handle either,
+    // and a miss still degrades to "no grid card" via the `!area` return below.
     const [area] = await db
       .select({ location: areas.location })
       .from(areas)
-      .where(eq(areas.legacySystemId, systemId))
+      .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+      .where(eq(legacyHandles.handle, systemId))
       .limit(1);
     if (!area) return null;
 

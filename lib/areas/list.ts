@@ -9,7 +9,7 @@
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas } from "@/lib/db/planetscale/schema";
+import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { hasChartCapability } from "@/lib/capabilities/server";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -59,7 +59,7 @@ export async function listReadableAreas(
     systemIds.length > 0
       ? or(
           eq(areas.ownerUserId, userId),
-          inArray(areas.legacySystemId, systemIds),
+          inArray(legacyHandles.handle, systemIds),
         )
       : eq(areas.ownerUserId, userId);
 
@@ -67,9 +67,16 @@ export async function listReadableAreas(
     .select({
       id: areas.id,
       displayName: areas.name,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
     })
     .from(areas)
+    // config-v4 Phase 13 PR 5: the handle comes from `legacy_handles`, not the dropped
+    // `areas.legacy_system_id`. LEFT, not inner, for TWO independent reasons: the projected
+    // `legacySystemId` must stay `number | null` so the `.filter` below (and the exported
+    // `ReadableArea` contract) is unchanged; AND `accessCond`'s FIRST disjunct is ownership, which must
+    // still match an owned area that happens to carry no handle — an inner join would silently narrow
+    // the readable set, which is the direction that REMOVES access.
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(and(eq(areas.status, "active"), accessCond));
 
   const present = rows
@@ -104,9 +111,11 @@ export async function resolveAreasByIds(
     .select({
       id: areas.id,
       displayName: areas.name,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
     })
     .from(areas)
+    // LEFT: `legacySystemId` stays nullable for the `.filter` below (see `listReadableAreas`).
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(inArray(areas.id, ids));
   const present = rows
     .filter(

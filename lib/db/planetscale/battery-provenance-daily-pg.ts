@@ -19,6 +19,7 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   batteryProvenanceDaily,
+  legacyHandles,
   type BatteryProvenanceDailyRow,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
@@ -329,7 +330,8 @@ export async function learnAllForHandle(
   const [area] = await db
     .select({ id: areas.id, tz: areas.timezoneOffsetMin })
     .from(areas)
-    .where(eq(areas.legacySystemId, handle))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    .where(eq(legacyHandles.handle, handle))
     .limit(1);
   if (!area) return NO_DATA;
   const tz = area.tz;

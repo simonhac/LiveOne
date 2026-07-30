@@ -14,12 +14,13 @@
  * The `sql` fragments below are invisible to `tsc`; `__tests__/members.test.ts` asserts their rendered
  * SQL so a stale table or column name fails CI rather than at runtime.
  */
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaMembers,
   areas,
   devices,
+  legacyHandles,
   points,
 } from "@/lib/db/planetscale/schema";
 import { Device, type DeviceId } from "@/lib/ids";
@@ -74,25 +75,35 @@ export async function ensureAreaMember(
  */
 export async function listFlowEligibleAreaHandles(): Promise<number[]> {
   const rows = await requirePlanetscaleDb()
-    .select({ handle: areas.legacySystemId })
+    .select({ handle: legacyHandles.handle })
     .from(areas)
+    // config-v4 Phase 13 PR 5: the handle comes from `legacy_handles`, not the dropped
+    // `areas.legacy_system_id`. INNER, so it subsumes the `isNotNull(areas.legacySystemId)` this
+    // replaces — "has a handle" is now expressed by the join, and leaving a redundant null check
+    // behind would imply the projection could still be null when the join guarantees it cannot.
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(
       and(
         eq(areas.status, "active"),
-        isNotNull(areas.legacySystemId),
         // Not a member device of a different active area. `devices.rid` IS the member's integer handle
         // (the `devices.rid == systems.id` seam invariant, lib/registry/v4-mirror.ts).
+        //
+        // ⚠️ Raw `sql`, so `tsc` cannot see either handle reference. The PARENT's handle needs its own
+        // `legacy_handles` hop (`plh`); an INNER join there preserves the old NULL semantics exactly —
+        // `parent.legacy_system_id <> X` was NULL, hence not-EXISTS-satisfying, for a parent with no
+        // handle, and a missing `plh` row drops that parent from the subquery the same way.
         sql`NOT EXISTS (
           SELECT 1 FROM area_members am
           JOIN devices d ON d.id = am.device_id
           JOIN areas parent ON parent.id = am.area_id
-          WHERE d.rid = ${areas.legacySystemId}
-            AND parent.legacy_system_id <> ${areas.legacySystemId}
+          JOIN legacy_handles plh ON plh.area_id = parent.id
+          WHERE d.rid = ${legacyHandles.handle}
+            AND plh.handle <> ${legacyHandles.handle}
             AND parent.status = 'active'
         )`,
       ),
     )
-    .orderBy(areas.legacySystemId);
+    .orderBy(legacyHandles.handle);
   return rows.map((r) => r.handle).filter((h): h is number => h != null);
 }
 
@@ -114,11 +125,14 @@ export async function getBindinglessAreaMemberPoints(): Promise<
 > {
   const rows = await requirePlanetscaleDb()
     .select({
-      handle: areas.legacySystemId,
+      handle: legacyHandles.handle,
       sourceSystemId: devices.rid,
       pointUid: points.id,
     })
     .from(areas)
+    // config-v4 Phase 13 PR 5: handle from `legacy_handles`, not the dropped column. INNER, so it
+    // subsumes the `isNotNull(areas.legacySystemId)` that used to sit in the `where` below.
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .innerJoin(areaMembers, eq(areaMembers.areaId, areas.id))
     .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
     // slice 1b: was `point_info.system_id = devices.rid` — a join through the integer handle. The
@@ -126,18 +140,17 @@ export async function getBindinglessAreaMemberPoints(): Promise<
     .innerJoin(points, eq(points.deviceId, devices.id))
     .where(
       and(
-        isNotNull(areas.legacySystemId),
         // areas-backed: the handle names no DEVICE of its own. config-v4 slice K3: was
         // `NOT EXISTS (SELECT 1 FROM systems s WHERE s.id = …)` — an open-coded `isAreaHandle` that
         // `tsc` could not see, so it survived K2's sweep. `devices.rid` IS the device's integer handle
         // (the `devices.rid == systems.id` seam invariant, lib/registry/v4-mirror.ts), so this is the
         // same predicate against the surviving table.
-        sql`NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = ${areas.legacySystemId})`,
+        sql`NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = ${legacyHandles.handle})`,
         // binding-less: no area_bindings (those are covered by getAllCompositeBindings)
         sql`NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = ${areas.id})`,
       ),
     )
-    .orderBy(areas.legacySystemId, devices.rid, points.rid);
+    .orderBy(legacyHandles.handle, devices.rid, points.rid);
   return rows
     .filter((r): r is typeof r & { handle: number } => r.handle != null)
     .map((r) => ({

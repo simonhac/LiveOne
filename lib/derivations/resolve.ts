@@ -17,7 +17,7 @@
  *   `RegistryCache.pointForAddr` round-trip, and a point rename can't break the wiring.
  *
  * The integer `legacyHandle` is still carried because `point_info` and the KV latest keyspace stay
- * int-addressed until Phase 13; it is the area's `legacy_system_id`, i.e. exactly the `systemId`
+ * int-addressed until Phase 13; it is the area's `legacy_handles.handle`, i.e. exactly the `systemId`
  * these engines used before.
  */
 import { and, eq } from "drizzle-orm";
@@ -26,6 +26,7 @@ import {
   areas,
   derivations,
   devices,
+  legacyHandles,
   points,
 } from "@/lib/db/planetscale/schema";
 import { Device, Point, type PointId } from "@/lib/ids";
@@ -76,7 +77,7 @@ export interface ResolvedRunDetector {
   /** `derivations.id` — the identity `derived_intervals` rows hang off. */
   id: string;
   areaId: string;
-  /** The area's `legacy_system_id`: the integer this detector used to be keyed by. */
+  /** The area's `legacy_handles.handle`: the integer this detector used to be keyed by. */
   legacyHandle: number;
   role: string;
   name: string;
@@ -139,8 +140,13 @@ type AreaFacts = {
   tz: string;
 };
 
+// config-v4 Phase 13 PR 5: `legacySystemId` is read from `legacy_handles`, not the dropped
+// `areas.legacy_system_id`. Every query using this projection must therefore also LEFT JOIN
+// `legacyHandles` on `area_id` — left, so the field stays `number | null` and `resolveRunDetector`'s
+// existing "area has no legacy handle — skipping" guard keeps its referent instead of the detector
+// silently disappearing from the result set with no log line.
 const areaFactsProjection = {
-  legacySystemId: areas.legacySystemId,
+  legacySystemId: legacyHandles.handle,
   tzOffset: areas.timezoneOffsetMin,
   tz: areas.displayTimezone,
 };
@@ -190,6 +196,7 @@ export async function listEnabledRunDetectors(): Promise<
     .select({ d: derivations, a: areaFactsProjection })
     .from(derivations)
     .innerJoin(areas, eq(areas.id, derivations.areaId))
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(
       and(
         eq(derivations.kind, RUN_DETECTOR_KIND),
@@ -212,6 +219,7 @@ export async function getRunDetectorForHandleRole(
     .select({ d: derivations, a: areaFactsProjection })
     .from(derivations)
     .innerJoin(areas, eq(areas.id, derivations.areaId))
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(
       and(
         eq(derivations.areaId, areaId),

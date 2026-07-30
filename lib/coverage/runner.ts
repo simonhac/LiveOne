@@ -400,17 +400,28 @@ export async function runCoverageRepair(
       }[] = [];
       try {
         // ⚠️ HAND-WRITTEN `sql` — invisible to `tsc`, and its failure mode is silent
-        // under-resolution (no areas found → no flow refresh, no error). The device test goes
-        // through the binding's `point_uid` since config-v4 Phase 12 slice E PR 2a, hopping
-        // `points.device_id → devices.rid` (the seam invariant `devices.rid == systems.id`).
+        // under-resolution (no areas found → no flow refresh, no error), swallowed by the `catch`
+        // below. The device test goes through the binding's `point_uid` since config-v4 Phase 12
+        // slice E PR 2a, hopping `points.device_id → devices.rid` (the seam invariant
+        // `devices.rid == systems.id`).
+        //
+        // ⚠️ config-v4 Phase 13 PR 5: `handle` comes from `legacy_handles`, NOT the dropped
+        // `areas.legacy_system_id`. Because this is raw SQL, a stale column name here would be a
+        // RUNTIME 42703 that the `catch` swallows into "no areas found" — the exact shape of the
+        // failure this PR exists to avoid, which is why this path is driven and not merely compiled.
+        // LEFT JOIN, not JOIN: the old projection was nullable and the loop below still relies on
+        // `handle == null` to skip, so an area without a handle must survive the join rather than
+        // vanish from the result set. `legacy_handles.area_id` is uniquely indexed, so the join adds
+        // at most one row per area and cannot fan the `DISTINCT` out.
         const res = await db.execute(sql`
           SELECT DISTINCT a.id,
-                 a.legacy_system_id AS handle,
+                 lh.handle AS handle,
                  a.timezone_offset_min AS tz,
                  EXISTS (SELECT 1 FROM area_bindings b2
                          WHERE b2.area_id = a.id AND b2.role='battery' AND b2.metric_type='power') AS is_battery
           FROM area_bindings b
           JOIN areas a ON a.id = b.area_id
+          LEFT JOIN legacy_handles lh ON lh.area_id = a.id
           JOIN points p ON p.id = b.point_uid
           JOIN devices d ON d.id = p.device_id
           WHERE d.rid = ${sid}

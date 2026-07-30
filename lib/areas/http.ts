@@ -16,7 +16,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas } from "@/lib/db/planetscale/schema";
+import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { Area } from "@/lib/ids";
 import { listReadableAreas, type ReadableArea } from "@/lib/areas/list";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -55,12 +55,17 @@ export async function loadAreaForAuth(
     .select({
       id: areas.id,
       ownerClerkUserId: areas.ownerUserId,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
       status: areas.status,
       displayName: areas.name,
       location: areas.location,
     })
     .from(areas)
+    // config-v4 Phase 13 PR 5: handle from `legacy_handles`, not the dropped column. LEFT, so
+    // `AreaAuthRow.legacySystemId` keeps its `number | null` type AND — the load-bearing half — an area
+    // with no handle row still RESOLVES here rather than returning null and 404-ing a route that only
+    // needed the owner to authorize a patch.
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(eq(areas.id, areaId))
     .limit(1);
   return row ?? null;

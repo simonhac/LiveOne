@@ -75,7 +75,14 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
       // `devices.rid`, not `systems.id` — 0051 dropped `systems`, and `devices.rid == systems.id`
       // verbatim, so the row set is unchanged. Hand-written `sql` is invisible to tsc: this predicate had
       // to be found by grep and has to be DRIVEN to be verified.
-      where: "legacy_system_id IN (SELECT rid FROM devices)",
+      //
+      // config-v4 Phase 13 PR 5: the area's handle now comes from `legacy_handles`, not the dropped
+      // `areas.legacy_system_id`. This site is NOT in the phase plan's inventory — it was found only by
+      // the raw-string grep, which is exactly what the comment above predicted. The `area_id IS NOT NULL`
+      // guard matters: `legacy_handles` rows can name a device and no area, and without it the subquery
+      // would yield a NULL that makes `id IN (…)` match nothing.
+      where:
+        "id IN (SELECT area_id FROM legacy_handles WHERE area_id IS NOT NULL AND handle IN (SELECT rid FROM devices))",
     },
   ];
 

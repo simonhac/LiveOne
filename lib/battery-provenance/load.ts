@@ -18,6 +18,7 @@ import {
   areas,
   batteryProvenanceDaily,
   devices,
+  legacyHandles,
   points,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
@@ -307,7 +308,8 @@ export async function loadProvenanceInputs(
         tz: areas.timezoneOffsetMin,
       })
       .from(areas)
-      .where(eq(areas.legacySystemId, handle))
+      .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+      .where(eq(legacyHandles.handle, handle))
       .limit(1),
     opts.logicalSystem
       ? Promise.resolve(opts.logicalSystem)
@@ -568,7 +570,8 @@ export async function loadBatteryThroughput(
   const [area] = await db
     .select({ id: areas.id, tz: areas.timezoneOffsetMin })
     .from(areas)
-    .where(eq(areas.legacySystemId, handle))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    .where(eq(legacyHandles.handle, handle))
     .limit(1);
   if (!area) return null;
 

@@ -4,13 +4,14 @@
  * (recomputeBatteryProvenanceForWindow*) over a trailing window (minutely) or an explicit range (daily
  * heal / backfill), chunked. Best-effort throughout so a fold hiccup never breaks the aggregation it trails.
  */
-import { and, asc, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, or } from "drizzle-orm";
 import { parseDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areas,
   devices,
+  legacyHandles,
   points,
   pointReadingsFlowAttr1d,
 } from "@/lib/db/planetscale/schema";
@@ -49,14 +50,14 @@ const REHEAL_MAX_DAYS_PER_RUN = 20;
 export async function listBatteryProvenanceHandles(): Promise<number[]> {
   const db = requirePlanetscaleDb();
   const rows = await db
-    .selectDistinct({ handle: areas.legacySystemId })
+    .selectDistinct({ handle: legacyHandles.handle })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(
       and(
         eq(areaBindings.role, "battery"),
         eq(areaBindings.metricType, "power"),
-        isNotNull(areas.legacySystemId),
       ),
     );
   return rows.map((r) => r.handle).filter((h): h is number => h != null);
@@ -125,9 +126,10 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(
       and(
-        eq(areas.legacySystemId, handle),
+        eq(legacyHandles.handle, handle),
         eq(areaBindings.role, "battery"),
         eq(areaBindings.metricType, "power"),
       ),
@@ -137,6 +139,7 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     // The "is this a helper device?" test hops the binding's uuid through `points.device_id`
     // (slice E PR 2a). Slice K2 dropped the trailing `devices.rid → systems.id` bridge outright:
     // `devices.vendor` IS the vendor, so the hop was pure overhead, not a source.
@@ -144,7 +147,7 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(areas.legacySystemId, handle),
+        eq(legacyHandles.handle, handle),
         eq(areaBindings.role, "battery"),
         eq(areaBindings.metricType, "carbon-intensity"),
         eq(devices.vendor, "helper"),
@@ -272,7 +275,7 @@ export async function rehealStaleAttrDays(
   const [rep] = await db
     .select({ tz: areas.timezoneOffsetMin })
     .from(areas)
-    .where(isNotNull(areas.legacySystemId))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .limit(1);
   const ceilingDay = getTodayInTimezone(rep?.tz ?? 0)
     .subtract({ days: REHEAL_CEILING_LAG_DAYS })
@@ -280,12 +283,13 @@ export async function rehealStaleAttrDays(
 
   const rows = await db
     .selectDistinct({
-      handle: areas.legacySystemId,
+      handle: legacyHandles.handle,
       tz: areas.timezoneOffsetMin,
       day: pointReadingsFlowAttr1d.day,
     })
     .from(pointReadingsFlowAttr1d)
     .innerJoin(areas, eq(areas.id, pointReadingsFlowAttr1d.areaId))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(
       and(
         lt(pointReadingsFlowAttr1d.day, ceilingDay),
@@ -293,7 +297,6 @@ export async function rehealStaleAttrDays(
           isNull(pointReadingsFlowAttr1d.finalizedAt),
           lt(pointReadingsFlowAttr1d.version, FLOW_ATTR_VERSION),
         ),
-        isNotNull(areas.legacySystemId),
       ),
     )
     .orderBy(asc(pointReadingsFlowAttr1d.day))
