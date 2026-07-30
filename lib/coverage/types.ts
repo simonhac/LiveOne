@@ -11,8 +11,9 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import type { PollCollector } from "@/lib/observations/poll-collector";
 
-/** A coverage point resolved to its per-system point id and its registry identity. */
+/** A coverage point resolved to its internal rid and its registry identity. */
 export interface CoveragePoint {
+  /** `points.rid` — globally unique. Was `point_info.index` until the config-v4 pre-terminal prep. */
   id: number;
   tail: string; // physical_path_tail, e.g. "E1/kwh", "nem/price", "solar_interval_wh"
   /** The point's registry identity, carried from the same row `id`/`tail` came from. The readings
@@ -24,6 +25,7 @@ export interface CoveragePoint {
 
 export interface PointShortfall {
   tail: string;
+  /** `points.rid` (diagnostic only). */
   pointId: number;
   present: number;
   missing: number;

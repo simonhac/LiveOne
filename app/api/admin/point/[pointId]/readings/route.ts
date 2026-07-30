@@ -3,37 +3,42 @@ import { requireAdmin } from "@/lib/api-auth";
 import { decodeUrlDateToEpoch, decodeUrlOffset } from "@/lib/url-date";
 import { formatDateYYYYMMDD, parseDateYYYYMMDD } from "@/lib/date-utils";
 import { ReadingsDao } from "@/lib/readings/dao";
-import { RegistryCache, UnknownIdError } from "@/lib/registry";
+import { Point } from "@/lib/ids";
+import { UnknownIdError } from "@/lib/registry";
 
+/**
+ * GET /api/admin/point/{pt_…}/readings — a centred window of readings around one instant.
+ *
+ * The URL segment WAS the legacy `"{systemId}.{pointIndex}"` address, split and `parseInt`ed and then
+ * resolved through `RegistryCache.pointForAddr`. That made this route the last production caller of
+ * that grammar — and unfixable later, because `points` has no counterpart to `point_info.index`, so
+ * the terminal `point_info` drop would have left nothing to resolve the segment against.
+ *
+ * It is now the point's `pt_` TypeID, which is the locked public ID scheme AND already exactly the
+ * `PointId` the readings seam is keyed on. So there is no registry round trip left here at all: parse,
+ * and hand the branded id straight to the DAO.
+ */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ systemIdDotPointId: string }> },
+  { params }: { params: Promise<{ pointId: string }> },
 ) {
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
 
-    const { systemIdDotPointId } = await params;
+    const { pointId: pointIdParam } = await params;
     const { searchParams } = new URL(request.url);
 
-    // Parse systemId.pointId from path param (e.g., "1586.1")
-    const parts = systemIdDotPointId.split(".");
-    if (parts.length !== 2) {
+    const parsed = Point.parse(pointIdParam);
+    if (!parsed.ok) {
       return NextResponse.json(
-        { error: "Invalid format. Expected systemId.pointId (e.g., 1586.1)" },
+        {
+          error: `Invalid point id (expected a pt_ TypeID): ${parsed.message}`,
+        },
         { status: 400 },
       );
     }
-
-    const systemId = parseInt(parts[0]);
-    const pointId = parseInt(parts[1]);
-
-    if (isNaN(systemId) || isNaN(pointId)) {
-      return NextResponse.json(
-        { error: "Invalid systemId or pointId" },
-        { status: 400 },
-      );
-    }
+    const point = parsed.id;
 
     // Support both raw epoch milliseconds and encoded timestamps
     const timestampParam = searchParams.get("timestamp");
@@ -131,20 +136,19 @@ export async function GET(
       return allReadings.slice(startIndex, endIndex);
     };
 
-    // Serve the window from Postgres, addressing the point through the readings seam. The URL
-    // `pointId` is the point's `point_info` index; resolve it to a PointId (UnknownIdError = no such
-    // point → an empty window, matching the legacy 0-row query).
+    // Serve the window from Postgres. The `UnknownIdError` catch is NOT vestigial: a well-formed `pt_`
+    // id for a point that has no registry row still throws from inside the DAO's own PointId→rid
+    // resolution (`RegistryCache.addrsForPoints`), so it is what turns "no such point" into the empty
+    // window the legacy 0-row query produced. Verified by driving a syntactically valid, non-existent
+    // `pt_` id against dev: without this it is a 500.
     let all: any[] = [];
     try {
-      const point = await RegistryCache.pointForAddr(systemId, pointId);
       if (source === "daily") {
         const series = await ReadingsDao.read1d([point], {
           startDay: dailyStartDayStr!,
           endDay: dailyEndDayStr!,
         });
         all = (series.get(point) ?? []).map((r) => ({
-          systemId,
-          pointId,
           date: r.day,
           avg: r.avg,
           min: r.min,
@@ -167,8 +171,7 @@ export async function GET(
     return NextResponse.json({
       readings,
       metadata: {
-        systemId,
-        pointId,
+        point,
         ...(source === "daily" ? { targetDate } : { timestamp }),
         source,
         totalInWindow: readings.length,

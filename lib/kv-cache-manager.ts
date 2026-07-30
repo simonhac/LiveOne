@@ -1,4 +1,5 @@
 import { kv, kvKey } from "./kv";
+import { Point } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { LatestValue, LatestValuesMap } from "./latest-values-store";
 import { getAreaBindings } from "@/lib/areas/bindings";
@@ -25,13 +26,16 @@ export interface SubscriptionRegistryEntry {
    * Map of source point UUID to array of subscriber point references that subscribe to it.
    * Key: `point_info.point_uid` (canonical uuid) — NOT the integer point index. Config-v4 slice E
    * PR 2b re-keyed this map when `area_bindings` lost its `(point_system_id, point_id)` pair.
-   * Value: array of subscriber point references (format: "systemId.pointIndex")
+   * Value: array of SUBSCRIBER references, `"{areaHandle}.{ordinal}"` — an AREA handle and a binding
+   * ordinal, NOT a `point_info.index`. It never was one, so the pre-terminal retirement of the
+   * `"{systemId}.{pointIndex}"` POINT address left this untouched; only the `.` split for the handle
+   * half is read (`updateLatestPointValue`, `system-summary-store.getSubscriberSystemIds`) and the
+   * ordinal half is vestigial (a subscriber's latest hash is keyed by logicalPath).
    *
    * Example: { "0199…-…": ["100.0", "101.2"] }
    *
    * NOTE (deliberate, not an oversight): the enclosing `subscriptions:system:N` / `latest:system:N`
-   * KV keys and the `pointReference` field inside a stored `LatestValue` are STILL integer-addressed.
-   * Those move in Phase 13 with `point_info.system_id` / `systems.id`; only this map's source key moved.
+   * KV keys are STILL integer-addressed. They move in Phase 13 with `systems.id`.
    */
   pointSubscribers: Record<string, string[]>;
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
@@ -55,22 +59,22 @@ function getSubscriptionsKey(systemId: number): string {
  * Update the latest value for a point in a system's cache
  * Also updates all subscriber systems that subscribe to this specific point
  *
- * @param systemId - Source system ID (the `latest:system:N` hash key — integer until Phase 13)
- * @param pointId - Source point index (only for the stored `pointReference` — integer until Phase 13)
- * @param pointUid - Source point's `point_info.point_uid` — the subscription-map lookup key
+ * @param systemId - Source device handle: the `latest:system:N` hash key AND the stored
+ *                   `sourceSystemId` (integer until Phase 13 retires the keyspace)
+ * @param pointUid - Source point's `point_info.point_uid` — the subscription-map lookup key AND, as a
+ *                   `pt_` TypeID, the stored `pointReference`
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
  * @param value - Latest value (numeric or string for text/json types)
  * @param measurementTimeMs - Unix timestamp in milliseconds when value was measured
  * @param receivedTimeMs - Unix timestamp in milliseconds when value was received from vendor
  * @param metricUnit - Unit of measurement (e.g., "W", "kWh", "%", "text", "json")
  * @param displayName - Display name from point_info
- * @param _sourceSystemName - DEPRECATED: No longer stored (pointReference encodes systemId)
+ * @param _sourceSystemName - DEPRECATED: no longer stored (`sourceSystemId` identifies the source)
  * @param sessionId - Session ID that wrote this value
  * @param sessionLabel - Session label/name for display
  */
 export async function updateLatestPointValue(
   systemId: number,
-  pointId: number,
   pointUid: string,
   pointPath: string,
   value: number | string | null,
@@ -89,7 +93,15 @@ export async function updateLatestPointValue(
     receivedTimeMs,
     metricUnit,
     displayName,
-    pointReference: `${systemId}.${pointId}`,
+    // config-v4 pre-terminal prep: `pointReference` was `"{systemId}.{pointIndex}"`. Its index half
+    // came from `point_info.index`, which `points` has no counterpart to, so the terminal drop would
+    // have made the value unreproducible. It is now the point's `pt_` TypeID — the locked public ID
+    // scheme, not a second bespoke grammar — and the source DEVICE, the only fact any consumer
+    // actually derived from the old string, moves to its own field. The two grammars are mutually
+    // unambiguous (`pt_…` vs `"9.7"`), so a stale KV entry written by an older build can never be
+    // mis-parsed as the new one; it simply reads as absent.
+    pointReference: Point.encode(pointUid),
+    sourceSystemId: systemId,
     ...(sessionId && { sessionId }),
     ...(sessionLabel && { sessionLabel }),
   };
@@ -107,7 +119,7 @@ export async function updateLatestPointValue(
     const updatesBySystem = new Map<number, Record<string, LatestValue>>();
 
     for (const subscriberPointRef of subscriberPointRefs) {
-      // Parse subscriber point reference (e.g., "100.0" → systemId=100, pointIndex=0)
+      // Parse the subscriber reference (e.g., "100.0" → area handle 100). The ordinal half is unused.
       const [subscriberSystemIdStr] = subscriberPointRef.split(".");
       const subscriberSystemId = parseInt(subscriberSystemIdStr);
 
@@ -151,7 +163,7 @@ export async function getLatestPointValues(
  *
  * @param sourceSystemId - Source system ID (selects the `subscriptions:system:N` KV entry)
  * @param sourcePointUid - Source point's `point_info.point_uid`
- * @returns Array of subscriber point references (format: "systemId.pointIndex")
+ * @returns Array of subscriber references (format: "{areaHandle}.{ordinal}")
  */
 async function getPointSubscribers(
   sourceSystemId: number,

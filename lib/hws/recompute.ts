@@ -101,7 +101,6 @@ async function recomputePairWindow(
     const last = steps[steps.length - 1];
     await updateLatestPointValue(
       pair.systemId,
-      pair.tempPointIndex,
       Point.toUuid(pair.tempPoint),
       pair.tempPath,
       last.faucetC,

@@ -477,7 +477,6 @@ async function writeBlendOutputs(
       if (pointId === undefined || pointUid === undefined || !l) continue;
       await updateLatestPointValue(
         helperSystemId,
-        pointId,
         pointUid,
         `${BATTERY_STEM}/${spec.metricType}`,
         l.value,

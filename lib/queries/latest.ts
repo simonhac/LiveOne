@@ -7,7 +7,10 @@ export interface LatestReadingValue {
   value?: number | string | boolean;
   physicalPath: string;
   logicalPath: string | null;
+  /** The source point's `pt_` TypeID. Absent on KV entries written before the grammar changed. */
   pointReference?: string;
+  /** Source device handle — supplied separately since `pointReference` no longer encodes it. */
+  sourceSystemId?: number;
   measurementTime?: string; // ISO8601 string (kept as string — converted at render)
   receivedTime?: string;
   metricUnit: string;

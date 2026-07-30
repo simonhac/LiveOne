@@ -64,7 +64,6 @@ export async function publishRunningLatest(
       const running = await isRunningNow(t.id);
       await updateLatestPointValue(
         t.legacyHandle,
-        point.index,
         point.pointUid,
         path,
         running ? 1 : 0,

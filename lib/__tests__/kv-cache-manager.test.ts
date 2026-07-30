@@ -94,7 +94,6 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
-        1, // point index (pointReference only)
         "0199aaaa-0000-7000-8000-00000000000a", // point uid (subscription key)
         "source.solar.local/power",
         5234.5,
@@ -125,7 +124,6 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
-        1, // point index (pointReference only)
         "0199aaaa-0000-7000-8000-00000000000a", // point uid (subscription key)
         "source.solar.local/power",
         5234.5,
@@ -155,7 +153,6 @@ describe("kv-cache-manager", () => {
 
       await updateLatestPointValue(
         10,
-        1, // point index (pointReference only)
         "0199aaaa-0000-7000-8000-00000000000a", // point uid (subscription key)
         "source.solar.local/power",
         5234.5,

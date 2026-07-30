@@ -252,7 +252,6 @@ export class AmberAdapter extends BaseVendorAdapter {
         // Point exists in point_info - use updateLatestPointValue for propagation
         await updateLatestPointValue(
           systemId,
-          point.index,
           point.pointUid,
           item.logicalPath,
           item.value,

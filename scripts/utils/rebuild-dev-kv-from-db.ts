@@ -137,7 +137,6 @@ async function main(): Promise<void> {
       pointTasks.push(() =>
         updateLatestPointValue(
           systemId,
-          address.index,
           Point.toUuid(row.point),
           logicalPath,
           cacheValue,

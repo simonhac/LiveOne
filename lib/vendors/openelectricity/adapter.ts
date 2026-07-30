@@ -233,7 +233,6 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
       if (!point) continue;
       await updateLatestPointValue(
         systemId,
-        point.index,
         point.pointUid,
         path,
         Number(r.rawValue),
