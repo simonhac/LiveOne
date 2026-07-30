@@ -7,7 +7,6 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
-import { isUserAdmin } from "@/lib/auth-utils";
 import { listReadableAreas } from "@/lib/areas/list";
 import { listReadableDevices } from "@/lib/devices/list";
 import { Area } from "@/lib/ids";
@@ -30,8 +29,14 @@ export async function loadOwnedDashboard(
       error: NextResponse.json({ error: "Not found" }, { status: 404 }),
     };
   }
+  // `auth.isAdmin` — NOT a second `isUserAdmin()` call. `getAuthContext` has already resolved it, and
+  // the bare re-call re-entered `auth()` (an extra Clerk round trip on EVERY v4 dashboard request) and
+  // disagreed with the context it was second-guessing: under the dev `x-claude` bypass `getAuthContext`
+  // returns `{userId:"claude-dev", isAdmin:true}` with no Clerk session at all, so `isUserAdmin()`
+  // resolved `userId` to null and answered `false`. Matches `loadAreaForOwner`, which was already
+  // reading `auth.isAdmin`.
   const owns = dashboard.ownerClerkUserId === auth.userId;
-  if (!owns && !(await isUserAdmin())) {
+  if (!owns && !auth.isAdmin) {
     return {
       error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
     };

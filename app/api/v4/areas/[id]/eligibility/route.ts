@@ -19,7 +19,9 @@ import { DeviceRegistry } from "@/lib/registry";
  * Area-scoped cards/tiles are checked against the area UNION capabilities; device-scoped cards against
  * each MEMBER's own capabilities (catalog contract #1).
  *   GET → { areaCards:[{id,label}], tiles:[{id,label}],
- *           deviceCards:[{ systemId, cards:[{id,label,bindsCapability?}] }] }
+ *           deviceCards:[{ deviceId: dv_…, cards:[{id,label,bindsCapability?}] }] }
+ * (the key is `deviceId` and carries a `dv_` TypeID — this said `systemId` while the handler has
+ *  emitted `deviceId` since slice H; nothing called it, so the drift was never observed.)
  */
 export async function GET(
   request: NextRequest,

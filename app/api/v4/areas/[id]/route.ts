@@ -9,8 +9,13 @@ import { DeviceRegistry } from "@/lib/registry";
 import { areaDetailResponse } from "@/lib/areas/v4-shapes";
 
 /**
- * Final TypeID-native area aggregate. Legacy integer handles remain an internal addressing detail and
- * never cross this API boundary.
+ * The TypeID-native area aggregate (§9.2): meta + members + bindings + capabilities in ONE payload.
+ * Every entity IDENTITY crosses as a TypeID (`ar_`/`dv_`/`bn_`/`pt_`).
+ *
+ * It also carries `area.legacySystemId`, the integer ADDRESS — not an identity — that `/api/data` and
+ * the KV keyspace are still keyed by, exactly as the legacy twin `GET /api/areas/{areaId}` does. This
+ * header used to claim handles "never cross this API boundary"; that aspiration silently made the v4
+ * payload non-substitutable for the one its clients read. See `lib/areas/v4-shapes.ts`.
  */
 export async function GET(
   request: NextRequest,
@@ -98,6 +103,9 @@ export async function GET(
       area: {
         ...row,
         capabilities: [...areaCaps],
+        // Carried, not dropped: the integer address `/api/data?systemId=` still uses, which the legacy
+        // twin returns. See `areaDetailResponse`. It comes off the loader (`legacy_handles`), not `row`.
+        legacySystemId: r.area.legacySystemId,
       },
       members,
       bindings: bindingRows,

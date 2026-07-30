@@ -13,6 +13,7 @@
  */
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { isPgUniqueViolation } from "@/lib/db/pg-error";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
 import {
@@ -58,9 +59,13 @@ export class DashboardAliasTakenError extends Error {
   }
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  return (err as { code?: string })?.code === "23505";
-}
+/**
+ * config-v4 Phase 14 STEP 0: this used to read `(err as {code?: string})?.code`, which drizzle ≥0.44
+ * never populates — the SQLSTATE lives on the wrapping `DrizzleQueryError`'s `cause`. The alias 409 on
+ * BOTH write paths below was therefore an unhandled 500 with an empty body (measured on the previously
+ * dark `/api/v4/dashboards` POST + PATCH). See `lib/db/pg-error.ts`.
+ */
+const isUniqueViolation = isPgUniqueViolation;
 
 /** Create a new composition dashboard for `ownerClerkUserId`. Returns its id. */
 export async function createDashboard(args: {

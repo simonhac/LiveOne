@@ -17,8 +17,10 @@ import {
 import { findReadableArea } from "@/lib/areas/http";
 
 /**
- * config-v4 dashboards collection (§9.2), DARK. Owner-scoped.
- *   GET  → { dashboards: [...] }
+ * config-v4 dashboards collection (§9.2). Owner-scoped.
+ *   GET  → { dashboards: [{ id, name, slug, cardCount, updatedAt, access }] }
+ *        · v4 wire vocabulary (`name`/`slug`), not the DAO's legacy `displayName`/`alias` — the same
+ *          keys `GET/PATCH /dashboards/{id}` speak, so a list entry is directly patchable.
  *   POST { name?, slug?, doc? | seedArea? } → 201 { id, revision }
  *        · `seedArea` (an `ar_` id) seeds the doc from that area's capability strategy using stable
  *          pre-minted device refs; mutually exclusive with `doc`. `name` defaults to the area name.
@@ -31,7 +33,16 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
   if (auth instanceof NextResponse) return auth;
   const dashboards = await listAccessibleDashboards(auth.userId);
-  return NextResponse.json({ dashboards });
+  return NextResponse.json({
+    dashboards: dashboards.map((d) => ({
+      id: d.id,
+      name: d.displayName,
+      slug: d.alias,
+      cardCount: d.cardCount,
+      updatedAt: d.updatedAt,
+      access: d.access,
+    })),
+  });
 }
 
 export async function POST(request: NextRequest) {
