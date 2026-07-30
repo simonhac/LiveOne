@@ -5,9 +5,11 @@ import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { transformDates } from "@/lib/json";
 import { PointManager } from "@/lib/point/point-manager";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
-import { SystemsManager } from "@/lib/systems-manager";
 import { specToDisplayStrings } from "@/lib/capabilities/config";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 import type { ServerTimer } from "@/lib/server-timing";
 
 /**
@@ -194,7 +196,7 @@ export async function buildSystemPayload(
 export async function getSystemDataForCache(
   systemId: number,
 ): Promise<unknown | null> {
-  const system = await SystemsManager.getInstance().getViewableSystem(systemId);
+  const system = await DeviceConfigRegistry.viewableByHandle(systemId);
   if (!system) return null;
   const payload = await buildSystemPayload(system, false);
   return transformDates(payload, system.timezoneOffsetMin);

@@ -2,8 +2,8 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
 // resolveLogicalSystem fans out to the systems cache, the point manager, and the Areas resolver —
 // mock all three so we can drive the loud-skip / null-area guard deterministically.
-jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: { getInstance: jest.fn() },
+jest.mock("@/lib/registry/device-config", () => ({
+  DeviceConfigRegistry: { viewableByHandle: jest.fn() },
 }));
 jest.mock("@/lib/point/point-manager", () => ({
   PointManager: { getInstance: jest.fn() },
@@ -20,7 +20,7 @@ import {
   resolveLogicalSystem,
   listCompleteLogicalSystems,
 } from "../logical-system";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { PointManager } from "@/lib/point/point-manager";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
@@ -71,17 +71,16 @@ function fakePoint(stem: string, name: string) {
 
 describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () => {
   // resolveLogicalSystem resolves the viewable system (real OR multi-device area handle) via
-  // getViewableSystem, then the points, then the mandatory Area. Areas are EXPLICIT now — a system
+  // DeviceConfigRegistry.viewableByHandle, then the points, then the mandatory Area. Areas are EXPLICIT now — a system
   // with no Area returns null (never minted here); flow belongs only to Areas.
-  const getViewableSystem = jest.fn<(id: number) => Promise<unknown>>();
+  const getViewableSystem = jest.mocked(
+    DeviceConfigRegistry.viewableByHandle,
+  ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
   const getActivePointsForSystem =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
 
   beforeEach(() => {
     jest.clearAllMocks();
-    (SystemsManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
-      getViewableSystem,
-    });
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
     });
@@ -132,15 +131,14 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
 });
 
 describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handles)", () => {
-  const getViewableSystem = jest.fn<(id: number) => Promise<unknown>>();
+  const getViewableSystem = jest.mocked(
+    DeviceConfigRegistry.viewableByHandle,
+  ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
   const getActivePointsForSystem =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
 
   beforeEach(() => {
     jest.clearAllMocks();
-    (SystemsManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
-      getViewableSystem,
-    });
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
     });

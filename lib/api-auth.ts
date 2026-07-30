@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "./auth-utils";
-import { SystemsManager } from "./systems-manager";
 import {
   DeviceConfigRegistry,
   type DeviceConfigView,
@@ -213,8 +212,7 @@ export async function requireDashboardAccess(
           doc: dash.doc,
         });
         if (allowed.includes(systemId)) {
-          const system =
-            await SystemsManager.getInstance().getViewableSystem(systemId);
+          const system = await DeviceConfigRegistry.viewableByHandle(systemId);
           if (system) {
             return {
               system,
@@ -231,10 +229,9 @@ export async function requireDashboardAccess(
 
   // Area-view handle (a multi-device Area with no real `systems` row): resolve access area-natively
   // (owner / admin / public). requireSystemAccess stays strict (real systems + /device routes).
-  const sm = SystemsManager.getInstance();
-  if (await sm.isAreaHandle(systemId)) {
+  if (await DeviceConfigRegistry.isAreaHandle(systemId)) {
     const ctx = await getAuthContext(request, timer);
-    const view = await sm.getViewableSystem(systemId);
+    const view = await DeviceConfigRegistry.viewableByHandle(systemId);
     if (!view) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
@@ -267,8 +264,7 @@ export async function requireDashboardAccess(
       ctx.userId != null &&
       (await grantedSystemScopeForUser(ctx.userId)).has(systemId)
     ) {
-      const system =
-        await SystemsManager.getInstance().getViewableSystem(systemId);
+      const system = await DeviceConfigRegistry.viewableByHandle(systemId);
       if (system) {
         return {
           system,

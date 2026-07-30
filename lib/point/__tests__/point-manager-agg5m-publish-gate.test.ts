@@ -32,14 +32,11 @@ jest.mock("../../observations/publisher", () => ({
 // The device config registry returns the vendorType under test (config-v4 slice K2 — was
 // `SystemsManager.getSystem`).
 let currentVendorType = "selectronic";
-// `point-manager` still imports `SystemsManager` for the K3-owned area-view resolution, and importing
-// it for real builds a query-builder subquery against the (mocked-away) db at module load.
-jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: { getInstance: () => ({ isAreaHandle: async () => false }) },
-}));
+// `isAreaHandle` joined this mock in slice K3, when the area-view resolution moved off `SystemsManager`.
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: {
     deviceByHandle: async () => ({ id: 1, vendorType: currentVendorType }),
+    isAreaHandle: async () => false,
   },
 }));
 

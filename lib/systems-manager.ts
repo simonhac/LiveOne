@@ -1,93 +1,18 @@
-import { cache } from "react";
-import { eq, max, getTableColumns } from "drizzle-orm";
+import { eq, max } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
-import { QueryBuilder } from "drizzle-orm/pg-core";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  systems as pgSystems,
-  devices as pgDevices,
-  deviceState as pgDeviceState,
-  areas as pgAreas,
-} from "@/lib/db/planetscale/schema";
+import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
-import {
-  DeviceConfigRegistry,
-  type DeviceConfigView,
-} from "@/lib/registry/device-config";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 
-// Export the type for a system from the database
+/**
+ * A `systems` row. The last surviving export of this module, and only because it is the patch shape of
+ * {@link SystemsManager.updateSystem}. Config READS are `DeviceConfigRegistry`
+ * (lib/registry/device-config.ts) — `SystemWithPolling`, `PollingStatus` and `Area` were deleted with
+ * the readers in slice K3.
+ */
 export type System = InferSelectModel<typeof pgSystems>;
-/**
- * Operational polling state. Now sourced from `device_state`, not `polling_status` (config-v4 Phase 12
- * slice C) — so it no longer carries the legacy `id`/`systemId` columns. The name is kept because it
- * is what the shape MEANS; slice K renames the surface wholesale.
- */
-export type PollingStatus = InferSelectModel<typeof pgDeviceState>;
-
-export type Area = InferSelectModel<typeof pgAreas>;
-
-// Combined system with polling status
-export type SystemWithPolling = System & {
-  pollingStatus?: PollingStatus | null;
-};
-
-/**
- * `device_state` re-keyed onto the legacy integer handle, so the ONE remaining `systems` read below can
- * join it exactly where it used to join `polling_status`.
- *
- * config-v4 slice K2 was briefed to DELETE this. It cannot go yet: it exists to give `getSystem` a
- * `pollingStatus`, and `getSystem` is the LEGACY side of `verify-slice-k1-parity.ts` — the gate that
- * proves the whole K2 conversion moved nothing. Deleting the subquery deletes the only independent
- * reading of `device_state` that `deviceByHandle`'s native join can be checked against, which is the
- * "re-assert an equivalence inside the change that destroys your ability to check it" trap. It goes
- * with `getSystem` in the terminal window, after the gate has served its purpose.
- *
- * `device_state` is keyed by `devices.id` (uuid), and the bridge to `systems.id` is the verbatim-rid
- * invariant `devices.rid == systems.id` (lib/registry/v4-mirror.ts). Folding that hop into a subquery
- * keeps it stated once instead of eight times, and keeps the join sites a one-line swap. Both hops are
- * unique-index probes over a 16-row table.
- *
- * Built from a standalone QueryBuilder, not `requirePlanetscaleDb()`, so importing this module never
- * needs a configured pool.
- */
-const deviceStateByHandle = new QueryBuilder()
-  .select({ handle: pgDevices.rid, ...getTableColumns(pgDeviceState) })
-  .from(pgDeviceState)
-  .innerJoin(pgDevices, eq(pgDevices.id, pgDeviceState.deviceId))
-  .as("device_state");
-
-/**
- * An "area view" — a SystemWithPolling shape synthesized from a multi-device Area whose integer
- * addressing handle (`legacy_system_id`) has NO real `systems` row. It is the SERVER-ONLY resolution
- * of that handle for the dashboard data path (points/flow/auth resolve via `area_bindings` + members);
- * it is deliberately kept OUT of the systems/devices/admin lists. Owns no points and never polls, so
- * device/polling fields are null.
- */
-function synthesizeAreaView(area: Area): DeviceConfigView | null {
-  if (area.legacySystemId == null) return null;
-  return {
-    id: area.legacySystemId,
-    ownerClerkUserId: area.ownerUserId,
-    vendorType: "area",
-    vendorSiteId: `area:${area.legacySystemId}`,
-    status: area.status,
-    displayName: area.name,
-    alias: area.slug,
-    model: null,
-    serial: null,
-    location: area.location,
-    metadata: null,
-    config: null,
-    timezoneOffsetMin: area.timezoneOffsetMin,
-    displayTimezone: area.displayTimezone,
-    createdAt: area.createdAt,
-    updatedAt: area.updatedAt,
-    commissionedOn: null, // area views own no points and never poll — no vendor commission date
-    pollingStatus: null,
-  };
-}
 
 // Input shape for creating a system (shared by createSystem and its routed inserts).
 type CreateSystemData = {
@@ -118,66 +43,20 @@ function isPgUniqueViolation(e: unknown): boolean {
   );
 }
 
-/** Flatten a systems⋈device_state join row (any extra joined tables are ignored). */
-function toSystemWithPolling(row: {
-  systems: System;
-  device_state: (PollingStatus & { handle: number }) | null;
-}): SystemWithPolling {
-  if (!row.device_state) return { ...row.systems, pollingStatus: null };
-  // `handle` exists only to carry the join key out of the subquery — drop it so `pollingStatus` is
-  // exactly a device_state row at runtime as well as in the types.
-  const { handle: _handle, ...state } = row.device_state;
-  return { ...row.systems, pollingStatus: state };
-}
-
 /**
- * Per-request memoized point lookup of a real system by id (with polling status). React's `cache()`
- * dedupes repeated lookups of the same id within a single request; nothing is shared across requests,
- * so config is always fresh. Outside a request (Jest/scripts) it just runs unmemoized.
- */
-const fetchSystemById = cache(
-  async (id: number): Promise<SystemWithPolling | null> => {
-    const [row] = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .where(eq(pgSystems.id, id))
-      .limit(1);
-    return row ? toSystemWithPolling(row) : null;
-  },
-);
-
-/** Per-request memoized lookup of the Area whose addressing handle is `id` → synthesized area view. */
-const fetchAreaByHandle = cache(async (id: number): Promise<Area | null> => {
-  const [area] = await requirePlanetscaleDb()
-    .select()
-    .from(pgAreas)
-    .where(eq(pgAreas.legacySystemId, id))
-    .limit(1);
-  return area ?? null;
-});
-
-/**
- * The RESIDUE of the v3 config registry, after slice K2 moved every config READ to
- * `DeviceConfigRegistry` (lib/registry/device-config.ts).
+ * The WRITE residue of the v3 config registry: four writers against `systems`, and nothing else.
  *
- * What is left, and why:
+ * Slice K2 moved every config READ to `DeviceConfigRegistry`; slice K3 moved the last two (the
+ * polymorphic-handle area views, `getViewableSystem`/`isAreaHandle`) and deleted `getSystem`, its
+ * `deviceStateByHandle` subquery and `fetchSystemById` outright. Nothing in this module reads config any
+ * more — `insertSystemToPg`'s `max(systems.id)` dev-id probe is a WRITE-path allocation, not a read.
  *
- * - **`getSystem`** — zero production callers. Retained solely as the LEGACY side of
- *   `scripts/config-v4/verify-slice-k1-parity.ts`. Dies with `systems` in the terminal window.
- * - **`getViewableSystem` / `isAreaHandle`** — slice K3. Their REAL leg already reads `devices`; only
- *   the multi-device-area synthesis is still v3-shaped.
- * - **The four WRITERS** (`createSystem`, `createHelperDevice`, `updateSystem`, `deleteSystem`) —
- *   `systems` is still the author and `devices` still the mirror, because `systems_id_seq` allocates
- *   while `devices.rid` is documented inert. Writes flip in the terminal window, not here.
+ * The four writers stay because `systems_id_seq` still allocates the integer handle while `devices.rid`
+ * is documented inert: `devices` cannot become the write target until `systems` drops. They flip — and
+ * this file goes — in the terminal window (Phase 12 slice N / Phase 13).
  *
- * Six readers (`getSystemByVendorSiteId`, `getSystemByUsernameAndAlias`, `getActiveSystems`,
- * `getAllSystems`, `getSystemsByOwner`, `getSystemsVisibleByUser`, `getPrimaryVisibleSystem`) were
- * deleted outright by K2 once their last caller moved — a callerless reader against a dying table is
- * not a shim, it is a second definition of "the config registry".
+ * ⚠️ Do NOT "fix" {@link SystemsManager.deleteSystem}'s orphaned `devices` row: the terminal window's
+ * FK-coverage guard depends on that orphaning. See the method comment.
  */
 export class SystemsManager {
   private static instance: SystemsManager | null = null;
@@ -187,31 +66,6 @@ export class SystemsManager {
   /** Get the (stateless) SystemsManager facade. Cheap: no DB work, no cross-request cache. */
   static getInstance(): SystemsManager {
     return (SystemsManager.instance ??= new SystemsManager());
-  }
-
-  /** Get a real system by id (with polling status). */
-  async getSystem(systemId: number): Promise<SystemWithPolling | null> {
-    return fetchSystemById(systemId);
-  }
-
-  /**
-   * Resolve a handle for the DASHBOARD DATA PATH: a real system, OR an area view (a multi-device Area
-   * with no `systems` row). Use this — not getSystem — wherever an Area's whole-area data/auth/flow is
-   * served. getSystem stays real-only (devices/admin/polling).
-   */
-  async getViewableSystem(systemId: number): Promise<DeviceConfigView | null> {
-    // config-v4 slice K2: the REAL leg reads `devices` (the config registry), not `systems`. Only the
-    // area-view synthesis below is still v3-shaped, and that is what K3 deletes.
-    const real = await DeviceConfigRegistry.deviceByHandle(systemId);
-    if (real) return real; // real row wins (an area-of-one)
-    const area = await fetchAreaByHandle(systemId);
-    return area ? synthesizeAreaView(area) : null;
-  }
-
-  /** Whether `systemId` is an area view (a multi-device Area handle with no real `systems` row). */
-  async isAreaHandle(systemId: number): Promise<boolean> {
-    if (await DeviceConfigRegistry.deviceByHandle(systemId)) return false; // real row wins
-    return (await fetchAreaByHandle(systemId)) != null;
   }
 
   /**

@@ -125,8 +125,12 @@ export async function getBindinglessAreaMemberPoints(): Promise<
     .where(
       and(
         isNotNull(areas.legacySystemId),
-        // areas-backed: the handle has no real systems row
-        sql`NOT EXISTS (SELECT 1 FROM systems s WHERE s.id = ${areas.legacySystemId})`,
+        // areas-backed: the handle names no DEVICE of its own. config-v4 slice K3: was
+        // `NOT EXISTS (SELECT 1 FROM systems s WHERE s.id = …)` — an open-coded `isAreaHandle` that
+        // `tsc` could not see, so it survived K2's sweep. `devices.rid` IS the device's integer handle
+        // (the `devices.rid == systems.id` seam invariant, lib/registry/v4-mirror.ts), so this is the
+        // same predicate against the surviving table.
+        sql`NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = ${areas.legacySystemId})`,
         // binding-less: no area_bindings (those are covered by getAllCompositeBindings)
         sql`NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = ${areas.id})`,
       ),
