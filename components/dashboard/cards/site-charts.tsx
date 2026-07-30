@@ -2,7 +2,7 @@
 
 /**
  * The collapsed site charts (+ sankey) for a section — the N→1 render unit that the section's
- * `sankey` + stacked-areas `chart` cards merge into (see the collapse pass in Dashboard.tsx and
+ * `sankey` + stacked-areas `chart` cards merge into (see the collapse pass in node-view.tsx and
  * `collapseKey` on those plugins). NOT in the card registry: the host invokes it directly.
  *
  * Renders SiteChartsCard for ANY area that has loads + sources — not just mondo/composite "site"

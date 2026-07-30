@@ -50,6 +50,7 @@ import {
   synthCardV3,
   synthSectionV3,
   v4CardRenderKind,
+  type V3CardType,
 } from "@/lib/dashboard/v4-adapt";
 import {
   TILE_GRID_CONTAINER,
@@ -170,7 +171,7 @@ function CardNodeView({
 
   // Known v3 card type → the unchanged v3 CardPlugin, via the v4→v3 adapter.
   if (renderKind === "v3") {
-    const plugin = CARD_RENDERERS[node.type as DashboardCardType];
+    const plugin = CARD_RENDERERS[node.type as V3CardType];
     if (!plugin) return null;
     if (plugin.pending !== "self" && handle == null) {
       return areasResolved ? null : <ChartSkeleton />;
@@ -246,7 +247,7 @@ function GroupNodeView({
   const chartKeys = new Set<string>();
   for (const child of node.children) {
     if (child.kind === "card" && isV3CardType(child.type)) {
-      const plugin = CARD_RENDERERS[child.type as DashboardCardType];
+      const plugin = CARD_RENDERERS[child.type as V3CardType];
       const k = plugin?.collapseKey?.(synthCardV3(child)) ?? null;
       if (k != null) chartKeys.add(k);
     }
@@ -266,7 +267,7 @@ function GroupNodeView({
     .filter((c) => !c.hidden)
     .map((child, i) => {
       if (child.kind === "card" && isV3CardType(child.type)) {
-        const plugin = CARD_RENDERERS[child.type as DashboardCardType];
+        const plugin = CARD_RENDERERS[child.type as V3CardType];
         if (plugin?.collapseKey?.(synthCardV3(child)) != null) {
           if (chartsEmitted) return null;
           chartsEmitted = true;

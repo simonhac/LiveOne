@@ -21,8 +21,15 @@ import { isKnownCardType, isTileViewType } from "@/lib/dashboard/card-types";
 /** The tile-view vocabulary lives in card-types.ts (its single owner); re-exported for callers here. */
 export { TILE_VIEW_TYPES, isTileViewType } from "@/lib/dashboard/card-types";
 
+/**
+ * A v4 card type that maps to a v3 `CardPlugin`. `tiles` is excluded STRUCTURALLY: it is a v3
+ * descriptor type only (it became a `row` group in v4), it is absent from `V4_CARD_TYPES`, and
+ * config-v4 Phase 14 stage 9 deleted its plugin — so it is not a key of `CARD_RENDERERS` either.
+ */
+export type V3CardType = Exclude<DashboardCardType, "tiles">;
+
 /** A v4 card type that maps to a v3 `CardPlugin` (everything known that isn't a tile view or `tiles`). */
-export function isV3CardType(type: string): type is DashboardCardType {
+export function isV3CardType(type: string): type is V3CardType {
   return isKnownCardType(type) && !isTileViewType(type);
 }
 

@@ -118,7 +118,7 @@ type CardNormalizer = (card: CardV3, ctx: { ordinal: number }) => CardV3;
  *
  * sankey: guarantee a stable `id` — the `sankeyId` slot of the per-sankey display-options key
  * (`sankeyId:areaId:dashboardId`). One sankey per area, so a lone card is given the deterministic
- * id `"sankey"` (matching the render-side fallback in Dashboard.tsx); a hypothetical 2nd+ sankey
+ * id `"sankey"` (matching the render-side fallback in node-view.tsx); a hypothetical 2nd+ sankey
  * in one section gets `"sankey:1"`, `"sankey:2"`, … Existing ids are preserved.
  */
 const CARD_NORMALIZERS: Partial<Record<DashboardCardType, CardNormalizer>> = {

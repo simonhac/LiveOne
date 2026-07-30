@@ -3,7 +3,7 @@
  *
  * A tile plugin is a self-contained module: a pure availability predicate (replacing the old
  * `useTileNodes` `available` map) plus a Render component that owns any tile-specific hooks
- * (e.g. the hot-water sparkline query). The host (`tiles-card.tsx` TileCell) fetches the
+ * (e.g. the hot-water sparkline query). The host (`node-view.tsx`'s V4TileCell) fetches the
  * device's `dashboardDataQuery` datum, gates mount on `isAvailable`, and passes these props.
  */
 import type React from "react";

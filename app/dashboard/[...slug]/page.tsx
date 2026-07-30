@@ -12,7 +12,7 @@ import {
 import DashboardClient from "@/components/DashboardClient";
 import { getGrant } from "@/lib/dashboard/grants";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
-import { isDashboardV4 } from "@/lib/dashboard/v4";
+import { emptyDashboardV4, isDashboardV4 } from "@/lib/dashboard/v4";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
 import { areaRefToUuid } from "@/lib/areas/ref";
 import { Area } from "@/lib/ids";
@@ -79,12 +79,17 @@ async function renderCompositionDashboard(
   const descriptor: DashboardV3 = isDashboardV3(raw)
     ? raw
     : { version: 3, sections: [] };
-  // Dual-shape render window (§8): a dashboard carrying a v4 `doc` renders the v4 node tree
-  // (DashboardV4View, branched inside DashboardClient); area resolution + data seeding below stay
-  // shape-aware via `dashboardAreaUuids`. Since the Phase 8/10 cutover `dashboards.doc` is NOT NULL,
-  // so this is the live path; the v3 fallback survives only for a doc that fails the shape guard.
-  const v4doc = isDashboardV4(dashboard.doc) ? dashboard.doc : null;
-  const v4DeviceIds = v4doc ? collectRefs(v4doc).devices : [];
+  // The v4 node tree is what renders (DashboardV4View, inside DashboardClient); area resolution +
+  // data seeding below stay shape-aware via `dashboardAreaUuids`. `dashboards.doc` is NOT NULL
+  // (Phase 8/10 cutover) and both write paths validate it, so this guard is a defence against a
+  // corrupt jsonb only. Phase 14 stage 9 deleted the v3 renderer, so a failed guard can no longer
+  // silently fall back to rendering `descriptor` — it renders an EMPTY document instead. That is
+  // deliberate: `descriptor` is being retired (stages 15/16), and quietly serving a second,
+  // divergent shape from a shape-guard failure is exactly the drift the cutover set out to end.
+  const v4doc = isDashboardV4(dashboard.doc)
+    ? dashboard.doc
+    : emptyDashboardV4();
+  const v4DeviceIds = collectRefs(v4doc).devices;
   const readableDevices: ReadableDevice[] =
     v4DeviceIds.length === 0
       ? []
@@ -106,7 +111,7 @@ async function renderCompositionDashboard(
     (sharedAreas ?? initialReadableAreas ?? []).map((a) => [a.id, a] as const),
   );
   // Section handles (the whole-area devices). These ALONE form the client's dashboardDataBatchQuery
-  // key (Dashboard.tsx derives it from section handles, ignoring device pins), so keep them separate
+  // key (the client derives it from section handles, ignoring device pins), so keep them separate
   // from the expanded per-tile seed set below — folding pins into `batchIds` would break the key
   // match and force a client batch refetch.
   const handles = [
@@ -237,7 +242,7 @@ async function renderCompositionDashboard(
             displayName: dashboard.displayName,
             alias: dashboard.alias,
             descriptor,
-            doc: v4doc ?? undefined,
+            doc: v4doc,
           }}
           canEdit={canEdit}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid

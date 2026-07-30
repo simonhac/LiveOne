@@ -6,9 +6,10 @@ import Link from "next/link";
 import { AlertTriangle, Home } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import { dashboardDataQuery } from "@/lib/queries";
-import Dashboard from "@/components/Dashboard";
+import { DashboardV4View } from "@/components/dashboard/v4/node-view";
 import type { ReadableArea } from "@/lib/areas/list";
-import type { DashboardV3 } from "@/lib/dashboard/v3";
+import type { DashboardV4 } from "@/lib/dashboard/v4";
+import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
 import type { LatestPointValues } from "@/lib/types/api";
 
 /**
@@ -43,35 +44,35 @@ interface DeviceViewerProps {
   isAdmin: boolean;
   userId?: string;
   /**
-   * The device's default v3 view, built SERVER-SIDE from `buildAreaStrategyForHandle` — the single
+   * The device's default v4 view, built SERVER-SIDE by `buildDeviceStrategyDoc` — the single
    * server/config capability path, grid + generator + config overrides folded in. Null when the device
    * is inaccessible/absent (Access-Denied render).
    */
-  descriptor: DashboardV3 | null;
-  /** The section's render key (null when inaccessible/absent). */
-  area: ReadableArea | null;
+  doc: DashboardV4 | null;
+  /** Every `dv_` the doc binds (this device + any pin) — the renderer's device resolver input. */
+  resolvedDevices: ResolvedDevice[];
 }
 
 /**
  * Read-only per-device viewer ("Device"), served at /device/{id}. Renders the SERVER-built default
- * descriptor via the SAME v3 renderer the composition dashboards use (`<Dashboard>`): a single
- * section over the device handle. No Customise / Share / Location controls (those live on Dashboards).
+ * document via the SAME v4 renderer the composition dashboards use (`<DashboardV4View>`): one group
+ * bound to this DEVICE, no area. No Customise / Share / Location controls (those live on Dashboards).
  * This component owns only the device-level chrome (loading / error / removed banners); every card
- * self-fetches inside `<Dashboard>`.
+ * self-fetches inside `<DashboardV4View>`.
  */
 export default function DeviceViewer({
   systemId,
   device,
   hasAccess,
   deviceExists,
-  descriptor,
-  area,
+  doc,
+  resolvedDevices,
 }: DeviceViewerProps) {
   const { isAnyModalOpen } = useModalContext();
 
   // Device-level chrome payload via React Query (latest values + device). Polls every 30s and on
   // focus; paused while a modal is open. Used here only for the loading/error/removed banners — the
-  // cards inside <Dashboard> self-fetch the same (deduped) query. The descriptor comes from the server.
+  // cards inside <DashboardV4View> self-fetch the same (deduped) query. The doc comes from the server.
   const {
     data: queryData,
     isPending,
@@ -80,10 +81,12 @@ export default function DeviceViewer({
   } = useQuery(dashboardDataQuery(systemId ?? "", { paused: isAnyModalOpen }));
   const data = (queryData ?? null) as DashboardData | null;
 
-  // The section's Area is just a render key (the v3 renderer addresses data by `area.legacySystemId`).
-  const areaById = useMemo(
-    () => (area ? new Map([[area.id, area]]) : new Map<string, ReadableArea>()),
-    [area],
+  // A device page binds no Area, so the renderer's area map is always empty; every node addresses its
+  // data through the inherited `device` ref instead (node-view.tsx: `area?.handle ?? device.systemId`).
+  const areaById = useMemo(() => new Map<string, ReadableArea>(), []);
+  const deviceById = useMemo(
+    () => new Map(resolvedDevices.map((d) => [d.deviceId as string, d])),
+    [resolvedDevices],
   );
 
   // Derive the display error: connection failure, an explicit `error` body, or the "device exists but
@@ -165,8 +168,17 @@ export default function DeviceViewer({
           </div>
         ))}
 
-      {(data?.device ?? data?.area) && descriptor && (
-        <Dashboard descriptor={descriptor} areaById={areaById} areasResolved />
+      {/* `px-1` reproduces the v3 renderer's own outer padding, which sat inside this `main`'s —
+          keeping the cards' horizontal inset unchanged by the v4 port. */}
+      {(data?.device ?? data?.area) && doc && (
+        <div className="px-1">
+          <DashboardV4View
+            doc={doc}
+            areaById={areaById}
+            deviceById={deviceById}
+            areasResolved
+          />
+        </div>
       )}
     </main>
   );

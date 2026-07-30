@@ -2,7 +2,7 @@
  * The card / tile CATALOG — the declarative, capability-keyed card/tile ELIGIBILITY data (label +
  * required capabilities + scope). Server-safe and React-free: the render side is the client plugin
  * registries (components/dashboard/cards/ + /tiles/), which replaced the old `card.type` switch in
- * components/Dashboard.tsx.
+ * the (since deleted) v3 renderer; the live renderer is components/dashboard/v4/node-view.tsx.
  *
  * Each entry declares the capabilities it REQUIRES. "Which cards/tiles can an area show" =
  * `CATALOG.filter(e => satisfies(scopeCaps(e), e.requires))`. No vendor/device names appear here — a

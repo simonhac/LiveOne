@@ -35,7 +35,12 @@ import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
 import type { DeviceId } from "@/lib/ids";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
-import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import type { DashboardV4 } from "@/lib/dashboard/v4";
+import { normalizeDocV4 } from "@/lib/dashboard/v4-validate";
+import {
+  DeviceConfigRegistry,
+  type DeviceRecord,
+} from "@/lib/registry/device-config";
 
 /**
  * The member systemIds behind a handle: an area's `area_members`, or the handle itself (a real device).
@@ -158,14 +163,17 @@ export async function resolveAreaStrategyInputs(
 }
 
 /**
- * 🛑 TEMPORARY — the v3-shaped default dashboard (the "area strategy") for a handle, for the three
- * consumers that still read v3: `/device/{id}` (stage 9) plus `GET /api/areas/{id}/default-section`
- * and `POST /api/dashboards` (stage 13). It builds the v4 group and projects it back
- * (`strategy-v3.ts`); both this function and that projection go when the last consumer does.
+ * 🛑 TEMPORARY — the v3-shaped default dashboard (the "area strategy") for a handle, for the two
+ * consumers that still read v3: `GET /api/areas/{id}/default-section` and `POST /api/dashboards`
+ * (both retired by stage 13). It builds the v4 group and projects it back (`strategy-v3.ts`); this
+ * function and that projection go together when the last consumer does.
  *
- * `areaId` is the section's Area uuid (what the descriptor stores) — or `/device/{id}`'s synthetic
- * `device-{id}` key, which is not an area ref at all, hence the group is built unbound and the raw
- * string re-attached on the way back. `handle` is the integer `legacy_system_id` the resolvers key on.
+ * `/device/{id}` was the third consumer until Phase 14 stage 9 — it now builds a v4 doc directly
+ * (`buildDeviceStrategyDoc` below), so the projection's synthetic `device-{id}` `areaId` no longer
+ * has a producer anywhere.
+ *
+ * `areaId` is the section's Area uuid (what the descriptor stores); `handle` is the integer
+ * `legacy_system_id` the resolvers key on.
  *
  * The one device pin the strategy emits (the `oe-grid` card) is resolved to a `dv_` so the v4 builder
  * can carry it in the envelope, then mapped straight back. An unresolvable handle degrades to "no
@@ -196,4 +204,78 @@ export async function buildAreaStrategyForHandle(
       gridDevice && gridHandle != null ? [[gridDevice, gridHandle]] : [],
     ),
   });
+}
+
+/** A device ref the `/device/{id}` renderer must be able to resolve, with its addressing handle. */
+export interface StrategyDeviceRef {
+  deviceId: DeviceId;
+  name: string;
+  systemId: number;
+}
+
+export interface DeviceStrategyDoc {
+  /** The normalized v4 document `/device/{id}` renders. */
+  doc: DashboardV4;
+  /** Every `dv_` the doc binds — the page device plus any pin — for the renderer's device resolver. */
+  devices: StrategyDeviceRef[];
+}
+
+/**
+ * The v4 default view for `/device/{id}` (config-v4 Phase 14 stage 9).
+ *
+ * 🛑 **The page is DEVICE-scoped, so the document is device-bound — it binds no area.** That is the
+ * §8.3 envelope answer to what the v3 projection used to fake with a synthetic `device-{id}`
+ * `section.areaId`: a device page is not a section over an area, it is a subtree scoped to one
+ * device, and the renderer addresses it through the inherited `device` (see `node-view.tsx`'s
+ * `area?.handle ?? device?.systemId`). Consequences, all matching the pre-port render exactly:
+ *  - no area header — a `heading` group with no resolvable area renders bare, which is what the v3
+ *    renderer did for a single-section descriptor (`showHeaders = sections.length > 1`);
+ *  - `chartCapable` stays undefined, so the collapsed site charts stay hidden here, as before;
+ *  - the `device-` sentinel loses its last producer.
+ *
+ * `device.deviceId` is always present (`devices.id` is the row's own uuid), so unlike the area leg
+ * there is no "unresolvable binding" case to degrade. The one pin the strategy can emit — the
+ * `oe-grid` card's OE region device — is resolved here and returned so the renderer can address it;
+ * an unresolvable pin degrades to "no oe-grid card", the same posture `buildAreaStrategyForHandle`
+ * and `resolveGridContextForDevice` take (the grid card is additive and must never break the page).
+ */
+export async function buildDeviceStrategyDoc(
+  device: DeviceRecord,
+): Promise<DeviceStrategyDoc> {
+  const inputs = await resolveAreaStrategyInputs(device.id);
+  const gridHandle = inputs.gridDeviceSystemId;
+  const grid =
+    gridHandle != null
+      ? await DeviceConfigRegistry.deviceByHandle(gridHandle)
+      : null;
+  const group = buildAreaStrategy({
+    capabilities: inputs.capabilities,
+    aggregate: inputs.aggregate,
+    gridDevice: grid?.deviceId,
+    leadWithDeviceMetrics: true,
+  });
+  const doc = normalizeDocV4({
+    version: 4,
+    root: {
+      kind: "group",
+      direction: "column",
+      device: device.deviceId,
+      children: [group],
+    },
+  });
+  const devices: StrategyDeviceRef[] = [
+    {
+      deviceId: device.deviceId,
+      name: device.displayName,
+      systemId: device.id,
+    },
+  ];
+  if (grid) {
+    devices.push({
+      deviceId: grid.deviceId,
+      name: grid.displayName,
+      systemId: grid.id,
+    });
+  }
+  return { doc, devices };
 }
