@@ -247,10 +247,17 @@ const FULL: FullTable[] = [
         { table: "devices", cols: ["primary_area_id"] },
         { table: "derivations", cols: ["area_id"] },
       ],
-      // Nullable columns behind areas_legacy_system_unique / areas_owner_alias_unique. Cleared on the
-      // drifted dev row so prod's row can be inserted alongside it, which the repoint UPDATE needs as
-      // its FK target. The drifted row is deleted moments later, in the same transaction.
-      neutralize: ["legacy_system_id", "slug"],
+      // Nullable columns behind areas_owner_alias_unique. Cleared on the drifted dev row so prod's row
+      // can be inserted alongside it, which the repoint UPDATE needs as its FK target. The drifted row
+      // is deleted moments later, in the same transaction.
+      //
+      // config-v4 Phase 13 PR 6 dropped `legacy_system_id` from this list with the column itself
+      // (migration 0052) — `neutralize` emits a literal `UPDATE areas SET <col> = NULL`, so leaving it
+      // here would be a runtime 42703 in the sync, invisible to tsc. Its index went too, which is why
+      // the cross-table `crossKeys` above had to land FIRST (PR 5): while the column existed, an
+      // undetected drift ABORTED on `areas_legacy_system_unique` and so was its own backstop; without
+      // it the same miss is a silent no-op.
+      neutralize: ["slug"],
     },
   },
   // ── config-v4 v4 registries (Phase 12 slice A) ──────────────────────────────

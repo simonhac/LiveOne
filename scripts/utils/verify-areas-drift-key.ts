@@ -9,10 +9,13 @@
  * It writes ONLY to liveone-dev and refuses to run against a connection carrying the prod branch id.
  *
  * Originally config-v4 Phase 13 PR 5's positive drift-detection proof — kept because the property it
- * checks is permanently invisible to every other kind of test (see below).
+ * checks is permanently invisible to every other kind of test (see below), and since PR 6 it is the ONLY
+ * instrument that can see it at all: `areas_legacy_system_unique` used to abort the sync when the key
+ * missed, and migration 0052 dropped that index along with the column.
  *
  * Why this exists. PR 5 moved the `areas` idDrift leg's cross-ENVIRONMENT identity off
- * `areas.legacy_system_id` (dropped in PR 6) and onto a CROSS-TABLE key, `legacy_handles.handle`.
+ * `areas.legacy_system_id` (dropped by migration 0052 in PR 6) onto a CROSS-TABLE key,
+ * `legacy_handles.handle`.
  * A drift key that has silently stopped matching produces a sync that exits 0 having done nothing —
  * indistinguishable from a clean run. So "the sync passed" is NOT evidence; only a deliberately
  * drifted area that is actually REALIGNED is.
@@ -96,8 +99,6 @@ async function main() {
             return "\\N"; // NULL
           case "slug":
             return "\\N"; // NULL — see header: disables the owner+slug key
-          case "legacy_system_id":
-            return String(handle); // still written in PR 5; PR 6 drops it
           case "name":
             return name;
           case "timezone_offset_min":
@@ -121,11 +122,13 @@ async function main() {
       [DEV_UUID_DRIFT, HANDLE_DRIFT, "PR5 proof · drifted"],
       [UUID_CLEAN, HANDLE_CLEAN, "PR5 proof · control"],
     ] as [string, number, string][]) {
+      // No `legacy_system_id`: migration 0052 dropped it. The handle lives ONLY in the
+      // `legacy_handles` row below — which is precisely the relation the cross-table key reads.
       await dev.query(
-        `INSERT INTO areas (id, name, slug, legacy_system_id, timezone_offset_min, day_offset_min,
+        `INSERT INTO areas (id, name, slug, timezone_offset_min, day_offset_min,
                             display_timezone, status)
-         VALUES ($1,$2,NULL,$3,600,600,'Australia/Sydney','active')`,
-        [uuid, name, handle],
+         VALUES ($1,$2,NULL,600,600,'Australia/Sydney','active')`,
+        [uuid, name],
       );
       await dev.query(
         `INSERT INTO legacy_handles (handle, area_id) VALUES ($1,$2)`,
@@ -158,16 +161,17 @@ async function main() {
   // Exhaustive on purpose: the sync UPSERTS prod's rows into dev, so after a run the synthetic set can
   // include uuids this script never seeded. Match on the synthetic handle band and name prefix too.
   const cleanup = async () => {
+    // The `OR legacy_system_id = ANY(...)` disjuncts are gone with the column (migration 0052); the
+    // handle band is still reachable via `legacy_handles`, which is deleted first, so `areas` is matched
+    // on the synthetic uuids + the name prefix.
     await dev.query(
       `DELETE FROM legacy_handles WHERE handle = ANY($1::int[])
-         OR area_id IN (SELECT id FROM areas WHERE name LIKE 'PR5 proof%'
-                        OR legacy_system_id = ANY($1::int[]))`,
+         OR area_id IN (SELECT id FROM areas WHERE name LIKE 'PR5 proof%')`,
       [ALL_HANDLES],
     );
     await dev.query(
-      `DELETE FROM areas WHERE id = ANY($1::uuid[]) OR name LIKE 'PR5 proof%'
-         OR legacy_system_id = ANY($2::int[])`,
-      [ALL_UUIDS, ALL_HANDLES],
+      `DELETE FROM areas WHERE id = ANY($1::uuid[]) OR name LIKE 'PR5 proof%'`,
+      [ALL_UUIDS],
     );
   };
 
@@ -197,7 +201,7 @@ async function main() {
     console.log(`\nsyncTable(areas) -> staged ${res.rows} rows`);
 
     const after = await dev.query(
-      `SELECT a.id, lh.handle, a.legacy_system_id FROM areas a
+      `SELECT a.id, lh.handle FROM areas a
          JOIN legacy_handles lh ON lh.area_id = a.id
         WHERE lh.handle = ANY($1::int[]) ORDER BY lh.handle`,
       [ALL_HANDLES],
@@ -286,24 +290,26 @@ async function main() {
         `\n  NOTE — it did not fail quietly, it ABORTED: ${controlErr}`,
       );
       console.log(
-        "  While `legacy_system_id` still exists (PR 5) an undetected drift collides with",
+        "  UNEXPECTED post-0052: `areas_legacy_system_unique` was the backstop that made a missed",
       );
       console.log(
-        "  areas_legacy_system_unique and takes the whole sync down — loud, and survivable.",
+        "  key abort, and it is gone. Some OTHER constraint is standing in for it — worth knowing,",
       );
-      console.log(
-        "  PR 6 DROPS that column and its index, which removes this backstop: the same miss",
-      );
-      console.log(
-        "  then becomes the silent no-op. That asymmetry is why this key had to move in PR 5,",
-      );
-      console.log(
-        "  strictly BEFORE the drop, rather than being fixed up afterwards.",
-      );
+      console.log("  but do not rely on it.");
     } else {
       console.log(
-        "\n  NOTE: it failed SILENTLY (exit 0, nothing realigned) — the invisible mode.",
+        "\n  NOTE: it failed SILENTLY (exit 0, nothing realigned) — the invisible mode, and the",
       );
+      console.log(
+        "  EXPECTED post-0052 behaviour. `areas_legacy_system_unique` used to abort the sync on a",
+      );
+      console.log(
+        "  missed key; migration 0052 dropped it with the column, so this script is now the ONLY",
+      );
+      console.log(
+        "  instrument that can tell a working drift key from a broken one. Run it after any change",
+      );
+      console.log("  to the `areas` idDrift leg.");
     }
   } finally {
     await cleanup();

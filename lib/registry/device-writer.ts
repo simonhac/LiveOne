@@ -127,8 +127,8 @@ function isPgUniqueViolation(e: unknown): boolean {
  * Allocate the integer handle for a new device.
  *
  * Prod draws from `device_rid_seq` EXPLICITLY rather than letting the `devices.rid` column DEFAULT fire,
- * because the value is needed up front: the area-of-one is inserted first and keys on it
- * (`areas.legacy_system_id`). Migration 0049 floored the sequence above `max(systems.id)`, so a value
+ * because the value is needed up front — by step 3's `legacy_handles` row, which names it for BOTH the
+ * device and its area-of-one. Migration 0049 floored the sequence above `max(systems.id)`, so a value
  * from it cannot collide with a historical handle. (Pre-1a this came from `systems_id_seq` and was copied
  * into `devices.rid` verbatim; `devices.rid`'s own DEFAULT was documented inert precisely because two
  * independent counters were live. 1a leaves exactly one.)
@@ -162,8 +162,8 @@ async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
  * key, and getting it wrong has broken device creation three times.** Read this before reordering:
  *
  *   1. **`areas`** — must precede `devices` because `devices.primary_area_id` is `NOT NULL` and FKs
- *      `areas(id)`. (Also why the rid is allocated before any insert: the area keys on it via
- *      `areas.legacy_system_id`.)
+ *      `areas(id)`. (The area no longer keys on the rid at all — migration 0052 dropped
+ *      `areas.legacy_system_id` — but the rid is still allocated up front for `devices.rid` and step 3.)
  *   2. **`devices`** — must precede `legacy_handles` because `legacy_handles.device_id` FKs `devices(id)`
  *      (migration 0036). Violating *this* edge is the 2026-07-27 prod defect: the writer opened by
  *      filling the handle row for a uuid no `devices` row carried yet, so **every first mint of a device
@@ -195,7 +195,6 @@ async function insertDeviceToPg(
       await tx.insert(areas).values({
         id: areaId,
         ownerUserId: data.ownerClerkUserId,
-        legacySystemId: rid,
         name: data.displayName,
         slug: null,
         timezoneOffsetMin: tzOffset,
@@ -389,6 +388,16 @@ async function updateDevice(
  * `point_readings_flow_attr_1d` — a table with a deliberate data-loss firewall. Widening a rollback path
  * into that blast radius is slice N's call to make explicitly, not a side effect of this conversion. A
  * stranded area-of-one with no member is inert.
+ *
+ * ⚠️ **The stranded area is inert but it is not invisible: its `legacy_handles` row still names it.**
+ * This function frees the handle's `device_id` and NOT its `area_id`, so handle N keeps resolving to the
+ * orphaned area. Re-creating a device on a RECYCLED rid (dev's `allocateRid` is `max(devices.rid)+1`, so
+ * deleting the highest device recycles its rid on the very next create) therefore re-collides on that
+ * handle. Until migration 0052 the collision surfaced as a 23505 on `areas_legacy_system_unique`;
+ * `ensureAreaForHandle` now raises {@link HandleAreaConflictError} in its place, so the alarm is
+ * preserved rather than downgraded to a silent mis-mapping. Freeing `area_id` here (or deleting the
+ * area) remains out of scope for the reason above — the fix is to make the failure loud, not to widen
+ * the rollback's blast radius.
  */
 async function deleteDevice(systemId: number): Promise<void> {
   await requirePlanetscaleDb().transaction(async (tx) => {

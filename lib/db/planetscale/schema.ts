@@ -611,9 +611,9 @@ export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
 //
-// `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the integer ADDRESSING
-// HANDLE: an area-of-one's == its member's systems.id; a multi-device area's == the old
-// composite shim's systems.id. It drives the point_readings_flow_attr_1d.area_id keying.
+// `id` is a GUID and the area's SOLE identity. The integer ADDRESSING HANDLE lived here as
+// `legacy_system_id` until config-v4 Phase 13 (migration 0052 dropped it); it now lives only in
+// `legacy_handles.handle` (see below), which is the permanently-retained handle→uuid map.
 // Areas are organizational, NOT the access boundary (access stays device-granular until P4).
 // ============================================================================
 export const areas = pgTable(
@@ -629,12 +629,11 @@ export const areas = pgTable(
     // per-area `catch {}` swallows, silently resolving the area to ZERO points. That is exactly the Run-5
     // AC1 "lockout": 35 area_bindings present and correct, 0 points served.
     ownerUserId: text("owner_user_id"),
-    // The 1:1 migration seam + the stable integer ADDRESSING HANDLE. For a multi-device area it is
-    // the old composite shim's systems.id; no FK to devices, since that area outlives its `systems`
-    // row (deleted in migration 0014), and `getDevice(legacy_system_id)` then resolves to the
-    // synthesized virtual system. The unique index below stays as the addressing invariant (one Area
-    // per handle). RETAINED through the cutover (mapping key + backlog drain); dropped in Phase 9.
-    legacySystemId: integer("legacy_system_id"),
+    // 🛑 `legacy_system_id` WAS HERE and is GONE (migration 0052, config-v4 Phase 13 PR 6). The handle
+    // an area is addressed by is `legacy_handles.handle` (partial-unique on `area_id`, so the one-area-
+    // per-handle invariant `areas_legacy_system_unique` used to carry is unchanged). Do not re-add it:
+    // `?systemId=N` resolves through `legacy_handles` forever — that table is a sanctioned permanent
+    // shim, this column was not.
     name: text("name").notNull(),
     slug: text("slug"),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
@@ -662,9 +661,9 @@ export const areas = pgTable(
       table.ownerUserId,
       table.slug,
     ),
-    legacySystemUnique: uniqueIndex("areas_legacy_system_unique").on(
-      table.legacySystemId,
-    ),
+    // `areas_legacy_system_unique` dropped with its column in migration 0052. Its job — one Area per
+    // integer handle — is now `legacy_handles_area_unique` (a partial UNIQUE on `legacy_handles.area_id`)
+    // plus `legacy_handles`' own PK on `handle`.
   }),
 );
 
@@ -858,15 +857,18 @@ export const dashboardRevisions = pgTable(
   }),
 );
 
-// legacy_handles: permanent compat shim mapping every old integer handle (systems.id AND
-// areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (area first, else device).
-// Frozen at cutover. Both FKs are wired: area_id → areas(id) from the start, and device_id →
+// legacy_handles: permanent compat shim mapping every old integer handle (the dropped systems.id AND
+// areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (device leg first, else area).
+// It is now the SOLE home of the integer handle for an area — migration 0052 dropped
+// `areas.legacy_system_id`, so `handle` here is not a copy of anything any more. NOT frozen for areas:
+// `createArea` and `DeviceWriter.createSystem` still mint a row per new area/device.
+// Both FKs are wired: area_id → areas(id) from the start, and device_id →
 // devices(id) since config-transform stage 5 minted devices. The device FK was declared here by
 // migration 0036 — it had been live but undeclared, so drizzle wanted to DROP it on the next generate.
 export const legacyHandles = pgTable(
   "legacy_handles",
   {
-    handle: integer("handle").primaryKey(), // old systems.id or areas.legacy_system_id
+    handle: integer("handle").primaryKey(), // the integer handle itself — no longer mirrored anywhere
     deviceId: uuid("device_id").references(() => devices.id),
     areaId: uuid("area_id").references(() => areas.id),
   },

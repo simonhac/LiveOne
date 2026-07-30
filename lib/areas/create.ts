@@ -27,6 +27,7 @@ import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
+import { HandleAreaConflictError } from "@/lib/registry/device-registry";
 import { bindingShapeMatches } from "@/lib/areas/slots";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -105,8 +106,14 @@ export interface CreateAreaInput {
 
 /**
  * Create a multi-device (site) area with a freshly-allocated synthetic handle and its member rows, in
- * one transaction. Returns the area uuid + its integer addressing handle. Retries on a handle race
- * (`areas_legacy_system_unique`); surfaces an alias collision as `AreaAliasTakenError`.
+ * one transaction. Returns the area uuid + its integer addressing handle. Retries on a handle race;
+ * surfaces an alias collision as `AreaAliasTakenError`.
+ *
+ * config-v4 Phase 13 PR 6: the handle is minted ONLY into `legacy_handles` — `areas.legacy_system_id`
+ * is gone (migration 0052). The handle-race retry therefore hangs off `HandleAreaConflictError` from
+ * `ensureAreaForHandle` instead of a 23505 on `areas_legacy_system_unique`: that index is what used to
+ * detect the race, and it no longer exists. See `HandleAreaConflictError` for why the upsert's own PK
+ * conflict is not a substitute.
  */
 export async function createArea(
   input: CreateAreaInput,
@@ -124,7 +131,6 @@ export async function createArea(
           // unchanged CreateAreaInput (renaming that input shape is elective → Phase 9).
           id,
           ownerUserId: input.ownerClerkUserId,
-          legacySystemId: handle,
           name: input.displayName,
           slug: input.alias ?? null,
           timezoneOffsetMin: input.timezoneOffsetMin,
@@ -158,8 +164,7 @@ export async function createArea(
       return { id, legacySystemId: handle };
     } catch (err) {
       const constraint = constraintOf(err);
-      if (isUniqueViolation(err) && constraint === "areas_legacy_system_unique")
-        continue; // lost a handle race — re-allocate
+      if (err instanceof HandleAreaConflictError) continue; // lost a handle race — re-allocate
       if (isUniqueViolation(err) && constraint === "areas_owner_alias_unique")
         throw new AreaAliasTakenError();
       throw err;
