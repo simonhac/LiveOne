@@ -179,9 +179,14 @@ export const sessions = pgTable(
     // Was `serial`; the receiver always supplies an explicit id.
     id: text("id").primaryKey(),
     sessionLabel: text("session_label"),
-    systemId: integer("system_id")
-      .notNull()
-      .references(() => systems.id),
+    // config-v4 Phase 12 slice 1a (migration 0050): the FK to `systems.id` is GONE. `DeviceWriter` now
+    // writes `devices`, so a device created after 1a has no `systems` row — and this is the HOT INGEST
+    // path, so the constraint would have 23503'd the first session write for every new device. The
+    // replacement FK (-> `devices.rid`) arrives with the rename in the terminal migration, not here:
+    // between the two, session -> device reachability is an ACCEPTED, bounded coverage gap that the
+    // window's G2 asserts. Deliberately accepting the "removing a FK turns a join onto the replacement
+    // key into a silent filter" trap for that interval.
+    systemId: integer("system_id").notNull(),
     cause: text("cause").notNull(),
     duration: integer("duration").notNull(), // milliseconds
     successful: boolean("successful"),
@@ -217,9 +222,10 @@ export const pointInfo = pgTable(
   "point_info",
   {
     // Composite primary key (systemId, index)
-    systemId: integer("system_id")
-      .notNull()
-      .references(() => systems.id),
+    // config-v4 Phase 12 slice 1a (migration 0050): the FK to `systems.id` is GONE, for the same reason
+    // as `sessions.system_id` above — a device created after 1a has no `systems` row, so minting its
+    // first point 23503'd. No replacement FK: `point_info` itself dies in the terminal migration.
+    systemId: integer("system_id").notNull(),
     index: integer("id").notNull(), // Sequential per system
 
     // Global integer identity, sequence-allocated (see pointRidSeq). Additive — the per-system
