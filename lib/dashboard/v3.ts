@@ -14,7 +14,8 @@
  *    name a device -> that specific member (e.g. the OpenElectricity region device for the `oe-grid`
  *    view, a member device of the Area).
  */
-import type { DashboardCardType, DashboardLayout, TileId } from "./cards";
+import type { DashboardCardType, DashboardLayout } from "./cards";
+import type { TileFeature, TileView } from "./card-types";
 
 /** A chart card's config — lines (sidebar) vs stacked-areas (site load/generation halves). */
 export interface ChartCardConfig {
@@ -25,19 +26,6 @@ export interface ChartCardConfig {
   /** Optional series subset for the (future) union-of-series fetch. */
   series?: string[];
 }
-
-/**
- * The tile-view catalog: today's TileId (`solar`, `load`, `hotWater`, `battery`, `house-to-grid`,
- * `amber`, `ev`) plus `oe-grid` — the OpenElectricity NEM grid signals, bound to a member device.
- */
-export type TileView = TileId | "oe-grid";
-
-/** HA-style optional tile "features" (detail/affordances). Forward seam; inert-with-defaults today. */
-export type TileFeature =
-  | { kind: "sparkline"; series: string }
-  | { kind: "breakdown" }
-  | { kind: "flow-direction" }
-  | { kind: "toggle"; command: string };
 
 /** A device-bound tile — the mix-and-match unit. device -> data, view -> rendering. */
 export interface TileV3 {

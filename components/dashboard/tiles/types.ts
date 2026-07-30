@@ -7,7 +7,7 @@
  * device's `dashboardDataQuery` datum, gates mount on `isAvailable`, and passes these props.
  */
 import type React from "react";
-import type { TileView } from "@/lib/dashboard/v3";
+import type { TileView } from "@/lib/dashboard/card-types";
 import type { LatestPointValues } from "@/lib/types/api";
 
 export interface TileRenderProps {

@@ -14,27 +14,12 @@ import type {
   CardV3,
   AreaSectionV3,
   ChartCardConfig,
-  TileView,
   DashboardCardType,
 } from "@/lib/dashboard/v3";
-import { isKnownCardType } from "@/lib/dashboard/card-types";
+import { isKnownCardType, isTileViewType } from "@/lib/dashboard/card-types";
 
-/** The 9 promoted tile views — v4 card types that render via a tile cell (not a v3 CardPlugin). */
-export const TILE_VIEW_TYPES: ReadonlySet<string> = new Set<TileView>([
-  "solar",
-  "load",
-  "hotWater",
-  "battery",
-  "house-to-grid",
-  "amber",
-  "ev",
-  "renewables",
-  "oe-grid",
-]);
-
-export function isTileViewType(type: string): type is TileView {
-  return TILE_VIEW_TYPES.has(type);
-}
+/** The tile-view vocabulary lives in card-types.ts (its single owner); re-exported for callers here. */
+export { TILE_VIEW_TYPES, isTileViewType } from "@/lib/dashboard/card-types";
 
 /** A v4 card type that maps to a v3 `CardPlugin` (everything known that isn't a tile view or `tiles`). */
 export function isV3CardType(type: string): type is DashboardCardType {

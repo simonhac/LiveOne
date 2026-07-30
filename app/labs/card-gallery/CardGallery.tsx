@@ -15,7 +15,7 @@ import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
 import HomeEnergyCard from "@/components/HomeEnergyCard";
 import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
-import type { TileId } from "@/lib/dashboard/cards";
+import type { TileId } from "@/lib/dashboard/card-types";
 import type { LatestPointValues } from "@/lib/types/api";
 import {
   SOLAR_SCENARIOS,
