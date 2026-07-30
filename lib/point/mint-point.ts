@@ -1,54 +1,83 @@
 /**
- * config-v4 Phase 12 slice M — the ONE place a point is born.
+ * config-v4 Phase 12 — the ONE place a point is born.
  *
- * ## The inversion
+ * ## The terminal shape
  *
- * `points` is now PRIMARY and `point_info` the write-behind copy (until slice N drops it). Identity is
- * allocated by `points.rid`'s own `DEFAULT nextval('point_rid_seq')` — the default migration 0043 created
- * for exactly this moment and which was inert until now. `point_info.rid` draws from the SAME sequence,
- * so the `points.rid == point_info.rid` invariant is structural, not copied.
+ * `points` is the ONLY point table. Slice M made it primary with `point_info` as a write-behind copy;
+ * the terminal window (migration 0051) drops `point_info`, so both the write-behind and the
+ * `point_info → points` mirror (`lib/registry/point-mirror.ts`) are gone. Identity is allocated entirely
+ * by `points`: `id` is the derived uid, `rid` comes from `points.rid`'s own
+ * `DEFAULT nextval('point_rid_seq')`.
  *
- * `point_info.index` (column `id`, half the composite PK, NOT NULL) is set to **`rid`**: globally unique,
- * monotonic, satisfies the PK and `pi_rid_unique`, and passes `PointReference.fromIds`' `> 0` check. That
- * kills the `max(index)+1` scan **and its race** outright — there were FOUR such allocators before this
- * (point-manager, hws/register, battery-provenance/register, run-tracking/running-latest) and three of
- * them never mirrored at all, so each was a live C7 hole (a `point_info` row with no `points` row, whose
- * first reading fails `FK point_rid → points(rid)` and becomes a QStash poison pill retried forever).
+ * ## Why the returned shape is still `point_info`-shaped
  *
- * Consequence: new `point_info.index` values are sequence-scale (~1000s), not per-system 1..N. Every
- * consumer treats the index as an opaque positive int.
+ * The four callers (`PointManager.ensurePointInfo`, `lib/hws/register`, `lib/battery-provenance/register`,
+ * `lib/run-tracking/running-latest`) each consume a handful of named fields. Re-homing the QUERY without
+ * re-shaping the RESULT is the same single-seam discipline slice 1b used for the ~20 readers it moved:
+ * one mapper here, zero churn (and zero new bug surface) at the call sites. `index` is set to `rid` —
+ * the identity every read has served since slice M — and `systemId` is echoed from the argument, since
+ * `points` addresses its owner by `device_id`, not by the handle.
  *
- * ## Shape (one transaction)
+ * The `max(index)+1` allocators stay dead. There were FOUR before slice M (point-manager, hws/register,
+ * battery-provenance/register, run-tracking/running-latest) and three never mirrored into `points` at
+ * all, so each was a live C7 hole (a point row whose first reading fails `FK point_rid → points(rid)`
+ * and becomes a QStash poison pill retried forever). Introduce no `max(rid)+1` pattern here: the
+ * sequence is the sole allocator.
  *
- *   resolve device uuid → upsert `points` (allocates id + rid) → upsert `point_info` (index = rid = points.rid,
- *   point_uid = points.id) → `mirrorPoint` to reconcile the descriptive columns.
+ * ## Shape (one statement)
  *
- * The trailing `mirrorPoint` matters when a `point_info` row already existed with user-customised
- * `display_name`: the `point_info` upsert deliberately does not overwrite it, so `points` is brought back
- * to whatever `point_info` actually holds rather than to what this caller proposed. It is also the single
- * mapper (`toMirrorPointInput`) that makes a future mirrored column a compile error in one place.
+ *   resolve device uuid → upsert `points` (allocates id + rid) → project onto the returned row
+ *
+ * The upsert deliberately does NOT overwrite `name` (the user-customisable display name), `rid`,
+ * `device_id` or `id`. It DOES refresh `default_name` + `transform`, exactly as the pre-terminal
+ * `point_info` upsert did, so re-minting an existing point still tracks a vendor rename.
  *
  * ## Collision
  *
- * `point_uid` is derived deterministically from (vendor_type, vendor_site_id, physical_path_tail) so
+ * The uid is derived deterministically from (vendor_type, vendor_site_id, physical_path_tail) so
  * re-onboarding the same physical point reproduces the same uid. On the rare duplicate-site collision the
- * mint retries once with a random uid. Inverted, that collision now surfaces on **`points_pkey`** (points
- * is written first), not `pi_point_uid_unique` — {@link isPointUidCollision} matches both.
+ * mint retries once with a random uid. That collision surfaces on **`points_pkey`**.
  *
  * Server-only.
  */
 import { and, eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo, points } from "@/lib/db/planetscale/schema";
+import { devices, points } from "@/lib/db/planetscale/schema";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
-import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
 import { DeviceRegistry } from "@/lib/registry/device-registry";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
-export type PointInfoDbRow = typeof pointInfo.$inferSelect;
+/**
+ * The point row this module returns — the `point_info`-shaped projection of a `points` row.
+ *
+ * Named columns, not `typeof points.$inferSelect`, precisely so the mapping is explicit: `index === rid`,
+ * and `systemId` is the caller's handle rather than a stored column.
+ */
+export interface MintedPointRow {
+  systemId: number;
+  /** `points.rid`. Equal to `rid` — the address every read has served since slice M. */
+  index: number;
+  rid: number;
+  /** `points.id`. */
+  pointUid: string;
+  physicalPathTail: string;
+  logicalPathStem: string | null;
+  metricType: string;
+  metricUnit: string;
+  defaultName: string;
+  displayName: string;
+  subsystem: string | null;
+  transform: string | null;
+  active: boolean;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+}
 
-/** The descriptive columns a caller supplies; identity (`id`/`rid`/`point_uid`) is minted here. */
+/** @deprecated `point_info` is gone — use {@link MintedPointRow}. Kept so callers read unchanged. */
+export type PointInfoDbRow = MintedPointRow;
+
+/** The descriptive columns a caller supplies; identity (`id`/`rid`) is minted here. */
 export interface MintPointSpec {
   physicalPathTail: string;
   logicalPathStem: string | null;
@@ -63,28 +92,45 @@ export interface MintPointSpec {
   active?: boolean;
 }
 
+/** Project a `points` row onto the returned shape. The one place the mapping lives. */
+function toMintedRow(
+  systemId: number,
+  row: typeof points.$inferSelect,
+): MintedPointRow {
+  return {
+    systemId,
+    index: row.rid,
+    rid: row.rid,
+    pointUid: row.id,
+    physicalPathTail: row.physicalPath,
+    logicalPathStem: row.logicalPath,
+    metricType: row.metricType,
+    metricUnit: row.unit,
+    defaultName: row.defaultName,
+    displayName: row.name,
+    subsystem: row.subsystem,
+    transform: row.transform,
+    active: row.active,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 /**
- * A unique violation that means "this derived point_uid is already taken by a different point".
+ * A unique violation that means "this derived uid is already taken by a different point".
  *
- * Matches BOTH constraints: `points_pkey` (the inverted order writes `points` first, so this is the one
- * that fires now) and `pi_point_uid_unique` (the pre-inversion shape, kept so a partially-healed row or a
- * legacy path still retries). A non-uid unique error — e.g. `pi_system_stem_metric_unique` or
- * `points_device_logical_metric_unique` — is deliberately NOT matched and is rethrown unchanged.
+ * Matches `points_pkey` only — `pi_point_uid_unique` died with `point_info`. A non-uid unique error
+ * (e.g. `points_device_logical_metric_unique`) is deliberately NOT matched and is rethrown unchanged.
  */
 export function isPointUidCollision(e: unknown): boolean {
   if (!e || typeof e !== "object") return false;
   const err = e as { code?: unknown; constraint?: unknown; message?: unknown };
   if (err.code !== "23505") return false;
-  const names = ["points_pkey", "pi_point_uid_unique"];
-  if (typeof err.constraint === "string" && names.includes(err.constraint))
-    return true;
-  return (
-    typeof err.message === "string" &&
-    names.some((n) => (err.message as string).includes(n))
-  );
+  if (err.constraint === "points_pkey") return true;
+  return typeof err.message === "string" && err.message.includes("points_pkey");
 }
 
-/** Derive the stable point identity from the system's vendor identity; random uuid if unresolvable. */
+/** Derive the stable point identity from the device's vendor identity; random uuid if unresolvable. */
 async function derivedUidFor(
   systemId: number,
   physicalPathTail: string,
@@ -92,19 +138,18 @@ async function derivedUidFor(
   const sys = await DeviceConfigRegistry.deviceByHandle(systemId);
   return sys
     ? derivePointUid(sys.vendorType, sys.vendorSiteId, physicalPathTail)
-    : uuidv7(); // no vendor identity to derive from → random uid (point_uid is NOT NULL)
+    : uuidv7(); // no vendor identity to derive from → random uid (`points.id` is the PK)
 }
 
 /**
- * Mint (or return) the point for `(systemId, spec.physicalPathTail)`, writing `points` first and
- * `point_info` behind it, in one transaction. Idempotent.
+ * Mint (or return) the point for `(systemId, spec.physicalPathTail)`. Idempotent.
  *
- * @returns the `point_info` row (the shape every existing caller already consumes).
+ * @returns the point row, in the shape every existing caller already consumes.
  */
 export async function mintPoint(
   systemId: number,
   spec: MintPointSpec,
-): Promise<PointInfoDbRow> {
+): Promise<MintedPointRow> {
   const db = requirePlanetscaleDb();
   const displayName = spec.displayName ?? spec.defaultName;
   const subsystem = spec.subsystem ?? null;
@@ -112,75 +157,38 @@ export async function mintPoint(
   const active = spec.active ?? true;
   const now = new Date();
 
-  const doMint = async (pointUid: string): Promise<PointInfoDbRow> =>
-    db.transaction(async (tx) => {
-      // Slice 1a: resolves the device uuid instead of ensuring (mirroring) the `devices` row. `devices`
-      // is the registry now, so minting a point against a handle that has no device row is an error —
-      // `uuidForRid` throws and aborts the tx rather than conjuring a device from a `systems` row.
-      const deviceId = await DeviceRegistry.uuidForRid(systemId, tx);
+  const doMint = async (pointUid: string): Promise<MintedPointRow> => {
+    // Slice 1a: resolves the device uuid rather than ensuring it. `devices` is the registry, so minting
+    // a point against a handle with no device row is an error — `uuidForRid` throws.
+    const deviceId = await DeviceRegistry.uuidForRid(systemId, db);
 
-      // PRIMARY write: `points` allocates BOTH identities — `id` (the uid) and `rid` (from its own
-      // sequence DEFAULT). DO UPDATE rather than DO NOTHING so the existing row is RETURNED on conflict.
-      // `rid`, `device_id` and `id` are identity and are never overwritten here.
-      const [pt] = await tx
-        .insert(points)
-        .values({
-          id: pointUid,
-          deviceId,
-          physicalPath: spec.physicalPathTail,
-          logicalPath: spec.logicalPathStem,
-          metricType: spec.metricType,
-          unit: spec.metricUnit,
-          name: displayName,
-          defaultName: spec.defaultName,
-          subsystem,
-          transform,
-          active,
-          createdAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [points.deviceId, points.physicalPath],
-          set: { defaultName: spec.defaultName, transform, updatedAt: now },
-        })
-        .returning({ id: points.id, rid: points.rid });
+    // `points` allocates BOTH identities — `id` (the uid) and `rid` (from its own sequence DEFAULT).
+    // DO UPDATE rather than DO NOTHING so the existing row is RETURNED on conflict. `rid`, `device_id`,
+    // `id` and `name` are never overwritten: the first three are identity, the last is user-owned.
+    const [pt] = await db
+      .insert(points)
+      .values({
+        id: pointUid,
+        deviceId,
+        physicalPath: spec.physicalPathTail,
+        logicalPath: spec.logicalPathStem,
+        metricType: spec.metricType,
+        unit: spec.metricUnit,
+        name: displayName,
+        defaultName: spec.defaultName,
+        subsystem,
+        transform,
+        active,
+        createdAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [points.deviceId, points.physicalPath],
+        set: { defaultName: spec.defaultName, transform, updatedAt: now },
+      })
+      .returning();
 
-      // WRITE-BEHIND: `point_info` takes its identity verbatim from `points`. index == rid, so there is
-      // no allocator and no read-then-write race. Identity columns are never touched on conflict.
-      const [pi] = await tx
-        .insert(pointInfo)
-        .values({
-          systemId,
-          index: pt.rid,
-          rid: pt.rid,
-          pointUid: pt.id,
-          physicalPathTail: spec.physicalPathTail,
-          logicalPathStem: spec.logicalPathStem,
-          metricType: spec.metricType,
-          metricUnit: spec.metricUnit,
-          defaultName: spec.defaultName,
-          displayName,
-          subsystem,
-          transform,
-          active,
-          createdAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [pointInfo.systemId, pointInfo.physicalPathTail],
-          set: {
-            defaultName: spec.defaultName,
-            transform,
-            updatedAt: now,
-            // id/rid/point_uid are identity — deliberately NOT overwritten.
-          },
-        })
-        .returning();
-
-      // Reconcile `points`' descriptive columns to what `point_info` actually holds (a pre-existing row
-      // may carry a user-customised display_name the upsert above deliberately preserved).
-      await mirrorPoint(toMirrorPointInput(pi), tx);
-
-      return pi;
-    });
+    return toMintedRow(systemId, pt);
+  };
 
   const derived = await derivedUidFor(systemId, spec.physicalPathTail);
   try {
@@ -189,7 +197,7 @@ export async function mintPoint(
     if (!isPointUidCollision(e)) throw e;
     const randomUid = uuidv7();
     console.warn(
-      `[mintPoint] point_uid collision for system ${systemId} "${spec.physicalPathTail}" — using random uid ${randomUid}`,
+      `[mintPoint] uid collision for system ${systemId} "${spec.physicalPathTail}" — using random uid ${randomUid}`,
     );
     return await doMint(randomUid);
   }
@@ -198,22 +206,27 @@ export async function mintPoint(
 /**
  * Look up an existing point by `(systemId, logicalPathStem, metricType)` — the address the derived-point
  * writers (HWS, battery-provenance, run-tracking) use to decide whether to mint.
+ *
+ * Reads `points ⋈ devices`; the `point_info` read died with the table.
+ * `points_device_logical_metric_unique` is the direct analogue of the retired
+ * `pi_system_stem_metric_unique`, so this stays a single-row lookup.
  */
 export async function findPointByStemMetric(
   systemId: number,
   logicalPathStem: string,
   metricType: string,
-): Promise<PointInfoDbRow | null> {
+): Promise<MintedPointRow | null> {
   const [row] = await requirePlanetscaleDb()
-    .select()
-    .from(pointInfo)
+    .select({ points })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, logicalPathStem),
-        eq(pointInfo.metricType, metricType),
+        eq(devices.rid, systemId),
+        eq(points.logicalPath, logicalPathStem),
+        eq(points.metricType, metricType),
       ),
     )
     .limit(1);
-  return row ?? null;
+  return row ? toMintedRow(systemId, row.points) : null;
 }

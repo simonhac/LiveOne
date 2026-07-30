@@ -65,9 +65,9 @@ export async function ensureHwsTemperaturePoint(
     return {
       status: "exists",
       systemId,
-      // `rid`, not `index`: `findPointByStemMetric` still reads the `point_info` write-behind copy
-      // (it lives in the writer module, out of this slice), but the two integers differ for legacy
-      // rows and every other id this slice reports is now the global rid.
+      // `rid` — the global point id. Since the terminal window `findPointByStemMetric` reads
+      // `points ⋈ devices`, where `index` IS `rid` (one column, two names), so the two are equal by
+      // construction rather than by mirror. Naming `rid` keeps the field that survives.
       tempPointId: existing.rid,
       powerPointId: power.index,
     };

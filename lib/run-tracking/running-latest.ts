@@ -23,9 +23,9 @@ import {
 } from "./running-point";
 
 /**
- * Ensure a derived `<stem>/running` `point_info` row exists for `systemId`, returning its index
- * (the pointId used as the KV pointReference) AND its uuid (the KV subscription-map key). Idempotent.
- * No migration — `point_info` is a config table. Mirrors `ensureHwsTemperaturePoint`.
+ * Ensure a derived `<stem>/running` point exists for `systemId`, returning its index (the pointId used
+ * as the KV pointReference) AND its uuid (the KV subscription-map key). Idempotent. No migration —
+ * `points` is a config table. Mirrors `ensureHwsTemperaturePoint`.
  */
 async function ensureRunningPoint(
   systemId: number,
@@ -35,8 +35,9 @@ async function ensureRunningPoint(
   const existing = await findPointByStemMetric(systemId, stem, RUNNING_METRIC);
   if (existing) return existing;
 
-  // config-v4 slice M: `mintPoint` owns identity + index (points-primary). The max(index)+1 scan this
-  // replaced never mirrored into `points`, so it was a live C7 hole.
+  // config-v4 slice M: `mintPoint` owns identity + index (`points` is the only point table since the
+  // terminal window). The max(index)+1 scan this replaced never mirrored into `points`, so it was a
+  // live C7 hole.
   return mintPoint(systemId, {
     physicalPathTail: `derived/${stem}/${RUNNING_METRIC}`,
     logicalPathStem: stem,

@@ -12,7 +12,6 @@ import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   devices as pgDevices,
-  pointInfo as pgPointInfoTable,
   points as pgPoints,
 } from "@/lib/db/planetscale/schema";
 import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
@@ -24,7 +23,6 @@ import {
 } from "@/lib/point/series-info";
 import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
-import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
 import {
   DeviceConfigRegistry,
   type DeviceConfigView,
@@ -497,18 +495,21 @@ export class PointManager {
    * Update a point's information
    * Automatically invalidates the series cache for the affected system
    *
-   * config-v4: the `point_info` update and its `points` mirror are ONE transaction — the same invariant
-   * `ensurePointInfo` holds at mint. Before this, `mirrorPoint` was called only on the mint path, so
-   * every edit here drifted `points.name`/`active`/`logical_path`/`transform`, and `mirrorPoint` could
-   * not self-heal it (the mint upsert hands it the row `point_info` just returned, so it only ever
-   * re-copies what is already there). Measured on prod 2026-07-28 while re-stemming the Sigenergy site:
-   * `point_info.logical_path_stem` said `load.rest-of-house`, `points.logical_path` still said `load`.
-   * Slice M's read-flip assumes `points` is a faithful copy, so this closes the leak at the source
-   * rather than leaving a whole edit history for M's reconcile to find.
+   * config-v4 Phase 12 terminal window: this writes `points` DIRECTLY. It used to update `point_info`
+   * and mirror into `points` in one transaction — the mirror existed because an earlier shape wrote only
+   * `point_info` here, so every edit drifted `points.name`/`active`/`logical_path`/`transform` (measured
+   * on prod 2026-07-28 while re-stemming the Sigenergy site: `point_info.logical_path_stem` said
+   * `load.rest-of-house`, `points.logical_path` still said `load`). With `point_info` dropped there is one
+   * home, so the drift class is structurally gone rather than mirrored shut, and no transaction is needed.
+   *
+   * ⚠️ The predicate is driven POSITIVELY on both legs — `points.rid` AND the owning device — rather than
+   * on `rid` alone. `rid` is globally unique, so the device leg is not needed for correctness today, but
+   * dropping it would silently widen the statement to "any system's point with this rid" the moment a
+   * caller passes a mismatched pair.
    */
   async updatePoint(
     systemId: number,
-    pointIndex: number, // Database field is 'id', but we call it 'index' in TS code
+    pointIndex: number, // the global `points.rid`; called `index` in TS code (see mint-point)
     updates: Partial<{
       displayName: string;
       active: boolean;
@@ -516,29 +517,37 @@ export class PointManager {
       transform: string | null;
     }>,
   ): Promise<void> {
-    await requirePlanetscaleDb().transaction(async (tx) => {
-      const [row] = await tx
-        .update(pgPointInfoTable)
-        .set({
-          ...updates,
-          updatedAt: new Date(), // PG native timestamp
-        })
-        // ⚠️ slice 1b: `rid`, NOT `index`. Every read now serves `index = points.rid`, so the
-        // `pointIndex` a caller hands back is a rid. `point_info.rid == points.rid` verbatim, so
-        // this addresses the same row — but matching on `point_info.id` here would silently update
-        // the WRONG point (or none) for the 117-of-134 rows where the two integers differ.
-        .where(
-          and(
-            eq(pgPointInfoTable.systemId, systemId),
-            eq(pgPointInfoTable.rid, pointIndex),
+    const db = requirePlanetscaleDb();
+    await db
+      .update(pgPoints)
+      .set({
+        // `point_info`'s column names mapped onto `points`': display_name → name,
+        // logical_path_stem → logical_path. Spread-and-rename rather than a blind `...updates` so a new
+        // updatable field is a compile error here instead of a silently-ignored key.
+        ...(updates.displayName !== undefined
+          ? { name: updates.displayName }
+          : {}),
+        ...(updates.active !== undefined ? { active: updates.active } : {}),
+        ...(updates.logicalPathStem !== undefined
+          ? { logicalPath: updates.logicalPathStem }
+          : {}),
+        ...(updates.transform !== undefined
+          ? { transform: updates.transform }
+          : {}),
+        updatedAt: new Date(), // PG native timestamp
+      })
+      .where(
+        and(
+          eq(pgPoints.rid, pointIndex),
+          inArray(
+            pgPoints.deviceId,
+            db
+              .select({ id: pgDevices.id })
+              .from(pgDevices)
+              .where(eq(pgDevices.rid, systemId)),
           ),
-        )
-        .returning();
-
-      // No such point — nothing was updated, so there is nothing to mirror.
-      if (!row) return;
-      await mirrorPoint(toMirrorPointInput(row), tx);
-    });
+        ),
+      );
 
     // Invalidate cache for this system
     this.invalidateSeriesCache(systemId);
