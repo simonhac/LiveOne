@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requireAuth, requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, areaBindings } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  areaBindings,
+  legacyHandles,
+} from "@/lib/db/planetscale/schema";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import {
@@ -55,12 +59,13 @@ export async function GET(request: NextRequest) {
   const [area] = await db
     .select({
       id: areas.id,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
       displayName: areas.name,
       alias: areas.slug,
       status: areas.status,
     })
     .from(areas)
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(eq(areas.id, resolved.id))
     .limit(1);
 

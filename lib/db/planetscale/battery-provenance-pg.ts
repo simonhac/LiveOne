@@ -18,6 +18,7 @@ import {
   areaBindings,
   areas,
   batteryProvenanceDaily,
+  legacyHandles,
   pointReadingsFlowAttr1d,
 } from "./schema";
 import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
@@ -627,7 +628,8 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
   const [area] = await db
     .select({ id: areas.id, tz: areas.timezoneOffsetMin })
     .from(areas)
-    .where(eq(areas.legacySystemId, handle))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    .where(eq(legacyHandles.handle, handle))
     .limit(1);
   if (!area) return { seeded: false, reason: "no-area" };
 
@@ -760,7 +762,8 @@ export async function tryLoadSeededProvenanceInputs(
   const [area] = await db
     .select({ id: areas.id, tz: areas.timezoneOffsetMin })
     .from(areas)
-    .where(eq(areas.legacySystemId, handle))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    .where(eq(legacyHandles.handle, handle))
     .limit(1);
   if (!area) return { seeded: false, reason: "no-area" };
 

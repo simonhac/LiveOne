@@ -28,7 +28,7 @@ function getArg(name: string): string | undefined {
 
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { areas } = await import("@/lib/db/planetscale/schema");
+  const { areas, legacyHandles } = await import("@/lib/db/planetscale/schema");
 
   if (!planetscaleDb) {
     console.error(
@@ -95,11 +95,12 @@ async function main() {
   const [area] = await planetscaleDb
     .select({
       id: areas.id,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
       location: areas.location,
     })
     .from(areas)
-    .where(areaArg ? eq(areas.id, areaArg) : eq(areas.legacySystemId, handle))
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    .where(areaArg ? eq(areas.id, areaArg) : eq(legacyHandles.handle, handle))
     .limit(1);
   if (!area) {
     console.error(

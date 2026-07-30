@@ -357,10 +357,14 @@ async function updateSystem(
     await tx.update(devices).set(deviceSet).where(eq(devices.rid, systemId));
     if (Object.keys(areaSet).length > 0) {
       areaSet.updatedAt = new Date();
-      await tx
-        .update(areas)
-        .set(areaSet)
-        .where(eq(areas.legacySystemId, systemId));
+      // config-v4 Phase 13 PR 5: the target area is located through `legacy_handles`, not the dropped
+      // `areas.legacy_system_id`. An UPDATE cannot join, so the handle is resolved to a uuid first —
+      // inside the SAME transaction, so it cannot race the `ensureAreaForHandle` in `ensureAreaOfOne`.
+      // A handle naming no area updates nothing, exactly as the old 0-row-match predicate did.
+      const targets = await DeviceRegistry.resolveHandle(systemId, tx);
+      if (targets?.areaId) {
+        await tx.update(areas).set(areaSet).where(eq(areas.id, targets.areaId));
+      }
     }
   });
 }

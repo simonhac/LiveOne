@@ -33,7 +33,12 @@ if (
 
 import { and, eq, or, sql } from "drizzle-orm";
 import { planetscaleDb } from "../lib/db/planetscale";
-import { areas, devices, points } from "../lib/db/planetscale/schema";
+import {
+  areas,
+  devices,
+  legacyHandles,
+  points,
+} from "../lib/db/planetscale/schema";
 import { loadProvenanceInputs } from "../lib/battery-provenance/load";
 import { computeBatteryProvenance } from "../lib/battery-provenance/compute";
 import type {
@@ -98,10 +103,11 @@ async function runDiscover() {
   const areaRows = await db()
     .select({
       id: areas.id,
-      handle: areas.legacySystemId,
+      handle: legacyHandles.handle,
       name: areas.displayName,
     })
-    .from(areas);
+    .from(areas)
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id));
   console.log(
     "\nCandidate systems (have battery SoC / EV load / Amber price):",
   );

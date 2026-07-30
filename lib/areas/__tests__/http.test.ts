@@ -20,6 +20,9 @@ jest.mock("@/lib/db/planetscale", () => ({
     const builder: Record<string, unknown> = {};
     builder.select = () => builder;
     builder.from = () => builder;
+    // config-v4 Phase 13 PR 5: `loadAreaForAuth` LEFT-joins `legacy_handles` for the integer handle,
+    // which is no longer a column on `areas`.
+    builder.leftJoin = () => builder;
     builder.where = () => builder;
     builder.limit = () => Promise.resolve(areaRow ? [areaRow] : []);
     return builder;

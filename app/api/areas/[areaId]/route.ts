@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas } from "@/lib/db/planetscale/schema";
+import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
@@ -46,9 +46,10 @@ export async function GET(
       displayTimezone: areas.displayTimezone,
       location: areas.location,
       status: areas.status,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
     })
     .from(areas)
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(eq(areas.id, uuid))
     .limit(1);
   if (!row)

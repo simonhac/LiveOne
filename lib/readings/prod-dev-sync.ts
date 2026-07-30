@@ -83,8 +83,37 @@ type FkChild = { table: string; cols: string[] };
 // blocks the upsert on a secondary unique index — so `neutralize` names the columns of those unique keys,
 // made non-colliding first so both rows can coexist for the middle of the transaction. Ordering is
 // therefore load-bearing: neutralize → upsert → repoint → delete.
+// A CROSS-TABLE natural key: the discriminating value does not live on the drifting table at all, but on
+// a satellite table that references it. `uniqueKeys` cannot express this — every entry there is a column
+// list on the drifting table itself.
+//
+// Introduced by config-v4 Phase 13 PR 5, which removed `areas.legacy_system_id`. That column was the
+// areas leg's cross-ENVIRONMENT identity (area uuids are minted per-environment, so they always differ),
+// and the documented fallback `["owner_user_id", "slug"]` cannot replace it: measured on `liveone-dev`,
+// **16 of 22 areas have a NULL slug** (and `reown-dev-data.ts` rewrites dev's `owner_user_id` besides).
+// There is no on-table substitute either — `name` is not unique (2 duplicate pairs; `(owner, name)` is
+// 20 distinct over 22 rows). The surviving identity is `legacy_handles.handle`, frozen at cutover and so
+// identical in both environments. Losing it would leave the sync unable to detect drift for 73% of
+// areas — **silently**, which is indistinguishable from a sync with nothing to do.
+//
+// Semantics: dev row `d` and staged prod row `s` are the same LOGICAL row when some row of dev's `table`
+// points at `d`, some row of prod's `table` points at `s`, and the two agree on every `keyCols` column.
+//
+// Prod's satellite slice is staged into its OWN helper table (`sync_staging._xkey_<table>`) rather than
+// reusing `sync_staging.<table>`, for two reasons: the satellite's own manifest leg has not run yet (and
+// must not — it is an FK CHILD of the very table being realigned, so it is cleared and repopulated
+// around this one), and the helper must not collide with that leg's later staging table.
+type CrossKey = {
+  table: string; // satellite table carrying the key, e.g. "legacy_handles"
+  parentCol: string; // its FK onto the drifting table's (single-column) PK, e.g. "area_id"
+  keyCols: string[]; // the cross-environment natural key, e.g. ["handle"]
+};
+
 type IdDrift = {
   uniqueKeys: string[][]; // secondary unique indexes (each a full column list) a divergent-PK row collides on
+  // Cross-TABLE identities, OR-ed into the same match as `uniqueKeys` (see CrossKey). Only valid for a
+  // single-column PK — the satellite carries one FK column per `parentCol`.
+  crossKeys?: CrossKey[];
   children: FkChild[];
   repoint?: FkChild[]; // FKs that must FOLLOW the realignment instead of being deleted (NOT NULL/NO ACTION)
   // Columns of `uniqueKeys` freed on the drifted dev row so prod's row can be inserted alongside it.
@@ -95,6 +124,14 @@ type IdDrift = {
   // transaction, so the value never has to be restored or even meaningful — only collision-free.
   neutralize?: (string | { col: string; expr: string })[];
 };
+
+/**
+ * Staging table for a cross-key satellite slice. Deliberately NOT `sync_staging.<table>`: the satellite
+ * (`legacy_handles`) has its own manifest leg that stages under that exact name later in the run, and it
+ * is an FK child of the table being realigned, so the two must not share a table.
+ */
+const crossKeyStaging = (ck: CrossKey): string =>
+  `sync_staging._xkey_${ck.table}_${ck.parentCol}`;
 
 type FullTable = {
   name: string;
@@ -165,8 +202,8 @@ const FULL: FullTable[] = [
     (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
   ),
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
-  // legacy_system_id / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
-  // unique index (areas_legacy_system_unique / areas_owner_alias_unique). `idDrift` clears the mismatched
+  // handle / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
+  // unique index (areas_owner_alias_unique). `idDrift` clears the mismatched
   // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_members /
   // area_bindings / the incremental flow legs re-populate under the correct uuid.
   {
@@ -175,8 +212,17 @@ const FULL: FullTable[] = [
     onConflict: "update",
     idDrift: {
       uniqueKeys: [
-        ["legacy_system_id"], // areas_legacy_system_unique
         ["owner_user_id", "slug"], // areas_owner_alias_unique — config-v4 renamed owner_clerk_user_id/alias
+      ],
+      // ⚠️ config-v4 Phase 13 PR 5 replaced the `["legacy_system_id"]` key with this cross-table one,
+      // because the column is dropped in PR 6. `owner_user_id + slug` above CANNOT carry the leg alone:
+      // 16 of 22 dev areas have a NULL slug (NULL = NULL never matches) and `reown-dev-data.ts` has
+      // already rewritten dev's `owner_user_id`. `legacy_handles.handle` is frozen at cutover and so is
+      // the one value identical in both environments — verified 22/22 on `liveone-dev`, with the
+      // relation `areas(id, legacy_system_id)` set-identical to `legacy_handles(area_id, handle)` in
+      // BOTH directions before the swap. See `CrossKey` for why prod's slice must be staged separately.
+      crossKeys: [
+        { table: "legacy_handles", parentCol: "area_id", keyCols: ["handle"] },
       ],
       children: [
         // `area_members` is deliberately NOT listed: its `area_id` FK is ON DELETE CASCADE, so a cleared
@@ -653,6 +699,30 @@ export async function syncTable(
   const idDrift = t.mode === "full" ? t.idDrift : undefined;
   const replaceConflicts = t.mode === "full" ? t.replaceConflicts : undefined;
 
+  // 2b. Stage prod's slice of each cross-key satellite table (see CrossKey). Must happen BEFORE the
+  // `_drift` computation reads it, and it is a separate helper table because the satellite's own
+  // manifest leg runs later and would otherwise clash on `sync_staging.<table>`.
+  for (const ck of idDrift?.crossKeys ?? []) {
+    const ckCols = [ck.parentCol, ...ck.keyCols].join(", ");
+    await dev.query(
+      `DROP TABLE IF EXISTS ${crossKeyStaging(ck)};
+       CREATE UNLOGGED TABLE ${crossKeyStaging(ck)} AS
+         SELECT ${ckCols} FROM public.${ck.table} WITH NO DATA;`,
+    );
+    await pipeline(
+      prod.query(
+        copyTo(
+          `COPY (SELECT ${ckCols} FROM public.${ck.table}
+                  WHERE ${ck.parentCol} IS NOT NULL) TO STDOUT`,
+        ),
+      ),
+      dev.query(copyFrom(`COPY ${crossKeyStaging(ck)} (${ckCols}) FROM STDIN`)),
+    );
+    // The join in `crossMatch` is the hot path of the `_drift` scan and this table has no stats at all
+    // until analyzed — same reasoning as the `ANALYZE _drift` below.
+    await dev.query(`ANALYZE ${crossKeyStaging(ck)};`);
+  }
+
   // 3. Upsert into dev. The transaction paths ROLLBACK before rethrowing so a failure
   // never leaves the persistent dev connection stuck in an aborted transaction.
   try {
@@ -661,11 +731,31 @@ export async function syncTable(
       // but sitting under a different PK. Whichever key collides would abort the by-PK upsert, so clear
       // them (and their FK children — not all ON DELETE CASCADE) inside the upsert's transaction. `_drift`
       // carries the parent's PK columns; children map their FK columns positionally onto that PK.
-      const match = idDrift.uniqueKeys
-        .map(
+      const crossKeys = idDrift.crossKeys ?? [];
+      if (crossKeys.length > 0 && pk.length !== 1) {
+        // Fail LOUD rather than emit a match that silently never fires — a drift key that has stopped
+        // matching is invisible (see CrossKey), so this must never degrade quietly.
+        throw new Error(
+          `${t.name}: idDrift.crossKeys needs a single-column PK, got [${pk.join(", ")}]`,
+        );
+      }
+      // Cross-table identities (see CrossKey): correlate through dev's satellite table and prod's staged
+      // copy of it. OR-ed in alongside the on-table `uniqueKeys` — a row is the same logical row if ANY
+      // key says so, exactly as before.
+      const crossMatch = crossKeys.map((ck) => {
+        const on = ck.keyCols.map((c) => `xs.${c} = xd.${c}`).join(" AND ");
+        return `(EXISTS (SELECT 1
+                   FROM public.${ck.table} xd
+                   JOIN ${crossKeyStaging(ck)} xs ON (${on})
+                  WHERE xd.${ck.parentCol} = d.${pk[0]}
+                    AND xs.${ck.parentCol} = s.${pk[0]}))`;
+      });
+      const match = [
+        ...idDrift.uniqueKeys.map(
           (key) => "(" + key.map((c) => `d.${c} = s.${c}`).join(" AND ") + ")",
-        )
-        .join(" OR ");
+        ),
+        ...crossMatch,
+      ].join(" OR ");
       const samePk = pk.map((c) => `d.${c} = s.${c}`).join(" AND ");
       const childDeletes = idDrift.children
         .map((c) => {
@@ -737,7 +827,8 @@ export async function syncTable(
        ${childDeletes}
        ${realign}
        COMMIT;
-       DROP TABLE sync_staging.${t.name};`,
+       DROP TABLE sync_staging.${t.name};
+       ${crossKeys.map((ck) => `DROP TABLE IF EXISTS ${crossKeyStaging(ck)};`).join("\n       ")}`,
       );
     } else if (replaceConflicts?.length) {
       const match = replaceConflicts

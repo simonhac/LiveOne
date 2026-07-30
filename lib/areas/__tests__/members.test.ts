@@ -98,7 +98,14 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     expect(sql).toContain("FROM area_members am");
     expect(sql).toContain("JOIN devices d ON d.id = am.device_id");
     // The int handle comparison must go through devices.rid — the seam invariant devices.rid == systems.id.
-    expect(sql).toContain('d.rid = "areas"."legacy_system_id"');
+    // config-v4 Phase 13 PR 5: the handle side is `legacy_handles.handle`, not the dropped
+    // `areas.legacy_system_id`. Raw `sql`, so tsc cannot see either side of this — hence the assertion.
+    expect(sql).toContain('d.rid = "legacy_handles"."handle"');
+    expect(sql).not.toContain("legacy_system_id");
+    // The PARENT's handle needs its own satellite hop, or the "a different active area owns the flow
+    // view" guard compares against nothing and every area looks flow-eligible.
+    expect(sql).toContain("JOIN legacy_handles plh ON plh.area_id = parent.id");
+    expect(sql).toContain('plh.handle <> "legacy_handles"."handle"');
     expect(sql).toContain("parent.status = 'active'");
   });
 

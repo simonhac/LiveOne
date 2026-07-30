@@ -18,9 +18,15 @@ function copyClients(options: { failUpsert?: boolean } = {}) {
   }) as Writable & { rowCount: number };
   destination.rowCount = 1;
 
+  // Prod is READ-ONLY, so every command it sees is a COPY … TO STDOUT stream object rather than a
+  // string. Record its SQL text anyway: config-v4 Phase 13 PR 5 stages a cross-key satellite slice from
+  // prod, and the filter on that COPY is only observable here.
+  const prodSql: string[] = [];
   const prod = {
     query(command: unknown) {
       expect(typeof command).not.toBe("string");
+      const text = (command as { text?: string }).text;
+      if (typeof text === "string") prodSql.push(text);
       return source;
     },
   } as unknown as Client;
@@ -39,7 +45,7 @@ function copyClients(options: { failUpsert?: boolean } = {}) {
       return Promise.resolve({ rows: [] });
     },
   } as unknown as Client;
-  return { prod, dev, devSql };
+  return { prod, dev, devSql, prodSql };
 }
 
 describe("prod→dev readings transfer", () => {
@@ -269,6 +275,30 @@ describe("prod→dev readings transfer", () => {
         neutralize: ["legacy_system_id", "slug"],
       },
     });
+
+    // config-v4 Phase 13 PR 5: the cross-ENVIRONMENT identity moved OFF `areas.legacy_system_id`
+    // (dropped in PR 6) and onto `legacy_handles.handle`, which is frozen at cutover and therefore
+    // identical in both environments. `owner_user_id + slug` cannot carry this leg alone — 16 of 22 dev
+    // areas have a NULL slug, and `reown-dev-data.ts` rewrites dev's owner_user_id — so if this key ever
+    // silently stops matching, the sync detects no drift for ~73% of areas while still exiting 0. That
+    // failure is invisible by construction, which is why it is pinned here rather than left to the run.
+    expect(table).toMatchObject({
+      idDrift: {
+        uniqueKeys: [["owner_user_id", "slug"]],
+        crossKeys: [
+          {
+            table: "legacy_handles",
+            parentCol: "area_id",
+            keyCols: ["handle"],
+          },
+        ],
+      },
+    });
+    // The retired key must be GONE, not merely supplemented: PR 6 drops the column, so a lingering
+    // `d.legacy_system_id = s.legacy_system_id` would be a runtime 42703 in the sync.
+    expect(
+      (table as { idDrift: { uniqueKeys: string[][] } }).idDrift.uniqueKeys,
+    ).not.toContainEqual(["legacy_system_id"]);
     // derivations must be repointed, NOT deleted — that preserves its derived_intervals (CASCADE).
     expect(
       (
@@ -276,7 +306,7 @@ describe("prod→dev readings transfer", () => {
       ).idDrift.children.map((c) => c.table),
     ).not.toContain("derivations");
 
-    const { prod, dev, devSql } = copyClients();
+    const { prod, dev, devSql, prodSql } = copyClients();
     await syncTable(
       prod,
       dev,
@@ -287,7 +317,34 @@ describe("prod→dev readings transfer", () => {
       new Map([["areas", ["id"]]]),
     );
 
+    // Prod's `legacy_handles` slice must be staged BEFORE the `_drift` scan reads it, into its OWN
+    // helper table — `sync_staging.legacy_handles` belongs to that table's later manifest leg, and
+    // `legacy_handles` is an FK CHILD of areas that this very transaction clears and repopulates.
+    const staged = devSql.join("\n");
+    expect(staged).toContain(
+      "CREATE UNLOGGED TABLE sync_staging._xkey_legacy_handles_area_id",
+    );
+    expect(staged).toContain(
+      "ANALYZE sync_staging._xkey_legacy_handles_area_id;",
+    );
+    // Prod's slice is read with the area filter — a handle naming only a device carries a NULL area_id
+    // and must not be staged, or the EXISTS correlation could pair two unrelated areas through it.
+    const prodCopies = prodSql.join("\n");
+    expect(prodCopies).toContain("area_id, handle FROM public.legacy_handles");
+    expect(prodCopies).toContain("WHERE area_id IS NOT NULL");
+
     const sql = devSql.at(-1)!;
+    // The cross-table match: correlate dev's satellite row to prod's staged one on the handle, then tie
+    // each side back to its own area uuid. This is the assertion that fails if the key silently dies.
+    expect(sql).toContain("xs.handle = xd.handle");
+    expect(sql).toContain("xd.area_id = d.id");
+    expect(sql).toContain("xs.area_id = s.id");
+    expect(sql).not.toContain("d.legacy_system_id = s.legacy_system_id");
+    // The helper table is dropped with the leg's own staging table, not leaked into the next leg.
+    expect(sql).toContain(
+      "DROP TABLE IF EXISTS sync_staging._xkey_legacy_handles_area_id;",
+    );
+
     // _drift must carry prod's PK too — it is the repoint target.
     expect(sql).toContain("s.id AS new_id");
     expect(sql).toContain(

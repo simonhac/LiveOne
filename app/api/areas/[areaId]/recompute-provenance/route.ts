@@ -3,7 +3,11 @@ import { and, eq } from "drizzle-orm";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getAuthContext } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { areas, areaBindings } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  areaBindings,
+  legacyHandles,
+} from "@/lib/db/planetscale/schema";
 import { planFlowRecomputeBatch } from "@/lib/aggregation/flow-recompute-batch";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import { getYesterdayInTimezone } from "@/lib/date-utils";
@@ -57,10 +61,11 @@ export async function POST(
   const [area] = await planetscaleDb
     .select({
       ownerClerkUserId: areas.ownerUserId,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
       tz: areas.timezoneOffsetMin,
     })
     .from(areas)
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(eq(areas.id, uuid))
     .limit(1);
   if (!area)

@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { getAuthContext } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { areas } from "@/lib/db/planetscale/schema";
+import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { Area } from "@/lib/ids";
 
 export const maxDuration = 15;
 
 /**
  * GET /api/areas/by-handle/[legacySystemId] — resolve an Area's integer addressing handle
- * (`legacy_system_id`, e.g. 8 for Kinkora, 1000002 for Daylesford) to its UUID. The inverse lookup
+ * (`legacy_handles.handle`, e.g. 8 for Kinkora, 1000002 for Daylesford) to its UUID. The inverse lookup
  * every ops session needs first: the recompute / provenance-summary endpoints are keyed on the UUID,
  * but a human (or a runbook) starts from the handle. (`GET /api/areas?systemId=` takes a numeric handle
  * but returns the full area+bindings payload; this is the tiny handle→id map.)
@@ -39,12 +39,13 @@ export async function GET(
     .select({
       id: areas.id,
       ownerClerkUserId: areas.ownerUserId,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
       displayName: areas.name,
       alias: areas.slug,
     })
     .from(areas)
-    .where(eq(areas.legacySystemId, handle))
+    .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    .where(eq(legacyHandles.handle, handle))
     .limit(1);
   if (!area)
     return NextResponse.json(
