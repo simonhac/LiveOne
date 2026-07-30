@@ -53,9 +53,10 @@ export async function getAreaBindingRefs(
 
 /** A flat row for rebuilding the KV subscription registry from SQL. */
 export interface AreaBindingRow {
-  handle: number; // legacy_handles.handle
-  /** The SOURCE point's owning device handle (`devices.rid`) — the `subscriptions:system:N` KV key. */
-  sourceSystemId: number;
+  /** The SUBSCRIBER Area's uuid — the `latest:area:{ar_…}` KV key (config-v4 Phase 13 PR 3). */
+  areaId: string;
+  /** The SOURCE point's owning device uuid — the `subscriptions:device:{dv_…}` KV key. */
+  sourceDeviceId: string;
   /** The bound point's uuid — the subscription map's inner key since slice E PR 2b. */
   pointUid: string;
   ordinal: number;
@@ -79,24 +80,26 @@ export interface AreaBindingRow {
  * Ordered so the per-Area enumeration is deterministic.
  */
 export async function getAreaBindings(): Promise<AreaBindingRow[]> {
-  const rows = await requirePlanetscaleDb()
-    .select({
-      handle: legacyHandles.handle,
-      sourceSystemId: devices.rid,
-      pointUid: areaBindings.pointUid,
-      ordinal: areaBindings.ordinal,
-    })
-    .from(areaBindings)
-    .innerJoin(areas, eq(areaBindings.areaId, areas.id))
-    // LEFT, not inner: the projected `handle` was nullable and the `.filter` below is what enforces
-    // presence, so an area missing a handle row must reach that filter rather than silently vanish
-    // here. `legacy_handles.area_id` is uniquely indexed, so this adds at most one row per area.
-    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-    .innerJoin(points, eq(points.id, areaBindings.pointUid))
-    .innerJoin(devices, eq(devices.id, points.deviceId))
-    // The first innerJoin already restricts to Areas that HAVE bindings — exactly the multi-device
-    // areas; an area-of-one contributes none.
-    .orderBy(legacyHandles.handle, areaBindings.ordinal);
-  // `legacy_handles.area_id` is nullable, but a handle-addressed Area always has its row.
-  return rows.filter((r): r is AreaBindingRow => r.handle !== null);
+  // config-v4 Phase 13 PR 3: both ids are now uuids, and the `legacy_handles` join is GONE. It existed
+  // only to name the subscriber by its integer handle; the KV subscriber key is the Area's own `ar_`
+  // TypeID, so `areas.id` serves it directly. Two consequences, both good: the `.filter(handle !== null)`
+  // that used to drop an Area lacking a `legacy_handles` row — silently costing it its subscription edge —
+  // is unnecessary (strictly additive; 0 rows affected on dev, where 22/22 areas have handles), and this
+  // query no longer depends on the handle map at all.
+  return (
+    requirePlanetscaleDb()
+      .select({
+        areaId: areas.id,
+        sourceDeviceId: devices.id,
+        pointUid: areaBindings.pointUid,
+        ordinal: areaBindings.ordinal,
+      })
+      .from(areaBindings)
+      .innerJoin(areas, eq(areaBindings.areaId, areas.id))
+      .innerJoin(points, eq(points.id, areaBindings.pointUid))
+      .innerJoin(devices, eq(devices.id, points.deviceId))
+      // The first innerJoin already restricts to Areas that HAVE bindings — exactly the multi-device
+      // areas; an area-of-one contributes none.
+      .orderBy(areas.id, areaBindings.ordinal)
+  );
 }

@@ -10,9 +10,15 @@
  * (see the bind-preview skill): point PLANETSCALE_DATABASE_URL at the branch and run this.
  *
  * What it writes (all in the `dev:` namespace, see lib/kv.ts kvKey):
- *   - dev:latest:system:{id}      per-point latest values (incl. composite propagation)
- *   - dev:system-summaries        per-system aggregated solar/load/battery/grid rollup
- *   - dev:subscriptions:system:{id}  reverse map source-point → composite subscribers
+ *   - dev:latest:device:{dv_…}       per-point latest values for a device
+ *   - dev:latest:area:{ar_…}         the same, propagated to each subscribing multi-device Area
+ *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
+ *   - dev:subscriptions:device:{dv_…}  reverse map source-point → subscribing Areas
+ *
+ * config-v4 Phase 13 PR 3 moved this keyspace off the integer handle. This script's own API is
+ * unchanged (every function it calls still takes the integer handle), but running it is the
+ * **latest-values half of that keyspace change's deploy step** on dev — entries written by an older
+ * build sit under `dev:latest:system:{int}` and are simply never read again.
  *
  * SAFETY
  *   - Refuses to run unless getEnvironment() === "dev" (would otherwise clobber prod's live KV).

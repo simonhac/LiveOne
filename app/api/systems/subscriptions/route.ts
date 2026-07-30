@@ -21,22 +21,19 @@ import { getEnvironment } from "@/lib/env";
  * {
  *   "namespace": "dev",
  *   "subscriptions": {
- *     "1": {
+ *     "dv_01k9…": {
  *       "pointSubscribers": {
- *         "1": ["5.0", "7.0"],
- *         "2": ["5.1"]
- *       },
- *       "lastUpdatedTimeMs": 1731627423000
- *     },
- *     "2": {
- *       "pointSubscribers": {
- *         "3": ["7.1", "7.2"]
+ *         "0199a1…": ["ar_01ka…", "ar_01kb…"],
+ *         "0199a2…": ["ar_01ka…"]
  *       },
  *       "lastUpdatedTimeMs": 1731627423000
  *     }
  *   },
  *   "note": "Use ?action=build to force rebuild the registry from database"
  * }
+ *
+ * config-v4 Phase 13 PR 3: the outer keys are the SOURCE DEVICE's `dv_` TypeID (was its integer handle)
+ * and the subscriber refs are `ar_` TypeIDs (was `"{areaHandle}.{ordinal}"`).
  *
  * Requires admin access
  */
@@ -67,16 +64,17 @@ export async function GET(request: NextRequest) {
     > = {};
 
     for (const key of keys) {
-      // Extract system ID from key (e.g., "dev:subscriptions:system:6" -> "6")
-      // Remove the namespace prefix first
-      const namespace = getEnvironment();
-      const withoutNamespace = key.replace(`${namespace}:`, "");
-      const systemId = withoutNamespace.replace("subscriptions:system:", "");
+      // The source device's `dv_` TypeID is the last colon-separated segment of
+      // "{namespace}:subscriptions:device:{dv_…}". Taken positionally rather than by stripping two
+      // prefixes: the old code did `key.replace(namespace + ":", "")` then
+      // `.replace("subscriptions:system:", "")`, which is two literal key fragments duplicated outside
+      // `lib/kv-keys.ts` — exactly the split-brain this PR closed.
+      const deviceId = key.slice(key.lastIndexOf(":") + 1);
 
       const entry = await kv.get<SubscriptionRegistryEntry>(key);
 
       if (entry && entry.pointSubscribers) {
-        subscriptions[systemId] = {
+        subscriptions[deviceId] = {
           pointSubscribers: entry.pointSubscribers,
           lastUpdatedTimeMs: entry.lastUpdatedTimeMs,
         };

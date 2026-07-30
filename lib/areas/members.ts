@@ -109,24 +109,25 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
 
 /**
  * The member-device points to fan out for **binding-less** areas-backed handles — i.e. multi-device
- * areas that resolve under union-default (no `area_bindings` to select). For each such handle, every
- * member device's `points` point, as `(handle, sourceSystemId, pointUid)`. Multi-device areas WITH
- * bindings are covered by `getAllCompositeBindings` instead, so this is empty for today's data (both
+ * areas that resolve under union-default (no `area_bindings` to select). For each such area, every
+ * member device's `points` point, as `(areaId, sourceDeviceId, pointUid)`. Multi-device areas WITH
+ * bindings are covered by `getAreaBindings` instead, so this is empty for today's data (both
  * prod multi-device areas have bindings) — it only lights up when a binding-less multi-device area
  * appears. SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
  *
- * Still emits integer handles: the subscriber ref grammar stays `{systemId}.{pointIndex}` until
- * Phase 13, and `sourceSystemId` remains the `subscriptions:system:N` KV key. The map's SOURCE-point
- * key moved to `point_uid` in slice E PR 2b. (Slice M retired the same grammar on the OBSERVATIONS
- * wire; the KV subscriber grammar is a separate keyspace and is untouched.)
+ * config-v4 Phase 13 PR 3: both ids are now uuids — the KV subscriber key is the Area's own `ar_` TypeID
+ * (`latest:area:{ar_…}`) and the source key is the device's `dv_` TypeID
+ * (`subscriptions:device:{dv_…}`), so the vestigial `{handle}.{ordinal}` ref grammar is gone with them.
+ * The map's SOURCE-point key moved to `point_uid` in slice E PR 2b. The `legacy_handles` join REMAINS,
+ * but only for the areas-backed predicate below — nothing is projected from it.
  */
 export async function getBindinglessAreaMemberPoints(): Promise<
-  { handle: number; sourceSystemId: number; pointUid: string }[]
+  { areaId: string; sourceDeviceId: string; pointUid: string }[]
 > {
   const rows = await requirePlanetscaleDb()
     .select({
-      handle: legacyHandles.handle,
-      sourceSystemId: devices.rid,
+      areaId: areas.id,
+      sourceDeviceId: devices.id,
       pointUid: points.id,
     })
     .from(areas)
@@ -153,7 +154,12 @@ export async function getBindinglessAreaMemberPoints(): Promise<
         // The two must stay in step — `NOT EXISTS (device with this rid)` here is exactly
         // "`deviceByHandle` returned null" there. If one flips to area-first, so must the other, or the
         // KV subscription registry will fan out points for a colliding handle that the serving path
-        // resolves device-first (trap D-l). `tsc` cannot see this coupling; only this comment can.
+        // resolves device-first (trap D-l).
+        //
+        // PR 3 did NOT relax this even though the KV keyspace split gives an Area its own
+        // `latest:area:{ar_…}` hash. The reason is that a READ by integer handle unions both legs
+        // (`lib/kv-subjects.ts`), so fanning out here for a colliding or identity handle would still
+        // widen what that handle serves. The coupling moved; it did not go away. `tsc` cannot see this coupling; only this comment can.
         //
         // The probed value is PR 5's `legacy_handles.handle`, not the dropped `areas.legacy_system_id`
         // — same integer handle, read from the table that survives Phase 13.
@@ -162,12 +168,6 @@ export async function getBindinglessAreaMemberPoints(): Promise<
         sql`NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = ${areas.id})`,
       ),
     )
-    .orderBy(legacyHandles.handle, devices.rid, points.rid);
-  return rows
-    .filter((r): r is typeof r & { handle: number } => r.handle != null)
-    .map((r) => ({
-      handle: r.handle,
-      sourceSystemId: r.sourceSystemId,
-      pointUid: r.pointUid,
-    }));
+    .orderBy(areas.id, devices.rid, points.rid);
+  return rows;
 }

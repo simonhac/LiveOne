@@ -10,17 +10,57 @@
  * 3. Tests automatically use 'test' namespace to avoid polluting dev/prod
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "@jest/globals";
+import { describe, it, expect, beforeAll, afterAll, jest } from "@jest/globals";
+import { Area, Device } from "@/lib/ids";
 import {
   updateLatestPointValue,
   getLatestValues,
   buildSubscriptionRegistry,
   invalidateSubscriptionRegistry,
 } from "../kv-cache-manager";
-import { kv, kvKey } from "../kv";
+import { kv } from "../kv";
+import {
+  areaSubject,
+  deviceSubject,
+  latestValuesKey,
+  subscriptionsKey,
+} from "../kv-keys";
 
 const testUid = (n: number | string) =>
   `0199aaaa-0000-7000-8000-${String(n).padStart(12, "0")}`;
+
+// config-v4 Phase 13 PR 3: the KV keyspace is TypeID-native, so a test handle needs an identity. These
+// three fake handles have no `legacy_handles` row, so the real resolver (which reads that table) is
+// mocked with a static map — the KV round trips below stay real, which is the point of this suite.
+// The SOURCE is a device; the two subscribers are Areas, which is the only shape the fan-out produces.
+const TEST_SOURCE_HANDLE = 99999;
+const TEST_AREA1_HANDLE = 99998;
+const TEST_AREA2_HANDLE = 99997;
+const TEST_SOURCE_DEVICE = Device.encode(
+  "0199f999-0000-7000-8000-000000099999",
+);
+const TEST_AREA1 = Area.encode("0199f999-0000-7000-8000-000000099998");
+const TEST_AREA2 = Area.encode("0199f999-0000-7000-8000-000000099997");
+
+const SUBJECTS: Record<
+  number,
+  ReturnType<typeof deviceSubject> | ReturnType<typeof areaSubject>
+> = {
+  [TEST_SOURCE_HANDLE]: deviceSubject(TEST_SOURCE_DEVICE),
+  [TEST_AREA1_HANDLE]: areaSubject(TEST_AREA1),
+  [TEST_AREA2_HANDLE]: areaSubject(TEST_AREA2),
+};
+
+jest.mock("../kv-subjects", () => ({
+  kvSourceSubjectForHandle: jest.fn(async (h: number) => SUBJECTS[h] ?? null),
+  kvDeviceSubjectForHandle: jest.fn(async (h: number) => {
+    const s = SUBJECTS[h];
+    return s && s.kind === "device" ? s : null;
+  }),
+  kvSubjectsForHandle: jest.fn(async (h: number) =>
+    SUBJECTS[h] ? [SUBJECTS[h]] : [],
+  ),
+}));
 
 // Skip these tests if KV is not configured
 const isKVConfigured = !!(
@@ -31,18 +71,19 @@ const describeIfKV = isKVConfigured ? describe : describe.skip;
 
 describeIfKV("kv-cache-manager (integration)", () => {
   // Use test system IDs that won't conflict with real data
-  const testSystemId = 99999;
-  const testCompositeId1 = 99998;
-  const testCompositeId2 = 99997;
+  const testSystemId = TEST_SOURCE_HANDLE;
+  const testCompositeId1 = TEST_AREA1_HANDLE;
+  const testCompositeId2 = TEST_AREA2_HANDLE;
 
-  // Cleanup function to remove test data
+  // Cleanup function to remove test data. Keys come from `lib/kv-keys.ts` — the single owner — rather
+  // than being interpolated here, which is exactly the duplication this PR removed.
   async function cleanup() {
     try {
       await Promise.all([
-        kv.del(kvKey(`latest:system:${testSystemId}`)),
-        kv.del(kvKey(`latest:system:${testCompositeId1}`)),
-        kv.del(kvKey(`latest:system:${testCompositeId2}`)),
-        kv.del(kvKey(`subscriptions:system:${testSystemId}`)),
+        kv.del(latestValuesKey(SUBJECTS[testSystemId])),
+        kv.del(latestValuesKey(SUBJECTS[testCompositeId1])),
+        kv.del(latestValuesKey(SUBJECTS[testCompositeId2])),
+        kv.del(subscriptionsKey(TEST_SOURCE_DEVICE)),
       ]);
     } catch (error) {
       console.error("Cleanup error:", error);
@@ -206,17 +247,17 @@ describeIfKV("kv-cache-manager (integration)", () => {
       const now = Date.now();
       const entry = {
         pointSubscribers: {
-          "1": [`${testCompositeId1}.0`, `${testCompositeId2}.0`],
+          [testUid(1)]: [TEST_AREA1, TEST_AREA2],
         },
         lastUpdatedTimeMs: now,
       };
-      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), entry);
+      await kv.set(subscriptionsKey(TEST_SOURCE_DEVICE), entry);
 
       // Verify entry was stored with timestamp
       const stored = await kv.get<{
         pointSubscribers: Record<string, string[]>;
         lastUpdatedTimeMs: number;
-      }>(kvKey(`subscriptions:system:${testSystemId}`));
+      }>(subscriptionsKey(TEST_SOURCE_DEVICE));
       expect(stored).toEqual(entry);
       expect(stored).toHaveProperty("lastUpdatedTimeMs");
       expect(stored!.lastUpdatedTimeMs).toBe(now);
@@ -258,13 +299,16 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // Set up subscription
       const entry = {
         pointSubscribers: {
-          "1": [`${testCompositeId1}.0`, `${testCompositeId2}.0`],
-          "2": [`${testCompositeId1}.1`, `${testCompositeId2}.1`],
-          "3": [`${testCompositeId1}.2`, `${testCompositeId2}.2`],
+          // Inner keys are the SOURCE POINT UUIDs (slice E PR 2b). They were left as "1"/"2"/"3" when
+          // that slice re-keyed the map, so these two propagation assertions had been failing silently
+          // on `main` ever since — fixed here, because propagation is exactly what PR 3 re-routes.
+          [testUid(1)]: [TEST_AREA1, TEST_AREA2],
+          [testUid(2)]: [TEST_AREA1, TEST_AREA2],
+          [testUid(3)]: [TEST_AREA1, TEST_AREA2],
         },
         lastUpdatedTimeMs: Date.now(),
       };
-      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), entry);
+      await kv.set(subscriptionsKey(TEST_SOURCE_DEVICE), entry);
 
       // Update multiple points on source system
       const points = [
@@ -304,9 +348,9 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
     it("should handle invalidateSubscriptionRegistry", async () => {
       // Set up a subscription
-      await kv.set(kvKey(`subscriptions:system:${testSystemId}`), {
+      await kv.set(subscriptionsKey(TEST_SOURCE_DEVICE), {
         pointSubscribers: {
-          "1": [`${testCompositeId1}.0`],
+          [testUid(1)]: [TEST_AREA1],
         },
         lastUpdatedTimeMs: Date.now(),
       });
@@ -315,17 +359,15 @@ describeIfKV("kv-cache-manager (integration)", () => {
       await invalidateSubscriptionRegistry(testSystemId);
 
       // Verify it was deleted
-      const subscribers = await kv.get(
-        kvKey(`subscriptions:system:${testSystemId}`),
-      );
+      const subscribers = await kv.get(subscriptionsKey(TEST_SOURCE_DEVICE));
       expect(subscribers).toBeNull();
     });
 
     it("should not propagate updates if no subscribers", async () => {
       // Clear any existing subscriptions AND composite caches
-      await kv.del(kvKey(`subscriptions:system:${testSystemId}`));
-      await kv.del(kvKey(`latest:system:${testCompositeId1}`));
-      await kv.del(kvKey(`latest:system:${testCompositeId2}`));
+      await kv.del(subscriptionsKey(TEST_SOURCE_DEVICE));
+      await kv.del(latestValuesKey(SUBJECTS[testCompositeId1]));
+      await kv.del(latestValuesKey(SUBJECTS[testCompositeId2]));
 
       // Update a point
       const pointPath = "source.solar.local/power";

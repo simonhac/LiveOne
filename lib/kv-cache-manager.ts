@@ -1,13 +1,20 @@
 import { kv } from "./kv";
 import {
+  areaSubject,
   latestValuesKey,
   subscriptionsKey,
   subscriptionsKeyPattern,
+  type KvSubject,
 } from "./kv-keys";
-import { Point } from "@/lib/ids";
+import {
+  kvDeviceSubjectForHandle,
+  kvSourceSubjectForHandle,
+} from "./kv-subjects";
+import { Area, Device, Point, type AreaId, type DeviceId } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   getLatestValues,
+  getLatestValuesForSubject,
   LatestValue,
   LatestValuesMap,
 } from "./latest-values-store";
@@ -18,7 +25,7 @@ import { getBindinglessAreaMemberPoints } from "@/lib/areas/members";
 export type { LatestValue, LatestValuesMap };
 // The single reader of the latest-values hash lives in `latest-values-store`; re-exported here so the
 // propagation writer and its reader can still be imported from one place.
-export { getLatestValues };
+export { getLatestValues, getLatestValuesForSubject };
 
 /**
  * @deprecated Use LatestValue instead
@@ -35,19 +42,23 @@ export type LatestPointValues = LatestValuesMap;
  */
 export interface SubscriptionRegistryEntry {
   /**
-   * Map of source point UUID to array of subscriber point references that subscribe to it.
-   * Key: `point_info.point_uid` (canonical uuid) — NOT the integer point index. Config-v4 slice E
-   * PR 2b re-keyed this map when `area_bindings` lost its `(point_system_id, point_id)` pair.
-   * Value: array of SUBSCRIBER references, `"{areaHandle}.{ordinal}"` — an AREA handle and a binding
-   * ordinal, NOT a `point_info.index`. It never was one, so the pre-terminal retirement of the
-   * `"{systemId}.{pointIndex}"` POINT address left this untouched; only the `.` split for the handle
-   * half is read (`updateLatestPointValue`, `system-summary-store.getSubscriberSystemIds`) and the
-   * ordinal half is vestigial (a subscriber's latest hash is keyed by logicalPath).
+   * Map of source point uuid to the `ar_` TypeIDs of the Areas that subscribe to it.
    *
-   * Example: { "0199…-…": ["100.0", "101.2"] }
+   * Key: `points.id` (canonical uuid) — NOT the integer point index. Config-v4 slice E PR 2b re-keyed
+   * this map when `area_bindings` lost its `(point_system_id, point_id)` pair.
    *
-   * NOTE (deliberate, not an oversight): the enclosing `subscriptions:system:N` / `latest:system:N`
-   * KV keys are STILL integer-addressed. They move in Phase 13 with `systems.id`.
+   * Value: SUBSCRIBER Area TypeIDs. **config-v4 Phase 13 PR 3 retired the `"{areaHandle}.{ordinal}"`
+   * ref grammar**: the handle half is now the Area's own `ar_` TypeID (the `latest:area:{ar_…}` key it
+   * selects), and the ordinal half is gone because it was already vestigial — nothing ever read it (a
+   * subscriber's latest hash is keyed by logicalPath), and both consumers only ever `.split(".")[0]`'d
+   * it back off. Dropping it also means the `Set` dedupes per (source point, Area) instead of per
+   * binding slot, which is what the fan-out actually wants.
+   *
+   * Example: { "0199…-…": ["ar_01k9…", "ar_01ka…"] }
+   *
+   * ⚠️ PERSISTED. An entry written by an older build holds `"13.0"`-shaped refs, which
+   * `Area.parse` rejects — so a stale entry degrades to "no subscribers" rather than mis-routing.
+   * Re-running {@link buildSubscriptionRegistry} is a REQUIRED deploy step for this keyspace change.
    */
   pointSubscribers: Record<string, string[]>;
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
@@ -57,8 +68,10 @@ export interface SubscriptionRegistryEntry {
  * Update the latest value for a point in a system's cache
  * Also updates all subscriber systems that subscribe to this specific point
  *
- * @param systemId - Source device handle: the `latest:system:N` hash key AND the stored
- *                   `sourceSystemId` (integer until Phase 13 retires the keyspace)
+ * @param systemId - Source device handle. Resolved HERE to its `dv_` subject for the
+ *                   `latest:device:{dv_…}` hash key (config-v4 Phase 13 PR 3 — the interior stays
+ *                   handle-keyed, which is why none of the six writers changed), and stored verbatim
+ *                   as `sourceSystemId`
  * @param pointUid - Source point's `point_info.point_uid` — the subscription-map lookup key AND, as a
  *                   `pt_` TypeID, the stored `pointReference`
  * @param pointPath - Point path string (e.g., "source.solar.local/power")
@@ -104,62 +117,68 @@ export async function updateLatestPointValue(
     ...(sessionLabel && { sessionLabel }),
   };
 
-  // Update source system's cache
-  const key = latestValuesKey(systemId);
-  await kv.hset(key, { [pointPath]: pointValue });
-
-  // Look up subscriber points that subscribe to this specific source point
-  const subscriberPointRefs = await getPointSubscribers(systemId, pointUid);
-
-  // Update each subscriber system's cache (only for subscribed points)
-  if (subscriberPointRefs && subscriberPointRefs.length > 0) {
-    // Group by subscriber system ID for efficient batching
-    const updatesBySystem = new Map<number, Record<string, LatestValue>>();
-
-    for (const subscriberPointRef of subscriberPointRefs) {
-      // Parse the subscriber reference (e.g., "100.0" → area handle 100). The ordinal half is unused.
-      const [subscriberSystemIdStr] = subscriberPointRef.split(".");
-      const subscriberSystemId = parseInt(subscriberSystemIdStr);
-
-      if (!updatesBySystem.has(subscriberSystemId)) {
-        updatesBySystem.set(subscriberSystemId, {});
-      }
-
-      // Add this point's value to the batch for this subscriber system
-      updatesBySystem.get(subscriberSystemId)![pointPath] = pointValue;
-    }
-
-    // Execute batched updates per subscriber system
-    const updates = Array.from(updatesBySystem.entries()).map(
-      ([subscriberSystemId, pointValues]) => {
-        const subscriberKey = latestValuesKey(subscriberSystemId);
-        return kv.hset(subscriberKey, pointValues);
-      },
+  // Update the SOURCE's own hash. A reading's point always belongs to a device (`points.device_id` is
+  // NOT NULL and FK-backed), so this is the device leg; the area fallback inside
+  // `kvSourceSubjectForHandle` only guards a handle that names no device at all.
+  const source = await kvSourceSubjectForHandle(systemId);
+  if (!source) {
+    // Unknown handle: no `legacy_handles` row, so there is no key to write. Before PR 3 this wrote
+    // `latest:system:N` for an id nothing could serve. Log rather than throw — a KV cache failure must
+    // never break reading insertion (point-manager catches, but the other five writers do not).
+    console.warn(
+      `[KV] updateLatestPointValue: handle ${systemId} resolves to no device or area — skipping`,
     );
+    return;
+  }
+  await kv.hset(latestValuesKey(source), { [pointPath]: pointValue });
 
-    await Promise.all(updates);
+  // Look up the Areas that subscribe to this specific source point
+  const subscriberAreaIds = await getPointSubscribers(systemId, pointUid);
+
+  // Update each subscriber Area's cache (only for subscribed points). One hset per Area; the refs are
+  // already deduped per Area by the registry, so no grouping pass is needed any more.
+  if (subscriberAreaIds.length > 0) {
+    await Promise.all(
+      subscriberAreaIds.map((areaId) =>
+        kv.hset(latestValuesKey(areaSubject(areaId)), {
+          [pointPath]: pointValue,
+        }),
+      ),
+    );
   }
 }
 
 /**
- * Get point-specific subscribers for a source system point
+ * The Areas subscribing to one source point.
  *
- * @param sourceSystemId - Source system ID (selects the `subscriptions:system:N` KV entry)
- * @param sourcePointUid - Source point's `point_info.point_uid`
- * @returns Array of subscriber references (format: "{areaHandle}.{ordinal}")
+ * @param sourceSystemId - Source device handle (selects the `subscriptions:device:{dv_…}` KV entry)
+ * @param sourcePointUid - Source point's `points.id`
+ * @returns Subscriber Area TypeIDs. A ref written by a pre-PR-3 build (`"13.0"`) fails `Area.parse`
+ *          and is dropped, so a stale entry reads as "no subscribers" rather than mis-routing a value
+ *          into another entity's hash.
  */
 async function getPointSubscribers(
   sourceSystemId: number,
   sourcePointUid: string,
-): Promise<string[]> {
-  const key = subscriptionsKey(sourceSystemId);
-  const entry = await kv.get<SubscriptionRegistryEntry>(key);
+): Promise<AreaId[]> {
+  const device = await kvDeviceSubjectForHandle(sourceSystemId);
+  if (!device) return [];
+  const entry = await kv.get<SubscriptionRegistryEntry>(
+    subscriptionsKey(device.id),
+  );
 
-  if (!entry?.pointSubscribers) {
-    return [];
+  const refs = entry?.pointSubscribers?.[sourcePointUid];
+  if (!refs) return [];
+
+  const out: AreaId[] = [];
+  for (const ref of refs) {
+    if (Area.is(ref)) out.push(ref);
+    else
+      console.warn(
+        `[KV] subscription ref "${ref}" is not an ar_ TypeID (pre-PR-3 entry) — ignoring; rebuild the registry`,
+      );
   }
-
-  return entry.pointSubscribers[sourcePointUid] || [];
+  return out;
 }
 
 /**
@@ -172,102 +191,91 @@ async function getPointSubscribers(
  * - Periodically (e.g., daily) as a safety net
  */
 /**
- * Insert one (source point → subscriber point ref) edge into the reverse-subscription map. The map is
- * `sourceSystemId → sourcePointUid → subscriberPointRefs`: the outer key is still the integer system
- * (it is the KV key) but the inner key is the point's uuid.
+ * Insert one (source point → subscriber Area) edge into the reverse-subscription map. The map is
+ * `sourceDeviceId → sourcePointUid → subscriberAreaIds` — all three uuid/TypeID since config-v4
+ * Phase 13 PR 3 (the outer key was the source device's integer handle, because it WAS the KV key).
  */
 function addSubscription(
-  subscriptions: Map<number, Map<string, Set<string>>>,
-  sourceSystemId: number,
+  subscriptions: Map<DeviceId, Map<string, Set<AreaId>>>,
+  sourceDeviceId: DeviceId,
   sourcePointUid: string,
-  subscriberPointRef: string,
+  subscriberAreaId: AreaId,
 ): void {
-  if (!subscriptions.has(sourceSystemId)) {
-    subscriptions.set(sourceSystemId, new Map());
+  if (!subscriptions.has(sourceDeviceId)) {
+    subscriptions.set(sourceDeviceId, new Map());
   }
-  const sourceSystemMap = subscriptions.get(sourceSystemId)!;
-  if (!sourceSystemMap.has(sourcePointUid)) {
-    sourceSystemMap.set(sourcePointUid, new Set());
+  const sourceDeviceMap = subscriptions.get(sourceDeviceId)!;
+  if (!sourceDeviceMap.has(sourcePointUid)) {
+    sourceDeviceMap.set(sourcePointUid, new Set());
   }
-  sourceSystemMap.get(sourcePointUid)!.add(subscriberPointRef);
+  sourceDeviceMap.get(sourcePointUid)!.add(subscriberAreaId);
 }
 
 /**
- * Reverse-subscription map (source point → subscribing areas-backed handle). Two sources, unioned:
+ * Reverse-subscription map (source point → subscribing Areas). Two sources, unioned:
  * (1) typed `area_bindings` for curated multi-device Areas (every existing subscriber); (2) the member
  * devices' own points for **binding-less** multi-device Areas (union-default — empty for today's data,
  * since both prod subscribers have bindings). Together this is "the area's resolved point set", in SQL.
+ *
+ * PR 3 dropped the per-binding ordinal that used to ride along in the ref string: it was never read
+ * (the subscriber's latest hash is keyed by logicalPath) and both consumers immediately split it back
+ * off. Without it the `Set` dedupes per (source point, Area) — one edge, which is what the fan-out
+ * writes anyway.
  */
 async function buildSubscriptionsFromBindings(): Promise<
-  Map<number, Map<string, Set<string>>>
+  Map<DeviceId, Map<string, Set<AreaId>>>
 > {
-  const subscriptions = new Map<number, Map<string, Set<string>>>();
+  const subscriptions = new Map<DeviceId, Map<string, Set<AreaId>>>();
   for (const b of await getAreaBindings()) {
     addSubscription(
       subscriptions,
-      b.sourceSystemId,
+      Device.encode(b.sourceDeviceId),
       b.pointUid,
-      `${b.handle}.${b.ordinal}`,
+      Area.encode(b.areaId),
     );
   }
-  // Binding-less multi-device Areas: fan out each member device's own points to the handle. The ref's
-  // index half is vestigial (latest is keyed by logicalPath), so a per-handle running ordinal is fine.
-  const ordByHandle = new Map<number, number>();
+  // Binding-less multi-device Areas: fan out each member device's own points to the Area.
   for (const m of await getBindinglessAreaMemberPoints()) {
-    const ord = ordByHandle.get(m.handle) ?? 0;
-    ordByHandle.set(m.handle, ord + 1);
     addSubscription(
       subscriptions,
-      m.sourceSystemId,
+      Device.encode(m.sourceDeviceId),
       m.pointUid,
-      `${m.handle}.${ord}`,
+      Area.encode(m.areaId),
     );
   }
   return subscriptions;
 }
 
+/**
+ * Rebuild the whole subscription registry from SQL: source point → the Areas that subscribe to it.
+ *
+ * 🛑 **This is a REQUIRED DEPLOY STEP for config-v4 Phase 13 PR 3**, on every environment. The keyspace
+ * moved (`subscriptions:system:{int}` → `subscriptions:device:{dv_…}`) *and* so did the ref grammar
+ * (`"{areaHandle}.{ordinal}"` → `ar_…`). Entries written by an older build are invisible under the new
+ * key pattern, so until this runs there are no subscribers at all and every multi-device Area's `latest`
+ * map goes stale. (It has been a required step once before, for slice E PR 2b, which re-keyed the map's
+ * inner key from the integer point index to the point uuid.)
+ *
+ * Called automatically by `refreshAreaServing` on every area/binding mutation; run by hand with
+ * `npx tsx scripts/build-subscription-registry.ts`, or via `GET /api/systems/subscriptions?action=build`.
+ */
 export async function buildSubscriptionRegistry(): Promise<void> {
-  // Build reverse mapping: sourceSystemId → { sourcePointUid → [subscriberPointRefs] }
-  // Example: { 6: { "0199a1…": ["100.0", "101.2"] } }
-  // ⚠️ Re-running this is REQUIRED after deploying slice E PR 2b: entries written by an earlier build
-  // are keyed by the integer point index and will never match a uuid lookup.
-  // Edges come from the typed area_bindings (the authoritative subscriber role→point mapping). The
-  // subscriberPointRef's index half is vestigial (updateLatestPointValue keys the subscriber's latest
-  // hash by logicalPath, not by index).
+  // Example: { "dv_01k9…": { "0199a1…": ["ar_01ka…", "ar_01kb…"] } }
   const subscriptions = await buildSubscriptionsFromBindings();
 
-  // First, scan for existing subscription keys and delete any that are no longer needed
-  const existingKeys = await kv.keys(subscriptionsKeyPattern());
-  const validSystemIds = new Set(subscriptions.keys());
-
-  // Delete stale subscription keys (systems that no longer have subscribers)
-  const deletions: Promise<any>[] = [];
-  for (const existingKey of existingKeys) {
-    // Extract system ID from key (e.g., "dev:subscriptions:system:10001" -> 10001)
-    const match = existingKey.match(/subscriptions:system:(\d+)$/);
-    if (match) {
-      const existingSystemId = parseInt(match[1], 10);
-      if (!validSystemIds.has(existingSystemId)) {
-        console.log(
-          `[SubscriptionRegistry] Deleting stale subscription key for system ${existingSystemId}`,
-        );
-        deletions.push(kv.del(existingKey));
-      }
-    }
-  }
-  await Promise.all(deletions);
-
   // Write subscriptions to KV with timestamp
-  const updates: Promise<any>[] = [];
   const now = Date.now();
+  const validKeys = new Set<string>();
+  const updates: Promise<unknown>[] = [];
 
-  for (const [sourceSystemId, pointMap] of subscriptions.entries()) {
-    const key = subscriptionsKey(sourceSystemId);
+  for (const [sourceDeviceId, pointMap] of subscriptions.entries()) {
+    const key = subscriptionsKey(sourceDeviceId);
+    validKeys.add(key);
 
-    // Convert Map<string, Set<string>> to Record<string, string[]>
+    // Convert Map<string, Set<AreaId>> to Record<string, string[]>
     const pointSubscribers: Record<string, string[]> = {};
-    for (const [pointUid, subscriberRefs] of pointMap.entries()) {
-      pointSubscribers[pointUid] = Array.from(subscriberRefs);
+    for (const [pointUid, subscriberAreaIds] of pointMap.entries()) {
+      pointSubscribers[pointUid] = Array.from(subscriberAreaIds);
     }
 
     const entry: SubscriptionRegistryEntry = {
@@ -277,10 +285,23 @@ export async function buildSubscriptionRegistry(): Promise<void> {
     updates.push(kv.set(key, entry));
   }
 
-  await Promise.all(updates);
+  // Delete stale entries: any key matching the family pattern that this rebuild did not write. Compared
+  // as WHOLE KEY STRINGS — the old code parsed the id back out with `/subscriptions:system:(\d+)$/`,
+  // a regex that cannot match a TypeID and would have silently stopped collecting garbage.
+  const existingKeys = await kv.keys(subscriptionsKeyPattern());
+  const deletions: Promise<unknown>[] = [];
+  for (const existingKey of existingKeys) {
+    if (validKeys.has(existingKey)) continue;
+    console.log(
+      `[SubscriptionRegistry] Deleting stale subscription key ${existingKey}`,
+    );
+    deletions.push(kv.del(existingKey));
+  }
+
+  await Promise.all([...updates, ...deletions]);
 
   console.log(
-    `Built subscription registry for ${subscriptions.size} source systems (deleted ${deletions.length} stale entries)`,
+    `Built subscription registry for ${subscriptions.size} source device(s) (deleted ${deletions.length} stale entries)`,
   );
 }
 
@@ -294,12 +315,12 @@ export async function invalidateSubscriptionRegistry(
   systemId?: number,
 ): Promise<void> {
   if (systemId) {
-    // Delete specific subscription key
-    const key = subscriptionsKey(systemId);
-    await kv.del(key);
+    // Delete the specific source device's entry (the registry is device-keyed).
+    const device = await kvDeviceSubjectForHandle(systemId);
+    if (device) await kv.del(subscriptionsKey(device.id));
   } else {
     // Delete all subscription keys
-    // Note: This requires scanning all keys with pattern "subscriptions:system:*"
+    // Note: This requires scanning all keys with the family pattern.
     // In practice, it's better to just rebuild the registry
     console.warn(
       "Full subscription registry invalidation requested - rebuilding is recommended",
