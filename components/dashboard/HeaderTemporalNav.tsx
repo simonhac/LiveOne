@@ -8,10 +8,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { dashboardDataQuery } from "@/lib/queries";
-import {
-  subjectOf,
-  type AreaDatum,
-} from "@/components/dashboard/cards/shared";
+import { subjectOf, type AreaDatum } from "@/components/dashboard/cards/shared";
 import TemporalNavigator from "@/components/TemporalNavigator";
 
 export function HeaderTemporalNav({

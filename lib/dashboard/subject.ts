@@ -153,7 +153,11 @@ export async function resolveWireAddress(
   if (areaParam) {
     const parsed = Area.parse(areaParam);
     if (!parsed.ok) {
-      return { ok: false, error: `Invalid areaId: ${parsed.message}`, status: 400 };
+      return {
+        ok: false,
+        error: `Invalid areaId: ${parsed.message}`,
+        status: 400,
+      };
     }
     const handle = await DeviceRegistry.handleForArea(parsed.id);
     if (handle == null) {
@@ -180,7 +184,11 @@ export async function resolveWireAddress(
 
   const handle = parseInt(systemParam!, 10);
   if (isNaN(handle)) {
-    return { ok: false, error: "Invalid systemId: must be a number", status: 400 };
+    return {
+      ok: false,
+      error: "Invalid systemId: must be a number",
+      status: 400,
+    };
   }
   // Device-first — the LOCKED v3 order. See the precedence table above (trap D-l).
   return { ok: true, handle, prefer: "device" };

@@ -14,7 +14,10 @@ import type { TilePlugin, TileRenderProps } from "./types";
 function OeGridTile({ data }: TileRenderProps) {
   const values = gridLatestFromData(data);
   if (!values) return null;
-  const siteId = (data as { system?: { vendorSiteId?: string | null } } | null)
+  // `device` only: the NEM region is an OpenElectricity DEVICE's `vendorSiteId` ("NSW1"/"VIC1"). An
+  // area has no vendor site (it used to carry the `"area:{handle}"` sentinel, which `isNemRegion`
+  // rejected anyway), so this tile is only ever meaningful on a device-bound section.
+  const siteId = (data as { device?: { vendorSiteId?: string | null } } | null)
     ?.device?.vendorSiteId;
   const region = siteId && isNemRegion(siteId) ? siteId : null;
   return (

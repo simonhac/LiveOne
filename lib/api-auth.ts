@@ -10,10 +10,7 @@ import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
 import type { ServerTimer } from "@/lib/server-timing";
-import {
-  subjectForHandle,
-  type ServingSubject,
-} from "@/lib/dashboard/subject";
+import { subjectForHandle, type ServingSubject } from "@/lib/dashboard/subject";
 
 // Authorization result with context
 export interface AuthContext {

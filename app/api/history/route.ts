@@ -699,9 +699,7 @@ export async function GET(request: NextRequest) {
               const endYMD = (timeRange.endTime as CalendarDate).toString();
               // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
               // it handles null/incomplete internally (→ reason "not-a-logical-system").
-              const logicalSystem = await resolveLogicalSystem(
-                handle,
-              );
+              const logicalSystem = await resolveLogicalSystem(handle);
               const attr = await readAttributedDailyMatrices(
                 planetscaleDb,
                 logicalSystem,

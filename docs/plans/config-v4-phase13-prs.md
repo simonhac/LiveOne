@@ -13,13 +13,13 @@
 
 Each PR section has the same five parts, and they are load-bearing:
 
-| Part | What it is for |
-| --- | --- |
-| **Goal** | One sentence. If the PR does more than this, it has scope-crept — split it. |
-| **Inventory** | The measured file:line list. Re-measure before starting (see below) — do not trust these numbers blind. |
-| **Steps** | Ordered, concrete edits. |
-| **Proof** | What must be true before opening the PR. Each PR has a _different_ proof — that is why they are separate PRs. |
-| **Do NOT** | The specific ways this PR goes wrong. |
+| Part          | What it is for                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Goal**      | One sentence. If the PR does more than this, it has scope-crept — split it.                                   |
+| **Inventory** | The measured file:line list. Re-measure before starting (see below) — do not trust these numbers blind.       |
+| **Steps**     | Ordered, concrete edits.                                                                                      |
+| **Proof**     | What must be true before opening the PR. Each PR has a _different_ proof — that is why they are separate PRs. |
+| **Do NOT**    | The specific ways this PR goes wrong.                                                                         |
 
 ## 🛑 Standing rules for every PR in this phase
 
@@ -29,7 +29,7 @@ Each PR section has the same five parts, and they are load-bearing:
    and re-run the greps** before you plan your edits.
 2. **Never push to `main`.** Branch off `main`, `gh pr create --base main`. No exceptions, including for
    a one-line fix.
-3. **`tsc` is blind to raw SQL and to string-built keys.** This is *the* most reliable failure mode of
+3. **`tsc` is blind to raw SQL and to string-built keys.** This is _the_ most reliable failure mode of
    this migration — **it bit six times in Phase 12 alone**, including twice after a fully green build.
    Every PR here must **hand-run a raw-string grep** for what it changed, and must **drive** the changed
    path, not merely compile it.
@@ -69,23 +69,23 @@ PR 5  convert ~55 readers onto legacy_handles + rewrite the sync drift key
 PR 6  stop writing the column + migration 0052 DROP
 ```
 
-**Why PR 1 and PR 2 swapped.** Multi-device areas have **no `devices` row** — they are served *only*
+**Why PR 1 and PR 2 swapped.** Multi-device areas have **no `devices` row** — they are served _only_
 through `synthesizeAreaView`, a fabricated device-shaped view. `viewableByHandle`'s own docstring
 (`lib/registry/device-config.ts:425-433`) says area-first ordering "belongs to Phase 13, **where areas
-are addressed as areas**". So the synthesis is deletable only *after* an area-native path exists. Delete
+are addressed as areas**". So the synthesis is deletable only _after_ an area-native path exists. Delete
 it first and you 500 every multi-device area.
 
 Measured on the dev mirror — **four handles depend on the synthesis**, and one is a trap:
 
-| Handle | Name | Members | Has `devices` row |
-| --- | --- | --- | --- |
-| 7 | Craig Unified | 4 | **no** |
-| 8 | Kinkora Unified | 7 | **no** |
-| 1000001 | Kuti House | 1 | **no** |
-| 1000002 | Daylesford | 4 | **no** |
-| **13** | **Kutis** | **3** | **yes — the D-l collision** |
+| Handle  | Name            | Members | Has `devices` row           |
+| ------- | --------------- | ------- | --------------------------- |
+| 7       | Craig Unified   | 4       | **no**                      |
+| 8       | Kinkora Unified | 7       | **no**                      |
+| 1000001 | Kuti House      | 1       | **no**                      |
+| 1000002 | Daylesford      | 4       | **no**                      |
+| **13**  | **Kutis**       | **3**   | **yes — the D-l collision** |
 
-**Handle 13 is both a real Sigenergy device and a 3-member area.** `resolveHandle` states *no*
+**Handle 13 is both a real Sigenergy device and a 3-member area.** `resolveHandle` states _no_
 precedence and can return both legs; two existing callers impose **opposite** precedence
 (`viewableByHandle` device-first/LOCKED, `resolveAreaIdForHandle` area-first). Routing naively through
 `resolveHandle` silently widens handle 13 from its device's own points to the area's bindings — a scope
@@ -113,8 +113,8 @@ column on a 22-row table, off the hot path. No queue pause, no backlog drain, no
 The only DDL complication is the `areas_legacy_system_unique` index, which drops with it.
 
 **The drop is provably lossless.** Verified on the dev mirror: 22 areas, 22 with a handle, and
-**0 area handles missing from `legacy_handles`** — every write path fills both in the *same
-transaction* (`lib/areas/create.ts:119-136`, `lib/registry/device-writer.ts:185-229`). The handle→area
+**0 area handles missing from `legacy_handles`** — every write path fills both in the _same
+transaction_ (`lib/areas/create.ts:119-136`, `lib/registry/device-writer.ts:185-229`). The handle→area
 map survives the column. One call site has already been converted and independently verified 22/22
 (`lib/registry/device-config.ts:398-410`) — copy that pattern.
 
@@ -142,7 +142,7 @@ Every field the synthesized view supplies is **already a real `areas` column** �
 ### 🛑 Scope boundary — read this twice
 
 **Keep the integer handle as the INTERNAL data-addressing key in this PR.** These are all still
-int-keyed and are explicitly *out of scope* here:
+int-keyed and are explicitly _out of scope_ here:
 
 - the KV latest cache (`getLatestPointValues(system.id)`) → **PR 3**
 - `point_readings` / `agg_5m` / `agg_1d` addressing and `SystemIdentifier.fromId` → later
@@ -159,7 +159,15 @@ The wire becomes TypeID-native; the interior does not. Resolve `ar_…`/`dv_…`
    naturally via `getPollingStatus(handle)` (a `devices ⋈ device_state` join that misses for a pure area),
    and `commissionedOn` is not read on this path at all — confirm both rather than special-casing them.
 2. **Accept `areaId=ar_…` / `deviceId=dv_…`** on `/api/data` and `/api/history`. Keep `?systemId=N` as a
-   **permanent** alias resolved through `legacy_handles` — area leg first, else device.
+   **permanent** alias, resolved **DEVICE leg first, else area**.
+   🛑 **Corrected in PR 1 — this line originally said "area leg first, else device", which contradicted
+   the Proof gate ten lines below.** For a COLLIDING handle (13) the two cannot both hold: area-first
+   widens it from its device's own 12 points to its area's bindings, which is exactly what the gate
+   forbids. Device-first is also the behaviour-preserving order (it is what `viewableByHandle` does
+   today). The area-native reading of a colliding handle is reachable through the new explicit `ar_…`
+   address — that is the whole point of putting TypeIDs on the wire, rather than silently
+   reinterpreting an old integer. Precedence is now written down per call site in
+   `lib/dashboard/subject.ts`.
 3. **Rename the payload key `system` → `device`** only where it genuinely means a device. Where it means
    an area, emit `area`. Update the response TS types.
 4. **Move the React Query keys in lockstep** (`lib/queries/keys.ts`, `SystemIdLike`). A stale key against
@@ -193,19 +201,19 @@ The wire becomes TypeID-native; the interior does not. Resolve `ar_…`/`dv_…`
 
 ### Inventory (measured at `d16429fa`)
 
-| Symbol | Where | Call sites |
-| --- | --- | --- |
-| `synthesizeAreaView` | `lib/registry/device-config.ts:372-396` (module-private) | 1 — `:441` |
-| `viewableByHandle` | `lib/registry/device-config.ts:435-442`, exported `:452` | 7 prod: `lib/api-auth.ts:215,234,267`; `lib/aggregation/logical-system.ts:83`; `lib/point/point-manager.ts:457`; `lib/dashboard/serve-data.ts:203`; `scripts/area-builder-smoke.ts:127` |
-| `isAreaHandle` | `lib/registry/device-config.ts:445-448`, exported `:453` | 3 prod: `lib/api-auth.ts:232`; `lib/point/point-manager.ts:356`; `scripts/area-builder-smoke.ts:124` |
-| `fetchAreaForHandle` | `lib/registry/device-config.ts:407-418` | 2 — both of the above; orphaned when they go |
+| Symbol               | Where                                                    | Call sites                                                                                                                                                                              |
+| -------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `synthesizeAreaView` | `lib/registry/device-config.ts:372-396` (module-private) | 1 — `:441`                                                                                                                                                                              |
+| `viewableByHandle`   | `lib/registry/device-config.ts:435-442`, exported `:452` | 7 prod: `lib/api-auth.ts:215,234,267`; `lib/aggregation/logical-system.ts:83`; `lib/point/point-manager.ts:457`; `lib/dashboard/serve-data.ts:203`; `scripts/area-builder-smoke.ts:127` |
+| `isAreaHandle`       | `lib/registry/device-config.ts:445-448`, exported `:453` | 3 prod: `lib/api-auth.ts:232`; `lib/point/point-manager.ts:356`; `scripts/area-builder-smoke.ts:124`                                                                                    |
+| `fetchAreaForHandle` | `lib/registry/device-config.ts:407-418`                  | 2 — both of the above; orphaned when they go                                                                                                                                            |
 
 🛑 **`getViewableSystem` DOES NOT EXIST.** The execution plan names it, but slice K3 renamed it to
 `viewableByHandle`. The only survivors of the old name are comments and a local test variable. **Do not
 go looking for it.**
 
 🛑 **`AREA_HANDLE_BASE` and `allocateAreaHandle` are NOT part of this PR.** The plan lumps them in, but
-they are the *write-side allocator* (`lib/areas/handles.ts:29,36-46`), not the read-side synthesis.
+they are the _write-side allocator_ (`lib/areas/handles.ts:29,36-46`), not the read-side synthesis.
 Areas still need a handle minted at creation while `areas.legacy_system_id` exists. **They die in PR 6.**
 
 ### Steps
@@ -259,7 +267,7 @@ format. Do this as its own commit so the collapse is reviewable on its own.
 
 - **`oe:sched:system:{id}`** (`lib/vendors/openelectricity/scheduler.ts:174-175`) — poll-scheduler EWMA
   state. Same class of key. Decide explicitly: migrate, or leave and document why.
-- **`{env}:system-summaries`** (`lib/system-summary-store.ts:49-51`) — the *key* is constant, but every
+- **`{env}:system-summaries`** (`lib/system-summary-store.ts:49-51`) — the _key_ is constant, but every
   **hash field name** is the integer id. Same currency, different shape.
 
 State the decision on both in the PR body. Silence reads as "covered".
@@ -308,26 +316,26 @@ belongs in the PR body and the migration header, not the reviewer's memory. (Thi
 - Highest-leverage single file: **`lib/vendors/types.ts:93-133`** — the `VendorAdapter` interface all
   nine adapters implement. Renaming it forces every adapter's signature to follow.
 - **`DeviceWriter.{createSystem, updateSystem, deleteSystem}` ARE in scope** — the file's own comment
-  (`lib/registry/device-writer.ts:405-411`) says *"Phase 13 re-grammars the whole handle vocabulary at
-  once."* Easy to misfile as "keep" by pattern-matching the surrounding v3-compat language.
+  (`lib/registry/device-writer.ts:405-411`) says _"Phase 13 re-grammars the whole handle vocabulary at
+  once."_ Easy to misfile as "keep" by pattern-matching the surrounding v3-compat language.
 
 ### 🛑 The DO-NOT-RENAME list — a blind `sed` corrupts every one of these
 
-| Keep | Why |
-| --- | --- |
-| **`subsystem`** — DB column, every vendor `point-metadata.ts`, `SUBSYSTEM_CONFIG`, `SubsystemKey` | A *point category* (solar/battery/grid/load). Unrelated entity. `sed s/system/device/` yields `subdevice`. |
-| `?systemId=N` on 8 routes | Permanent compat alias (PR 1 demotes it; it does not disappear). |
-| `areas.legacy_system_id`, `[legacySystemId]` route param, `legacy_handles.handle` | Sanctioned permanent shim / dropped in PR 6. |
-| `PointReference`'s `"{systemId}.{pointId}"` grammar | Legacy wire address, still live in `/api/history`. |
-| **`QueueMessage.systemId` / `.systemName`** (`lib/observations/types.ts:126,129`) | Serialized to QStash JSON. **A rolling deploy has old and new builds live at once** — rename the key and in-flight messages break. |
-| `LatestValue.sourceSystemId` (`lib/latest-values-store.ts:29`) | Explicitly **persisted in KV**. |
-| All `*:system:*` KV key strings | PR 3's job, not this one. |
-| **Vendor-literal fields** | Enphase `system_id` (`lib/vendors/enphase/types.ts:17,38`); Sigenergy `d.systemId` + `?systemId=` URL param (`sigenergy-client.ts:490,516`); Selectronic `systemNumber` (`selectronic-client.ts:59,220,312-372,410`); Fronius `?Scope=System` (`packages/usher/clients/fronius/inverter.ts:337`). **These are other people's API grammars.** |
-| Share-token phrases, slugs, `/dashboard/id/{n}` | Public/persisted strings. |
-| Six independent local `interface SystemInfo` declarations | Not one type with six importers — six unrelated types. Confirm before a global rename. |
+| Keep                                                                                              | Why                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`subsystem`** — DB column, every vendor `point-metadata.ts`, `SUBSYSTEM_CONFIG`, `SubsystemKey` | A _point category_ (solar/battery/grid/load). Unrelated entity. `sed s/system/device/` yields `subdevice`.                                                                                                                                                                                                                                   |
+| `?systemId=N` on 8 routes                                                                         | Permanent compat alias (PR 1 demotes it; it does not disappear).                                                                                                                                                                                                                                                                             |
+| `areas.legacy_system_id`, `[legacySystemId]` route param, `legacy_handles.handle`                 | Sanctioned permanent shim / dropped in PR 6.                                                                                                                                                                                                                                                                                                 |
+| `PointReference`'s `"{systemId}.{pointId}"` grammar                                               | Legacy wire address, still live in `/api/history`.                                                                                                                                                                                                                                                                                           |
+| **`QueueMessage.systemId` / `.systemName`** (`lib/observations/types.ts:126,129`)                 | Serialized to QStash JSON. **A rolling deploy has old and new builds live at once** — rename the key and in-flight messages break.                                                                                                                                                                                                           |
+| `LatestValue.sourceSystemId` (`lib/latest-values-store.ts:29`)                                    | Explicitly **persisted in KV**.                                                                                                                                                                                                                                                                                                              |
+| All `*:system:*` KV key strings                                                                   | PR 3's job, not this one.                                                                                                                                                                                                                                                                                                                    |
+| **Vendor-literal fields**                                                                         | Enphase `system_id` (`lib/vendors/enphase/types.ts:17,38`); Sigenergy `d.systemId` + `?systemId=` URL param (`sigenergy-client.ts:490,516`); Selectronic `systemNumber` (`selectronic-client.ts:59,220,312-372,410`); Fronius `?Scope=System` (`packages/usher/clients/fronius/inverter.ts:337`). **These are other people's API grammars.** |
+| Share-token phrases, slugs, `/dashboard/id/{n}`                                                   | Public/persisted strings.                                                                                                                                                                                                                                                                                                                    |
+| Six independent local `interface SystemInfo` declarations                                         | Not one type with six importers — six unrelated types. Confirm before a global rename.                                                                                                                                                                                                                                                       |
 
 **Stale prose naming the dropped tables** (e.g. `point-manager.ts:105` referencing `point_info.system_id`)
-needs *editing*, not substitution — a sed produces comments describing columns that never existed.
+needs _editing_, not substitution — a sed produces comments describing columns that never existed.
 
 ### Proof
 
@@ -388,7 +396,7 @@ ordering — update in lockstep.
 ### Proof
 
 Run `npm run db:sync-dev-db` end to end and confirm **exit 0 with every orphan-FK check at 0**. Then
-deliberately create a drifted dev area and confirm drift is still *detected* — a sync that silently
+deliberately create a drifted dev area and confirm drift is still _detected_ — a sync that silently
 stops detecting drift looks identical to a sync with nothing to do.
 
 ---
@@ -425,7 +433,7 @@ migration since 0014 has touched it.
 ### Apply procedure
 
 Standard manual migration, **no window**: merge → deploy `Ready` → apply prod → post-check the
-**catalog** → apply dev → post-check → `db:pg:generate` must say *No schema changes*. Use a short-TTL
+**catalog** → apply dev → post-check → `db:pg:generate` must say _No schema changes_. Use a short-TTL
 `pscale role` with `lock_timeout`, then delete it.
 
 ### 🛑 Do NOT confuse this with `/dashboard/id/{n}`
@@ -439,5 +447,5 @@ this PR touches it. It is a fine smoke test; it is not a gate on this drop.
 ## Close-out for the phase
 
 Update [config-v4-execution-plan.md](config-v4-execution-plan.md): move Phase 13 into the shipped table,
-strike its rows from *Still v3*, and fold any trap learned here into **Traps and rules**. Then delete
+strike its rows from _Still v3_, and fold any trap learned here into **Traps and rules**. Then delete
 this file — git is the archive.

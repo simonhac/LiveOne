@@ -8,11 +8,7 @@
  */
 import LinesChartCard from "@/components/LinesChartCard";
 import type { CardPlugin, CardRenderProps } from "./types";
-import {
-  maxPowerHintFromSystemInfo,
-  subjectOf,
-  useAreaDatum,
-} from "./shared";
+import { maxPowerHintFromSystemInfo, subjectOf, useAreaDatum } from "./shared";
 
 function AreaLinesChart({ handle }: CardRenderProps) {
   const systemId = handle!;

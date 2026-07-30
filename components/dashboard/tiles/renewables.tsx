@@ -7,10 +7,7 @@ import Tile from "@/components/Tile";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { getPointValue, getMeasurementTime } from "./shared";
-import {
-  subjectOf,
-  useAreaDatum,
-} from "@/components/dashboard/cards/shared";
+import { subjectOf, useAreaDatum } from "@/components/dashboard/cards/shared";
 import { siteDataQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
