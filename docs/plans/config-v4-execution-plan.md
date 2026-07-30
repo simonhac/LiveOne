@@ -14,12 +14,25 @@
 > yet done, and every trap that would otherwise be re-learned (**Traps and rules** — read it before
 > touching a migration).
 
-## ▶ NEXT ACTION — Phase 12 slice **M**: `point-manager` mints `points` directly
+## ▶ NEXT ACTION — the terminal window, split into **three** PRs
 
-Phases 10 + 11 COMPLETE. **✅ SLICE E IS COMPLETE** — all of A, A2, B, C, D, E, F, G, H shipped, and
-**0047 + 0048 are applied to BOTH environments** (2026-07-29). `area_bindings` has exactly one
-address, **FKs into `point_info` are 0, and slice N is unblocked.** No outstanding migration debt.
-Remaining: **M → K → the terminal window**.
+**Every slice except the terminal window is DONE.** A, A2, B, C, D, E, F, G, H, **M**, **K1/K2/K3** all
+shipped; migrations **0030–0049** are applied to prod `sydney` and `liveone-dev`; **`lib/systems-manager.ts`
+is deleted**; FKs into `point_info` and `polling_status` are **0**, and into `systems` exactly **3**
+(`point_info`, `polling_status`, `sessions`). No outstanding migration debt.
+
+Remaining, in order — **1a → 1b → 2**:
+
+- **1a** — the writer keystone, no DDL: `DeviceWriter` → `devices`/`areas`, `v4-mirror.ts` deleted
+  (8 production consumers). Carries the **create-path** risk.
+- **1b** — `point_info` → `points`, no DDL: 24 conversions + the `getReference` re-grammar +
+  `lib/readings/dao.ts:460,472`. Carries the **authz** risk.
+- **2** — the window itself: the two renames, the three drops, migration **0050**, slice L.
+
+**Why three and not one.** The plan's own drop rule already requires the code half live in prod before
+the drop migration applies — so a single PR does not avoid the deploy→DDL skew, it forces the riskiest
+stage to swallow it. Splitting **deletes** the skew rather than managing it, and 1a/1b carry different
+risks needing different proofs (a device-create drive vs a share-token set-equality proof).
 
 ---
 
@@ -106,6 +119,11 @@ and a long branch has none (the 0037 lesson). **[A]** additive → prod before t
 | **E1** | The `area_bindings` writers populate `point_uid` — closed a live defect                    | [C]       |
 | **E2a**| 13 server-internal `area_bindings` readers onto `point_uid`                                 | 0047      |
 | **E2b**| the area-builder wire → `pt_` TypeIDs, KV map re-keyed by point uuid, writers + contract     | 0048      |
+| **M**  | `points` becomes primary; **five** `max(index)+1` allocators die; one `mintPoint()`           | [C]       |
+| **K1** | the `DeviceConfigRegistry` config-read layer + `devices.config.spec`                          | [C]       |
+| **K2** | 79 config reads onto it; two live writer leaks closed                                         | [C]       |
+| **K3** | area views onto `DeviceConfigRegistry`; **`lib/systems-manager.ts` DELETED**                  | [C]       |
+| **prep**| 0049 floors `device_rid_seq`; the legacy `N.M` point address retired; the tz leak closed     | 0049      |
 
 Two of these carry findings that still bind:
 
@@ -189,47 +207,33 @@ naming them every binding INSERT fails until the drop. Expand/contract, not one 
 **No `point_uid` → `point_id` rename.** Catalog-only and tempting, but `pointId` meaning `int` in one
 commit and `uuid` in the next is a history hazard. It belongs with Phase 13/14's batch TypeID pass.
 
-### Slice M — `point-manager` mints `points` directly [C], no migration
+### ✅ Slices M and K — SHIPPED
 
-**The plan under-sized this: there are FOUR `max(index)+1` allocators, not one — and three never call
-`mirrorPoint`.** `point-manager.ts:588-596` (mirrors), `hws/register.ts:80-100`,
-`battery-provenance/register.ts:205-232`, `run-tracking/running-latest.ts:51-77` (none mirror). That is
-slice A2's defect class one level out.
+**M** (#286) inverted the mint: `points` is primary, `point_info` the write-behind copy, identity from
+`points.rid`'s `nextval` DEFAULT (0043's, live at last), and `point_info.index = rid` — which killed the
+`max(index)+1` **scan and its race** outright. The plan said "the allocator"; there were **five**, and
+**three never mirrored** — a live C7 hole that was *armed but not fired* (the unmirrored writers last
+minted before `registry-populate` backfilled `points`). All now route through one `mintPoint()`.
+The legacy `"{systemId}.{pointIndex}"` observations grammar and its `debug.reference` producer are gone.
 
-**Probed 2026-07-29: the hole is ARMED but has NOT FIRED.** `/api/health?v4mirror=1` reads
-`pointsMissing: 0, devicesMissing: 0` on prod, and dev is 134 `point_info` = 134 `points`. The reason
-is timing, not safety: the three unmirrored writers last minted in June (hws ×2, running ×1), before
-the cutover's `registry-populate` backfilled `points` — so their rows have a mirror they did not
-create. **The next mint through any of those three paths orphans a point**, and the hot tables'
-`FK point_rid → points(rid)` still enforces on insert, so that reading fails and QStash retries it
-forever. This is the same shape as slice E PR 1: a writer gap that is invisible until someone
-exercises it. So M is **preventive**, and the probe must be re-run immediately before it starts.
+**K** was three PRs, not one, because **`DeviceRegistry` had zero counterparts to any `SystemsManager`
+method** — it is an *addressing* registry, so K was never a rename: the config-read layer was new code.
+**K1** (#288) built `DeviceConfigRegistry` + `devices.config.spec`, retiring the free-text spec columns
+(the parse fixed a latent bug: the old regex required a space, so `11.9kW` silently produced no chart
+hint). **K2** (#289) moved 79 reads onto it and closed two live writer leaks. **K3** (#290) collapsed the
+area views (**device-first is LOCKED**; `resolveHandle`'s docstring claimed area-first and was wrong
+about the tree) and **deleted `lib/systems-manager.ts`**, relocating the four writers to `DeviceWriter`.
 
-**Invert: `points` becomes primary, `point_info` the write-behind copy until it drops.** 0043's
-`points.rid DEFAULT nextval(…)` exists for exactly this and is inert until now; both columns draw from
-one sequence, so the invariant is untouched. `point_info.index` is NOT NULL and half the PK, so give it
-`index = rid` — globally unique, monotonic, and **the scan and its race both die outright**. Extract one
-`mintPoint()` helper and route all four writers through it. Two consequences: `schema.ts:222-224`
-("writers must NEVER name `rid`") becomes a lie and must move with the code, and `isPointUidCollision`
-must also match `points_pkey`, or the retry-with-random-uid path silently dies.
+**Pre-window prep** (#292): 0049 re-floors `device_rid_seq` (0043 had already floored it — a floor is
+point-in-time and drifts while a second allocator feeds the same column); the legacy `N.M` point address
+retired onto `pt_` TypeIDs, which took `pointForAddr`/`fillByAddrs` and `verify-slice-d-parity.ts` with
+it; and the **tz leak** closed — the ninth "wired at MINT, not at EDIT", and the one that showed **a NOT
+NULL column cannot be healed by a fill-if-NULL reconcile, because it never looks missing**.
 
-M also retires the receiver's legacy `"{systemId}.{pointIndex}"` branch and its producer
-(`publisher.ts`'s `debug.reference`). **G3 must be run by M at merge time**, not deferred to the
-terminal window — and note `observations_outbox` is the *backup* leg, not the population, so pair the
-content check with `min(created_at)` of unpublished rows and an empty DLQ. **After removal, a null
-`pointUid` must be loud-but-skipping**: today it throws and retries; a naive deletion makes it return
-null, which means silent skip — data loss. A throw re-creates the poison pill G3 exists to prevent.
-
-**Proof:** the live dev exercise (mint a genuinely new point, follow poll → publish → receive →
-aggregate → serve), `pointsMissing: 0` before and after, and a **concurrency test** — two simultaneous
-mints of the same new tail, which is a PK violation under the old allocator.
-
-### Slice K — `SystemsManager` → `DeviceRegistry` [C]
-
-**One PR, not seven.** Every `systems` read already goes through the `deviceStateByHandle` subquery, so
-the shape is fixed and the change is mechanical. Slice by **method**, not by file — `getSystem` alone is
-34 of the 78 sites. Fix in passing: `createSystem` writes the `legacy_handles` row **twice**
-(`systems-manager.ts:448` inside `insertSystemToPg`'s tx, then `:333` outside it).
+Also fixed along the way (#291): **creating any device 500'd on prod** since Phase 10's migration 0036.
+`ensureDeviceForHandle` filled `legacy_handles.device_id` with a uuid that had no `devices` row yet;
+existing handles survived on the `ON CONFLICT … coalesce` path, which is why it looked healthy. Found
+only because K3 exercised the **write** path on dev at the end of its slice.
 
 ### The collapsed terminal window — slices I + J + L + N in one pass
 
@@ -257,7 +261,7 @@ the outbox to zero**: impossible while polling, and unnecessary.
 | -- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | 0  | `pscale backup create` on `sydney` + confirm PITR. `gh workflow disable sync-prod-to-dev.yml`. Capture `GET /api/admin/observations/info` (record `parallelism`) and full row inventories to a local file. | backup id recorded                                                                               |
 | 1  | `POST …/observations/info {"action":"pause"}`                                                                                                                                                           | **G1**: `paused:true`, then `max(sessions.created_at)` and `max(point_readings.measurement_time)` static across 60 s |
-| 2  | **G2 — identity proof.** `sessions`/`observations_outbox` LEFT JOIN `devices d ON d.rid = …` WHERE `d.rid IS NULL` → 0 each; `systems` FULL JOIN `devices` with either side NULL → 0.                     | all three 0, or **abort**                                                                        |
+| 2  | **G2 — identity proof, ASYMMETRIC.** `systems`-without-`devices` → **0, hard abort**. `devices`-without-`systems` → **report only** (that is `deleteSystem`'s sanctioned orphan; a strict check aborts the window on a benign row). The `observations_outbox` leg is **advisory** — that column has no FK and none is added, so the rename cannot fail on it. | `systems`→`devices` 0, or **abort**; the rest reported |
 | 3  | **G3 — poison pill.** Unpublished outbox rows with any observation missing `pointUid` → 0. (Already asserted by slice M; this is the re-assert.)                                                          | 0, or **abort**                                                                                  |
 | 4  | **Merge + deploy the terminal build.**                                                                                                                                                                 | deploy `Ready` + aliased; `/api/health` 200                                                      |
 | 5  | **Apply to prod** (short-TTL role, `ALTER ROLE CURRENT_USER SET lock_timeout = '5s'`).                                                                                                                  | migrator exits 0                                                                                 |
@@ -266,6 +270,12 @@ the outbox to zero**: impossible while polling, and unnecessary.
 | 8  | Restore parallelism; `lag` → 0; DLQ empty.                                                                                                                                                             | lag 0, DLQ empty                                                                                 |
 | 9  | **G5 — continuity.** Gap-check `point_readings` across the window.                                                                                                                                     | no gap > the vendor's own interval                                                               |
 | 10 | Apply to `liveone-dev`, re-run G4, re-enable the sync workflow, watch one dispatch go green. Delete temp roles.                                                                                          | sync green                                                                                       |
+
+**Extra guards the migration must carry** (measured on prod 2026-07-30, all currently clean):
+zero `point_info`↔`points` drift and zero orphans either way (134 pairs / 0 / 0 across every column
+including `rid`); every `sessions` row resolving to a `devices.rid`; and **`systems.status` conforming to
+`devices_status_check IN ('active','disabled','removed')`** — `systems.status` is unconstrained text, so a
+non-conforming value is one that *cannot move*. Preconditions read the **catalog**, never the journal.
 
 **DDL order inside the migration** (one transaction — drizzle wraps all pending files):
 (1) guard block re-asserting G2's three counts with `RAISE EXCEPTION` — the only version of the check
@@ -421,6 +431,23 @@ Each was learned by breaking something; they are why the shipped narratives coul
 - 🛑 **Migration preconditions read the CATALOG, never the drizzle journal.** The journal records
   intent; the catalog records what is true of *this* branch. 0048 proves 0047 landed by checking that
   `area_bindings_unique` actually keys on `point_uid`.
+- 🛑 **A parity gate over two homes for one value must be DIRECTIONAL.** The two directions mean opposite
+  things — one is a serving loss, the other the designed end state — so a symmetric equality check either
+  fails on correct data or gets widened into a tautology. State the authority; assert only the losing
+  direction; make any repair one-directional and NULL-only. This bit three separate gates in Phase 12
+  (`location`, G2, and k1-parity after slice K).
+- 🛑 **A `max(x)+1` scan is a PATTERN, not an allocator — grep the TABLE, not the function.** Slice M's
+  plan named one; there were five, and three also skipped the mirror the fourth called.
+- ⚠️ **A doc comment describing dispatch order, or naming a future slice, is a CLAIM about code.**
+  `resolveHandle`'s "area-first" prose was wrong and nearly re-pointed a shared dashboard; three separate
+  "until slice M" comments were stale by the time M ran. Verify before following.
+- ⚠️ **Adding an FK to a column a pre-mint writer fills breaks FIRST CREATION ONLY**, and an
+  `ON CONFLICT … coalesce` masks it on every idempotent re-run. An FK addition needs a
+  create-from-scratch test, not a re-run test. That is how #291 hid for three days.
+- ⚠️ **A NOT NULL column cannot be healed by a fill-if-NULL reconcile — it never looks missing.** That is
+  why the tz leak survived eight earlier passes of the same defect class.
+- ⚠️ **Exercise WRITERS, not just readers, at the end of a slice.** The only reason the prod device-create
+  break surfaced at all is that slice K3 drove a create on dev.
 - 🛑 **Re-assert an equivalence inside the migration that destroys your ability to check it.** After a
   DROP there is no second address left to disagree with, so a divergence introduced since the last
   check becomes silent and permanent. A check that can only ever run once should run.
