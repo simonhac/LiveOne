@@ -71,6 +71,17 @@ export function getPeriodDuration(period: ChartTimeRange): number {
   return 30 * 24 * 60 * 60 * 1000; // M
 }
 
+/**
+ * The period spelled out for a card heading — the same nominal durations {@link getPeriodDuration}
+ * uses, in words ("over the last …").
+ */
+export const PERIOD_LABEL: Record<NavigatorPeriod, string> = {
+  D: "24 hours",
+  W: "7 days",
+  M: "30 days",
+  Y: "12 months",
+};
+
 /** Data interval (minutes) for a period: 5m for D, 30m for W, 1d for M/Y. */
 export function getPeriodIntervalMinutes(period: ChartTimeRange): number {
   if (period === "D") return 5;

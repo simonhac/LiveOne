@@ -1,9 +1,18 @@
 /**
- * Renewables metrics — the client-safe reduction the `renewables` tile computes from the SHARED
- * attributed-flow payload (`DailyFlowMatrices`, served by `/api/history?include=sankey` and consumed
- * via `siteDataQuery` — NO dedicated route). `reduceRenewablesMetrics` flattens that period-scoped
- * payload into per-edge aggregates and runs the pure `computeRenewablesMetrics` below. No DB / HTTP /
- * React — only types + arithmetic, safe to import from the browser bundle.
+ * Home-energy metrics — the client-safe reduction the `renewables` tile (rendered as the "Home Energy"
+ * card) computes from the SHARED attributed-flow payload (`DailyFlowMatrices`, served by
+ * `/api/history?include=sankey` and consumed via `siteDataQuery` — NO dedicated route).
+ * `reduceRenewablesMetrics` flattens that period-scoped payload into per-edge aggregates and runs the
+ * pure `computeRenewablesMetrics` below. No DB / HTTP / React — only types + arithmetic, safe to import
+ * from the browser bundle.
+ *
+ * Besides the three renewables percentages it totals what the period's CONSUMPTION cost and emitted —
+ * energy, ¢/kWh, gCO2/kWh — off the `costC`/`emissionsG` legs of the same payload, with FILTERED
+ * (known-intensity) denominators so unknown-intensity edges don't bias the averages (same discipline as
+ * `reduceLoadProvenance`). Two things to know about the cost:
+ *   - it is OUT-OF-POCKET: self-consumed solar is priced at zero (`SOLAR_ACTUAL_COST`), so this is the
+ *     cost of the energy you consumed, not a bill, and not opportunity-cost inclusive; and
+ *   - export revenue is EXCLUDED, because `load.grid` is not a consumption edge.
  *
  * The three metrics, over a period, from the flow matrix (`point_readings_flow_attr_1d`; multi-day =
  * SUM by source_path/load_path):
@@ -51,6 +60,14 @@ export interface RenewablesEdgeAgg {
   selfRenewableNullRows: number;
   /** Σ estimated_kwh (confidence numerator). */
   estimatedKwh: number;
+  /** Σ emissions_g where non-null (the attributed gCO2). */
+  emissionsG: number;
+  /** Σ energy on the days emissions_g was known — the g/kWh denominator. */
+  emissionsKnownKwh: number;
+  /** Σ cost_c where non-null (signed cents, out-of-pocket). */
+  costC: number;
+  /** Σ energy on the days cost_c was known — the ¢/kWh denominator. */
+  costKnownKwh: number;
 }
 
 export interface RenewablesMetrics {
@@ -75,6 +92,18 @@ export interface RenewablesSummary {
   estimatedKwh: number;
   /** 100 · estimatedKwh / consumptionKwh (0 when there is no consumption). */
   pctEstimated: number;
+
+  // ── Consumption totals (the "Home Energy" stats) — the same consumption edge set as above ──
+  /** Out-of-pocket cost of the consumed energy (signed cents). Excludes export revenue. */
+  costC: number;
+  /** costC over the known-cost energy (c/kWh); null when no consumption edge had a known price. */
+  avgCentsPerKwh: number | null;
+  /** Attributed emissions of the consumed energy (gCO2). */
+  emissionsG: number;
+  /** emissionsG / 1000. */
+  kgCo2: number;
+  /** emissionsG over the known-emissions energy (gCO2/kWh); null when none was known. */
+  avgGramsPerKwh: number | null;
 }
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -111,6 +140,10 @@ export function computeRenewablesMetrics(
   let selfRenewGenerated = 0;
   let selfRenewExported = 0;
   let estimatedConsumption = 0;
+  let costC = 0;
+  let costKnownKwh = 0;
+  let emissionsG = 0;
+  let emissionsKnownKwh = 0;
   // Partial-data guard: if self_renewable is unknown on ANY edge that contributes to the self-renewable
   // metrics (a consumption edge, a behind-the-meter generator source, or an export edge), BOTH metrics
   // 1 and 2 are unavailable for the period — no silent fallback. Metric 3 (renewable_kwh only) is fine.
@@ -126,6 +159,10 @@ export function computeRenewablesMetrics(
       selfRenewToLoads += e.selfRenewableKwh;
       renewToLoads += e.renewableKwh;
       estimatedConsumption += e.estimatedKwh;
+      costC += e.costC;
+      costKnownKwh += e.costKnownKwh;
+      emissionsG += e.emissionsG;
+      emissionsKnownKwh += e.emissionsKnownKwh;
     }
     if (generatorSource) selfRenewGenerated += e.selfRenewableKwh;
     if (exportEdge) selfRenewExported += e.selfRenewableKwh;
@@ -160,14 +197,21 @@ export function computeRenewablesMetrics(
     estimatedKwh: estimatedConsumption,
     pctEstimated:
       consumption > 0 ? (100 * estimatedConsumption) / consumption : 0,
+    costC,
+    avgCentsPerKwh: costKnownKwh > 0 ? costC / costKnownKwh : null,
+    emissionsG,
+    kgCo2: emissionsG / 1000,
+    avgGramsPerKwh:
+      emissionsKnownKwh > 0 ? emissionsG / emissionsKnownKwh : null,
   };
 }
 
 /**
- * Reduce the shared attributed-flow payload (a `source=modern` {@link DailyFlowMatrices}) to the three
- * renewables metrics over the whole window — summing across all days and all edges, the same additive
- * discipline as `reduceLoadProvenance`/`reduceSourceProvenance`. This is the tile's entry point: it
- * follows the dashboard's selected period (1D/7D/30D) because the payload does.
+ * Reduce the shared attributed-flow payload (a `source=modern` {@link DailyFlowMatrices}) to the whole
+ * window's summary — the three renewables metrics plus the consumption cost/emissions totals — summing
+ * across all days and all edges, the same additive discipline as
+ * `reduceLoadProvenance`/`reduceSourceProvenance`. This is the card's entry point: it follows the
+ * dashboard's selected period (1D/7D/30D) because the payload does.
  *
  * Returns null for a legacy energy-only payload (no metric legs at all). When the metric legs are
  * present but `selfRenewableKwh` is absent (an older attributed payload predating this leg), every
@@ -190,6 +234,10 @@ export function reduceRenewablesMetrics(
       let selfRenewableKwh = 0;
       let selfRenewableNullRows = 0;
       let estimatedKwh = 0;
+      let emissionsG = 0;
+      let emissionsKnownKwh = 0;
+      let costC = 0;
+      let costKnownKwh = 0;
       for (const day of d.days) {
         const e = day.matrix[s]?.[l] ?? 0;
         if (e <= 0) continue;
@@ -199,6 +247,17 @@ export function reduceRenewablesMetrics(
         const sr = day.selfRenewableKwh?.[s]?.[l];
         if (sr != null) selfRenewableKwh += sr;
         else selfRenewableNullRows += 1; // energy flowed but self-renewable was unknown that day
+        // Filtered denominators: a day only enters the average when its intensity was known.
+        const eg = day.emissionsG?.[s]?.[l];
+        if (eg != null) {
+          emissionsG += eg;
+          emissionsKnownKwh += e;
+        }
+        const cc = day.costC?.[s]?.[l];
+        if (cc != null) {
+          costC += cc;
+          costKnownKwh += e;
+        }
         estimatedKwh += day.estimatedKwh?.[s]?.[l] ?? 0;
       }
       if (energyKwh <= 0) continue;
@@ -210,6 +269,10 @@ export function reduceRenewablesMetrics(
         selfRenewableKwh,
         selfRenewableNullRows,
         estimatedKwh,
+        emissionsG,
+        emissionsKnownKwh,
+        costC,
+        costKnownKwh,
       });
     }
   }

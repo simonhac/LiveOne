@@ -39,6 +39,9 @@ describe("formatCentsPerKwh", () => {
   it("returns an em-dash for null", () => {
     expect(formatCentsPerKwh(null)).toBe("—");
   });
+  it("spells a negative rate with a real minus, not a hyphen", () => {
+    expect(formatCentsPerKwh(-3)).toBe("−3.0");
+  });
 });
 
 describe("formatGramsPerKwh", () => {

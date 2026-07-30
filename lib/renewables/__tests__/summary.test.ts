@@ -19,6 +19,10 @@ function edge(p: Partial<RenewablesEdgeAgg>): RenewablesEdgeAgg {
     selfRenewableKwh: 0,
     selfRenewableNullRows: 0,
     estimatedKwh: 0,
+    emissionsG: 0,
+    emissionsKnownKwh: 0,
+    costC: 0,
+    costKnownKwh: 0,
     ...p,
   };
 }
@@ -178,6 +182,90 @@ describe("computeRenewablesMetrics", () => {
     expect(r.metrics.ownRenewableSelfConsumption).toBeNull();
     expect(r.metrics.renewableShare).toBeNull();
     expect(r.pctEstimated).toBe(0);
+    expect(r.costC).toBe(0);
+    expect(r.avgCentsPerKwh).toBeNull();
+    expect(r.avgGramsPerKwh).toBeNull();
+  });
+
+  // ── consumption cost + emissions totals (the Home Energy stats) ──
+
+  it("cost/emissions totals sum over consumption edges only — export and battery charge excluded", () => {
+    const edges: RenewablesEdgeAgg[] = [
+      // solar → load: free, zero-carbon.
+      edge({
+        sourcePath: "source.solar",
+        loadPath: "load",
+        energyKwh: 6,
+        renewableKwh: 6,
+        selfRenewableKwh: 6,
+        emissionsG: 0,
+        emissionsKnownKwh: 6,
+        costC: 0,
+        costKnownKwh: 6,
+      }),
+      // grid → load: 4 kWh @ 30c/kWh, 500 g/kWh.
+      edge({
+        sourcePath: "source.grid",
+        loadPath: "load",
+        energyKwh: 4,
+        renewableKwh: 1.6,
+        emissionsG: 2000,
+        emissionsKnownKwh: 4,
+        costC: 120,
+        costKnownKwh: 4,
+      }),
+      // solar → grid (export revenue) and solar → battery (charge): NOT consumption.
+      edge({
+        sourcePath: "source.solar",
+        loadPath: "load.grid",
+        energyKwh: 2,
+        renewableKwh: 2,
+        selfRenewableKwh: 2,
+        costC: -50,
+        costKnownKwh: 2,
+      }),
+      edge({
+        sourcePath: "source.solar",
+        loadPath: "load.battery",
+        energyKwh: 3,
+        renewableKwh: 3,
+        selfRenewableKwh: 3,
+        emissionsG: 0,
+        emissionsKnownKwh: 3,
+        costC: 0,
+        costKnownKwh: 3,
+      }),
+    ];
+    const r = computeRenewablesMetrics(edges);
+    expect(r.consumptionKwh).toBeCloseTo(10, 9);
+    // Export's −50c and the charge edge never enter: 0 + 120 = 120c over 10 known kWh = 12.0 c/kWh.
+    expect(r.costC).toBeCloseTo(120, 9);
+    expect(r.avgCentsPerKwh).toBeCloseTo(12, 9);
+    // 2000 g over 10 known kWh = 200 g/kWh.
+    expect(r.emissionsG).toBeCloseTo(2000, 9);
+    expect(r.kgCo2).toBeCloseTo(2, 9);
+    expect(r.avgGramsPerKwh).toBeCloseTo(200, 9);
+  });
+
+  it("filtered denominators: an unknown-intensity edge doesn't drag the averages down", () => {
+    const edges: RenewablesEdgeAgg[] = [
+      edge({
+        sourcePath: "source.grid",
+        loadPath: "load",
+        energyKwh: 5,
+        emissionsG: 2500,
+        emissionsKnownKwh: 5,
+        costC: 150,
+        costKnownKwh: 5,
+      }),
+      // 5 kWh with NO known cost/emissions (both known-kWh legs zero).
+      edge({ sourcePath: "source.battery", loadPath: "load", energyKwh: 5 }),
+    ];
+    const r = computeRenewablesMetrics(edges);
+    expect(r.consumptionKwh).toBeCloseTo(10, 9);
+    // Averages use the 5 known kWh, not the 10 total: 30 c/kWh and 500 g/kWh (NOT 15 / 250).
+    expect(r.avgCentsPerKwh).toBeCloseTo(30, 9);
+    expect(r.avgGramsPerKwh).toBeCloseTo(500, 9);
   });
 });
 
@@ -228,6 +316,43 @@ describe("reduceRenewablesMetrics", () => {
     expect(r.metrics.renewableShare).toBeCloseTo(0.76, 9);
     // selfRenewGenerated = solar edges (3+1)×2 = 8; exported = solar→grid 1×2 = 2 → 1 − 2/8 = 0.75
     expect(r.metrics.ownRenewableSelfConsumption).toBeCloseTo(0.75, 9);
+  });
+
+  it("carries the cost/emissions legs through, skipping the days a cell is null", () => {
+    // One consumption edge (grid→load), 2 kWh/day for two days; day 2's cost is unknown.
+    const d: DailyFlowMatrices = {
+      sources: [node("source.grid")],
+      loads: [node("load")],
+      days: [
+        {
+          day: "2026-07-01",
+          matrix: [[2]],
+          emissionsG: [[900]],
+          renewableKwh: [[0.5]],
+          selfRenewableKwh: [[0]],
+          costC: [[60]],
+          estimatedKwh: [[0]],
+        },
+        {
+          day: "2026-07-02",
+          matrix: [[2]],
+          emissionsG: [[700]],
+          renewableKwh: [[0.5]],
+          selfRenewableKwh: [[0]],
+          costC: [[null]],
+          estimatedKwh: [[0]],
+        },
+      ],
+    };
+    const r = reduceRenewablesMetrics(d)!;
+    expect(r.consumptionKwh).toBeCloseTo(4, 9);
+    // Cost: only day 1 counts, on both numerator and denominator → 60c / 2 kWh = 30 c/kWh.
+    expect(r.costC).toBeCloseTo(60, 9);
+    expect(r.avgCentsPerKwh).toBeCloseTo(30, 9);
+    // Emissions: both days known → 1600 g / 4 kWh = 400 g/kWh.
+    expect(r.emissionsG).toBeCloseTo(1600, 9);
+    expect(r.kgCo2).toBeCloseTo(1.6, 9);
+    expect(r.avgGramsPerKwh).toBeCloseTo(400, 9);
   });
 
   it("returns null for a legacy energy-only payload (no metric legs)", () => {

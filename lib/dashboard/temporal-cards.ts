@@ -23,7 +23,11 @@ function cardTravels(card: CardV3, chartCapable: boolean): boolean {
     case "generator-runs":
       return true; // consumes the shared window
     case "tiles":
-      return (card.tiles ?? []).some((t) => !t.hidden && t.view === "hotWater");
+      // hotWater renders the shared window's sparkline; renewables (the Home Energy card) reduces the
+      // window's attributed flow. Either one means the navigator has to be there.
+      return (card.tiles ?? []).some(
+        (t) => !t.hidden && (t.view === "hotWater" || t.view === "renewables"),
+      );
     default:
       return false;
   }

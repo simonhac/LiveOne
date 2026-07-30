@@ -18,6 +18,11 @@ import {
   CONTENTS_LATEST_PATHS as CP,
   type BatteryContentsValues,
 } from "@/lib/battery/contents-latest";
+import {
+  computeRenewablesMetrics,
+  type RenewablesEdgeAgg,
+  type RenewablesSummary,
+} from "@/lib/renewables/summary";
 
 const FRESH = 30; // seconds old — comfortably fresh
 const STALE = 1200; // seconds old — past every threshold here
@@ -360,6 +365,98 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
     },
     STALE,
   ),
+};
+
+// ---------------------------------------------------------------------------
+// HomeEnergyCard (RenewablesSummary — the period's consumption, valued)
+// ---------------------------------------------------------------------------
+// Built by feeding plausible source→load edges through the real reducer, so every derived
+// number (the filtered ¢/kWh and g/kWh averages, the ratios, the totals) is computed exactly
+// as in prod. Cost is signed CENTS and emissions are GRAMS, per edge, over the whole period.
+function he(edges: Partial<RenewablesEdgeAgg>[]): RenewablesSummary {
+  return computeRenewablesMetrics(
+    edges.map((p) => ({
+      sourcePath: "source.solar",
+      loadPath: "load",
+      energyKwh: 0,
+      renewableKwh: 0,
+      selfRenewableKwh: 0,
+      selfRenewableNullRows: 0,
+      estimatedKwh: 0,
+      emissionsG: 0,
+      emissionsKnownKwh: 0,
+      costC: 0,
+      costKnownKwh: 0,
+      ...p,
+    })),
+  );
+}
+
+/** A priced+carbon-costed edge: `e` kWh at `c` cents/kWh and `g` grams/kWh, `r` renewable kWh. */
+function edge(
+  sourcePath: string,
+  loadPath: string,
+  e: number,
+  c: number,
+  g: number,
+  r: number,
+  selfRenew: number,
+): Partial<RenewablesEdgeAgg> {
+  return {
+    sourcePath,
+    loadPath,
+    energyKwh: e,
+    renewableKwh: r,
+    selfRenewableKwh: selfRenew,
+    emissionsG: e * g,
+    emissionsKnownKwh: e,
+    costC: e * c,
+    costKnownKwh: e,
+  };
+}
+
+export const HOME_ENERGY_SCENARIOS: Record<string, RenewablesSummary | null> = {
+  // A grid-connected solar+battery day: solar direct, battery evening, some grid import, an export.
+  typical: he([
+    edge("source.solar", "load", 8.4, 0, 0, 8.4, 8.4),
+    edge("source.battery", "load", 5.1, 6.2, 90, 3.6, 2.6),
+    edge("source.grid", "load", 4.2, 31.5, 620, 1.5, 0),
+    edge("source.solar", "load.grid", 6.3, -5.5, 0, 6.3, 6.3), // export — excluded
+    edge("source.solar", "load.battery", 5.6, 0, 0, 5.6, 5.6), // charge — excluded
+  ]),
+  // Sunny + fully self-supplied: free, zero-carbon, 100% renewable.
+  "all solar": he([
+    edge("source.solar", "load", 12.0, 0, 0, 12.0, 12.0),
+    edge("source.solar", "load.grid", 9.0, -5.5, 0, 9.0, 9.0),
+  ]),
+  // Grid-only site: no own generation → Autarky 0, Self-use "—".
+  "grid only": he([edge("source.grid", "load", 18.6, 34.0, 680, 6.1, 0)]),
+  // A negative wholesale window: the period's consumption cost lands below zero.
+  "negative rate": he([
+    edge("source.grid", "load", 9.0, -4.0, 540, 3.0, 0),
+    edge("source.solar", "load", 3.0, 0, 0, 3.0, 3.0),
+  ]),
+  // Partial self_renewable data → BOTH ratios unavailable, but the stats still compute.
+  "partial self-renewable": he([
+    edge("source.solar", "load", 7.0, 0, 0, 7.0, 7.0),
+    {
+      sourcePath: "source.battery",
+      loadPath: "load",
+      energyKwh: 4.0,
+      renewableKwh: 2.4,
+      selfRenewableNullRows: 1,
+      emissionsG: 4.0 * 120,
+      emissionsKnownKwh: 4.0,
+      costC: 4.0 * 9,
+      costKnownKwh: 4.0,
+    },
+  ]),
+  // No known intensity anywhere → the rate/emissions stats em-dash while `consumed` still reads.
+  "no intensities": he([
+    { sourcePath: "source.grid", loadPath: "load", energyKwh: 11.3 },
+  ]),
+  // Nothing materialised for the window yet.
+  "no data": null,
 };
 
 // ---------------------------------------------------------------------------
