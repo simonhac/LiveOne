@@ -3,7 +3,10 @@ import type { InferSelectModel } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { systems as pgSystems } from "@/lib/db/planetscale/schema";
-import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
+import {
+  ensureDeviceRow,
+  mirrorPlacementToAreaOfOne,
+} from "@/lib/registry/v4-mirror";
 
 /**
  * A `systems` row. The only type this module exports, and only because it is the patch shape of
@@ -141,6 +144,12 @@ async function createHelperDevice(params: {
  * was written at mint only, so every edit here drifted `devices.name`/`status`/`slug`/`config`/
  * `adapter_state` — and `ensureDeviceRow` was `ON CONFLICT DO NOTHING`, so nothing could self-heal it.
  * Slice K reads `devices` as the config registry, so the drift is not cosmetic.
+ *
+ * The same is true one level out for tz: `devices` has no tz/location columns (the area-of-one is their
+ * sole home by design), so `ensureDeviceRow` cannot carry a timezone edit anywhere a reader will find
+ * it. `mirrorPlacementToAreaOfOne` closes that — in the SAME transaction, so a tz edit can never be
+ * half-applied. See its header for why this is intent propagation and not the blanket copy-down
+ * `ensureAreaOfOne` deliberately refuses.
  */
 async function updateSystem(
   systemId: number,
@@ -157,6 +166,18 @@ async function updateSystem(
       .where(eq(pgSystems.id, systemId));
     // Re-copies the mutable columns from the row just written (ensureDeviceRow SELECTs `systems`).
     await ensureDeviceRow(systemId, tx);
+    await mirrorPlacementToAreaOfOne(
+      systemId,
+      {
+        ...(values.timezoneOffsetMin != null && {
+          timezoneOffsetMin: values.timezoneOffsetMin,
+        }),
+        ...(values.displayTimezone != null && {
+          displayTimezone: values.displayTimezone,
+        }),
+      },
+      tx,
+    );
   });
 }
 
