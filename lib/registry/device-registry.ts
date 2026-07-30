@@ -144,6 +144,11 @@ async function ridsForDevices(
 /**
  * Fill a handle's device column without overwriting an existing identity. Returns the authoritative
  * mapping, which may pre-date the supplied candidate.
+ *
+ * ⚠️ **`candidate` must already have a `devices` row.** `legacy_handles.device_id` FKs `devices(id)`
+ * (migration 0036), so this raises 23503 for a brand-new uuid. Do not call it to mint an identity —
+ * call `ensureDeviceRow` (lib/registry/v4-mirror.ts), which inserts `devices` first and then comes back
+ * here. The `coalesce` on conflict is why the defect only bit the FIRST mint of a handle.
  */
 async function ensureDeviceForHandle(
   handle: number,

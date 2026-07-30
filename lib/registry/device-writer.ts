@@ -3,7 +3,6 @@ import type { InferSelectModel } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { systems as pgSystems } from "@/lib/db/planetscale/schema";
-import { DeviceRegistry } from "./device-registry";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 
 /**
@@ -82,29 +81,31 @@ async function createSystem(systemData: CreateSystemData): Promise<System> {
   // area-only concept — a device gets a flow matrix only once a user groups it into an Area
   // (createArea). No cache to invalidate: config is read per-request.
   //
-  // config-v4: mirror into `devices` immediately so the standing C7 invariant
-  // (`systems` with no `devices` row == 0) can never be disarmed by a newly created system. Note this
-  // DOES mint the v4 area-of-one — post-cutover the area is the sole home for tz/location and
-  // `devices.primary_area_id` is NOT NULL, so it is a structural requirement of the v4 shape, not a
-  // reversal of the explicit-areas model above (which governs the v3 rendering path).
-  // Best-effort: the v4 registries are dark until cutover, so a mirror failure must not fail creation.
-  try {
-    await ensureDeviceRow(newSystem.id);
-  } catch (error) {
-    console.error(
-      `[DeviceWriter] v4 device mirror failed for system ${newSystem.id} — registry-sync will heal it`,
-      error,
-    );
-  }
+  // config-v4: the `devices` mirror is minted INSIDE `insertSystemToPg`'s transaction (see there), so
+  // the standing C7 invariant (`systems` with no `devices` row == 0) holds atomically and there is no
+  // best-effort mirror call here any more. It could not stay best-effort: `legacy_handles.device_id`
+  // FKs `devices(id)`, so the mirror is no longer optional bookkeeping that a create can skip — a
+  // create either lands whole or not at all. Note this DOES mint the v4 area-of-one — post-cutover the
+  // area is the sole home for tz/location and `devices.primary_area_id` is NOT NULL, so it is a
+  // structural requirement of the v4 shape, not a reversal of the explicit-areas model above (which
+  // governs the v3 rendering path).
   return newSystem;
 }
 
 /**
  * Create a HELPER device — a derived, non-physical, never-polled `systems` row (vendor_type='helper')
- * that lives in an Area and owns the Area's COMPUTED points (battery-provenance blend, …). Unlike
- * {@link createSystem} it does NOT mint an area-of-one: a helper is a MEMBER of an existing Area
- * (wired by `lib/areas/helper.ts::ensureHelperDevice`), never its own area. Owned by the Area's owner
- * for access control (NOT ownerless — the blend is private household-derived data).
+ * that lives in an Area and owns the Area's COMPUTED points (battery-provenance blend, …). Its
+ * SEMANTIC home is an existing Area, of which it is a MEMBER (wired by
+ * `lib/areas/helper.ts::ensureHelperDevice`). Owned by the Area's owner for access control (NOT
+ * ownerless — the blend is private household-derived data).
+ *
+ * ⚠️ It nonetheless gets a v4 area-of-one, exactly like {@link createSystem}. This comment used to
+ * claim it did NOT; the tree disagreed — `ensureHelperDevice` calls `ensureDeviceRow`, which always
+ * mints one, and all six helpers on `liveone-dev` have had an `areas` row keyed by their handle since
+ * they were created. `devices.primary_area_id` is NOT NULL post-cutover, so a device with no
+ * area-of-one is not a representable shape; the helper's Area membership is the SECOND edge, not a
+ * substitute for it. So the FK fix deliberately did NOT give this path a no-area variant — that would
+ * have been a behaviour change dressed as a hotfix.
  */
 async function createHelperDevice(params: {
   ownerClerkUserId: string | null;
@@ -221,7 +222,12 @@ async function insertSystemToPg(systemData: CreateSystemData): Promise<System> {
           updatedAt: new Date(),
         })
         .returning();
-      await DeviceRegistry.ensureDeviceForHandle(inserted.id, tx);
+      // ONE transaction, `devices` before `legacy_handles`. This used to be a bare
+      // `DeviceRegistry.ensureDeviceForHandle`, which writes `legacy_handles.device_id` — FK'd to
+      // `devices(id)` since migration 0036 — for a uuid that no `devices` row carried yet, so EVERY
+      // device creation raised 23503. `ensureDeviceRow` is the ordered writer (devices → handle →
+      // area-of-one → membership) and is idempotent, so it is also correct on the re-mirror paths.
+      await ensureDeviceRow(inserted.id, tx);
       return inserted;
     });
 
