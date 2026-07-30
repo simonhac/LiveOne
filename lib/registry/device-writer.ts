@@ -363,10 +363,7 @@ async function updateSystem(
       // A handle naming no area updates nothing, exactly as the old 0-row-match predicate did.
       const targets = await DeviceRegistry.resolveHandle(systemId, tx);
       if (targets?.areaId) {
-        await tx
-          .update(areas)
-          .set(areaSet)
-          .where(eq(areas.id, targets.areaId));
+        await tx.update(areas).set(areaSet).where(eq(areas.id, targets.areaId));
       }
     }
   });

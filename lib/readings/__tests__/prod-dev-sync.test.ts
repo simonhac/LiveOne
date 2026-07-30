@@ -286,7 +286,11 @@ describe("prod→dev readings transfer", () => {
       idDrift: {
         uniqueKeys: [["owner_user_id", "slug"]],
         crossKeys: [
-          { table: "legacy_handles", parentCol: "area_id", keyCols: ["handle"] },
+          {
+            table: "legacy_handles",
+            parentCol: "area_id",
+            keyCols: ["handle"],
+          },
         ],
       },
     });

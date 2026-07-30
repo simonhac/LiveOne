@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requireAuth, requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, areaBindings, legacyHandles } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  areaBindings,
+  legacyHandles,
+} from "@/lib/db/planetscale/schema";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import {
