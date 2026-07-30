@@ -179,14 +179,18 @@ export const sessions = pgTable(
     // Was `serial`; the receiver always supplies an explicit id.
     id: text("id").primaryKey(),
     sessionLabel: text("session_label"),
-    // config-v4 Phase 12 slice 1a (migration 0050): the FK to `systems.id` is GONE. `DeviceWriter` now
-    // writes `devices`, so a device created after 1a has no `systems` row — and this is the HOT INGEST
-    // path, so the constraint would have 23503'd the first session write for every new device. The
-    // replacement FK (-> `devices.rid`) arrives with the rename in the terminal migration, not here:
-    // between the two, session -> device reachability is an ACCEPTED, bounded coverage gap that the
-    // window's G2 asserts. Deliberately accepting the "removing a FK turns a join onto the replacement
-    // key into a silent filter" trap for that interval.
-    systemId: integer("system_id").notNull(),
+    // config-v4 Phase 12 terminal window (migration 0051): `system_id` was RENAMED to `device_rid` and
+    // re-constrained onto `devices.rid`. Catalog-only — `devices.rid == systems.id` verbatim, so there is
+    // no value migration. 0050 had dropped the old FK into `systems.id` (a device created after slice 1a
+    // has no `systems` row, and this is the HOT INGEST path, so the constraint 23503'd that device's first
+    // session write); the replacement is added `NOT VALID` and then `VALIDATE`d, so the ~10^6-row scan
+    // runs under `SHARE UPDATE EXCLUSIVE` instead of holding `ACCESS EXCLUSIVE`.
+    //
+    // The wire field is still called `systemId` (`SessionWithSystem`) — that grammar moves in Phase 13
+    // with the rest of the handle.
+    deviceRid: integer("device_rid")
+      .notNull()
+      .references(() => devices.rid),
     cause: text("cause").notNull(),
     duration: integer("duration").notNull(), // milliseconds
     successful: boolean("successful"),
@@ -202,7 +206,10 @@ export const sessions = pgTable(
     // separate-session-publish path; with UUIDv7 text PKs the id alone
     // guarantees distinctness, and the unique would reject legitimate
     // same-instant sessions — dropped in PR-7b.
-    systemIdx: index("sessions_system_idx").on(table.systemId),
+    // ⚠️ A `RENAME COLUMN` does NOT rename the indexes over it, so 0051 renames this one by hand
+    // (`sessions_system_idx` -> `sessions_device_rid_idx`) and this declaration moves in step. Leaving
+    // either side alone ships permanent `db:pg:generate` drift.
+    deviceRidIdx: index("sessions_device_rid_idx").on(table.deviceRid),
     createdAtIdx: index("sessions_created_at_idx").on(table.createdAt),
     causeIdx: index("sessions_cause_idx").on(table.cause),
   }),
