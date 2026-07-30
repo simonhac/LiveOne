@@ -344,6 +344,13 @@
       "when": 1785326604280,
       "tag": "0048_area_bindings_drop_int_pair",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1785376302587,
+      "tag": "0049_floor_device_rid_seq",
+      "breakpoints": true
     }
   ]
 }
