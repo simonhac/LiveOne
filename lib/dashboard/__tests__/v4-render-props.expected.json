@@ -1,0 +1,788 @@
+{
+  "n_amber_now": {
+    "plugin": "card:amber-now",
+    "renderProps": {
+      "card": {
+        "id": "n_amber_now",
+        "type": "amber-now"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "AmberSmallCard",
+        "props": {
+          "latest": "<fixture latest>"
+        }
+      },
+      {
+        "component": "AmberNow",
+        "props": {
+          "latest": "<fixture latest>"
+        }
+      }
+    ]
+  },
+  "n_amber_timeline": {
+    "plugin": "card:amber-timeline",
+    "renderProps": {
+      "card": {
+        "id": "n_amber_timeline",
+        "type": "amber-timeline"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "AmberCard",
+        "props": {
+          "displayTimezone": "Australia/Sydney",
+          "systemId": 1,
+          "timezoneOffsetMin": 600
+        }
+      }
+    ]
+  },
+  "n_b_dm": {
+    "plugin": "card:device-metrics",
+    "renderProps": {
+      "card": {
+        "deviceSystemId": 11,
+        "id": "n_b_dm",
+        "type": "device-metrics"
+      },
+      "handle": 2,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000002",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "DeviceMetricsCard",
+        "props": {
+          "staleThresholdSeconds": 30,
+          "systemId": 11
+        }
+      }
+    ]
+  },
+  "n_batt_contents": {
+    "plugin": "card:battery-contents",
+    "renderProps": {
+      "card": {
+        "id": "n_batt_contents",
+        "type": "battery-contents"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "BatteryContentsCard",
+        "props": {
+          "values": null
+        }
+      }
+    ]
+  },
+  "n_batt_prov": {
+    "plugin": "card:battery-provenance-history",
+    "renderProps": {
+      "card": {
+        "id": "n_batt_prov",
+        "type": "battery-provenance-history"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "BatteryProvenancePanel",
+        "props": {
+          "areaId": "ar_01j4q2m000e008000000000001",
+          "timezoneOffsetMin": 600
+        }
+      }
+    ]
+  },
+  "n_chart_lines": {
+    "plugin": "card:chart",
+    "renderProps": {
+      "card": {
+        "chart": {
+          "variant": "lines"
+        },
+        "id": "n_chart_lines",
+        "type": "chart"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "LinesChartCard",
+        "props": {
+          "className": "h-full min-h-[360px]",
+          "maxPowerHint": 9,
+          "systemId": 1,
+          "timezoneOffsetMin": 600
+        }
+      }
+    ]
+  },
+  "n_dm_device": {
+    "plugin": "card:device-metrics",
+    "renderProps": {
+      "card": {
+        "deviceSystemId": 11,
+        "id": "n_dm_device",
+        "type": "device-metrics",
+        "variant": "table"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "DeviceMetricsCard",
+        "props": {
+          "staleThresholdSeconds": 30,
+          "systemId": 11,
+          "variant": "table"
+        }
+      }
+    ]
+  },
+  "n_dm_inherit": {
+    "plugin": "card:device-metrics",
+    "renderProps": {
+      "card": {
+        "id": "n_dm_inherit",
+        "type": "device-metrics",
+        "variant": "grid"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "DeviceMetricsCard",
+        "props": {
+          "staleThresholdSeconds": 60,
+          "systemId": 1,
+          "variant": "grid"
+        }
+      }
+    ]
+  },
+  "n_ev_prov": {
+    "plugin": "card:ev-provenance",
+    "renderProps": {
+      "card": {
+        "id": "n_ev_prov",
+        "type": "ev-provenance"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "LoadProvenanceCard",
+        "props": {
+          "loading": false,
+          "periodLabel": "last 30 days",
+          "summary": null,
+          "title": "EV Charging"
+        }
+      }
+    ]
+  },
+  "n_gen_device": {
+    "plugin": "card:generator-runs",
+    "renderProps": {
+      "card": {
+        "deviceSystemId": 12,
+        "id": "n_gen_device",
+        "type": "generator-runs"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "GeneratorRunsCard",
+        "props": {
+          "systemId": 12,
+          "timezoneOffsetMin": 600
+        }
+      }
+    ]
+  },
+  "n_gen_inherit": {
+    "plugin": "card:generator-runs",
+    "renderProps": {
+      "card": {
+        "id": "n_gen_inherit",
+        "type": "generator-runs"
+      },
+      "handle": 1,
+      "section": {
+        "areaId": "01912e2a-0000-7000-8000-000000000001",
+        "cards": []
+      }
+    },
+    "leaves": [
+      {
+        "component": "GeneratorRunsCard",
+        "props": {
+          "systemId": 1,
+          "timezoneOffsetMin": 600
+        }
+      }
+    ]
+  },
+  "site-charts@1": {
+    "plugin": "host:site-charts-collapse",
+    "renderProps": null,
+    "leaves": [
+      {
+        "component": "SiteChartsCard",
+        "props": {
+          "device": "<fixture device@1>",
+          "sankeyOptionsKey": "n_sankey:01912e2a-0000-7000-8000-000000000001:db_fixture",
+          "siteCapable": true,
+          "systemId": "1",
+          "visibleKeys": ["chart:generation", "chart:load", "sankey"]
+        }
+      }
+    ]
+  },
+  "tile:amber@1": {
+    "plugin": "tile:amber",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "AmberSmallCard",
+        "props": {
+          "latest": "<fixture latest>"
+        }
+      }
+    ]
+  },
+  "tile:battery@1": {
+    "plugin": "tile:battery",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "Tile",
+        "props": {
+          "bgColor": "bg-green-900/20",
+          "borderColor": "border-green-700",
+          "extra": {
+            "$element": "div",
+            "$props": {
+              "children": [
+                "Charging",
+                " ",
+                {
+                  "$element": "Value",
+                  "$props": {
+                    "unit": "kW",
+                    "value": "1.5"
+                  }
+                }
+              ],
+              "className": "text-xs text-gray-400"
+            }
+          },
+          "icon": {
+            "$element": "span",
+            "$props": {
+              "children": [
+                {
+                  "$element": "Fragment",
+                  "$props": {
+                    "children": [
+                      {
+                        "$element": "span",
+                        "$props": {
+                          "children": {
+                            "$element": "ChevronLeft",
+                            "$props": {
+                              "className": "w-4 h-4"
+                            }
+                          },
+                          "className": "text-green-400 md:hidden"
+                        }
+                      },
+                      {
+                        "$element": "span",
+                        "$props": {
+                          "children": {
+                            "$element": "ChevronRight",
+                            "$props": {
+                              "className": "w-5 h-5"
+                            }
+                          },
+                          "className": "text-green-400 hidden md:block"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "$element": "Battery",
+                  "$props": {
+                    "className": "w-6 h-6"
+                  }
+                }
+              ],
+              "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
+            }
+          },
+          "iconColor": "text-green-400",
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "staleThresholdSeconds": 60,
+          "title": "Battery",
+          "unit": "%",
+          "value": "72.5"
+        }
+      }
+    ]
+  },
+  "tile:battery@11": {
+    "plugin": "tile:battery",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@11>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 30,
+      "systemId": 11
+    },
+    "leaves": [
+      {
+        "component": "Tile",
+        "props": {
+          "bgColor": "bg-green-900/20",
+          "borderColor": "border-green-700",
+          "extra": {
+            "$element": "div",
+            "$props": {
+              "children": [
+                "Charging",
+                " ",
+                {
+                  "$element": "Value",
+                  "$props": {
+                    "unit": "kW",
+                    "value": "1.5"
+                  }
+                }
+              ],
+              "className": "text-xs text-gray-400"
+            }
+          },
+          "icon": {
+            "$element": "span",
+            "$props": {
+              "children": [
+                {
+                  "$element": "Fragment",
+                  "$props": {
+                    "children": [
+                      {
+                        "$element": "span",
+                        "$props": {
+                          "children": {
+                            "$element": "ChevronLeft",
+                            "$props": {
+                              "className": "w-4 h-4"
+                            }
+                          },
+                          "className": "text-green-400 md:hidden"
+                        }
+                      },
+                      {
+                        "$element": "span",
+                        "$props": {
+                          "children": {
+                            "$element": "ChevronRight",
+                            "$props": {
+                              "className": "w-5 h-5"
+                            }
+                          },
+                          "className": "text-green-400 hidden md:block"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "$element": "Battery",
+                  "$props": {
+                    "className": "w-6 h-6"
+                  }
+                }
+              ],
+              "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
+            }
+          },
+          "iconColor": "text-green-400",
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "staleThresholdSeconds": 30,
+          "title": "Battery",
+          "unit": "%",
+          "value": "72.5"
+        }
+      }
+    ]
+  },
+  "tile:ev@1": {
+    "plugin": "tile:ev",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "TeslaSmallCard",
+        "props": {
+          "canControl": false,
+          "latest": "<fixture latest>",
+          "systemId": 1
+        }
+      }
+    ]
+  },
+  "tile:hotWater@1": {
+    "plugin": "tile:hotWater",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "HwsSmallCard",
+        "props": {
+          "faucetC": 58,
+          "heating": true,
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "sparkValues": [],
+          "staleThresholdSeconds": 60
+        }
+      }
+    ]
+  },
+  "tile:house-to-grid@1": {
+    "plugin": "tile:house-to-grid",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "Tile",
+        "props": {
+          "bgColor": "bg-red-900/20",
+          "borderColor": "border-red-700",
+          "extraInfo": "Importing",
+          "icon": {
+            "$element": "span",
+            "$props": {
+              "children": [
+                {
+                  "$element": "Fragment",
+                  "$props": {
+                    "children": [
+                      {
+                        "$element": "span",
+                        "$props": {
+                          "children": {
+                            "$element": "ChevronRight",
+                            "$props": {
+                              "className": "w-4 h-4"
+                            }
+                          },
+                          "className": "text-red-400 md:hidden"
+                        }
+                      },
+                      {
+                        "$element": "span",
+                        "$props": {
+                          "children": {
+                            "$element": "ChevronLeft",
+                            "$props": {
+                              "className": "w-5 h-5"
+                            }
+                          },
+                          "className": "text-red-400 hidden md:block"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "$element": "Zap",
+                  "$props": {
+                    "className": "w-6 h-6"
+                  }
+                }
+              ],
+              "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
+            }
+          },
+          "iconColor": "text-red-400",
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "staleThresholdSeconds": 60,
+          "title": "Grid",
+          "unit": "kW",
+          "value": "0.8"
+        }
+      }
+    ]
+  },
+  "tile:load@1": {
+    "plugin": "tile:load",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "Tile",
+        "props": {
+          "bgColor": "bg-blue-900/20",
+          "borderColor": "border-blue-700",
+          "extra": {
+            "$element": "div",
+            "$props": {
+              "children": [
+                {
+                  "$element": "div",
+                  "$key": "load.hws/power",
+                  "$props": {
+                    "children": [
+                      "HWS",
+                      ": ",
+                      {
+                        "$element": "Value",
+                        "$props": {
+                          "unit": "kW",
+                          "value": "3.6"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "className": "text-xs text-gray-400 space-y-0.5"
+            }
+          },
+          "icon": {
+            "$element": "House",
+            "$props": {
+              "className": "w-6 h-6"
+            }
+          },
+          "iconColor": "text-blue-400",
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "staleThresholdSeconds": 60,
+          "title": "Load",
+          "unit": "kW",
+          "value": "3.5"
+        }
+      }
+    ]
+  },
+  "tile:oe-grid@13": {
+    "plugin": "tile:oe-grid",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@13>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 300,
+      "systemId": 13
+    },
+    "leaves": [
+      {
+        "component": "GridSignalsCard",
+        "props": {
+          "regionLabel": "NSW",
+          "values": {
+            "demand": {
+              "measurementTime": "2026-07-30T04:05:00.000Z",
+              "value": 7200
+            },
+            "emissionsIntensity": {
+              "measurementTime": "2026-07-30T04:05:00.000Z",
+              "value": 0.55
+            },
+            "price": {
+              "measurementTime": "2026-07-30T04:05:00.000Z",
+              "value": 92.5
+            },
+            "renewables": {
+              "measurementTime": "2026-07-30T04:05:00.000Z",
+              "value": 41.2
+            }
+          }
+        }
+      }
+    ]
+  },
+  "tile:renewables@1": {
+    "plugin": "tile:renewables",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "HomeEnergyCard",
+        "props": {
+          "loading": true,
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "periodLabel": "24 hours",
+          "staleThresholdSeconds": 60,
+          "summary": null
+        }
+      }
+    ]
+  },
+  "tile:solar@1": {
+    "plugin": "tile:solar",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "Tile",
+        "props": {
+          "bgColor": "bg-yellow-900/20",
+          "borderColor": "border-yellow-700",
+          "extra": {
+            "$element": "div",
+            "$props": {
+              "children": [
+                {
+                  "$element": "div",
+                  "$props": {
+                    "children": [
+                      "Local: ",
+                      {
+                        "$element": "Value",
+                        "$props": {
+                          "unit": "kW",
+                          "value": "3.0"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "$element": "div",
+                  "$props": {
+                    "children": [
+                      "Remote: ",
+                      {
+                        "$element": "Value",
+                        "$props": {
+                          "unit": "kW",
+                          "value": "1.2"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "className": "text-xs text-gray-400 space-y-0.5"
+            }
+          },
+          "icon": {
+            "$element": "Sun",
+            "$props": {
+              "className": "w-6 h-6"
+            }
+          },
+          "iconColor": "text-yellow-400",
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "staleThresholdSeconds": 60,
+          "title": "Solar",
+          "unit": "kW",
+          "value": "4.2"
+        }
+      }
+    ]
+  }
+}
