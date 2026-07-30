@@ -12,18 +12,17 @@ import { and, asc, eq, inArray, max } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  devices,
   areas,
   areaBindings,
   areaMembers,
   pointInfo,
   points,
-  systems,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
 import { Device, Point, type PointId } from "@/lib/ids";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
-import { SystemsManager } from "@/lib/systems-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
@@ -31,6 +30,7 @@ import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { DeviceRegistry } from "@/lib/registry";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 import { bindingShapeMatches } from "@/lib/areas/slots";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
 
@@ -81,9 +81,8 @@ export async function assertMembersReadable(
   isAdmin: boolean,
   systemIds: number[],
 ): Promise<void> {
-  const sm = SystemsManager.getInstance();
   for (const sid of systemIds) {
-    const sys = await sm.getSystem(sid);
+    const sys = await DeviceConfigRegistry.deviceByHandle(sid);
     if (!sys) throw new AreaValidationError(`System ${sid} not found`);
     if (
       isAdmin ||
@@ -437,9 +436,9 @@ export async function replaceBindings(
         ? null
         : (
             await tx
-              .select({ config: systems.config })
-              .from(systems)
-              .where(eq(systems.id, selectedBatterySystemId))
+              .select({ config: devices.config })
+              .from(devices)
+              .where(eq(devices.rid, selectedBatterySystemId))
               .limit(1)
           )[0];
     const nextAreaConfig: AreaConfig = { ...(currentArea?.config ?? {}) };

@@ -6,7 +6,7 @@
  */
 import { eq, inArray, isNull, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
+import { devices } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
 import type { DeviceId } from "@/lib/ids";
 
@@ -28,20 +28,20 @@ export interface ReadableDevice {
 export async function listReadableDevices(
   userId: string,
 ): Promise<ReadableDevice[]> {
+  // config-v4 slice K2: the config columns come from `devices` (rid/name/vendor/status). The
+  // `DeviceRegistry.addrsForHandles` hop below is deliberately KEPT even though `devices.id` is right
+  // here: `legacy_handles` is what makes a device PUBLICLY addressable, so a device without one is
+  // filtered out today. Deriving the id from `devices.id` instead would silently WIDEN this list, and
+  // this is an authorization surface — identity semantics change on their own PR, not in a read swap.
   const visible = await requirePlanetscaleDb()
     .select({
-      id: systems.id,
-      displayName: systems.displayName,
-      vendorType: systems.vendorType,
-      status: systems.status,
+      id: devices.rid,
+      displayName: devices.name,
+      vendorType: devices.vendor,
+      status: devices.status,
     })
-    .from(systems)
-    .where(
-      or(
-        eq(systems.ownerClerkUserId, userId),
-        isNull(systems.ownerClerkUserId),
-      ),
-    );
+    .from(devices)
+    .where(or(eq(devices.ownerUserId, userId), isNull(devices.ownerUserId)));
   const mappings = await DeviceRegistry.addrsForHandles(
     visible.map((s) => s.id),
   );
@@ -74,13 +74,13 @@ export async function resolveDevicesByIds(
   if (handles.length === 0) return [];
   const rows = await requirePlanetscaleDb()
     .select({
-      id: systems.id,
-      name: systems.displayName,
-      vendor: systems.vendorType,
-      status: systems.status,
+      id: devices.rid,
+      name: devices.name,
+      vendor: devices.vendor,
+      status: devices.status,
     })
-    .from(systems)
-    .where(inArray(systems.id, handles));
+    .from(devices)
+    .where(inArray(devices.rid, handles));
   const systemsById = new Map(rows.map((r) => [r.id, r]));
   return unique.flatMap((id) => {
     const mapped = mappings.get(id);

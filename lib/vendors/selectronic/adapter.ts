@@ -5,7 +5,7 @@ import type {
   FetchContext,
   FetchResult,
 } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
 import {
   SelectronicFetchClient,
@@ -57,7 +57,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
    * Base adapter handles session creation, data insertion, and session completion
    */
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -175,7 +175,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
     }
   }
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult> {
     try {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 // Generic per-system metadata config endpoint.
 //
@@ -33,7 +34,7 @@ function readMetadata(raw: unknown): Record<string, unknown> {
 
 async function loadSystem(systemId: number) {
   // Resolves a composite to its areas-backed virtual system (metadata is null there).
-  return SystemsManager.getInstance().getSystem(systemId);
+  return DeviceConfigRegistry.deviceByHandle(systemId);
 }
 
 export async function GET(

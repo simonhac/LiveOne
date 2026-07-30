@@ -1,11 +1,12 @@
 import { cache } from "react";
 import { clerkClient } from "@clerk/nextjs/server";
-import { SystemsManager } from "@/lib/systems-manager";
+import {
+  DeviceConfigRegistry,
+  type VisibleDevice,
+} from "@/lib/registry/device-config";
 
-/** The exact element shape `getSystemsVisibleByUser` returns (a projection, narrower than System). */
-type VisibleSystem = Awaited<
-  ReturnType<SystemsManager["getSystemsVisibleByUser"]>
->[number];
+/** The exact element shape `devicesVisibleByUser` returns (a projection, narrower than DeviceRecord). */
+type VisibleSystem = VisibleDevice;
 
 /** A visible device with the viewer's Clerk username attached to the ones they own (for pretty URLs). */
 export type ViewerDevice = VisibleSystem & { ownerUsername: string | null };
@@ -20,14 +21,16 @@ export interface ViewerDevices {
 /**
  * The viewer's device list + their Clerk username, shared by the `/device` shell layout (for the rail)
  * and the device page (for the header switcher). Wrapped in React `cache()` so both server components
- * dedupe the `getSystemsVisibleByUser` query + the Clerk lookup within a single request. The Clerk
+ * dedupe the `devicesVisibleByUser` query + the Clerk lookup within a single request. The Clerk
  * lookup is defensive (dev mirrors prod owner ids on a different Clerk instance) — a failure just means
  * no pretty-URL username, never a 500.
  */
 export const getViewerDevices = cache(
   async (userId: string): Promise<ViewerDevices> => {
-    const availableSystems =
-      await SystemsManager.getInstance().getSystemsVisibleByUser(userId, true);
+    const availableSystems = await DeviceConfigRegistry.devicesVisibleByUser(
+      userId,
+      true,
+    );
 
     let currentUsername: string | null = null;
     try {

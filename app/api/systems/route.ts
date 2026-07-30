@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { requireAuth } from "@/lib/api-auth";
 import { eq, desc } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -113,12 +114,12 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
     const { userId } = authResult;
 
-    // Get all systems for this user
-    const userSystems = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .where(eq(pgSystems.ownerClerkUserId, userId))
-      .orderBy(desc(pgSystems.createdAt));
+    // Get all devices for this user. config-v4 slice K2: reads `devices`; the payload is now the
+    // `DeviceRecord` shape (v4 identity added, the three free-text spec strings gone — they are
+    // `config.spec`). No in-repo consumer reads this listing, so the shape change is contained.
+    const userSystems = (
+      await DeviceConfigRegistry.devicesByOwner(userId)
+    ).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     return NextResponse.json({
       systems: userSystems,

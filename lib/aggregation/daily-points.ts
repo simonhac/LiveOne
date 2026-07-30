@@ -11,7 +11,6 @@ import { CalendarDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
 import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
@@ -22,13 +21,14 @@ import {
   REHEAL_TRAILING_MS,
 } from "@/lib/battery-provenance/recompute";
 import { DeviceRegistry } from "@/lib/registry";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
 
 /** Resolve the timezone offset of the first active system (for today/yesterday math). */
 async function firstSystemTimezoneOffsetMin(): Promise<number> {
-  const systems = await SystemsManager.getInstance().getActiveSystems();
+  const systems = await DeviceConfigRegistry.activeDevices();
   if (systems.length === 0) throw new Error("No systems found");
   return systems[0].timezoneOffsetMin;
 }
@@ -169,14 +169,13 @@ export async function aggregateRange(
   console.log(`[Daily Points] Aggregating ${allDays.length} days`);
 
   const db = requirePlanetscaleDb();
-  const systemsManager = SystemsManager.getInstance();
   const results = [];
   let totalPoints = 0;
   let totalRowsCreated = 0;
 
   for (const deviceId of deviceIds) {
     const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId);
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
     if (!system) {
       console.warn(
         `[Daily Points] System ${systemId} not in the registry — skipping its 1d aggregation.`,

@@ -1,4 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
+// config-v4 slice K2: the page chrome still renders the three free-text spec strings, which are no
+// longer columns — project them from `config.spec` at the prop boundary.
+import { withSpecDisplayStrings } from "@/lib/capabilities/config";
 import { redirect } from "next/navigation";
 import DeviceViewer from "@/components/DeviceViewer";
 import HeatmapClient from "@/components/HeatmapClient";
@@ -7,7 +10,6 @@ import AmberSync from "@/components/AmberSync";
 import LatestReadingsClient from "@/components/LatestReadingsClient";
 import DeviceLayout from "@/components/DeviceLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
@@ -17,6 +19,7 @@ import { getViewerDevices } from "@/lib/devices/viewer-devices";
 import { hasTimeTravelingCard } from "@/lib/dashboard/temporal-cards";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 import type { ReadableArea } from "@/lib/areas/list";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 interface PageProps {
   params: Promise<{
@@ -39,7 +42,6 @@ export default async function DevicePage({ params }: PageProps) {
   }
 
   const isAdmin = await isUserAdmin();
-  const systemsManager = SystemsManager.getInstance();
 
   const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
 
@@ -60,7 +62,7 @@ export default async function DevicePage({ params }: PageProps) {
     const isNumericId = /^\d+$/.test(segment);
 
     if (isNumericId) {
-      system = await systemsManager.getSystem(parseInt(segment));
+      system = await DeviceConfigRegistry.deviceByHandle(parseInt(segment));
       systemId = system?.id?.toString() || segment;
       systemIdentifier = segment;
     } else {
@@ -69,7 +71,10 @@ export default async function DevicePage({ params }: PageProps) {
   } else if (subPageRoute && slug.length === 3) {
     // Special route with username/alias: /device/username/alias/[heatmap|generator|amber|latest]
     const [username, alias] = slug;
-    system = await systemsManager.getSystemByUsernameAndAlias(username, alias);
+    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+      username,
+      alias,
+    );
     systemId = system?.id?.toString() || `${username}/${alias}`;
     systemIdentifier = `${username}/${alias}`;
   } else if (slug.length === 1) {
@@ -79,7 +84,7 @@ export default async function DevicePage({ params }: PageProps) {
 
     if (isNumericId) {
       // Numeric ID - look up and canonicalise to /device/{owner-username}/{alias} if it has an alias
-      system = await systemsManager.getSystem(parseInt(segment));
+      system = await DeviceConfigRegistry.deviceByHandle(parseInt(segment));
 
       if (system?.alias && system.ownerClerkUserId) {
         // Guard the Clerk lookup: the owner may be absent from THIS Clerk instance (dev mirrors prod
@@ -107,7 +112,8 @@ export default async function DevicePage({ params }: PageProps) {
       // another user's device list; the rail always reflects the viewer's own devices anyway).
       const ownerId = await getUserIdByUsername(segment);
       if (ownerId && (ownerId === userId || isAdmin)) {
-        const primary = await systemsManager.getPrimaryVisibleSystem(ownerId);
+        const primary =
+          await DeviceConfigRegistry.primaryVisibleDevice(ownerId);
         if (primary) {
           redirect(`/device/${primary.id}`);
         }
@@ -118,7 +124,10 @@ export default async function DevicePage({ params }: PageProps) {
   } else if (slug.length === 2 && !subPageRoute) {
     // Two segments: username/alias format
     const [username, alias] = slug;
-    system = await systemsManager.getSystemByUsernameAndAlias(username, alias);
+    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+      username,
+      alias,
+    );
     systemId = system?.id?.toString() || `${username}/${alias}`;
   } else {
     // Invalid route
@@ -160,7 +169,7 @@ export default async function DevicePage({ params }: PageProps) {
       case "heatmap":
         return (
           <DeviceLayout
-            system={system}
+            system={withSpecDisplayStrings(system)}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
@@ -178,7 +187,7 @@ export default async function DevicePage({ params }: PageProps) {
       case "generator":
         return (
           <DeviceLayout
-            system={system}
+            system={withSpecDisplayStrings(system)}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
@@ -204,7 +213,7 @@ export default async function DevicePage({ params }: PageProps) {
         }
         return (
           <DeviceLayout
-            system={system}
+            system={withSpecDisplayStrings(system)}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
@@ -222,7 +231,7 @@ export default async function DevicePage({ params }: PageProps) {
       case "latest":
         return (
           <DeviceLayout
-            system={system}
+            system={withSpecDisplayStrings(system)}
             userId={userId}
             isAdmin={isAdmin}
             availableSystems={systemsWithUsernames}
@@ -292,7 +301,7 @@ export default async function DevicePage({ params }: PageProps) {
 
   return (
     <DeviceLayout
-      system={system}
+      system={withSpecDisplayStrings(system)}
       userId={userId}
       isAdmin={isAdmin}
       availableSystems={systemsWithUsernames}

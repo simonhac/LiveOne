@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { requireAdmin } from "@/lib/api-auth";
-import { SystemsManager } from "@/lib/systems-manager";
 import { PointInfo } from "@/lib/point/point-info";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
@@ -15,6 +14,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo as pgPointInfo } from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
 import { Point } from "@/lib/ids";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * Apply transform to a numeric value based on the transform type
@@ -64,8 +64,7 @@ export async function GET(
     let dbElapsedMs = 0;
 
     // Get system from SystemsManager (already cached in memory)
-    const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });

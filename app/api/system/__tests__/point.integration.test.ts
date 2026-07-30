@@ -9,7 +9,6 @@
  */
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
-import { SystemsManager } from "@/lib/systems-manager";
 // Phase 5: the legacy store was decommissioned. The point lookup now reads Postgres. The PG `pointInfo`
 // schema mirrors the same fields the seed uses (systemId, index, displayName, active,
 // transform), so this is a drop-in re-point of the same .select().from().where().limit()
@@ -17,6 +16,7 @@ import { SystemsManager } from "@/lib/systems-manager";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
@@ -68,8 +68,7 @@ describe("GET /api/system/[systemId]/point/[pointId]", () => {
 
   beforeAll(async () => {
     // Get a test system from the database
-    const systemsManager = SystemsManager.getInstance();
-    const systems = await systemsManager.getAllSystems();
+    const systems = await DeviceConfigRegistry.allDevices();
 
     if (systems.length === 0) {
       throw new Error("No systems in database for testing");
@@ -145,8 +144,7 @@ describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
 
   beforeAll(async () => {
     // Get a test system from the database
-    const systemsManager = SystemsManager.getInstance();
-    const systems = await systemsManager.getAllSystems();
+    const systems = await DeviceConfigRegistry.allDevices();
 
     if (systems.length === 0) {
       throw new Error("No systems in database for testing");

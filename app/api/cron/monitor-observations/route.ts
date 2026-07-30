@@ -266,13 +266,15 @@ export async function GET(request: NextRequest) {
   // ── 5: battery-provenance freshness + confidence ──
   // Separate try so the not-everywhere flow_attr_1d table / absent helpers never break the checks above.
   try {
-    // Helper-vendor system ids drive both helper_count and the blend-freshness max(interval_end). The
+    // Helper-vendor device rids drive both helper_count and the blend-freshness max(interval_end). The
     // old query JOINed agg_5m to systems inside a CTE; resolving the helper ids first + a DAO
     // max-over-set is byte-identical (the CTE's data_quality column was selected but never used).
+    // config-v4 slice K2: reads `devices` (was a hand-written `SELECT id FROM systems`, invisible to
+    // tsc and therefore to the terminal window's drop).
     const helperIds = (
       (
         await db.execute(
-          sql`SELECT id FROM systems WHERE vendor_type = 'helper'`,
+          sql`SELECT rid AS id FROM devices WHERE vendor = 'helper'`,
         )
       ).rows ?? []
     ).map((h) => Number((h as { id: unknown }).id));

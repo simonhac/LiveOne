@@ -20,7 +20,6 @@ import {
   devices,
   pointInfo,
   points,
-  systems,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
@@ -95,12 +94,12 @@ async function loadOeRawSeries(
 }> {
   if (!region) return { emissions: null, renewable: null };
   const [oeSys] = await db
-    .select({ id: systems.id })
-    .from(systems)
+    .select({ id: devices.rid })
+    .from(devices)
     .where(
       and(
-        eq(systems.vendorType, "openelectricity"),
-        eq(systems.vendorSiteId, region),
+        eq(devices.vendor, "openelectricity"),
+        eq(devices.vendorSiteId, region),
       ),
     )
     .limit(1);
@@ -211,7 +210,7 @@ export interface BoundPoint {
  * `point_info` row rather than the binding — which is what keeps them a genuine LEGACY side for the
  * slice-D parity gate (`scripts/config-v4/verify-slice-d-parity.ts` block 1 compares `point` against
  * `pointForAddr(systemId, pointId)`; sourcing them from the same uuid would make that check circular).
- * Their remaining production consumers are the two `systems.config` lookups in this module and
+ * Their remaining production consumers are the two `devices.config` lookups in this module and
  * `battery-provenance-daily-pg.ts`, both of which read the device through `points`/`devices` instead.
  */
 export async function boundPoints(
@@ -247,24 +246,22 @@ export async function boundPoints(
 }
 
 /**
- * The `systems.config` of the DEVICE that owns `point` — the site-level knobs (battery provenance,
+ * The `devices.config` of the DEVICE that owns `point` — the site-level knobs (battery provenance,
  * generator source, reserve-floor prior) hang off the battery point's device.
  *
- * Resolved `points.device_id → devices.rid → systems.id` since slice E PR 2a, replacing a lookup keyed
- * on `area_bindings.point_system_id`. `devices.rid == systems.id` is the seam invariant
- * (lib/registry/v4-mirror.ts); slice K/N delete the last `systems` hop, leaving `devices.config`.
- * Returns undefined when the point (or its device's `systems` row) is gone — the same "no knobs, use
+ * Resolved `points.device_id → devices.id` since slice E PR 2a; slice K2 deleted the trailing
+ * `devices.rid → systems.id` bridge, so this is now a single FK-backed hop and cannot miss for a
+ * point that exists. Returns undefined only when the point itself is gone — the same "no knobs, use
  * the defaults" outcome the previous `where(systems.id = pointSystemId)` miss produced.
  */
 export async function ownerDeviceConfig(
   db: PgDb,
   point: PointId,
-): Promise<(typeof systems.$inferSelect)["config"] | undefined> {
+): Promise<(typeof devices.$inferSelect)["config"] | undefined> {
   const [row] = await db
-    .select({ config: systems.config })
+    .select({ config: devices.config })
     .from(points)
     .innerJoin(devices, eq(devices.id, points.deviceId))
-    .innerJoin(systems, eq(systems.id, devices.rid))
     .where(eq(points.id, Point.toUuid(point)))
     .limit(1);
   return row?.config;

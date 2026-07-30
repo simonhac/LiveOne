@@ -4,7 +4,6 @@ import { requireAuth, requireSystemAccess } from "@/lib/api-auth";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
 import { getAreaForSystem } from "@/lib/areas/resolve";
-import { SystemsManager } from "@/lib/systems-manager";
 import { mergeAreaLocation } from "@/lib/areas/location";
 import {
   createArea,
@@ -16,6 +15,7 @@ import {
 } from "@/lib/areas/create";
 import { locationPatchFromBody } from "@/lib/areas/http";
 import { Area, Point } from "@/lib/ids";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * GET /api/areas?systemId=N — the P3 Area for a system, read-only.
@@ -136,9 +136,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Timezone defaults from the first member device.
-  const first = await SystemsManager.getInstance().getSystem(
-    memberSystemIds[0],
-  );
+  const first = await DeviceConfigRegistry.deviceByHandle(memberSystemIds[0]);
   const timezoneOffsetMin =
     typeof body?.timezoneOffsetMin === "number"
       ? body.timezoneOffsetMin

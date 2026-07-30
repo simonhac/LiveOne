@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SystemsManager } from "@/lib/systems-manager";
 import { loadAreaForOwner } from "@/lib/areas/http";
 import {
   addMember,
@@ -9,6 +8,7 @@ import {
   AreaAccessError,
   AreaValidationError,
 } from "@/lib/areas/create";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * Member-device membership of an Area (the area builder's Members tab), addressed by its opaque `ar_`
@@ -43,7 +43,7 @@ export async function POST(
   // synthetic-handle Area instead.
   if (
     area.legacySystemId != null &&
-    (await SystemsManager.getInstance().getSystem(area.legacySystemId))
+    (await DeviceConfigRegistry.deviceByHandle(area.legacySystemId))
   ) {
     return NextResponse.json(
       {

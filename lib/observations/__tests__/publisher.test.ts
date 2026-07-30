@@ -1,6 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import { buildObservations } from "../publisher";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 /**
  * Regression guard for the observations ms-truncation bug: buildObservations must
@@ -14,7 +14,7 @@ describe("buildObservations", () => {
     vendorType: "mondo",
     vendorSiteId: "site-1",
     timezoneOffsetMin: 600,
-  } as unknown as SystemWithPolling;
+  } as unknown as DeviceConfigView;
 
   const point = {
     index: 1,

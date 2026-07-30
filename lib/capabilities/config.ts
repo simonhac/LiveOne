@@ -160,6 +160,51 @@ export function maxPowerHintFromSpec(
 }
 
 /**
+ * Render a {@link DeviceSpec} back into the three free-text display strings the WIRE still carries
+ * (`/api/data`'s `systemInfo.ratings`/`solarSize`/`batterySize`, the admin systems table).
+ *
+ * This is deliberately a one-way DISPLAY projection, not a round-trip. Slice K2 flips the config reads
+ * onto `devices`, which has no counterpart to the three columns — but four components still render the
+ * strings verbatim (`SystemInfoTooltip`, `MobileHeaderMenu`, `DeviceLayout`, `AdminDashboardClient`),
+ * so dropping them from the payload would silently blank a panel rather than fail a build. Emitting them
+ * from the structured spec keeps the payload stable while making `config.spec` the sole SOURCE.
+ *
+ * The formats reproduce what the vendor scrapers happened to produce ("7.5kW, 48V", "9 kW", "63.6 kWh"),
+ * because that is what the components' copy is written around. `undefined` (not `null`) for an absent
+ * field, so an unknown spec renders exactly as an unparseable free-text value did — blank, not "0 kW".
+ * Retires with the strings themselves in Phase 14.
+ */
+export function specToDisplayStrings(spec: DeviceSpec | null | undefined): {
+  ratings: string | null;
+  solarSize: string | null;
+  batterySize: string | null;
+} {
+  const ratingsParts: string[] = [];
+  if (spec?.inverterSizeKw !== undefined)
+    ratingsParts.push(`${spec.inverterSizeKw}kW`);
+  if (spec?.batteryVoltageV !== undefined)
+    ratingsParts.push(`${spec.batteryVoltageV}V`);
+  return {
+    ratings: ratingsParts.length > 0 ? ratingsParts.join(", ") : null,
+    solarSize:
+      spec?.solarSizeKw !== undefined ? `${spec.solarSizeKw} kW` : null,
+    batterySize:
+      spec?.batterySizeKwh !== undefined ? `${spec.batterySizeKwh} kWh` : null,
+  };
+}
+
+/**
+ * A device config record widened with the three legacy display strings — the shape the page chrome
+ * (`DeviceLayout` → `SystemInfoTooltip` / `MobileHeaderMenu`) still declares. A function rather than a
+ * precomputed const so it composes with TypeScript's narrowing at the call site.
+ */
+export function withSpecDisplayStrings<
+  T extends { config: DeviceConfig | null },
+>(device: T): T & ReturnType<typeof specToDisplayStrings> {
+  return { ...device, ...specToDisplayStrings(device.config?.spec) };
+}
+
+/**
  * Apply a device's capability overrides to a derived set: present+true forces the capability on,
  * present+false forces it off, absent leaves derivation untouched. Returns a new set; a null/empty
  * config is a no-op (so an un-configured device behaves exactly as before — parity preserved).

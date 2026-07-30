@@ -12,7 +12,7 @@
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
 import { PointManager } from "@/lib/point/point-manager";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
@@ -53,8 +53,7 @@ describe("GET /api/system/[systemId]/series", () => {
 
   beforeAll(async () => {
     // Get a test system from the database
-    const systemsManager = SystemsManager.getInstance();
-    const systems = await systemsManager.getAllSystems();
+    const systems = await DeviceConfigRegistry.allDevices();
 
     if (systems.length === 0) {
       throw new Error("No systems in database for testing");

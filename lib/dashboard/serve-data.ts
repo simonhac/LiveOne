@@ -5,10 +5,9 @@ import { getLatestPointValues } from "@/lib/kv-cache-manager";
 import { transformDates } from "@/lib/json";
 import { PointManager } from "@/lib/point/point-manager";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
-import {
-  SystemsManager,
-  type SystemWithPolling,
-} from "@/lib/systems-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import { specToDisplayStrings } from "@/lib/capabilities/config";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { ServerTimer } from "@/lib/server-timing";
 
 /**
@@ -39,7 +38,7 @@ interface LatestReadingRow {
  * before returning/caching.
  */
 export async function buildSystemPayload(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   wantsReadings: boolean,
   timer?: ServerTimer,
 ) {
@@ -59,7 +58,11 @@ export async function buildSystemPayload(
       : Promise.resolve(undefined),
   ]);
 
-  // Build the system object with full SystemWithPolling data
+  // Build the system object with full DeviceConfigView data.
+  // config-v4 slice K2: `ratings`/`solarSize`/`batterySize` are no longer COLUMNS — `devices` has no
+  // counterpart and `config.spec` is the source. They stay on the wire as a display projection because
+  // four components render them verbatim; retired with those components in Phase 14.
+  const spec = specToDisplayStrings(system.config?.spec);
   const systemData = {
     id: system.id,
     vendorType: system.vendorType,
@@ -72,9 +75,9 @@ export async function buildSystemPayload(
     status: system.status,
     model: system.model,
     serial: system.serial,
-    ratings: system.ratings,
-    solarSize: system.solarSize,
-    batterySize: system.batterySize,
+    ratings: spec.ratings,
+    solarSize: spec.solarSize,
+    batterySize: spec.batterySize,
     location: system.location,
     metadata: system.metadata,
     config: system.config,

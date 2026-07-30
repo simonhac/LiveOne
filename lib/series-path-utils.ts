@@ -1,7 +1,7 @@
-import { SystemsManager, SystemWithPolling } from "@/lib/systems-manager";
-
-// Load SystemsManager once at module level
-const systemsManager = SystemsManager.getInstance();
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 
 /**
  * Utilities for working with series IDs in the format:
@@ -36,10 +36,10 @@ const systemsManager = SystemsManager.getInstance();
  */
 export async function resolveSystemFromIdentifier(
   systemIdentifier: string,
-): Promise<SystemWithPolling | null> {
+): Promise<DeviceConfigView | null> {
   // Only support numeric ID for now
   if (/^\d+$/.test(systemIdentifier)) {
-    return systemsManager.getSystem(parseInt(systemIdentifier));
+    return DeviceConfigRegistry.deviceByHandle(parseInt(systemIdentifier));
   }
 
   return null;
@@ -81,7 +81,7 @@ export function buildSeriesId(
  * getSiteIdentifier({ id: 10, alias: null, ... })
  * // Returns: "system.10"
  */
-export function getSiteIdentifier(system: SystemWithPolling): string {
+export function getSiteIdentifier(system: DeviceConfigView): string {
   return system.alias || `system.${system.id}`;
 }
 
@@ -89,6 +89,6 @@ export function getSiteIdentifier(system: SystemWithPolling): string {
  * Build a siteId from a system
  * @deprecated Use getSiteIdentifier() instead
  */
-export function buildSiteIdFromSystem(system: SystemWithPolling): string {
+export function buildSiteIdFromSystem(system: DeviceConfigView): string {
   return getSiteIdentifier(system);
 }

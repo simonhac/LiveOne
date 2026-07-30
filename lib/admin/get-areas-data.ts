@@ -12,11 +12,11 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { and, eq, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas, areaBindings } from "@/lib/db/planetscale/schema";
-import { SystemsManager } from "@/lib/systems-manager";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import type { AreaLocation } from "@/lib/areas/types";
 import { Area } from "@/lib/ids";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export interface AreaSourceSystem {
   id: number;
@@ -52,12 +52,11 @@ export interface AdminAreasResult {
   timestamp: string;
 }
 
-/** Resolve a physical system id to its display fields (null if no such system). */
+/** Resolve a physical device handle to its display fields (null if no such device). */
 async function resolveSystem(
-  systemsManager: SystemsManager,
   systemId: number,
 ): Promise<AreaSourceSystem | null> {
-  const system = await systemsManager.getSystem(systemId);
+  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
   if (!system) return null;
   return {
     id: system.id,
@@ -75,7 +74,6 @@ async function shapeAreas(
   allAreas: (typeof areas.$inferSelect)[],
 ): Promise<AdminAreaData[]> {
   const db = requirePlanetscaleDb();
-  const systemsManager = SystemsManager.getInstance();
 
   // Binding counts per area (one grouped query).
   const bindingCountRows = await db
@@ -134,7 +132,7 @@ async function shapeAreas(
       await Promise.all(
         memberIds.map(
           async (id) =>
-            (await resolveSystem(systemsManager, id)) ?? {
+            (await resolveSystem(id)) ?? {
               id,
               alias: null,
               displayName: null,

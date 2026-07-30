@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SystemsManager } from "@/lib/systems-manager";
 import {
   updatePollingStatusSuccess,
   updatePollingStatusError,
@@ -10,6 +9,7 @@ import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import type { PointReadingInput } from "@/lib/vendors/types";
 import type { GushRequestBody } from "@/lib/push/types";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * gusher — the generic push receiver.
@@ -103,8 +103,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getSystemByVendorSiteId(
+    const system = await DeviceConfigRegistry.deviceByVendorSite(
       data.vendorSiteId,
     );
     if (!system) {

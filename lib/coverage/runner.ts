@@ -9,7 +9,9 @@
 import { sql } from "drizzle-orm";
 import { parseDate } from "@internationalized/date";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { SystemsManager, type SystemWithPolling } from "@/lib/systems-manager";
+import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
@@ -98,7 +100,7 @@ export async function runCoverageRepair(
   const providers = COVERAGE_PROVIDERS.filter(
     (p) => !onlyVendor || p.vendorType === onlyVendor,
   );
-  const allSystems = await SystemsManager.getInstance().getActiveSystems();
+  const allSystems = await DeviceConfigRegistry.activeDevices();
 
   const reports: SystemReport[] = [];
   const pointsBySystem = new Map<number, CoveragePoint[]>();
@@ -155,10 +157,17 @@ export async function runCoverageRepair(
                 floor = commissioned;
                 if (!dryRun) {
                   try {
-                    await db.execute(sql`
-                      UPDATE systems SET commissioned_on = ${commissioned}
-                      WHERE id = ${system.id} AND commissioned_on IS NULL
-                    `);
+                    // config-v4 slice K2: this was a hand-written `UPDATE systems` that bypassed
+                    // `updateSystem` and therefore the `devices` mirror entirely — a THIRD instance of
+                    // the "wired at mint, not at edit" class, and the only one where the writer was not
+                    // even the sanctioned one. `commissioned_on` is the coverage window's floor, so a
+                    // drifted mirror manufactures phantom gaps once `devices` is the reader. Routed
+                    // through the mirrored writer; the old statement's `AND commissioned_on IS NULL`
+                    // guard is preserved by the enclosing `if (!floor)`, and this is a weekly single
+                    // writer, so there is no concurrent update to lose.
+                    await SystemsManager.getInstance().updateSystem(system.id, {
+                      commissionedOn: commissioned,
+                    });
                   } catch (err) {
                     console.error(
                       `[RepairCoverage] persist commissioned_on failed sys=${system.id}:`,

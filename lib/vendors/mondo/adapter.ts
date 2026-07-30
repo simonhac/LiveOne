@@ -5,7 +5,7 @@ import type {
   FetchContext,
   FetchResult,
 } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
@@ -200,7 +200,7 @@ export class MondoAdapter extends BaseVendorAdapter {
    * Base adapter handles session creation, data insertion, and session completion
    */
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: MondoCredentials,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -397,7 +397,7 @@ export class MondoAdapter extends BaseVendorAdapter {
    * Test connection for an existing system with monitoring point group ID
    */
   private async testExistingSystem(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     accessToken: string,
   ): Promise<TestConnectionResult> {
     console.log(
@@ -695,7 +695,7 @@ export class MondoAdapter extends BaseVendorAdapter {
   }
 
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: MondoCredentials,
   ): Promise<TestConnectionResult> {
     try {

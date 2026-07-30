@@ -64,15 +64,7 @@ export type DevicePollingState = typeof pgDeviceState.$inferSelect;
  * "eager areas — Option A" makes `devices.primary_area_id` NOT NULL and the area the sole home for
  * placement. The join is therefore inner and can never drop a device.
  */
-export interface DeviceRecord {
-  // --- v4 identity (not on SystemWithPolling; additive, free to use) ---
-  /** `dv_…` TypeID — the identity every v4 caller should prefer. */
-  readonly deviceId: DeviceId;
-  /** Raw `devices.id`. Data-layer only; above this seam use `deviceId`. */
-  readonly uuid: string;
-  /** The device's area-of-one (`devices.primary_area_id`, NOT NULL). */
-  readonly primaryAreaId: string;
-
+export interface DeviceConfigView {
   // --- SystemWithPolling-compatible surface (see module header) ---
   /** `devices.rid` — still the integer handle, so `?systemId=N` keeps resolving. */
   readonly id: number;
@@ -94,6 +86,31 @@ export interface DeviceRecord {
   readonly updatedAt: Date;
   readonly commissionedOn: string | null;
   readonly pollingStatus: DevicePollingState | null;
+}
+
+/**
+ * One device's full config, WITH its v4 identity — what every read in this module returns.
+ *
+ * The identity is split out from {@link DeviceConfigView} because of ONE caller that cannot supply it:
+ * `synthesizeAreaView` (slice K3) fabricates this shape from a multi-device Area, which by definition
+ * has no `devices` row and therefore no `deviceId`/`uuid`/`primary_area_id`. Making the identity
+ * non-optional on the shape the serving and vendor layers consume would have forced K2 and K3 into a
+ * single PR: `getSystem` and `getViewableSystem` converge on the same `system:` parameter in
+ * `api-auth.ts`, `serve-data.ts`, `point-manager.ts` and `history/`, so the PARAMETER type has to be
+ * satisfiable by both producers before either can move. Splitting the type lets the type conversion
+ * land whole-tree here while the area-view RESOLUTION stays K3's problem — and K3 finishes the job by
+ * deleting the synthesis and collapsing `DeviceConfigView` back into `DeviceRecord`.
+ *
+ * Rule of thumb: a function that only READS config takes `DeviceConfigView`; one that needs to address
+ * a real device (points, readings, v4 writes) takes `DeviceRecord`.
+ */
+export interface DeviceRecord extends DeviceConfigView {
+  /** `dv_…` TypeID — the identity every v4 caller should prefer. */
+  readonly deviceId: DeviceId;
+  /** Raw `devices.id`. Data-layer only; above this seam use `deviceId`. */
+  readonly uuid: string;
+  /** The device's area-of-one (`devices.primary_area_id`, NOT NULL). */
+  readonly primaryAreaId: string;
 }
 
 /** The trimmed shape the device switcher renders — mirrors `getSystemsVisibleByUser`'s projection. */

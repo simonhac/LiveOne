@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
+import { devices, systems } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { getValidEnphaseToken } from "@/lib/vendors/enphase/enphase-auth";
 
@@ -51,11 +52,9 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
     }
 
     // Get system details
-    const [system] = await requirePlanetscaleDb()
-      .select()
-      .from(systems)
-      .where(eq(systems.id, parseInt(systemId)))
-      .limit(1);
+    const system = await DeviceConfigRegistry.deviceByHandle(
+      parseInt(systemId),
+    );
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });

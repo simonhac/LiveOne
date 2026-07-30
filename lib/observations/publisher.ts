@@ -11,7 +11,7 @@ import {
   getObservationsReceiverUrl,
 } from "@/lib/qstash";
 import { Observation, QueueMessage } from "./types";
-import { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import type { PointInfoRow } from "@/lib/point/point-manager";
 import { persistOutbox } from "./outbox";
@@ -37,7 +37,7 @@ export interface RawObservationInput {
  * Build the MQTT-style topic for an observation
  * Format: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
  */
-function buildTopic(system: SystemWithPolling, point: PointInfo): string {
+function buildTopic(system: DeviceConfigView, point: PointInfo): string {
   return `liveone/${system.vendorType}/${system.vendorSiteId}/${point.physicalPathTail}`;
 }
 
@@ -54,7 +54,7 @@ function formatTimestamp(timeMs: number, timezoneOffsetMin: number): string {
  * Convert raw observation inputs to Observation objects
  */
 export function buildObservations(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   inputs: RawObservationInput[],
 ): Observation[] {
   return inputs.map((input) => ({
@@ -95,7 +95,7 @@ export function buildObservations(
  * @param inputs - Array of raw observation inputs
  */
 export async function publishObservationBatch(
-  system: SystemWithPolling,
+  system: DeviceConfigView,
   inputs: RawObservationInput[],
 ): Promise<void> {
   // Skip if no QStash client configured

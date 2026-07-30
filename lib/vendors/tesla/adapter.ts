@@ -8,7 +8,7 @@
 
 import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
 import type { FetchContext, FetchResult, TestConnectionResult } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { getTeslaClient } from "./tesla-client";
 import { getValidTeslaToken } from "./tesla-auth";
@@ -32,7 +32,7 @@ interface ResolvedTeslaConfig {
 
 // Read the per-system overrides from `systems.metadata.tesla`, applying defaults and a
 // 1-minute floor on the intervals. Absent/garbage metadata yields the legacy defaults.
-function resolveTeslaConfig(system: SystemWithPolling): ResolvedTeslaConfig {
+function resolveTeslaConfig(system: DeviceConfigView): ResolvedTeslaConfig {
   const meta =
     ((system.metadata as { tesla?: TeslaSystemMetadata } | null) ?? {}).tesla ??
     {};
@@ -73,7 +73,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
    * - 5 min when charging (from previous poll)
    */
   protected evaluateSchedule(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
@@ -129,7 +129,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
    * Base adapter handles session creation, data insertion, and session completion
    */
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     _credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -268,7 +268,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
    * Test connection with Tesla
    */
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     _credentials: any,
   ): Promise<TestConnectionResult> {
     try {

@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "./auth-utils";
-import { SystemsManager, SystemWithPolling } from "./systems-manager";
+import { SystemsManager } from "./systems-manager";
+import {
+  DeviceConfigRegistry,
+  type DeviceConfigView,
+} from "@/lib/registry/device-config";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
@@ -23,7 +27,7 @@ export interface AuthenticatedContext extends AuthContext {
 
 // System access result
 export interface SystemAuthContext extends AuthenticatedContext {
-  system: SystemWithPolling;
+  system: DeviceConfigView;
   isOwner: boolean;
   canRead: boolean;
   canWrite: boolean;
@@ -135,9 +139,8 @@ export async function requireSystemAccess(
 ): Promise<SystemAuthContext | NextResponse> {
   const ctx = await getAuthContext(request, timer);
 
-  // Get system
-  const systemsManager = SystemsManager.getInstance();
-  const system = await systemsManager.getSystem(systemId);
+  // Get the device's config. Strictly real devices — the area-view path is requireDashboardAccess's.
+  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
   if (!system) {
     return NextResponse.json({ error: "System not found" }, { status: 404 });
   }
@@ -177,7 +180,7 @@ export async function requireSystemAccess(
 // Dashboard access context — like a read-only SystemAuthContext but userId may be null when access
 // is granted via a public per-dashboard share token.
 export interface DashboardAuthContext {
-  system: SystemWithPolling;
+  system: DeviceConfigView;
   userId: string | null;
   canRead: boolean;
   canWrite: boolean;

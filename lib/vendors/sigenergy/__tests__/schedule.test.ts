@@ -1,6 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import { SigenergyAdapter } from "../adapter";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 /**
  * Boundary-aligned scheduling (adapter.alignToBoundary = true): poll on absolute 5-min boundaries
@@ -8,12 +8,12 @@ import type { SystemWithPolling } from "@/lib/systems-manager";
  * success lands. Keyed off pollingStatus.lastSuccessTime. All timestamps are UTC.
  */
 
-// Minimal SystemWithPolling — shouldPoll only reads timezoneOffsetMin + pollingStatus.
-function sys(lastSuccessTime: Date | null): SystemWithPolling {
+// Minimal DeviceConfigView — shouldPoll only reads timezoneOffsetMin + pollingStatus.
+function sys(lastSuccessTime: Date | null): DeviceConfigView {
   return {
     timezoneOffsetMin: 600,
     pollingStatus: lastSuccessTime ? { lastSuccessTime } : null,
-  } as unknown as SystemWithPolling;
+  } as unknown as DeviceConfigView;
 }
 
 describe("SigenergyAdapter boundary schedule", () => {

@@ -4,7 +4,7 @@ import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
 import { formatDataArray } from "./format-opennem";
 import { CalendarDate, ZonedDateTime } from "@internationalized/date";
 import { toUnixTimestamp } from "@/lib/date-utils";
-import { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { buildSeriesId, buildSiteIdFromSystem } from "@/lib/series-path-utils";
 
 /**
@@ -19,7 +19,7 @@ export class OpenNEMConverter {
     measurementSeries: MeasurementSeries[],
     fields: string[],
     interval: "5m" | "30m" | "1d",
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     requestedStartTime?: CalendarDate | ZonedDateTime,
     requestedEndTime?: CalendarDate | ZonedDateTime,
   ): OpenNEMDataSeries[] {

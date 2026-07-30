@@ -1,6 +1,6 @@
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { PointMetadata } from "@/lib/point/point-manager";
 import type { SessionCause } from "@/lib/session-manager";
 import type { CommonPollingData } from "@/lib/types/common";
@@ -106,7 +106,7 @@ export interface VendorAdapter {
 
   // Check if system should be polled based on schedule
   shouldPoll(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     forcePollAll: boolean,
     now: Date,
   ): Promise<{
@@ -117,7 +117,7 @@ export interface VendorAdapter {
 
   // Main polling function - handles all data collection
   poll(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
     options: PollOptions,
   ): Promise<PollingResult>;
@@ -127,7 +127,7 @@ export interface VendorAdapter {
 
   // Test connection with vendor
   testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult>;
 }

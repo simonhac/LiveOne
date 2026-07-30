@@ -35,7 +35,7 @@
  * check in `/api/health` and `monitor-observations`.
  */
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
 import { Area } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -136,22 +136,55 @@ export const DEVICE_CONFIG_WITH_SPEC_SQL = `
       )), '{}'::jsonb))))`;
 
 /**
- * Ensure the area-of-one for a device handle, minting it if absent.
+ * Ensure the area-of-one for a device handle, minting it if absent — and BACKFILL its placement.
  *
  * `devices.primary_area_id` is tightened to NOT NULL by registry-sync, and v3's `createSystem` does not
  * mint an area (the "explicit areas only" model on `main`), so a system created after registry-sync would
  * otherwise have no area to point at. tz/location are copied up from the device: post-cutover the area is
  * the SOLE home for placement, so this is a move, not a duplicate.
  *
+ * ## The mint-only leak, and why the reconcile is one-directional
+ *
+ * Until slice K2 this function returned early on `if (existing)`, so placement was copied at MINT and
+ * never again — the EIGHTH instance of "wired at mint, not at edit" (A2 found three, H a fourth, E a
+ * fifth, M a sixth shape, K1 a seventh). `updateSystem` re-mirrors `devices` but the area is a separate
+ * row, so every `location`/timezone edit through the admin settings route drifted, with nothing able to
+ * self-heal it. That matters now: `lib/grid/context.ts` derives the NEM region from `areas.location`, and
+ * the terminal window DROPS `systems` — a value living only there is destroyed, not merely stale.
+ *
+ * ⚠️ The reconcile fills only what is MISSING on the area, and never overwrites. The area is the
+ * AUTHORITY: the area builder and `/api/areas/*` write `areas.location` / the timezones directly, so a
+ * blanket copy-down from `systems` would destroy the newer value. That is not hypothetical — handle 13
+ * (Kutis) is exactly this case, with a populated `areas.location` and a stale/null `systems.location`,
+ * and it is asserted as a NAMED benign divergence in `verify-slice-k1-parity.ts` block 4. So: `systems`
+ * → area only where the area side is NULL. Timezones are NOT NULL on `areas`, so they are never filled
+ * by this path; `location` is the one nullable column and the one that leaked.
+ *
  * @returns the area uuid
  */
 async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
   const [existing] = await exec
-    .select({ id: areas.id })
+    .select({ id: areas.id, location: areas.location })
     .from(areas)
     .where(eq(areas.legacySystemId, systemId))
     .limit(1);
-  if (existing) return existing.id;
+  if (existing) {
+    // Heal the mint-only leak, one-directionally: adopt `systems.location` ONLY when the area has none.
+    if (existing.location == null) {
+      const [src] = await exec
+        .select({ location: systems.location })
+        .from(systems)
+        .where(eq(systems.id, systemId))
+        .limit(1);
+      if (src?.location != null) {
+        await exec
+          .update(areas)
+          .set({ location: src.location as AreaLocation | null })
+          .where(and(eq(areas.id, existing.id), isNull(areas.location)));
+      }
+    }
+    return existing.id;
+  }
 
   const [sys] = await exec
     .select({

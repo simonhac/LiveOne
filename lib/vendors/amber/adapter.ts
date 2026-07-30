@@ -5,7 +5,7 @@ import type {
   FetchContext,
   FetchResult,
 } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import {
@@ -286,7 +286,7 @@ export class AmberAdapter extends BaseVendorAdapter {
    * but sets recordsProcessed to the actual count.
    */
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: AmberCredentials,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -443,7 +443,7 @@ export class AmberAdapter extends BaseVendorAdapter {
    * Test connection and discover system
    */
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: AmberCredentials,
   ): Promise<TestConnectionResult> {
     try {

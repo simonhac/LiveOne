@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withQstashSignatureVerification } from "@/lib/observations/qstash-receiver";
 import { eq } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { sessions, systems } from "@/lib/db/planetscale/schema";
+import { devices, sessions, systems } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import type { RawInsert, Agg5mInsert } from "@/lib/readings";
 import { Point } from "@/lib/ids";
@@ -52,9 +52,9 @@ async function isSystemFiveMinuteNative(
   const cached = fiveMinNativeCache.get(systemId);
   if (cached !== undefined) return cached;
   const rows = await db
-    .select({ vendorType: systems.vendorType })
-    .from(systems)
-    .where(eq(systems.id, systemId))
+    .select({ vendorType: devices.vendor })
+    .from(devices)
+    .where(eq(devices.rid, systemId))
     .limit(1);
   // Unknown system (not yet mirrored) → treat as raw-vendor (safe default; first-write-wins).
   const isNative = isFiveMinuteNativeVendor(rows[0]?.vendorType);

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export async function GET(
   request: NextRequest,
@@ -24,7 +25,7 @@ export async function GET(
     }
 
     // Get the system to find the owner (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
-    const system = await SystemsManager.getInstance().getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
@@ -65,7 +66,7 @@ export async function PATCH(
     const { ownerClerkUserId } = body;
 
     // Verify system exists (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
-    const system = await SystemsManager.getInstance().getSystem(systemId);
+    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });

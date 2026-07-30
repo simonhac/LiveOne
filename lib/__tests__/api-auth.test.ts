@@ -21,17 +21,24 @@ jest.mock("@/lib/dashboard/access", () => ({ allowedSystemIds: jest.fn() }));
 jest.mock("@/lib/systems-manager", () => ({
   SystemsManager: { getInstance: jest.fn() },
 }));
+// config-v4 slice K2: `requireSystemAccess` reads the config registry directly, so the DEVICE registry
+// is what has to be mocked. `getViewableSystem`/`isAreaHandle` are still SystemsManager (slice K3).
+jest.mock("@/lib/registry/device-config", () => ({
+  DeviceConfigRegistry: { deviceByHandle: jest.fn() },
+}));
 
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const mockValidate = jest.mocked(validateDashboardShareToken);
 const mockGetDashboard = jest.mocked(getDashboard);
 const mockAllowed = jest.mocked(allowedSystemIds);
 const mockGetInstance = jest.mocked(SystemsManager.getInstance);
+const mockDeviceByHandle = jest.mocked(DeviceConfigRegistry.deviceByHandle);
 
 function req(systemId: number, token: string): NextRequest {
   return {
@@ -51,10 +58,12 @@ beforeEach(() => {
     timezoneOffsetMin: 600,
     displayName: `sys ${sid}`,
   }));
+  mockDeviceByHandle.mockImplementation(
+    getSystem as unknown as typeof DeviceConfigRegistry.deviceByHandle,
+  );
   mockGetInstance.mockReturnValue({
-    getSystem,
-    // These tests use REAL systems, so the area-handle branch is never taken and a viewable
-    // system resolves to the system itself.
+    // These tests use REAL devices, so the area-handle branch is never taken and a viewable
+    // system resolves to the device itself.
     getViewableSystem: getSystem,
     isAreaHandle: jest.fn(async () => false),
   } as unknown as ReturnType<typeof SystemsManager.getInstance>);

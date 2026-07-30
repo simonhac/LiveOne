@@ -48,7 +48,7 @@ async function main() {
 
   if (systemId == null || !owner) {
     const { planetscaleDb } = await import("@/lib/db/planetscale");
-    const { systems } = await import("@/lib/db/planetscale/schema");
+    const { devices } = await import("@/lib/db/planetscale/schema");
     if (!planetscaleDb) {
       console.error(
         "❌ Provide SYSTEM_ID + OWNER_CLERK_USER_ID, or set PLANETSCALE_DATABASE_URL so the system can be resolved.",
@@ -57,16 +57,13 @@ async function main() {
     }
     const rows = await planetscaleDb
       .select({
-        id: systems.id,
-        owner: systems.ownerClerkUserId,
-        displayName: systems.displayName,
+        id: devices.rid,
+        owner: devices.ownerUserId,
+        displayName: devices.name,
       })
-      .from(systems)
+      .from(devices)
       .where(
-        and(
-          eq(systems.vendorType, vendorType),
-          eq(systems.vendorSiteId, siteId),
-        ),
+        and(eq(devices.vendor, vendorType), eq(devices.vendorSiteId, siteId)),
       )
       .limit(1);
     if (rows.length === 0) {

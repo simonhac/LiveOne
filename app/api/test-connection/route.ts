@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { SystemsManager } from "@/lib/systems-manager";
 import { getSystemCredentials } from "@/lib/secure-credentials";
 import { sessionManager } from "@/lib/session-manager";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,9 +37,7 @@ export async function POST(request: NextRequest) {
     }
     // Use case 2: Testing an existing system by systemId
     else if (systemId) {
-      // Use SystemsManager to get the system
-      const manager = SystemsManager.getInstance();
-      system = await manager.getSystem(systemId);
+      system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
       if (!system) {
         return NextResponse.json(
@@ -120,7 +118,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Create a temporary system object for the adapter to use
-    const tempSystem: SystemWithPolling = {
+    const tempSystem: DeviceConfigView = {
       id: systemId || -1, // Use real ID if testing existing system
       vendorType: finalVendorType,
       vendorSiteId: vendorSiteId || "", // Use existing vendorSiteId or let adapter discover
@@ -130,9 +128,6 @@ export async function POST(request: NextRequest) {
       alias: null,
       model: null,
       serial: null,
-      ratings: null,
-      solarSize: null,
-      batterySize: null,
       location: null,
       metadata: null,
       config: null,

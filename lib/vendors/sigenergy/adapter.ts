@@ -5,7 +5,7 @@ import type {
   FetchResult,
   TestConnectionResult,
 } from "../types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { SigenergyClient, SigenergyError } from "./sigenergy-client";
@@ -76,7 +76,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
   }
 
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: SigenergyCredentials,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -139,7 +139,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
   }
 
   async testConnection(
-    _system: SystemWithPolling,
+    _system: DeviceConfigView,
     credentials: SigenergyCredentials,
   ): Promise<TestConnectionResult> {
     try {

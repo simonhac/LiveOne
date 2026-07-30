@@ -8,6 +8,7 @@ import {
   teslaOAuthStateKey,
   type TeslaOAuthState,
 } from "@/lib/vendors/tesla/tesla-oauth-state";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
   try {
@@ -126,7 +127,7 @@ export async function GET(request: NextRequest) {
     // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
     const systemsManager = SystemsManager.getInstance();
     const existingByVendorSiteId =
-      await systemsManager.getSystemByVendorSiteId(vehicleId);
+      await DeviceConfigRegistry.deviceByVendorSite(vehicleId);
     const existingSystem =
       existingByVendorSiteId && existingByVendorSiteId.vendorType === "tesla"
         ? existingByVendorSiteId

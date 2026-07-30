@@ -7,7 +7,7 @@ import type {
   FetchResult,
   PollStage,
 } from "./types";
-import type { SystemWithPolling } from "@/lib/systems-manager";
+import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
@@ -60,7 +60,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @returns Evaluation result with shouldPoll flag, reason, and next poll time
    */
   protected evaluateSchedule(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
@@ -121,7 +121,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * already loaded with the system, so it needs no extra state and survives serverless cold starts.
    */
   private evaluateBoundarySchedule(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     now: Date,
   ): ScheduleEvaluation {
     const intervalMs = this.pollIntervalMinutes * 60 * 1000;
@@ -158,7 +158,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @returns Time of last poll, or null if never polled
    */
   protected async getLastPollTime(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
   ): Promise<Date | null> {
     // The polling status is already loaded with the system from SystemsManager
     return system.pollingStatus?.lastPollTime || null;
@@ -172,7 +172,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @returns Object with shouldPoll flag, reason if skipped, and nextPoll time
    */
   async shouldPoll(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     forcePollAll: boolean,
     now: Date,
   ): Promise<{
@@ -210,7 +210,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @param options - Poll options including sessionLabel, cause, dryRun, and onProgress callback
    */
   async poll(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
     options: PollOptions,
   ): Promise<PollingResult> {
@@ -368,7 +368,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @returns FetchResult with readings data or error
    */
   protected async fetchData(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -383,7 +383,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @deprecated Use fetchData() instead. This method will be removed after migration.
    */
   protected async doPoll(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
     session: SessionInfo,
     pollReason: string,
@@ -500,7 +500,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Test connection with vendor. Only poll-based systems can test connections.
    */
   async testConnection(
-    system: SystemWithPolling,
+    system: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult> {
     if (this.dataSource !== "poll") {
