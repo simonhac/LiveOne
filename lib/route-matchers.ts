@@ -34,6 +34,12 @@ const publicRoutes = [
   // v4 `recompute-provenance` yet — it is a mutation and belongs to the area-writes PR.)
   "/api/v4/areas/(.*)/provenance-summary",
   "/api/v4/areas/by-handle/(.*)",
+  // …and their config-v4 `/api/v4` twins. A SEPARATE entry, not a widened pattern: the middleware runs
+  // BEFORE next.config's rewrites and matches the ORIGINAL path, so `/api/v4/...` is simply a different
+  // path and inherits nothing from the lines above. Same surgical suffix, same in-handler
+  // owner/admin/CRON_SECRET gate; the sibling v4 area routes (POST /api/v4/areas, PATCH/DELETE
+  // /api/v4/areas/{id}, PUT …/members, PUT …/bindings) stay Clerk-gated.
+  "/api/v4/areas/(.*)/recompute-provenance",
   // All other routes (pages + APIs) require Clerk auth, except share links (?access=, below)
 ];
 

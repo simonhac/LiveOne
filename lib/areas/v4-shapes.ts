@@ -60,17 +60,33 @@ export function areaDetailResponse(source: AreaDetailSource) {
       capabilities: [...source.area.capabilities].sort(),
       legacySystemId: source.area.legacySystemId,
     },
-    members: source.members.map((member) => ({
-      ...member,
-      capabilities: [...member.capabilities].sort(),
-    })),
-    bindings: source.bindings.map((binding) => ({
-      id: Binding.encode(binding.id),
-      role: binding.role,
-      metricType: binding.metricType,
-      pointId: Point.encode(binding.pointUid),
-      priority: binding.priority,
-      transform: binding.transform,
-    })),
+    members: areaMembersWire(source.members),
+    bindings: areaBindingsWire(source.bindings),
   };
+}
+
+/**
+ * The `members` collection, alone — what `PUT /api/v4/areas/{id}/members` returns as "the new state".
+ *
+ * Split out of `areaDetailResponse` rather than re-written beside it: §9.2 makes the collection PUT's
+ * response the same list the aggregate GET carries, so a second projection would only exist in order to
+ * drift from this one. (config-v4 Phase 14 stage 10.)
+ */
+export function areaMembersWire(members: AreaDetailSource["members"]) {
+  return members.map((member) => ({
+    ...member,
+    capabilities: [...member.capabilities].sort(),
+  }));
+}
+
+/** The `bindings` collection, alone — what `PUT /api/v4/areas/{id}/bindings` returns. See above. */
+export function areaBindingsWire(bindings: AreaDetailSource["bindings"]) {
+  return bindings.map((binding) => ({
+    id: Binding.encode(binding.id),
+    role: binding.role,
+    metricType: binding.metricType,
+    pointId: Point.encode(binding.pointUid),
+    priority: binding.priority,
+    transform: binding.transform,
+  }));
 }

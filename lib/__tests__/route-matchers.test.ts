@@ -41,6 +41,9 @@ describe("isPublicRoute — middleware allow-list", () => {
     // edge having never reached the in-handler gate — invisible to a logged-in tester.
     "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-summary",
     "/api/v4/areas/by-handle/1000002",
+    // The config-v4 twin — a SEPARATE entry, because middleware matches the original path and
+    // `/api/v4/...` inherits nothing from the legacy patterns above (Phase 14 stage 10).
+    "/api/v4/areas/ar_01k1abcd2efghjkmnpqrstvwxy/recompute-provenance",
   ];
   it.each(publicPaths)("treats %s as public", (p) => {
     expect(isPublicRoute(req(p))).toBe(true);
@@ -74,6 +77,13 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/v4/devices",
     "/api/v4/dashboards",
     "/api/v4/dashboards/db_01k9fahd43fkbb2ge7dwsjhzqf",
+    // …and the v4 allow-list is just as surgical: only the recompute suffix is public, so every v4 area
+    // MUTATION stays Clerk-gated. Adding `/api/v4/areas(.*)` instead of the one suffix would have
+    // silently opened all four of these.
+    "/api/v4/areas",
+    "/api/v4/areas/ar_01k1abcd2efghjkmnpqrstvwxy",
+    "/api/v4/areas/ar_01k1abcd2efghjkmnpqrstvwxy/members",
+    "/api/v4/areas/ar_01k1abcd2efghjkmnpqrstvwxy/bindings",
   ];
   it.each(protectedPaths)("treats %s as protected", (p) => {
     expect(isPublicRoute(req(p))).toBe(false);
