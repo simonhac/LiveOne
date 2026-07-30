@@ -85,7 +85,7 @@
 --     dropped, so the drop would destroy it and `?systemId=N` would stop resolving that area forever.
 --   * a `legacy_handles` area row with no counterpart in the column -> **REPORTED ONLY**, because it is
 --     the DESIGNED END STATE and not merely tolerated: the code deploys at step 1 and this applies at
---     step 2, and from step 1 onward `createArea` / `DeviceWriter.createSystem` mint into
+--     step 2, and from step 1 onward `createArea` / `DeviceWriter.createDevice` mint into
 --     `legacy_handles` ALONE. An area created in that window is `legacy_handles`-only BY CONSTRUCTION.
 --     A symmetric gate would abort on exactly the rows the correct sequence produces.
 --

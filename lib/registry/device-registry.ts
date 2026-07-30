@@ -223,8 +223,8 @@ async function resolveHandle(
  * Two reachable collisions, both real:
  *  - two concurrent `createArea` calls allocating the same `max()+1` handle (`createArea` catches this
  *    and re-allocates — that retry used to hang off `areas_legacy_system_unique`);
- *  - a device re-created on a RECYCLED rid after `deleteSystem` left its area-of-one orphaned with the
- *    handle row still pointing at it. Pre-existing (`deleteSystem` deletes neither the `areas` row nor
+ *  - a device re-created on a RECYCLED rid after `deleteDevice` left its area-of-one orphaned with the
+ *    handle row still pointing at it. Pre-existing (`deleteDevice` deletes neither the `areas` row nor
  *    the `legacy_handles` row); reachable on dev, where `allocateRid` is `max(devices.rid)+1`.
  */
 export class HandleAreaConflictError extends Error {

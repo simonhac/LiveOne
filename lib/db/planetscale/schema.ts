@@ -861,7 +861,7 @@ export const dashboardRevisions = pgTable(
 // areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (device leg first, else area).
 // It is now the SOLE home of the integer handle for an area — migration 0052 dropped
 // `areas.legacy_system_id`, so `handle` here is not a copy of anything any more. NOT frozen for areas:
-// `createArea` and `DeviceWriter.createSystem` still mint a row per new area/device.
+// `createArea` and `DeviceWriter.createDevice` still mint a row per new area/device.
 // Both FKs are wired: area_id → areas(id) from the start, and device_id →
 // devices(id) since config-transform stage 5 minted devices. The device FK was declared here by
 // migration 0036 — it had been live but undeclared, so drizzle wanted to DROP it on the next generate.

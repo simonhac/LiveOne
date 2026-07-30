@@ -107,7 +107,7 @@ describe("DeviceRegistry", () => {
   // check a second area claiming a live handle would simply be ignored — leaving `legacy_handles`
   // naming the incumbent while `devices.primary_area_id` / `createArea`'s caller named the new one.
   // Two real paths reach here: a lost `createArea` handle race (which retries on this error), and a
-  // device re-created on a rid recycled from a `deleteSystem`'d device whose area-of-one was left
+  // device re-created on a rid recycled from a `deleteDevice`'d device whose area-of-one was left
   // standing with its handle row intact.
   it("REFUSES to re-point a handle already claimed by a different area", async () => {
     const { exec, rows } = fakeExec();
