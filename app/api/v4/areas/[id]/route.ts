@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { asc, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  devices,
   areaBindings,
   areas,
-  systems,
 } from "@/lib/db/planetscale/schema";
 import { loadReadableArea } from "@/lib/areas/http";
 import { capabilitiesForSystem } from "@/lib/capabilities/server";
@@ -52,13 +52,13 @@ export async function GET(
   const [memberRows, areaCaps, bindingRows] = await Promise.all([
     db
       .select({
-        id: systems.id,
-        name: systems.displayName,
-        vendor: systems.vendorType,
-        status: systems.status,
+        id: devices.rid,
+        name: devices.name,
+        vendor: devices.vendor,
+        status: devices.status,
       })
-      .from(systems)
-      .where(inArray(systems.id, [...memberRids.values()])),
+      .from(devices)
+      .where(inArray(devices.rid, [...memberRids.values()])),
     capabilitiesForSystem(r.area.legacySystemId),
     db
       .select({

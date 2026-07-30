@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
+import { devices, systems } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { SystemsManager } from "@/lib/systems-manager";
@@ -194,9 +194,9 @@ export async function PATCH(
     // Check if the alias is already taken by another system.
     if (updates.alias) {
       const conflict = await requirePlanetscaleDb()
-        .select({ displayName: systems.displayName })
-        .from(systems)
-        .where(and(eq(systems.alias, updates.alias), ne(systems.id, systemId)))
+        .select({ displayName: devices.name })
+        .from(devices)
+        .where(and(eq(devices.slug, updates.alias), ne(devices.rid, systemId)))
         .limit(1);
 
       if (conflict.length > 0) {

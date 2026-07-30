@@ -12,7 +12,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
+import { devices, areas, pointInfo, systems } from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 
@@ -69,14 +69,14 @@ export async function resolveGridContextForSystem(
 
     // e. Resolve the public OpenElectricity system serving this region.
     const [oeSystem] = await db
-      .select({ id: systems.id })
-      .from(systems)
+      .select({ id: devices.rid })
+      .from(devices)
       .where(
         and(
-          eq(systems.vendorType, "openelectricity"),
-          eq(systems.vendorSiteId, region),
-          isNull(systems.ownerClerkUserId),
-          eq(systems.status, "active"),
+          eq(devices.vendor, "openelectricity"),
+          eq(devices.vendorSiteId, region),
+          isNull(devices.ownerUserId),
+          eq(devices.status, "active"),
         ),
       )
       .limit(1);

@@ -3,9 +3,9 @@ import { requireDashboardAccess } from "@/lib/api-auth";
 import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  devices,
   derivedIntervals,
   pointInfo,
-  systems,
   type DerivedInterval,
 } from "@/lib/db/planetscale/schema";
 import {
@@ -76,10 +76,10 @@ async function readSignalMeta(
       metricUnit: pointInfo.metricUnit,
       subsystem: pointInfo.subsystem,
       physicalPathTail: pointInfo.physicalPathTail,
-      vendorType: systems.vendorType,
+      vendorType: devices.vendor,
     })
     .from(pointInfo)
-    .innerJoin(systems, eq(systems.id, pointInfo.systemId))
+    .innerJoin(devices, eq(devices.rid, pointInfo.systemId))
     .where(eq(pointInfo.pointUid, uuid))
     .limit(1);
   if (!row) {

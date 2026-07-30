@@ -1,5 +1,6 @@
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems } from "@/lib/db/planetscale/schema";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { devices, systems } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { Point } from "@/lib/ids";
 import { ReadingsDao } from "@/lib/readings";
@@ -37,11 +38,7 @@ interface EnphaseProductionResponse {
  * Get and validate a system from the database
  */
 async function getValidatedEnphaseSystem(systemId: number) {
-  const [system] = await requirePlanetscaleDb()
-    .select()
-    .from(systems)
-    .where(eq(systems.id, systemId))
-    .limit(1);
+  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
   if (!system) {
     throw new Error(`System ${systemId} not found`);
