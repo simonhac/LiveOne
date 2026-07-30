@@ -29,13 +29,17 @@ jest.mock("../../observations/publisher", () => ({
   publishObservationBatch: (...args: unknown[]) => publishSpy(...args),
 }));
 
-// SystemsManager.getSystem returns the vendorType under test.
+// The device config registry returns the vendorType under test (config-v4 slice K2 — was
+// `SystemsManager.getSystem`).
 let currentVendorType = "selectronic";
+// `point-manager` still imports `SystemsManager` for the K3-owned area-view resolution, and importing
+// it for real builds a query-builder subquery against the (mocked-away) db at module load.
 jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: {
-    getInstance: async () => ({
-      getSystem: async () => ({ id: 1, vendorType: currentVendorType }),
-    }),
+  SystemsManager: { getInstance: () => ({ isAreaHandle: async () => false }) },
+}));
+jest.mock("@/lib/registry/device-config", () => ({
+  DeviceConfigRegistry: {
+    deviceByHandle: async () => ({ id: 1, vendorType: currentVendorType }),
   },
 }));
 

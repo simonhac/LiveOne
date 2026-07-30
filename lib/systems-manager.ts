@@ -1,18 +1,8 @@
 import { cache } from "react";
-import {
-  eq,
-  max,
-  isNotNull,
-  isNull,
-  and,
-  or,
-  inArray,
-  getTableColumns,
-} from "drizzle-orm";
+import { eq, max, getTableColumns } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import { isProduction } from "@/lib/env";
-import { getUserIdByUsername } from "@/lib/user-cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   systems as pgSystems,
@@ -44,8 +34,15 @@ export type SystemWithPolling = System & {
 };
 
 /**
- * `device_state` re-keyed onto the legacy integer handle, so the eight `systems` reads below can join
- * it in ONE call exactly where they used to join `polling_status`.
+ * `device_state` re-keyed onto the legacy integer handle, so the ONE remaining `systems` read below can
+ * join it exactly where it used to join `polling_status`.
+ *
+ * config-v4 slice K2 was briefed to DELETE this. It cannot go yet: it exists to give `getSystem` a
+ * `pollingStatus`, and `getSystem` is the LEGACY side of `verify-slice-k1-parity.ts` — the gate that
+ * proves the whole K2 conversion moved nothing. Deleting the subquery deletes the only independent
+ * reading of `device_state` that `deviceByHandle`'s native join can be checked against, which is the
+ * "re-assert an equivalence inside the change that destroys your ability to check it" trap. It goes
+ * with `getSystem` in the terminal window, after the gate has served its purpose.
  *
  * `device_state` is keyed by `devices.id` (uuid), and the bridge to `systems.id` is the verbatim-rid
  * invariant `devices.rid == systems.id` (lib/registry/v4-mirror.ts). Folding that hop into a subquery
@@ -163,31 +160,24 @@ const fetchAreaByHandle = cache(async (id: number): Promise<Area | null> => {
   return area ?? null;
 });
 
-/** Per-request memoized lookup of a real system by vendor site id (OAuth/webhook dedup). */
-const fetchSystemByVendorSiteId = cache(
-  async (vendorSiteId: string): Promise<SystemWithPolling | null> => {
-    const [row] = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .where(eq(pgSystems.vendorSiteId, vendorSiteId))
-      .limit(1);
-    return row ? toSystemWithPolling(row) : null;
-  },
-);
-
 /**
- * Reads system config via targeted, indexed queries — no fleet-wide load. Each access is either an
- * O(1) point lookup (by id / vendor site id) or a query bounded by what one user can see; all are
- * memoized per-request by React's `cache()`. `getInstance()` is a stateless facade (no DB work, no
- * cross-request cache); mutations write straight through and the next request reads them.
+ * The RESIDUE of the v3 config registry, after slice K2 moved every config READ to
+ * `DeviceConfigRegistry` (lib/registry/device-config.ts).
  *
- * Scales to large fleets because nothing materializes all systems. Two callers remain inherently
- * "all" — `getAllSystems` (admin table; paginated in a later phase) and `getActiveSystems` (the
- * poll-all cron; a collection-sharding concern, not a query-shape one).
+ * What is left, and why:
+ *
+ * - **`getSystem`** — zero production callers. Retained solely as the LEGACY side of
+ *   `scripts/config-v4/verify-slice-k1-parity.ts`. Dies with `systems` in the terminal window.
+ * - **`getViewableSystem` / `isAreaHandle`** — slice K3. Their REAL leg already reads `devices`; only
+ *   the multi-device-area synthesis is still v3-shaped.
+ * - **The four WRITERS** (`createSystem`, `createHelperDevice`, `updateSystem`, `deleteSystem`) —
+ *   `systems` is still the author and `devices` still the mirror, because `systems_id_seq` allocates
+ *   while `devices.rid` is documented inert. Writes flip in the terminal window, not here.
+ *
+ * Six readers (`getSystemByVendorSiteId`, `getSystemByUsernameAndAlias`, `getActiveSystems`,
+ * `getAllSystems`, `getSystemsByOwner`, `getSystemsVisibleByUser`, `getPrimaryVisibleSystem`) were
+ * deleted outright by K2 once their last caller moved — a callerless reader against a dying table is
+ * not a shim, it is a second definition of "the config registry".
  */
 export class SystemsManager {
   private static instance: SystemsManager | null = null;
@@ -222,165 +212,6 @@ export class SystemsManager {
   async isAreaHandle(systemId: number): Promise<boolean> {
     if (await DeviceConfigRegistry.deviceByHandle(systemId)) return false; // real row wins
     return (await fetchAreaByHandle(systemId)) != null;
-  }
-
-  /** Get a real system by vendor site id (first match; vendor site ids are not unique). */
-  async getSystemByVendorSiteId(
-    vendorSiteId: string,
-  ): Promise<SystemWithPolling | null> {
-    return fetchSystemByVendorSiteId(vendorSiteId);
-  }
-
-  /**
-   * Resolve a system from a pretty `/device/{username}/{alias}` URL. Resolves the username to a Clerk
-   * id first (cached), then a single indexed lookup on the unique (owner, alias) pair.
-   */
-  async getSystemByUsernameAndAlias(
-    username: string,
-    alias: string,
-  ): Promise<SystemWithPolling | null> {
-    const ownerClerkUserId = await getUserIdByUsername(username);
-    if (!ownerClerkUserId) return null;
-
-    const [row] = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .where(
-        and(
-          eq(pgSystems.ownerClerkUserId, ownerClerkUserId),
-          eq(pgSystems.alias, alias),
-        ),
-      )
-      .limit(1);
-    return row ? toSystemWithPolling(row) : null;
-  }
-
-  /** All active real systems. Inherently fleet-wide (poll-all cron / flow recompute). */
-  async getActiveSystems(): Promise<SystemWithPolling[]> {
-    const rows = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .where(eq(pgSystems.status, "active"));
-    return rows.map(toSystemWithPolling);
-  }
-
-  /**
-   * All real systems (any status). Inherently fleet-wide — used by the admin systems table, which a
-   * later phase will paginate/search. Avoid in request-hot paths.
-   */
-  async getAllSystems(): Promise<SystemWithPolling[]> {
-    const rows = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      );
-    return rows.map(toSystemWithPolling);
-  }
-
-  /** Real systems owned by a user (any status). Indexed on owner_clerk_user_id. */
-  async getSystemsByOwner(userId: string): Promise<SystemWithPolling[]> {
-    const rows = await requirePlanetscaleDb()
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .where(eq(pgSystems.ownerClerkUserId, userId));
-    return rows.map(toSystemWithPolling);
-  }
-
-  /**
-   * Systems visible to a user for the switcher: the ones they OWN, that are PUBLIC (ownerless,
-   * readable by everyone), or that a DASHBOARD GRANT reaches. Bounded indexed queries — no fleet load
-   * and no admin-sees-all branch: an admin's cross-system reach is the admin systems table, not this
-   * list. Area views are intentionally excluded (the switcher lists real devices only).
-   *
-   * The granted leg used to be an inner join on `user_systems`; that table died in migration 0045
-   * (slice F) and the leg was RE-POINTED at `dashboard_grants` via `grantedSystemScopeForUser` rather
-   * than deleted. It is load-bearing for Vercel preview: `scripts/utils/reown-dev-data.ts` reowns the
-   * mirrored systems to the DEV clerk id and grants the PROD id back, and a preview session
-   * authenticates against the LIVE prod Clerk instance — so without a granted leg the preview
-   * switcher, the `/dashboard` landing redirect and the area candidate list all go empty.
-   */
-  async getSystemsVisibleByUser(userId: string, activeOnly: boolean = true) {
-    const db = requirePlanetscaleDb();
-
-    // Owned + public in one indexed pass.
-    const ownedOrPublic = await db
-      .select()
-      .from(pgSystems)
-      .leftJoin(
-        deviceStateByHandle,
-        eq(deviceStateByHandle.handle, pgSystems.id),
-      )
-      .where(
-        or(
-          eq(pgSystems.ownerClerkUserId, userId),
-          isNull(pgSystems.ownerClerkUserId),
-        ),
-      );
-
-    const byId = new Map<number, SystemWithPolling>();
-    for (const r of ownedOrPublic)
-      byId.set(r.systems.id, toSystemWithPolling(r));
-
-    // Then the dashboard-grant leg, for handles the first pass didn't already cover. Imported
-    // dynamically to break a module cycle: lib/dashboard/grants → lib/dashboard/access →
-    // lib/point/point-manager → back here (same reason lib/vendors/amber/client.ts does it).
-    const { grantedSystemScopeForUser } = await import(
-      "@/lib/dashboard/grants"
-    );
-    const grantedHandles = [
-      ...(await grantedSystemScopeForUser(userId)),
-    ].filter((id) => !byId.has(id));
-    if (grantedHandles.length > 0) {
-      const granted = await db
-        .select()
-        .from(pgSystems)
-        .leftJoin(
-          deviceStateByHandle,
-          eq(deviceStateByHandle.handle, pgSystems.id),
-        )
-        .where(inArray(pgSystems.id, grantedHandles));
-      for (const r of granted) byId.set(r.systems.id, toSystemWithPolling(r));
-    }
-
-    return Array.from(byId.values())
-      .filter((s) => !activeOnly || s.status === "active")
-      .filter((s) => s.displayName && s.vendorSiteId) // must have display name + vendor site id
-      .sort((a, b) => a.displayName.localeCompare(b.displayName))
-      .map((s) => ({
-        id: s.id,
-        displayName: s.displayName,
-        vendorSiteId: s.vendorSiteId,
-        vendorType: s.vendorType,
-        status: s.status,
-        ownerClerkUserId: s.ownerClerkUserId,
-        alias: s.alias,
-      }));
-  }
-
-  /**
-   * The user's "primary" visible system — owned-first, else the first visible (by display name), or
-   * null if they can see none. Single source of truth for the `/dashboard` landing redirect and the
-   * "Go to Systems" (`/device`) redirect, which previously each copy-pasted this owned-first logic.
-   */
-  async getPrimaryVisibleSystem(userId: string) {
-    const visible = await this.getSystemsVisibleByUser(userId, true);
-    if (visible.length === 0) return null;
-    const owned = visible.filter((s) => s.ownerClerkUserId === userId);
-    return owned.length > 0 ? owned[0] : visible[0];
   }
 
   /**

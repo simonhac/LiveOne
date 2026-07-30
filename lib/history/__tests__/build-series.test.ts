@@ -1,7 +1,7 @@
 import { describe, it, expect, jest } from "@jest/globals";
 
-// Decouple from SeriesPath/identifier internals and the systems cache: getSeriesPath → a simple
-// id, SystemsManager.getSystem → present for all systems except 999 (to test the skip path).
+// Decouple from SeriesPath/identifier internals and the config registry: getSeriesPath → a simple
+// id, `deviceByHandle` → present for all devices except 999 (to test the skip path).
 jest.mock("@/lib/point/series-info", () => ({
   getSeriesPath: (s: {
     point: { index: number };
@@ -10,11 +10,9 @@ jest.mock("@/lib/point/series-info", () => ({
     toString: () => `${s.point.index}/${s.aggregationField}`,
   }),
 }));
-jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: {
-    getInstance: () => ({
-      getSystem: async (id: number) => (id === 999 ? null : { id }),
-    }),
+jest.mock("@/lib/registry/device-config", () => ({
+  DeviceConfigRegistry: {
+    deviceByHandle: async (id: number) => (id === 999 ? null : { id }),
   },
 }));
 
