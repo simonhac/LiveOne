@@ -58,6 +58,15 @@ const shareableRoutes = [
   "/api/history", // time series + sankey (?include=sankey) — requireDashboardAccess
   "/api/device/(.*)", // per-device read endpoints the cards use (latest, run-periods)
   "/api/areas/(.*)/provenance-daily", // battery-provenance history panel — requireDashboardAccess
+  // ── COMPATIBILITY SHIM WITH AN EXPIRY — delete with the next.config rewrites ─────────
+  // The pre-Phase-13 spelling of the line above. Middleware runs BEFORE next.config
+  // rewrites and sees the ORIGINAL path, so a stale bundle in an already-open SHARED
+  // dashboard (anonymous viewer, cannot be told to reload) would otherwise be 404'd at the
+  // Clerk edge before the rewrite to `/api/device/*` ever happens.
+  // This grants NO new surface: every `/api/system/*` path rewrites into `/api/device/*`,
+  // which is already shareable in full. It is deliberately singular — `/api/systems/*`
+  // (now `/api/devices/*`, admin) stays Clerk-gated, same trailing-slash reasoning as above.
+  "/api/system/(.*)",
 ];
 
 export const isShareableRoute = createRouteMatcher(shareableRoutes);
