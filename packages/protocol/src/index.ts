@@ -13,7 +13,7 @@
 
 /** One self-describing point reading (a serialized `PointReadingInput` + its `PointMetadata`). */
 export interface PushReading {
-  /** vendor-native key, unique per system — the dedup key + `point_info` identity */
+  /** vendor-native key, unique per device — the dedup key + `point_info` identity */
   physicalPathTail: string;
   /** number → `point_readings.value`; string → `value_str` (use metricUnit "text"/"json"); null = skip */
   value: number | string | null;
@@ -35,9 +35,9 @@ export interface PushReading {
 
 /** The `POST /api/gush` request body. */
 export interface GushRequestBody {
-  /** identifies the system (matches `systems.vendor_site_id`) */
+  /** identifies the device (matches `devices.vendor_site_id`) */
   vendorSiteId: string;
-  /** validated against the system owner's stored credential (`credentials.apiKey`) */
+  /** validated against the device owner's stored credential (`credentials.apiKey`) */
   apiKey: string;
   /** "test" = auth check only; "store" = persist the readings */
   action: "test" | "store";

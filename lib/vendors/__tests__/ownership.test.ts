@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
-import { isPublicSystem, vendorUsesAppCredentials } from "../ownership";
+import { isPublicDevice, vendorUsesAppCredentials } from "../ownership";
 
 describe("vendorUsesAppCredentials", () => {
   it("is true for app-wide-credential vendors (openelectricity)", () => {
@@ -22,9 +22,9 @@ describe("vendorUsesAppCredentials", () => {
 
 describe("isPublicSystem", () => {
   it("treats a null owner as public", () => {
-    expect(isPublicSystem({ ownerClerkUserId: null })).toBe(true);
+    expect(isPublicDevice({ ownerClerkUserId: null })).toBe(true);
   });
   it("treats an owned system as not public", () => {
-    expect(isPublicSystem({ ownerClerkUserId: "user_123" })).toBe(false);
+    expect(isPublicDevice({ ownerClerkUserId: "user_123" })).toBe(false);
   });
 });

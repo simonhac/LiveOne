@@ -88,7 +88,7 @@ export interface PointReadingAgg5mInput {
 }
 
 /**
- * Vendor adapter interface for all energy system vendors
+ * Vendor adapter interface for all energy device vendors
  */
 export interface VendorAdapter {
   // Basic vendor information
@@ -98,15 +98,15 @@ export interface VendorAdapter {
 
   // Credential requirements for this vendor
   readonly credentialFields?: CredentialField[];
-  readonly supportsAddSystem?: boolean; // Whether this vendor supports the Add System flow
-  // How the Add System dialog onboards this vendor. "credentials" (default) collects
+  readonly supportsAddDevice?: boolean; // Whether this vendor supports the Add Device flow
+  // How the Add Device dialog onboards this vendor. "credentials" (default) collects
   // credentialFields + Test Connection; "oauth-redirect" runs an in-dialog OAuth
   // redirect (Tesla Fleet API) with no credential fields.
-  readonly addSystemFlow?: "credentials" | "oauth-redirect";
+  readonly addDeviceFlow?: "credentials" | "oauth-redirect";
 
-  // Check if system should be polled based on schedule
+  // Check if device should be polled based on schedule
   shouldPoll(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     forcePollAll: boolean,
     now: Date,
   ): Promise<{
@@ -117,17 +117,17 @@ export interface VendorAdapter {
 
   // Main polling function - handles all data collection
   poll(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
     options: PollOptions,
   ): Promise<PollingResult>;
 
-  // Get the latest reading for this system
+  // Get the latest reading for this device
   getLastReading(systemId: number): Promise<LatestReadingData | null>;
 
   // Test connection with vendor
   testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult>;
 }
@@ -176,7 +176,7 @@ export interface PollingResult {
  */
 export interface TestConnectionResult {
   success: boolean;
-  systemInfo?: {
+  deviceInfo?: {
     vendorSiteId?: string; // Discovered vendor site ID
     displayName?: string; // Suggested display name
     model?: string | null;

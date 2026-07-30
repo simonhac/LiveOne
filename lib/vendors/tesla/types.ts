@@ -78,10 +78,10 @@ export interface TeslaCredentials {
   fleet_api_base_url?: string;
 }
 
-// Per-system Tesla polling config, stored under `systems.metadata.tesla` (JSONB).
+// Per-device Tesla polling config, stored under `devices.metadata.tesla` (JSONB).
 // All fields optional; absent fields fall back to the adapter defaults. Used to tune
 // Fleet API cost / vampire-drain on a per-vehicle basis. See lib/vendors/tesla/adapter.ts.
-export interface TeslaSystemMetadata {
+export interface TeslaDeviceMetadata {
   // When false, never force-wake the car to poll: if it's asleep/offline, record a
   // skipped poll (0 readings) instead of issuing a Wake command. Saves the $0.02 wake
   // charge and lets the car sleep (less phantom drain). Default true (legacy behaviour).

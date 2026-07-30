@@ -28,7 +28,7 @@ export class AmberAdapter extends BaseVendorAdapter {
   readonly vendorType = "amber";
   readonly displayName = "Amber Electric";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = true;
+  readonly supportsAddDevice = true;
 
   // Amber usage data: poll every 5 minutes
   protected pollIntervalMinutes = 5;
@@ -173,7 +173,7 @@ export class AmberAdapter extends BaseVendorAdapter {
 
   /**
    * Store current period data in KV cache for live dashboard display.
-   * Uses updateLatestPointValue to propagate to composite system subscribers.
+   * Uses updateLatestPointValue to propagate to composite device subscribers.
    */
   private async storeCurrentPeriodInKV(
     systemId: number,
@@ -194,9 +194,9 @@ export class AmberAdapter extends BaseVendorAdapter {
       return;
     }
 
-    // Get active points for this system and build logicalPath → point map
+    // Get active points for this device and build logicalPath → point map
     const pointManager = PointManager.getInstance();
-    const activePoints = await pointManager.getActivePointsForSystem(systemId);
+    const activePoints = await pointManager.getActivePointsForDevice(systemId);
     const pointsByLogicalPath = new Map<string, PointInfo>();
     for (const point of activePoints) {
       const logicalPath = point.getLogicalPath();
@@ -285,7 +285,7 @@ export class AmberAdapter extends BaseVendorAdapter {
    * but sets recordsProcessed to the actual count.
    */
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: AmberCredentials,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -293,7 +293,7 @@ export class AmberAdapter extends BaseVendorAdapter {
       const { dryRun, session, collector } = context;
       // Determine if this is a force poll based on the cause
       const isForcePoll = true; // We always run usage+forecasts since base adapter checks shouldPoll
-      console.log(`[Amber] Fetching data for system ${system.id}`);
+      console.log(`[Amber] Fetching data for system ${device.id}`);
 
       const audits = [];
       let totalRecords = 0;
@@ -307,17 +307,17 @@ export class AmberAdapter extends BaseVendorAdapter {
 
       if (shouldRunUsage) {
         // Run usage sync for yesterday (billable data becomes available)
-        const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
+        const yesterday = getYesterdayInTimezone(device.timezoneOffsetMin);
         console.log(`[Amber] Running usage sync for ${yesterday.toString()}`);
 
-        // Add siteId from system to credentials
+        // Add siteId from device to credentials
         const credentialsWithSite: AmberCredentials = {
           ...credentials,
-          siteId: system.vendorSiteId || undefined,
+          siteId: device.vendorSiteId || undefined,
         };
 
         const usageAudit = await updateUsage(
-          system.id,
+          device.id,
           yesterday,
           1,
           credentialsWithSite,
@@ -339,19 +339,19 @@ export class AmberAdapter extends BaseVendorAdapter {
       // Only run forecast sync if usage didn't fail (or if usage wasn't run)
       if (!hasError) {
         // Run forecast sync for today + tomorrow (2 days)
-        const today = getTodayInTimezone(system.timezoneOffsetMin);
+        const today = getTodayInTimezone(device.timezoneOffsetMin);
         console.log(
           `[Amber] Running forecast sync for ${today.toString()} + 1 day`,
         );
 
-        // Add siteId from system to credentials
+        // Add siteId from device to credentials
         const credentialsWithSite: AmberCredentials = {
           ...credentials,
-          siteId: system.vendorSiteId || undefined,
+          siteId: device.vendorSiteId || undefined,
         };
 
         const forecastAudit = await updateForecasts(
-          system.id,
+          device.id,
           today,
           2,
           credentialsWithSite,
@@ -375,7 +375,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           // Forecast sync succeeded - fetch and store current period in KV for live dashboard
           try {
             const siteId =
-              system.vendorSiteId || (await this.getSiteId(credentials));
+              device.vendorSiteId || (await this.getSiteId(credentials));
             const priceData: AmberPriceRecord[] = await this.fetchWithAuth(
               `${this.baseUrl}/sites/${siteId}/prices/current`,
               credentials.apiKey,
@@ -387,10 +387,10 @@ export class AmberAdapter extends BaseVendorAdapter {
             );
             if (currentIntervals.length > 0) {
               await this.storeCurrentPeriodInKV(
-                system.id,
+                device.id,
                 currentIntervals,
                 session,
-                system.displayName,
+                device.displayName,
               );
             }
           } catch (kvError) {
@@ -408,7 +408,7 @@ export class AmberAdapter extends BaseVendorAdapter {
       // Calculate next poll time (5 minutes for forecasts)
       const nextPollTime = getNextMinuteBoundary(
         this.priceForecastIntervalMinutes,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
 
       // Return error if any sync failed
@@ -439,10 +439,10 @@ export class AmberAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Test connection and discover system
+   * Test connection and discover device
    */
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: AmberCredentials,
   ): Promise<TestConnectionResult> {
     try {
@@ -505,7 +505,7 @@ export class AmberAdapter extends BaseVendorAdapter {
 
       return {
         success: true,
-        systemInfo: {
+        deviceInfo: {
           vendorSiteId: site.id,
           displayName: `Amber - ${site.network} (${site.nmi})`,
           model: "Amber Electric",

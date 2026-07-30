@@ -7,7 +7,7 @@
  */
 import { backfillEnergyRange } from "@/lib/vendors/sigenergy/statistics";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type {
   CoverageRepairProvider,
   DayRepair,
@@ -22,13 +22,13 @@ interface SigenCtx {
 
 /** Validate owner/station/creds and build a mySigen client. Shared by prepare() + commissionDay(). */
 async function buildSigenCtx(
-  system: DeviceConfigView,
+  device: DeviceConfigView,
 ): Promise<PrepareResult<SigenCtx>> {
-  if (!system.ownerClerkUserId)
+  if (!device.ownerClerkUserId)
     return { ok: false, error: "no owner (Sigenergy credentials required)" };
-  if (!system.vendorSiteId)
+  if (!device.vendorSiteId)
     return { ok: false, error: "no Sigenergy station id (vendorSiteId)" };
-  const base = await getSystemCredentials(system.ownerClerkUserId, system.id);
+  const base = await getDeviceCredentials(device.ownerClerkUserId, device.id);
   if (!base?.username || !base?.password)
     return { ok: false, error: "no Sigenergy credentials" };
   const client = new SigenergyClient({
@@ -36,7 +36,7 @@ async function buildSigenCtx(
     password: base.password,
     region: base.region ?? "aus",
   });
-  return { ok: true, ctx: { client, stationId: system.vendorSiteId } };
+  return { ok: true, ctx: { client, stationId: device.vendorSiteId } };
 }
 
 /** The six 5-min interval-energy points (Wh) written by the statistics backfill. */
@@ -61,9 +61,9 @@ export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
   prepare: buildSigenCtx,
   /** Sigenergy exposes the station's commissioning day as `stationOpenTime` (→ `station.openDate`).
    *  Best-effort: needs creds; returns null on any failure so the runner falls back to created_at. */
-  async commissionDay(system): Promise<string | null> {
+  async commissionDay(device): Promise<string | null> {
     try {
-      const prep = await buildSigenCtx(system);
+      const prep = await buildSigenCtx(device);
       if (!prep.ok) return null;
       const station = await prep.ctx.client.getStation();
       return station.openDate ?? null;
@@ -71,13 +71,13 @@ export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
       return null;
     }
   },
-  async backfillDay(system, day, ctx, session, collector): Promise<DayRepair> {
+  async backfillDay(device, day, ctx, session, collector): Promise<DayRepair> {
     const ymd = day.replace(/-/g, ""); // 'YYYY-MM-DD' → 'YYYYMMDD'
-    const tz = system.timezoneOffsetMin ?? 600;
+    const tz = device.timezoneOffsetMin ?? 600;
     try {
       const res = await backfillEnergyRange({
         client: ctx.client,
-        systemId: system.id,
+        systemId: device.id,
         stationId: ctx.stationId,
         startDate: ymd,
         endDate: ymd,
@@ -88,21 +88,21 @@ export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
       const rows = res.days?.[0]?.readingsWritten ?? 0;
       if (res.errors && res.errors.length > 0)
         return {
-          systemId: system.id,
+          systemId: device.id,
           day,
           publishedRows: rows,
           status: "error",
           error: res.errors.join("; "),
         };
       return {
-        systemId: system.id,
+        systemId: device.id,
         day,
         publishedRows: rows,
         status: rows > 0 ? "repaired" : "unsettled",
       };
     } catch (err) {
       return {
-        systemId: system.id,
+        systemId: device.id,
         day,
         publishedRows: 0,
         status: "error",

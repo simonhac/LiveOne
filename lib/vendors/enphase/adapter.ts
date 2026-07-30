@@ -19,7 +19,7 @@ import { sessionManager } from "@/lib/session-manager";
 import * as SunCalc from "suncalc";
 
 /**
- * Vendor adapter for Enphase systems
+ * Vendor adapter for Enphase devices
  * Polls every 30 minutes during daylight hours due to API rate limits
  */
 // Configuration constants
@@ -29,7 +29,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   readonly vendorType = "enphase";
   readonly displayName = "Enphase";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = false; // Enphase uses OAuth flow, not supported in Add System dialog yet
+  readonly supportsAddDevice = false; // Enphase uses OAuth flow, not supported in Add Device dialog yet
 
   // Enphase has custom schedule logic - polls every 60 minutes during daylight hours
   protected pollIntervalMinutes = 60;
@@ -39,7 +39,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    * Override getLastReading to read from point_readings_agg_5m table
    */
   async getLastReading(systemId: number): Promise<LatestReadingData | null> {
-    // Find the Enphase solar power point for this system
+    // Find the Enphase solar power point for this device
     const solarPoint =
       await PointManager.getInstance().getPointByPhysicalPathTail(
         systemId,
@@ -102,14 +102,14 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    * then hourly from 01:00-05:00 for yesterday's data
    */
   protected evaluateSchedule(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
     // Always poll if never polled before
     if (!lastPollTime) {
       console.log(`[Enphase] Never polled, polling now`);
-      const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Next hour boundary
+      const nextPollTime = getNextMinuteBoundary(60, device.timezoneOffsetMin); // Next hour boundary
       return {
         shouldPoll: true,
         reason: "Never polled",
@@ -121,12 +121,12 @@ export class EnphaseAdapter extends BaseVendorAdapter {
     let lat = -37.8136; // Melbourne default
     let lon = 144.9631;
 
-    if (system.location) {
+    if (device.location) {
       try {
         const loc =
-          typeof system.location === "string"
-            ? JSON.parse(system.location)
-            : system.location;
+          typeof device.location === "string"
+            ? JSON.parse(device.location)
+            : device.location;
         if (loc.lat && loc.lon) {
           lat = loc.lat;
           lon = loc.lon;
@@ -136,9 +136,9 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       }
     }
 
-    // Calculate local time for the system
+    // Calculate local time for the device
     const utcTime = now.getTime();
-    const localOffset = system.timezoneOffsetMin * 60 * 1000;
+    const localOffset = device.timezoneOffsetMin * 60 * 1000;
     const localTime = new Date(utcTime + localOffset);
     const localHour = localTime.getUTCHours();
     const localMinutes = localTime.getUTCMinutes();
@@ -175,7 +175,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
         const nextPollTime = getNextMinuteBoundary(
           ENPHASE_POLLING_INTERVAL_MINUTES,
-          system.timezoneOffsetMin,
+          device.timezoneOffsetMin,
         );
         return {
           shouldPoll: true,
@@ -186,11 +186,11 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
       const nextPollTime = getNextMinuteBoundary(
         ENPHASE_POLLING_INTERVAL_MINUTES,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
       return {
         shouldPoll: false,
-        reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime.toDate(), system.timezoneOffsetMin)})`,
+        reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime.toDate(), device.timezoneOffsetMin)})`,
         nextPollTime,
       };
     }
@@ -204,7 +204,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
         const nextPollTime = getNextMinuteBoundary(
           60,
-          system.timezoneOffsetMin,
+          device.timezoneOffsetMin,
         ); // Hourly
         return {
           shouldPoll: true,
@@ -213,10 +213,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         };
       }
 
-      const nextPollTime = getNextMinuteBoundary(60, system.timezoneOffsetMin); // Hourly
+      const nextPollTime = getNextMinuteBoundary(60, device.timezoneOffsetMin); // Hourly
       return {
         shouldPoll: false,
-        reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime.toDate(), system.timezoneOffsetMin)})`,
+        reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime.toDate(), device.timezoneOffsetMin)})`,
         nextPollTime,
       };
     }
@@ -233,7 +233,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       // Get next hour boundary after dawn time
       nextPollTime = getNextMinuteBoundary(
         60,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
         dawnTime,
       );
 
@@ -254,7 +254,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       // Get next hour boundary after target time
       nextPollTime = getNextMinuteBoundary(
         60,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
         targetTime,
       );
 
@@ -278,7 +278,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
    * Uses fetchEnphaseDay which handles data insertion internally
    */
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -286,21 +286,21 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
     try {
       console.log(
-        `[Enphase] Polling system ${system.id} (${system.displayName})`,
+        `[Enphase] Polling system ${device.id} (${device.displayName})`,
       );
 
       // Determine what to fetch based on time of day
       let result;
-      const localTime = getZonedNow(system.timezoneOffsetMin);
+      const localTime = getZonedNow(device.timezoneOffsetMin);
       const localHour = localTime.hour;
 
       if (localHour >= 1 && localHour <= 5) {
         // During 01:00-05:00, check and fetch yesterday's data if incomplete
         console.log(
-          `[Enphase] Checking yesterday's data completeness for system ${system.id}`,
+          `[Enphase] Checking yesterday's data completeness for system ${device.id}`,
         );
         result = await checkAndFetchYesterdayIfNeeded(
-          system.id,
+          device.id,
           session,
           dryRun,
           collector,
@@ -308,9 +308,9 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       } else {
         // Otherwise fetch current day's data
         result = await fetchEnphaseDay(
-          system.id,
+          device.id,
           null,
-          system.timezoneOffsetMin,
+          device.timezoneOffsetMin,
           session,
           dryRun,
           collector,
@@ -327,7 +327,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       }
 
       console.log(
-        `[Enphase] System ${system.id}: Upserted ${recordsProcessed} records`,
+        `[Enphase] System ${device.id}: Upserted ${recordsProcessed} records`,
       );
 
       // Get raw response if available
@@ -337,8 +337,8 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       // Calculate next poll time
       const now = new Date();
       const evaluation = this.evaluateSchedule(
-        system,
-        system.pollingStatus?.lastPollTime || null,
+        device,
+        device.pollingStatus?.lastPollTime || null,
         now,
       );
 
@@ -352,7 +352,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         rawResponse,
       };
     } catch (error) {
-      console.error(`[Enphase] Error polling system ${system.id}:`, error);
+      console.error(`[Enphase] Error polling system ${device.id}:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -363,30 +363,30 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   // getMostRecentReadings removed - not used externally
 
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult> {
     try {
-      console.log(`[Enphase] Testing connection for system ${system.id}`);
+      console.log(`[Enphase] Testing connection for system ${device.id}`);
 
       // Create a session for this test connection
       const session = await sessionManager.createSession({
-        systemId: system.id,
+        systemId: device.id,
         cause: "USER-TEST",
         started: new Date(),
       });
 
       // Fetch today's data to verify connection works
       const result = await fetchEnphaseDay(
-        system.id,
+        device.id,
         null, // null means fetch today
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
         session,
         true, // dryRun - don't actually save to database during test
       );
 
       // Get the most recent reading from the database to show current status
-      const latestReading = await this.getLastReading(system.id);
+      const latestReading = await this.getLastReading(device.id);
 
       // Convert to test connection format
       const latestData = latestReading
@@ -412,17 +412,17 @@ export class EnphaseAdapter extends BaseVendorAdapter {
           }
         : null;
 
-      // System info
-      const systemInfo = {
+      // Device info
+      const deviceInfo = {
         model: "Enphase System",
-        serial: system.vendorSiteId,
+        serial: device.vendorSiteId,
         ratings: null,
         solarSize: null,
         batterySize: null,
       };
 
       console.log(
-        `[Enphase] Test connection successful for system ${system.vendorSiteId}`,
+        `[Enphase] Test connection successful for system ${device.vendorSiteId}`,
       );
       console.log(
         `[Enphase] Would have fetched ${result.intervalCount} intervals`,
@@ -430,7 +430,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
 
       return {
         success: true,
-        systemInfo,
+        deviceInfo,
         latestData: latestData || undefined,
         vendorResponse: result.rawResponse, // Return the raw Enphase production data
       };

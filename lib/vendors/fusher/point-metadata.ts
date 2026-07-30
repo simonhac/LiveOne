@@ -1,10 +1,10 @@
 /**
  * Fusher (Fronius Pusher) Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Fusher systems.
+ * This defines all metadata for the key monitoring points from Fusher devices.
  * Each entry maps a field from the FusherPushData interface to point_info metadata.
  *
- * Fusher systems push data to /api/push/fusher endpoint
+ * Fusher devices push data to /api/push/fusher endpoint
  */
 
 import type { PointMetadata } from "@/lib/point/point-manager";
@@ -17,7 +17,7 @@ export interface FusherPointConfig {
 }
 
 /**
- * Monitoring points for Fusher systems
+ * Monitoring points for Fusher devices
  */
 export const FUSHER_POINTS: FusherPointConfig[] = [
   // ============================================================================

@@ -1,7 +1,7 @@
 /**
  * Enphase Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Enphase systems.
+ * This defines all metadata for the key monitoring points from Enphase devices.
  * Each entry maps a field from the Enphase data to point_info metadata.
  *
  * Note: Enphase production_micro endpoint returns 5-minute interval data
@@ -28,7 +28,7 @@ export interface EnphasePointConfig {
 }
 
 /**
- * Monitoring points for Enphase systems
+ * Monitoring points for Enphase devices
  *
  * Currently Enphase production_micro endpoint only provides solar production data.
  * Other endpoints may provide consumption, storage, and grid data but are not yet integrated.

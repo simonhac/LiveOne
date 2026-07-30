@@ -421,7 +421,7 @@ export class TeslaClient implements ITeslaClient {
 
 /**
  * Factory function to get the Tesla Fleet client.
- * @param baseUrl - the system's persisted regional Fleet host (falls back to NA).
+ * @param baseUrl - the device's persisted regional Fleet host (falls back to NA).
  */
 export function getTeslaClient(baseUrl?: string): TeslaClient {
   return new TeslaClient({ baseUrl });

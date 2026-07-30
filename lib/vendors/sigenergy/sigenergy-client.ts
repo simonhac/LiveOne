@@ -477,7 +477,7 @@ export class SigenergyClient {
     };
   }
 
-  /** Fetch the owner's station and normalize the fields we provision a LiveOne system from. */
+  /** Fetch the owner's station and normalize the fields we provision a LiveOne device from. */
   async getStation(): Promise<SigenergyStationInfo> {
     await this.ensureToken();
     const url =

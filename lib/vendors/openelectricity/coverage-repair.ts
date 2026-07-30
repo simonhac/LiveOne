@@ -2,7 +2,7 @@
  * OpenElectricity coverage-repair provider (Stage-2 backfill adapter).
  *
  * OE is 5-min-native NEM grid data (AEST, fixed +10) with an OWNERLESS global API key
- * (OPEN_ELECTRICITY_API_KEY) — one system per region (vendorSiteId = NSW1/VIC1/…). Backfill re-fetches
+ * (OPEN_ELECTRICITY_API_KEY) — one device per region (vendorSiteId = NSW1/VIC1/…). Backfill re-fetches
  * a day via `backfillRange` (which publishes through the shared collector → receiver → agg_5m path).
  *
  * DETECTION covers all four points, incl. `nem/emissionsIntensity` (derived = emissions÷energy). An
@@ -44,11 +44,11 @@ export const openelectricityProvider: CoverageRepairProvider<
       return { ok: false, error: "OPEN_ELECTRICITY_API_KEY not set" };
     return { ok: true, ctx: {} };
   },
-  async backfillDay(system, day, _ctx, session, collector): Promise<DayRepair> {
-    const region = system.vendorSiteId;
+  async backfillDay(device, day, _ctx, session, collector): Promise<DayRepair> {
+    const region = device.vendorSiteId;
     if (!region || !isNemRegion(region))
       return {
-        systemId: system.id,
+        systemId: device.id,
         day,
         publishedRows: 0,
         status: "error",
@@ -57,32 +57,32 @@ export const openelectricityProvider: CoverageRepairProvider<
     try {
       const startMs = Date.parse(`${day}T00:00:00Z`) - AEST_OFFSET_MS; // AEST midnight of `day`
       const res = await backfillRange({
-        systemId: system.id,
+        systemId: device.id,
         region,
         dateStart: new Date(startMs),
         dateEnd: new Date(startMs + DAY_MS),
         session,
         collector,
-        aggregate: null, // runner owns the scoped recompute, never the all-systems cascade
+        aggregate: null, // runner owns the scoped recompute, never the all-devices cascade
       });
       const rows = res.intervalsIngested ?? 0;
       if (res.errors && res.errors.length > 0)
         return {
-          systemId: system.id,
+          systemId: device.id,
           day,
           publishedRows: rows,
           status: "error",
           error: res.errors.join("; "),
         };
       return {
-        systemId: system.id,
+        systemId: device.id,
         day,
         publishedRows: rows,
         status: rows > 0 ? "repaired" : "unsettled",
       };
     } catch (err) {
       return {
-        systemId: system.id,
+        systemId: device.id,
         day,
         publishedRows: 0,
         status: "error",

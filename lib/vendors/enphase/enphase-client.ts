@@ -2,7 +2,7 @@ import type { EnphaseCredentials } from "@/lib/types/enphase";
 import type {
   EnphaseTokens,
   EnphaseTelemetryResponse,
-  EnphaseSystem,
+  EnphaseDevice,
 } from "./types";
 
 /**
@@ -19,7 +19,7 @@ import type {
  *    - Basic auth (client_id:client_secret) for token exchange
  *
  * 2. DATA FETCHING - PRODUCTION MICRO ENDPOINT:
- *    We primarily use /api/v4/systems/{id}/telemetry/production_micro
+ *    We primarily use /api/v4/devices/{id}/telemetry/production_micro
  *
  *    IMPORTANT BEHAVIORS:
  *    - WITHOUT parameters: Returns today's partial data (from 00:05 until ~25 mins ago)
@@ -34,7 +34,7 @@ import type {
  *
  * 4. TIMEZONE HANDLING:
  *    - All timestamps are in Unix time (UTC)
- *    - System timezone is stored separately and used for day boundaries
+ *    - Device timezone is stored separately and used for day boundaries
  *    - For fetching a specific day: start_at = day 00:05, end_at = next day 00:00
  *
  * 5. RATE LIMITING:
@@ -56,7 +56,7 @@ export interface IEnphaseClient {
   getAuthorizationUrl(state: string, origin?: string): string;
   exchangeCodeForTokens(code: string): Promise<EnphaseTokens>;
   refreshTokens(refreshToken: string): Promise<EnphaseTokens>;
-  getSystems(accessToken: string): Promise<EnphaseSystem[]>;
+  getDevices(accessToken: string): Promise<EnphaseDevice[]>;
 }
 
 // Real Enphase Client
@@ -223,8 +223,8 @@ export class EnphaseClient implements IEnphaseClient {
     }
   }
 
-  async getSystems(accessToken: string): Promise<EnphaseSystem[]> {
-    // Fetching user systems
+  async getDevices(accessToken: string): Promise<EnphaseDevice[]> {
+    // Fetching user devices
 
     try {
       const response = await fetch(`${this.baseUrl}/api/v4/systems`, {
@@ -240,15 +240,15 @@ export class EnphaseClient implements IEnphaseClient {
       }
 
       const data = await response.json();
-      // Found systems
-      return data.systems || [];
+      // Found devices
+      return data.devices || [];
     } catch (error) {
       console.error("ENPHASE: Error fetching systems:", error);
       throw error;
     }
   }
 
-  // Methods removed - use storeEnphaseTokens and getSystemCredentials directly
+  // Methods removed - use storeEnphaseTokens and getDeviceCredentials directly
 }
 
 // Factory function to get the Enphase client

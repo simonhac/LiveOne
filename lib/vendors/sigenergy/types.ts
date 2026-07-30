@@ -7,14 +7,14 @@
 
 export type SigenRegion = "aus" | "eu" | "apac" | "us" | "cn";
 
-/** Per-user credentials stored in Clerk private metadata for a Sigenergy system. */
+/** Per-user credentials stored in Clerk private metadata for a Sigenergy device. */
 export interface SigenergyCredentials {
   username: string;
   password: string;
   region?: SigenRegion; // default "aus"
 }
 
-/** Station metadata (from /device/owner/station/home), used to provision a LiveOne system. */
+/** Station metadata (from /device/owner/station/home), used to provision a LiveOne device. */
 export interface SigenergyStationInfo {
   stationId: string;
   name?: string;

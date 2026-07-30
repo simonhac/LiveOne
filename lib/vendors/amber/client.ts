@@ -258,22 +258,22 @@ async function loadLocalRecords(
     const { PointManager } = await import("@/lib/point/point-manager");
     const { ReadingsDao } = await import("@/lib/readings");
 
-    // 0. Verify this is an Amber system
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+    // 0. Verify this is an Amber device
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-    if (!system) {
+    if (!device) {
       throw new Error(`System ${systemId} not found`);
     }
 
-    if (system.vendorType !== "amber") {
+    if (device.vendorType !== "amber") {
       throw new Error(
-        `System ${systemId} is ${system.vendorType}, not amber. This sync only works with Amber systems.`,
+        `System ${systemId} is ${device.vendorType}, not amber. This sync only works with Amber systems.`,
       );
     }
 
     // 1. Get all points using PointManager
     const pointManager = PointManager.getInstance();
-    const allPoints = await pointManager.getActivePointsForSystem(
+    const allPoints = await pointManager.getActivePointsForDevice(
       systemId,
       false,
     );
@@ -284,7 +284,7 @@ async function loadLocalRecords(
       : allPoints;
 
     if (filteredPoints.length === 0) {
-      // No points yet - this is valid for a new system
+      // No points yet - this is valid for a new device
       // Return empty result and let stage 2 fetch from remote
       return {
         stage: stageName,

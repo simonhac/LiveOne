@@ -13,7 +13,7 @@ import { buildSigenergyReadings, sigenergyFlowToData } from "./point-metadata";
 import type { SigenergyCredentials, SigenergyData } from "./types";
 
 /**
- * Vendor adapter for Sigenergy (mySigen) systems.
+ * Vendor adapter for Sigenergy (mySigen) devices.
  *
  * Per-user credentialed poll-snapshot vendor (mirrors Selectronic): each 5-minute poll fetches the
  * cloud energy-flow snapshot and emits raw PV/battery/grid/load/EV + SOC readings; Postgres computes
@@ -23,7 +23,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
   readonly vendorType = "sigenergy";
   readonly displayName = "Sigenergy";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = true;
+  readonly supportsAddDevice = true;
 
   protected pollIntervalMinutes = 5;
   protected toleranceSeconds = 30;
@@ -76,11 +76,11 @@ export class SigenergyAdapter extends BaseVendorAdapter {
   }
 
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: SigenergyCredentials,
     context: FetchContext,
   ): Promise<FetchResult> {
-    if (!system.vendorSiteId) {
+    if (!device.vendorSiteId) {
       return {
         success: false,
         error: "System has no Sigenergy station id (vendorSiteId)",
@@ -88,7 +88,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
     }
     try {
       const client = this.getClient(credentials);
-      const flow = await client.getEnergyFlow(system.vendorSiteId);
+      const flow = await client.getEnergyFlow(device.vendorSiteId);
       const data = sigenergyFlowToData(flow, context.startedAt);
       const readings = buildSigenergyReadings(
         data,
@@ -119,7 +119,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
         rawResponse: flow.raw,
         nextPollTime: getNextMinuteBoundary(
           this.pollIntervalMinutes,
-          system.timezoneOffsetMin,
+          device.timezoneOffsetMin,
         ),
       };
     } catch (error) {
@@ -139,7 +139,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
   }
 
   async testConnection(
-    _system: DeviceConfigView,
+    _device: DeviceConfigView,
     credentials: SigenergyCredentials,
   ): Promise<TestConnectionResult> {
     try {
@@ -160,7 +160,7 @@ export class SigenergyAdapter extends BaseVendorAdapter {
 
       return {
         success: true,
-        systemInfo: {
+        deviceInfo: {
           vendorSiteId: station.stationId,
           displayName: station.name || `Sigenergy ${station.stationId}`,
           model: "Sigenergy",

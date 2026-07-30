@@ -1,10 +1,10 @@
 /**
  * Selectronic Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Selectronic/Select.Live systems.
+ * This defines all metadata for the key monitoring points from Selectronic/Select.Live devices.
  * Each entry maps a field from the SelectronicData interface to point_info metadata.
  *
- * Based on system ID 1 (Daylesford) - Selectronic SP PRO
+ * Based on device ID 1 (Daylesford) - Selectronic SP PRO
  */
 
 import type { PointMetadata } from "@/lib/point/point-manager";
@@ -17,7 +17,7 @@ export interface SelectronicPointConfig {
 }
 
 /**
- * Monitoring points for Selectronic systems
+ * Monitoring points for Selectronic devices
  */
 export const SELECTRONIC_POINTS: SelectronicPointConfig[] = [
   // ============================================================================

@@ -37,7 +37,7 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly vendorType = "mondo";
   readonly displayName = "Mondo Power";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = true;
+  readonly supportsAddDevice = true;
 
   // Mondo polls every 2 minutes
   protected pollIntervalMinutes = 2;
@@ -200,18 +200,18 @@ export class MondoAdapter extends BaseVendorAdapter {
    * Base adapter handles session creation, data insertion, and session completion
    */
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: MondoCredentials,
     context: FetchContext,
   ): Promise<FetchResult> {
     try {
-      console.log(`[Mondo] Fetching data for system ${system.id}`);
+      console.log(`[Mondo] Fetching data for system ${device.id}`);
 
       // Authenticate
       const accessToken = await this.authenticate(credentials);
 
       // Get subcircuit details
-      const subcircuitUrl = `${this.baseUrl}/subcircuit/${system.vendorSiteId}`;
+      const subcircuitUrl = `${this.baseUrl}/subcircuit/${device.vendorSiteId}`;
       let subcircuitResponse;
       try {
         subcircuitResponse = await fetch(subcircuitUrl, {
@@ -310,7 +310,7 @@ export class MondoAdapter extends BaseVendorAdapter {
       // Calculate next poll time at the next boundary
       const nextPollTime = getNextMinuteBoundary(
         this.pollIntervalMinutes,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
 
       return {
@@ -394,20 +394,20 @@ export class MondoAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Test connection for an existing system with monitoring point group ID
+   * Test connection for an existing device with monitoring point group ID
    */
-  private async testExistingSystem(
-    system: DeviceConfigView,
+  private async testExistingDevice(
+    device: DeviceConfigView,
     accessToken: string,
   ): Promise<TestConnectionResult> {
     console.log(
-      `[Mondo] Testing existing system ${system.id} with monitoring point group ${system.vendorSiteId}`,
+      `[Mondo] Testing existing system ${device.id} with monitoring point group ${device.vendorSiteId}`,
     );
 
     try {
       // Fetch subcircuit/monitoring points data
       // The vendorSiteId is the widget/monitoring point group ID
-      const dataUrl = `${this.baseUrl}/subcircuit/${system.vendorSiteId}`;
+      const dataUrl = `${this.baseUrl}/subcircuit/${device.vendorSiteId}`;
       console.log(`[Mondo] Fetching monitoring points from: ${dataUrl}`);
 
       const response = await fetch(dataUrl, {
@@ -430,7 +430,7 @@ export class MondoAdapter extends BaseVendorAdapter {
 
       const rawData = await response.json();
       console.log(
-        `[Mondo] Got monitoring points data from API for widget ${system.vendorSiteId}`,
+        `[Mondo] Got monitoring points data from API for widget ${device.vendorSiteId}`,
       );
 
       // Parse the monitoring points to calculate aggregated values
@@ -542,14 +542,14 @@ export class MondoAdapter extends BaseVendorAdapter {
 
       return {
         success: true,
-        systemInfo: {
-          vendorSiteId: system.vendorSiteId,
+        deviceInfo: {
+          vendorSiteId: device.vendorSiteId,
           displayName:
-            system.displayName ||
+            device.displayName ||
             rawData.rows?.[0]?.monitoringPointGroupName ||
             "Mondo Power System",
           model: "Mondo Power Monitor",
-          serial: system.vendorSiteId,
+          serial: device.vendorSiteId,
         },
         latestData,
         vendorResponse: rawData,
@@ -565,9 +565,9 @@ export class MondoAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Discover and test a new system
+   * Discover and test a new device
    */
-  private async discoverNewSystem(
+  private async discoverNewDevice(
     accessToken: string,
   ): Promise<TestConnectionResult> {
     console.log(`[Mondo] Discovering monitoring point groups for new system`);
@@ -653,7 +653,7 @@ export class MondoAdapter extends BaseVendorAdapter {
 
           return {
             success: true,
-            systemInfo: {
+            deviceInfo: {
               vendorSiteId: firstPoint.id, // This should be saved as vendorSiteId
               displayName: `${firstPoint.name || "Unnamed"} (${org.name})`,
               model: "Mondo Power Monitor",
@@ -672,7 +672,7 @@ export class MondoAdapter extends BaseVendorAdapter {
           // Still return success but without live data
           return {
             success: true,
-            systemInfo: {
+            deviceInfo: {
               vendorSiteId: firstPoint.id,
               displayName: `${firstPoint.name || "Unnamed"} (${org.name})`,
               model: "Mondo Power Monitor",
@@ -695,20 +695,20 @@ export class MondoAdapter extends BaseVendorAdapter {
   }
 
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: MondoCredentials,
   ): Promise<TestConnectionResult> {
     try {
       // Authenticate
       const accessToken = await this.authenticate(credentials);
 
-      // Case 1: Testing existing system with monitoring point group ID
-      if (system.id && system.id > 0 && system.vendorSiteId) {
-        return await this.testExistingSystem(system, accessToken);
+      // Case 1: Testing existing device with monitoring point group ID
+      if (device.id && device.id > 0 && device.vendorSiteId) {
+        return await this.testExistingDevice(device, accessToken);
       }
 
-      // Case 2: Discovering new system
-      return await this.discoverNewSystem(accessToken);
+      // Case 2: Discovering new device
+      return await this.discoverNewDevice(accessToken);
     } catch (error) {
       return {
         success: false,

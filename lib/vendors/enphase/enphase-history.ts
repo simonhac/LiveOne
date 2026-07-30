@@ -35,43 +35,43 @@ interface EnphaseProductionResponse {
 }
 
 /**
- * Get and validate a system from the database
+ * Get and validate a device from the database
  */
-async function getValidatedEnphaseSystem(systemId: number) {
-  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+async function getValidatedEnphaseDevice(systemId: number) {
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-  if (!system) {
+  if (!device) {
     throw new Error(`System ${systemId} not found`);
   }
 
-  if (system.vendorType !== "enphase") {
+  if (device.vendorType !== "enphase") {
     throw new Error(
-      `System ${systemId} is not an Enphase system (type: ${system.vendorType})`,
+      `System ${systemId} is not an Enphase system (type: ${device.vendorType})`,
     );
   }
 
-  if (!system.ownerClerkUserId) {
+  if (!device.ownerClerkUserId) {
     throw new Error(`System ${systemId} has no owner`);
   }
 
   // Type assertion since we've validated ownerClerkUserId is not null
-  return system as typeof system & { ownerClerkUserId: string };
+  return device as typeof device & { ownerClerkUserId: string };
 }
 
 /**
  * Fetch raw production data from Enphase API for a specific time range
- * @param system - The system record from database
+ * @param device - The device record from database
  * @param startUnix - Start timestamp in Unix seconds
  * @param endUnix - End timestamp in Unix seconds (optional)
  * @returns Raw Enphase production response
  */
 async function fetchEnphaseProductionData(
-  system: { id: number; vendorSiteId: string; ownerClerkUserId: string },
+  device: { id: number; vendorSiteId: string; ownerClerkUserId: string },
   startUnix?: number,
   endUnix?: number,
 ): Promise<EnphaseProductionResponse> {
   // Build base URL
-  let url = `https://api.enphaseenergy.com/api/v4/systems/${system.vendorSiteId}/telemetry/production_micro`;
+  let url = `https://api.enphaseenergy.com/api/v4/systems/${device.vendorSiteId}/telemetry/production_micro`;
 
   // Add parameters if fetching historical data
   if (startUnix) {
@@ -89,7 +89,7 @@ async function fetchEnphaseProductionData(
   }
 
   console.log(`[Enphase] Fetching data from ${url}`);
-  const response = await fetchWithEnphaseAuth(system, url);
+  const response = await fetchWithEnphaseAuth(device, url);
 
   if (!response.ok) {
     const error = await response.text();
@@ -102,7 +102,7 @@ async function fetchEnphaseProductionData(
 /**
  * Process Enphase production data and prepare point readings for direct 5m aggregation
  * @param productionData - Raw Enphase production response
- * @param systemId - System ID for the records
+ * @param systemId - Device ID for the records
  * @param startUnix - Start of time range (optional, for filtering)
  * @param endUnix - End of time range (optional, for filtering)
  * @returns Array of point readings ready for direct point_readings_agg_5m insertion
@@ -142,7 +142,7 @@ function processEnphaseDataForPointReadings(
 
 /**
  * Fetch 5-minute data for a specific calendar day (today or historical)
- * @param systemId - The system ID in the database
+ * @param systemId - The device ID in the database
  * @param date - The calendar date to fetch (null means today)
  * @param timezoneOffsetMin - Timezone offset in minutes from UTC
  * @param session - SessionInfo for point_readings
@@ -157,8 +157,8 @@ export async function fetchEnphaseDay(
   dryRun = false,
   collector?: PollCollector,
 ) {
-  // Get and validate system
-  const system = await getValidatedEnphaseSystem(systemId);
+  // Get and validate device
+  const device = await getValidatedEnphaseDevice(systemId);
 
   // Check if we're fetching today
   const today = getTodayInTimezone(timezoneOffsetMin);
@@ -167,7 +167,7 @@ export async function fetchEnphaseDay(
   const dateLabel = isToday ? "today" : actualDate.toString();
 
   console.log(
-    `[Enphase] Fetching 5-minute data for ${dateLabel} for system ${systemId} (${system.displayName})`,
+    `[Enphase] Fetching 5-minute data for ${dateLabel} for system ${systemId} (${device.displayName})`,
   );
 
   let productionData: EnphaseProductionResponse;
@@ -177,7 +177,7 @@ export async function fetchEnphaseDay(
   if (isToday) {
     console.log(`[Enphase] Fetching today's partial data`);
     // For today, don't pass timestamps to get partial data
-    productionData = await fetchEnphaseProductionData(system);
+    productionData = await fetchEnphaseProductionData(device);
   } else {
     // For historical dates, use the full day range
     [startUnix, endUnix] = calendarDateToUnixRange(
@@ -196,7 +196,7 @@ export async function fetchEnphaseDay(
 
     // Fetch the raw data
     productionData = await fetchEnphaseProductionData(
-      system,
+      device,
       startUnix,
       endUnix,
     );
@@ -262,7 +262,7 @@ export async function fetchEnphaseDay(
 
 /**
  * Check if we have sufficient evening data for a specific day (18:00-23:55)
- * @param systemId - System ID
+ * @param systemId - Device ID
  * @param date - Calendar date to check
  * @param timezoneOffsetMin - Timezone offset in minutes
  * @returns true if we have at least 80% of evening intervals
@@ -272,7 +272,7 @@ export async function hasCompleteEveningData(
   date: CalendarDate,
   timezoneOffsetMin: number,
 ): Promise<boolean> {
-  // Find the Enphase solar power point for this system
+  // Find the Enphase solar power point for this device
   const solarPoint =
     await PointManager.getInstance().getPointByPhysicalPathTail(
       systemId,
@@ -284,7 +284,7 @@ export async function hasCompleteEveningData(
     return false; // No point data exists yet
   }
 
-  // Get Unix timestamps for the day in the system's timezone
+  // Get Unix timestamps for the day in the device's timezone
   const [dayStartUnix, dayEndUnix] = calendarDateToUnixRange(
     date,
     timezoneOffsetMin,
@@ -321,7 +321,7 @@ export async function hasCompleteEveningData(
 
 /**
  * Check and fetch yesterday's data if incomplete
- * Called hourly between 01:00-05:00 in the system's timezone
+ * Called hourly between 01:00-05:00 in the device's timezone
  */
 export async function checkAndFetchYesterdayIfNeeded(
   systemId: number,
@@ -329,21 +329,21 @@ export async function checkAndFetchYesterdayIfNeeded(
   dryRun = false,
   collector?: PollCollector,
 ) {
-  // Get and validate system
-  const system = await getValidatedEnphaseSystem(systemId);
+  // Get and validate device
+  const device = await getValidatedEnphaseDevice(systemId);
 
   console.log(
-    `[Enphase] Checking if yesterday's data is complete for system ${systemId} (${system.displayName})`,
+    `[Enphase] Checking if yesterday's data is complete for system ${systemId} (${device.displayName})`,
   );
 
-  // Get yesterday's date in the system's timezone
-  const yesterday = getYesterdayInTimezone(system.timezoneOffsetMin);
+  // Get yesterday's date in the device's timezone
+  const yesterday = getYesterdayInTimezone(device.timezoneOffsetMin);
 
   // Check if we have complete evening data
   const hasData = await hasCompleteEveningData(
     systemId,
     yesterday,
-    system.timezoneOffsetMin,
+    device.timezoneOffsetMin,
   );
 
   if (hasData) {
@@ -360,7 +360,7 @@ export async function checkAndFetchYesterdayIfNeeded(
   const result = await fetchEnphaseDay(
     systemId,
     yesterday,
-    system.timezoneOffsetMin,
+    device.timezoneOffsetMin,
     session,
     dryRun,
     collector,

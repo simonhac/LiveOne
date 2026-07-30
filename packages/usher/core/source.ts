@@ -30,7 +30,7 @@ export type Values = Record<string, number | string | null>;
 export interface Source {
   /** short label for logs/sessions, e.g. "musher" */
   name: string;
-  /** gusher vendorSiteId (identifies the LiveOne system) */
+  /** gusher vendorSiteId (identifies the LiveOne device) */
   siteId: string;
   manifest: Manifest;
   read(): Promise<Values>;

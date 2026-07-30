@@ -33,7 +33,7 @@ export class VendorRegistry {
     this.adapters.set("mondo", new MondoAdapter());
     this.adapters.set("amber", new AmberAdapter());
     this.adapters.set("tesla", new TeslaAdapter());
-    // 'composite' is no longer a vendor: a multi-device area is an areas-backed virtual system handled
+    // 'composite' is no longer a vendor: a multi-device area is an areas-backed virtual device handled
     // outside the adapter path (the minutely cron skips it; live values come via the KV fan-out).
     this.adapters.set("openelectricity", new OpenElectricityAdapter());
     this.adapters.set("sigenergy", new SigenergyAdapter());
@@ -109,23 +109,23 @@ export class VendorRegistry {
   }
 
   /**
-   * Get an adapter for a specific system by its ID
+   * Get an adapter for a specific device by its ID
    * Uses the device config registry to look up the device's vendor type
    */
-  static async getAdapterForSystem(
+  static async getAdapterForDevice(
     systemId: number,
   ): Promise<VendorAdapter | null> {
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
-    if (!system) {
+    if (!device) {
       console.error(`[VendorRegistry] System ${systemId} not found`);
       return null;
     }
 
-    const adapter = this.getAdapter(system.vendorType);
+    const adapter = this.getAdapter(device.vendorType);
     if (!adapter) {
       console.error(
-        `[VendorRegistry] No adapter found for vendor type: ${system.vendorType}`,
+        `[VendorRegistry] No adapter found for vendor type: ${device.vendorType}`,
       );
       return null;
     }
