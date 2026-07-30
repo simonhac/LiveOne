@@ -13,6 +13,7 @@ import HwsSmallCard from "@/components/HwsSmallCard";
 import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
+import HomeEnergyCard from "@/components/HomeEnergyCard";
 import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
 import type { TileId } from "@/lib/dashboard/cards";
 import type { LatestPointValues } from "@/lib/types/api";
@@ -26,6 +27,7 @@ import {
   HWS_SCENARIOS,
   GRID_SIGNALS_SCENARIOS,
   BATTERY_CONTENTS_SCENARIOS,
+  HOME_ENERGY_SCENARIOS,
 } from "./fixtures";
 
 // ---------------------------------------------------------------------------
@@ -358,6 +360,22 @@ export default function CardGallery() {
           playground={{ w: 380, h: 150 }}
           render={(s) => (
             <BatteryContentsCard values={BATTERY_CONTENTS_SCENARIOS[s]} />
+          )}
+        />
+
+        <CardSection
+          title="Home Energy"
+          note="HomeEnergyCard. Same shape as Battery Contents, over the navigator's period. 'grid only' reads Self-use '—'; 'partial self-renewable' em-dashes BOTH ratios; 'no intensities' em-dashes the rate/emissions stats; 'no data' is the empty state."
+          scenarios={Object.keys(HOME_ENERGY_SCENARIOS)}
+          defaultScenario="typical"
+          presetWidths={CQ_WIDTHS}
+          playground={{ w: 380, h: 200 }}
+          render={(s) => (
+            <HomeEnergyCard
+              summary={HOME_ENERGY_SCENARIOS[s]}
+              periodLabel="24 hours"
+              measurementTime={new Date()}
+            />
           )}
         />
       </div>

@@ -1,70 +1,34 @@
 "use client";
 
-import { Leaf } from "lucide-react";
-import Value from "@/components/ui/value";
 import { useQuery } from "@tanstack/react-query";
-import Tile from "@/components/Tile";
+import HomeEnergyCard from "@/components/HomeEnergyCard";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { getPointValue, getMeasurementTime } from "./shared";
 import { subjectOf, useAreaDatum } from "@/components/dashboard/cards/shared";
 import { siteDataQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
+import { PERIOD_LABEL } from "@/lib/charts/temporal";
 import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
 
 /**
- * The "Renewables" tile — three labelled percentages over the DASHBOARD's currently-selected period
- * (D/W/M/Y), so it follows the shared temporal navigator like the charts (NOT a fixed window, and NOT
- * an instantaneous value):
+ * The "Home Energy" card (tile view `renewables`) — everything the site CONSUMED over the DASHBOARD's
+ * currently-selected period (D/W/M/Y), so it follows the shared temporal navigator like the charts (NOT
+ * a fixed window, and NOT an instantaneous value): the energy, its blended rate and emissions intensity,
+ * its renewable share, the absolute cost/carbon, and then the two own-generation ratios:
  *   1. Renewable autarky              — consumption covered by OUR OWN renewable generation.
  *   2. Own-renewable self-consumption — of the renewable WE generated, the share consumed on site.
- *   3. Renewable share of consumption — own + grid renewables.
- * Metrics 1-2 draw on the joint `self_renewable_kwh` leg; metric 3 on the existing `renewable_kwh`.
+ * Metrics 1-2 draw on the joint `self_renewable_kwh` leg.
  *
  * NO dedicated route: it reads the SAME period-scoped attributed-flow payload the Sankey uses
  * (`siteDataQuery` → `/api/history?include=sankey` → `attributedFlow`, deduped with the charts) and
  * reduces it client-side via `reduceRenewablesMetrics`. Sub-daily (D/W) is computed live, so
  * "today so far" is real; M/Y read the daily rollup.
+ *
+ * It renders a full card ({@link HomeEnergyCard}) rather than a `Tile`; it stays a tile VIEW only so the
+ * persisted dashboard docs — where it already sits alone in its own row, hence full width — need no
+ * rewrite.
  */
-
-/** Bare rounded percent — never includes the "%". Both the Tile hero and the MetricRows render the
- *  "%" via `<Value unit="%">` so it is sized and bound per docs/architecture/number-typography.md. */
-const fmtPctValue = (x: number | null | undefined): string =>
-  x == null ? "—" : `${Math.round(x * 100)}`;
-
-const AUTARKY_TIP =
-  "Renewable autarky — the share of your consumption covered by your OWN renewable generation " +
-  "(solar directly, or via the battery at its self-renewable blend). Grid imports and any backup " +
-  "generator are self-origin only when renewable, so grid mix and generator energy are excluded here.";
-const SELF_CONSUMPTION_TIP =
-  "Own-renewable self-consumption — of the renewable energy you generated, the fraction consumed on " +
-  "site rather than exported. Battery round-trip losses reduce it. “—” when you generated no own " +
-  "renewable in the period.";
-const SHARE_TIP =
-  "Renewable share of consumption — your own renewables plus the renewable fraction of the grid you " +
-  "imported.";
-
-function MetricRow({
-  label,
-  value,
-  tip,
-}: {
-  label: string;
-  value: string;
-  tip: string;
-}) {
-  return (
-    <div
-      className="flex items-baseline justify-between gap-2 cursor-help"
-      title={tip}
-    >
-      <span className="text-gray-400 truncate">{label}</span>
-      <span className="text-gray-200 font-semibold">
-        <Value value={value} unit={/\d/.test(value) ? "%" : undefined} />
-      </span>
-    </div>
-  );
-}
 
 function RenewablesTile({
   latest,
@@ -74,8 +38,8 @@ function RenewablesTile({
   const { datum, paused } = useAreaDatum(systemId ?? 0);
   const tz = subjectOf(datum)?.timezoneOffsetMin ?? 600;
 
-  // Freshness of the site's live feed (like the sibling tiles) — without a measurementTime the Tile
-  // treats the tile as permanently stale and paints the diagonal "stale" hatch + dims it.
+  // Freshness of the site's live feed (like the sibling tiles) — without a measurementTime the card
+  // treats itself as permanently stale and paints the diagonal "stale" hatch + dims it.
   const measurementTime =
     getMeasurementTime(latest, "load/power") ??
     getMeasurementTime(latest, "bidi.grid/power") ??
@@ -99,40 +63,14 @@ function RenewablesTile({
 
   const flow = siteData?.attributedFlow;
   const summary = flow ? reduceRenewablesMetrics(flow) : null;
-  const m = summary?.metrics;
-  const loading = !isError && !siteData;
 
   return (
-    <Tile
-      title="Renewables"
-      value={loading ? "…" : fmtPctValue(m?.renewableAutarky)}
-      unit={loading || m?.renewableAutarky == null ? undefined : "%"}
-      icon={<Leaf className="w-6 h-6" />}
-      iconColor="text-green-400"
-      bgColor="bg-green-900/20"
-      borderColor="border-green-700"
-      staleThresholdSeconds={staleThresholdSeconds}
+    <HomeEnergyCard
+      summary={summary}
+      periodLabel={PERIOD_LABEL[period]}
       measurementTime={measurementTime}
-      extraInfo={`over ${period}`}
-      extra={
-        <div className="text-xs space-y-0.5">
-          <MetricRow
-            label="Autarky"
-            value={loading ? "…" : fmtPctValue(m?.renewableAutarky)}
-            tip={AUTARKY_TIP}
-          />
-          <MetricRow
-            label="Self-use"
-            value={loading ? "…" : fmtPctValue(m?.ownRenewableSelfConsumption)}
-            tip={SELF_CONSUMPTION_TIP}
-          />
-          <MetricRow
-            label="Renewable"
-            value={loading ? "…" : fmtPctValue(m?.renewableShare)}
-            tip={SHARE_TIP}
-          />
-        </div>
-      }
+      staleThresholdSeconds={staleThresholdSeconds}
+      loading={!isError && !siteData}
     />
   );
 }

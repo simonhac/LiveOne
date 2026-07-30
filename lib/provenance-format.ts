@@ -16,9 +16,11 @@ export function formatDollars(costC: number): string {
   return `${dollars < 0 ? "−" : ""}$${Math.abs(dollars).toFixed(2)}`;
 }
 
-/** "X.Y" (1dp, cents/kWh) or "—" when unknown. */
+/** "X.Y" (1dp, cents/kWh) or "—" when unknown. Negatives take a real minus (U+2212), like
+ *  `formatDollars` and BatteryContentsCard's own cents spelling — never a hyphen. */
 export function formatCentsPerKwh(c: number | null): string {
-  return c != null ? c.toFixed(1) : "—";
+  if (c == null) return "—";
+  return `${c < 0 ? "−" : ""}${Math.abs(c).toFixed(1)}`;
 }
 
 /** Rounded whole grams/kWh, or "—" when unknown. */
@@ -56,4 +58,12 @@ export function formatKwh(k: number): string {
 /** "X.Y" (1dp kg CO2 — `kgCo2` is already grams/1000, e.g. `LoadProvenanceSummary.kgCo2`). */
 export function formatKgCo2(kg: number): string {
   return kg.toFixed(1);
+}
+
+/** An absolute carbon total WITH its unit, switching g → kg at 1 kg: "497 g" / "7.2 kg". Unlike the
+ *  bare formatters above this one carries the unit, because the unit is what changes. */
+export function formatCarbonTotal(grams: number): string {
+  return grams >= 1000
+    ? `${(grams / 1000).toFixed(1)} kg`
+    : `${Math.round(grams)} g`;
 }

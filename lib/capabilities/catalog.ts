@@ -94,9 +94,10 @@ export const TILE_CATALOG: Record<TileId, TileCatalogEntry> = {
   ev: { id: "ev", label: "EV", requires: { all: ["ev/soc"] } },
   // Solar OR grid: a solar site gets all three renewables metrics; a grid-only site still gets the
   // renewable-share metric (metrics 1 & 2 then correctly read 0 / — rather than being hidden).
+  // The `renewables` id is historical — the view renders as the "Home Energy" card.
   renewables: {
     id: "renewables",
-    label: "Renewables",
+    label: "Home Energy",
     requires: { any: ["solar/power", "grid/power"] },
   },
 };
