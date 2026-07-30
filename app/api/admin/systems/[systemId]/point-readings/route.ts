@@ -11,7 +11,10 @@ import {
   type ReadingStore,
 } from "@/lib/readings/dao";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo as pgPointInfo } from "@/lib/db/planetscale/schema";
+import {
+  devices as pgDevices,
+  points as pgPointsTable,
+} from "@/lib/db/planetscale/schema";
 import { DeviceRegistry } from "@/lib/registry";
 import { Point } from "@/lib/ids";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -105,11 +108,30 @@ export async function GET(
 
     // Get all point info for this system
     const pointsStartTime = Date.now();
+    // `points ⋈ devices` (slice 1b), projected explicitly: the served shape this route feeds into
+    // `new PointInfo(...)` is no longer one table's columns — `systemId` is the owning device's handle
+    // and `index` is the global `points.rid`.
     const pgPoints = await requirePlanetscaleDb()
-      .select()
-      .from(pgPointInfo)
-      .where(eq(pgPointInfo.systemId, systemId))
-      .orderBy(pgPointInfo.index);
+      .select({
+        systemId: pgDevices.rid,
+        index: pgPointsTable.rid,
+        pointUid: pgPointsTable.id,
+        physicalPathTail: pgPointsTable.physicalPath,
+        logicalPathStem: pgPointsTable.logicalPath,
+        metricType: pgPointsTable.metricType,
+        metricUnit: pgPointsTable.unit,
+        defaultName: pgPointsTable.defaultName,
+        displayName: pgPointsTable.name,
+        subsystem: pgPointsTable.subsystem,
+        transform: pgPointsTable.transform,
+        active: pgPointsTable.active,
+        createdAt: pgPointsTable.createdAt,
+        updatedAt: pgPointsTable.updatedAt,
+      })
+      .from(pgPointsTable)
+      .innerJoin(pgDevices, eq(pgDevices.id, pgPointsTable.deviceId))
+      .where(eq(pgDevices.rid, systemId))
+      .orderBy(pgPointsTable.rid);
     // Map PG rows (native timestamps) to the served shape (epoch-ms columns) the rest
     // of this route consumes.
     const points = pgPoints.map((p) => ({
