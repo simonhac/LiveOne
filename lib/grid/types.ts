@@ -10,6 +10,6 @@ import type { NemRegion } from "@/lib/vendors/openelectricity/types";
 export interface GridContext {
   /** The NEM region the Area sits in, derived from its location. */
   region: NemRegion;
-  /** The public OpenElectricity `devices.id` that serves this region's live signals. */
+  /** The public OpenElectricity `systems.id` that serves this region's live signals. */
   regionSystemId: number;
 }

@@ -11,7 +11,7 @@ import {
  * Get the last polling status for a device, by its legacy integer handle.
  *
  * Reads `device_state` (config-v4 Phase 12 slice C — `polling_status` is frozen until slice N
- * drops it). The handle bridges via the verbatim-rid invariant `devices.rid == devices.id`.
+ * drops it). The handle bridges via the verbatim-rid invariant `devices.rid == systems.id`.
  */
 export async function getPollingStatus(systemId: number) {
   const [row] = await requirePlanetscaleDb()

@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
       }
     }
     // The `?v4mirror=1` C7 completeness probe was REMOVED in the Phase 12 terminal window: it counted
-    // `point_info` rows with no `points` row and `devices` rows with no `devices` row, and both of its
+    // `point_info` rows with no `points` row and `systems` rows with no `devices` row, and both of its
     // left-hand tables are gone. It was retained deliberately until the drop — with one home per config
     // object there is no mirror left to be incomplete.
     return NextResponse.json(body, { headers: serverTimingHeaders(t) });

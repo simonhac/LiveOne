@@ -30,7 +30,7 @@ interface CommandBody {
 }
 
 /**
- * Issue a Tesla charge-control command for a device.
+ * Issue a Tesla charge-control command for a system.
  *
  * Auth: caller must own the device or be an admin (requireWrite). Credentials are
  * always loaded under the device OWNER (admins act on the owner's stored tokens).

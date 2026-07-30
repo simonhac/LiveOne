@@ -310,7 +310,7 @@ export class AmberAdapter extends BaseVendorAdapter {
         const yesterday = getYesterdayInTimezone(device.timezoneOffsetMin);
         console.log(`[Amber] Running usage sync for ${yesterday.toString()}`);
 
-        // Add siteId from device to credentials
+        // Add siteId from system to credentials
         const credentialsWithSite: AmberCredentials = {
           ...credentials,
           siteId: device.vendorSiteId || undefined,
@@ -344,7 +344,7 @@ export class AmberAdapter extends BaseVendorAdapter {
           `[Amber] Running forecast sync for ${today.toString()} + 1 day`,
         );
 
-        // Add siteId from device to credentials
+        // Add siteId from system to credentials
         const credentialsWithSite: AmberCredentials = {
           ...credentials,
           siteId: device.vendorSiteId || undefined,

@@ -1,6 +1,6 @@
 /**
- * Logical-device resolver — the single authority for "which physical points play which energy-flow
- * roles" for an Area Sankey view. A *logical device* is an explicit Area with a complete source/load
+ * Logical-system resolver — the single authority for "which physical points play which energy-flow
+ * roles" for an Area Sankey view. A *logical system* is an explicit Area with a complete source/load
  * role set; its points may come from one member device or many, with `area_bindings` as an override.
  * Every Sankey path — the engine's daily recompute, the sub-daily history compute, and the FE —
  * consumes this one definition instead of re-deriving role classification independently.
@@ -22,7 +22,7 @@ import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 // Re-exported for back-compat: the role taxonomy now lives in lib/roles/registry.ts.
 export { isCompleteRoleSet };
 
-/** A power point participating in a logical device, carrying its physical origin. */
+/** A power point participating in a logical system, carrying its physical origin. */
 export interface LogicalSystemPoint {
   /**
    * The point's identity (`point_info.point_uid`, NOT NULL). Carried alongside `ref` so the
@@ -32,7 +32,7 @@ export interface LogicalSystemPoint {
    */
   point: PointId;
   /**
-   * Physical origin: {systemId, pointId} — for a multi-device area this is the child device.
+   * Physical origin: {systemId, pointId} — for a multi-device area this is the child system.
    * Still needed: the flow builder's `NormRow`s and the `/api/history` served rows are both
    * addressed by the integer pair. It dies with the handle in Phase 13.
    */
@@ -48,7 +48,7 @@ export interface LogicalSystemPoint {
 }
 
 export interface LogicalSystem {
-  /** The logical-device handle == the Area's integer `legacy_handles.handle`. */
+  /** The logical-system handle == the Area's integer `legacy_handles.handle`. */
   id: number;
   /**
    * The Area this view belongs to (the area whose `legacy_system_id == id`). Always present:
@@ -73,7 +73,7 @@ export interface LogicalSystem {
 }
 
 /**
- * Resolve the role→point mapping for a logical device. Returns null if the device doesn't exist.
+ * Resolve the role→point mapping for a logical system. Returns null if the device doesn't exist.
  * Only typed power points participate (no `logical_path_stem` ⇒ excluded, matching the engine).
  */
 export async function resolveLogicalSystem(
@@ -133,7 +133,7 @@ export async function resolveLogicalSystem(
 
   const isComplete = isCompleteRoleSet(points.map((p) => p.stem));
 
-  // A logical device MUST map to an Area — `area_id` is the primary key of point_readings_flow_attr_1d
+  // A logical system MUST map to an Area — `area_id` is the primary key of point_readings_flow_attr_1d
   // (P3-tail-1). Flow is AREA-only: a device with no Area has no flow to record, so return null (never
   // mint one here). Areas are EXPLICIT now — a device gets a flow view only once a user groups it into
   // an Area (createArea); it is NOT auto-minted at create-time or lazily healed here.
@@ -151,7 +151,7 @@ export async function resolveLogicalSystem(
 }
 
 /**
- * The Areas that form a complete logical device (a usable source/load role set) — the set the daily
+ * The Areas that form a complete logical system (a usable source/load role set) — the set the daily
  * flow recompute analyses. AREA-only: driven off `listFlowEligibleAreaHandles()` (active explicit
  * Areas), so a raw device never gets a duplicate Sankey. A grid-signal Area with no complete role set
  * drops out via the `isComplete` filter.

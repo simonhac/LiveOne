@@ -544,7 +544,7 @@ export default function ViewDataModal({
     return pointInfo?.displayName || pointInfo?.defaultName || key;
   };
 
-  // Get series ID suffix (without the liveone.mondo.{device} prefix)
+  // Get series ID suffix (without the liveone.mondo.{system} prefix)
   const getSeriesIdSuffix = (key: string, pointInfo: PointInfo | null) => {
     // Must have logicalPath to be a valid series
     const logicalPath = pointInfo?.getLogicalPath();

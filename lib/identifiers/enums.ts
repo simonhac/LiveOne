@@ -2,7 +2,7 @@
  * Enums for known identifier values
  *
  * These enums provide type safety for common point types, metric types,
- * and aggregation fields used throughout the device.
+ * and aggregation fields used throughout the system.
  */
 
 /**

@@ -5,7 +5,7 @@
  * of the legacy store). The daily cron computes each
  * device/day's 1d aggregates in Postgres from PG `point_readings_agg_5m` via
  * `recomputeAgg1dForDay`, and materialises the energy-flow matrix per logical
- * device. Idempotent: re-running a day just heals it.
+ * system. Idempotent: re-running a day just heals it.
  */
 import { CalendarDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -212,7 +212,7 @@ export async function aggregateRange(
   }
 
   // NOTE: the per-(area, day) energy-flow matrix (`point_readings_flow_attr_1d`) is materialised by the
-  // battery-provenance heal pass below (it iterates every complete logical device — energy-only +
+  // battery-provenance heal pass below (it iterates every complete logical system — energy-only +
   // grid/solar attribution for battery-less Areas, plus the blend for battery Areas). The legacy
   // `point_readings_flow_1d` writer was retired, so there is no separate flow-matrix pass here.
 
@@ -236,7 +236,7 @@ export async function aggregateRange(
 
   // Daily heal of the flow matrix + battery-provenance blend over the aggregated range (best-effort).
   // Runs LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. It
-  // materialises `point_readings_flow_attr_1d` for EVERY complete logical device (energy-only +
+  // materialises `point_readings_flow_attr_1d` for EVERY complete logical system (energy-only +
   // grid/solar attribution for battery-less Areas; the blend too for battery Areas) — this is the sole
   // flow-matrix pass since flow_1d was retired. First run THE learn (η → C → losses over the incremental
   // battery_provenance_daily cache — ordering enforced inside), so the blend/rollup recompute below

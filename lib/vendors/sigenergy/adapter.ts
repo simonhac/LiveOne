@@ -13,7 +13,7 @@ import { buildSigenergyReadings, sigenergyFlowToData } from "./point-metadata";
 import type { SigenergyCredentials, SigenergyData } from "./types";
 
 /**
- * Vendor adapter for Sigenergy (mySigen) devices.
+ * Vendor adapter for Sigenergy (mySigen) systems.
  *
  * Per-user credentialed poll-snapshot vendor (mirrors Selectronic): each 5-minute poll fetches the
  * cloud energy-flow snapshot and emits raw PV/battery/grid/load/EV + SOC readings; Postgres computes

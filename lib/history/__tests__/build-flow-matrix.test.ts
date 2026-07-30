@@ -206,7 +206,7 @@ describe("buildFlowMatrixFromAggRows — exact-energy overlays", () => {
   });
 
   it("missing energy rows never omit the Sankey — falls back to the power matrix", () => {
-    // energyPoints declared on the logical device, but the fetch returned no delta rows.
+    // energyPoints declared on the logical system, but the fetch returned no delta rows.
     const actual = buildFlowMatrixFromAggRows(makeAggRows(POINTS), LS_E);
     expect(actual).toEqual(expectedMatrix(POINTS));
   });

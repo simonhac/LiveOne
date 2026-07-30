@@ -141,7 +141,7 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
     .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     // The "is this a helper device?" test hops the binding's uuid through `points.device_id`
-    // (slice E PR 2a). Slice K2 dropped the trailing `devices.rid → devices.id` bridge outright:
+    // (slice E PR 2a). Slice K2 dropped the trailing `devices.rid → systems.id` bridge outright:
     // `devices.vendor` IS the vendor, so the hop was pure overhead, not a source.
     .innerJoin(points, eq(points.id, areaBindings.pointUid))
     .innerJoin(devices, eq(devices.id, points.deviceId))
@@ -233,7 +233,7 @@ export async function recomputeRange(
   config?: ProvenanceConfig,
   onChunk?: (info: RangeChunkInfo) => void,
 ): Promise<void> {
-  // The rollup covers EVERY complete logical device, so flow_attr_1d supersedes flow_1d fleet-wide
+  // The rollup covers EVERY complete logical system, so flow_attr_1d supersedes flow_1d fleet-wide
   // (energy-only + grid/solar attribution for battery-less Areas).
   const handles = (await listCompleteLogicalSystems()).map((ls) => ls.id);
   const start = Math.max(startMs, LIVEONE_BIRTHDATE_MS);

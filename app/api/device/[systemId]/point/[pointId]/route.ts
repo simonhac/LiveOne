@@ -130,7 +130,7 @@ export async function PATCH(
 
     // Perform the update.
     // Routed through PointManager.updatePoint so the write honours
-    // CONFIG_WRITES_TO_PG and the series cache is invalidated for this device.
+    // CONFIG_WRITES_TO_PG and the series cache is invalidated for this system.
     const pointManager = PointManager.getInstance();
     await pointManager.updatePoint(systemId, pointId, updateData);
 

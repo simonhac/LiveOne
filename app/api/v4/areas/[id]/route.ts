@@ -41,7 +41,7 @@ export async function GET(
 
   // Membership arrives as device ids (slice H), so the `dv_` TypeIDs this route emits come straight off
   // the membership rows — no `legacy_handles` round trip, and no `device-mapping-incomplete` 503, since
-  // `area_members.device_id` FKs `devices.id`. The rid hop remains only because `devices` and
+  // `area_members.device_id` FKs `devices.id`. The rid hop remains only because `systems` and
   // `capabilitiesForDevice` are still int-keyed (Phase 13 removes it).
   const memberIds = await getAreaMemberDeviceIds(r.area.id);
   const memberRids = await DeviceRegistry.ridsForDevices(memberIds);

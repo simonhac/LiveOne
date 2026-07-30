@@ -1,12 +1,12 @@
 /**
- * Per-device CONFIG — the typed, user-editable "all sorts of stuff" blob stored on `devices.config`
- * (jsonb). Distinct from `devices.metadata`, which is the adapter-owned credentials/diagnostics bag
+ * Per-device CONFIG — the typed, user-editable "all sorts of stuff" blob stored on `systems.config`
+ * (jsonb). Distinct from `systems.metadata`, which is the adapter-owned credentials/diagnostics bag
  * (secure-credentials, vendor network, device descriptors). `config` is the clean home for the
  * per-device knobs the capability cleanup is data-driving instead of hardcoding — it grows WITHOUT
  * migrations (the HA `.storage` model), because the column already exists.
  *
  * Today: capability on/off overrides, the structured device `spec` (config-v4 slice K1 — the successor
- * to the free-text `devices.ratings`/`solar_size`/`battery_size` columns, which `devices` does not
+ * to the free-text `systems.ratings`/`solar_size`/`battery_size` columns, which `devices` does not
  * have), and `nameplateKw`/`updateCadenceSeconds`. `updateCadenceSeconds` is still a forward seam to
  * retire the hardcoded `vendorType === 'enphase' ? 2100 : 300` stale-threshold branch.
  *
@@ -95,7 +95,7 @@ export interface BatteryProvenanceConfig {
 }
 
 /**
- * The device's PHYSICAL SPEC, structured — the successor to the three free-text `devices` columns
+ * The device's PHYSICAL SPEC, structured — the successor to the three free-text `systems` columns
  * `ratings` / `solar_size` / `battery_size` (clean-sheet §4.8 "what dies": `devices` has no counterpart
  * to any of them, deliberately).
  *
@@ -110,13 +110,13 @@ export interface BatteryProvenanceConfig {
  * 3 carries the literal `solar_size` "-0.0 kW", which the old regex also rejected).
  */
 export interface DeviceSpec {
-  /** PV array nameplate (kW DC) — was `devices.solar_size` ("9 kW"). */
+  /** PV array nameplate (kW DC) — was `systems.solar_size` ("9 kW"). */
   solarSizeKw?: number;
-  /** Battery nominal capacity (kWh) — was `devices.battery_size` ("63.6 kWh"). */
+  /** Battery nominal capacity (kWh) — was `systems.battery_size` ("63.6 kWh"). */
   batterySizeKwh?: number;
-  /** Inverter continuous rating (kW) — was the first half of `devices.ratings` ("7.5kW, 48V"). */
+  /** Inverter continuous rating (kW) — was the first half of `systems.ratings` ("7.5kW, 48V"). */
   inverterSizeKw?: number;
-  /** Battery nominal DC bus voltage (V) — the second half of `devices.ratings`. Display-only. */
+  /** Battery nominal DC bus voltage (V) — the second half of `systems.ratings`. Display-only. */
   batteryVoltageV?: number;
 }
 
@@ -126,8 +126,8 @@ export interface DeviceSpec {
  * The TypeScript counterpart of the `specNum(…)` SQL that used to live in the deleted
  * `lib/registry/v4-mirror.ts`, added in config-v4 Phase 12 slice 1a. It is needed because the two CREATE
  * paths that still receive free text — `POST /api/devices` (from a vendor adapter's `getDeviceInfo`) and
- * the Tesla OAuth callback — used to hand it to `devices.ratings`/`solar_size`/`battery_size` and let the
- * mirror's SQL parse it on the way into `devices.config.spec`. With no `devices` row left to stage it in,
+ * the Tesla OAuth callback — used to hand it to `systems.ratings`/`solar_size`/`battery_size` and let the
+ * mirror's SQL parse it on the way into `devices.config.spec`. With no `systems` row left to stage it in,
  * the parse has to happen before the write.
  *
  * Semantics are deliberately identical to that SQL, so a device created after 1a gets the same `spec` a
@@ -196,7 +196,7 @@ export interface DeviceConfig {
 /**
  * The line chart's y-axis scaling hint (kW) — the SUCCESSOR to `maxPowerHintFromDeviceInfo`
  * (components/dashboard/cards/shared.tsx), which regex-scrapes the same two numbers out of the free-text
- * `devices.solar_size`/`ratings` on every render. Same rule: the larger of the PV array and the inverter,
+ * `systems.solar_size`/`ratings` on every render. Same rule: the larger of the PV array and the inverter,
  * whichever of the two is known; undefined when neither is.
  *
  * Client-safe (no DB imports) so the card can call it directly once slice K2 puts `config` on the wire.
@@ -221,7 +221,7 @@ export function maxPowerHintFromSpec(
 
 /**
  * Render a {@link DeviceSpec} back into the three free-text display strings the WIRE still carries
- * (`/api/data`'s `deviceInfo.ratings`/`solarSize`/`batterySize`, the admin devices table).
+ * (`/api/data`'s `deviceInfo.ratings`/`solarSize`/`batterySize`, the admin systems table).
  *
  * This is deliberately a one-way DISPLAY projection, not a round-trip. Slice K2 flips the config reads
  * onto `devices`, which has no counterpart to the three columns — but four components still render the

@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     console.log("TESLA: User disconnecting Tesla:", userDisplay);
 
     // The read is the config registry (`devices`); each Tesla device is then marked removed through
-    // the `devices` writer, keyed by handle.
+    // the `systems` writer, keyed by handle.
 
     const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
     const teslaDevices = ownedDevices.filter((s) => s.vendorType === "tesla");

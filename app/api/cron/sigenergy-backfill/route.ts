@@ -84,8 +84,8 @@ function spanDaysBetween(startYmd: string, endYmd: string): number {
 }
 
 /**
- * Resolve the station-local calendar window for one device. Explicit start/end are timezone-free;
- * only the `days` fallback needs the station's offset, which is why this is per-device.
+ * Resolve the station-local calendar window for one system. Explicit start/end are timezone-free;
+ * only the `days` fallback needs the station's offset, which is why this is per-system.
  */
 function resolveWindow(
   device: DeviceConfigView,
@@ -105,7 +105,7 @@ function resolveWindow(
   return { startYmd: ymd(startD), endYmd: ymd(localNow) };
 }
 
-/** Backfill one device. Never throws — a failure is reported as `{ ok: false, error }`. */
+/** Backfill one system. Never throws — a failure is reported as `{ ok: false, error }`. */
 async function backfillOneDevice(
   device: DeviceConfigView,
   params: BackfillParams,
@@ -278,7 +278,7 @@ async function handleBackfill(request: NextRequest) {
       { status: 400 },
     );
 
-  // Resolve the targets: an explicit systemId, else EVERY active sigenergy device. Looping by
+  // Resolve the targets: an explicit systemId, else EVERY active sigenergy system. Looping by
   // default is deliberate — the old "exactly one, or 400" rule would have silently broken the
   // nightly cron the day a second Sigenergy site was added.
   const sigenDevices = (await DeviceConfigRegistry.activeDevices()).filter(

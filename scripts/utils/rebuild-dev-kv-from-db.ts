@@ -1,5 +1,5 @@
 /**
- * Rebuild the dev KV cache (latest point values + device summaries + subscription registry)
+ * Rebuild the dev KV cache (latest point values + system summaries + subscription registry)
  * purely from the already-synced `liveone-dev` Postgres DB. Companion to sync-prod-to-dev-db.ts.
  *
  * Why this exists: dev/preview run with crons OFF (CRONS_ENABLED unset), so nothing polls into
@@ -12,13 +12,13 @@
  * What it writes (all in the `dev:` namespace, see lib/kv.ts kvKey):
  *   - dev:latest:device:{dv_…}       per-point latest values for a device
  *   - dev:latest:area:{ar_…}         the same, propagated to each subscribing multi-device Area
- *   - dev:device-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
+ *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
  *   - dev:subscriptions:device:{dv_…}  reverse map source-point → subscribing Areas
  *
  * config-v4 Phase 13 PR 3 moved this keyspace off the integer handle. This script's own API is
  * unchanged (every function it calls still takes the integer handle), but running it is the
  * **latest-values half of that keyspace change's deploy step** on dev — entries written by an older
- * build sit under `dev:latest:device:{int}` and are simply never read again.
+ * build sit under `dev:latest:system:{int}` and are simply never read again.
  *
  * SAFETY
  *   - Refuses to run unless getEnvironment() === "dev" (would otherwise clobber prod's live KV).
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
   const byDevice = groupLatestByDevice(rows, addresses);
 
   // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
-  // instead of one-at-a-time. Per-device summary inputs are collected the same way, to run AFTER all
+  // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
   // point values land (updateSubscriberSummaries reads them back from KV).
   const pointTasks: Array<() => Promise<void>> = [];
   const systemSummaries: Array<{

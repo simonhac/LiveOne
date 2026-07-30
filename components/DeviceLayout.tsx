@@ -160,7 +160,7 @@ export default function DeviceLayout({
     if (onDeviceUpdate) {
       await onDeviceUpdate(updates);
     }
-    // Refresh server components to update devices list (e.g., if display name changed)
+    // Refresh server components to update systems list (e.g., if display name changed)
     router.refresh();
   };
 

@@ -35,7 +35,7 @@ function toKw(value: number | null, unit: string | null): number | null {
 }
 
 /**
- * Build the `EnergyFlowMatrix` for a logical device from in-memory signed 5m rows.
+ * Build the `EnergyFlowMatrix` for a logical system from in-memory signed 5m rows.
  *
  * @param allRows  the agg_5m rows already fetched for the request (5m, or 30m pre-bucketing)
  * @param logicalSystem  the role→point mapping (`resolveLogicalSystem`); its points may span devices
@@ -90,7 +90,7 @@ export function buildFlowMatrixFromAggRows(
 
   if (classified.length === 0) return null;
 
-  // Exact-energy overlays from the logical device's accumulator points (fetched into `allRows`
+  // Exact-energy overlays from the logical system's accumulator points (fetched into `allRows`
   // by the route when a Sankey is requested); slot-aligned — buildFlowSeries owns the shift.
   const energySeries: EnergySeriesInput[] = [];
   for (const p of logicalSystem.energyPoints) {

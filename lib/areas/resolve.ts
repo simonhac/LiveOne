@@ -1,5 +1,5 @@
 /**
- * Resolve the Area that represents a logical device. An Area is located by its integer addressing
+ * Resolve the Area that represents a logical system. An Area is located by its integer addressing
  * handle: a single-device Area wraps one physical device (handle == its `devices.rid`); a multi-device
  * Area draws its points across child devices via `area_bindings` (the handle names no device of its
  * own — resolved area-natively by `DeviceConfigRegistry.areaByHandle`). The single-vs-multi

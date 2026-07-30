@@ -1,7 +1,7 @@
 /**
  * Allocate a synthetic **addressing handle** (`areas.legacy_system_id`) for a multi-device area.
  *
- * A multi-device (site) area has NO real `devices` row — it is addressed purely by its integer
+ * A multi-device (site) area has NO real `systems` row — it is addressed purely by its integer
  * `legacy_system_id`; `createArea` also registers it in `legacy_handles`, which is what
  * `DeviceConfigRegistry.areaByHandle` reads (and thus the
  * only shape the point resolver serves via membership/bindings). So a freshly-created site needs a
@@ -13,9 +13,9 @@
  * that would be a schema change), guarded at the call site by the `areas_legacy_system_unique` index
  * + a retry.
  *
- * config-v4 slice K2: the device leg reads `max(devices.rid)`, not `max(devices.id)`. The two are equal
- * by the verbatim-rid invariant (`devices.rid == devices.id`, lib/registry/v4-mirror.ts) AND the floor
- * only ever ratchets UP, so the swap cannot lower a handle below a live id even transiently. `devices`
+ * config-v4 slice K2: the device leg reads `max(devices.rid)`, not `max(systems.id)`. The two are equal
+ * by the verbatim-rid invariant (`devices.rid == systems.id`, lib/registry/v4-mirror.ts) AND the floor
+ * only ever ratchets UP, so the swap cannot lower a handle below a live id even transiently. `systems`
  * drops in the terminal window while `devices.rid` keeps allocating, so reading the dying table here
  * would have made the allocator the last thing standing between the drop and a handle collision.
  */
@@ -37,7 +37,7 @@ export const AREA_HANDLE_BASE = 1_000_000;
  * `max(areas.legacy_system_id)`. Three reasons this is strictly safer, not merely equivalent:
  *  1. `legacy_handles` outlives the column (PR 6 drops it), and the allocator must not be the last
  *     thing standing between the drop and a handle collision — the same argument that moved the device
- *     leg off `devices.id` in slice K2.
+ *     leg off `systems.id` in slice K2.
  *  2. `handle` is `legacy_handles`' PRIMARY KEY, so it is the strongest of the remaining uniqueness
  *     guards backing the retry (`areas_legacy_system_unique` disappears with the column).
  *  3. It is a SUPERSET of the old read: it spans device handles as well as area handles. The floor can

@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
     const vehicleId = String(teslaVehicle.id);
     console.log("TESLA: Using vehicle:", vehicleId, teslaVehicle.display_name);
 
-    // Existence check reads the config registry (`devices`); the writers below are still `devices`.
+    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
 
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(vehicleId);

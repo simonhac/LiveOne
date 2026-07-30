@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Resolve the region's device.
+  // Resolve the region's system.
   const devices = await DeviceConfigRegistry.activeDevices();
   const device = devices.find(
     (s) => s.vendorType === "openelectricity" && s.vendorSiteId === region,

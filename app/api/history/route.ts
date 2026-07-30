@@ -159,7 +159,7 @@ function parseTimeRangeParams(
         deviceTimezoneOffsetMin,
       );
     } else if (startTimeParam && endTimeParam) {
-      // Parse timezone offset if provided, otherwise use device timezone
+      // Parse timezone offset if provided, otherwise use system timezone
       const offsetMin = timezoneOffsetParam
         ? parseInt(timezoneOffsetParam)
         : deviceTimezoneOffsetMin;
@@ -393,7 +393,7 @@ async function getDeviceHistoryInOpenNEMFormat(
   const computeSankey =
     sankey !== undefined && flowMatrixOmittedReason === undefined;
 
-  // Exact-energy overlay: also fetch the logical device's energy-accumulator points so the Sankey
+  // Exact-energy overlay: also fetch the logical system's energy-accumulator points so the Sankey
   // can prefer metered interval energies over power integration (`FlowSeries.energyKwh`). Additive
   // only — the coverage check above stays POWER-only, so missing energy rows can never omit the
   // Sankey (they just fall back to integration), and `buildSeriesFromAggRows` iterates
@@ -598,7 +598,7 @@ export async function GET(request: NextRequest) {
     );
     if (authResult instanceof NextResponse) return authResult;
     // `subject` is the area-native identity — the ONLY identity this route now carries. Phase 13 PR 2
-    // removed the legacy device-shaped `device` view: the series layer takes the bare handle and the
+    // removed the legacy device-shaped `system` view: the series layer takes the bare handle and the
     // timezone comes off the subject, so there is no longer a second, device-first identity to disagree
     // with it.
     const { subject } = authResult;
@@ -707,8 +707,8 @@ export async function GET(request: NextRequest) {
             try {
               const startYMD = (timeRange.startTime as CalendarDate).toString();
               const endYMD = (timeRange.endTime as CalendarDate).toString();
-              // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical device;
-              // it handles null/incomplete internally (→ reason "not-a-logical-device").
+              // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
+              // it handles null/incomplete internally (→ reason "not-a-logical-system").
               const logicalSystem = await resolveLogicalSystem(handle);
               const attr = await readAttributedDailyMatrices(
                 planetscaleDb,

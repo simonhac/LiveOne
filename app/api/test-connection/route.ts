@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
       error: result.error,
     });
 
-    // Record session only if we have a valid device (required for JOIN with devices table)
+    // Record session only if we have a valid device (required for JOIN with systems table)
     // Skip recording for new device tests (no systemId)
     if (systemId) {
       const sessionCause =

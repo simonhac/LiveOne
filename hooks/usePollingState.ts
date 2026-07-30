@@ -48,7 +48,7 @@ interface UsePollingStateReturn {
  *   startPolling('/api/cron/minutely?realTime=true&systemId=1');
  *
  *   // Render devices
- *   {devices.map(sys => <DeviceRow key={sys.systemId} device={sys} />)}
+ *   {systems.map(sys => <DeviceRow key={sys.systemId} device={sys} />)}
  */
 export function usePollingState(
   options: UsePollingStateOptions = {},

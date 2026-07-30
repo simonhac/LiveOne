@@ -2,7 +2,7 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import { parseDate } from "@internationalized/date";
 
 // rehealStaleAttrDays fans out to the PG db + the prod-driver recompute + (unused here) the learn /
-// logical-device enumeration. Mock all the heavy collaborators so we can drive the grouping/windowing/cap
+// logical-system enumeration. Mock all the heavy collaborators so we can drive the grouping/windowing/cap
 // deterministically. The WHERE predicate (day < ceiling; finalized_at IS NULL OR version < V) is a SQL
 // concern verified in the dev integration step — the fake db returns the rows the WHERE would produce.
 jest.mock("@/lib/db/planetscale", () => ({

@@ -13,7 +13,7 @@ import type {
  */
 
 /**
- * Format an area's source devices: "drawn from Kinkora Fronius and ID: 9".
+ * Format an area's source systems: "drawn from Kinkora Fronius and ID: 9".
  * Uses the display name where available, falling back to "ID: X".
  */
 function formatSourceDevices(devices: AreaSourceDevice[]): string {

@@ -95,7 +95,7 @@ function validatePattern(pattern: string): {
  * {
  *   "series": [
  *     {
- *       "id": "device.3/source.solar/power.avg",
+ *       "id": "system.3/source.solar/power.avg",
  *       "intervals": ["5m", "1d"],
  *       "label": "Solar Power",
  *       "metricUnit": "W",

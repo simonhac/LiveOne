@@ -1,5 +1,5 @@
 /**
- * Contract guards for `DeviceWriter`, the writer that replaced the `devices` writers + mirror in
+ * Contract guards for `DeviceWriter`, the writer that replaced the `systems` writers + mirror in
  * config-v4 Phase 12 slice 1a. Two things here are regression guards for defects that have already
  * reached production once each, and both are invisible to `tsc`.
  *

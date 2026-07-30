@@ -121,7 +121,7 @@ export async function DELETE(
   const { area } = authed;
   const uuid = area.id;
 
-  // A legacy Area addressed by a real devices.id may still be load-bearing — never delete it here.
+  // A legacy Area addressed by a real systems.id may still be load-bearing — never delete it here.
   if (
     area.legacySystemId != null &&
     (await DeviceConfigRegistry.deviceByHandle(area.legacySystemId))

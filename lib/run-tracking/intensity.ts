@@ -103,7 +103,7 @@ export async function resolveIntensitySeries(
       ),
     )
     // The battery binding's device, reached through the binding's uuid (`points.device_id`) since
-    // slice E PR 2a. Slice K2 deleted the trailing `devices.rid → devices.id` bridge: `devices.config`
+    // slice E PR 2a. Slice K2 deleted the trailing `devices.rid → systems.id` bridge: `devices.config`
     // IS the config, so the hop carried nothing. Both joins are INNER, exactly as the single one they
     // replace was: `point_uid` is NOT NULL with an FK into `points`, and `points.device_id` an FK into
     // `devices`, so neither can drop a row — and removing the bridge removed the one hop that could

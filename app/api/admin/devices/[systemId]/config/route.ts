@@ -12,7 +12,7 @@ import type {
 } from "@/lib/capabilities/config";
 import { syncAreaBatteryConfigFromDevice } from "@/lib/areas/config";
 
-// Per-device CONFIG endpoint — reads/writes the typed `devices.config` (DeviceConfig) jsonb blob that
+// Per-device CONFIG endpoint — reads/writes the typed `systems.config` (DeviceConfig) jsonb blob that
 // data-drives capability on/off overrides + nameplateKw + updateCadenceSeconds (see
 // lib/capabilities/config.ts). Owner/admin editable (requireDeviceAccess), so it lives alongside the
 // other per-device settings routes but is NOT admin-only. The whole blob is the DeviceConfig, so PATCH

@@ -104,7 +104,7 @@ export default function PollNowModal({
     );
   };
 
-  // Derive status from device state
+  // Derive status from system state
   const status = deviceState?.status || (isConnected ? "polling" : "pending");
   const isPolling = status === "polling" || status === "pending";
 

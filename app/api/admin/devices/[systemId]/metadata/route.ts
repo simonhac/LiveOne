@@ -5,7 +5,7 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 // Generic per-device metadata config endpoint.
 //
-// Reads/writes a namespaced section of the `devices.metadata` JSONB column so any vendor or
+// Reads/writes a namespaced section of the `systems.metadata` JSONB column so any vendor or
 // feature can persist its own config blob without a bespoke route. It is intentionally NOT
 // vendor-specific: callers pass a `key` (the namespace, e.g. "tesla") and a `value` object,
 // and we shallow-merge `{ [key]: value }` into the existing metadata, leaving sibling keys

@@ -94,7 +94,7 @@ export async function GET(
       }
     }
 
-    // Get username from device owner
+    // Get username from system owner
     let username: string | null = null;
     if (device.ownerClerkUserId) {
       try {

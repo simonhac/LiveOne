@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       device.ownerClerkUserId,
       device.id,
     );
-    // The apiKey check implicitly gates to push devices: poll vendors store login creds, not an apiKey.
+    // The apiKey check implicitly gates to push systems: poll vendors store login creds, not an apiKey.
     if (!credentials || credentials.apiKey !== data.apiKey) {
       await recordFailedSession(
         sessionStart,

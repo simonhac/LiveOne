@@ -190,7 +190,7 @@ export async function PATCH(
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Check if the alias is already taken by another device.
+    // Check if the alias is already taken by another system.
     if (updates.alias) {
       const conflict = await requirePlanetscaleDb()
         .select({ displayName: devices.name })

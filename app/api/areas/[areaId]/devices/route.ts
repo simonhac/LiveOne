@@ -39,7 +39,7 @@ export async function POST(
       { status: 400 },
     );
 
-  // A legacy Area addressed by a real devices.id can't gain members without re-keying — create a new
+  // A legacy Area addressed by a real systems.id can't gain members without re-keying — create a new
   // synthetic-handle Area instead.
   if (
     area.legacySystemId != null &&

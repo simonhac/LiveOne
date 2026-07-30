@@ -115,7 +115,7 @@ export default function DashboardsMenu({
         Manage sites
       </Link>
 
-      {/* Cross-nav to the devices world — `/device` redirects to the first visible device,
+      {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible device,
           whose header dropdown is the symmetric DevicesMenu (with "Go to Dashboards"). */}
       <div className="my-1 border-t border-gray-700" />
       <Link

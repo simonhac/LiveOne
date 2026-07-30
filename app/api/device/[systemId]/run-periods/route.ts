@@ -60,7 +60,7 @@ function knownSum() {
 
 /**
  * Describe the signal a detector follows, so its statistics can be shown in their OWN unit rather
- * than assumed to be Watts. One uuid-keyed `point_info` read (joined to `devices` for the
+ * than assumed to be Watts. One uuid-keyed `point_info` read (joined to `systems` for the
  * `vendorType` the display registry keys on) — same pattern as `listEnabledHwsModels`.
  *
  * A missing `points` row is survivable: warn and return null, and the caller simply omits the
@@ -233,14 +233,14 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const role = searchParams.get("role") || "generator";
 
-    // Phase 13 PR 2: was `authResult.device.displayTimezone` off the legacy device-shaped view. An Area
+    // Phase 13 PR 2: was `authResult.system.displayTimezone` off the legacy device-shaped view. An Area
     // carries its own `display_timezone`, so the subject answers this natively for either kind.
     const tz = subjectDisplayTimezone(authResult.subject);
     const db = requirePlanetscaleDb();
 
     // The intervals hang off the run detector for this (handle, role). No detector configured →
     // no rows, which is the same empty response this endpoint has always given for an untracked
-    // device. Resolved through the shared handle→area mapping so reader and writer always agree.
+    // system. Resolved through the shared handle→area mapping so reader and writer always agree.
     const detector = await getRunDetectorForHandleRole(systemId, role);
 
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the

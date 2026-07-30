@@ -1,7 +1,7 @@
 /**
  * Amber Electric - Monitoring Point Metadata Definitions
  *
- * This file defines the structure of monitoring points for Amber Electric devices.
+ * This file defines the structure of monitoring points for Amber Electric systems.
  * Amber provides grid import/export data with energy, cost/revenue, and pricing.
  */
 

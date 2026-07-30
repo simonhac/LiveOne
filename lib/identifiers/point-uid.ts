@@ -5,7 +5,7 @@
  * `derivePointUid` is a deterministic UUIDv5 over `(vendor_type, vendor_site_id, physical_path_tail)`,
  * so re-onboarding the same physical point (e.g. a vehicle re-added, a vendor swap that preserves the
  * site id) reproduces the SAME uid — config that cites the uid survives an address change. The rare
- * exception is the same vendor site added as two devices: both derive the same uid, so the second
+ * exception is the same vendor site added as two systems: both derive the same uid, so the second
  * collides on `pi_point_uid_unique` and the caller falls back to a random uid (still a valid identity,
  * just not reproducible — which is correct, since it's genuinely a distinct registry entry).
  *
@@ -47,7 +47,7 @@ export function uuidv5(
 
 /**
  * Deterministic point identity from vendor identity. Inputs are all non-null point/device columns
- * (`devices.vendor_type`, `devices.vendor_site_id`, `point_info.physical_path_tail`). The backfill and
+ * (`systems.vendor_type`, `systems.vendor_site_id`, `point_info.physical_path_tail`). The backfill and
  * `PointManager.ensurePointInfo` MUST use this same derivation so existing and new rows agree.
  */
 export function derivePointUid(

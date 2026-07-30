@@ -35,7 +35,7 @@ export interface PushReading {
 
 /** The `POST /api/gush` request body. */
 export interface GushRequestBody {
-  /** identifies the device (matches `devices.vendor_site_id`) */
+  /** identifies the device (matches `systems.vendor_site_id`) */
   vendorSiteId: string;
   /** validated against the device owner's stored credential (`credentials.apiKey`) */
   apiKey: string;

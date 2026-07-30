@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Seed OpenElectricity region devices — one liveone `device` per NEM region.
+ * Seed OpenElectricity region devices — one liveone `system` per NEM region.
  *
  * Idempotent: a region that already has an `openelectricity` device is skipped.
  * Point rows are NOT created here; they auto-create on the first poll via PointManager.
@@ -70,7 +70,7 @@ async function main() {
     }
 
     // Slice 1a: routed through `DeviceWriter.createDevice` instead of a hand-written `insert(devices)`
-    // plus a mirror call. This was the LAST `devices` writer outside `DeviceWriter` — a raw INSERT that
+    // plus a mirror call. This was the LAST `systems` writer outside `DeviceWriter` — a raw INSERT that
     // `tsc` could see but no reviewer would think to look for, and the reason `devices.rid`'s `nextval`
     // DEFAULT could not be trusted (two independent counters were live). Going through the writer also
     // gets the load-bearing four-step insert order for free rather than re-deriving it here.

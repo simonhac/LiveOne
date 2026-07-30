@@ -12,7 +12,7 @@ import type { AreaConfig } from "./types";
  * ⚠️ HAND-WRITTEN `sql` — `tsc` cannot see into it, and its failure mode is silent under-resolution
  * (zero areas updated, no error). Config-v4 Phase 12 slice E PR 2a re-points the device test from
  * `ab.point_system_id` to the binding's `point_uid`, hopping `points.device_id → devices.rid` (the
- * seam invariant `devices.rid == devices.id`, lib/registry/v4-mirror.ts). Exercised against a live
+ * seam invariant `devices.rid == systems.id`, lib/registry/v4-mirror.ts). Exercised against a live
  * database, not merely compiled — see the slice-E block in docs/plans/config-v4-execution-plan.md.
  */
 export async function syncAreaBatteryConfigFromDevice(

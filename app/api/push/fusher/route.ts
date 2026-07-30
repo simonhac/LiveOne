@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
 
     if (!device) {
       console.error(`[Fusher Push] System not found for siteId: ${siteId}`);
-      // Note: Cannot record session without valid device (requires JOIN with devices table)
+      // Note: Cannot record session without valid device (requires JOIN with systems table)
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 

@@ -4,7 +4,7 @@ import { fetchJson } from "@/lib/queries";
 import { CAPABILITIES, type CapabilityId } from "@/lib/capabilities/registry";
 import type { DeviceConfig } from "@/lib/capabilities/config";
 
-// Editor for the typed per-device `devices.config` (DeviceConfig) blob: capability on/off overrides
+// Editor for the typed per-device `systems.config` (DeviceConfig) blob: capability on/off overrides
 // + nameplateKw + updateCadenceSeconds. Mirrors TeslaConfigTab's shape — the parent DeviceSettingsDialog
 // drives it via the onDirtyChange / onSaveFunctionReady handshake and PATCHes the returned config.
 

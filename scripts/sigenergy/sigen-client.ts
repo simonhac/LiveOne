@@ -126,7 +126,7 @@ export interface SigenEnergyStats {
   raw: unknown;
 }
 
-/** OpenAPI device summary — running generation totals (kWh). */
+/** OpenAPI system summary — running generation totals (kWh). */
 export interface SigenSystemSummary {
   dailyPowerGeneration: number | null;
   monthlyPowerGeneration: number | null;
@@ -675,7 +675,7 @@ export class SigenClient {
   }
 
   /**
-   * Fetch the OpenAPI device summary — running generation totals (kWh). READ-ONLY.
+   * Fetch the OpenAPI system summary — running generation totals (kWh). READ-ONLY.
    * Requires openapi auth (the legacy host has no equivalent `/summary`).
    */
   async getSystemSummary(systemId: string): Promise<SigenSystemSummary> {

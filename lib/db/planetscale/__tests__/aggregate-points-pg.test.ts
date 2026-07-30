@@ -95,7 +95,7 @@ function pointRow(transform: string | null, metricType: string) {
  * Minimal fake db: `select().from().innerJoin().where()` → the canned point rows; tx + advisory lock.
  *
  * `innerJoin` arrived with slice 1b — the point enumeration reads `points ⋈ devices` (it needs
- * `devices.rid` to select the device's points now that the handle is not a column on the point row).
+ * `devices.rid` to select the system's points now that the handle is not a column on the point row).
  */
 function makeFakeDb(pointRows: unknown[]) {
   const executed: unknown[] = [];

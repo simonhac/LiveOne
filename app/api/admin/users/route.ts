@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
 
     // Devices are listed by OWNERSHIP only. There used to be a second leg here — a full-table
-    // `user_systems innerJoin devices` that contributed extra (device, role) pairs and extra user ids.
+    // `user_systems innerJoin systems` that contributed extra (device, role) pairs and extra user ids.
     // That table died in migration 0045 (slice F), so a user who appeared ONLY via a grant no longer
     // appears at all, and every listed device is one the user owns (hence no `role` field).
     const allDevices = await DeviceConfigRegistry.allDevices();

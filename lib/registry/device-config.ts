@@ -1,6 +1,6 @@
 /**
  * The device CONFIG registry — `devices` (+ `device_state`, + the area-of-one) read as the primary
- * config source, replacing `SystemsManager`'s eight `devices` reads.
+ * config source, replacing `SystemsManager`'s eight `systems` reads.
  *
  * ## Why this is a sibling of `device-registry.ts`, not an extension of it
  *
@@ -17,7 +17,7 @@
  * which moved into `config.spec` — see below), NOT the `devices` column names. That is not laziness: it
  * makes slice K2's 89-call-site conversion a mechanical `getDevice(h)` → `deviceByHandle(h)` swap whose
  * correctness is checkable by a field-by-field diff (`scripts/config-v4/verify-slice-k1-parity.ts`)
- * rather than by reading 89 diffs. The `device`→`device` FIELD rename is Phase 13's wholesale pass,
+ * rather than by reading 89 diffs. The `system`→`device` FIELD rename is Phase 13's wholesale pass,
  * where it is one rename against one already-converted reader set instead of two moving parts at once.
  *
  * ## What IS here
@@ -32,7 +32,7 @@
  * ## What is NOT here
  *
  * - **Writes.** `devices.rid` is documented inert while `systems_id_seq` still allocates, so `devices`
- *   cannot become the write target until `devices` drops. Reads flip now; writes flip in the terminal
+ *   cannot become the write target until `systems` drops. Reads flip now; writes flip in the terminal
  *   window. This module is read-only by construction.
  * - **`ratings` / `solar_size` / `battery_size`.** `devices` has no counterpart, by design. They are
  *   `config.spec` now (`DeviceSpec`, lib/capabilities/config.ts).
@@ -56,7 +56,7 @@ import type { DeviceRid } from "./registry-cache";
  * Operational polling state — a `device_state` row, verbatim.
  *
  * `SystemsManager` reaches this through the `deviceStateByHandle` subquery, which re-keys
- * `device_state` onto the integer handle via `devices.rid` so eight `devices` reads can join it where
+ * `device_state` onto the integer handle via `devices.rid` so eight `systems` reads can join it where
  * they used to join `polling_status`. `device_state` is keyed by `devices.id`, so a `devices`-native
  * read joins it directly: the subquery does not move here, it CEASES TO EXIST. (Deleted with the class
  * in K3, not here — K1 changes no call sites.)
@@ -86,7 +86,7 @@ export interface DeviceConfigView {
   readonly model: string | null;
   readonly serial: string | null;
   readonly location: AreaLocation | null;
-  /** ← `devices.adapter_state` (was `devices.metadata`): adapter-owned credentials/diagnostics. */
+  /** ← `devices.adapter_state` (was `systems.metadata`): adapter-owned credentials/diagnostics. */
   readonly metadata: unknown;
   readonly config: DeviceConfig | null;
   readonly timezoneOffsetMin: number;
@@ -220,7 +220,7 @@ async function deviceByHandle(handle: number): Promise<DeviceRecord | null> {
 
 /**
  * One device by vendor site id — first match; vendor site ids are NOT unique (indexed on
- * `devices` for OAuth/webhook dedup). ← `SystemsManager.getDeviceByVendorSiteId`.
+ * `systems`/`devices` for OAuth/webhook dedup). ← `SystemsManager.getDeviceByVendorSiteId`.
  */
 async function deviceByVendorSite(
   vendorSiteId: string,
@@ -233,7 +233,7 @@ async function deviceByVendorSite(
  * ← `SystemsManager.getDeviceByUsernameAndAlias`, minus the username→Clerk-id hop.
  *
  * Needs NO new index: `devices_owner_slug_unique` already covers `(owner_user_id, slug)`, the exact
- * counterpart of `devices`' `alias_unique`.
+ * counterpart of `systems`' `alias_unique`.
  */
 async function deviceByOwnerSlug(
   ownerUserId: string,

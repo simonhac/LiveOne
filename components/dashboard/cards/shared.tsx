@@ -14,7 +14,7 @@ import type { DeviceConfig } from "@/lib/capabilities/config";
  * The slice of the `dashboardDataQuery` payload the cards read.
  *
  * config-v4 Phase 13 PR 1: the payload is DISCRIMINATED — `device` for a real device, `area` for an
- * Area served as an Area (previously both arrived as `device`, an Area via `synthesizeAreaView`'s
+ * Area served as an Area (previously both arrived as `system`, an Area via `synthesizeAreaView`'s
  * device-shaped fabrication). Cards read the shared fields through {@link subjectOf}; only a card that
  * genuinely needs device hardware (`vendorType`, `vendorSiteId`, `config`) narrows on `datum.device`,
  * and those fields are simply ABSENT for an area — as they were `null`/`"area"` filler before.
@@ -87,7 +87,7 @@ export function useAreaDatum(systemId: number): {
 
 /**
  * Seconds a tile can go without an update before it dims. Prefers the device's configured
- * `updateCadenceSeconds` (from `devices.config`); falls back to the vendor default (Enphase's slow
+ * `updateCadenceSeconds` (from `systems.config`); falls back to the vendor default (Enphase's slow
  * cloud cadence, else 5 min) when unconfigured.
  */
 export function staleThreshold(

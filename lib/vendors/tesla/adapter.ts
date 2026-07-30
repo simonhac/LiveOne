@@ -30,7 +30,7 @@ interface ResolvedTeslaConfig {
   chargingInterval: number;
 }
 
-// Read the per-device overrides from `devices.metadata.tesla`, applying defaults and a
+// Read the per-device overrides from `systems.metadata.tesla`, applying defaults and a
 // 1-minute floor on the intervals. Absent/garbage metadata yields the legacy defaults.
 function resolveTeslaConfig(device: DeviceConfigView): ResolvedTeslaConfig {
   const meta =

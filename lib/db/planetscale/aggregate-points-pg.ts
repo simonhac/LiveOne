@@ -56,7 +56,7 @@ type PgExecutor = PgDb | Parameters<Parameters<PgDb["transaction"]>[0]>[0];
  */
 const AGG5M_RECOMPUTE_LOCK_NS = 0x41475335; // ascii "AGS5"
 
-/** Minimal device shape the 1d recompute needs (a `devices` row satisfies it). */
+/** Minimal device shape the 1d recompute needs (a `systems` row satisfies it). */
 interface DeviceForDailyAgg {
   id: number;
   timezoneOffsetMin: number;
@@ -125,7 +125,7 @@ export async function recomputeAgg5mForIntervals(
   if (intervalEndsMs.length === 0) {
     return { intervalsProcessed: 0, rowsUpserted: 0 };
   }
-  // Serialize recomputes for THIS device: one transaction holding a per-device advisory lock,
+  // Serialize recomputes for THIS system: one transaction holding a per-device advisory lock,
   // so concurrent queue messages can't interleave a read-then-write on a shared interval and
   // lose an update. Transaction-scoped lock → released at commit, safe under the pooler.
   return db.transaction(async (tx) => {
@@ -138,7 +138,7 @@ export async function recomputeAgg5mForIntervals(
 
 /**
  * Inner recompute: read raw via the DAO → group by point → upsert 5m for the given intervals,
- * against a transaction handle so the caller's advisory lock serializes it per device.
+ * against a transaction handle so the caller's advisory lock serializes it per system.
  *
  * The point set is driven from `point_info` (so every point resolves to a `PointId`); the DAO reads
  * raw by that list. A point present in raw but absent from `point_info` is impossible (the composite
@@ -150,7 +150,7 @@ async function recompute5mIntervalsWithin(
   systemId: number,
   intervalEndsMs: number[],
 ): Promise<{ intervalsProcessed: number; rowsUpserted: number }> {
-  // point metadata (transform / metric_type) + identity (points.id → PointId) for the device.
+  // point metadata (transform / metric_type) + identity (points.id → PointId) for the system.
   const points = await db
     .select({
       pointUid: pointsTable.id,

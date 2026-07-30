@@ -39,7 +39,7 @@ type Db = NonNullable<typeof planetscaleDb>;
 
 /**
  * Cache of systemId → whether the device's vendor is 5m-native (Amber/Enphase). Vendor type is
- * effectively immutable, so caching avoids a `devices` lookup on every message. Used to decide
+ * effectively immutable, so caching avoids a `systems` lookup on every message. Used to decide
  * whether `insert5mObservations` UPSERTS (5m-native: late re-published refinements must overwrite)
  * or first-write-wins (raw vendors: the PG recompute owns their 5m).
  */
@@ -287,7 +287,7 @@ async function insertSession(
       id: session.sessionId,
       sessionLabel: session.sessionLabel,
       // config-v4 Phase 12 terminal window: the column is `device_rid` now, FK -> `devices.rid`. The
-      // value is unchanged — the handle IS the device rid (`devices.rid == devices.id` verbatim).
+      // value is unchanged — the handle IS the device rid (`devices.rid == systems.id` verbatim).
       deviceRid: systemId,
       cause: session.cause,
       duration: session.durationMs,

@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
     const systemId = String(enphaseDevice.system_id);
     console.log("ENPHASE: Using system:", systemId, enphaseDevice.name);
 
-    // Existence check reads the config registry (`devices`); the writers below are still `devices`.
+    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
 
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(systemId);
@@ -196,7 +196,7 @@ export async function GET(request: NextRequest) {
         ownerClerkUserId: userId,
         displayName: enphaseDevice.name || existingDevice.displayName,
         // Slice 1a: `location` is now typed `AreaLocation` (it lands on `areas.location`) whereas it
-        // used to land in the untyped `devices.location` jsonb. Enphase's address has every field
+        // used to land in the untyped `systems.location` jsonb. Enphase's address has every field
         // optional, so it does not satisfy `AreaLocation.country: string`. The cast preserves the exact
         // pre-1a behaviour — `ensureAreaOfOne` cast this same value `as AreaLocation | null` when it
         // copied it down — rather than inventing a country here. A partial address still reads fine:

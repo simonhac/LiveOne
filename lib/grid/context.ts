@@ -1,5 +1,5 @@
 /**
- * Resolve the grid-signals context for a dashboard's device: the NEM region the device's identity
+ * Resolve the grid-signals context for a dashboard's system: the NEM region the device's identity
  * Area sits in, and the public OpenElectricity device that serves that region's live signals.
  *
  * The card it backs reads a DIFFERENT (public OE region) device than the dashboard it lives on, so
@@ -25,7 +25,7 @@ import type { GridContext } from "@/lib/grid/types";
 
 /**
  * Whether a device plays the grid role — a real device checks its own `bidi.grid*` points. Returns
- * false for off-grid devices.
+ * false for off-grid systems.
  */
 async function devicePlaysGridRole(
   db: ReturnType<typeof requirePlanetscaleDb>,

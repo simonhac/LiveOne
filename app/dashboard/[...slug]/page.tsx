@@ -161,7 +161,7 @@ async function renderCompositionDashboard(
           if (isPin) {
             // 🛑 Reads the DISCRIMINATED payload (config-v4 Phase 13 PR 1): `device` for a real
             // device, `area` for an Area. This is an AUTHORIZATION guard and `value` is `unknown`, so
-            // the old `device` key would have compiled clean and silently read `undefined` — failing
+            // the old `system` key would have compiled clean and silently read `undefined` — failing
             // closed (pins stop being seeded and self-fetch) but wrong.
             const subject = value as {
               device?: { ownerClerkUserId?: string | null };

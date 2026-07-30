@@ -1,7 +1,7 @@
 /**
  * Selectronic Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Selectronic/Select.Live devices.
+ * This defines all metadata for the key monitoring points from Selectronic/Select.Live systems.
  * Each entry maps a field from the SelectronicData interface to point_info metadata.
  *
  * Based on device ID 1 (Daylesford) - Selectronic SP PRO

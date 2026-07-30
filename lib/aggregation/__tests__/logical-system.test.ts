@@ -180,7 +180,7 @@ describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handle
 
     const list = await listCompleteLogicalSystems();
     expect(list.map((l) => l.id)).toEqual([7]);
-    // Never enumerates raw devices: only the flow-eligible handles are consulted.
+    // Never enumerates raw systems: only the flow-eligible handles are consulted.
     expect(listFlowEligibleAreaHandles).toHaveBeenCalledTimes(1);
   });
 });

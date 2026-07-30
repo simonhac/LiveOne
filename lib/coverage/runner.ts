@@ -157,7 +157,7 @@ export async function runCoverageRepair(
                 floor = commissioned;
                 if (!dryRun) {
                   try {
-                    // config-v4 slice K2: this was a hand-written `UPDATE devices` that bypassed
+                    // config-v4 slice K2: this was a hand-written `UPDATE systems` that bypassed
                     // `updateDevice` and therefore the `devices` mirror entirely — a THIRD instance of
                     // the "wired at mint, not at edit" class, and the only one where the writer was not
                     // even the sanctioned one. `commissioned_on` is the coverage window's floor, so a
@@ -403,7 +403,7 @@ export async function runCoverageRepair(
         // under-resolution (no areas found → no flow refresh, no error), swallowed by the `catch`
         // below. The device test goes through the binding's `point_uid` since config-v4 Phase 12
         // slice E PR 2a, hopping `points.device_id → devices.rid` (the seam invariant
-        // `devices.rid == devices.id`).
+        // `devices.rid == systems.id`).
         //
         // ⚠️ config-v4 Phase 13 PR 5: `handle` comes from `legacy_handles`, NOT the dropped
         // `areas.legacy_system_id`. Because this is raw SQL, a stale column name here would be a

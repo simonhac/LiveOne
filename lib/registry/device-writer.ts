@@ -9,24 +9,24 @@ import { DeviceRegistry, type DeviceRegistryExec } from "./device-registry";
 
 /**
  * The four device writers. Since config-v4 Phase 12 slice 1a they write **`devices` + `areas`**, and
- * `devices` is not referenced anywhere in this file — this was the last writer of that table.
+ * `systems` is not referenced anywhere in this file — this was the last writer of that table.
  *
  * ## What changed, and why the mirror had to die with it
  *
- * Until 1a these four wrote `devices` and then called `ensureDeviceRow` (`lib/registry/v4-mirror.ts`) to
+ * Until 1a these four wrote `systems` and then called `ensureDeviceRow` (`lib/registry/v4-mirror.ts`) to
  * COPY the row into `devices`. That mirror is not separable from the writer: `ensureDeviceRow` and
- * `ensureAreaOfOne` both resolved their values with `SELECT … FROM devices`, so the moment `devices`
+ * `ensureAreaOfOne` both resolved their values with `SELECT … FROM systems`, so the moment `systems`
  * stops being written there is nothing for them to read. Converting the writer therefore deletes the
  * mirror in the same change, and every value it used to copy is now supplied directly by the caller.
  *
  * Placement (tz / location) lives on the **area-of-one**, which is its permanent home — `devices` has no
  * tz or location columns by design (clean-sheet §4.8). So a placement edit is an `areas` UPDATE here,
  * not the `mirrorPlacementToAreaOfOne` intent-propagation hop it used to need. That hop existed only to
- * chase a value written to `devices`; with no `devices` write there is no drift to chase, which retires
+ * chase a value written to `systems`; with no `systems` write there is no drift to chase, which retires
  * the ninth "wired at MINT, not at EDIT" leak by construction rather than by patch.
  *
  * The free-text `ratings`/`solar_size`/`battery_size` parse (`DEVICE_CONFIG_WITH_SPEC_SQL`) is gone for
- * the same reason: it existed to derive `devices.config.spec` FROM those `devices` columns. `config.spec`
+ * the same reason: it existed to derive `devices.config.spec` FROM those `systems` columns. `config.spec`
  * is now written directly, and the one-shot backfill that populated it historically
  * (`scripts/config-v4/backfill-device-spec.ts`) is deleted — it reports `0 would change` on both
  * environments and its input cannot recur.
@@ -35,13 +35,13 @@ import { DeviceRegistry, type DeviceRegistryExec } from "./device-registry";
 /**
  * A patch for {@link updateDevice}.
  *
- * ⚠️ **The field names are deliberately the v3 `devices` ones** (`displayName`, `alias`,
+ * ⚠️ **The field names are deliberately the v3 `systems` ones** (`displayName`, `alias`,
  * `ownerClerkUserId`, `metadata`, …) even though each now writes a differently-named `devices`/`areas`
  * column. That is not laziness: these names are the vocabulary of all ten call sites and of the JSON
  * request bodies those routes parse, so renaming them here would churn ten unrelated files and their
  * tests to no benefit. The mapping to storage is done once, below, where it can be read.
  *
- * It is also a CLOSED shape rather than the old `Partial<Device>`, which accepted any `devices` column —
+ * It is also a CLOSED shape rather than the old `Partial<Device>`, which accepted any `systems` column —
  * including ones with no `devices` counterpart, which it would have silently dropped.
  */
 export type DevicePatch = {
@@ -128,14 +128,14 @@ function isPgUniqueViolation(e: unknown): boolean {
  *
  * Prod draws from `device_rid_seq` EXPLICITLY rather than letting the `devices.rid` column DEFAULT fire,
  * because the value is needed up front: the area-of-one is inserted first and keys on it
- * (`areas.legacy_system_id`). Migration 0049 floored the sequence above `max(devices.id)`, so a value
+ * (`areas.legacy_system_id`). Migration 0049 floored the sequence above `max(systems.id)`, so a value
  * from it cannot collide with a historical handle. (Pre-1a this came from `systems_id_seq` and was copied
  * into `devices.rid` verbatim; `devices.rid`'s own DEFAULT was documented inert precisely because two
  * independent counters were live. 1a leaves exactly one.)
  *
- * Dev keeps the explicit-ids-from-10000 policy, re-based on `max(devices.rid)` now that `devices` is not
+ * Dev keeps the explicit-ids-from-10000 policy, re-based on `max(devices.rid)` now that `systems` is not
  * written. The two allocators cannot cross: dev's floor is 10000 and the sequence sits near
- * `max(devices.id)`, far below it.
+ * `max(systems.id)`, far below it.
  */
 async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
   if (!isProduction()) {
@@ -174,7 +174,7 @@ async function allocateRid(exec: DeviceRegistryExec): Promise<number> {
  *      `areas(id)`; it is the only step needing both rows present.
  *
  * Steps 2-4 are the pre-1a mirror's order, preserved exactly. Step 1 was previously a separate
- * `ensureAreaOfOne` call that read `devices` for the values it is now handed directly.
+ * `ensureAreaOfOne` call that read `systems` for the values it is now handed directly.
  */
 async function insertDeviceToPg(
   data: CreateDeviceData,
@@ -310,13 +310,13 @@ async function createHelperDevice(params: {
 /**
  * Update a device, addressed by its integer handle.
  *
- * Splits across the two tables that now hold what `devices` used to: descriptive/config columns go to
+ * Splits across the two tables that now hold what `systems` used to: descriptive/config columns go to
  * `devices`, placement (tz + location) to the device's area-of-one. Both in ONE transaction, so a
  * placement edit can never be half-applied. `updatedAt` is always stamped to now; a caller-supplied one
  * is ignored.
  *
  * ⚠️ `areas.name` is deliberately NOT updated when `displayName` changes. The pre-1a mirror copied
- * `devices.display_name` into `devices.name` only; the area's name was set at mint and never re-copied,
+ * `systems.display_name` into `devices.name` only; the area's name was set at mint and never re-copied,
  * and `/api/areas/*` can rename an area independently. Following `displayName` through to `areas.name`
  * would be a NEW behaviour that silently overwrites a user-set area name — out of scope for a
  * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
@@ -373,11 +373,11 @@ async function updateDevice(
  * Delete a device, addressed by its integer handle.
  *
  * ⚠️ **Behaviour CHANGED in 1a, deliberately — read this rather than assuming continuity.** Pre-1a this
- * deleted the `devices` row and left the mirrored `devices` row ORPHANED, and that orphan was recorded as
- * load-bearing for the terminal window's FK-coverage gate. Post-1a there is no `devices` row to delete,
+ * deleted the `systems` row and left the mirrored `devices` row ORPHANED, and that orphan was recorded as
+ * load-bearing for the terminal window's FK-coverage gate. Post-1a there is no `systems` row to delete,
  * so "preserve the orphaning" has no referent: `devices` IS the row. Nor is the gate weakened —
- * `devices`-without-`devices` is now the state of EVERY newly created device, since nothing writes
- * `devices` at all, which is exactly why PR 2's G2 treats that direction as report-only rather than
+ * `devices`-without-`systems` is now the state of EVERY newly created device, since nothing writes
+ * `systems` at all, which is exactly why PR 2's G2 treats that direction as report-only rather than
  * fatal. The orphan G2 must tolerate is generic, not this function's.
  *
  * So this now performs the real inverse of {@link insertDeviceToPg}, in reverse FK order: membership

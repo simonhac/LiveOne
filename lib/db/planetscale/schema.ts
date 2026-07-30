@@ -59,10 +59,10 @@ import type { DeviceConfig } from "@/lib/capabilities/config";
 import type { AreaConfig } from "@/lib/areas/types";
 
 // ============================================================================
-// `devices` — DROPPED by migration 0051 (config-v4 Phase 12, the terminal window).
+// `systems` — DROPPED by migration 0051 (config-v4 Phase 12, the terminal window).
 //
-// `devices` is the device registry (see its declaration below); `devices.rid == devices.id` verbatim, so
-// every integer handle that used to address a `devices` row now addresses a `devices` row. The drop was
+// `devices` is the device registry (see its declaration below); `devices.rid == systems.id` verbatim, so
+// every integer handle that used to address a `systems` row now addresses a `devices` row. The drop was
 // irreversible: PITR + the 2-hourly R2 dump are the only recovery path.
 // ============================================================================
 
@@ -73,7 +73,7 @@ import type { AreaConfig } from "@/lib/areas/types";
 // ============================================================================
 
 // The `user_systems` junction table — the pre-Areas per-device access grant — was dropped by
-// migration 0045 (config-v4 Phase 12 slice F), releasing an FK into `devices`. It held ZERO rows on
+// migration 0045 (config-v4 Phase 12 slice F), releasing an FK into `systems`. It held ZERO rows on
 // prod, and the clean-sheet retires it with no replacement: sharing is `dashboard_grants` +
 // `share_tokens`. Read access is now exactly owner ∪ ownerless-is-public ∪ admin, plus whatever a
 // dashboard grant implies (`grantedDeviceScopeForUser`, lib/dashboard/grants.ts). The grant never
@@ -115,9 +115,9 @@ export const sessions = pgTable(
     id: text("id").primaryKey(),
     sessionLabel: text("session_label"),
     // config-v4 Phase 12 terminal window (migration 0051): `system_id` was RENAMED to `device_rid` and
-    // re-constrained onto `devices.rid`. Catalog-only — `devices.rid == devices.id` verbatim, so there is
-    // no value migration. 0050 had dropped the old FK into `devices.id` (a device created after slice 1a
-    // has no `devices` row, and this is the HOT INGEST path, so the constraint 23503'd that device's first
+    // re-constrained onto `devices.rid`. Catalog-only — `devices.rid == systems.id` verbatim, so there is
+    // no value migration. 0050 had dropped the old FK into `systems.id` (a device created after slice 1a
+    // has no `systems` row, and this is the HOT INGEST path, so the constraint 23503'd that device's first
     // session write); the replacement is added `NOT VALID` and then `VALIDATE`d, so the ~10^6-row scan
     // runs under `SHARE UPDATE EXCLUSIVE` instead of holding `ACCESS EXCLUSIVE`.
     //
@@ -611,9 +611,9 @@ export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
 //
-// `id` is a GUID (decoupled from devices.id). `legacy_system_id` is the integer ADDRESSING
-// HANDLE: an area-of-one's == its member's devices.id; a multi-device area's == the old
-// composite shim's devices.id. It drives the point_readings_flow_attr_1d.area_id keying.
+// `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the integer ADDRESSING
+// HANDLE: an area-of-one's == its member's systems.id; a multi-device area's == the old
+// composite shim's systems.id. It drives the point_readings_flow_attr_1d.area_id keying.
 // Areas are organizational, NOT the access boundary (access stays device-granular until P4).
 // ============================================================================
 export const areas = pgTable(
@@ -630,9 +630,9 @@ export const areas = pgTable(
     // AC1 "lockout": 35 area_bindings present and correct, 0 points served.
     ownerUserId: text("owner_user_id"),
     // The 1:1 migration seam + the stable integer ADDRESSING HANDLE. For a multi-device area it is
-    // the old composite shim's devices.id; no FK to devices, since that area outlives its `devices`
+    // the old composite shim's systems.id; no FK to devices, since that area outlives its `systems`
     // row (deleted in migration 0014), and `getDevice(legacy_system_id)` then resolves to the
-    // synthesized virtual device. The unique index below stays as the addressing invariant (one Area
+    // synthesized virtual system. The unique index below stays as the addressing invariant (one Area
     // per handle). RETAINED through the cutover (mapping key + backlog drain); dropped in Phase 9.
     legacySystemId: integer("legacy_system_id"),
     name: text("name").notNull(),
@@ -858,7 +858,7 @@ export const dashboardRevisions = pgTable(
   }),
 );
 
-// legacy_handles: permanent compat shim mapping every old integer handle (devices.id AND
+// legacy_handles: permanent compat shim mapping every old integer handle (systems.id AND
 // areas.legacy_system_id) → its v4 uuid, so ?systemId=N resolves forever (area first, else device).
 // Frozen at cutover. Both FKs are wired: area_id → areas(id) from the start, and device_id →
 // devices(id) since config-transform stage 5 minted devices. The device FK was declared here by
@@ -866,7 +866,7 @@ export const dashboardRevisions = pgTable(
 export const legacyHandles = pgTable(
   "legacy_handles",
   {
-    handle: integer("handle").primaryKey(), // old devices.id or areas.legacy_system_id
+    handle: integer("handle").primaryKey(), // old systems.id or areas.legacy_system_id
     deviceId: uuid("device_id").references(() => devices.id),
     areaId: uuid("area_id").references(() => areas.id),
   },
@@ -883,38 +883,38 @@ export const legacyHandles = pgTable(
 // ============================================================================
 // config-v4 registries (migration 0035, additive + DARK)
 //
-// These are the v4 successors to devices/point_info/area_devices/polling_status. Created EMPTY by
+// These are the v4 successors to systems/point_info/area_devices/polling_status. Created EMPTY by
 // 0035 and populated (idempotently) by scripts/config-v4/registry-sync.ts as a separate dark step.
 // The predecessors are COPIED, not renamed, so both sets coexist until Phase 12 drops the old ones
 // one at a time — which is what let the pre-cutover build keep running unchanged.
 //
 // No longer dark, and no longer a uniform group: `area_members` and `device_state` are now PRIMARY
 // (slices H and C dropped/froze their predecessors), while `devices` and `points` are still mirrored
-// from `devices`/`point_info` by lib/registry/v4-mirror.ts.
+// from `systems`/`point_info` by lib/registry/v4-mirror.ts.
 // ============================================================================
 
-// Global device rid allocator. Seeded at max(devices.id)+1 by registry-sync so devices.rid preserves
-// today's devices.id verbatim (sessions/observations_outbox keep an int device_rid == old system_id).
+// Global device rid allocator. Seeded at max(systems.id)+1 by registry-sync so devices.rid preserves
+// today's systems.id verbatim (sessions/observations_outbox keep an int device_rid == old system_id).
 export const deviceRidSeq = pgSequence("device_rid_seq");
 
-// devices ← devices. `id` is the pre-minted legacy_handles.device_id; `rid` is the old devices.id.
+// devices ← systems. `id` is the pre-minted legacy_handles.device_id; `rid` is the old systems.id.
 export const devices = pgTable(
   "devices",
   {
     id: uuid("id").primaryKey(),
     // Sequence-allocated (0043). LIVE and now the SOLE allocator of device handles: migration 0051
-    // dropped `devices` (and with it `systems_id_seq`, the second counter this used to have to avoid) and
+    // dropped `systems` (and with it `systems_id_seq`, the second counter this used to have to avoid) and
     // re-floored `device_rid_seq` with `setval(greatest(…))`, so a device minted from the default can no
     // longer collide with anything on `devices_rid_unique`. Never introduce a `max(rid)+1` scan here.
     rid: integer("rid")
       .notNull()
       .default(sql`nextval('device_rid_seq')`),
     ownerUserId: text("owner_user_id"),
-    vendor: text("vendor").notNull(), // ← devices.vendor_type
+    vendor: text("vendor").notNull(), // ← systems.vendor_type
     vendorSiteId: text("vendor_site_id").notNull(),
     status: text("status").notNull().default("active"),
-    name: text("name").notNull(), // ← devices.display_name
-    slug: text("slug"), // ← devices.alias
+    name: text("name").notNull(), // ← systems.display_name
+    slug: text("slug"), // ← systems.alias
     model: text("model"),
     serial: text("serial"),
     // Eager area: tz/location resolve HERE, not on the device. ⚠️ config-v4 CUTOVER SHAPE — NOT NULL
@@ -923,7 +923,7 @@ export const devices = pgTable(
       .notNull()
       .references(() => areas.id),
     config: jsonb("config").$type<DeviceConfig>(),
-    adapterState: jsonb("adapter_state"), // ← devices.metadata
+    adapterState: jsonb("adapter_state"), // ← systems.metadata
     commissionedOn: date("commissioned_on"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -992,7 +992,7 @@ export const points = pgTable(
 // Two things carried over from the table this replaced:
 //   • Fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen
 //     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
-//   • The migration-0014 case still holds — a member whose `devices` row was deleted keeps its
+//   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
 //     membership, because `deleteDevice` ORPHANS its `devices` row rather than deleting it
 //     (`DeviceWriter.deleteDevice`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
 //     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE

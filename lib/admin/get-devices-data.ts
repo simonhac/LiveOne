@@ -132,7 +132,7 @@ function extractPowerValues(latestValues: LatestValuesMap) {
 }
 
 /**
- * Extract power values from device summary (fast path - single KV call for all devices)
+ * Extract power values from system summary (fast path - single KV call for all devices)
  */
 function extractPowerValuesFromSummary(summary: SystemSummary | null) {
   if (!summary) {
@@ -172,7 +172,7 @@ export async function getAdminDevicesData(
   const { latestValuesTimeoutMs = 100, skipLatestValues = false } = options;
 
   // Only real (physical, polled) devices belong in the admin Devices list. Areas-backed virtual
-  // devices are never in the devices table (synthesized on demand) and live on /admin/areas.
+  // devices are never in the systems table (synthesized on demand) and live on /admin/areas.
   const allDevices = await DeviceConfigRegistry.allDevices();
 
   // Get unique owner user IDs to fetch user info in batch
@@ -229,7 +229,7 @@ export async function getAdminDevicesData(
     }
   }
 
-  // Fetch device summaries with timeout (single KV call for all devices)
+  // Fetch system summaries with timeout (single KV call for all devices)
   let summariesMap: SystemSummariesMap = {};
   let latestValuesIncluded = false;
 

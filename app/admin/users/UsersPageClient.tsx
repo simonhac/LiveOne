@@ -191,7 +191,7 @@ export default function UsersPageClient() {
                     <td className="px-2 md:px-6 py-4 align-top">
                       <div className="space-y-1">
                         {user.devices.length > 0 ? (
-                          // Sort devices: non-removed first, then removed
+                          // Sort systems: non-removed first, then removed
                           user.devices
                             .sort((a, b) => {
                               // Sort by status first (non-removed before removed)

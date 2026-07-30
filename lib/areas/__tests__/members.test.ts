@@ -97,7 +97,7 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     const [sql] = captured;
     expect(sql).toContain("FROM area_members am");
     expect(sql).toContain("JOIN devices d ON d.id = am.device_id");
-    // The int handle comparison must go through devices.rid — the seam invariant devices.rid == devices.id.
+    // The int handle comparison must go through devices.rid — the seam invariant devices.rid == systems.id.
     // config-v4 Phase 13 PR 5: the handle side is `legacy_handles.handle`, not the dropped
     // `areas.legacy_system_id`. Raw `sql`, so tsc cannot see either side of this — hence the assertion.
     expect(sql).toContain('d.rid = "legacy_handles"."handle"');

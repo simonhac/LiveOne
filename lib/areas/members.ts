@@ -8,7 +8,7 @@
  * `getAreaMemberDeviceIds` returns `dv_` TypeIDs, and callers that still join int-keyed columns convert
  * explicitly through `DeviceRegistry.ridsForDevices`. There is deliberately NO handle-returning variant
  * here — the conversion is meant to be visible at each site, because Phase 13 deletes them all when
- * `point_info.system_id` / `devices.id` move to uuid. (`area_bindings`' own int pair is already gone —
+ * `point_info.system_id` / `systems.id` move to uuid. (`area_bindings`' own int pair is already gone —
  * slice E PR 2b / migration 0048.)
  *
  * The `sql` fragments below are invisible to `tsc`; `__tests__/members.test.ts` asserts their rendered
@@ -86,7 +86,7 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
       and(
         eq(areas.status, "active"),
         // Not a member device of a different active area. `devices.rid` IS the member's integer handle
-        // (the `devices.rid == devices.id` seam invariant, lib/registry/v4-mirror.ts).
+        // (the `devices.rid == systems.id` seam invariant, lib/registry/v4-mirror.ts).
         //
         // ⚠️ Raw `sql`, so `tsc` cannot see either handle reference. The PARENT's handle needs its own
         // `legacy_handles` hop (`plh`); an INNER join there preserves the old NULL semantics exactly —
@@ -142,9 +142,9 @@ export async function getBindinglessAreaMemberPoints(): Promise<
     .where(
       and(
         // areas-backed: the handle names no DEVICE of its own. config-v4 slice K3: was
-        // `NOT EXISTS (SELECT 1 FROM devices s WHERE s.id = …)` — an open-coded `isAreaHandle` that
+        // `NOT EXISTS (SELECT 1 FROM systems s WHERE s.id = …)` — an open-coded `isAreaHandle` that
         // `tsc` could not see, so it survived K2's sweep. `devices.rid` IS the device's integer handle
-        // (the `devices.rid == devices.id` seam invariant, lib/registry/v4-mirror.ts), so this is the
+        // (the `devices.rid == systems.id` seam invariant, lib/registry/v4-mirror.ts), so this is the
         // same predicate against the surviving table.
         //
         // 🛑 **This is the SQL twin of the device-first dispatch in `PointManager`'s

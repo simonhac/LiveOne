@@ -21,7 +21,7 @@ jest.mock("@/lib/dashboard/access", () => ({ allowedSystemIds: jest.fn() }));
 // config-v4 slice K2 + K3: `requireDeviceAccess` AND the polymorphic-handle area views both read the
 // device config registry now, so it is the only config seam to mock.
 // Phase 13 PR 1 adds `areaByHandle` — the area-native leg of `ServingSubject`. It MUST be mocked here:
-// `requireDashboardAccess` now returns a `subject` alongside `device`, and without this entry the area
+// `requireDashboardAccess` now returns a `subject` alongside `system`, and without this entry the area
 // leg would throw rather than resolve (a real device short-circuits before reaching it, so the device
 // tests below would still have passed while the area path was broken).
 // Phase 13 PR 2 deleted `viewableByHandle`/`isAreaHandle`: `requireDashboardAccess` now asks the two

@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       serial: deviceInfo.serial || null,
       // Slice 1a: the adapter still reports the vendor's free-text ratings/sizes, but `devices` has no
       // counterpart to those three columns by design — they are parsed into the structured
-      // `config.spec` here instead of being staged in `devices` for the mirror's SQL to parse. Same
+      // `config.spec` here instead of being staged in `systems` for the mirror's SQL to parse. Same
       // parse, same rejection rules; see `specFromLegacyText`.
       config: (() => {
         const spec = specFromLegacyText({
@@ -86,8 +86,8 @@ export async function POST(request: NextRequest) {
     );
 
     if (!credentialResult.success) {
-      // If credential storage failed, delete the device.
-      // Routed through the `devices` writer so the rollback matches the insert.
+      // If credential storage failed, delete the system.
+      // Routed through the `systems` writer so the rollback matches the insert.
       await DeviceWriter.deleteDevice(newDevice.id);
 
       return NextResponse.json(

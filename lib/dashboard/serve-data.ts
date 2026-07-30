@@ -98,7 +98,7 @@ export interface AreaBlock extends SubjectBlockCommon {
  * (`jsonResponse`/`transformDates`) before returning/caching.
  *
  * config-v4 Phase 13 PR 1: the payload is now DISCRIMINATED — `{device, latest}` for a real device,
- * `{area, latest}` for an Area served as an Area. Previously an Area was served as `{device, latest}`
+ * `{area, latest}` for an Area served as an Area. Previously an Area was served as `{system, latest}`
  * built from `synthesizeAreaView`, whose only invented fields were `vendorType:"area"`,
  * `vendorSiteId:"area:{handle}"` and null `model`/`serial`/`metadata`/`config`; every other field was
  * already a real `areas` column, so the area branch reads that row directly and simply DOES NOT EMIT
@@ -108,7 +108,7 @@ export interface AreaBlock extends SubjectBlockCommon {
  * handles 7 / 8 / 1000001 / 1000002.
  *
  * 🛑 The INTERIOR is still integer-handle-keyed: the KV latest cache (PR 3), the active-points list and
- * polling status all take `subject.handle` exactly as they took `device.id`.
+ * polling status all take `subject.handle` exactly as they took `system.id`.
  */
 export async function buildDevicePayload(
   subject: ServingSubject,

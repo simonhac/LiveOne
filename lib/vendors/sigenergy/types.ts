@@ -7,7 +7,7 @@
 
 export type SigenRegion = "aus" | "eu" | "apac" | "us" | "cn";
 
-/** Per-user credentials stored in Clerk private metadata for a Sigenergy device. */
+/** Per-user credentials stored in Clerk private metadata for a Sigenergy system. */
 export interface SigenergyCredentials {
   username: string;
   password: string;

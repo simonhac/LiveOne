@@ -37,7 +37,7 @@ export interface SessionData {
 }
 
 /**
- * Full session record with device info (from JOIN with devices table)
+ * Full session record with device info (from JOIN with systems table)
  * Used by: getSessions, getLastSessions, getSessionsByLabel, getSessionById
  *
  * Session reads are served from Postgres. `id` is the app-minted UUIDv7 (text);
@@ -49,8 +49,8 @@ export interface SessionWithDevice {
   id: string;
   sessionLabel: string | null;
   systemId: number;
-  vendorType: string; // from devices.vendorType
-  deviceName: string; // from devices.displayName
+  vendorType: string; // from systems.vendorType
+  deviceName: string; // from systems.displayName
   cause: string;
   started: Date;
   duration: number;
@@ -101,7 +101,7 @@ export class SessionManager {
    * The session id is an app-minted UUIDv7 (text, time-ordered) — this removes
    * the dependency on the legacy store's autoincrement (decision E). The
    * authoritative copy is written to Postgres via the queue.
-   * Note: vendorType and deviceName are no longer stored - they're retrieved via JOIN with devices table
+   * Note: vendorType and deviceName are no longer stored - they're retrieved via JOIN with systems table
    */
   async createSession(data: {
     sessionLabel?: string | null;

@@ -18,7 +18,7 @@ import type { ReadableArea } from "@/lib/areas/list";
 /**
  * The nested dashboard renderer. Consumes the v3 definition (Dashboard -> AreaSection -> Card -> Tile,
  * see lib/dashboard/v3.ts) and renders each AreaSection against its Area's handle. There is NO home
- * device: every card self-fetches via the per-systemId query factories (see the plugin modules under
+ * system: every card self-fetches via the per-systemId query factories (see the plugin modules under
  * components/dashboard/cards/ and /tiles/), and every tile/chart reads either the section's own
  * handle (whole-area) or a named member device.
  *
@@ -65,7 +65,7 @@ export default function Dashboard({
   // area + an oe-grid region section), fire ONE /api/data request for all of them and seed each
   // device's own dashboardDataQuery cache — see dashboardDataBatchQuery. Purely additive: every card
   // still self-fetches via useAreaDatum as before, so a slow/absent batch just means no saving, never
-  // a regression. No-ops (disabled) below 2 devices.
+  // a regression. No-ops (disabled) below 2 systems.
   const queryClient = useQueryClient();
   const handles = [
     ...new Set(

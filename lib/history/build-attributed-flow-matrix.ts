@@ -113,7 +113,7 @@ export function shapeAttributedFlowMatrix(
 }
 
 /**
- * Build the attributed flow matrix for logical-device `handle` over `[startMs, endMs]`. First tries to
+ * Build the attributed flow matrix for logical-system `handle` over `[startMs, endMs]`. First tries to
  * seed the battery fold from the freshest persisted checkpoint (`tryLoadSeededProvenanceInputs` —
  * loads from the checkpoint's anchor instead of a full lead-in, typically O(today) instead of O(7
  * days)); on any guard failure (no checkpoint, span too long, stale, non-canonical inputs) falls back
@@ -123,7 +123,7 @@ export function shapeAttributedFlowMatrix(
  * produces no battery source-intensity entry), then re-runs `computeFlowAccounting` clipped to the exact
  * requested window (mirrors `writeAttrRollup`'s per-day re-slice).
  *
- * Returns `null` when the Area/logical device can't be resolved or has no usable timeline — the caller
+ * Returns `null` when the Area/logical system can't be resolved or has no usable timeline — the caller
  * treats that as "nothing to serve" (distinct from a thrown error, which the caller catches for P3
  * degradation).
  */
@@ -131,7 +131,7 @@ export async function buildAttributedFlowMatrix(
   handle: number,
   startMs: number,
   endMs: number,
-  /** Pre-resolved logical device, when the caller already has one (e.g. `/api/history` resolves it
+  /** Pre-resolved logical system, when the caller already has one (e.g. `/api/history` resolves it
    *  once for the energy-only Sankey) — skips two internal `resolveLogicalSystem` calls (here and
    *  inside `loadProvenanceInputs`). Must be for the same `handle`; not verified. */
   logicalSystem?: LogicalSystem,

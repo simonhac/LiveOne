@@ -269,7 +269,7 @@ export async function GET(request: NextRequest) {
     // Helper-vendor device rids drive both helper_count and the blend-freshness max(interval_end). The
     // old query JOINed agg_5m to devices inside a CTE; resolving the helper ids first + a DAO
     // max-over-set is byte-identical (the CTE's data_quality column was selected but never used).
-    // config-v4 slice K2: reads `devices` (was a hand-written `SELECT id FROM devices`, invisible to
+    // config-v4 slice K2: reads `devices` (was a hand-written `SELECT id FROM systems`, invisible to
     // tsc and therefore to the terminal window's drop).
     const helperIds = (
       (

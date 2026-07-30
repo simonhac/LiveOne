@@ -14,7 +14,7 @@ import type { LatestPointValues } from "@/lib/types/api";
 /**
  * The slice of the `dashboardDataQuery` payload this chrome reads.
  *
- * 🛑 config-v4 Phase 13 PR 1: the payload key moved `device` -> `device`/`area`, and this cast is why
+ * 🛑 config-v4 Phase 13 PR 1: the payload key moved `system` -> `device`/`area`, and this cast is why
  * `tsc` could not see it — `dashboardDataQuery` returns `unknown`, so the OLD key would have compiled
  * clean and silently stopped rendering the viewer's dashboard (`data?.device` forever falsy). `/device`
  * routes are device-only, but the area leg is accepted rather than assumed away.

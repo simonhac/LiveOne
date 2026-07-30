@@ -4,7 +4,7 @@
  *
  * These are the persistence helpers the `/api/areas` mutation routes call (the routes own auth); they
  * keep the routes thin, mirroring `lib/dashboard/dashboards.ts`. Areas are EXPLICIT: a device gets no
- * auto-minted Area — everything here mints a SYNTHETIC-handle area (no `devices` row) so a site
+ * auto-minted Area — everything here mints a SYNTHETIC-handle area (no `systems` row) so a site
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
@@ -139,7 +139,7 @@ export async function createArea(
           // membership row. Slice 1a: this RESOLVES the uuid (`uuidForRid`) instead of ensuring the row
           // (`ensureDeviceRow`). It is not a weakening — `devices` is the registry now, not a mirror, so a
           // member handle with no `devices` row is a genuine error and `uuidForRid` THROWS, aborting the
-          // tx. Previously it would have silently minted a device from a `devices` row.
+          // tx. Previously it would have silently minted a device from a `systems` row.
           // Sequential, not Promise.all: a drizzle tx is ONE pg client, so overlapping statements on it
           // are serialised anyway and only make the ordering harder to reason about.
           const deviceIds: string[] = [];
@@ -403,8 +403,8 @@ export async function replaceBindings(
   }
   const db = requirePlanetscaleDb();
   // The battery/power point's OWNING device, for the area-config carry-over below. Sourced from the
-  // resolved `point_info` row (the wire no longer names a device), so it stays an int `devices.id`
-  // exactly as the `devices.config` lookup needs.
+  // resolved `point_info` row (the wire no longer names a device), so it stays an int `systems.id`
+  // exactly as the `systems.config` lookup needs.
   const batteryIdx = bindings.findIndex(
     (binding) => binding.role === "battery" && binding.metricType === "power",
   );

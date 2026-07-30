@@ -78,7 +78,7 @@ export interface TeslaCredentials {
   fleet_api_base_url?: string;
 }
 
-// Per-device Tesla polling config, stored under `devices.metadata.tesla` (JSONB).
+// Per-device Tesla polling config, stored under `systems.metadata.tesla` (JSONB).
 // All fields optional; absent fields fall back to the adapter defaults. Used to tune
 // Fleet API cost / vampire-drain on a per-vehicle basis. See lib/vendors/tesla/adapter.ts.
 export interface TeslaDeviceMetadata {

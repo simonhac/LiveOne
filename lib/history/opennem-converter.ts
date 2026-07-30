@@ -23,7 +23,7 @@ export class OpenNEMConverter {
     requestedStartTime?: CalendarDate | ZonedDateTime,
     requestedEndTime?: CalendarDate | ZonedDateTime,
   ): OpenNEMDataSeries[] {
-    // Build siteId from device (uses shortname if available, otherwise device.{id})
+    // Build siteId from system (uses shortname if available, otherwise system.{id})
     const siteId = buildSiteIdFromDevice(device);
     const dataSeries: OpenNEMDataSeries[] = [];
 

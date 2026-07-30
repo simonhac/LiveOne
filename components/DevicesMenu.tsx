@@ -57,7 +57,7 @@ export default function DevicesMenu({
     ? defaultDashboardId
     : (dashboards[0]?.id ?? null);
   // Physical devices. Areas-backed virtual devices are already excluded upstream (never in the
-  // device lists); public grid-data sources (e.g. OpenElectricity) count as physical and stay.
+  // systems/devices lists); public grid-data sources (e.g. OpenElectricity) count as physical and stay.
   const devices = availableDevices;
 
   // Separate owned vs granted devices

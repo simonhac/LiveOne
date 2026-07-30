@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Authenticate and authorize (owner, viewer, or admin) on the underlying device.
+  // Authenticate and authorize (owner, viewer, or admin) on the underlying system.
   const auth = await requireDeviceAccess(request, systemId);
   if (auth instanceof NextResponse) return auth;
 

@@ -42,7 +42,7 @@ async function withChartCapabilityIfRequested<
 }
 
 /**
- * The Areas a user may read = Areas they own plus any Area whose handle is one of their visible devices.
+ * The Areas a user may read = Areas they own plus any Area whose handle is one of their visible systems.
  * The dashboard owner can compose a card from any of these, and the authoring check
  * (PUT /api/dashboard/[systemId]) rejects a card binding any Area outside this set.
  */

@@ -165,7 +165,7 @@ export interface SyncProdToDevOptions {
 
 // Small config tables — full refresh, FK parents first.
 const FULL: FullTable[] = [
-  // `devices`, `polling_status` and `point_info` were dropped by migration 0051 (the Phase 12 terminal
+  // `systems`, `polling_status` and `point_info` were dropped by migration 0051 (the Phase 12 terminal
   // window) and their legs are gone with them: `devices`/`device_state`/`points` are the live tables and
   // are already synced below. The manifest is not type-checked against the schema — a stale entry here
   // would fail at RUNTIME on the next dispatch, not at build.

@@ -41,7 +41,7 @@ function formatTimestamp(date: Date, timezoneOffsetMin: number): string {
  * object, formatting timestamps using the supplied timezone offset.
  *
  * @param input - Session data to convert
- * @param timezoneOffsetMin - Device timezone offset in minutes
+ * @param timezoneOffsetMin - System timezone offset in minutes
  */
 export function buildSessionPayload(
   input: SessionPublishInput,

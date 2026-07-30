@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Register HWS modelling for a device: the derived `load.hws/temperature` point AND the
+ * Register HWS modelling for a system: the derived `load.hws/temperature` point AND the
  * `hws-model` derivation that turns it on.
  *
  * Since config-v4 Phase 11 the point alone is not enough — the derivations cron discovers an

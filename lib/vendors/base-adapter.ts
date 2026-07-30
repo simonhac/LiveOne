@@ -487,7 +487,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
-   * Get the latest reading for this device.
+   * Get the latest reading for this system.
    * Default implementation returns null - adapters should override this
    * to provide their own implementation using point_readings data.
    */

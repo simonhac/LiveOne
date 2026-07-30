@@ -328,12 +328,12 @@ export class PointManager {
    * Resolve the viewable points for a device handle — the single "resolve viewable" path.
    *
    * An Area is a grouping of 1..N member devices. A **real device** (an area-of-one's source, addressed
-   * by its own `devices.id`) loads its own `point_info`. A **multi-device area** (an areas-backed handle
-   * with no real `devices` row) resolves under the membership + override model: its typed `area_bindings`
+   * by its own `systems.id`) loads its own `point_info`. A **multi-device area** (an areas-backed handle
+   * with no real `systems` row) resolves under the membership + override model: its typed `area_bindings`
    * SELECT the points (the override), and a curated multi-device area HAS bindings, so its bound child
    * refs ARE the set (unchanged). An area with NO bindings DEFAULTS to the union of its member devices'
    * own points (a plain "several devices in one area"). Dispatched on the structural area-handle signal
-   * (no real `devices` row), not a vendorType string.
+   * (no real `systems` row), not a vendorType string.
    *
    * Parity: an area-of-one's union-of-one is byte-identical to loading the device's own points, and
    * every existing multi-device area has bindings, so the union-default branch is dormant for current
@@ -974,7 +974,7 @@ export class PointManager {
         const cacheValue = val.value ?? val.valueStr ?? null;
         // Only cache active points with a proper logicalPath and a value
         if (point && cacheValue !== null && logicalPath && point.active) {
-          // Collect for device summary (only numeric values)
+          // Collect for system summary (only numeric values)
           if (typeof cacheValue === "number") {
             summaryValues.push({
               logicalPath,
@@ -1003,7 +1003,7 @@ export class PointManager {
       });
       await Promise.all(cacheUpdates);
 
-      // Update device summary (fire-and-forget, don't block)
+      // Update system summary (fire-and-forget, don't block)
       if (summaryValues.length > 0) {
         updateSystemSummary(systemId, summaryValues, maxMeasurementTimeMs)
           .then(() => {

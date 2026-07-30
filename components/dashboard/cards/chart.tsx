@@ -2,7 +2,7 @@
 
 /**
  * The `chart` card. The lines variant renders standalone here and mounts immediately (its history
- * fetch doesn't need the handle's `device` to have landed yet — see the tz note below); the
+ * fetch doesn't need the handle's `system` to have landed yet — see the tz note below); the
  * stacked-areas variant never renders standalone: `collapseKey` folds it into the section's
  * SiteChartsGroup (chart:load / chart:generation).
  */

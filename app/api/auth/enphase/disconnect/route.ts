@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     // and credentials are ignored for removed devices
 
     // The read is the config registry (`devices`); each Enphase device is then marked removed through
-    // the `devices` writer, keyed by handle.
+    // the `systems` writer, keyed by handle.
 
     const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
     const enphaseDevices = ownedDevices.filter(

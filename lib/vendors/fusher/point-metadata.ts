@@ -1,7 +1,7 @@
 /**
  * Fusher (Fronius Pusher) Point Metadata Configuration
  *
- * This defines all metadata for the key monitoring points from Fusher devices.
+ * This defines all metadata for the key monitoring points from Fusher systems.
  * Each entry maps a field from the FusherPushData interface to point_info metadata.
  *
  * Fusher devices push data to /api/push/fusher endpoint

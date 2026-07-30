@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Onboard the DeepSea generator as a push (gusher) device.
+ * Onboard the DeepSea generator as a push (gusher) system.
  *
  * Idempotent: reuses an existing `(deepsea, <siteId>)` device, else creates one. Mints a `gk_` apiKey
  * and stores it as the device's credential (so gusher accepts pushes for it). Points auto-create on
@@ -37,7 +37,7 @@ async function main() {
   const displayName =
     process.env.DEEPSEA_DISPLAY_NAME ?? "Daylesford Generator";
 
-  // Resolve the owner: DEEPSEA_OWNER, else the Daylesford device (id 1), else any owned device.
+  // Resolve the owner: DEEPSEA_OWNER, else the Daylesford device (id 1), else any owned system.
   let owner = process.env.DEEPSEA_OWNER ?? null;
   if (!owner) {
     const owned = await planetscaleDb
@@ -65,7 +65,7 @@ async function main() {
     );
   }
 
-  // Idempotent: reuse an existing deepsea/<siteId> device.
+  // Idempotent: reuse an existing deepsea/<siteId> system.
   const existing = await planetscaleDb
     .select({ id: devices.rid })
     .from(devices)
@@ -81,7 +81,7 @@ async function main() {
       `• system already exists: id ${systemId} (deepsea/${siteId}) — reusing`,
     );
   } else {
-    // Use the `devices` writer so dev-id allocation (ids ≥ 10000) avoids colliding with restored prod ids.
+    // Use the `systems` writer so dev-id allocation (ids ≥ 10000) avoids colliding with restored prod ids.
     const device = await DeviceWriter.createDevice({
       ownerClerkUserId: owner,
       vendorType,

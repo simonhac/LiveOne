@@ -247,9 +247,9 @@ export async function boundPoints(
  * generator source, reserve-floor prior) hang off the battery point's device.
  *
  * Resolved `points.device_id → devices.id` since slice E PR 2a; slice K2 deleted the trailing
- * `devices.rid → devices.id` bridge, so this is now a single FK-backed hop and cannot miss for a
+ * `devices.rid → systems.id` bridge, so this is now a single FK-backed hop and cannot miss for a
  * point that exists. Returns undefined only when the point itself is gone — the same "no knobs, use
- * the defaults" outcome the previous `where(devices.id = pointSystemId)` miss produced.
+ * the defaults" outcome the previous `where(systems.id = pointSystemId)` miss produced.
  */
 export async function ownerDeviceConfig(
   db: PgDb,
@@ -269,7 +269,7 @@ export interface LoadOptions {
   noSoc?: boolean;
   /** Ablation: ignore the persisted capacity point, forcing the in-window fallback (harness `--no-capacity`). */
   noCapacity?: boolean;
-  /** Pre-resolved logical device for `handle`, when the caller already has one (e.g. `/api/history`
+  /** Pre-resolved logical system for `handle`, when the caller already has one (e.g. `/api/history`
    *  resolves it once for the energy-only Sankey and can hand it straight in here) — skips the
    *  internal `resolveLogicalSystem` call. Must be the same `handle`; not verified. */
   logicalSystem?: LogicalSystem;
@@ -293,7 +293,7 @@ export async function loadProvenanceInputs(
     throw new Error("No Postgres connection (PLANETSCALE_DATABASE_URL).");
   const { startMs, endMs } = window;
 
-  // The Area lookup and the logical-device resolve are independent (the latter needs only `handle`)
+  // The Area lookup and the logical-system resolve are independent (the latter needs only `handle`)
   // — fire concurrently. Flow series (source/load kW) are built from the SAME canonical
   // `resolveLogicalSystem` + shared PG builder the Sankey reads, so the attributed matrix's edges
   // match by construction — per-inverter solar-leaf granularity and area-of-ones (which have no power

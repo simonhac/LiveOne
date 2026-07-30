@@ -19,7 +19,7 @@ import type {
  *    - Basic auth (client_id:client_secret) for token exchange
  *
  * 2. DATA FETCHING - PRODUCTION MICRO ENDPOINT:
- *    We primarily use /api/v4/devices/{id}/telemetry/production_micro
+ *    We primarily use /api/v4/systems/{id}/telemetry/production_micro
  *
  *    IMPORTANT BEHAVIORS:
  *    - WITHOUT parameters: Returns today's partial data (from 00:05 until ~25 mins ago)
@@ -34,7 +34,7 @@ import type {
  *
  * 4. TIMEZONE HANDLING:
  *    - All timestamps are in Unix time (UTC)
- *    - Device timezone is stored separately and used for day boundaries
+ *    - System timezone is stored separately and used for day boundaries
  *    - For fetching a specific day: start_at = day 00:05, end_at = next day 00:00
  *
  * 5. RATE LIMITING:

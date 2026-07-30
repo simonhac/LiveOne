@@ -38,7 +38,7 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  * The member systemIds behind a handle: an area's `area_members`, or the handle itself (a real device).
  *
  * Membership is uuid-keyed since slice H, but every consumer here still joins int-keyed columns
- * (`devices.id`, the run-detector lookup), so it converts back. The `!` is safe by the
+ * (`systems.id`, the run-detector lookup), so it converts back. The `!` is safe by the
  * `area_members.device_id` FK — see `DeviceRegistry.ridsForDevices`.
  */
 export async function memberSystemIds(handle: number): Promise<number[]> {
@@ -80,7 +80,7 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
   }
   if (hasGenerator) caps.add("generator-running");
 
-  // grid-signals: the area's location derives a NEM region + a seeded OE region device.
+  // grid-signals: the area's location derives a NEM region + a seeded OE region system.
   if (await resolveGridContextForDevice(handle)) caps.add("grid-signals");
 
   return { derived: caps, overrides };
