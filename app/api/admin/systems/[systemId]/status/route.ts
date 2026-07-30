@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export async function PATCH(
@@ -36,7 +36,7 @@ export async function PATCH(
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    await SystemsManager.getInstance().updateSystem(systemId, { status });
+    await DeviceWriter.updateSystem(systemId, { status });
 
     // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); a removed system
     // leaves its dashboards intact, so there is no per-system default to clear here.

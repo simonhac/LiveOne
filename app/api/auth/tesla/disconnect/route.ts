@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getSystemCredentials } from "@/lib/secure-credentials";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
@@ -32,12 +32,12 @@ export async function POST(request: NextRequest) {
 
     // The read is the config registry (`devices`); each Tesla device is then marked removed through
     // the `systems` writer, keyed by handle.
-    const systemsManager = SystemsManager.getInstance();
+
     const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
     const teslaSystems = ownedSystems.filter((s) => s.vendorType === "tesla");
 
     for (const s of teslaSystems) {
-      await systemsManager.updateSystem(s.id, {
+      await DeviceWriter.updateSystem(s.id, {
         ownerClerkUserId: null,
         status: "removed",
       });

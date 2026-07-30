@@ -23,7 +23,7 @@ async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
   const { devices } = await import("@/lib/db/planetscale/schema");
   const { storeSystemCredentials } = await import("@/lib/secure-credentials");
-  const { SystemsManager } = await import("@/lib/systems-manager");
+  const { DeviceWriter } = await import("@/lib/registry/device-writer");
 
   if (!planetscaleDb) {
     console.error(
@@ -81,8 +81,8 @@ async function main() {
       `• system already exists: id ${systemId} (deepsea/${siteId}) — reusing`,
     );
   } else {
-    // Use SystemsManager so dev-id allocation (ids ≥ 10000) avoids colliding with restored prod ids.
-    const system = await SystemsManager.getInstance().createSystem({
+    // Use the `systems` writer so dev-id allocation (ids ≥ 10000) avoids colliding with restored prod ids.
+    const system = await DeviceWriter.createSystem({
       ownerClerkUserId: owner,
       vendorType,
       vendorSiteId: siteId,

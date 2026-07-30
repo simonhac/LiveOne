@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getEnphaseClient } from "@/lib/vendors/enphase/enphase-client";
 import { storeEnphaseTokens } from "@/lib/vendors/enphase/enphase-auth";
 import { clerkClient } from "@clerk/nextjs/server";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
     console.log("ENPHASE: Using system:", systemId, enphaseSystem.name);
 
     // Existence check reads the config registry (`devices`); the writers below are still `systems`.
-    const systemsManager = SystemsManager.getInstance();
+
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(systemId);
     const existingSystem =
@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
         // Add more timezone mappings as needed
       }
 
-      const newSystem = await systemsManager.createSystem({
+      const newSystem = await DeviceWriter.createSystem({
         ownerClerkUserId: userId,
         vendorType: "enphase",
         vendorSiteId: systemId,
@@ -177,7 +177,7 @@ export async function GET(request: NextRequest) {
       // Update existing system (reactivate if it was removed)
       console.log("ENPHASE: Updating existing system");
 
-      await systemsManager.updateSystem(existingSystem.id, {
+      await DeviceWriter.updateSystem(existingSystem.id, {
         ownerClerkUserId: userId,
         displayName: enphaseSystem.name || existingSystem.displayName,
         location: enphaseSystem.address || existingSystem.location, // Update location if available

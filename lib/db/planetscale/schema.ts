@@ -1108,7 +1108,7 @@ export const points = pgTable(
 //     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
 //   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
 //     membership, because `deleteSystem` ORPHANS its `devices` row rather than deleting it
-//     (`SystemsManager.deleteSystem`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
+//     (`DeviceWriter.deleteSystem`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
 //     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE
 //     here means such a member silently leaves its areas — fix the two together.
 export const areaMembers = pgTable(

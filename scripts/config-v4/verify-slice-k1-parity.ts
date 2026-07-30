@@ -25,7 +25,7 @@
  *    reports "0 differences" after quietly widening what counts as no difference is worse than no gate,
  *    so an unlisted divergence AND an unfired expectation both fail.
  *
- * 4. **The mint-not-edit leak.** `SystemsManager.updateSystem` re-mirrors `devices` but NEVER re-copies
+ * 4. **The mint-not-edit leak.** `DeviceWriter.updateSystem` re-mirrors `devices` but NEVER re-copies
  *    `location` / `timezone_offset_min` / `display_timezone` to the area-of-one, which
  *    `ensureAreaOfOne` only ever wrote at MINT. Since `DeviceRecord` sources all three from the AREA,
  *    any drift is a live defect that K2 would turn into wrong served config. This block measures it.
@@ -50,7 +50,7 @@ const db = planetscaleDb!;
  *
  * Blocks 1 + 2 need an INDEPENDENT `systems`-side reading to diff the new module against. Until K3 that
  * was `SystemsManager.getSystem` + its `deviceStateByHandle` subquery — retained in `lib/` for this gate
- * alone, with zero production callers. K3 deletes every config read from `lib/systems-manager.ts`, so
+ * alone, with zero production callers. K3 deleted `lib/systems-manager.ts` outright, so
  * the oracle is copied here rather than either (a) keeping a callerless `systems` reader alive in the
  * serving tree, or (b) retiring the gate.
  *

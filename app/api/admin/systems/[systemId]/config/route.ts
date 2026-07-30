@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireSystemAccess } from "@/lib/api-auth";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { derivedCapabilitiesForSystem } from "@/lib/capabilities/server";
 import { CAPABILITIES, type CapabilityId } from "@/lib/capabilities/registry";
 import type {
@@ -192,7 +192,7 @@ export async function PATCH(
   if ("error" in parsed)
     return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  await SystemsManager.getInstance().updateSystem(systemId, {
+  await DeviceWriter.updateSystem(systemId, {
     config: parsed.config,
   });
   await syncAreaBatteryConfigFromDevice(

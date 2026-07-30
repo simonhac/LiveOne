@@ -9,7 +9,7 @@
 import { sql } from "drizzle-orm";
 import { parseDate } from "@internationalized/date";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
@@ -165,7 +165,7 @@ export async function runCoverageRepair(
                     // through the mirrored writer; the old statement's `AND commissioned_on IS NULL`
                     // guard is preserved by the enclosing `if (!floor)`, and this is a weekly single
                     // writer, so there is no concurrent update to lose.
-                    await SystemsManager.getInstance().updateSystem(system.id, {
+                    await DeviceWriter.updateSystem(system.id, {
                       commissionedOn: commissioned,
                     });
                   } catch (err) {

@@ -19,6 +19,9 @@ export {
 } from "./device-registry";
 // The device CONFIG registry — `devices` read as the primary config source (config-v4 Phase 12 slice
 // K1). Deliberately separate from the ADDRESSING registry above; see device-config.ts's header.
+// The four surviving `systems` WRITERS, relocated out of the deleted `lib/systems-manager.ts` in slice
+// K3. Reads never come from here; see device-writer.ts's header.
+export { DeviceWriter, type System } from "./device-writer";
 export {
   DeviceConfigRegistry,
   ridOf,
