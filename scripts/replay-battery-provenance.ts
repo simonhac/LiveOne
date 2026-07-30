@@ -33,7 +33,7 @@ if (
 
 import { and, eq, or, sql } from "drizzle-orm";
 import { planetscaleDb } from "../lib/db/planetscale";
-import { areas, pointInfo } from "../lib/db/planetscale/schema";
+import { areas, devices, points } from "../lib/db/planetscale/schema";
 import { loadProvenanceInputs } from "../lib/battery-provenance/load";
 import { computeBatteryProvenance } from "../lib/battery-provenance/compute";
 import type {
@@ -70,21 +70,22 @@ function db() {
 async function runDiscover() {
   const rows = await db()
     .select({
-      systemId: pointInfo.systemId,
-      stem: pointInfo.logicalPathStem,
-      metric: pointInfo.metricType,
+      systemId: devices.rid,
+      stem: points.logicalPath,
+      metric: points.metricType,
     })
-    .from(pointInfo)
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       or(
         and(
-          eq(pointInfo.logicalPathStem, "bidi.battery"),
-          eq(pointInfo.metricType, "soc"),
+          eq(points.logicalPath, "bidi.battery"),
+          eq(points.metricType, "soc"),
         ),
-        eq(pointInfo.logicalPathStem, "load.ev"),
+        eq(points.logicalPath, "load.ev"),
         and(
-          eq(pointInfo.logicalPathStem, "bidi.grid.import"),
-          eq(pointInfo.metricType, "rate"),
+          eq(points.logicalPath, "bidi.grid.import"),
+          eq(points.metricType, "rate"),
         ),
       ),
     );

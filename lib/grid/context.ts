@@ -12,7 +12,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { AreaLocation } from "@/lib/areas/types";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { devices, areas, pointInfo } from "@/lib/db/planetscale/schema";
+import { devices, areas, points } from "@/lib/db/planetscale/schema";
 import { stemMatchesRole } from "@/lib/roles/registry";
 import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 
@@ -27,9 +27,10 @@ async function systemPlaysGridRole(
   systemId: number,
 ): Promise<boolean> {
   const gridPoints = await db
-    .select({ logicalPathStem: pointInfo.logicalPathStem })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
+    .select({ logicalPathStem: points.logicalPath })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
+    .where(eq(devices.rid, systemId));
   return gridPoints.some(
     (p) =>
       p.logicalPathStem != null && stemMatchesRole(p.logicalPathStem, "grid"),

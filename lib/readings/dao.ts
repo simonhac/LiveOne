@@ -444,39 +444,47 @@ async function latest5mForPoints(
  * Latest cache-worthy value for every active point with a logical path. Raw is preferred whenever
  * present; agg5m is the fallback for 5m-native vendors. The LATERAL probes reproduce the former
  * dev-KV rebuild query exactly while returning the public PointId.
+ *
+ * ⚠️ Hand-written SQL: `tsc` is blind to it, so a table rename here fails only at RUNTIME. It must be
+ * DRIVEN (rebuild the latest-values path) after any edit.
  */
 async function latestForActivePoints(
   exec?: ReadingsExec,
 ): Promise<ActivePointLatest[]> {
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: both LATERAL probes now key on the rid-keyed twins (pr.point_rid = pi.rid). `point_info.rid`
-  // is the same internal recorder key the hot tables store, so the driver + projection are unchanged.
+  // SEAM: both LATERAL probes key on the rid-keyed twins (pr.point_rid = p.rid), and since slice 1b the
+  // driver is `points` — `p.rid` is the SAME sequence value `point_info.rid` held (0043: one counter), so
+  // the probes are unchanged. No `devices` join: every column projected here lives on the point row
+  // (`points.id` IS the old `point_uid`, `unit`/`name` are the old `metric_unit`/`display_name`). The
+  // OUTPUT column names are held fixed so the row mapper below is untouched.
   const res = await db.execute(
     sql.raw(`
     WITH candidates AS (
-      SELECT pi.point_uid, pi.logical_path_stem, pi.metric_type, pi.metric_unit, pi.display_name,
+      SELECT p.id AS point_uid, p.logical_path AS logical_path_stem, p.metric_type,
+             p.unit AS metric_unit, p.name AS display_name,
              r.value, r.value_str, r.measurement_time AS mt, r.received_time AS rt,
              r.session_id, 0 AS src_rank
-      FROM point_info pi
+      FROM points p
       JOIN LATERAL (
         SELECT value, value_str, measurement_time, received_time, session_id
         FROM point_readings pr
-        WHERE pr.point_rid = pi.rid
+        WHERE pr.point_rid = p.rid
         ORDER BY measurement_time DESC LIMIT 1
       ) r ON true
-      WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
+      WHERE p.active = true AND p.logical_path IS NOT NULL
       UNION ALL
-      SELECT pi.point_uid, pi.logical_path_stem, pi.metric_type, pi.metric_unit, pi.display_name,
+      SELECT p.id AS point_uid, p.logical_path AS logical_path_stem, p.metric_type,
+             p.unit AS metric_unit, p.name AS display_name,
              a.last AS value, a.value_str, a.interval_end AS mt, a.interval_end AS rt,
              a.session_id, 1 AS src_rank
-      FROM point_info pi
+      FROM points p
       JOIN LATERAL (
         SELECT last, value_str, interval_end, session_id
         FROM point_readings_agg_5m ag
-        WHERE ag.point_rid = pi.rid
+        WHERE ag.point_rid = p.rid
         ORDER BY interval_end DESC LIMIT 1
       ) a ON true
-      WHERE pi.active = true AND pi.logical_path_stem IS NOT NULL
+      WHERE p.active = true AND p.logical_path IS NOT NULL
     )
     SELECT DISTINCT ON (c.point_uid)
       c.point_uid, c.logical_path_stem, c.metric_type, c.metric_unit, c.display_name,

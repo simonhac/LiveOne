@@ -18,7 +18,6 @@ import {
   areas,
   batteryProvenanceDaily,
   devices,
-  pointInfo,
   points,
 } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
@@ -106,16 +105,17 @@ async function loadOeRawSeries(
   if (!oeSys) return { emissions: null, renewable: null };
   const oePts = await db
     .select({
-      pointUid: pointInfo.pointUid,
-      stem: pointInfo.logicalPathStem,
+      pointUid: points.id,
+      stem: points.logicalPath,
     })
-    .from(pointInfo)
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(pointInfo.systemId, oeSys.id),
+        eq(devices.rid, oeSys.id),
         or(
-          eq(pointInfo.logicalPathStem, "grid.emissionsIntensity"),
-          eq(pointInfo.logicalPathStem, "grid.renewables"),
+          eq(points.logicalPath, "grid.emissionsIntensity"),
+          eq(points.logicalPath, "grid.renewables"),
         ),
       ),
     );
@@ -190,10 +190,8 @@ export function bindingPoint(pointUid: string): PointId {
 }
 
 export interface BoundPoint {
-  /** LEGACY address, read from the point_info row `point_uid` joins to — not from the binding. */
+  /** The owning device's handle (`devices.rid`), read from the joined point row — not from the binding. */
   systemId: number;
-  /** LEGACY address (the point's per-device index) — see `systemId`. */
-  pointId: number;
   /** The point's identity — see `bindingPoint`. */
   point: PointId;
   role: string;
@@ -204,14 +202,13 @@ export interface BoundPoint {
 }
 
 /**
- * The Area's curated points via `area_bindings` joined to point_info (dedupes overlapping devices).
+ * The Area's curated points via `area_bindings` joined to `points ⋈ devices` (dedupes overlapping devices).
  *
- * The join is on `point_uid` since slice E PR 2a. `systemId`/`pointId` therefore come from the joined
- * `point_info` row rather than the binding. That used to matter because it kept them a genuine LEGACY
- * side for the slice-D parity gate, which compared `point` against `pointForAddr(systemId, pointId)`;
- * the pre-terminal prep retired `pointForAddr` and the gate with it, so there is no second address left
- * to disagree with. Their remaining production consumers are the two `devices.config` lookups here and
- * `battery-provenance-daily-pg.ts`, both of which read the device through `points`/`devices` instead.
+ * The join is on the point identity (`area_bindings.point_uid = points.id`) since slice E PR 2a, so
+ * `systemId` comes from the joined point's device rather than from the binding — a caller cannot claim a
+ * point belongs to a device it does not. The companion `pointId` (the per-device index) went with slice
+ * 1b: it was set here and read nowhere, the last trace of the slice-D parity gate that compared `point`
+ * against `pointForAddr(systemId, pointId)` before the pre-terminal prep retired both.
  */
 export async function boundPoints(
   db: PgDb,
@@ -219,23 +216,22 @@ export async function boundPoints(
 ): Promise<BoundPoint[]> {
   const rows = await db
     .select({
-      systemId: pointInfo.systemId,
-      pointId: pointInfo.index,
+      systemId: devices.rid,
       pointUid: areaBindings.pointUid,
       role: areaBindings.role,
       metric: areaBindings.metricType,
-      stem: pointInfo.logicalPathStem,
-      unit: pointInfo.metricUnit,
+      stem: points.logicalPath,
+      unit: points.unit,
       transform: areaBindings.transform,
-      piTransform: pointInfo.transform,
+      piTransform: points.transform,
     })
     .from(areaBindings)
-    .innerJoin(pointInfo, eq(pointInfo.pointUid, areaBindings.pointUid))
+    .innerJoin(points, eq(points.id, areaBindings.pointUid))
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(eq(areaBindings.areaId, areaId))
     .orderBy(asc(areaBindings.ordinal));
   return rows.map((r) => ({
     systemId: r.systemId,
-    pointId: r.pointId,
     point: bindingPoint(r.pointUid),
     role: r.role,
     metric: r.metric,

@@ -26,7 +26,7 @@ import {
   areas,
   derivations,
   devices,
-  pointInfo,
+  points,
 } from "@/lib/db/planetscale/schema";
 import { Device, Point, type PointId } from "@/lib/ids";
 import { DeviceRegistry } from "@/lib/registry/device-registry";
@@ -91,13 +91,11 @@ export interface ResolvedRunDetector {
 export interface ResolvedHwsModel {
   id: string;
   areaId: string;
-  /** The output point's own `point_info.system_id` — the KV latest cache key, as before. */
+  /** The output point's own owning-device handle (`devices.rid`) — the KV latest cache key, as before. */
   systemId: number;
   powerPoint: PointId;
   /** The derived output point (`output_point_id`) — the agg_5m write target. */
   tempPoint: PointId;
-  /** Its integer `point_info.index` — still the KV latest cache key until Phase 13. */
-  tempPointIndex: number;
   tempPath: string;
   tempUnit: string;
   tempDisplayName: string;
@@ -275,19 +273,19 @@ export async function listEnabledHwsModels(): Promise<ResolvedHwsModel[]> {
     }
     const [out] = await requirePlanetscaleDb()
       .select({
-        systemId: pointInfo.systemId,
-        index: pointInfo.index,
-        stem: pointInfo.logicalPathStem,
-        metric: pointInfo.metricType,
-        unit: pointInfo.metricUnit,
-        displayName: pointInfo.displayName,
+        systemId: devices.rid,
+        stem: points.logicalPath,
+        metric: points.metricType,
+        unit: points.unit,
+        displayName: points.name,
       })
-      .from(pointInfo)
-      .where(eq(pointInfo.pointUid, d.outputPointId))
+      .from(points)
+      .innerJoin(devices, eq(devices.id, points.deviceId))
+      .where(eq(points.id, d.outputPointId))
       .limit(1);
     if (!out) {
       console.warn(
-        `[Derivations] hws-model ${d.id}: output point ${d.outputPointId} has no point_info row — skipping`,
+        `[Derivations] hws-model ${d.id}: output point ${d.outputPointId} has no points row — skipping`,
       );
       continue;
     }
@@ -297,7 +295,6 @@ export async function listEnabledHwsModels(): Promise<ResolvedHwsModel[]> {
       systemId: out.systemId,
       powerPoint: Point.encode(src.power),
       tempPoint: Point.encode(d.outputPointId),
-      tempPointIndex: out.index,
       tempPath: `${out.stem}/${out.metric}`,
       tempUnit: out.unit,
       tempDisplayName: out.displayName,

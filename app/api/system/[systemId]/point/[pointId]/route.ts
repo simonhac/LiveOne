@@ -1,10 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { devices, points } from "@/lib/db/planetscale/schema";
 import { eq, and } from "drizzle-orm";
 import { requireSystemAccess } from "@/lib/api-auth";
 import { isValidLogicalPathStem } from "@/lib/identifiers/logical-path";
 import { PointManager } from "@/lib/point/point-manager";
+
+/**
+ * One point of `{systemId}`, by the `pointId` URL segment, from `points ⋈ devices` (slice 1b).
+ *
+ * `pointId` is a **`points.rid`** — a global integer, not the old per-system `point_info.index`. This
+ * route is the pair to `PointManager.updatePoint`, whose WHERE moved to `rid` in the seam commit, so
+ * reading on anything else here would 404 (or, worse, address a different point) for the 117-of-134
+ * rows on dev where the two integers differ.
+ */
+function pointByRid(systemId: number, pointRid: number) {
+  return requirePlanetscaleDb()
+    .select({
+      systemId: devices.rid,
+      index: points.rid,
+      physicalPathTail: points.physicalPath,
+      logicalPathStem: points.logicalPath,
+      metricType: points.metricType,
+      metricUnit: points.unit,
+      defaultName: points.defaultName,
+      displayName: points.name,
+      subsystem: points.subsystem,
+      transform: points.transform,
+      active: points.active,
+    })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
+    .where(and(eq(devices.rid, systemId), eq(points.rid, pointRid)))
+    .limit(1);
+}
 
 /**
  * PATCH /api/system/{systemId}/point/{pointId}
@@ -43,13 +72,7 @@ export async function PATCH(
     const body = await request.json();
 
     // Validate the point exists
-    const [existingPoint] = await requirePlanetscaleDb()
-      .select()
-      .from(pointInfo)
-      .where(
-        and(eq(pointInfo.systemId, systemId), eq(pointInfo.index, pointId)),
-      )
-      .limit(1);
+    const [existingPoint] = await pointByRid(systemId, pointId);
 
     if (!existingPoint) {
       return NextResponse.json(
@@ -112,13 +135,7 @@ export async function PATCH(
     await pointManager.updatePoint(systemId, pointId, updateData);
 
     // Fetch the updated record
-    const [updatedPoint] = await requirePlanetscaleDb()
-      .select()
-      .from(pointInfo)
-      .where(
-        and(eq(pointInfo.systemId, systemId), eq(pointInfo.index, pointId)),
-      )
-      .limit(1);
+    const [updatedPoint] = await pointByRid(systemId, pointId);
 
     console.log(
       `[Point] Updated point ${systemId}.${pointId}:`,
@@ -178,13 +195,7 @@ export async function GET(
     if (authResult instanceof NextResponse) return authResult;
     const { system } = authResult;
 
-    const [point] = await requirePlanetscaleDb()
-      .select()
-      .from(pointInfo)
-      .where(
-        and(eq(pointInfo.systemId, systemId), eq(pointInfo.index, pointId)),
-      )
-      .limit(1);
+    const [point] = await pointByRid(systemId, pointId);
 
     if (!point) {
       return NextResponse.json(

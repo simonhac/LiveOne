@@ -16,7 +16,6 @@ import {
   areas,
   areaBindings,
   areaMembers,
-  pointInfo,
   points,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
@@ -340,21 +339,21 @@ export async function replaceBindings(
       ? []
       : await requirePlanetscaleDb()
           .select({
-            systemId: pointInfo.systemId,
-            index: pointInfo.index,
-            pointUid: pointInfo.pointUid,
-            logicalPathStem: pointInfo.logicalPathStem,
-            metricType: pointInfo.metricType,
+            systemId: devices.rid,
+            pointUid: points.id,
+            logicalPathStem: points.logicalPath,
+            metricType: points.metricType,
           })
-          .from(pointInfo)
-          .where(inArray(pointInfo.pointUid, wantedUids));
+          .from(points)
+          .innerJoin(devices, eq(devices.id, points.deviceId))
+          .where(inArray(points.id, wantedUids));
   const pointByUid = new Map(pointRows.map((point) => [point.pointUid, point]));
   const nextPriority = new Map<string, number>();
   const seenPriorities = new Set<string>();
   // Collected in binding order so the INSERT can name `point_uid` without re-looking-up (and without a
   // non-null assertion — the loop below has already proven every point resolves).
   const resolvedUids: string[] = [];
-  // The owning system of each resolved point, in binding order — read from `point_info`, not from the
+  // The owning system of each resolved point, in binding order — read from `points ⋈ devices`, not from the
   // wire, so a caller cannot claim a point belongs to a device it does not.
   const resolvedSystemIds: number[] = [];
   for (let bi = 0; bi < bindings.length; bi++) {

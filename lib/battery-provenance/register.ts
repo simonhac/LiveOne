@@ -14,7 +14,12 @@
  */
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
+import {
+  areaBindings,
+  devices,
+  pointInfo,
+  points,
+} from "@/lib/db/planetscale/schema";
 import { mintPoint } from "@/lib/point/mint-point";
 import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
 
@@ -119,14 +124,15 @@ export async function ensureBatteryProvenancePoints(
   // is already enforced upstream (the Area has a bound battery).
   if (opts.requireBatteryPoint !== false) {
     const [power] = await db
-      .select({ index: pointInfo.index })
-      .from(pointInfo)
+      .select({ rid: points.rid })
+      .from(points)
+      .innerJoin(devices, eq(devices.id, points.deviceId))
       .where(
         and(
-          eq(pointInfo.systemId, systemId),
-          eq(pointInfo.logicalPathStem, BATTERY_STEM),
-          eq(pointInfo.metricType, "power"),
-          eq(pointInfo.active, true),
+          eq(devices.rid, systemId),
+          eq(points.logicalPath, BATTERY_STEM),
+          eq(points.metricType, "power"),
+          eq(points.active, true),
         ),
       )
       .limit(1);
@@ -141,18 +147,16 @@ export async function ensureBatteryProvenancePoints(
 
   const existing = await db
     .select({
-      index: pointInfo.index,
-      pointUid: pointInfo.pointUid,
-      metricType: pointInfo.metricType,
-      displayName: pointInfo.displayName,
-      defaultName: pointInfo.defaultName,
+      rid: points.rid,
+      pointUid: points.id,
+      metricType: points.metricType,
+      displayName: points.name,
+      defaultName: points.defaultName,
     })
-    .from(pointInfo)
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
-      and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, BATTERY_STEM),
-      ),
+      and(eq(devices.rid, systemId), eq(points.logicalPath, BATTERY_STEM)),
     );
   const byMetric = new Map(existing.map((e) => [e.metricType, e]));
 
@@ -162,7 +166,7 @@ export async function ensureBatteryProvenancePoints(
   for (const p of BLEND_POINTS) {
     const row = byMetric.get(p.metricType);
     if (row !== undefined) {
-      pointIds[p.metricType] = row.index;
+      pointIds[p.metricType] = row.rid;
       pointUids[p.metricType] = row.pointUid;
     }
   }
@@ -185,10 +189,10 @@ export async function ensureBatteryProvenancePoints(
             .update(pointInfo)
             .set({ displayName: p.displayName, defaultName: p.displayName })
             .where(
-              and(
-                eq(pointInfo.systemId, systemId),
-                eq(pointInfo.index, row.index),
-              ),
+              // `point_info.rid`, NOT `.index`: `row` now carries a `points.rid`, and the two
+              // integers differ for legacy rows. Matching on `index` would rename the WRONG point
+              // (or none) — the same trap the seam commit fixed in `updatePoint`.
+              and(eq(pointInfo.systemId, systemId), eq(pointInfo.rid, row.rid)),
             )
             .returning();
           if (updated) await mirrorPoint(toMirrorPointInput(updated), tx);
@@ -220,7 +224,9 @@ export async function ensureBatteryProvenancePoints(
       defaultName: p.displayName,
       subsystem: "battery",
     });
-    pointIds[p.metricType] = row.index;
+    // `rid`, matching the existing-row branch above. Equal to `index` for a freshly minted row (slice M
+    // writes index == rid) but the rid is the field that survives PR 2.
+    pointIds[p.metricType] = row.rid;
     pointUids[p.metricType] = row.pointUid;
   }
 

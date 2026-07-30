@@ -29,7 +29,9 @@ const NEW_PREFIX = "source.generator.";
 async function main() {
   const dry = process.argv.includes("--dry");
   const { planetscaleDb } = await import("@/lib/db/planetscale");
-  const { devices, pointInfo } = await import("@/lib/db/planetscale/schema");
+  const { devices, pointInfo, points } = await import(
+    "@/lib/db/planetscale/schema"
+  );
 
   if (!planetscaleDb) {
     console.error(
@@ -56,15 +58,16 @@ async function main() {
 
   const rows = await planetscaleDb
     .select({
-      index: pointInfo.index,
-      physicalPathTail: pointInfo.physicalPathTail,
-      logicalPathStem: pointInfo.logicalPathStem,
+      rid: points.rid,
+      physicalPathTail: points.physicalPath,
+      logicalPathStem: points.logicalPath,
     })
-    .from(pointInfo)
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(pointInfo.systemId, systemId),
-        like(pointInfo.logicalPathStem, `${OLD_PREFIX}%`),
+        eq(devices.rid, systemId),
+        like(points.logicalPath, `${OLD_PREFIX}%`),
       ),
     );
 
@@ -77,7 +80,7 @@ async function main() {
   for (const r of rows) {
     const next = NEW_PREFIX + r.logicalPathStem!.slice(OLD_PREFIX.length);
     console.log(
-      `    [${r.index}] ${r.physicalPathTail}: ${r.logicalPathStem} → ${next}`,
+      `    [${r.rid}] ${r.physicalPathTail}: ${r.logicalPathStem} → ${next}`,
     );
   }
 
@@ -88,12 +91,17 @@ async function main() {
 
   for (const r of rows) {
     const next = NEW_PREFIX + r.logicalPathStem!.slice(OLD_PREFIX.length);
+    // `points` FIRST — it is the table readers serve since slice 1b, so a point_info-only relabel
+    // (what this script used to do) would now be silently INEFFECTIVE. `point_info` follows as the
+    // write-behind copy until PR 2 drops it. Both key on the rid, never on `point_info.index`.
+    await planetscaleDb
+      .update(points)
+      .set({ logicalPath: next, updatedAt: new Date() })
+      .where(eq(points.rid, r.rid));
     await planetscaleDb
       .update(pointInfo)
       .set({ logicalPathStem: next, updatedAt: new Date() })
-      .where(
-        and(eq(pointInfo.systemId, systemId), eq(pointInfo.index, r.index)),
-      );
+      .where(and(eq(pointInfo.systemId, systemId), eq(pointInfo.rid, r.rid)));
   }
   console.log(`\n✓ relabelled ${rows.length} point(s).`);
   process.exit(0);

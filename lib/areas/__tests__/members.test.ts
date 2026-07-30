@@ -102,7 +102,7 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     expect(sql).toContain("parent.status = 'active'");
   });
 
-  it("getBindinglessAreaMemberPoints bridges member uuid -> point_info.system_id via devices.rid", async () => {
+  it("getBindinglessAreaMemberPoints reaches member points through the points.device_id FK", async () => {
     await getBindinglessAreaMemberPoints();
     const [sql] = captured;
     expect(sql).toContain(
@@ -111,8 +111,10 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     expect(sql).toContain(
       'inner join "devices" on "devices"."id" = "area_members"."device_id"',
     );
+    // slice 1b: was `point_info.system_id = devices.rid`, a join through the integer handle. Points-
+    // primary joins the real FK instead, so the member bridge no longer passes through an int at all.
     expect(sql).toContain(
-      'inner join "point_info" on "point_info"."system_id" = "devices"."rid"',
+      'inner join "points" on "points"."device_id" = "devices"."id"',
     );
   });
 

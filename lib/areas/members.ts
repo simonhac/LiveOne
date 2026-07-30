@@ -20,7 +20,7 @@ import {
   areaMembers,
   areas,
   devices,
-  pointInfo,
+  points,
 } from "@/lib/db/planetscale/schema";
 import { Device, type DeviceId } from "@/lib/ids";
 
@@ -99,7 +99,7 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
 /**
  * The member-device points to fan out for **binding-less** areas-backed handles — i.e. multi-device
  * areas that resolve under union-default (no `area_bindings` to select). For each such handle, every
- * member device's `point_info` point, as `(handle, sourceSystemId, pointUid)`. Multi-device areas WITH
+ * member device's `points` point, as `(handle, sourceSystemId, pointUid)`. Multi-device areas WITH
  * bindings are covered by `getAllCompositeBindings` instead, so this is empty for today's data (both
  * prod multi-device areas have bindings) — it only lights up when a binding-less multi-device area
  * appears. SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
@@ -115,13 +115,15 @@ export async function getBindinglessAreaMemberPoints(): Promise<
   const rows = await requirePlanetscaleDb()
     .select({
       handle: areas.legacySystemId,
-      sourceSystemId: pointInfo.systemId,
-      pointUid: pointInfo.pointUid,
+      sourceSystemId: devices.rid,
+      pointUid: points.id,
     })
     .from(areas)
     .innerJoin(areaMembers, eq(areaMembers.areaId, areas.id))
     .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
-    .innerJoin(pointInfo, eq(pointInfo.systemId, devices.rid))
+    // slice 1b: was `point_info.system_id = devices.rid` — a join through the integer handle. The
+    // points-primary equivalent is the real FK, `points.device_id = devices.id`.
+    .innerJoin(points, eq(points.deviceId, devices.id))
     .where(
       and(
         isNotNull(areas.legacySystemId),
@@ -135,7 +137,7 @@ export async function getBindinglessAreaMemberPoints(): Promise<
         sql`NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = ${areas.id})`,
       ),
     )
-    .orderBy(areas.legacySystemId, pointInfo.systemId, pointInfo.index);
+    .orderBy(areas.legacySystemId, devices.rid, points.rid);
   return rows
     .filter((r): r is typeof r & { handle: number } => r.handle != null)
     .map((r) => ({

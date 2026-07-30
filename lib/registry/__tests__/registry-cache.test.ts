@@ -22,24 +22,28 @@ interface Row {
 }
 
 /**
- * Fake the drizzle `select(cols).from(table).where(cond)` surface. Each `.where()` shifts the next
- * queued row-set and records a call, so tests can assert batch/caching (how many DB round-trips).
+ * Fake the drizzle `select(cols).from(table).innerJoin(…).where(cond)` surface. Each `.where()` shifts
+ * the next queued row-set and records a call, so tests can assert batch/caching (how many DB
+ * round-trips).
+ *
+ * `innerJoin` arrived with slice 1b: the registry now fills from `points ⋈ devices` (it needs
+ * `devices.rid` for the `systemId` the row used to carry directly on `point_info`).
  */
 function makeFakeDb() {
   const queued: Row[][] = [];
   let calls = 0;
   const db = {
     select() {
-      return {
-        from() {
-          return {
-            where() {
-              calls++;
-              return Promise.resolve(queued.shift() ?? []);
-            },
-          };
+      const from = {
+        innerJoin() {
+          return from;
+        },
+        where() {
+          calls++;
+          return Promise.resolve(queued.shift() ?? []);
         },
       };
+      return { from: () => from };
     },
   };
   return {
@@ -51,7 +55,7 @@ function makeFakeDb() {
   };
 }
 
-/** Mint a PointId + the point_info fill row a DB would return for it. */
+/** Mint a PointId + the `points ⋈ devices` fill row a DB would return for it. */
 function makePoint(rid: number, systemId: number) {
   const id = Point.generate();
   const uuid = Point.toUuid(id);

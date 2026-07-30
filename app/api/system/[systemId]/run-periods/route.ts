@@ -5,7 +5,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   devices,
   derivedIntervals,
-  pointInfo,
+  points,
   type DerivedInterval,
 } from "@/lib/db/planetscale/schema";
 import {
@@ -62,7 +62,7 @@ function knownSum() {
  * than assumed to be Watts. One uuid-keyed `point_info` read (joined to `systems` for the
  * `vendorType` the display registry keys on) — same pattern as `listEnabledHwsModels`.
  *
- * A missing `point_info` row is survivable: warn and return null, and the caller simply omits the
+ * A missing `points` row is survivable: warn and return null, and the caller simply omits the
  * signal column (never a 500).
  */
 async function readSignalMeta(
@@ -71,20 +71,20 @@ async function readSignalMeta(
   const uuid = Point.toUuid(signalPoint);
   const [row] = await requirePlanetscaleDb()
     .select({
-      displayName: pointInfo.displayName,
-      metricType: pointInfo.metricType,
-      metricUnit: pointInfo.metricUnit,
-      subsystem: pointInfo.subsystem,
-      physicalPathTail: pointInfo.physicalPathTail,
+      displayName: points.name,
+      metricType: points.metricType,
+      metricUnit: points.unit,
+      subsystem: points.subsystem,
+      physicalPathTail: points.physicalPath,
       vendorType: devices.vendor,
     })
-    .from(pointInfo)
-    .innerJoin(devices, eq(devices.rid, pointInfo.systemId))
-    .where(eq(pointInfo.pointUid, uuid))
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
+    .where(eq(points.id, uuid))
     .limit(1);
   if (!row) {
     console.warn(
-      `[RunPeriods] signal point ${uuid} has no point_info row — omitting the signal column`,
+      `[RunPeriods] signal point ${uuid} has no points row — omitting the signal column`,
     );
     return null;
   }

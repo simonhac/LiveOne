@@ -10,7 +10,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { derivations, pointInfo } from "@/lib/db/planetscale/schema";
+import { derivations, devices, points } from "@/lib/db/planetscale/schema";
 import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
 import { deriveDerivationId } from "@/lib/derivations/ids";
 import {
@@ -42,14 +42,15 @@ export async function ensureHwsTemperaturePoint(
   const db = requirePlanetscaleDb();
 
   const [power] = await db
-    .select({ index: pointInfo.index })
-    .from(pointInfo)
+    .select({ index: points.rid })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, HWS_STEM),
-        eq(pointInfo.metricType, "power"),
-        eq(pointInfo.active, true),
+        eq(devices.rid, systemId),
+        eq(points.logicalPath, HWS_STEM),
+        eq(points.metricType, "power"),
+        eq(points.active, true),
       ),
     )
     .limit(1);
@@ -64,7 +65,10 @@ export async function ensureHwsTemperaturePoint(
     return {
       status: "exists",
       systemId,
-      tempPointId: existing.index,
+      // `rid`, not `index`: `findPointByStemMetric` still reads the `point_info` write-behind copy
+      // (it lives in the writer module, out of this slice), but the two integers differ for legacy
+      // rows and every other id this slice reports is now the global rid.
+      tempPointId: existing.rid,
       powerPointId: power.index,
     };
   }
@@ -110,16 +114,17 @@ export async function ensureHwsDerivation(
 
   const pts = await db
     .select({
-      metricType: pointInfo.metricType,
-      pointUid: pointInfo.pointUid,
-      displayName: pointInfo.displayName,
+      metricType: points.metricType,
+      pointUid: points.id,
+      displayName: points.name,
     })
-    .from(pointInfo)
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(
-        eq(pointInfo.systemId, systemId),
-        eq(pointInfo.logicalPathStem, HWS_STEM),
-        eq(pointInfo.active, true),
+        eq(devices.rid, systemId),
+        eq(points.logicalPath, HWS_STEM),
+        eq(points.active, true),
       ),
     );
   const power = pts.find((p) => p.metricType === "power");
