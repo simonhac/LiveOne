@@ -48,7 +48,7 @@ export interface LogicalSystemPoint {
 }
 
 export interface LogicalSystem {
-  /** The logical-system handle == the Area's integer `legacy_system_id`. */
+  /** The logical-system handle == the Area's integer `legacy_handles.handle`. */
   id: number;
   /**
    * The Area this view belongs to (the area whose `legacy_system_id == id`). Always present:
