@@ -1,6 +1,6 @@
 # Config v4 — execution plan
 
-> **Status: ACTIVE (started 2026-07-22; Phases 0–12 shipped, Phase 13 next).** The _rationale_ is
+> **Status: ACTIVE (started 2026-07-22; Phases 0–13 shipped, Phase 14 is the last).** The _rationale_ is
 > [config-v4-clean-sheet.md](config-v4-clean-sheet.md) — the canonical design doc and the source of the
 > finish-line checklist (§4.8 "What dies"). This file is the _execution_ plan: what has landed, what is
 > still legacy, and the phases that finish the job.
@@ -14,25 +14,26 @@
 > yet done, and every trap that would otherwise be re-learned (**Traps and rules** — read it before
 > touching a migration).
 
-## ▶ NEXT ACTION — Phase 13, kill the handle
+## ▶ NEXT ACTION — Phase 14, the last phase
 
-**Phase 12 is COMPLETE (2026-07-30).** `systems`, `point_info` and `polling_status` are **dropped** from
-prod `sydney` and `liveone-dev`; both are at **52 migrations, `inSync`**. `SystemsManager` and the dark
-mirror are gone, `scripts/config-v4/` is deleted, and `sessions`/`observations_outbox` are keyed on
-`device_rid`. No outstanding migration debt.
+**Phase 13 is COMPLETE (2026-07-31).** `areas.legacy_system_id` and `areas_legacy_system_unique` are
+**dropped** from prod `sydney` and `liveone-dev`; prod is at **53 migrations, `inSync`**. The wire is
+TypeID-native, the synthesis is gone, the KV keyspace is TypeID-keyed, and config-sense `system` is
+spelled `device` in code. No outstanding migration debt.
 
-Start at [Phase 13](#phase-13--kill-the-handle-typeid-native-serve-path). Its first move is the
-inventory the phase was never given, **re-measured on `main` after Phase 12's deletions**:
-`legacySystemId` is **110 occurrences / 46 files** (the plan's 186 is stale — Phase 12 removed a third
-of them), `isAreaHandle` 21/9, `getViewableSystem` 7/2, `synthesizeAreaView` 4/1, `AREA_HANDLE_BASE` 2/1,
-and the KV integer keyspace is **41 sites**. The `systems`→`devices` rename touches **273 files**.
+Start at [Phase 14](#phase-14--v4-native-presentation-and-the-last-of-the-two-shapes). It is the largest
+phase by volume and the only one left: one dashboard shape, the v3 descriptor and adapter deleted, the
+10 unbuilt v4 mutation routes.
 
-**Two things Phase 12 leaves on the floor for 13 to pick up**, both deliberate:
+**What Phase 13 leaves on the floor for 14**, deliberately:
 
-- **The KV keyspace is still integer** — `latest:system:N` / `subscriptions:system:N`. Slice E2b re-keyed
-  the subscription map's *source* key to point uuids but the outer key stayed integer by design.
-- **`updateLatestPointValue` still takes `(systemId, pointId, pointUid, …)`** — the ints cannot go while
-  the keyspace is integer-keyed.
+- **Plugin props still carry `handle`** — absorb it at the `v4-adapt.ts` boundary rather than touching 19
+  plugins twice.
+- **The `?systemId=N` → `/api/device/*` back-compat rewrites** (`next.config.js` + the legacy
+  `"/api/system/(.*)"` entry in `lib/route-matchers.ts`) are a **shim with an expiry**. They exist for the
+  stale-browser-bundle window. Delete both halves together; each names the other.
+- **`scripts/utils/kv-drop-legacy-integer-keys.ts`** — one-shot sweep of the ~30 orphaned
+  `prod:*:system:*` keys. Unread by the live build. Delete the script once both environments are swept.
 
 ---
 
@@ -43,41 +44,44 @@ and the KV integer keyspace is **41 sites**. The `systems`→`devices` rename to
 Phase 8 cut over the _hot path_ and the _presentation and sharing layer_ — **not** the config registry,
 the integer handle, or the dashboard write model. Those are still v3, with v4 alongside as a dark mirror.
 
-| Phase                       | What landed                                                                                                                                                    |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0–1 Governance + `lib/ids/` | Prefixes locked; client-safe TypeID codec, six branded codecs (cross-entity misuse is a compile error).                                                          |
-| 2 Point identity            | **0030**: `point_uid` NOT NULL, global `point_rid_seq` + `point_info.rid` backfilled deterministically.                                                          |
-| 3 Readings DAO seam         | The highest-leverage strangler, no migration. 31 modules behind `ReadingsDao` over PRs A–L.                                                                      |
-| 4–6 Additive v4 + `/api/v4` | **0032/0033/0034**: dark columns, `derivations`, `derived_intervals`, `dashboard_revisions`, `legacy_handles`; v4 doc model + rewriter + adapter; dashboards CRUD. |
-| 7–8 **THE CUTOVER**         | **0035**, 2026-07-26. Planning ran as a 14-agent workflow that found 7 defects in a "23/23 green" transform. Dev cut over first as a dress rehearsal, prod the same day; **pollers never stopped** — only materialization paused. |
-| 9 Post-cutover fixes        | prod→dev sync FK break (post-cutover `dashboards.id` is minted per-environment; only `legacy_id` is stable cross-env) + full `ar_` uniformity across `/api/areas/*`. |
-| 10 Scaffolding demolition   | **0036–0039**: `_old` hot tables + `backfill_progress` dropped (~4.2 GB/env), hot index names canonical, cutover pause disarmed, `db:pg:generate` trustworthy again. |
-| 11 Derivations              | **0040–0041**: run-tracking + HWS collapsed onto `derivations`; `device_trackers`/`device_run_periods` dropped.                                                  |
-| 12 **Registry cutover**     | **0043–0051**, finished 2026-07-30. `devices`/`points` are the only registry; `SystemsManager`, the dark mirror and `scripts/config-v4/` deleted; **`systems`, `point_info`, `polling_status` dropped**; `sessions`/`observations_outbox` on `device_rid`. Terminal window: ~11 min pause→drained, **no gap, no DLQ, no rollback**. |
+| Phase                       | What landed                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0–1 Governance + `lib/ids/` | Prefixes locked; client-safe TypeID codec, six branded codecs (cross-entity misuse is a compile error).                                                                                                                                                                                                                                                                                                                                                       |
+| 2 Point identity            | **0030**: `point_uid` NOT NULL, global `point_rid_seq` + `point_info.rid` backfilled deterministically.                                                                                                                                                                                                                                                                                                                                                       |
+| 3 Readings DAO seam         | The highest-leverage strangler, no migration. 31 modules behind `ReadingsDao` over PRs A–L.                                                                                                                                                                                                                                                                                                                                                                   |
+| 4–6 Additive v4 + `/api/v4` | **0032/0033/0034**: dark columns, `derivations`, `derived_intervals`, `dashboard_revisions`, `legacy_handles`; v4 doc model + rewriter + adapter; dashboards CRUD.                                                                                                                                                                                                                                                                                            |
+| 7–8 **THE CUTOVER**         | **0035**, 2026-07-26. Planning ran as a 14-agent workflow that found 7 defects in a "23/23 green" transform. Dev cut over first as a dress rehearsal, prod the same day; **pollers never stopped** — only materialization paused.                                                                                                                                                                                                                             |
+| 9 Post-cutover fixes        | prod→dev sync FK break (post-cutover `dashboards.id` is minted per-environment; only `legacy_id` is stable cross-env) + full `ar_` uniformity across `/api/areas/*`.                                                                                                                                                                                                                                                                                          |
+| 10 Scaffolding demolition   | **0036–0039**: `_old` hot tables + `backfill_progress` dropped (~4.2 GB/env), hot index names canonical, cutover pause disarmed, `db:pg:generate` trustworthy again.                                                                                                                                                                                                                                                                                          |
+| 11 Derivations              | **0040–0041**: run-tracking + HWS collapsed onto `derivations`; `device_trackers`/`device_run_periods` dropped.                                                                                                                                                                                                                                                                                                                                               |
+| 12 **Registry cutover**     | **0043–0051**, finished 2026-07-30. `devices`/`points` are the only registry; `SystemsManager`, the dark mirror and `scripts/config-v4/` deleted; **`systems`, `point_info`, `polling_status` dropped**; `sessions`/`observations_outbox` on `device_rid`. Terminal window: ~11 min pause→drained, **no gap, no DLQ, no rollback**.                                                                                                                           |
+| 13 **Kill the handle**      | **0052**, finished 2026-07-31 over seven PRs (#297–#303). Area-native serving + `ar_`/`dv_` on the wire; synthesis deleted and the `?areaId=` leg now authorizes the **area**; KV keyspace TypeID-keyed (four duplicate key-builders collapsed to one owner); `systems`→`devices` across 315 files behind back-compat URL rewrites; ~48 readers onto `legacy_handles` + a cross-table sync drift key; **`areas.legacy_system_id` dropped**. No window needed. |
 
 Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md),
 [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md). Do not re-litigate them here.
 
 ### Still v3 — the actual remaining work
 
-| Legacy thing still live                                                                                  | Retired in |
-| ---------------------------------------------------------------------------------------------------------- | ---------- |
-| **The integer handle** — `areas.legacy_system_id`, **110 occurrences / 46 files** (re-measured 2026-07-30) incl. inside `/api/v4/*`; `AREA_HANDLE_BASE` still allocates | Phase 13   |
-| **Virtual-system synthesis** — `synthesizeAreaView`, `getViewableSystem` (6 callers), `isAreaHandle` (2) | Phase 13   |
-| **KV is integer-keyed** — `latest:system:N` / `subscriptions:system:N` is the ONLY keyspace              | Phase 13   |
-| **`/api/data` is handle-addressed** — `?systemId=<int>`, payload `{system, latest}`                      | Phase 13   |
-| **Dashboards dual-shape, v3-write** — `descriptor` and `doc` both NOT NULL and both written              | Phase 14   |
-| **Zero v4-native renderers** — 19 plugins, two split registries, reached through `v4-adapt.ts`           | Phase 14   |
-| **All v4 mutation routes missing** — 10 unbuilt; 28 legacy handlers across 15 routes still serve         | Phase 14   |
+| Legacy thing still live                                                                                                                                                      | Retired in |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| ~~**The integer handle**~~ ✅ **DONE (Phase 13)** — column dropped; the handle lives only in `legacy_handles`, which is a permanent shim                                     | ~~13~~     |
+| ~~**Virtual-system synthesis**~~ ✅ **DONE (Phase 13)** — `synthesizeAreaView`/`viewableByHandle`/`isAreaHandle` deleted                                                     | ~~13~~     |
+| ~~**KV is integer-keyed**~~ ✅ **DONE (Phase 13)** — `latest:device:{dv_…}` / `latest:area:{ar_…}`, one key owner (`lib/kv-keys.ts`)                                         | ~~13~~     |
+| ~~**`/api/data` is handle-addressed**~~ ✅ **DONE (Phase 13)** — accepts `areaId=ar_…`/`deviceId=dv_…`; payload `{device\|area, latest}`; `?systemId=N` is a permanent alias | ~~13~~     |
+| **Dashboards dual-shape, v3-write** — `descriptor` and `doc` both NOT NULL and both written                                                                                  | Phase 14   |
+| **Zero v4-native renderers** — 19 plugins, two split registries, reached through `v4-adapt.ts`                                                                               | Phase 14   |
+| **All v4 mutation routes missing** — 10 unbuilt; 28 legacy handlers across 15 routes still serve                                                                             | Phase 14   |
 
 ## The finish line
 
 **Done — all three, or the migration is not finished:**
 
-1. **No legacy config code.** Every clean-sheet §4.8 item gone: the tables, the handle,
-   `point_info.index` + its allocator, tz/location on devices, `area_bindings.ordinal` + the int point
-   pair, the synthesis, the ≥1,000,000 allocator, the KV integer keyspaces, the `"systemId.pointIndex"`
-   ref grammar, `deviceSystemId` in descriptors.
+1. **No legacy config code.** ✅ **DONE for everything except the descriptor items (Phase 14).** Gone:
+   the tables, **the handle**, `point_info.index` + its allocator, tz/location on devices,
+   `area_bindings.ordinal` + the int point pair, **the synthesis**, **the KV integer keyspaces**, the
+   `"systemId.pointIndex"` ref grammar. Still live: `deviceSystemId` in descriptors, and the
+   ≥1,000,000 area-handle allocator — which is **retained on purpose**, since `legacy_handles` is a
+   permanent shim and new areas still need a handle minted.
 2. ~~**No migration scaffolding.**~~ ✅ **DONE (Phase 12)** — `scripts/config-v4/` deleted, its
    `prebuild` wiring removed, the dark mirror gone, one-shot backfills deleted.
 3. **One shape, not two.** No `isDashboardV3`/`isDashboardV4` branch, no adapter, no rewriter, one card
@@ -85,12 +89,17 @@ Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehe
 
 **Keep permanently — sanctioned shims, not debt:** `legacy_handles` (resolves `?systemId=N` forever),
 `dashboards.legacy_id`, the `?systemId=N` compat alias, slug URLs, share-token strings, `lib/ids/`,
-`lib/registry/{registry-cache,device-registry}.ts`, and `scripts/check-readings-boundary.mjs` (the
-permanent seam wall).
+`lib/registry/{registry-cache,device-registry}.ts`, `scripts/check-readings-boundary.mjs` (the permanent
+seam wall), and `scripts/utils/verify-areas-drift-key.ts` (the only remaining drift-key alarm).
 
-**Sequencing.** Phase 12 (done) unblocked both: the handle could not die while `SystemsManager` was the
-config API, and the v4 mutation routes need `devices`/`points` as primary. **13 then 14**; 14 is last and
-largest.
+**Shims WITH an expiry — delete deliberately, not permanently kept:** the `/api/system*` → `/api/device*`
+rewrites in `next.config.js` **plus** the legacy `"/api/system/(.*)"` entry in `lib/route-matchers.ts`
+(both halves together — each names the other), and `scripts/utils/kv-drop-legacy-integer-keys.ts` once
+both environments are swept.
+
+**Sequencing.** Phases 12 and 13 (done) unblocked the rest: the handle could not die while
+`SystemsManager` was the config API, and the v4 mutation routes need `devices`/`points` as primary.
+**Phase 14 is all that remains**, and it is the largest by volume.
 
 ---
 
@@ -101,18 +110,18 @@ are deleted; `systems`, `point_info` and `polling_status` are dropped from both 
 Migrations **0043–0051**. Per-slice narratives are in git; what survives here is the terminal-window
 record and the findings that still bind.
 
-| Slice | What | Migration |
-| ----- | ---- | --------- |
-| A · A2 | v4 registries into the sync manifest; mint-only mirror leaks closed | [C] |
-| B · G · F · H | `rid` DEFAULTs; `roles` dies; `user_systems` dies; `area_devices`→`area_members` | 0043–0046 |
-| C | `device_state` becomes the polling writer/reader; `polling_status` frozen | [C] |
-| D | `pointForAddr` 17 → 2; `pointUid` a field on `PointInfo` | [C] ×2 |
-| E1 · E2a · E2b | `area_bindings` off the int pair onto `point_uid`; area-builder wire → `pt_` | 0047–0048 |
-| M | `points` primary; **five** `max(index)+1` allocators die; one `mintPoint()` | [C] |
-| K1 · K2 · K3 | `DeviceConfigRegistry`; 79 reads moved; **`lib/systems-manager.ts` DELETED** | [C] ×3 |
-| prep | 0049 floors `device_rid_seq`; legacy `N.M` address retired; tz leak closed | 0049 |
-| 1a · 1b | `DeviceWriter` → `devices`/`areas`, dark mirror dies; ~20 `point_info` readers → `points ⋈ devices` | 0050 |
-| **L + terminal** | two renames onto `device_rid`, **three DROPs**, scaffolding deleted (#296) | **0051** |
+| Slice            | What                                                                                                | Migration |
+| ---------------- | --------------------------------------------------------------------------------------------------- | --------- |
+| A · A2           | v4 registries into the sync manifest; mint-only mirror leaks closed                                 | [C]       |
+| B · G · F · H    | `rid` DEFAULTs; `roles` dies; `user_systems` dies; `area_devices`→`area_members`                    | 0043–0046 |
+| C                | `device_state` becomes the polling writer/reader; `polling_status` frozen                           | [C]       |
+| D                | `pointForAddr` 17 → 2; `pointUid` a field on `PointInfo`                                            | [C] ×2    |
+| E1 · E2a · E2b   | `area_bindings` off the int pair onto `point_uid`; area-builder wire → `pt_`                        | 0047–0048 |
+| M                | `points` primary; **five** `max(index)+1` allocators die; one `mintPoint()`                         | [C]       |
+| K1 · K2 · K3     | `DeviceConfigRegistry`; 79 reads moved; **`lib/systems-manager.ts` DELETED**                        | [C] ×3    |
+| prep             | 0049 floors `device_rid_seq`; legacy `N.M` address retired; tz leak closed                          | 0049      |
+| 1a · 1b          | `DeviceWriter` → `devices`/`areas`, dark mirror dies; ~20 `point_info` readers → `points ⋈ devices` | 0050      |
+| **L + terminal** | two renames onto `device_rid`, **three DROPs**, scaffolding deleted (#296)                          | **0051**  |
 
 ### Findings that still bind
 
@@ -121,10 +130,10 @@ record and the findings that still bind.
   `point_info.id`**, so it could never have been served from `points` at all. `SystemsManager` was the
   real long pole.
 - **K was three PRs because `DeviceRegistry` had zero counterparts to any `SystemsManager` method** — it
-  is an *addressing* registry, so K was new code, never a rename. **Device-first precedence is LOCKED**
+  is an _addressing_ registry, so K was new code, never a rename. **Device-first precedence is LOCKED**
   (`resolveHandle`'s docstring claimed area-first and was simply wrong).
 - **#291 — creating any device 500'd on prod** for three days since 0036, masked by an
-  `ON CONFLICT … coalesce` path. Surfaced only because K3 drove a *create* on dev.
+  `ON CONFLICT … coalesce` path. Surfaced only because K3 drove a _create_ on dev.
 - **Slice M found a live C7 hole armed but not fired** — three of five point allocators never mirrored.
 
 ### The terminal window, as executed (2026-07-30)
@@ -133,7 +142,7 @@ PR **#296** merged as `d16429fa`; **0051** applied to prod then dev. Pause → l
 **no data lost, no gap, no DLQ, no rollback**. Both environments post-checked on the catalog: three
 `to_regclass` NULL, `sessions.device_rid` present with `system_id` gone, the new FK **`convalidated`**,
 `device_rid_seq` 10001 ≥ max rid 10001, `point_rid_seq` 166 ≥ 134, 1,076,342 session rows intact,
-`db:pg:generate` → *No schema changes*.
+`db:pg:generate` → _No schema changes_.
 
 Cheaper than planned in two ways worth reusing: **`parallelism` was already 1**, making the "set to 1
 then restore" steps no-ops; and the **Development-scope `OBSERVATIONS_QSTASH_TOKEN` controls the prod
@@ -148,46 +157,51 @@ still exists, or you are improvising from a detached checkout with the queue pau
 vendor pattern recurring every 8–12 h; future-dated `point_readings_agg_5m` rows are **Amber forecasts**,
 which Amber writes into the 5m agg table by design.
 
-## Phase 13 — Kill the handle: TypeID-native serve path
+## Phase 13 — Kill the handle ✅ SHIPPED 2026-07-31
 
-**Goal:** delete `areas.legacy_system_id` and everything that reads an integer as an address. Depends on
-Phase 12 (`DeviceRegistry` must already be the config API).
+Seven PRs (#297–#303), migration **0052**, no maintenance window. The per-PR detail file is deleted —
+git is the archive; the PR bodies carry the measurements. What survives here is what still binds.
 
-📋 **The detail now exists: [config-v4-phase13-prs.md](config-v4-phase13-prs.md)** — six PRs, each with a
-measured inventory, steps, its own proof, and a Do-NOT list. Written 2026-07-30 from a fresh sweep of the
-post-Phase-12 tree. **Two things in the bullets below are wrong and that file corrects them:**
+### Findings that still bind
 
-- 🛑 **"Delete the synthesis" CANNOT go first, and is NOT behaviour-preserving.** Multi-device areas have
-  no `devices` row and are served *only* through the synthesized view. Four handles depend on it (7, 8,
-  1000001, 1000002) and handle 13 is a device/area collision. The area-native wire must land first.
-- 🛑 **`getViewableSystem` no longer exists** — slice K3 renamed it `viewableByHandle`. And
-  `AREA_HANDLE_BASE`/`allocateAreaHandle` are the *write-side allocator*, not the synthesis; they die
-  with the column, not with it.
-- The drop itself is **provably lossless** (`legacy_handles` covers 22/22 areas) but is preceded by ~55
-  reader conversions **and a prod→dev sync drift-key rewrite** — 16 of 22 areas have a NULL `slug`, so
-  the fallback unique key cannot carry it.
+- 🛑 **`scripts/utils/verify-areas-drift-key.ts` is now the ONLY instrument** that can tell a working
+  prod→dev drift key from a broken one. Dropping `areas_legacy_system_unique` removed a backstop: before
+  0052, a missed `areas` drift key **aborted** the sync on that index. After 0052 the same miss exits 0
+  and lands prod's row **alongside** the drifted dev row — the same logical area under two uuids. This is
+  an accepted, permanent downgrade. **Run that script after any change to the `areas` `idDrift` leg.**
+- 🛑 **Handle 13 is both a real Sigenergy device and a 3-member area** (trap D-l). `resolveHandle` returns
+  both legs and states no precedence. `?systemId=N` resolves **device-first, forever** — that is the
+  behaviour-preserving order and it is written down at the top of `lib/dashboard/subject.ts`. The
+  area-native reading of a colliding handle is reachable only through an explicit `ar_…`.
+- **The `?areaId=` leg authorizes the AREA**, not the handle. `prefer` is threaded _into_
+  `requireDashboardAccess` so the grant names the entity being served. Do not reintroduce a post-hoc leg
+  swap after the grant — the area is a **superset** of the device sharing its handle.
+- **Areas still mint a handle** into `legacy_handles` at creation; `allocateAreaHandle` computes
+  `max(legacy_handles.handle)`, a superset of the old read, so the floor only ratchets up.
+- **`HandleAreaConflictError`** exists because `ensureAreaForHandle`'s `ON CONFLICT DO UPDATE … coalesce`
+  silently swallowed a recycled-`rid` collision. The PK is not a substitute for it.
 
-- **Delete the synthesis** — `synthesizeAreaView`, `getViewableSystem`, `isAreaHandle`,
-  `AREA_HANDLE_BASE`, `allocateAreaHandle`; route the remaining call sites through
-  `DeviceRegistry.resolveHandle`. **Precedence is device-first (locked)**, which is what today's
-  real-row-first code already does, so this is behaviour-preserving. Keep
-  `point-manager-area-of-one-parity.test.ts` as the gate.
-- **Make the wire TypeID-native** — `/api/data` and `/api/history` accept `deviceId=dv_…` / `areaId=ar_…`;
-  payload `system` → `device`. Demote `?systemId=N` to a **permanent compat alias** through
-  `legacy_handles` (area first, else device). React Query keys move in lockstep.
-- **Move the KV keyspace** to `latest:device:{dv_…}` / `latest:area:{ar_…}`; the SCAN regex requires
-  `(\d+)` and must change with it. KV is disposable — rebuild rather than migrate.
-- **The `systems`→`devices` code rename** — the URL cluster (~4,576 lines / 21 files) plus
-  `point-manager.ts`. Mechanical but wide: **273 files** mention a config-sense `system`.
-- **Drop `areas.legacy_system_id`**; keep `legacy_handles`. Fold the handle-era classes in
-  `lib/identifiers/` that lose their callers — but **leave `logical-path.ts` and `point-uid.ts` alone**,
-  they are orthogonal and still widely used.
+### Traps this phase added
 
-**Done when:** zero `legacySystemId` / `AREA_HANDLE_BASE` / `isAreaHandle` / `synthesizeAreaView`;
-`?systemId=N` still resolves for every handle in `legacy_handles`; KV holds only TypeID-keyed entries; a
-`/dashboard/id/{n}` 301 still works. **Risk:** the KV move and the `/api/data` shape change are both on
-the live serving path. Plugin props still carry `handle` — absorb that at the `v4-adapt.ts` boundary
-rather than touching 19 plugins twice.
+- 🛑 **`liveone-dev` is SHARED infrastructure** — every agent worktree, Vercel previews, and local dev.
+  "Apply on dev only" is not a sandbox instruction. **The drop-ordering rule applies to dev too:** the
+  code that stops reading the column must be running there before the column goes, or every `main`-based
+  build 500s. (Learned by breaking dev mid-phase.)
+- 🛑 **A projection-less `.select()` is invisible to grep.** `lib/admin/get-areas-data.ts` read
+  `area.legacySystemId` off a `select().from(areas)` that names no columns. It survived a ~48-site
+  conversion sweep and every raw-string grep; **only deleting the field from `schema.ts` surfaced it.**
+  Before any column drop, delete the field from `schema.ts` first and let `tsc` find the readers.
+- 🛑 **`db:pg:migrate` reports success from a STALE WORKTREE.** Running it from a checkout that lacks the
+  new migration file connects, finds nothing pending, and prints "migrations applied successfully".
+  Post-check the **catalog**; never the migrate output. (Hit during the 0052 prod apply.)
+- ⚠️ **`git stash` is repo-wide, not per-worktree** — parallel agents share one stack, and `lint-staged`
+  shells out to it. Commit instead; use `--no-verify` and run prettier by hand.
+- ⚠️ **A renamed API path breaks already-open browser tabs.** The same rolling-deploy argument that
+  protects `QueueMessage`'s QStash keys applies to URLs: stale bundles keep calling the old path. Hence
+  the `next.config.js` rewrites — and note **middleware runs BEFORE them**, so a legacy path also needs
+  its `lib/route-matchers.ts` entry or an anonymous share-token viewer gets an edge 404.
+- ⚠️ **A stale `.next-build/types/validator.ts`** referencing old route paths fails `type-check` with
+  `TS2307` after a rebase across a route rename. `rm -rf .next-build`.
 
 ## Phase 14 — v4-native presentation, and the last of the two shapes
 
@@ -262,12 +276,12 @@ Each was learned by breaking something; they are why the shipped narratives coul
   abort, not vanish. And **`db:pg:migrate` swallows `RAISE NOTICE`**, so capture inventories by hand
   first or the record is lost.
 - 🛑 **A ROW-COUNT inventory is not a backup.** The banked pre-0051 inventory held counts and a
-  `systems` id list — not what the tables *contained*. Before an irreversible drop, take a real
+  `systems` id list — not what the tables _contained_. Before an irreversible drop, take a real
   `pg_dump --data-only` of every doomed table (it took seconds; 134 + 16 + 11 rows, 66 KB). Write it
   under gitignored `.context/` — this dump carries serials and vendor ids and the repo is public.
 - 🛑 **A QStash queue pause is EVENTUALLY CONSISTENT, in both directions — a DB watermark is the wrong
   instrument for detecting when it took hold.** Pausing, then immediately sampling
-  `max(sessions.created_at)` over 62 s, showed both watermarks *advancing* — which reads exactly like
+  `max(sessions.created_at)` over 62 s, showed both watermarks _advancing_ — which reads exactly like
   "the pause failed, there is a second write path," and nearly sent the window hunting a bypass that
   does not exist. Already-dispatched messages keep landing for **1–2 minutes** after the API returns
   200; the same lag applies on resume (45 s of apparent silence before deliveries flow). **Wait ~90 s
@@ -282,15 +296,33 @@ Each was learned by breaking something; they are why the shipped narratives coul
 - ⚠️ **A dev-side check is only evidence about prod when the sync is demonstrably green.** Probe prod
   directly under a short-TTL read-only role, and confirm it really is prod two ways (the role username
   carries the prod branch token; `max(measurement_time)` is ~0 min behind, since dev's crons are off).
+- 🛑 **A projection-less `.select()` is invisible to EVERY grep.** `select().from(areas)` names no
+  columns, so a reader of a doomed column leaves no string to search for. Phase 13's sweep converted ~48
+  sites, hand-grepped raw SQL, and still missed `lib/admin/get-areas-data.ts` — found only when the field
+  was deleted from `schema.ts`. **Before a column drop, delete the field from `schema.ts` first and let
+  `tsc` enumerate the readers.** That is the only complete inventory.
+- 🛑 **`liveone-dev` is SHARED infrastructure** — every worktree, Vercel previews, and local dev servers.
+  "Apply on dev only" is not a sandbox instruction. **The drop-ordering rule applies to dev as well as
+  prod:** the code that stops reading the column must be running there before the column goes.
+- 🛑 **`db:pg:migrate` prints "applied successfully" from a checkout that LACKS the migration file.** It
+  connects, finds nothing pending, and exits 0. Combined with the older dev-journal variant, the rule is
+  absolute: **post-check the CATALOG, never the migrate output** — and confirm the migrations directory
+  actually contains the file you think you are applying.
+- ⚠️ **`git stash` is repo-wide, not per-worktree.** Parallel agents/worktrees share one stack, and
+  `lint-staged` shells out to it. Prefer committing; `--no-verify` + prettier by hand when a hook fights.
+- ⚠️ **Renaming an API path breaks already-open browser tabs**, for the same reason renaming a QStash
+  message key breaks in-flight messages: a deploy leaves stale bundles live. Ship `next.config.js`
+  rewrites — and note **middleware runs BEFORE rewrites**, so a legacy path also needs its
+  `lib/route-matchers.ts` entry, or anonymous share-token viewers get an edge 404.
 - ⚠️ **Hand-written `sql` fragments are invisible to tsc** — a rename or drop breaks them silently, so
-  they must be *driven*, not compiled. (Bit slice H.) **This is the single most reliable failure mode of
+  they must be _driven_, not compiled. (Bit slice H.) **This is the single most reliable failure mode of
   the whole migration — it bit six times in Phase 12 alone**, most recently two raw-SQL strays that
   survived a green `tsc` and the full suite. Re-run the raw-SQL grep by hand before every drop.
 - ⚠️ **Read the producer, not the consumer, before sizing a conversion.** Three of slice D PR 2's six
   sites already held the uuid and were never blocked at all.
 - ⚠️ **A DELETE predicate must be driven POSITIVELY.** It fails silently in both directions —
   under-delete leaves a dangling row, over-delete removes a live one. `area-builder-smoke.ts` clears
-  bindings *before* removing a member, so its `removeMember` call only ever ran the statement against
+  bindings _before_ removing a member, so its `removeMember` call only ever ran the statement against
   zero rows: it proved the SQL parses, not that it selects the right rows. A two-member area with a
   binding on each is what actually proves it.
 - ⚠️ **When a v4 column goes NOT NULL, the constraint is its WIRE-facing readers, not its internal
@@ -298,7 +330,7 @@ Each was learned by breaking something; they are why the shipped narratives coul
   why a contract migration **relaxes** the legacy column instead of dropping it — the intervening state
   has to be representable, or two PRs collapse into one un-splittable change.
 - 🛑 **Migration preconditions read the CATALOG, never the drizzle journal.** The journal records
-  intent; the catalog records what is true of *this* branch. 0048 proves 0047 landed by checking that
+  intent; the catalog records what is true of _this_ branch. 0048 proves 0047 landed by checking that
   `area_bindings_unique` actually keys on `point_uid`.
 - 🛑 **A parity gate over two homes for one value must be DIRECTIONAL.** The two directions mean opposite
   things — one is a serving loss, the other the designed end state — so a symmetric equality check either
@@ -321,7 +353,7 @@ Each was learned by breaking something; they are why the shipped narratives coul
   DROP there is no second address left to disagree with, so a divergence introduced since the last
   check becomes silent and permanent. A check that can only ever run once should run.
 - 🛑 **A column drop is only half the change when a persisted derived store keys off it.** The KV
-  subscription registry had to be rebuilt on both environments *between* the deploy and the drop —
+  subscription registry had to be rebuilt on both environments _between_ the deploy and the drop —
   that is a deploy step, and it belongs in the PR body and the migration header, not in the reviewer's
   memory.
 - ⚠️ **Removing a FK turns any join onto the replacement key into a silent filter.** Prefer a
@@ -330,11 +362,11 @@ Each was learned by breaking something; they are why the shipped narratives coul
   A passing tautology reads as coverage. The parity gate's block 0 went from "is `point_uid` non-null"
   (now enforced by 0047) to binding→`point_info` reachability.
 - ⚠️ **A mocked query-builder chain encodes arity**, so re-shaping a query is a test change by
-  construction — a stale chain returns `undefined` and yields zero rows *silently*. If re-shaping a
+  construction — a stale chain returns `undefined` and yields zero rows _silently_. If re-shaping a
   query did not require touching its mock, the mock is not asserting anything.
 - 🛑 **A pre-flip reconcile tool REVERSES direction the moment the flip lands, and its drift report
   inverts with it.** `reconcile-device-state.ts` would have rewound live counters post-flip, because
-  `polling_status` was frozen while `device_state` advanced — and post-flip the two are *supposed* to
+  `polling_status` was frozen while `device_state` advanced — and post-flip the two are _supposed_ to
   diverge, so its report read as alarming when it was correct. Delete such a tool at the flip; a spent
   one-shot that still runs is worse than no tool. (Both it and the completed one-off backfills went with
   `scripts/config-v4/` in the terminal window — they could not have been "left alone", since they stop
