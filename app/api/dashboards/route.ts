@@ -50,8 +50,9 @@ export async function POST(request: NextRequest) {
     typeof body?.seedAreaId === "string" ? body.seedAreaId : null;
 
   // Seed from an Area's defaults, or start empty. The seed Area must be readable by the caller.
-  // Dual-accept decode (areaRefToUuid): the picker sends `ar_`, but a not-yet-migrated caller could
-  // still send a raw uuid.
+  // STRICT decode (config-v4 Phase 14): `seedAreaId` must be `ar_`. The picker already sends `ar_`;
+  // a raw uuid now fails to decode and falls into the `!area` branch below (403) instead of being
+  // silently accepted. A deliberate wire-contract narrowing.
   let descriptor = emptyCompositionDescriptor();
   if (seedAreaId) {
     const uuid = areaRefToUuid(seedAreaId);

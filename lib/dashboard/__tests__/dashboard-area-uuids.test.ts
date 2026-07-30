@@ -35,17 +35,22 @@ describe("dashboardAreaUuids — dual-shape", () => {
     );
   });
 
-  it("dual-accept: also decodes a not-yet-migrated raw-uuid descriptor (mixed with ar_)", () => {
+  // config-v4 Phase 14: decode is STRICT — the dual-accept raw-uuid leg is gone. This is the
+  // inverted assertion, and it is the most important test in this file, because the failure mode is
+  // SILENT: a raw uuid does not throw, it is filtered out. That NARROWS the authorization set
+  // (fail-closed — a section vanishes rather than becoming readable by the wrong person), so nothing
+  // downstream errors. The guarantee that no raw uuid is ever stored therefore lives entirely in the
+  // WRITE paths: `POST /api/dashboards` encodes, `PATCH /api/dashboards/{id}` 400s on a non-`ar_`
+  // section ref (see `descriptorAreaRefsAreStrict`).
+  it("STRICT: silently DROPS a raw-uuid section ref, keeping only the ar_ one", () => {
     const descriptor: DashboardV3 = {
       version: 3,
       sections: [
-        { areaId: u1, cards: [] }, // raw uuid — pre-migration form
-        { areaId: Area.encode(u2), cards: [] }, // ar_ — already migrated
+        { areaId: u1, cards: [] }, // raw uuid — no longer decodable
+        { areaId: Area.encode(u2), cards: [] }, // ar_
       ],
     };
-    expect(dashboardAreaUuids({ descriptor, doc: null }).sort()).toEqual(
-      [u1, u2].sort(),
-    );
+    expect(dashboardAreaUuids({ descriptor, doc: null })).toEqual([u2]);
   });
 
   it("reads a v4 doc's envelope area refs (decoded to uuids), taking precedence over descriptor", () => {

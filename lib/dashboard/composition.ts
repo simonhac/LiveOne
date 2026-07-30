@@ -43,8 +43,10 @@ export function descriptorAreaIds(descriptor: unknown): string[] {
 
 /**
  * The distinct Area UUIDS a dashboard references, SHAPE-AWARE: a v4 `doc` (via the §8.3 envelope walk,
- * decoded to uuids) else the v3 `descriptor` (its stored `section.areaId` is `ar_`, dual-accept-decoded
- * to uuid — `areaRefToUuid` also tolerates a not-yet-migrated raw-uuid descriptor). Use this wherever
+ * decoded to uuids) else the v3 `descriptor` (its stored `section.areaId` is `ar_`, STRICT-decoded to
+ * uuid as of config-v4 Phase 14 — a raw uuid no longer decodes and is FILTERED OUT silently, which
+ * narrows the resulting set rather than widening it; the write paths are what guarantee no such ref is
+ * ever stored). Use this wherever
  * the render path resolves a dashboard's areas, so a v4 doc's sections resolve on the shared/grantee
  * paths too (the owner path already lists all readable areas). Unlike `descriptorAreaIds`, this ALWAYS
  * returns raw uuids (below the seam) regardless of the stored ref form — callers passing the result to

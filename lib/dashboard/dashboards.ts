@@ -15,7 +15,6 @@ import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
-import { encodeDescriptorAreaRefs } from "@/lib/areas/ref";
 import {
   allCardsV3,
   normalizeDescriptor,
@@ -119,13 +118,13 @@ function rowToDashboard(r: {
     ownerClerkUserId: r.clerkUserId,
     displayName: r.displayName,
     alias: r.alias,
-    // Read-normalize: a pre-migration row's section.areaId is still a raw uuid on disk (the one-off
-    // rewrite, scripts/config-v4/rewrite-descriptor-area-refs.ts, is a separate cleanup step) — every
-    // descriptor this module hands out speaks `ar_` regardless, so the deploy needs no simultaneity
-    // with that migration. Idempotent on an already-`ar_` descriptor.
-    descriptor: isDashboardV3(r.descriptor)
-      ? encodeDescriptorAreaRefs(r.descriptor)
-      : (r.descriptor as DashboardV3),
+    // NO read-normalize (config-v4 Phase 14). This used to run `encodeDescriptorAreaRefs` on every
+    // read to decouple the code deploy from a one-off descriptor rewrite. Stored data is now 100%
+    // `ar_` — measured 2026-07-31 on prod `sydney` AND `liveone-dev`, 16/16 section refs each, zero
+    // raw uuids — so the normalize had become a no-op that also MASKED any writer able to re-dirty
+    // the column. The write paths are the guarantee now: POST /api/dashboards encodes,
+    // PATCH /api/dashboards/{id} rejects a non-`ar_` section ref with 400.
+    descriptor: r.descriptor as DashboardV3,
     doc: (r.doc as DashboardV4 | null) ?? null,
     revision: r.revision,
     createdAt: r.createdAt,

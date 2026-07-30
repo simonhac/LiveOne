@@ -10,6 +10,7 @@ import {
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
 import { dashboardAreaUuids } from "@/lib/dashboard/composition";
+import { descriptorAreaRefsAreStrict } from "@/lib/areas/ref";
 import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 
 /**
@@ -86,6 +87,18 @@ export async function PATCH(
     if (!isDashboardV3(descriptor)) {
       return NextResponse.json(
         { error: "A version-3 descriptor is required" },
+        { status: 400 },
+      );
+    }
+    // 🛑 Strict-ref gate, and it MUST precede the no-escalation check below rather than lean on it.
+    // `areaRefToUuid` is strict as of Phase 14, and `dashboardAreaUuids` FILTERS OUT anything that
+    // fails to decode. So a descriptor whose sections carry raw uuids yields an EMPTY `areaIds`,
+    // skips the readability check entirely, and is then persisted — turning a tightened decode into
+    // a hole. Rejecting explicitly is what keeps the column 100% `ar_`; this handler is the one
+    // writer that previously stored `body.descriptor` verbatim (POST already encodes).
+    if (!descriptorAreaRefsAreStrict(descriptor)) {
+      return NextResponse.json(
+        { error: "Every section.areaId must be an `ar_` area id" },
         { status: 400 },
       );
     }
