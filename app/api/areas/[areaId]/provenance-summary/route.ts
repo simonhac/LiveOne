@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getAuthContext } from "@/lib/api-auth";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { areas } from "@/lib/db/planetscale/schema";
+import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
 import { getYesterdayInTimezone } from "@/lib/date-utils";
 import { labelForFlowPath } from "@/lib/aggregation/flow-node-meta";
 import { areaRefToUuid } from "@/lib/areas/ref";
@@ -46,10 +46,11 @@ export async function GET(
   const [area] = await db
     .select({
       ownerClerkUserId: areas.ownerUserId,
-      legacySystemId: areas.legacySystemId,
+      legacySystemId: legacyHandles.handle,
       tz: areas.timezoneOffsetMin,
     })
     .from(areas)
+    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
     .where(eq(areas.id, uuid))
     .limit(1);
   if (!area)

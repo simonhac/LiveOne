@@ -23,10 +23,12 @@ import type { AreaLocation } from "@/lib/areas/types";
 
 /** The current location for `systemId`'s Area (null if the handle has no Area). Read-only. */
 async function readLocation(systemId: number): Promise<AreaLocation | null> {
+  const area = await getAreaForSystem(systemId);
+  if (!area) return null;
   const [row] = await requirePlanetscaleDb()
     .select({ location: areas.location })
     .from(areas)
-    .where(eq(areas.legacySystemId, systemId))
+    .where(eq(areas.id, area.id))
     .limit(1);
   return row?.location ?? null;
 }

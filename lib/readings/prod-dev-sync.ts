@@ -165,8 +165,8 @@ const FULL: FullTable[] = [
     (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
   ),
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
-  // legacy_system_id / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
-  // unique index (areas_legacy_system_unique / areas_owner_alias_unique). `idDrift` clears the mismatched
+  // handle / owner+alias) under a different uuid. The by-PK upsert then trips a secondary
+  // unique index (areas_owner_alias_unique). `idDrift` clears the mismatched
   // dev Area (+ its FK children) so prod's uuid lands. FK-first: areas here, then area_members /
   // area_bindings / the incremental flow legs re-populate under the correct uuid.
   {
@@ -175,8 +175,17 @@ const FULL: FullTable[] = [
     onConflict: "update",
     idDrift: {
       uniqueKeys: [
-        ["legacy_system_id"], // areas_legacy_system_unique
         ["owner_user_id", "slug"], // areas_owner_alias_unique — config-v4 renamed owner_clerk_user_id/alias
+      ],
+      // ⚠️ config-v4 Phase 13 PR 5 replaced the `["legacy_system_id"]` key with this cross-table one,
+      // because the column is dropped in PR 6. `owner_user_id + slug` above CANNOT carry the leg alone:
+      // 16 of 22 dev areas have a NULL slug (NULL = NULL never matches) and `reown-dev-data.ts` has
+      // already rewritten dev's `owner_user_id`. `legacy_handles.handle` is frozen at cutover and so is
+      // the one value identical in both environments — verified 22/22 on `liveone-dev`, with the
+      // relation `areas(id, legacy_system_id)` set-identical to `legacy_handles(area_id, handle)` in
+      // BOTH directions before the swap. See `CrossKey` for why prod's slice must be staged separately.
+      crossKeys: [
+        { table: "legacy_handles", parentCol: "area_id", keyCols: ["handle"] },
       ],
       children: [
         // `area_members` is deliberately NOT listed: its `area_id` FK is ON DELETE CASCADE, so a cleared
