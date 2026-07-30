@@ -24,7 +24,7 @@
 import { eq, sql } from "drizzle-orm";
 import { CalendarDate } from "@internationalized/date";
 import { planetscaleDb } from "./index";
-import { pointInfo } from "./schema";
+import { devices, points as pointsTable } from "./schema";
 import {
   aggregate5mForPoint,
   aggregate1dForPoint,
@@ -150,15 +150,16 @@ async function recompute5mIntervalsWithin(
   systemId: number,
   intervalEndsMs: number[],
 ): Promise<{ intervalsProcessed: number; rowsUpserted: number }> {
-  // point_info metadata (transform / metric_type) + identity (point_uid → PointId) for the system.
+  // point metadata (transform / metric_type) + identity (points.id → PointId) for the system.
   const points = await db
     .select({
-      pointUid: pointInfo.pointUid,
-      transform: pointInfo.transform,
-      metricType: pointInfo.metricType,
+      pointUid: pointsTable.id,
+      transform: pointsTable.transform,
+      metricType: pointsTable.metricType,
     })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, systemId));
+    .from(pointsTable)
+    .innerJoin(devices, eq(devices.id, pointsTable.deviceId))
+    .where(eq(devices.rid, systemId));
 
   const pointIds: PointId[] = [];
   const metaById = new Map<
@@ -293,11 +294,12 @@ export async function recomputeAgg1dForDay(
   const dayStr = day.toString();
 
   // Enumerate the system's points as PointIds — the DAO reads 5m by PointId. (This path didn't read
-  // point_info before; 5m FKs to point_info so the point set is identical to the old broad scan.)
+  // the point table before; 5m FKs to it, so the point set is identical to the old broad scan.)
   const points = await db
-    .select({ pointUid: pointInfo.pointUid })
-    .from(pointInfo)
-    .where(eq(pointInfo.systemId, system.id));
+    .select({ pointUid: pointsTable.id })
+    .from(pointsTable)
+    .innerJoin(devices, eq(devices.id, pointsTable.deviceId))
+    .where(eq(devices.rid, system.id));
   const pointIds: PointId[] = [];
   for (const p of points) {
     try {

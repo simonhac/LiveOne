@@ -85,19 +85,26 @@ beforeEach(() => {
   }));
 });
 
-/** A point_info row with a real point_uid, plus the PointId the module will derive from it. */
+/** A `points` row with a real id, plus the PointId the module will derive from it. */
 function pointRow(transform: string | null, metricType: string) {
   const id = Point.generate();
   return { id, row: { pointUid: Point.toUuid(id), transform, metricType } };
 }
 
-/** Minimal fake db: `select().from().where()` → the canned point_info rows; tx + advisory lock. */
-function makeFakeDb(pointInfoRows: unknown[]) {
+/**
+ * Minimal fake db: `select().from().innerJoin().where()` → the canned point rows; tx + advisory lock.
+ *
+ * `innerJoin` arrived with slice 1b — the point enumeration reads `points ⋈ devices` (it needs
+ * `devices.rid` to select the system's points now that the handle is not a column on the point row).
+ */
+function makeFakeDb(pointRows: unknown[]) {
   const executed: unknown[] = [];
+  const chain = {
+    innerJoin: () => chain,
+    where: () => Promise.resolve(pointRows),
+  };
   const db: Record<string, unknown> = {
-    select: () => ({
-      from: () => ({ where: () => Promise.resolve(pointInfoRows) }),
-    }),
+    select: () => ({ from: () => chain }),
     execute: (q: unknown) => {
       executed.push(q);
       return Promise.resolve({ rows: [] });
