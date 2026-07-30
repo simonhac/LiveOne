@@ -11,6 +11,7 @@
 import { and, asc, eq, inArray, max } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import {
   devices,
   areas,
@@ -57,12 +58,22 @@ export class AreaValidationError extends Error {
   }
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  return (err as { code?: string })?.code === "23505";
-}
-function constraintOf(err: unknown): string | undefined {
-  return (err as { constraint?: string })?.constraint;
-}
+/**
+ * config-v4 Phase 14 stage 2b: the alias 409 on BOTH write paths below was DOUBLY broken, and only the
+ * private copies of these two predicates are gone — the shape of the check is unchanged.
+ *
+ *  1. `(err as {code?: string}).code === "23505"` never matched, because drizzle ≥0.44 re-throws a failed
+ *     query as a `DrizzleQueryError` whose own `code` is undefined and whose `cause` is the `pg` error
+ *     (the STEP 0 finding, #311).
+ *  2. `constraintOf(err) === "areas_owner_alias_unique"` never matched EITHER, and fixing (1) alone would
+ *     not have helped: PlanetScale's proxy strips `constraint` from every error it forwards. The index
+ *     name arrives in the `message` text only.
+ *
+ * So an alias collision — the one thing `/api/areas` documents a 409 for — 500'd. `isUniqueViolationOn`
+ * (lib/db/pg-error.ts) closes both halves; that module's docstring carries the measurement, including why
+ * a migration restating the `uniqueIndex` as a named constraint would NOT have fixed (2).
+ */
+const AREA_ALIAS_UNIQUE = "areas_owner_alias_unique";
 
 /**
  * Assert the caller may pull each `systemId` into an area they own — the no-escalation firewall. A
@@ -163,9 +174,8 @@ export async function createArea(
       });
       return { id, legacySystemId: handle };
     } catch (err) {
-      const constraint = constraintOf(err);
       if (err instanceof HandleAreaConflictError) continue; // lost a handle race — re-allocate
-      if (isUniqueViolation(err) && constraint === "areas_owner_alias_unique")
+      if (isUniqueViolationOn(err, AREA_ALIAS_UNIQUE))
         throw new AreaAliasTakenError();
       throw err;
     }
@@ -207,10 +217,7 @@ export async function updateAreaMeta(
       .set(set)
       .where(eq(areas.id, areaId));
   } catch (err) {
-    if (
-      isUniqueViolation(err) &&
-      constraintOf(err) === "areas_owner_alias_unique"
-    )
+    if (isUniqueViolationOn(err, AREA_ALIAS_UNIQUE))
       throw new AreaAliasTakenError();
     throw err;
   }
