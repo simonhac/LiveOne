@@ -21,13 +21,17 @@ jest.mock("../kv", () => ({
 }));
 
 // Mock the database (Postgres). Two query shapes hit this:
-//  - getAreaBindings: select→from→innerJoin×3→orderBy (areas + points + devices)
-//  - getBindinglessAreaMemberPoints: select→from→innerJoin×3→where→orderBy (slice H added the
-//    `devices` hop that bridges area_members.device_id back to the int point_info.system_id)
-// A recursive chain node (innerJoin/where return itself; orderBy resolves) covers both → [].
+//  - getAreaBindings: select→from→innerJoin→leftJoin→innerJoin×2→orderBy (areas + legacy_handles +
+//    points + devices)
+//  - getBindinglessAreaMemberPoints: select→from→innerJoin×4→where→orderBy (slice H added the
+//    `devices` hop that bridges area_members.device_id back to the owning device's rid)
+// config-v4 Phase 13 PR 5 added the `legacy_handles` hop to both — that is where the area's integer
+// handle now comes from, instead of the dropped `areas.legacy_system_id`.
+// A recursive chain node (innerJoin/leftJoin/where return itself; orderBy resolves) covers both → [].
 const chainNode = (): any => {
   const node: any = {
     innerJoin: jest.fn(() => node),
+    leftJoin: jest.fn(() => node),
     where: jest.fn(() => node),
     orderBy: jest.fn(() => Promise.resolve([])),
   };
@@ -51,7 +55,9 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
     index: "index",
     pointUid: "pointUid",
   },
-  areas: { id: "id", legacySystemId: "legacySystemId" },
+  areas: { id: "id" },
+  // config-v4 Phase 13 PR 5: the area's integer handle lives here now, not on `areas`.
+  legacyHandles: { handle: "handle", areaId: "areaId", deviceId: "deviceId" },
   areaBindings: {
     areaId: "areaId",
     pointUid: "pointUid",
@@ -226,15 +232,18 @@ describe("kv-cache-manager", () => {
   });
 
   describe("buildSubscriptionRegistry", () => {
-    // Mock getAreaBindings's query: select→from→innerJoin×3→orderBy → binding rows.
+    // Mock getAreaBindings's query: select→from→innerJoin→leftJoin→innerJoin×2→orderBy → binding rows.
     const mockBindings = (rows: unknown[]) => {
       (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
         from: () => ({
-          // getAreaBindings joins `areas`, then `points` → `devices` (the latter pair supplies
-          // sourceSystemId now that area_bindings has no point_system_id column).
+          // getAreaBindings joins `areas`, LEFT-joins `legacy_handles` for the integer handle (PR 5:
+          // the handle is no longer a column on `areas`), then `points` → `devices` (the latter pair
+          // supplies sourceSystemId now that area_bindings has no point_system_id column).
           innerJoin: () => ({
-            innerJoin: () => ({
-              innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
+            leftJoin: () => ({
+              innerJoin: () => ({
+                innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
+              }),
             }),
           }),
         }),
