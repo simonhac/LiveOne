@@ -29,9 +29,9 @@
  * runs in a different process — caching absence for the TTL would silently drop/mis-route that point's
  * readings for up to a minute. Miss-always-fills keeps a just-committed point immediately resolvable.
  */
-import { inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { devices, points } from "@/lib/db/planetscale/schema";
 import { Point, type PointId } from "@/lib/ids";
 
 // ── Branded internal keys ────────────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ const asPointRid = (n: number): PointRid => n as PointRid;
 
 export type UnknownIdKind = "point" | "point-rid";
 
-/** Thrown when a public id / rid / address has no `point_info` row. `kind` lets callers map to a domain error. */
+/** Thrown when a public id / rid / address has no `points` row. `kind` lets callers map to a domain error. */
 export class UnknownIdError extends Error {
   constructor(
     public readonly kind: UnknownIdKind,
@@ -116,21 +116,33 @@ function toAddr(row: {
   };
 }
 
-const SELECT_COLS = {
-  uuid: pointInfo.pointUid,
-  rid: pointInfo.rid,
-  systemId: pointInfo.systemId,
-} as const;
+/**
+ * `points ⋈ devices` — the sole source of an address since slice 1b.
+ *
+ * Every column this module has ever projected is carried by the join: `uuid` is `points.id` (the
+ * same value `point_info.point_uid` held — `points.id` IS that column, per the schema note), `rid` is
+ * `points.rid` (equal to `point_info.rid` by construction: one sequence, asserted by
+ * verify-slice-k1-parity), and `systemId` is the owning device's handle `devices.rid` (== the old
+ * `point_info.system_id` by the slice invariant `devices.rid == systems.id`). No column is dropped
+ * and none is re-derived, so a resolved {@link PointAddr} is identical before and after.
+ */
+function addrQuery() {
+  return requirePlanetscaleDb()
+    .select({
+      uuid: points.id,
+      rid: points.rid,
+      systemId: devices.rid,
+    })
+    .from(points)
+    .innerJoin(devices, eq(devices.id, points.deviceId));
+}
 
 // ── DB fills (one query per batch; every filled row is written to both indexes) ───────────────────
 
 async function fillByUuids(uuids: string[]): Promise<Map<string, PointAddr>> {
   const out = new Map<string, PointAddr>();
   if (uuids.length === 0) return out;
-  const rows = await requirePlanetscaleDb()
-    .select(SELECT_COLS)
-    .from(pointInfo)
-    .where(inArray(pointInfo.pointUid, uuids));
+  const rows = await addrQuery().where(inArray(points.id, uuids));
   const now = Date.now();
   for (const r of rows) {
     const addr = toAddr(r);
@@ -143,10 +155,7 @@ async function fillByUuids(uuids: string[]): Promise<Map<string, PointAddr>> {
 async function fillByRids(rids: number[]): Promise<Map<number, PointAddr>> {
   const out = new Map<number, PointAddr>();
   if (rids.length === 0) return out;
-  const rows = await requirePlanetscaleDb()
-    .select(SELECT_COLS)
-    .from(pointInfo)
-    .where(inArray(pointInfo.rid, rids));
+  const rows = await addrQuery().where(inArray(points.rid, rids));
   const now = Date.now();
   for (const r of rows) {
     const addr = toAddr(r);
