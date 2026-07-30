@@ -209,19 +209,59 @@ async function resolveHandle(
   };
 }
 
-/** Fill only the area column, preserving a colliding device mapping on the same handle. */
+/**
+ * Raised when a handle's `legacy_handles.area_id` is already claimed by a DIFFERENT area.
+ *
+ * 🛑 **This error is the alarm `areas_legacy_system_unique` used to raise, and it exists because
+ * migration 0052 removed that index** (config-v4 Phase 13 PR 6). Until then, a handle collision
+ * surfaced LOUDLY as a 23505 on the `areas` INSERT. After the drop the `areas` INSERT can no longer
+ * collide at all, and `ensureAreaForHandle`'s `coalesce` would have SILENTLY kept the incumbent
+ * `area_id` — leaving `legacy_handles.handle` naming one area while `devices.primary_area_id` names
+ * another, i.e. an area unreachable via `?systemId=N`. `legacy_handles`' own PK does **not** catch it,
+ * precisely because the upsert swallows the conflict. So the outcome is asserted instead.
+ *
+ * Two reachable collisions, both real:
+ *  - two concurrent `createArea` calls allocating the same `max()+1` handle (`createArea` catches this
+ *    and re-allocates — that retry used to hang off `areas_legacy_system_unique`);
+ *  - a device re-created on a RECYCLED rid after `deleteDevice` left its area-of-one orphaned with the
+ *    handle row still pointing at it. Pre-existing (`deleteDevice` deletes neither the `areas` row nor
+ *    the `legacy_handles` row); reachable on dev, where `allocateRid` is `max(devices.rid)+1`.
+ */
+export class HandleAreaConflictError extends Error {
+  constructor(
+    readonly handle: number,
+    readonly wanted: string,
+    readonly incumbent: string,
+  ) {
+    super(
+      `legacy_handles.handle ${handle} is already claimed by area ${incumbent}; refusing to point it at ${wanted}`,
+    );
+    this.name = "HandleAreaConflictError";
+  }
+}
+
+/**
+ * Fill only the area column, preserving a colliding DEVICE mapping on the same handle — then assert the
+ * handle really does name `areaId`, throwing {@link HandleAreaConflictError} if it names another area.
+ *
+ * Idempotent for the same `areaId` (the `coalesce` re-writes the value already there and the check
+ * passes), which is what every re-ensure path relies on.
+ */
 async function ensureAreaForHandle(
   handle: number,
   areaId: string,
   exec: DeviceRegistryExec = requirePlanetscaleDb(),
 ): Promise<void> {
-  await exec
+  const [row] = await exec
     .insert(legacyHandles)
     .values({ handle, areaId })
     .onConflictDoUpdate({
       target: legacyHandles.handle,
       set: { areaId: sql`coalesce(${legacyHandles.areaId}, ${areaId}::uuid)` },
-    });
+    })
+    .returning({ areaId: legacyHandles.areaId });
+  if (row?.areaId !== areaId)
+    throw new HandleAreaConflictError(handle, areaId, String(row?.areaId));
 }
 
 /**

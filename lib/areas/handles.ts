@@ -1,17 +1,22 @@
 /**
- * Allocate a synthetic **addressing handle** (`areas.legacy_system_id`) for a multi-device area.
+ * Allocate a synthetic **addressing handle** (`legacy_handles.handle`) for a multi-device area.
  *
- * A multi-device (site) area has NO real `systems` row — it is addressed purely by its integer
- * `legacy_system_id`; `createArea` also registers it in `legacy_handles`, which is what
- * `DeviceConfigRegistry.areaByHandle` reads (and thus the
- * only shape the point resolver serves via membership/bindings). So a freshly-created site needs a
- * handle that collides with NO real device id and NO existing area handle.
+ * 🛑 **RETAINED past the drop of `areas.legacy_system_id`, deliberately.** The phase plan listed this
+ * module as a Phase 13 PR 6 casualty; it is not one. The column died, the HANDLE did not: `?systemId=N`
+ * is a permanent compat alias resolved through `legacy_handles`, and every new area still needs a row
+ * there, which means a value still has to be allocated. What changed is only where it is stored.
+ *
+ * A multi-device (site) area is addressed purely by that integer handle; `createArea` registers it in
+ * `legacy_handles`, which is what `DeviceConfigRegistry.areaByHandle` reads (and thus the only shape the
+ * point resolver serves via membership/bindings). So a freshly-created site needs a handle that collides
+ * with NO device rid and NO existing area handle.
  *
  * We pick `max(max(devices.rid), max(legacy_handles.handle), BASE) + 1`. `BASE` is a reserved floor
  * that sits clearly above prod serial device rids and the dev id band (10000+), so a synthetic handle
  * can never later collide with a real serial rid. This is a `max()+1` allocation (not a DB sequence —
- * that would be a schema change), guarded at the call site by the `areas_legacy_system_unique` index
- * + a retry.
+ * that would be a schema change), guarded at the call site by `legacy_handles`' PK + a retry on
+ * `HandleAreaConflictError`. (Before migration 0052 that guard was `areas_legacy_system_unique`; see
+ * `HandleAreaConflictError` for why the PK alone was not a drop-in replacement.)
  *
  * config-v4 slice K2: the device leg reads `max(devices.rid)`, not `max(systems.id)`. The two are equal
  * by the verbatim-rid invariant (`devices.rid == systems.id`, lib/registry/v4-mirror.ts) AND the floor
@@ -35,9 +40,9 @@ export const AREA_HANDLE_BASE = 1_000_000;
  *
  * config-v4 Phase 13 PR 5: the handle leg reads `max(legacy_handles.handle)`, not
  * `max(areas.legacy_system_id)`. Three reasons this is strictly safer, not merely equivalent:
- *  1. `legacy_handles` outlives the column (PR 6 drops it), and the allocator must not be the last
- *     thing standing between the drop and a handle collision — the same argument that moved the device
- *     leg off `systems.id` in slice K2.
+ *  1. `legacy_handles` outlives the column (PR 6's migration 0052 dropped it), and the allocator must
+ *     not be the last thing standing between the drop and a handle collision — the same argument that
+ *     moved the device leg off `systems.id` in slice K2.
  *  2. `handle` is `legacy_handles`' PRIMARY KEY, so it is the strongest of the remaining uniqueness
  *     guards backing the retry (`areas_legacy_system_unique` disappears with the column).
  *  3. It is a SUPERSET of the old read: it spans device handles as well as area handles. The floor can

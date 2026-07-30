@@ -12,16 +12,25 @@ function fakeExec() {
       return {
         values(value: { handle: number; deviceId?: string; areaId?: string }) {
           return {
-            async onConflictDoUpdate() {
+            onConflictDoUpdate() {
               const current = rows.get(value.handle) ?? {
                 handle: value.handle,
                 deviceId: null,
                 areaId: null,
               };
-              rows.set(value.handle, {
+              const next = {
                 ...current,
                 deviceId: current.deviceId ?? value.deviceId ?? null,
                 areaId: current.areaId ?? value.areaId ?? null,
+              };
+              rows.set(value.handle, next);
+              // Awaitable directly (`ensureDeviceForHandle`) OR chained with `.returning()`
+              // (`ensureAreaForHandle`, which asserts the row really ended up naming ITS area — the
+              // alarm that replaced `areas_legacy_system_unique` when migration 0052 dropped it). The
+              // returned `area_id` must be the POST-coalesce value, which is what makes the assertion
+              // able to see an incumbent claim at all.
+              return Object.assign(Promise.resolve(next), {
+                returning: async () => [{ areaId: next.areaId }],
               });
             },
           };
@@ -90,6 +99,35 @@ describe("DeviceRegistry", () => {
       deviceId: Device.toUuid(device),
       areaId,
     });
+  });
+
+  // 🛑 The alarm that replaced `areas_legacy_system_unique` when migration 0052 dropped it (config-v4
+  // Phase 13 PR 6). Driven POSITIVELY, because the failure it guards is silent in both directions: the
+  // upsert's `ON CONFLICT DO UPDATE … coalesce` SWALLOWS the PK conflict, so without the RETURNING
+  // check a second area claiming a live handle would simply be ignored — leaving `legacy_handles`
+  // naming the incumbent while `devices.primary_area_id` / `createArea`'s caller named the new one.
+  // Two real paths reach here: a lost `createArea` handle race (which retries on this error), and a
+  // device re-created on a rid recycled from a `deleteDevice`'d device whose area-of-one was left
+  // standing with its handle row intact.
+  it("REFUSES to re-point a handle already claimed by a different area", async () => {
+    const { exec, rows } = fakeExec();
+    const incumbent = "018f1f2e-7a3b-7000-8000-00000000000a";
+    const usurper = "018f1f2e-7a3b-7000-8000-00000000000b";
+    await DeviceRegistry.ensureAreaForHandle(12, incumbent, exec);
+    await expect(
+      DeviceRegistry.ensureAreaForHandle(12, usurper, exec),
+    ).rejects.toThrow(/already claimed by area/);
+    // And the incumbent is untouched — the throw is the whole remedy, not a partial write.
+    expect(rows.get(12)?.areaId).toBe(incumbent);
+  });
+
+  it("is idempotent for the SAME area (the re-ensure path every writer relies on)", async () => {
+    const { exec } = fakeExec();
+    const areaId = "018f1f2e-7a3b-7000-8000-00000000000c";
+    await DeviceRegistry.ensureAreaForHandle(12, areaId, exec);
+    await expect(
+      DeviceRegistry.ensureAreaForHandle(12, areaId, exec),
+    ).resolves.toBeUndefined();
   });
 
   describe("resolveHandle", () => {

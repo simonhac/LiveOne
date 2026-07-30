@@ -9,9 +9,13 @@
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, areaBindings } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  areaBindings,
+  legacyHandles,
+} from "@/lib/db/planetscale/schema";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -87,6 +91,32 @@ async function shapeAreas(
     bindingCountRows.map((r) => [r.areaId, r.count]),
   );
 
+  // The integer addressing handle per area, from `legacy_handles` — one batched query rather than a join,
+  // so neither caller's `select().from(areas)` has to change shape.
+  //
+  // ⚠️ config-v4 Phase 13 PR 6: this used to read `areas.legacy_system_id` off the row, and it is the ONE
+  // live reader of that column PR 5's sweep missed. It was caught here only because dropping the field
+  // from `schema.ts` made it a type error — the projection-less `select()` above would otherwise have gone
+  // on compiling and started returning `undefined` for every area's handle the moment 0052 applied.
+  const handleRows =
+    allAreas.length === 0
+      ? []
+      : await db
+          .select({
+            areaId: legacyHandles.areaId,
+            handle: legacyHandles.handle,
+          })
+          .from(legacyHandles)
+          .where(
+            inArray(
+              legacyHandles.areaId,
+              allAreas.map((a) => a.id),
+            ),
+          );
+  const handleByArea = new Map<string, number>(
+    handleRows.flatMap((r) => (r.areaId == null ? [] : [[r.areaId, r.handle]])),
+  );
+
   // Batch-fetch owner info from Clerk.
   const ownerIds = [
     ...new Set(
@@ -145,7 +175,7 @@ async function shapeAreas(
       id: Area.encode(area.id),
       displayName: area.name,
       alias: area.slug,
-      legacySystemId: area.legacySystemId,
+      legacySystemId: handleByArea.get(area.id) ?? null,
       status: area.status,
       displayTimezone: area.displayTimezone,
       timezoneOffsetMin: area.timezoneOffsetMin,

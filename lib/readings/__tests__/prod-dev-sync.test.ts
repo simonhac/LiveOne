@@ -272,7 +272,9 @@ describe("prod→dev readings transfer", () => {
           { table: "devices", cols: ["primary_area_id"] },
           { table: "derivations", cols: ["area_id"] },
         ],
-        neutralize: ["legacy_system_id", "slug"],
+        // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
+        // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
+        neutralize: ["slug"],
       },
     });
 
@@ -311,9 +313,9 @@ describe("prod→dev readings transfer", () => {
       prod,
       dev,
       table,
-      new Map([
-        ["areas", ["id", "owner_user_id", "legacy_system_id", "name", "slug"]],
-      ]),
+      // The real column list post-0052 — `legacy_system_id` is not among them, so any generated SQL
+      // still naming it would be a 42703 against the real database.
+      new Map([["areas", ["id", "owner_user_id", "name", "slug"]]]),
       new Map([["areas", ["id"]]]),
     );
 
@@ -360,9 +362,11 @@ describe("prod→dev readings transfer", () => {
       expect(i).toBeGreaterThan(-1);
       return i;
     };
-    expect(at("SET legacy_system_id = NULL, slug = NULL")).toBeLessThan(
-      at("INSERT INTO public.areas"),
-    );
+    // config-v4 Phase 13 PR 6: `legacy_system_id` left `neutralize` with the column itself (migration
+    // 0052). `neutralize` emits a literal `SET <col> = NULL`, so a stale entry here would be a runtime
+    // 42703 in the sync — invisible to tsc, and a canary is the only thing that can see it.
+    expect(sql).not.toContain("legacy_system_id");
+    expect(at("SET slug = NULL")).toBeLessThan(at("INSERT INTO public.areas"));
     expect(at("INSERT INTO public.areas")).toBeLessThan(
       at("UPDATE public.devices x SET primary_area_id"),
     );
@@ -400,7 +404,7 @@ describe("prod→dev readings transfer", () => {
 
     const sql = devSql.at(-1)!;
     // The whole point: `rid` is NOT NULL, so it CANNOT be freed by NULLing it the way areas frees
-    // legacy_system_id. It is pushed into the negative range instead — disjoint from every staged prod
+    // `slug`. It is pushed into the negative range instead — disjoint from every staged prod
     // rid, and still distinct per drifted row because rid is unique.
     expect(sql).toContain("SET rid = -d.rid - 1, slug = NULL");
     expect(sql).not.toContain("rid = NULL");
@@ -548,7 +552,7 @@ describe("prod→dev readings transfer", () => {
       drift.prod,
       drift.dev,
       areas,
-      new Map([["areas", ["id", "legacy_system_id", "owner_user_id", "slug"]]]),
+      new Map([["areas", ["id", "owner_user_id", "slug"]]]),
       new Map([["areas", ["id"]]]),
     );
     const driftSql = drift.devSql.at(-1)!;
