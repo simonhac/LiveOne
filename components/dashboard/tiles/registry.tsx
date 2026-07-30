@@ -2,10 +2,10 @@
 
 /**
  * The tile-view render registry — one plugin per `TileView`. The `satisfies` check makes this
- * exhaustive at compile time: adding a view to `TileView` (lib/dashboard/v3.ts) is a type error
- * until a plugin is registered here. Adding a tile = one module in this directory + one line below.
+ * exhaustive at compile time: adding a view to `TileView` (lib/dashboard/card-types.ts) is a type
+ * error until a plugin is registered here. Adding a tile = one module here + one line below.
  */
-import type { TileView } from "@/lib/dashboard/v3";
+import type { TileView } from "@/lib/dashboard/card-types";
 import type { TilePlugin } from "./types";
 import { solarTile } from "./solar";
 import { loadTile } from "./load";

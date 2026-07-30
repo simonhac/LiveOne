@@ -1,6 +1,9 @@
 /**
- * Dashboard card + tile TYPE vocabulary — the shared string unions used across the descriptor (v3.ts),
- * the capability catalog (lib/capabilities/catalog.ts), and the tile renderer.
+ * Dashboard CARD type vocabulary — the v3 `DashboardCardType`/`DashboardLayout` unions used by the v3
+ * descriptor (v3.ts) and the capability catalog (lib/capabilities/catalog.ts).
+ *
+ * The TILE vocabulary (`TileView`/`TileId`) moved to lib/dashboard/card-types.ts, which owns the
+ * unified v4 card types — the tile plugins and the capability catalog read it from there.
  *
  * The former card/tile REGISTRIES and the vendor-keyed derivers (CARD_REGISTRY, TILES, getLayout,
  * isSiteVendor, availableTiles, chartHasData) were removed at the P5 cleanup: card/layout selection is
@@ -21,13 +24,3 @@ export type DashboardCardType =
 
 /** Layout hint (derived, never stored) — retained for the optional AreaSectionV3.layout override seam. */
 export type DashboardLayout = "amber" | "site" | "sidebar";
-
-export type TileId =
-  | "solar"
-  | "load"
-  | "hotWater"
-  | "battery"
-  | "house-to-grid"
-  | "amber"
-  | "ev"
-  | "renewables";

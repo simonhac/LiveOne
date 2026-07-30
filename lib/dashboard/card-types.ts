@@ -2,8 +2,10 @@
  * config-v4 dashboard card types — the unified card vocabulary + per-type config schemas.
  *
  * v4 merges the v3 card registry and tile registry into ONE `card` primitive (clean-sheet §8.1):
- * every v3 `TileView` becomes a first-class card type, and the v3 `tiles` container becomes a
- * structural `group` (so it is NOT a card type here). `type` is an OPEN string at the document level
+ * every tile view is a first-class card type, and the v3 `tiles` container becomes a
+ * structural `group` (so it is NOT a card type here). This module also OWNS the tile vocabulary
+ * (`TileView`/`TileId`), which the tile plugins and the capability catalog read directly — the v3
+ * descriptor types (v3.ts, cards.ts) no longer define it. `type` is an OPEN string at the document level
  * (§8.4 — unknown types persist with opaque config and render as a placeholder); `KnownCardType` is the
  * closed set this build knows how to render + validate.
  *
@@ -12,11 +14,11 @@
 import { z } from "zod";
 
 /**
- * The 18 known card types = 9 promoted v3 tile views + 9 v3 card types (minus `tiles`, now a group).
- * Kept as a const tuple so it doubles as the runtime set and the literal union.
+ * The 9 tile views — the SINGLE source of the tile vocabulary. The tile plugin registry
+ * (components/dashboard/tiles/registry.tsx) is `satisfies Record<TileView, TilePlugin>`, so adding a
+ * view here is a compile error until a plugin exists; the capability catalog keys off `TileId`.
  */
-export const V4_CARD_TYPES = [
-  // promoted from v3 TileView (lib/dashboard/v3.ts `TileView`)
+export const V4_TILE_TYPES = [
   "solar",
   "load",
   "hotWater",
@@ -26,7 +28,19 @@ export const V4_CARD_TYPES = [
   "ev",
   "renewables",
   "oe-grid",
-  // v3 DashboardCardType (lib/dashboard/cards.ts) minus "tiles" (→ group)
+] as const;
+
+/** A tile view — the render vocabulary of the tile plugins (8 device tiles + `oe-grid`). */
+export type TileView = (typeof V4_TILE_TYPES)[number];
+
+/**
+ * The capability-catalog subset of `TileView`: the 8 tiles derived from a device's capabilities.
+ * `oe-grid` is excluded — it is bound to an OpenElectricity region device, not capability-derived.
+ */
+export type TileId = Exclude<TileView, "oe-grid">;
+
+/** The 9 known card types that are NOT tile views (v3 `DashboardCardType` minus `tiles` → group). */
+export const V4_NON_TILE_CARD_TYPES = [
   "chart",
   "sankey",
   "amber-now",
@@ -38,7 +52,25 @@ export const V4_CARD_TYPES = [
   "battery-provenance-history",
 ] as const;
 
+/**
+ * The 18 known card types = the 9 promoted tile views + the 9 non-tile card types.
+ * Kept as a const tuple so it doubles as the runtime set and the literal union.
+ */
+export const V4_CARD_TYPES = [
+  ...V4_TILE_TYPES,
+  ...V4_NON_TILE_CARD_TYPES,
+] as const;
+
 export type KnownCardType = (typeof V4_CARD_TYPES)[number];
+
+/** The 9 promoted tile views — v4 card types that render via a tile plugin, not a card plugin. */
+export const TILE_VIEW_TYPES: ReadonlySet<string> = new Set<TileView>(
+  V4_TILE_TYPES,
+);
+
+export function isTileViewType(type: string): type is TileView {
+  return TILE_VIEW_TYPES.has(type);
+}
 
 export const KNOWN_CARD_TYPES: ReadonlySet<string> = new Set(V4_CARD_TYPES);
 
@@ -76,7 +108,7 @@ export const deviceMetricsConfigSchema = z
   .describe("device-metrics");
 export type DeviceMetricsConfig = z.infer<typeof deviceMetricsConfigSchema>;
 
-/** The v3 `TileFeature` forward-seam union (inert today), preserved on promoted tile cards. */
+/** The `TileFeature` forward-seam union (inert today), preserved on promoted tile cards. */
 export const tileFeatureSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("sparkline"), series: z.string() }),
   z.strictObject({ kind: z.literal("breakdown") }),

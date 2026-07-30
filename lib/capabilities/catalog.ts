@@ -28,7 +28,8 @@
 
 import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
-import type { DashboardCardType, TileId } from "@/lib/dashboard/cards";
+import type { DashboardCardType } from "@/lib/dashboard/cards";
+import type { TileId } from "@/lib/dashboard/card-types";
 
 export type { TileId };
 
@@ -47,7 +48,7 @@ export function isSatisfiable(req: CapReq): boolean {
 
 // ============================================================================
 // Tiles — the individually-toggleable cards inside the `tiles` container.
-// `TileId` is single-sourced from lib/dashboard/cards.ts (re-exported above).
+// `TileId` is single-sourced from lib/dashboard/card-types.ts (re-exported above).
 // ============================================================================
 
 export interface TileCatalogEntry {

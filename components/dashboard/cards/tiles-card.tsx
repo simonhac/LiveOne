@@ -8,7 +8,7 @@
  * a device tile just points its fetch at a member device.
  */
 import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
-import type { TileView } from "@/lib/dashboard/v3";
+import type { TileView } from "@/lib/dashboard/card-types";
 import type { TileV3 } from "@/lib/dashboard/v3";
 import type { CardPlugin } from "./types";
 import { staleThreshold, TileSkeleton, useAreaDatum } from "./shared";
