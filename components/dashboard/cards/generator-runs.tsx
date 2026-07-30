@@ -8,12 +8,12 @@
  */
 import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, useAreaDatum } from "./shared";
+import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
 
 function AreaGeneratorRuns({ card, handle }: CardRenderProps) {
   const systemId = card.deviceSystemId ?? handle!;
   const { datum } = useAreaDatum(systemId);
-  const tz = datum?.system?.timezoneOffsetMin;
+  const tz = subjectOf(datum)?.timezoneOffsetMin;
   if (tz == null) {
     return <ChartSkeleton />;
   }

@@ -15,7 +15,7 @@
  * bits fall back/blank until it lands).
  */
 import SiteChartsCard from "@/components/SiteChartsCard";
-import { useAreaDatum } from "./shared";
+import { subjectOf, useAreaDatum } from "./shared";
 
 export function SiteChartsGroup({
   systemId,
@@ -31,7 +31,7 @@ export function SiteChartsGroup({
   chartCapable?: boolean;
 }) {
   const { datum } = useAreaDatum(systemId);
-  const system = datum?.system;
+  const system = subjectOf(datum);
   if (!chartCapable) return null;
   return (
     <SiteChartsCard

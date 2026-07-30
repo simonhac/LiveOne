@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
+import {
+  resolveWireAddress,
+  subjectDisplayTimezone,
+  subjectTimezoneOffsetMin,
+} from "@/lib/dashboard/subject";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { formatOpenNEMResponse } from "@/lib/history/format-opennem";
 import {
@@ -92,29 +97,15 @@ interface ValidationResult {
 // Parameter Parsing & Validation
 // ============================================================================
 
+/**
+ * Interval + debug. The SUBJECT is not parsed here — `resolveWireAddress` owns the
+ * `areaId`/`deviceId`/`systemId` grammar (config-v4 Phase 13 PR 1) because two of the three need an
+ * async `legacy_handles` / `devices.rid` lookup.
+ */
 function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
-  systemId?: number;
   interval?: string;
   enableDebug?: boolean;
 } {
-  const systemIdParam = searchParams.get("systemId");
-  if (!systemIdParam) {
-    return {
-      isValid: false,
-      error: "Missing required parameter: systemId",
-      statusCode: 400,
-    };
-  }
-
-  const systemId = parseInt(systemIdParam);
-  if (isNaN(systemId)) {
-    return {
-      isValid: false,
-      error: "Invalid systemId: must be a number",
-      statusCode: 400,
-    };
-  }
-
   const interval = searchParams.get("interval");
   if (!interval) {
     return {
@@ -139,7 +130,6 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
 
   return {
     isValid: true,
-    systemId,
     interval,
     enableDebug,
   };
@@ -571,7 +561,7 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now();
   const t = makeTimer(request);
   try {
-    // Parse basic parameters (systemId, interval, debug)
+    // Parse basic parameters (interval, debug)
     const searchParams = request.nextUrl.searchParams;
     const basicParams = parseBasicParams(searchParams);
     if (!basicParams.isValid) {
@@ -581,19 +571,35 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Resolve the subject: `?areaId=ar_…` / `?deviceId=dv_…` / the permanent `?systemId=N` alias
+    // (device-first — trap D-l; see lib/dashboard/subject.ts). Everything below is handle-keyed: the
+    // series layer, `resolveLogicalSystem` and the attributed-flow builder all still take the integer.
+    const address = await resolveWireAddress(searchParams);
+    if (!address.ok) {
+      return NextResponse.json(
+        { error: address.error },
+        { status: address.status },
+      );
+    }
+    const handle = address.handle;
+
     // Authenticate and check access (owner/admin/viewer/public, or a valid dashboard share token).
     // `auth` spans the whole access check; the threaded timer adds its inner `clerk`/`admin` splits.
     const authResult = await t.time("auth", () =>
-      requireDashboardAccess(request, basicParams.systemId!, t),
+      requireDashboardAccess(request, handle, t),
     );
     if (authResult instanceof NextResponse) return authResult;
-    const { system } = authResult;
+    // `system` is the legacy device-shaped view, still consumed by the series layer (PR 2 repoints it);
+    // `subject` is the area-native identity the response's timezone fields come from. Both are the
+    // device-first resolution of the same handle, so they cannot disagree.
+    const { system, subject } = authResult;
+    const tzOffsetMin = subjectTimezoneOffsetMin(subject);
 
     // Parse time range
     const timeRange = parseTimeRangeParams(
       searchParams,
       basicParams.interval as "5m" | "30m" | "1d",
-      system.timezoneOffsetMin,
+      tzOffsetMin,
     );
     if (!timeRange.isValid) {
       return NextResponse.json(
@@ -645,7 +651,7 @@ export async function GET(request: NextRequest) {
     let sankeyOmittedReason: string | undefined;
     if (includeSankey && interval !== "1d") {
       const logicalSystem = await t.time("logical", () =>
-        resolveLogicalSystem(basicParams.systemId!),
+        resolveLogicalSystem(handle),
       );
       if (!logicalSystem || !logicalSystem.isComplete) {
         sankeyOmittedReason = "not-a-logical-system";
@@ -693,9 +699,7 @@ export async function GET(request: NextRequest) {
               const endYMD = (timeRange.endTime as CalendarDate).toString();
               // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
               // it handles null/incomplete internally (→ reason "not-a-logical-system").
-              const logicalSystem = await resolveLogicalSystem(
-                basicParams.systemId!,
-              );
+              const logicalSystem = await resolveLogicalSystem(handle);
               const attr = await readAttributedDailyMatrices(
                 planetscaleDb,
                 logicalSystem,
@@ -721,7 +725,7 @@ export async function GET(request: NextRequest) {
               .toDate()
               .getTime();
             const attr = await buildAttributedFlowMatrix(
-              basicParams.systemId!,
+              handle,
               startMs,
               endMs,
               sankey.logicalSystem,
@@ -750,7 +754,7 @@ export async function GET(request: NextRequest) {
       timeRange.endTime!,
       interval,
       durationMs,
-      system.displayTimezone,
+      subjectDisplayTimezone(subject),
       dataSource,
       debug,
       seriesPatterns.length > 0 ? seriesPatterns : undefined,

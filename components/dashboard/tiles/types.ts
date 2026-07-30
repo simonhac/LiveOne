@@ -13,7 +13,7 @@ import type { LatestPointValues } from "@/lib/types/api";
 export interface TileRenderProps {
   /** The tile's system's latest point values (from `dashboardDataQuery`). */
   latest: LatestPointValues;
-  /** The raw `dashboardDataQuery` payload — `oe-grid` reads `system.vendorSiteId` for its region. */
+  /** The raw `dashboardDataQuery` payload — `oe-grid` reads `device.vendorSiteId` for its region. */
   data: unknown;
   /** Omitted by prop-driven hosts (the labs card gallery): disables the HWS fetch / Tesla cog. */
   systemId?: number;

@@ -159,7 +159,15 @@ The wire becomes TypeID-native; the interior does not. Resolve `ar_…`/`dv_…`
    naturally via `getPollingStatus(handle)` (a `devices ⋈ device_state` join that misses for a pure area),
    and `commissionedOn` is not read on this path at all — confirm both rather than special-casing them.
 2. **Accept `areaId=ar_…` / `deviceId=dv_…`** on `/api/data` and `/api/history`. Keep `?systemId=N` as a
-   **permanent** alias resolved through `legacy_handles` — area leg first, else device.
+   **permanent** alias, resolved **DEVICE leg first, else area**.
+   🛑 **Corrected in PR 1 — this line originally said "area leg first, else device", which contradicted
+   the Proof gate ten lines below.** For a COLLIDING handle (13) the two cannot both hold: area-first
+   widens it from its device's own 12 points to its area's bindings, which is exactly what the gate
+   forbids. Device-first is also the behaviour-preserving order (it is what `viewableByHandle` does
+   today). The area-native reading of a colliding handle is reachable through the new explicit `ar_…`
+   address — that is the whole point of putting TypeIDs on the wire, rather than silently
+   reinterpreting an old integer. Precedence is now written down per call site in
+   `lib/dashboard/subject.ts`.
 3. **Rename the payload key `system` → `device`** only where it genuinely means a device. Where it means
    an area, emit `area`. Update the response TS types.
 4. **Move the React Query keys in lockstep** (`lib/queries/keys.ts`, `SystemIdLike`). A stale key against

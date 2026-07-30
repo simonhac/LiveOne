@@ -11,12 +11,12 @@ import LoadProvenanceCard from "@/components/LoadProvenanceCard";
 import { attributedFlowDailyQuery } from "@/lib/queries/attributedFlowDaily";
 import { reduceLoadProvenance } from "@/lib/energy-flow-matrix";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { useAreaDatum } from "./shared";
+import { subjectOf, useAreaDatum } from "./shared";
 
 function AreaLoadProvenance({ handle }: CardRenderProps) {
   const systemId = handle!;
   const { datum, paused } = useAreaDatum(systemId);
-  const tz = datum?.system?.timezoneOffsetMin;
+  const tz = subjectOf(datum)?.timezoneOffsetMin;
 
   // Trailing 30 COMPLETED local days (the attr rollup excludes today-so-far).
   const offsetMs = (tz ?? 600) * 60_000;

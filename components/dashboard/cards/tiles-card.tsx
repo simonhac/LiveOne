@@ -50,8 +50,8 @@ function TileCell({
       data={data}
       systemId={systemId}
       staleThresholdSeconds={staleThreshold(
-        datum?.system?.vendorType ?? "",
-        datum?.system?.config?.updateCadenceSeconds,
+        datum?.device?.vendorType ?? "",
+        datum?.device?.config?.updateCadenceSeconds,
       )}
       showGrid={showGrid}
       canControl={false}

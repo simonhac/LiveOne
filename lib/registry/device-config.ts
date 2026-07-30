@@ -449,6 +449,12 @@ async function isAreaHandle(handle: number): Promise<boolean> {
 
 export const DeviceConfigRegistry = {
   deviceByHandle,
+  /**
+   * The AREA a handle names, as its own `areas` row — the area-native serving leg (Phase 13 PR 1's
+   * `ServingSubject`), and the reason `fetchAreaForHandle` OUTLIVES the synthesis: PR 2 deletes
+   * `viewableByHandle`/`isAreaHandle`/`synthesizeAreaView`, not this reader.
+   */
+  areaByHandle: fetchAreaForHandle,
   viewableByHandle,
   isAreaHandle,
   deviceByVendorSite,

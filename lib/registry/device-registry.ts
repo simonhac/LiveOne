@@ -8,7 +8,7 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices, legacyHandles } from "@/lib/db/planetscale/schema";
-import { Device, type DeviceId } from "@/lib/ids";
+import { Area, Device, type AreaId, type DeviceId } from "@/lib/ids";
 import type { DeviceRid } from "./registry-cache";
 
 type PgDb = ReturnType<typeof requirePlanetscaleDb>;
@@ -250,8 +250,48 @@ async function uuidForRid(
   return row.id;
 }
 
+/**
+ * Area uuid -> integer addressing handle, from `legacy_handles.area_id`.
+ *
+ * The inverse of {@link resolveHandle}'s area leg, and the resolution behind the wire-native
+ * `?areaId=ar_…` address (config-v4 Phase 13 PR 1). Reads `legacy_handles`, NOT
+ * `areas.legacy_system_id`: the latter is a Phase-13 casualty, whereas `legacy_handles` is the
+ * authoritative map both area write paths (`createArea`, `DeviceWriter`) fill inside the area's own
+ * transaction. Null when the area has no handle — impossible today (22/22 on `liveone-dev`), but the
+ * column is nullable so the caller must 404 rather than assume.
+ */
+async function handleForArea(
+  id: AreaId,
+  exec: DeviceRegistryExec = requirePlanetscaleDb(),
+): Promise<number | null> {
+  const [row] = await exec
+    .select({ handle: legacyHandles.handle })
+    .from(legacyHandles)
+    .where(eq(legacyHandles.areaId, Area.toUuid(id)))
+    .limit(1);
+  return row?.handle ?? null;
+}
+
+/**
+ * Device uuid -> integer addressing handle, from `devices.rid` (see {@link ridsForDevices} for why
+ * `rid` and not `legacy_handles.device_id`). Backs the wire-native `?deviceId=dv_…` address.
+ */
+async function handleForDevice(
+  id: DeviceId,
+  exec: DeviceRegistryExec = requirePlanetscaleDb(),
+): Promise<number | null> {
+  const [row] = await exec
+    .select({ rid: devices.rid })
+    .from(devices)
+    .where(eq(devices.id, Device.toUuid(id)))
+    .limit(1);
+  return row?.rid ?? null;
+}
+
 export const DeviceRegistry = {
   uuidForRid,
+  handleForArea,
+  handleForDevice,
   addrForHandle,
   addrsForHandles,
   addrForDevice,

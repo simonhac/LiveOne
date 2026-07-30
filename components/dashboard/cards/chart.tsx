@@ -8,7 +8,7 @@
  */
 import LinesChartCard from "@/components/LinesChartCard";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { maxPowerHintFromSystemInfo, useAreaDatum } from "./shared";
+import { maxPowerHintFromSystemInfo, subjectOf, useAreaDatum } from "./shared";
 
 function AreaLinesChart({ handle }: CardRenderProps) {
   const systemId = handle!;
@@ -19,13 +19,13 @@ function AreaLinesChart({ handle }: CardRenderProps) {
   // window either) don't depend on it. So mount immediately with a harmless placeholder instead of
   // blocking the whole chart on `/api/data` landing first; the real value swaps in once `datum`
   // resolves.
-  const tz = datum?.system?.timezoneOffsetMin ?? 0;
+  const tz = subjectOf(datum)?.timezoneOffsetMin ?? 0;
   const systemInfo = (
     data as { systemInfo?: { solarSize?: string; ratings?: string } } | null
   )?.systemInfo;
   // Configured nameplate wins; fall back to scraping the free-text solarSize/ratings.
   const maxPowerHint =
-    datum?.system?.config?.nameplateKw ??
+    subjectOf(datum)?.config?.nameplateKw ??
     maxPowerHintFromSystemInfo(systemInfo);
   return (
     <LinesChartCard

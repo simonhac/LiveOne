@@ -11,8 +11,16 @@ import type { ReadableArea } from "@/lib/areas/list";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 import type { LatestPointValues } from "@/lib/types/api";
 
+/**
+ * The slice of the `dashboardDataQuery` payload this chrome reads.
+ *
+ * 🛑 config-v4 Phase 13 PR 1: the payload key moved `system` -> `device`/`area`, and this cast is why
+ * `tsc` could not see it — `dashboardDataQuery` returns `unknown`, so the OLD key would have compiled
+ * clean and silently stopped rendering the viewer's dashboard (`data?.system` forever falsy). `/device`
+ * routes are device-only, but the area leg is accepted rather than assumed away.
+ */
 interface DashboardData {
-  system: {
+  device?: {
     id: number;
     vendorType: string;
     vendorSiteId: string;
@@ -23,6 +31,7 @@ interface DashboardData {
     timezoneOffsetMin: number;
     status: string;
   };
+  area?: { id: number };
   latest: LatestPointValues;
 }
 
@@ -156,7 +165,7 @@ export default function DeviceViewer({
           </div>
         ))}
 
-      {data?.system && descriptor && (
+      {(data?.device ?? data?.area) && descriptor && (
         <Dashboard descriptor={descriptor} areaById={areaById} areasResolved />
       )}
     </main>

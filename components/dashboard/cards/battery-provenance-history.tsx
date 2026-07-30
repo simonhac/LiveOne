@@ -13,11 +13,11 @@ import BatteryProvenancePanel from "@/components/battery-provenance/BatteryProve
 import { parentAreaIdFromHelperSiteId } from "@/lib/areas/helper-site-id";
 import { areaRefToArId } from "@/lib/areas/ref";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, useAreaDatum } from "./shared";
+import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
 
 function AreaBatteryProvenanceHistory({ section, handle }: CardRenderProps) {
   const { datum } = useAreaDatum(handle!);
-  const system = datum?.system;
+  const system = subjectOf(datum);
   if (!system) return <ChartSkeleton />;
 
   let areaRef: string | null;
