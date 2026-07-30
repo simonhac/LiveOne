@@ -1,10 +1,12 @@
 /**
- * Golden test for buildAreaStrategy — the capability-driven default-dashboard builder.
+ * ONE-SHOT equivalence: the v4-native `buildAreaStrategy` produces exactly what the v3 builder +
+ * `rewriteV3ToV4` produced. **This file is deleted in the very next commit of this PR**, together with
+ * the v3 goldens it compares against — after the change there is no second producer left to disagree
+ * with, so this check can only ever run once. It runs.
  *
- * The golden descriptors were captured from the previous vendor-keyed builder (buildDefaultDashboardV3)
- * at the P4 cutover, where buildAreaStrategy was proven byte-identical to it across these contexts. That
- * builder is now deleted, so this pins the capability strategy's output directly: each case pairs a
- * capability context with the exact descriptor it must produce.
+ * `want3` is the verbatim v3 golden the pre-Phase-14 `buildAreaStrategy` emitted for each context
+ * (previously pinned by this file), with the placeholder `"area-uuid"` swapped for a real uuid so the
+ * rewriter's strict area-ref decode accepts it. `ctx` is the same context expressed in v4 terms.
  */
 import { describe, it, expect } from "@jest/globals";
 import {
@@ -13,16 +15,44 @@ import {
 } from "@/lib/capabilities/strategy";
 import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
+import type { DashboardV4 } from "@/lib/dashboard/v4";
+import { rewriteV3ToV4, pureAreaRef } from "@/lib/dashboard/v3-to-v4";
+import { normalizeDocV4 } from "@/lib/dashboard/v4-validate";
+import { Area, Device } from "@/lib/ids";
 
 const caps = (...ids: CapabilityId[]) => new Set<CapabilityId>(ids);
-const A = "area-uuid";
+
+const AREA_UUID = "01980000-0000-7000-8000-000000000001";
+const GRID_DEVICE_UUID = "01980000-0000-7000-8000-00000000000c";
+const A = Area.encode(AREA_UUID);
+const GRID_DEVICE = Device.encode(GRID_DEVICE_UUID);
+/** The strategy's only device pin is the OE region device (legacy handle 12 in these goldens). */
+const resolver = {
+  areaRef: pureAreaRef,
+  deviceRef: (handle: number) => {
+    if (handle !== 12) throw new Error(`unexpected device pin: ${handle}`);
+    return GRID_DEVICE;
+  },
+};
+
 const golden = (json: string): DashboardV3 => JSON.parse(json) as DashboardV3;
 
-const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
+/** The seed path's wrapping: one strategy group under a column root, then id assignment. */
+const docOf = (ctx: AreaStrategyContext): DashboardV4 =>
+  normalizeDocV4({
+    version: 4,
+    root: {
+      kind: "group",
+      direction: "column",
+      children: [buildAreaStrategy(ctx)],
+    },
+  });
+
+const CASES: { name: string; ctx: AreaStrategyContext; want3: DashboardV3 }[] = [
   {
     name: "sidebar device + generator (device viewer)",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps(
         "solar/power",
         "load/power",
@@ -34,14 +64,14 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"battery"},{"view":"house-to-grid"},{"view":"renewables"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}},{"type":"generator-runs"}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"battery"},{"view":"house-to-grid"},{"view":"renewables"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}},{"type":"generator-runs"}]}]}',
     ),
   },
   {
     name: "site multi-device + oe-grid tile",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps(
         "solar/power",
         "load/power",
@@ -53,64 +83,64 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
         "ev/soc",
       ),
       aggregate: true,
-      gridDeviceSystemId: 12,
+      gridDevice: GRID_DEVICE,
       leadWithDeviceMetrics: true,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"renewables"},{"view":"oe-grid","deviceSystemId":12}]},{"type":"chart","id":"chart:load","chart":{"variant":"stacked-areas","split":"load"}},{"type":"chart","id":"chart:generation","chart":{"variant":"stacked-areas","split":"generation"}}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"device-metrics","variant":"table"},{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"renewables"},{"view":"oe-grid","deviceSystemId":12}]},{"type":"chart","id":"chart:load","chart":{"variant":"stacked-areas","split":"load"}},{"type":"chart","id":"chart:generation","chart":{"variant":"stacked-areas","split":"generation"}}]}]}',
     ),
   },
   {
     name: "amber pricing-only",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps("grid/rate"),
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"amber-now"},{"type":"amber-timeline"}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"device-metrics","variant":"table"},{"type":"amber-now"},{"type":"amber-timeline"}]}]}',
     ),
   },
   {
     name: "instrumentation-only device (generator/sensor pack)",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps("instrumentation"),
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"device-metrics","variant":"table"}]}]}',
     ),
   },
   {
     name: "instrumentation-only helper WITH battery/provenance — history card appended",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps("instrumentation", "battery/provenance"),
       aggregate: false,
       leadWithDeviceMetrics: true,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics","variant":"table"},{"type":"battery-provenance-history"}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"device-metrics","variant":"table"},{"type":"battery-provenance-history"}]}]}',
     ),
   },
   {
     name: "instrumentation-only device WITHOUT battery/provenance — no history card (no lead)",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps("instrumentation", "generator-running"),
       aggregate: false,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"device-metrics"},{"type":"generator-runs"}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"device-metrics"},{"type":"generator-runs"}]}]}',
     ),
   },
   {
     name: "seed, full caps (all tiles, lines, no lead)",
     ctx: {
-      areaId: A,
+      area: A,
       capabilities: caps(
         "solar/power",
         "load/power",
@@ -122,16 +152,16 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: DashboardV3 }[] = [
       ),
       aggregate: false,
     },
-    want: golden(
-      '{"version":3,"sections":[{"areaId":"area-uuid","cards":[{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"renewables"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}}]}]}',
+    want3: golden(
+      '{"version":3,"sections":[{"areaId":"01980000-0000-7000-8000-000000000001","cards":[{"type":"tiles","tiles":[{"view":"solar"},{"view":"load"},{"view":"hotWater"},{"view":"battery"},{"view":"house-to-grid"},{"view":"amber"},{"view":"ev"},{"view":"renewables"}]},{"type":"chart","id":"chart:lines","chart":{"variant":"lines"}}]}]}',
     ),
   },
 ];
 
-describe("buildAreaStrategy golden output", () => {
+describe("v4-native buildAreaStrategy === rewriteV3ToV4(old v3 strategy)", () => {
   for (const c of CASES) {
     it(c.name, () => {
-      expect(buildAreaStrategy(c.ctx)).toEqual(c.want);
+      expect(docOf(c.ctx)).toEqual(rewriteV3ToV4(c.want3, resolver));
     });
   }
 });
