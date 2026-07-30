@@ -1,6 +1,6 @@
 # Config v4 — execution plan
 
-> **Status: ACTIVE (started 2026-07-22; Phases 0–11 shipped, Phase 12 in progress).** The _rationale_ is
+> **Status: ACTIVE (started 2026-07-22; Phases 0–12 shipped, Phase 13 next).** The _rationale_ is
 > [config-v4-clean-sheet.md](config-v4-clean-sheet.md) — the canonical design doc and the source of the
 > finish-line checklist (§4.8 "What dies"). This file is the _execution_ plan: what has landed, what is
 > still legacy, and the phases that finish the job.
@@ -14,25 +14,25 @@
 > yet done, and every trap that would otherwise be re-learned (**Traps and rules** — read it before
 > touching a migration).
 
-## ▶ NEXT ACTION — the terminal window, split into **three** PRs
+## ▶ NEXT ACTION — Phase 13, kill the handle
 
-**Every slice except the terminal window is DONE.** A, A2, B, C, D, E, F, G, H, **M**, **K1/K2/K3** all
-shipped; migrations **0030–0049** are applied to prod `sydney` and `liveone-dev`; **`lib/systems-manager.ts`
-is deleted**; FKs into `point_info` and `polling_status` are **0**, and into `systems` exactly **3**
-(`point_info`, `polling_status`, `sessions`). No outstanding migration debt.
+**Phase 12 is COMPLETE (2026-07-30).** `systems`, `point_info` and `polling_status` are **dropped** from
+prod `sydney` and `liveone-dev`; both are at **52 migrations, `inSync`**. `SystemsManager` and the dark
+mirror are gone, `scripts/config-v4/` is deleted, and `sessions`/`observations_outbox` are keyed on
+`device_rid`. No outstanding migration debt.
 
-Remaining, in order — **1a → 1b → 2**:
+Start at [Phase 13](#phase-13--kill-the-handle-typeid-native-serve-path). Its first move is the
+inventory the phase was never given, **re-measured on `main` after Phase 12's deletions**:
+`legacySystemId` is **110 occurrences / 46 files** (the plan's 186 is stale — Phase 12 removed a third
+of them), `isAreaHandle` 21/9, `getViewableSystem` 7/2, `synthesizeAreaView` 4/1, `AREA_HANDLE_BASE` 2/1,
+and the KV integer keyspace is **41 sites**. The `systems`→`devices` rename touches **273 files**.
 
-- **1a** — the writer keystone, no DDL: `DeviceWriter` → `devices`/`areas`, `v4-mirror.ts` deleted
-  (8 production consumers). Carries the **create-path** risk.
-- **1b** — `point_info` → `points`, no DDL: 24 conversions + the `getReference` re-grammar +
-  `lib/readings/dao.ts:460,472`. Carries the **authz** risk.
-- **2** — the window itself: the two renames, the three drops, migration **0050**, slice L.
+**Two things Phase 12 leaves on the floor for 13 to pick up**, both deliberate:
 
-**Why three and not one.** The plan's own drop rule already requires the code half live in prod before
-the drop migration applies — so a single PR does not avoid the deploy→DDL skew, it forces the riskiest
-stage to swallow it. Splitting **deletes** the skew rather than managing it, and 1a/1b carry different
-risks needing different proofs (a device-create drive vs a share-token set-equality proof).
+- **The KV keyspace is still integer** — `latest:system:N` / `subscriptions:system:N`. Slice E2b re-keyed
+  the subscription map's *source* key to point uuids but the outer key stayed integer by design.
+- **`updateLatestPointValue` still takes `(systemId, pointId, pointUid, …)`** — the ints cannot go while
+  the keyspace is integer-keyed.
 
 ---
 
@@ -53,6 +53,7 @@ the integer handle, or the dashboard write model. Those are still v3, with v4 al
 | 9 Post-cutover fixes        | prod→dev sync FK break (post-cutover `dashboards.id` is minted per-environment; only `legacy_id` is stable cross-env) + full `ar_` uniformity across `/api/areas/*`. |
 | 10 Scaffolding demolition   | **0036–0039**: `_old` hot tables + `backfill_progress` dropped (~4.2 GB/env), hot index names canonical, cutover pause disarmed, `db:pg:generate` trustworthy again. |
 | 11 Derivations              | **0040–0041**: run-tracking + HWS collapsed onto `derivations`; `device_trackers`/`device_run_periods` dropped.                                                  |
+| 12 **Registry cutover**     | **0043–0051**, finished 2026-07-30. `devices`/`points` are the only registry; `SystemsManager`, the dark mirror and `scripts/config-v4/` deleted; **`systems`, `point_info`, `polling_status` dropped**; `sessions`/`observations_outbox` on `device_rid`. Terminal window: ~11 min pause→drained, **no gap, no DLQ, no rollback**. |
 
 Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehearsal-harness.md),
 [config-v4-phase8-cutover.md](config-v4-phase8-cutover.md). Do not re-litigate them here.
@@ -61,10 +62,7 @@ Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehe
 
 | Legacy thing still live                                                                                  | Retired in |
 | ---------------------------------------------------------------------------------------------------------- | ---------- |
-| **Config registry is v3-primary** — `systems` 28 query sites / 23 files, `point_info` 40/20              | Phase 12   |
-| **The dark mirror is load-bearing** — `v4-mirror.ts` writes `points`/`devices` at every mint; deleting it re-opens defect **C7** (a new point gets no `points` row → the hot FK rejects its first reading → QStash poison pill) | Phase 12   |
-| **`SystemsManager`** — 464 lines, 66 importers, 78 `getInstance()` sites, the largest blast radius        | Phase 12   |
-| **The integer handle** — `areas.legacy_system_id`, 186 occurrences incl. inside `/api/v4/*`; `AREA_HANDLE_BASE` still allocates | Phase 13   |
+| **The integer handle** — `areas.legacy_system_id`, **110 occurrences / 46 files** (re-measured 2026-07-30) incl. inside `/api/v4/*`; `AREA_HANDLE_BASE` still allocates | Phase 13   |
 | **Virtual-system synthesis** — `synthesizeAreaView`, `getViewableSystem` (6 callers), `isAreaHandle` (2) | Phase 13   |
 | **KV is integer-keyed** — `latest:system:N` / `subscriptions:system:N` is the ONLY keyspace              | Phase 13   |
 | **`/api/data` is handle-addressed** — `?systemId=<int>`, payload `{system, latest}`                      | Phase 13   |
@@ -80,8 +78,8 @@ Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehe
    `point_info.index` + its allocator, tz/location on devices, `area_bindings.ordinal` + the int point
    pair, the synthesis, the ≥1,000,000 allocator, the KV integer keyspaces, the `"systemId.pointIndex"`
    ref grammar, `deviceSystemId` in descriptors.
-2. **No migration scaffolding.** `scripts/config-v4/` deleted, its `prebuild` wiring removed, the dark
-   mirror gone, one-shot backfills deleted.
+2. ~~**No migration scaffolding.**~~ ✅ **DONE (Phase 12)** — `scripts/config-v4/` deleted, its
+   `prebuild` wiring removed, the dark mirror gone, one-shot backfills deleted.
 3. **One shape, not two.** No `isDashboardV3`/`isDashboardV4` branch, no adapter, no rewriter, one card
    registry, one write surface.
 
@@ -90,229 +88,87 @@ Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehe
 `lib/registry/{registry-cache,device-registry}.ts`, and `scripts/check-readings-boundary.mjs` (the
 permanent seam wall).
 
-**Sequencing.** Phase 12 precedes 13 (the handle can't die while `SystemsManager` is the config API) and
-14 (the v4 mutation routes need `devices`/`points` as primary). Phase 14 is last and largest.
+**Sequencing.** Phase 12 (done) unblocked both: the handle could not die while `SystemsManager` was the
+config API, and the v4 mutation routes need `devices`/`points` as primary. **13 then 14**; 14 is last and
+largest.
 
 ---
 
-## Phase 12 — Registry cutover: `devices`/`points` become primary
+## Phase 12 — Registry cutover ✅ SHIPPED 2026-07-30
 
-**Goal:** make the v4 registries the only registry, retire `SystemsManager`, drop `systems`,
-`point_info`, `polling_status`, and delete the dark mirror.
+**`devices`/`points` are the only registry.** `SystemsManager`, `v4-mirror.ts` and `scripts/config-v4/`
+are deleted; `systems`, `point_info` and `polling_status` are dropped from both environments.
+Migrations **0043–0051**. Per-slice narratives are in git; what survives here is the terminal-window
+record and the findings that still bind.
 
-Ordered PRs off `main`, **not** one long branch — the code/DDL interleave has to land at merge points,
-and a long branch has none (the 0037 lesson). **[A]** additive → prod before the code merges.
-**[D]** drop → code merged and deployed first, then prod, then dev. **[C]** code-only.
+| Slice | What | Migration |
+| ----- | ---- | --------- |
+| A · A2 | v4 registries into the sync manifest; mint-only mirror leaks closed | [C] |
+| B · G · F · H | `rid` DEFAULTs; `roles` dies; `user_systems` dies; `area_devices`→`area_members` | 0043–0046 |
+| C | `device_state` becomes the polling writer/reader; `polling_status` frozen | [C] |
+| D | `pointForAddr` 17 → 2; `pointUid` a field on `PointInfo` | [C] ×2 |
+| E1 · E2a · E2b | `area_bindings` off the int pair onto `point_uid`; area-builder wire → `pt_` | 0047–0048 |
+| M | `points` primary; **five** `max(index)+1` allocators die; one `mintPoint()` | [C] |
+| K1 · K2 · K3 | `DeviceConfigRegistry`; 79 reads moved; **`lib/systems-manager.ts` DELETED** | [C] ×3 |
+| prep | 0049 floors `device_rid_seq`; legacy `N.M` address retired; tz leak closed | 0049 |
+| 1a · 1b | `DeviceWriter` → `devices`/`areas`, dark mirror dies; ~20 `point_info` readers → `points ⋈ devices` | 0050 |
+| **L + terminal** | two renames onto `device_rid`, **three DROPs**, scaffolding deleted (#296) | **0051** |
 
-### Slices shipped
+### Findings that still bind
 
-| Slice  | What                                                                                    | Migration |
-| ------ | ----------------------------------------------------------------------------------------- | --------- |
-| **A**  | v4 registries into the prod→dev sync manifest (they were never in it, and no longer dark) | [C]       |
-| **B**  | `points.rid`/`devices.rid` get `DEFAULT nextval(…)`; `setval(device_rid_seq, …)`          | 0043      |
-| **C**  | `device_state` becomes the polling writer + reader; `polling_status` frozen                | [C]       |
-| **G**  | `roles` dies; `area_bindings_role_check` is now the sole enforcement of the 6-role set     | 0044      |
-| **F**  | `user_systems` + `isViewer` die (prod table was empty)                                     | 0045      |
-| **A2** | Close the mint-only mirror leaks (`updatePoint`, `updateDashboard`, `updateSystem`)        | [C]       |
-| **H**  | `area_devices` → `area_members`                                                            | 0046      |
-| **D**  | `pointForAddr` **17 → 2** over two PRs; `pointUid` became a field on `PointInfo`           | [C] ×2    |
-| **E1** | The `area_bindings` writers populate `point_uid` — closed a live defect                    | [C]       |
-| **E2a**| 13 server-internal `area_bindings` readers onto `point_uid`                                 | 0047      |
-| **E2b**| the area-builder wire → `pt_` TypeIDs, KV map re-keyed by point uuid, writers + contract     | 0048      |
-| **M**  | `points` becomes primary; **five** `max(index)+1` allocators die; one `mintPoint()`           | [C]       |
-| **K1** | the `DeviceConfigRegistry` config-read layer + `devices.config.spec`                          | [C]       |
-| **K2** | 79 config reads onto it; two live writer leaks closed                                         | [C]       |
-| **K3** | area views onto `DeviceConfigRegistry`; **`lib/systems-manager.ts` DELETED**                  | [C]       |
-| **prep**| 0049 floors `device_rid_seq`; the legacy `N.M` point address retired; the tz leak closed     | 0049      |
+- **Slice D's headline correction.** `pointForAddr` was sized as the long pole and went 17 → 2 in two
+  PRs, because nearly every caller already held the uuid. `points` has **no counterpart to
+  `point_info.id`**, so it could never have been served from `points` at all. `SystemsManager` was the
+  real long pole.
+- **K was three PRs because `DeviceRegistry` had zero counterparts to any `SystemsManager` method** — it
+  is an *addressing* registry, so K was new code, never a rename. **Device-first precedence is LOCKED**
+  (`resolveHandle`'s docstring claimed area-first and was simply wrong).
+- **#291 — creating any device 500'd on prod** for three days since 0036, masked by an
+  `ON CONFLICT … coalesce` path. Surfaced only because K3 drove a *create* on dev.
+- **Slice M found a live C7 hole armed but not fired** — three of five point allocators never mirrored.
 
-Two of these carry findings that still bind:
+### The terminal window, as executed (2026-07-30)
 
-- **Slice D's headline correction.** The plan sized `pointForAddr` as the long pole (~18 sites, backing
-  store move). It was 17 → 2 in two PRs, because nearly every caller already held the uuid. The backing
-  store never had to move — `points` has **no counterpart to `point_info.id`** (the per-device index), so
-  `pointForAddr` cannot be served from `points` at all. **`SystemsManager` (slice K) is the real long
-  pole.** The 2 remaining sites are structural, not mechanical: an admin route whose **URL segment** is
-  the legacy address (Phase 13), and the receiver's `debug.reference` branch (slice M).
-- **The parity gate.** `scripts/config-v4/verify-slice-d-parity.ts` drives the real new code paths and
-  compares every identity against what `pointForAddr` would have returned. Baseline **451 identities, 0
-  mismatched** on `liveone-dev`. Extend it per PR; a conversion that _moves_ an identity is a bug, not a
-  new baseline. It survives slice M and dies in Phase 13 with the last `pointForAddr` caller.
+PR **#296** merged as `d16429fa`; **0051** applied to prod then dev. Pause → lag-0 in **~11 minutes**;
+**no data lost, no gap, no DLQ, no rollback**. Both environments post-checked on the catalog: three
+`to_regclass` NULL, `sessions.device_rid` present with `system_id` gone, the new FK **`convalidated`**,
+`device_rid_seq` 10001 ≥ max rid 10001, `point_rid_seq` 166 ≥ 134, 1,076,342 session rows intact,
+`db:pg:generate` → *No schema changes*.
 
-### Slice E (remaining) — `area_bindings` off the int pair
+Cheaper than planned in two ways worth reusing: **`parallelism` was already 1**, making the "set to 1
+then restore" steps no-ops; and the **Development-scope `OBSERVATIONS_QSTASH_TOKEN` controls the prod
+`observations` queue** (one Upstash account, queues namespaced by `NODE_ENV`), so pause/resume is a CLI
+operation and the Clerk-gated admin route is not needed.
 
-`area_bindings_point_info_fk` is **the only remaining FK into `point_info`** and is therefore the single
-sequencing constraint on the terminal `point_info` drop.
+**The pre-drop oracle was banked BEFORE the merge** — `verify-slice-k1-parity.ts` on prod at
+**16 handles / 288 checks / 0 divergences** — because the PR deletes it. Run a retiring oracle while it
+still exists, or you are improvising from a detached checkout with the queue paused.
 
-**Correction to this slice's own sizing.** The pair is not internal. It is also the area-builder's wire
-grammar (`components/area-builder/types.ts:75-82`) and the KV subscription map's key
-(`lib/kv-cache-manager.ts:97,162`) — both of which this plan assigned to Phase 13, and neither of which
-can live there: the pair's second half is `point_info.index`, whose allocator dies at slice M and whose
-table dies at the terminal window. The pair must die inside Phase 12.
-
-- ✅ **PR 2a DONE** ([#281](https://github.com/simonhac/LiveOne/pull/281)) — 13 server-internal readers
-  onto `point_uid`, including the two hand-written-`sql` sites and the `prod-dev-sync` conflict target
-  (which had to precede 0047's index re-base). Verified: 137/137 suites (1,341 tests), tsc clean on app
-  + `scripts/config-v4/`, `check:readings` green, `db:pg:generate` "No schema changes", parity gate at
-  **451 identities / 0 mismatched** — unchanged, so the conversion moved no identity. The two raw-SQL
-  sites were *driven* against dev, not compiled: `syncAreaBatteryConfigFromDevice` updated the owning
-  Area alone (3 non-owning Areas untouched), and the coverage lookup A/B'd 0-differing across all 12
-  bound device rids. Inventory corrections: `area-builder-smoke.ts` and
-  `point-manager-area-of-one-parity.test.ts` needed no change (the latter mocks empty bindings, so the
-  converted branch is unreachable), and two unlisted sites fell out — dead `powerPoint ? … : null`
-  branches in `battery-provenance-pg.ts` that non-null `bindingPoint` exposed.
-- ✅ **0047 APPLIED to BOTH environments (2026-07-29** — prod `sydney`, then `liveone-dev`). `point_uid`
-  SET NOT NULL; `area_bindings_point_info_fk` dropped; `area_bindings_unique` re-based onto
-  `(area_id, role, metric_type, point_uid)` and `area_bindings_point_idx` onto `(point_uid)`; both int
-  columns relaxed to NULLable. The re-based unique index is strictly *stronger*, not merely equivalent —
-  `point_uid` being NOT NULL means two bindings on one (area, role, metric) slot can no longer both slip
-  through as NULL-distinct — which is why `SET NOT NULL` runs **before** the index is created.
-
-  Pre-checked on prod directly under a short-TTL `pg_read_all_data` role (confirmed genuinely prod two
-  ways: the role username carried the `91nbdvyn5o2z` branch token, and `point_readings` was 0 min
-  behind, i.e. actively polling): **72/72 `point_uid` populated, 0 NULL, 0 disagreeing with the pair**,
-  and `area_bindings_point_info_fk` was the sole FK into `point_info`. Both environments post-checked on
-  the **database** rather than the migrate output: `point_uid` `attnotnull` true, the pair false/false,
-  **FKs into `point_info` = 0**, 72 rows preserved, both indexes re-based, `slot_priority_unique`
-  untouched, and the journal's newest hash `fc49ac9e…` byte-identical to local 0047. Ingest never
-  paused — readings stayed ~27 s behind across the prod apply. The parity gate re-ran post-DDL at
-  **451 identities / 0 mismatched**. Row inventories for both envs captured to `.context/backups/`
-  beforehand, since the guard's `RAISE NOTICE`s are swallowed. Temp roles deleted; **no `reassign` was
-  needed even though the migration CREATEs indexes — an index's owner always follows its table's**, so
-  they came out owned by `postgres`.
-- ✅ **PR 2b DONE** ([#284](https://github.com/simonhac/LiveOne/pull/284)) — the area-builder wire is
-  `pt_` end to end and `parseReference` is gone; the KV subscription map's **source key** is the point
-  uuid (its outer `subscriptions:system:N` key, `latest:system:N` and the stored `pointReference` stay
-  integer by design until Phase 13, and say so in a comment); `replaceBindings` reads points by uuid and
-  now validates membership against the **resolved** `point_info.system_id` rather than a caller-asserted
-  one. Corrections to the brief: `updateLatestPointValue` keeps `(systemId, pointId, pointUid, …)` —
-  dropping the ints is impossible while `latest:system:N` is integer-keyed; there are **six** production
-  call sites, not three (`hws/recompute` and `run-tracking/running-latest` hold no `PointInfo`); and
-  `getAreaBindings` had to gain a join because the source system id lived on a dropped column — it goes
-  through `points → devices.rid`, **not** `point_info`, because slice N drops `point_info` before Phase
-  13 retires the integer keyspace, and because both hops are FK-backed so neither can silently drop a
-  binding.
-- ✅ **0048 APPLIED to BOTH environments (2026-07-29).** Order matters and is the reusable part:
-  merge → deploy `Ready` → **rebuild the KV registry on both envs** → verify multi-device areas serving
-  fresh → apply prod → post-check → apply dev → post-check. All three guards were also run by hand on
-  prod first. Both envs: pair columns gone, 72 rows, 0 NULL `point_uid`, **0 FKs into `point_info`**,
-  journal hash `97aa697e…` matching local, `db:pg:generate` "No schema changes", parity gate **451/0**,
-  ingest 7 s behind throughout. The KV rebuild was verified by re-running the *same* query before and
-  after — prod's inner keys went `['4','5','6']` → uuids across 12 source systems. Final int-pair
-  inventories are in `.context/backups/`; **unlike 0047, 0048 destroys data not reconstructible from
-  the schema**, so those files plus PITR are the only copies.
-
-**Why two migrations:** both int columns are `NOT NULL` with no default, so the instant the writers stop
-naming them every binding INSERT fails until the drop. Expand/contract, not one flip.
-
-**No `point_uid` → `point_id` rename.** Catalog-only and tempting, but `pointId` meaning `int` in one
-commit and `uuid` in the next is a history hazard. It belongs with Phase 13/14's batch TypeID pass.
-
-### ✅ Slices M and K — SHIPPED
-
-**M** (#286) inverted the mint: `points` is primary, `point_info` the write-behind copy, identity from
-`points.rid`'s `nextval` DEFAULT (0043's, live at last), and `point_info.index = rid` — which killed the
-`max(index)+1` **scan and its race** outright. The plan said "the allocator"; there were **five**, and
-**three never mirrored** — a live C7 hole that was *armed but not fired* (the unmirrored writers last
-minted before `registry-populate` backfilled `points`). All now route through one `mintPoint()`.
-The legacy `"{systemId}.{pointIndex}"` observations grammar and its `debug.reference` producer are gone.
-
-**K** was three PRs, not one, because **`DeviceRegistry` had zero counterparts to any `SystemsManager`
-method** — it is an *addressing* registry, so K was never a rename: the config-read layer was new code.
-**K1** (#288) built `DeviceConfigRegistry` + `devices.config.spec`, retiring the free-text spec columns
-(the parse fixed a latent bug: the old regex required a space, so `11.9kW` silently produced no chart
-hint). **K2** (#289) moved 79 reads onto it and closed two live writer leaks. **K3** (#290) collapsed the
-area views (**device-first is LOCKED**; `resolveHandle`'s docstring claimed area-first and was wrong
-about the tree) and **deleted `lib/systems-manager.ts`**, relocating the four writers to `DeviceWriter`.
-
-**Pre-window prep** (#292): 0049 re-floors `device_rid_seq` (0043 had already floored it — a floor is
-point-in-time and drifts while a second allocator feeds the same column); the legacy `N.M` point address
-retired onto `pt_` TypeIDs, which took `pointForAddr`/`fillByAddrs` and `verify-slice-d-parity.ts` with
-it; and the **tz leak** closed — the ninth "wired at MINT, not at EDIT", and the one that showed **a NOT
-NULL column cannot be healed by a fill-if-NULL reconcile, because it never looks missing**.
-
-Also fixed along the way (#291): **creating any device 500'd on prod** since Phase 10's migration 0036.
-`ensureDeviceForHandle` filled `legacy_handles.device_id` with a uuid that had no `devices` row yet;
-existing handles survived on the `ON CONFLICT … coalesce` path, which is why it looked healthy. Found
-only because K3 exercised the **write** path on dev at the end of its slice.
-
-### The collapsed terminal window — slices I + J + L + N in one pass
-
-Designed 2026-07-29, replacing a staged expand/contract across 5 migrations. **Net cost: 1 PR, 1
-migration, 2 applies.**
-
-**Why the renames need no staging.** `devices.rid == systems.id` is asserted at three independent points
-(`v4-mirror.ts:26` and `ensureDeviceRow`, which inserts `rid` as literally `s.id`; `schema.ts:1004-1006`;
-the Phase 8 cutover doc). So `ALTER TABLE … RENAME COLUMN` is catalog-only, instant, no backfill.
-Expand/contract was buying protection against a value migration that does not exist.
-
-- `sessions.system_id` → `device_rid`; drop the old FK, add one → `devices.rid` **`NOT VALID` then
-  `VALIDATE`** so the `ACCESS EXCLUSIVE` window is catalog-only and the ~870K-row scan runs under
-  `SHARE UPDATE EXCLUSIVE`.
-- `observations_outbox.system_id` → `device_rid`. It has no FK — **do not add one**: an outbox is a
-  buffer, and an FK there turns a device delete into an ingest-path failure.
-
-**The pause mechanism SURVIVED Phase 10 — do not rebuild it.** Phase 10 removed only the KV-flag half.
-The QStash **queue pause** is live at `app/api/admin/observations/info/route.ts:80-86`
-(`{"action":"pause"|"resume"|"set-parallelism"}`, `GET` → `{paused, lag, parallelism}`). It stops
-_delivery_, not enqueue — this is how the entire us-east → Sydney move was done. **Do NOT try to drain
-the outbox to zero**: impossible while polling, and unnecessary.
-
-| #  | Step                                                                                                                                                                                                   | Gate                                                                                             |
-| -- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 0  | `pscale backup create` on `sydney` + confirm PITR. `gh workflow disable sync-prod-to-dev.yml`. Capture `GET /api/admin/observations/info` (record `parallelism`) and full row inventories to a local file. | backup id recorded                                                                               |
-| 1  | `POST …/observations/info {"action":"pause"}`                                                                                                                                                           | **G1**: `paused:true`, then `max(sessions.created_at)` and `max(point_readings.measurement_time)` static across 60 s |
-| 2  | **G2 — identity proof, ASYMMETRIC.** `systems`-without-`devices` → **0, hard abort**. `devices`-without-`systems` → **report only** (that is `deleteSystem`'s sanctioned orphan; a strict check aborts the window on a benign row). The `observations_outbox` leg is **advisory** — that column has no FK and none is added, so the rename cannot fail on it. | `systems`→`devices` 0, or **abort**; the rest reported |
-| 3  | **G3 — poison pill.** Unpublished outbox rows with any observation missing `pointUid` → 0. (Already asserted by slice M; this is the re-assert.)                                                          | 0, or **abort**                                                                                  |
-| 4  | **Merge + deploy the terminal build.**                                                                                                                                                                 | deploy `Ready` + aliased; `/api/health` 200                                                      |
-| 5  | **Apply to prod** (short-TTL role, `ALTER ROLE CURRENT_USER SET lock_timeout = '5s'`).                                                                                                                  | migrator exits 0                                                                                 |
-| 6  | **G4 — post-check the DATABASE:** `to_regclass` NULL ×3; `sessions` has `device_rid` and not `system_id`; the new FK present **and `convalidated`**; `device_rid_seq.last_value` ≥ old `max(systems.id)`; `point_rid_seq` ≥ `max(points.rid)`. | all pass                                                                                         |
-| 7  | `set-parallelism` 1, then resume. Watch the first delivered message land.                                                                                                                               | a new `sessions` row with `device_rid`; `point_readings` advancing                                |
-| 8  | Restore parallelism; `lag` → 0; DLQ empty.                                                                                                                                                             | lag 0, DLQ empty                                                                                 |
-| 9  | **G5 — continuity.** Gap-check `point_readings` across the window.                                                                                                                                     | no gap > the vendor's own interval                                                               |
-| 10 | Apply to `liveone-dev`, re-run G4, re-enable the sync workflow, watch one dispatch go green. Delete temp roles.                                                                                          | sync green                                                                                       |
-
-**Extra guards the migration must carry** (measured on prod 2026-07-30, all currently clean):
-zero `point_info`↔`points` drift and zero orphans either way (134 pairs / 0 / 0 across every column
-including `rid`); every `sessions` row resolving to a `devices.rid`; and **`systems.status` conforming to
-`devices_status_check IN ('active','disabled','removed')`** — `systems.status` is unconstrained text, so a
-non-conforming value is one that *cannot move*. Preconditions read the **catalog**, never the journal.
-
-**DDL order inside the migration** (one transaction — drizzle wraps all pending files):
-(1) guard block re-asserting G2's three counts with `RAISE EXCEPTION` — the only version of the check
-that cannot be raced between probe and apply; (2) `sessions` rename → drop old FK → add new `NOT VALID`
-→ `VALIDATE`; (3) `observations_outbox` rename; (4) `DROP TABLE polling_status`, then `point_info`, then
-`systems` — **no `CASCADE` on any of them**; (5) `setval` for `device_rid_seq` and `point_rid_seq`,
-floored with `greatest(…)`, **last, after every guard** — `setval` is not transactional, so a stranded
-one must be a no-op, not a corruption.
-
-**The one unrecoverable loss path is stopped pollers** — vendors serve _latest_, not history, so a 2-hour
-stop is 2 hours gone forever. `CRONS_ENABLED` stays `true` throughout; positive mid-window check is
-`max(device_state.last_poll_time)` seconds old with `total_polls` climbing. During the deploy→DDL skew
-`persistOutbox` will fail (the new build writes `device_rid` before the column exists) and is
-_deliberately_ swallowed — that is fine, because the direct QStash enqueue is independent and the paused
-queue buffers it. Keep steps 4→5 under ~10 min and confirm queue `lag` is still **climbing**; a flat lag
-means the direct leg is failing too, which is an abort.
-
-**Extra code items, easy to miss:** `lib/areas/handles.ts:31-33` (`allocateAreaHandle` reads
-`max(systems.id)`); `app/api/observations/receive/route.ts:52-58` (`isSystemFiveMinuteNative` selects
-`systems.vendor_type` → must read `devices.vendor`); `lib/readings/prod-dev-sync.ts:129,270` and
-`lib/readings/preview-seed.ts:73-90`; `package.json:14,16` (the `prebuild` `tsc` step goes with
-`scripts/config-v4/`).
-
-**Done when:** zero query sites against any dropped table; `SystemsManager` deleted; a real poll →
-publish → receive → aggregate → serve cycle green on `liveone-dev` **including a newly minted point**
-(the C7 case); `db:sync-dev-db` exits 0 with every orphan-FK check at 0; `check:readings` green.
-
----
+**Non-findings, recorded so they are not re-chased:** ~24-min gaps on points 76–83 are a pre-existing
+vendor pattern recurring every 8–12 h; future-dated `point_readings_agg_5m` rows are **Amber forecasts**,
+which Amber writes into the 5m agg table by design.
 
 ## Phase 13 — Kill the handle: TypeID-native serve path
 
 **Goal:** delete `areas.legacy_system_id` and everything that reads an integer as an address. Depends on
-Phase 12 (`DeviceRegistry` must already be the config API). One page by design — the owning agent
-develops the detail.
+Phase 12 (`DeviceRegistry` must already be the config API).
+
+📋 **The detail now exists: [config-v4-phase13-prs.md](config-v4-phase13-prs.md)** — six PRs, each with a
+measured inventory, steps, its own proof, and a Do-NOT list. Written 2026-07-30 from a fresh sweep of the
+post-Phase-12 tree. **Two things in the bullets below are wrong and that file corrects them:**
+
+- 🛑 **"Delete the synthesis" CANNOT go first, and is NOT behaviour-preserving.** Multi-device areas have
+  no `devices` row and are served *only* through the synthesized view. Four handles depend on it (7, 8,
+  1000001, 1000002) and handle 13 is a device/area collision. The area-native wire must land first.
+- 🛑 **`getViewableSystem` no longer exists** — slice K3 renamed it `viewableByHandle`. And
+  `AREA_HANDLE_BASE`/`allocateAreaHandle` are the *write-side allocator*, not the synthesis; they die
+  with the column, not with it.
+- The drop itself is **provably lossless** (`legacy_handles` covers 22/22 areas) but is preceded by ~55
+  reader conversions **and a prod→dev sync drift-key rewrite** — 16 of 22 areas have a NULL `slug`, so
+  the fallback unique key cannot carry it.
 
 - **Delete the synthesis** — `synthesizeAreaView`, `getViewableSystem`, `isAreaHandle`,
-  `AREA_HANDLE_BASE`, `allocateAreaHandle`; route the 8 remaining call sites through
+  `AREA_HANDLE_BASE`, `allocateAreaHandle`; route the remaining call sites through
   `DeviceRegistry.resolveHandle`. **Precedence is device-first (locked)**, which is what today's
   real-row-first code already does, so this is behaviour-preserving. Keep
   `point-manager-area-of-one-parity.test.ts` as the gate.
@@ -322,7 +178,7 @@ develops the detail.
 - **Move the KV keyspace** to `latest:device:{dv_…}` / `latest:area:{ar_…}`; the SCAN regex requires
   `(\d+)` and must change with it. KV is disposable — rebuild rather than migrate.
 - **The `systems`→`devices` code rename** — the URL cluster (~4,576 lines / 21 files) plus
-  `point-manager.ts`. Mechanical but wide: ~296 files mention a config-sense `system`.
+  `point-manager.ts`. Mechanical but wide: **273 files** mention a config-sense `system`.
 - **Drop `areas.legacy_system_id`**; keep `legacy_handles`. Fold the handle-era classes in
   `lib/identifiers/` that lose their callers — but **leave `logical-path.ts` and `point-uid.ts` alone**,
   they are orthogonal and still widely used.
@@ -405,6 +261,18 @@ Each was learned by breaking something; they are why the shipped narratives coul
   that cannot be raced between probe and apply. Never `CASCADE` a drop: an unexpected dependent must
   abort, not vanish. And **`db:pg:migrate` swallows `RAISE NOTICE`**, so capture inventories by hand
   first or the record is lost.
+- 🛑 **A ROW-COUNT inventory is not a backup.** The banked pre-0051 inventory held counts and a
+  `systems` id list — not what the tables *contained*. Before an irreversible drop, take a real
+  `pg_dump --data-only` of every doomed table (it took seconds; 134 + 16 + 11 rows, 66 KB). Write it
+  under gitignored `.context/` — this dump carries serials and vendor ids and the repo is public.
+- 🛑 **A QStash queue pause is EVENTUALLY CONSISTENT, in both directions — a DB watermark is the wrong
+  instrument for detecting when it took hold.** Pausing, then immediately sampling
+  `max(sessions.created_at)` over 62 s, showed both watermarks *advancing* — which reads exactly like
+  "the pause failed, there is a second write path," and nearly sent the window hunting a bypass that
+  does not exist. Already-dispatched messages keep landing for **1–2 minutes** after the API returns
+  200; the same lag applies on resume (45 s of apparent silence before deliveries flow). **Wait ~90 s
+  after pause or resume, and confirm against the QStash event log (`GET /v2/logs` — last `DELIVERED`,
+  then `CREATED`-only), not against the database.**
 - 🛑 **Never `pscale role reset-default` on prod.** It rotates the `postgres` password prod's
   Production-scope vars carry, and Vercel captures env at deploy time — prod 500s until redeployed.
   Unnecessary for a `[D]` slice: a drop migration creates no objects, so a temp role owns nothing.
@@ -415,8 +283,9 @@ Each was learned by breaking something; they are why the shipped narratives coul
   directly under a short-TTL read-only role, and confirm it really is prod two ways (the role username
   carries the prod branch token; `max(measurement_time)` is ~0 min behind, since dev's crons are off).
 - ⚠️ **Hand-written `sql` fragments are invisible to tsc** — a rename or drop breaks them silently, so
-  they must be *driven*, not compiled. (Bit slice H.) Likewise `scripts/config-v4/` is type-checked by
-  `prebuild`, so a stale reference there fails the **Vercel build**, not just a local script.
+  they must be *driven*, not compiled. (Bit slice H.) **This is the single most reliable failure mode of
+  the whole migration — it bit six times in Phase 12 alone**, most recently two raw-SQL strays that
+  survived a green `tsc` and the full suite. Re-run the raw-SQL grep by hand before every drop.
 - ⚠️ **Read the producer, not the consumer, before sizing a conversion.** Three of slice D PR 2's six
   sites already held the uuid and were never blocked at all.
 - ⚠️ **A DELETE predicate must be driven POSITIVELY.** It fails silently in both directions —
@@ -463,10 +332,13 @@ Each was learned by breaking something; they are why the shipped narratives coul
 - ⚠️ **A mocked query-builder chain encodes arity**, so re-shaping a query is a test change by
   construction — a stale chain returns `undefined` and yields zero rows *silently*. If re-shaping a
   query did not require touching its mock, the mock is not asserting anything.
-- 🛑 **`scripts/config-v4/reconcile-device-state.ts` is SPENT** — a pre-flip tool whose direction is now
-  backwards (`polling_status` is frozen while `device_state` advances), so `--commit` would rewind live
-  counters. Its drift report is equally spent: post-flip the tables are _supposed_ to diverge. Check the
-  writer by reading `device_state` directly.
+- 🛑 **A pre-flip reconcile tool REVERSES direction the moment the flip lands, and its drift report
+  inverts with it.** `reconcile-device-state.ts` would have rewound live counters post-flip, because
+  `polling_status` was frozen while `device_state` advanced — and post-flip the two are *supposed* to
+  diverge, so its report read as alarming when it was correct. Delete such a tool at the flip; a spent
+  one-shot that still runs is worse than no tool. (Both it and the completed one-off backfills went with
+  `scripts/config-v4/` in the terminal window — they could not have been "left alone", since they stop
+  compiling once their tables leave `schema.ts`.)
 
 ## Open follow-up — run-interval statistics assume the signal IS power
 
