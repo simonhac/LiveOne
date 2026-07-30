@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
 import {
   resolveWireAddress,
   subjectDisplayTimezone,

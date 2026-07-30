@@ -10,7 +10,6 @@
  * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
  */
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
-import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
 import { SeriesInfo, getSeriesPath } from "@/lib/point/series-info";
 import { HistoryDebugInfo, registerSeries } from "@/lib/history/history-debug";

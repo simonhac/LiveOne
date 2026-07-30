@@ -25,12 +25,10 @@ import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
 import {
   DeviceConfigRegistry,
-  type DeviceConfigView,
 } from "@/lib/registry/device-config";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
-import { getAreaForSystem } from "@/lib/areas/resolve";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import {
