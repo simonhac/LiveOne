@@ -50,7 +50,9 @@ export function buildOutboxRows(
   messages: QueueMessage[],
 ): NewObservationsOutbox[] {
   return messages.map((message, seq) => ({
-    systemId: message.systemId,
+    // config-v4 Phase 12 terminal window: the column is `device_rid` now. Rename only — NO FK, and none
+    // is to be added: an FK on a buffer would turn a device delete into an ingest-path failure.
+    deviceRid: message.systemId,
     sessionId: message.session?.sessionId ?? null,
     seq,
     payload: message,

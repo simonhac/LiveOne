@@ -347,7 +347,7 @@ export class SessionManager {
     return {
       id: r.sessions.id,
       sessionLabel: r.sessions.sessionLabel,
-      systemId: r.sessions.systemId,
+      systemId: r.sessions.deviceRid,
       vendorType: r.devices.vendor,
       systemName: r.devices.name,
       cause: r.sessions.cause,
@@ -380,7 +380,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
+        .innerJoin(pgDevices, eq(pgSessions.deviceRid, pgDevices.rid))
         .where(before ? lt(pgSessions.createdAt, before) : undefined)
         .orderBy(desc(pgSessions.createdAt))
         .limit(limit);
@@ -407,7 +407,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
+        .innerJoin(pgDevices, eq(pgSessions.deviceRid, pgDevices.rid))
         .orderBy(desc(pgSessions.createdAt))
         .limit(limit);
 
@@ -431,7 +431,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
+        .innerJoin(pgDevices, eq(pgSessions.deviceRid, pgDevices.rid))
         .where(eq(pgSessions.sessionLabel, label))
         .orderBy(desc(pgSessions.createdAt))
         .limit(100); // Cap at 100 results per label
@@ -456,7 +456,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
+        .innerJoin(pgDevices, eq(pgSessions.deviceRid, pgDevices.rid))
         .where(eq(pgSessions.id, sessionId))
         .limit(1);
 
@@ -580,7 +580,7 @@ export class SessionManager {
       const results = await planetscaleDb
         .select()
         .from(pgSessions)
-        .innerJoin(pgDevices, eq(pgSessions.systemId, pgDevices.rid))
+        .innerJoin(pgDevices, eq(pgSessions.deviceRid, pgDevices.rid))
         .where(whereClause)
         .orderBy(orderByClause)
         .limit(pageSize)
@@ -590,7 +590,7 @@ export class SessionManager {
       const sessionsWithoutResponse = results.map((r) => ({
         id: r.sessions.id,
         sessionLabel: r.sessions.sessionLabel,
-        systemId: r.sessions.systemId,
+        systemId: r.sessions.deviceRid,
         vendorType: r.devices.vendor,
         systemName: r.devices.name,
         cause: r.sessions.cause,

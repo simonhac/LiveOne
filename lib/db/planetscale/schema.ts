@@ -598,7 +598,11 @@ export const observationsOutbox = pgTable(
   "observations_outbox",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    systemId: integer("system_id").notNull(),
+    // config-v4 Phase 12 terminal window (migration 0051): renamed `system_id` -> `device_rid`.
+    // ⚠️ NO FK, and none is to be added. An outbox is a BUFFER: an FK here would turn a device delete
+    // into an ingest-path failure, and a stale published row for a since-deleted device would become a
+    // migration blocker. Reachability into `devices` is therefore ADVISORY, never gating.
+    deviceRid: integer("device_rid").notNull(),
     // NULL for the no-collector publishObservationBatch path (no session).
     sessionId: text("session_id"),
     // Chunk index within a poll's multi-message set (0 for single-message paths).
@@ -619,9 +623,10 @@ export const observationsOutbox = pgTable(
       .on(table.createdAt)
       .where(sql`published_at IS NULL`),
     // Dedup poll-path rows on publish retry. publishObservationBatch rows have no
-    // session, so the unique only covers session-bearing rows.
+    // session, so the unique only covers session-bearing rows. Its NAME carries no column reference, so
+    // 0051 deliberately leaves it alone — only `sessions_system_idx` needed a hand rename.
     sessionSeqUnique: uniqueIndex("outbox_session_seq_unique")
-      .on(table.systemId, table.sessionId, table.seq)
+      .on(table.deviceRid, table.sessionId, table.seq)
       .where(sql`session_id IS NOT NULL`),
   }),
 );
