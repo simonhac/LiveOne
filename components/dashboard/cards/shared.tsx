@@ -10,17 +10,55 @@ import { useModalContext } from "@/contexts/ModalContext";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { DeviceConfig } from "@/lib/capabilities/config";
 
-/** The slice of the `dashboardDataQuery` payload the cards read. */
+/**
+ * The slice of the `dashboardDataQuery` payload the cards read.
+ *
+ * config-v4 Phase 13 PR 1: the payload is DISCRIMINATED — `device` for a real device, `area` for an
+ * Area served as an Area (previously both arrived as `system`, an Area via `synthesizeAreaView`'s
+ * device-shaped fabrication). Cards read the shared fields through {@link subjectOf}; only a card that
+ * genuinely needs device hardware (`vendorType`, `vendorSiteId`, `config`) narrows on `datum.device`,
+ * and those fields are simply ABSENT for an area — as they were `null`/`"area"` filler before.
+ */
 export interface AreaDatum {
-  system?: {
+  device?: {
     id: number;
+    deviceId: string;
     vendorType: string;
     vendorSiteId: string | null;
     timezoneOffsetMin: number;
     displayTimezone: string | null;
     config?: DeviceConfig | null;
   };
+  area?: {
+    id: number;
+    areaId: string;
+    timezoneOffsetMin: number;
+    displayTimezone: string | null;
+  };
   latest?: LatestPointValues;
+}
+
+/** The subject fields common to both legs — the drop-in replacement for the old `datum?.system`. */
+export interface AreaDatumSubject {
+  id: number;
+  timezoneOffsetMin: number;
+  displayTimezone: string | null;
+  /** Device-only; undefined for an Area (was the `"area"` sentinel). */
+  vendorType?: string;
+  /** Device-only; undefined for an Area (was `"area:{handle}"`). */
+  vendorSiteId?: string | null;
+  /** Device-only; undefined for an Area (was `null`). */
+  config?: DeviceConfig | null;
+}
+
+/**
+ * Device-first, matching the server's `?systemId=` precedence (trap D-l). A payload never carries both
+ * legs, so the order is documentation of intent rather than a tie-break.
+ */
+export function subjectOf(
+  datum: AreaDatum | null | undefined,
+): AreaDatumSubject | undefined {
+  return datum?.device ?? datum?.area;
 }
 
 /**

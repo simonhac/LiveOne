@@ -12,6 +12,17 @@
  *   - settled (explicit start/end)  → `${start}_${end}`.
  */
 
+/**
+ * A subject's cache identity. `number` is the permanent integer handle (`?systemId=`); `string` covers
+ * both its stringification and a wire-native TypeID (`dv_…` / `ar_…`), so a caller that already holds a
+ * TypeID can key off it directly rather than round-tripping through a handle.
+ *
+ * 🛑 The key and the WIRE ADDRESS must move together. `dashboardDataBatchQuery` seeds
+ * `queryKeys.data(id)` from the `{data: {[id]: …}}` map that `/api/data?systemId=a,b` returns — if the
+ * request's id grammar and the key's disagree, the seed lands under a key nobody reads (a silent miss,
+ * not a compile error), or under one already holding a different payload shape. That is why the batch
+ * leg is deliberately `systemId`-only.
+ */
 export type SystemIdLike = number | string;
 
 const sid = (systemId: SystemIdLike) => String(systemId);
@@ -29,6 +40,12 @@ export const queryKeys = {
    *  prefer the per-resource keys below. Kept for predicate-style sweeps. */
   all: ["system"] as const,
 
+  /**
+   * `/api/data` — the discriminated `{device|area, latest}` payload (config-v4 Phase 13 PR 1). The key
+   * did NOT need a shape-version bump with that rename: there is no query-client persister in this app
+   * (grep `persistQueryClient`), so every cache entry is created and read by ONE build — including the
+   * SSR seed, which `getSystemDataForCache` writes under this same key from the same build.
+   */
   data: (systemId: SystemIdLike) => ["data", sid(systemId)] as const,
 
   /** `ids` must already be deduped + sorted (see `dashboardDataBatchQuery`) so the key is stable

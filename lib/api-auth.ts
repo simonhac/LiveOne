@@ -10,6 +10,10 @@ import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
 import type { ServerTimer } from "@/lib/server-timing";
+import {
+  subjectForHandle,
+  type ServingSubject,
+} from "@/lib/dashboard/subject";
 
 // Authorization result with context
 export interface AuthContext {
@@ -179,11 +183,36 @@ export async function requireSystemAccess(
 // Dashboard access context — like a read-only SystemAuthContext but userId may be null when access
 // is granted via a public per-dashboard share token.
 export interface DashboardAuthContext {
+  /**
+   * What the request is about, area-natively (config-v4 Phase 13 PR 1). The serving path reads THIS.
+   */
+  subject: ServingSubject;
+  /**
+   * The legacy device-shaped view — an Area still arrives here as `synthesizeAreaView`'s fabrication.
+   * Retained only for the readers PR 2 repoints (`/api/history`'s series layer, run-periods); it is
+   * always the DEVICE-FIRST resolution of the same handle, so it can never disagree with `subject`.
+   */
   system: DeviceConfigView;
   userId: string | null;
   canRead: boolean;
   canWrite: boolean;
   viaShareToken: boolean;
+}
+
+/**
+ * The `ServingSubject` for a handle whose device-shaped view has already resolved.
+ *
+ * Device-first, deliberately: `viewableByHandle` (device-first, LOCKED) is what produced `view`, so any
+ * other precedence here would describe a different entity than the one just authorized. Both legs go
+ * through the same per-request-memoized readers, so this costs no extra round trip. Trap D-l.
+ */
+async function subjectFor(handle: number): Promise<ServingSubject> {
+  const subject = await subjectForHandle(handle, "device");
+  if (!subject) {
+    // Unreachable: `viewableByHandle` already resolved this handle through the same two readers.
+    throw new Error(`handle ${handle} resolved a view but no serving subject`);
+  }
+  return subject;
 }
 
 /**
@@ -215,6 +244,7 @@ export async function requireDashboardAccess(
           const system = await DeviceConfigRegistry.viewableByHandle(systemId);
           if (system) {
             return {
+              subject: await subjectFor(systemId),
               system,
               userId: null,
               canRead: true,
@@ -246,6 +276,7 @@ export async function requireDashboardAccess(
     if (!canRead && !ctx.userId) return unauthorized();
     if (!canRead) return forbidden("No access to this area");
     return {
+      subject: await subjectFor(systemId),
       system: view,
       userId: ctx.userId ?? null,
       canRead: true,
@@ -267,6 +298,7 @@ export async function requireDashboardAccess(
       const system = await DeviceConfigRegistry.viewableByHandle(systemId);
       if (system) {
         return {
+          subject: await subjectFor(systemId),
           system,
           userId: ctx.userId,
           canRead: true,
@@ -278,6 +310,7 @@ export async function requireDashboardAccess(
     return result;
   }
   return {
+    subject: await subjectFor(systemId),
     system: result.system,
     userId: result.userId,
     canRead: result.canRead,

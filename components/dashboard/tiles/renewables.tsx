@@ -7,7 +7,10 @@ import Tile from "@/components/Tile";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
 import { getPointValue, getMeasurementTime } from "./shared";
-import { useAreaDatum } from "@/components/dashboard/cards/shared";
+import {
+  subjectOf,
+  useAreaDatum,
+} from "@/components/dashboard/cards/shared";
 import { siteDataQuery } from "@/lib/queries";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { reduceRenewablesMetrics } from "@/lib/renewables/summary";
@@ -72,7 +75,7 @@ function RenewablesTile({
   staleThresholdSeconds,
 }: TileRenderProps) {
   const { datum, paused } = useAreaDatum(systemId ?? 0);
-  const tz = datum?.system?.timezoneOffsetMin ?? 600;
+  const tz = subjectOf(datum)?.timezoneOffsetMin ?? 600;
 
   // Freshness of the site's live feed (like the sibling tiles) — without a measurementTime the Tile
   // treats the tile as permanently stale and paints the diagonal "stale" hatch + dims it.

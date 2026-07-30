@@ -8,12 +8,12 @@
  */
 import DeviceMetricsCard from "@/components/DeviceMetricsCard";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { staleThreshold, useAreaDatum } from "./shared";
+import { staleThreshold, subjectOf, useAreaDatum } from "./shared";
 
 function AreaDeviceMetrics({ card, handle }: CardRenderProps) {
   const systemId = card.deviceSystemId ?? handle!;
   const { datum } = useAreaDatum(systemId);
-  const system = datum?.system;
+  const system = subjectOf(datum);
   return (
     <DeviceMetricsCard
       systemId={systemId}

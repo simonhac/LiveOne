@@ -15,7 +15,7 @@ function OeGridTile({ data }: TileRenderProps) {
   const values = gridLatestFromData(data);
   if (!values) return null;
   const siteId = (data as { system?: { vendorSiteId?: string | null } } | null)
-    ?.system?.vendorSiteId;
+    ?.device?.vendorSiteId;
   const region = siteId && isNemRegion(siteId) ? siteId : null;
   return (
     <GridSignalsCard

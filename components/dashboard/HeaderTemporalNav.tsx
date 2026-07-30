@@ -8,7 +8,10 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { dashboardDataQuery } from "@/lib/queries";
-import type { AreaDatum } from "@/components/dashboard/cards/shared";
+import {
+  subjectOf,
+  type AreaDatum,
+} from "@/components/dashboard/cards/shared";
 import TemporalNavigator from "@/components/TemporalNavigator";
 
 export function HeaderTemporalNav({
@@ -24,7 +27,7 @@ export function HeaderTemporalNav({
   // tz only drives the label + prev/next encoding; decode uses the URL's own offset, so an initial
   // default self-corrects. 600 = AEST, matching the cards' fallback.
   const tz =
-    (data as AreaDatum | undefined)?.system?.timezoneOffsetMin ??
+    subjectOf(data as AreaDatum | undefined)?.timezoneOffsetMin ??
     timezoneOffsetMin ??
     600;
   return <TemporalNavigator timezoneOffsetMin={tz} />;
