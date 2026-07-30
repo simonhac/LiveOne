@@ -20,7 +20,7 @@
  *
  * ## Shape (one transaction)
  *
- *   ensureDeviceRow → upsert `points` (allocates id + rid) → upsert `point_info` (index = rid = points.rid,
+ *   resolve device uuid → upsert `points` (allocates id + rid) → upsert `point_info` (index = rid = points.rid,
  *   point_uid = points.id) → `mirrorPoint` to reconcile the descriptive columns.
  *
  * The trailing `mirrorPoint` matters when a `point_info` row already existed with user-customised
@@ -42,11 +42,8 @@ import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { pointInfo, points } from "@/lib/db/planetscale/schema";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
-import {
-  ensureDeviceRow,
-  mirrorPoint,
-  toMirrorPointInput,
-} from "@/lib/registry/point-mirror";
+import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
+import { DeviceRegistry } from "@/lib/registry/device-registry";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 export type PointInfoDbRow = typeof pointInfo.$inferSelect;
@@ -117,7 +114,10 @@ export async function mintPoint(
 
   const doMint = async (pointUid: string): Promise<PointInfoDbRow> =>
     db.transaction(async (tx) => {
-      const deviceId = await ensureDeviceRow(systemId, tx);
+      // Slice 1a: resolves the device uuid instead of ensuring (mirroring) the `devices` row. `devices`
+      // is the registry now, so minting a point against a handle that has no device row is an error —
+      // `uuidForRid` throws and aborts the tx rather than conjuring a device from a `systems` row.
+      const deviceId = await DeviceRegistry.uuidForRid(systemId, tx);
 
       // PRIMARY write: `points` allocates BOTH identities — `id` (the uid) and `rid` (from its own
       // sequence DEFAULT). DO UPDATE rather than DO NOTHING so the existing row is RETURNED on conflict.

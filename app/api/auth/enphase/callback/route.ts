@@ -3,6 +3,7 @@ import { getEnphaseClient } from "@/lib/vendors/enphase/enphase-client";
 import { storeEnphaseTokens } from "@/lib/vendors/enphase/enphase-auth";
 import { clerkClient } from "@clerk/nextjs/server";
 import { DeviceWriter } from "@/lib/registry/device-writer";
+import type { AreaLocation } from "@/lib/areas/types";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 async function getUserDisplay(userId: string): Promise<string> {
@@ -150,10 +151,24 @@ export async function GET(request: NextRequest) {
         status: "active",
         displayName: enphaseSystem.name || "Enphase System",
         model: "Enphase IQ",
-        solarSize: enphaseSystem.system_size
-          ? `${(enphaseSystem.system_size / 1000).toFixed(1)} kW`
-          : null,
-        location: enphaseSystem.address || null, // Store the address object directly
+        // Slice 1a: goes straight to the structured `config.spec`. Enphase reports `system_size` in
+        // WATTS, so pre-1a this formatted it into the free text `"5.4 kW"` purely so the mirror's SQL
+        // could parse it back out into `spec.solarSizeKw`. The string round-trip is gone, but the
+        // `toFixed(1)` ROUNDING is kept deliberately — dropping it would change the stored value for
+        // every Enphase device (5432 W read 5.4, not 5.432), which is a data change dressed as a
+        // cleanup. `> 0` reproduces `specNum`'s rejection of non-positive values.
+        config:
+          enphaseSystem.system_size && enphaseSystem.system_size > 0
+            ? {
+                spec: {
+                  solarSizeKw: Number(
+                    (enphaseSystem.system_size / 1000).toFixed(1),
+                  ),
+                },
+              }
+            : null,
+        // See the cast note on the update path below — same reason, same pre-1a behaviour.
+        location: (enphaseSystem.address ?? null) as AreaLocation | null,
         timezoneOffsetMin,
         displayTimezone,
       });
@@ -180,7 +195,14 @@ export async function GET(request: NextRequest) {
       await DeviceWriter.updateSystem(existingSystem.id, {
         ownerClerkUserId: userId,
         displayName: enphaseSystem.name || existingSystem.displayName,
-        location: enphaseSystem.address || existingSystem.location, // Update location if available
+        // Slice 1a: `location` is now typed `AreaLocation` (it lands on `areas.location`) whereas it
+        // used to land in the untyped `systems.location` jsonb. Enphase's address has every field
+        // optional, so it does not satisfy `AreaLocation.country: string`. The cast preserves the exact
+        // pre-1a behaviour — `ensureAreaOfOne` cast this same value `as AreaLocation | null` when it
+        // copied it down — rather than inventing a country here. A partial address still reads fine:
+        // `region.ts` infers from `state`/`postcode` and tolerates a missing country.
+        location: (enphaseSystem.address ||
+          existingSystem.location) as AreaLocation | null,
         status: "active", // Reactivate the system if it was removed
       });
 
