@@ -57,7 +57,12 @@ export async function buildSeriesFromAggRows(
   allRows: AggRow[],
   seriesInfos: SeriesInfo[],
   interval: "5m" | "30m" | "1d",
-  system: DeviceConfigView,
+  /**
+   * The subject's UTC offset in minutes — the ONLY thing this builder ever read off the legacy
+   * device-shaped view it used to take (Phase 13 PR 2). An Area has a real offset of its own, so
+   * passing the number decouples this from `synthesizeAreaView`.
+   */
+  timezoneOffsetMin: number,
   firstEpoch: number,
   lastEpoch: number,
   debug?: HistoryDebugInfo,
@@ -260,8 +265,7 @@ export async function buildSeriesFromAggRows(
       `${series.point.index}/${series.point.metricType}`;
     const fullPath = `${pointPath}.${series.aggregationField}`;
 
-    // Format timestamps
-    const timezoneOffsetMin = system.timezoneOffsetMin ?? 600;
+    // Format timestamps (`timezoneOffsetMin` is now a parameter — see the signature)
     const startFormatted = formatTime_fromJSDate(
       new Date(firstEpoch),
       timezoneOffsetMin,

@@ -29,7 +29,7 @@ export interface BindingRef {
 /**
  * The point refs bound to the multi-device Area the integer `handle` names, ordered by
  * ordinal. Empty if no such Area / no bindings. Consumed by the area-native branch of
- * `PointManager._resolvePointsForViewable`.
+ * `PointManager._resolvePointsForHandle`.
  */
 export async function getAreaBindingRefs(
   handle: number,

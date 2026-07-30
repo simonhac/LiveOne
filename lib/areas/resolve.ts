@@ -2,7 +2,7 @@
  * Resolve the Area that represents a logical system. An Area is located by its integer addressing
  * handle: a single-device Area wraps one physical device (handle == its `devices.rid`); a multi-device
  * Area draws its points across child devices via `area_bindings` (the handle names no device of its
- * own — resolved as an area view by `DeviceConfigRegistry.viewableByHandle`). The single-vs-multi
+ * own — resolved area-natively by `DeviceConfigRegistry.areaByHandle`). The single-vs-multi
  * distinction is structural (membership), not a stored `kind`.
  *
  * ⚠️ **The handle map is `legacy_handles`, NOT `areas.legacy_system_id`** (config-v4 Phase 13 PR 5).

@@ -145,6 +145,18 @@ export async function getBindinglessAreaMemberPoints(): Promise<
         // `tsc` could not see, so it survived K2's sweep. `devices.rid` IS the device's integer handle
         // (the `devices.rid == systems.id` seam invariant, lib/registry/v4-mirror.ts), so this is the
         // same predicate against the surviving table.
+        //
+        // 🛑 **This is the SQL twin of the device-first dispatch in `PointManager`'s
+        // `_resolvePointsForHandle`, and it DELIBERATELY survives Phase 13 PR 2's deletion of
+        // `isAreaHandle`.** It is not a stray: this is a set-based sweep over every area at once, so it
+        // cannot call the per-handle memoized reader the TypeScript side uses without N+1 round trips.
+        // The two must stay in step — `NOT EXISTS (device with this rid)` here is exactly
+        // "`deviceByHandle` returned null" there. If one flips to area-first, so must the other, or the
+        // KV subscription registry will fan out points for a colliding handle that the serving path
+        // resolves device-first (trap D-l). `tsc` cannot see this coupling; only this comment can.
+        //
+        // The probed value is PR 5's `legacy_handles.handle`, not the dropped `areas.legacy_system_id`
+        // — same integer handle, read from the table that survives Phase 13.
         sql`NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = ${legacyHandles.handle})`,
         // binding-less: no area_bindings (those are covered by getAllCompositeBindings)
         sql`NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = ${areas.id})`,

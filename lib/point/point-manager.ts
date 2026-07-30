@@ -284,20 +284,18 @@ export class PointManager {
    * Results are cached per system
    * Works for any viewable handle (a real device or a multi-device area)
    *
-   * @param system - The viewable system (a real device or a multi-device area)
+   * @param handle - The integer addressing handle (a real device or a multi-device area)
    */
-  private async getAllSeriesForSystem(
-    system: DeviceConfigView,
-  ): Promise<SeriesInfo[]> {
+  private async getAllSeriesForSystem(handle: number): Promise<SeriesInfo[]> {
     // Check cache first
-    const cached = this.seriesCache.get(system.id);
+    const cached = this.seriesCache.get(handle);
     if (cached) {
       return cached;
     }
 
     // Get all points for this system (areas-backed → bound refs; real device → own point_info)
-    const allPoints = await this._resolvePointsForViewable(system);
-    const systemIdentifier = SystemIdentifier.fromId(system.id);
+    const allPoints = await this._resolvePointsForHandle(handle);
+    const systemIdentifier = SystemIdentifier.fromId(handle);
 
     const seriesInfos: SeriesInfo[] = [];
 
@@ -325,7 +323,7 @@ export class PointManager {
     }
 
     // Cache the result
-    this.seriesCache.set(system.id, seriesInfos);
+    this.seriesCache.set(handle, seriesInfos);
 
     return seriesInfos;
   }
@@ -343,23 +341,35 @@ export class PointManager {
    *
    * Parity: an area-of-one's union-of-one is byte-identical to loading the device's own points, and
    * every existing multi-device area has bindings, so the union-default branch is dormant for current
-   * data (verified by the per-area parity gate).
+   * data.
+   *
+   * 🔒 **The dispatch is DEVICE-FIRST and that is load-bearing, not stylistic.** A handle can name BOTH
+   * a device and an area (handle 13 is a real Sigenergy device AND a 3-member Area). Phase 13 PR 2
+   * replaced the `DeviceConfigRegistry.isAreaHandle` probe that used to express this with the same
+   * predicate spelled out inline — `deviceByHandle` first, `areaByHandle` only if there is no device —
+   * because `isAreaHandle` WAS exactly `!device && area`. The union leg is therefore reached only by a
+   * handle with no device of its own, and handle 13 keeps resolving the device's own 12 points. Flipping
+   * this to area-first would widen handle 13 to the area's bindings — trap D-l, a scope change on a
+   * shared dashboard in the direction that GRANTS access. Both readers are per-request memoized, so
+   * asking two questions costs no extra round trip.
    *
    * PRIVATE: external callers should use getActivePointsForSystem instead.
    */
-  private async _resolvePointsForViewable(
-    system: DeviceConfigView,
-  ): Promise<PointInfo[]> {
-    // A real device loads its own point_info. A multi-device area (an area handle with no real
-    // `systems` row) resolves area-natively: its typed `area_bindings` SELECT the points (the
-    // override); an area with no bindings DEFAULTS to the union of its member devices' own points.
-    if (!(await DeviceConfigRegistry.isAreaHandle(system.id))) {
-      return this._loadOwnPoints(system.id);
+  private async _resolvePointsForHandle(handle: number): Promise<PointInfo[]> {
+    // A real device loads its own point_info. A multi-device area (an area handle with no device of its
+    // own) resolves area-natively: its typed `area_bindings` SELECT the points (the override); an area
+    // with no bindings DEFAULTS to the union of its member devices' own points.
+    const device = await DeviceConfigRegistry.deviceByHandle(handle);
+    // device-first — LOCKED (see above). `area` stays null for a colliding handle.
+    const area = device
+      ? null
+      : await DeviceConfigRegistry.areaByHandle(handle);
+    if (!area) {
+      // A device, or a handle that names neither — the latter simply owns no points.
+      return this._loadOwnPoints(handle);
     }
 
-    const boundUids = (await getAreaBindingRefs(system.id)).map(
-      (r) => r.pointUid,
-    );
+    const boundUids = (await getAreaBindingRefs(handle)).map((r) => r.pointUid);
 
     if (boundUids.length > 0) {
       // Bindings present (override) → the bound child points ARE the set. Each binding carries the
@@ -372,8 +382,6 @@ export class PointManager {
     }
 
     // No bindings → default to the union of the area's member devices' own points.
-    const area = await getAreaForSystem(system.id);
-    if (!area) return [];
     // Membership is uuid-keyed since slice H; `point_info.system_id` is not, so convert. The `!` is
     // safe by `area_members.device_id`'s FK into `devices` — see DeviceRegistry.ridsForDevices.
     const memberIds = await getAreaMemberDeviceIds(area.id);
@@ -391,20 +399,20 @@ export class PointManager {
    *
    * Uses cache and applies filtering by pattern/interval/typedOnly
    *
-   * @param system - The viewable system (a real device or a multi-device area)
+   * @param handle - The integer addressing handle (a real device or a multi-device area)
    * @param filter - Optional array of glob patterns to match against series paths (without system prefix)
    * @param interval - Optional interval to filter by ("5m" or "1d")
    * @param typedOnly - If true, only includes points with type hierarchy (excludes fallback paths). Default: false
    * @returns Series matching the criteria
    */
   async getSeriesForSystem(
-    system: DeviceConfigView,
+    handle: number,
     filter?: string[],
     interval?: "5m" | "1d",
     typedOnly: boolean = false,
   ): Promise<SeriesInfo[]> {
     // Get all series for this system (uses cache)
-    let seriesInfos = await this.getAllSeriesForSystem(system);
+    let seriesInfos = await this.getAllSeriesForSystem(handle);
 
     // Filter by interval if provided
     if (interval) {
@@ -453,15 +461,19 @@ export class PointManager {
     typedOnly: boolean = false,
     includeInactive: boolean = false,
   ): Promise<PointInfo[]> {
-    // Resolve a real system OR an area view (multi-device Area handle) for the read data path.
-    const system = await DeviceConfigRegistry.viewableByHandle(systemId);
-
-    if (!system) {
+    // The handle must name SOMETHING — a real device or an Area. Phase 13 PR 2: this used to resolve a
+    // synthesized `DeviceConfigView` and read only `.id` off it; the existence check is all that was
+    // load-bearing, so it is spelled out against the two real readers instead. Device-first, matching
+    // the dispatch in `_resolvePointsForHandle` (trap D-l).
+    const exists =
+      (await DeviceConfigRegistry.deviceByHandle(systemId)) != null ||
+      (await DeviceConfigRegistry.areaByHandle(systemId)) != null;
+    if (!exists) {
       throw new Error(`System not found: ${systemId}`);
     }
 
     // Load points (areas-backed → bound refs; real device → own point_info)
-    const allPoints = await this._resolvePointsForViewable(system);
+    const allPoints = await this._resolvePointsForHandle(systemId);
 
     // Filter by active status (unless includeInactive) and optionally by typedOnly
     return allPoints.filter((point) => {

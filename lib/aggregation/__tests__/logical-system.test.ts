@@ -2,8 +2,11 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
 // resolveLogicalSystem fans out to the systems cache, the point manager, and the Areas resolver —
 // mock all three so we can drive the loud-skip / null-area guard deterministically.
+// config-v4 Phase 13 PR 2: `viewableByHandle` is gone. `resolveLogicalSystem` only ever used it as an
+// EXISTENCE check on the handle, so it now asks the two real readers — a device, else an area. These
+// tests drive the device leg; `areaByHandle` is stubbed so "names neither" stays reachable.
 jest.mock("@/lib/registry/device-config", () => ({
-  DeviceConfigRegistry: { viewableByHandle: jest.fn() },
+  DeviceConfigRegistry: { deviceByHandle: jest.fn(), areaByHandle: jest.fn() },
 }));
 jest.mock("@/lib/point/point-manager", () => ({
   PointManager: { getInstance: jest.fn() },
@@ -70,11 +73,14 @@ function fakePoint(stem: string, name: string) {
 }
 
 describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () => {
-  // resolveLogicalSystem resolves the viewable system (real OR multi-device area handle) via
-  // DeviceConfigRegistry.viewableByHandle, then the points, then the mandatory Area. Areas are EXPLICIT now — a system
-  // with no Area returns null (never minted here); flow belongs only to Areas.
-  const getViewableSystem = jest.mocked(
-    DeviceConfigRegistry.viewableByHandle,
+  // resolveLogicalSystem checks the handle exists (a device, else an area), then the points, then the
+  // mandatory Area. Areas are EXPLICIT now — a system with no Area returns null (never minted here);
+  // flow belongs only to Areas.
+  const deviceByHandle = jest.mocked(
+    DeviceConfigRegistry.deviceByHandle,
+  ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
+  const areaByHandle = jest.mocked(
+    DeviceConfigRegistry.areaByHandle,
   ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
   const getActivePointsForSystem =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
@@ -84,7 +90,8 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
     });
-    getViewableSystem.mockResolvedValue({
+    areaByHandle.mockResolvedValue(null);
+    deviceByHandle.mockResolvedValue({
       vendorType: "selectronic",
       timezoneOffsetMin: 600,
     });
@@ -123,7 +130,9 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
   });
 
   it("returns null for a non-existent system without consulting Areas", async () => {
-    getViewableSystem.mockResolvedValue(null);
+    // Names neither a device nor an area — the handle does not exist.
+    deviceByHandle.mockResolvedValue(null);
+    areaByHandle.mockResolvedValue(null);
     const ls = await resolveLogicalSystem(999);
     expect(ls).toBeNull();
     expect(getAreaForSystem).not.toHaveBeenCalled();
@@ -131,8 +140,11 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
 });
 
 describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handles)", () => {
-  const getViewableSystem = jest.mocked(
-    DeviceConfigRegistry.viewableByHandle,
+  const deviceByHandle = jest.mocked(
+    DeviceConfigRegistry.deviceByHandle,
+  ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
+  const areaByHandle = jest.mocked(
+    DeviceConfigRegistry.areaByHandle,
   ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
   const getActivePointsForSystem =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
@@ -142,7 +154,8 @@ describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handle
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
       getActivePointsForSystem,
     });
-    getViewableSystem.mockResolvedValue({
+    areaByHandle.mockResolvedValue(null);
+    deviceByHandle.mockResolvedValue({
       vendorType: "x",
       timezoneOffsetMin: 600,
     });

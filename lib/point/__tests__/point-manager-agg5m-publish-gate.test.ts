@@ -54,11 +54,13 @@ jest.mock("../../observations/publisher", () => ({
 // The device config registry returns the vendorType under test (config-v4 slice K2 — was
 // `SystemsManager.getSystem`, deleted in K3).
 let currentVendorType = "selectronic";
-// `isAreaHandle` joined this mock in slice K3, when the area-view resolution moved off `SystemsManager`.
+// config-v4 Phase 13 PR 2 deleted `isAreaHandle`; the dispatch now consults `areaByHandle` only when
+// `deviceByHandle` came back empty. This stub always resolves a device, so the area leg is never
+// reached — `areaByHandle` is present and null purely so the mock keeps a faithful shape.
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: {
     deviceByHandle: async () => ({ id: 1, vendorType: currentVendorType }),
-    isAreaHandle: async () => false,
+    areaByHandle: async () => null,
   },
 }));
 

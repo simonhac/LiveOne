@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
+import { subjectDisplayTimezone } from "@/lib/dashboard/subject";
 import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -232,7 +233,9 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const role = searchParams.get("role") || "generator";
 
-    const tz = authResult.system.displayTimezone;
+    // Phase 13 PR 2: was `authResult.system.displayTimezone` off the legacy device-shaped view. An Area
+    // carries its own `display_timezone`, so the subject answers this natively for either kind.
+    const tz = subjectDisplayTimezone(authResult.subject);
     const db = requirePlanetscaleDb();
 
     // The intervals hang off the run detector for this (handle, role). No detector configured →

@@ -79,9 +79,19 @@ export interface LogicalSystem {
 export async function resolveLogicalSystem(
   systemId: number,
 ): Promise<LogicalSystem | null> {
-  // Resolve a real system OR an area view. Only handles that map to an explicit Area continue below.
-  const system = await DeviceConfigRegistry.viewableByHandle(systemId);
-  if (!system) return null;
+  // The handle must name SOMETHING — a real device or an Area. Phase 13 PR 2: this resolved a
+  // device-shaped view and read only its existence and its `timezoneOffsetMin`, so it asks the two real
+  // readers directly. Device-first, matching the deleted view's locked precedence (trap D-l).
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+  const areaRow = device
+    ? null
+    : await DeviceConfigRegistry.areaByHandle(systemId);
+  if (!device && !areaRow) return null;
+  // Same value the view carried either way: `deviceByHandle` projects a device's offset FROM its
+  // area-of-one, and the synthesized area view read it straight off the area.
+  const timezoneOffsetMin = device
+    ? device.timezoneOffsetMin
+    : areaRow!.timezoneOffsetMin;
 
   // typedOnly=true drops points without a logical_path_stem (same exclusion as the engine recompute).
   const pts = await PointManager.getInstance().getActivePointsForSystem(
@@ -133,7 +143,7 @@ export async function resolveLogicalSystem(
   return {
     id: systemId,
     areaId: area.id,
-    timezoneOffsetMin: system.timezoneOffsetMin,
+    timezoneOffsetMin,
     points,
     energyPoints,
     isComplete,

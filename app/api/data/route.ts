@@ -85,35 +85,18 @@ export async function GET(request: NextRequest) {
 
     // Authenticate and check access (owner/admin/viewer/public, or a valid dashboard share token).
     // `auth` spans the whole access check; the threaded timer adds its inner `clerk`/`admin` splits.
+    // 🛑 `address.prefer` is threaded INTO the authorization, not applied after it. `?areaId=` names the
+    // AREA, which is the WIDER scope — the union that contains the device sharing its handle (13 is a
+    // real Sigenergy device AND a 3-member Area). PR 1 authorized the handle device-first and then
+    // re-took the area leg here without re-checking it, which held only because the point interior also
+    // dispatched device-first. Phase 13 PR 2 closed that: `requireDashboardAccess` now authorizes the
+    // entity the caller actually asked for, so the subject it returns is always one that was CHECKED.
+    // There is deliberately no post-hoc leg swap left at this call site — that swap was the trap.
     const authResult = await t.time("auth", () =>
-      requireDashboardAccess(request, address.handle, t),
+      requireDashboardAccess(request, address.handle, t, address.prefer),
     );
     if (authResult instanceof NextResponse) return authResult;
-    // `?areaId=` asks for the AREA leg explicitly; auth resolved the handle device-first (the locked v3
-    // order), so re-take the area leg here — the ONE place the two precedences legitimately differ, and
-    // only for a COLLIDING handle (13 is a real Sigenergy device AND a 3-member Area).
-    //
-    // 🛑 The area leg IS the wider scope. It is the union that CONTAINS the device sharing its handle,
-    // so its bindings are a SUPERSET of the device's own points — that is precisely the widening trap
-    // D-l is about. Authorization here was performed against the HANDLE, device-first; it has NOT been
-    // re-checked against the area's membership. This is safe **today**, and only for one reason: the
-    // interior still resolves points device-first too, via `PointManager`'s `isAreaHandle` gate
-    // (`lib/point/point-manager.ts:356`), so a colliding handle yields the device's 12 points whichever
-    // leg names it. Measured: `?systemId=13`, `?deviceId=dv_…`, `?areaId=ar_…` all return 12 readings.
-    //
-    // 🛑 **PR 2 REMOVES THAT COINCIDENCE.** PR 2 step 3 re-grammars the `isAreaHandle` gate. The moment
-    // it does, `?areaId=<colliding handle>` starts resolving the AREA's bindings, and this path becomes
-    // a real widening: a share token scoped to the DEVICE would yield the union's points. So PR 2 must
-    // authorize the area leg's scope EXPLICITLY here (re-run `requireDashboardAccess` against the area,
-    // or check the area's membership against the grant) — not inherit the handle's device-first grant.
-    // Do not read the "safe today" above as "safe".
-    //
-    // Falls back to the authorized subject if the area leg somehow vanished.
-    const subject =
-      address.prefer === "area" && authResult.subject.kind !== "area"
-        ? ((await subjectForHandle(address.handle, "area")) ??
-          authResult.subject)
-        : authResult.subject;
+    const subject = authResult.subject;
     const payload = await t.time("build", () =>
       buildSystemPayload(subject, wantsReadings, t),
     );

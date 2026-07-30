@@ -296,7 +296,13 @@ function validateTimeRange(
 // ============================================================================
 
 async function getSystemHistoryInOpenNEMFormat(
-  system: DeviceConfigView,
+  /**
+   * The integer addressing handle, and the subject's UTC offset. Phase 13 PR 2: this took the legacy
+   * device-shaped view (`synthesizeAreaView`'s fabrication for an Area) and read only `.id` and
+   * `.timezoneOffsetMin` off it — so it takes those two directly, and an Area now supplies its own.
+   */
+  handle: number,
+  timezoneOffsetMin: number,
   startTime: ZonedDateTime | CalendarDate,
   endTime: ZonedDateTime | CalendarDate,
   interval: "5m" | "30m" | "1d",
@@ -318,7 +324,7 @@ async function getSystemHistoryInOpenNEMFormat(
   const intervalForFiltering = interval === "30m" ? "5m" : interval;
 
   const seriesInfos = await pointManager.getSeriesForSystem(
-    system,
+    handle,
     filterPatterns,
     intervalForFiltering,
   );
@@ -435,7 +441,7 @@ async function getSystemHistoryInOpenNEMFormat(
     rows,
     seriesInfos,
     interval,
-    system,
+    timezoneOffsetMin,
     firstEpoch,
     lastEpoch,
     debug,
@@ -586,13 +592,17 @@ export async function GET(request: NextRequest) {
     // Authenticate and check access (owner/admin/viewer/public, or a valid dashboard share token).
     // `auth` spans the whole access check; the threaded timer adds its inner `clerk`/`admin` splits.
     const authResult = await t.time("auth", () =>
-      requireDashboardAccess(request, handle, t),
+      // `address.prefer` is threaded into the authorization — see the note in `/api/data`'s route and
+      // `requireDashboardAccess`: for a colliding handle the area is the wider scope, so the entity the
+      // caller named is the entity that gets checked.
+      requireDashboardAccess(request, handle, t, address.prefer),
     );
     if (authResult instanceof NextResponse) return authResult;
-    // `system` is the legacy device-shaped view, still consumed by the series layer (PR 2 repoints it);
-    // `subject` is the area-native identity the response's timezone fields come from. Both are the
-    // device-first resolution of the same handle, so they cannot disagree.
-    const { system, subject } = authResult;
+    // `subject` is the area-native identity — the ONLY identity this route now carries. Phase 13 PR 2
+    // removed the legacy device-shaped `system` view: the series layer takes the bare handle and the
+    // timezone comes off the subject, so there is no longer a second, device-first identity to disagree
+    // with it.
+    const { subject } = authResult;
     const tzOffsetMin = subjectTimezoneOffsetMin(subject);
 
     // Parse time range
@@ -671,7 +681,8 @@ export async function GET(request: NextRequest) {
       avgCache,
     } = await t.time("fetch", () =>
       getSystemHistoryInOpenNEMFormat(
-        system,
+        handle,
+        tzOffsetMin,
         timeRange.startTime!,
         timeRange.endTime!,
         interval,

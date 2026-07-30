@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
  * End-to-end smoke test for the self-serve **area builder** write path (lib/areas/create.ts), driving
- * the REAL serving resolver (`PointManager.getActivePointsForSystem` → `viewableByHandle` →
- * `_resolvePointsForViewable`). It creates a throwaway multi-device "site" area and asserts:
+ * the REAL serving resolver (`PointManager.getActivePointsForSystem` → `_resolvePointsForHandle`).
+ * It creates a throwaway multi-device "site" area and asserts:
  *   1. a synthetic handle is allocated (≥ AREA_HANDLE_BASE, no real systems row);
- *   2. it resolves as an area view (`isAreaHandle`, vendorType "area");
+ *   2. the handle resolves to an area and to NO device (`areaByHandle` / `deviceByHandle`);
  *   3. with no bindings, the point set is the UNION of its members' own points;
  *   4. with bindings, the point set is exactly the BOUND points (override);
  *   5. adding a member grows the union;
@@ -119,15 +119,12 @@ async function main() {
       `handle ${H} is a synthetic handle (> ${AREA_HANDLE_BASE})`,
     );
 
-    // 2. Resolver identity.
+    // 2. Resolver identity. Phase 13 PR 2 deleted `isAreaHandle`/`viewableByHandle` (and with them the
+    // fabricated `vendorType === "area"` view); the two real readers say the same thing more directly —
+    // an area exists at the handle, and no device does. That conjunction IS what `isAreaHandle` was.
     assert(
-      await DeviceConfigRegistry.isAreaHandle(H),
-      "isAreaHandle(handle) === true",
-    );
-    const view = await DeviceConfigRegistry.viewableByHandle(H);
-    assert(
-      view?.vendorType === "area",
-      'viewableByHandle().vendorType === "area"',
+      (await DeviceConfigRegistry.areaByHandle(H)) !== null,
+      "areaByHandle(handle) resolves the new area",
     );
     assert(
       (await DeviceConfigRegistry.deviceByHandle(H)) === null,

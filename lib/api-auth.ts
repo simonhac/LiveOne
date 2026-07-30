@@ -10,7 +10,11 @@ import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
 import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
 import type { ServerTimer } from "@/lib/server-timing";
-import { subjectForHandle, type ServingSubject } from "@/lib/dashboard/subject";
+import {
+  subjectForHandle,
+  type ServingSubject,
+  type SubjectPreference,
+} from "@/lib/dashboard/subject";
 
 // Authorization result with context
 export interface AuthContext {
@@ -184,12 +188,6 @@ export interface DashboardAuthContext {
    * What the request is about, area-natively (config-v4 Phase 13 PR 1). The serving path reads THIS.
    */
   subject: ServingSubject;
-  /**
-   * The legacy device-shaped view — an Area still arrives here as `synthesizeAreaView`'s fabrication.
-   * Retained only for the readers PR 2 repoints (`/api/history`'s series layer, run-periods); it is
-   * always the DEVICE-FIRST resolution of the same handle, so it can never disagree with `subject`.
-   */
-  system: DeviceConfigView;
   userId: string | null;
   canRead: boolean;
   canWrite: boolean;
@@ -197,17 +195,21 @@ export interface DashboardAuthContext {
 }
 
 /**
- * The `ServingSubject` for a handle whose device-shaped view has already resolved.
+ * The `ServingSubject` for a handle that has already been AUTHORIZED under the same `prefer`.
  *
- * Device-first, deliberately: `viewableByHandle` (device-first, LOCKED) is what produced `view`, so any
- * other precedence here would describe a different entity than the one just authorized. Both legs go
- * through the same per-request-memoized readers, so this costs no extra round trip. Trap D-l.
+ * 🛑 `prefer` must be the SAME preference the authorization decision above was made under. Resolving a
+ * subject under one preference after authorizing under the other is exactly trap D-l: it would return an
+ * entity that was never checked. Callers therefore pass the `prefer` they were called with, never a
+ * literal. Both legs are per-request memoized, so this costs no extra round trip.
  */
-async function subjectFor(handle: number): Promise<ServingSubject> {
-  const subject = await subjectForHandle(handle, "device");
+async function subjectFor(
+  handle: number,
+  prefer: SubjectPreference,
+): Promise<ServingSubject> {
+  const subject = await subjectForHandle(handle, prefer);
   if (!subject) {
-    // Unreachable: `viewableByHandle` already resolved this handle through the same two readers.
-    throw new Error(`handle ${handle} resolved a view but no serving subject`);
+    // Unreachable: authorization above already resolved this handle through the same two readers.
+    throw new Error(`handle ${handle} authorized but no serving subject`);
   }
   return subject;
 }
@@ -218,11 +220,21 @@ async function subjectFor(handle: number): Promise<ServingSubject> {
  * grant that mirrors the existing ownerless-system public path. Otherwise falls through to
  * `requireSystemAccess` (owner/admin/viewer/public). A bad or mismatched token never blocks normal
  * auth (the caller may also be logged in).
+ *
+ * 🛑 **`prefer` selects WHICH ENTITY is authorized, not merely which one is returned.** A handle can name
+ * both a device and an area (handle 13 is a real Sigenergy device AND a 3-member Area), and the area is
+ * the WIDER scope — its bindings/union contain the device sharing its handle. Before Phase 13 PR 2,
+ * `/api/data` authorized such a handle device-first and then re-took the area leg for an explicit
+ * `?areaId=` WITHOUT re-authorizing, which was safe only because the point interior also dispatched
+ * device-first; PR 2 made that interior lock explicit rather than incidental, and closed this by making
+ * `prefer: "area"` authorize against the AREA's own owner/grant scope here. So an `?areaId=` caller that
+ * holds only the device's grant is now refused instead of inheriting it. Trap D-l.
  */
 export async function requireDashboardAccess(
   request: NextRequest,
   systemId: number,
   timer?: ServerTimer,
+  prefer: SubjectPreference = "device",
 ): Promise<DashboardAuthContext | NextResponse> {
   const token = new URL(request.url).searchParams.get("access");
   if (token) {
@@ -238,11 +250,16 @@ export async function requireDashboardAccess(
           doc: dash.doc,
         });
         if (allowed.includes(systemId)) {
-          const system = await DeviceConfigRegistry.viewableByHandle(systemId);
-          if (system) {
+          // The handle must still name something under the requested preference. `allowedSystemIds` is
+          // deliberately leg-agnostic: its scope is computed through
+          // `PointManager.getActivePointsForSystem`, which is device-first-ALWAYS at the interior, so a
+          // token whose dashboard names an Area can only ever have been credited with the device's own
+          // points — `allowed.includes(13)` never certifies more than "this dashboard shows handle 13".
+          // Both legs resolve to that same interior-locked point set, so either is safe to grant.
+          const subject = await subjectForHandle(systemId, prefer);
+          if (subject) {
             return {
-              subject: await subjectFor(systemId),
-              system,
+              subject,
               userId: null,
               canRead: true,
               canWrite: false,
@@ -254,16 +271,21 @@ export async function requireDashboardAccess(
     }
   }
 
-  // Area-view handle (a multi-device Area with no real `systems` row): resolve access area-natively
-  // (owner / admin / public). requireSystemAccess stays strict (real systems + /device routes).
-  if (await DeviceConfigRegistry.isAreaHandle(systemId)) {
+  // The AREA leg. Taken when this handle names an area AND either the caller asked for the area
+  // explicitly (`?areaId=`) or the handle names no device at all.
+  //
+  // 🛑 The `prefer === "area"` disjunct IS the Phase 13 PR 2 authorization fix. Previously this branch
+  // was gated on `isAreaHandle` — i.e. `!device && area` — so a COLLIDING handle (13) never reached it
+  // and `/api/data`'s `?areaId=` re-take inherited the device-first grant for the wider entity. Now the
+  // area is authorized against ITS OWN owner/admin/public/grant scope before it can be served. The
+  // pure-area handles (7, 8, 1000001, 1000002) have no device, so they take this branch under either
+  // preference exactly as before — the union path for genuinely multi-device areas is untouched.
+  const area = await DeviceConfigRegistry.areaByHandle(systemId);
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+  if (area && (prefer === "area" || !device)) {
     const ctx = await getAuthContext(request, timer);
-    const view = await DeviceConfigRegistry.viewableByHandle(systemId);
-    if (!view) {
-      return NextResponse.json({ error: "System not found" }, { status: 404 });
-    }
-    const isOwner = ctx.userId === view.ownerClerkUserId;
-    const isPublic = view.ownerClerkUserId == null;
+    const isOwner = ctx.userId === area.ownerUserId;
+    const isPublic = area.ownerUserId == null;
     // A grantee of a dashboard whose scope includes this area handle gets read-only access.
     const grantReadOk =
       ctx.userId != null &&
@@ -273,8 +295,7 @@ export async function requireDashboardAccess(
     if (!canRead && !ctx.userId) return unauthorized();
     if (!canRead) return forbidden("No access to this area");
     return {
-      subject: await subjectFor(systemId),
-      system: view,
+      subject: await subjectFor(systemId, "area"),
       userId: ctx.userId ?? null,
       canRead: true,
       canWrite: ctx.isAdmin || isOwner,
@@ -292,11 +313,10 @@ export async function requireDashboardAccess(
       ctx.userId != null &&
       (await grantedSystemScopeForUser(ctx.userId)).has(systemId)
     ) {
-      const system = await DeviceConfigRegistry.viewableByHandle(systemId);
-      if (system) {
+      const subject = await subjectForHandle(systemId, prefer);
+      if (subject) {
         return {
-          subject: await subjectFor(systemId),
-          system,
+          subject,
           userId: ctx.userId,
           canRead: true,
           canWrite: false,
@@ -307,8 +327,10 @@ export async function requireDashboardAccess(
     return result;
   }
   return {
-    subject: await subjectFor(systemId),
-    system: result.system,
+    // `requireSystemAccess` authorized the DEVICE, so the subject is the device — regardless of
+    // `prefer`. An `?areaId=` request only reaches here when the handle names no area, in which case
+    // there is no area leg to prefer.
+    subject: await subjectFor(systemId, "device"),
     userId: result.userId,
     canRead: result.canRead,
     canWrite: result.canWrite,
