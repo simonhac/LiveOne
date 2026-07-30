@@ -6,10 +6,10 @@ import { devices, points } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
 import { isUserAdmin } from "@/lib/auth-utils";
-import { DEFAULT_HWS_MODEL_OPTIONS, type HwsModelStep } from "@/lib/hws-model";
+import { DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
-import Timeline from "./Timeline";
+import DailyStripes from "@/components/dashboard/DailyStripes";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -124,24 +124,26 @@ export default async function KinkoraHwsPage({
       ? await readAgg5m(powerPoint, displayStartMs, nowMs)
       : new Map<number, number | null>();
 
+  // Merge into the two series `DailyStripes` draws: the modelled temperature (coloured row) and
+  // the source power (the thin on/off strip). Both are keyed on the UNION of timestamps, so a
+  // slot present in either is "present" for the stripe — which is what the pre-extraction
+  // Timeline's merged step list meant.
   const tsSet = new Set<number>([...tempByTs.keys(), ...powerByTs.keys()]);
   let prevFaucetC = DEFAULT_HWS_MODEL_OPTIONS.tFloor; // carry-forward for genuine gaps
-  const steps: HwsModelStep[] = [...tsSet]
-    .sort((a, b) => a - b)
-    .map((tsMs) => {
-      // Use the modelled temperature; for a power-only timestamp (a gap in the derived
-      // series) carry the last modelled value forward rather than dropping to tFloor.
-      const faucetC = tempByTs.get(tsMs) ?? prevFaucetC;
-      prevFaucetC = faucetC;
-      const powerW = powerByTs.has(tsMs) ? (powerByTs.get(tsMs) ?? null) : null;
-      return {
-        tsMs,
-        powerW,
-        on: powerW !== null && powerW > ON_THRESHOLD_W,
-        tankC: faucetC, // tank not persisted; unused by the Timeline
-        faucetC,
-      };
-    });
+  const faucetByTs = new Map<number, number | null>();
+  const powerSeries = new Map<number, number | null>();
+  for (const tsMs of [...tsSet].sort((a, b) => a - b)) {
+    // Use the modelled temperature; for a power-only timestamp (a gap in the derived
+    // series) carry the last modelled value forward rather than dropping to tFloor. The generic
+    // card deliberately drops this carry-forward; the lab keeps it (docs/plans/hws-stripe-and-heatmap-cards.md).
+    const faucetC = tempByTs.get(tsMs) ?? prevFaucetC;
+    prevFaucetC = faucetC;
+    faucetByTs.set(tsMs, faucetC);
+    powerSeries.set(
+      tsMs,
+      powerByTs.has(tsMs) ? (powerByTs.get(tsMs) ?? null) : null,
+    );
+  }
 
   // The headline reflects the newest actually-modelled temperature (matches the dashboard's
   // KV latest), not the last merged step — which may be a power-only timestamp.
@@ -162,16 +164,25 @@ export default async function KinkoraHwsPage({
           Modelled hot-tap temperature based on HWS run-time.
         </p>
 
-        {steps.length === 0 ? (
+        {faucetByTs.size === 0 ? (
           <p className="text-gray-400">
             No modelled data in the last {DISPLAY_DAYS} days.
           </p>
         ) : (
-          <Timeline
-            steps={steps}
+          <DailyStripes
+            values={faucetByTs}
+            state={powerSeries}
             tz={tz}
             firstDayMidnightMs={displayStartMs}
             dayCount={DISPLAY_DAYS}
+            domain={[
+              DEFAULT_HWS_MODEL_OPTIONS.tFloor,
+              DEFAULT_HWS_MODEL_OPTIONS.tFaucetMax,
+            ]}
+            palette={["hsl(210,80%,50%)", "hsl(0,80%,50%)"]}
+            onThreshold={ON_THRESHOLD_W}
+            unit="°C"
+            label="Faucet"
           />
         )}
       </div>
