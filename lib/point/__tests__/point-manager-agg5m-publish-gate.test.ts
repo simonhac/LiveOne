@@ -18,7 +18,29 @@ import { describe, it, expect, afterEach, jest } from "@jest/globals";
 
 // PlanetScale is unused on this path (collector supplied, vendorType drives the gate).
 jest.mock("@/lib/db/planetscale", () => ({ planetscaleDb: null }));
-jest.mock("@/lib/db/planetscale/schema", () => ({ pointInfo: {} }));
+// config-v4 slice 1b: served points come from `points ⋈ devices`, so the schema mock carries those
+// two tables as well as `point_info` (still the write-behind copy). Named columns rather than `{}`
+// because the query now references `devices.rid` / `points.deviceId` by identity.
+jest.mock("@/lib/db/planetscale/schema", () => ({
+  pointInfo: { systemId: "pi.system_id", rid: "pi.rid" },
+  points: {
+    id: "p.id",
+    rid: "p.rid",
+    deviceId: "p.device_id",
+    physicalPath: "p.physical_path",
+    logicalPath: "p.logical_path",
+    metricType: "p.metric_type",
+    unit: "p.unit",
+    name: "p.name",
+    defaultName: "p.default_name",
+    subsystem: "p.subsystem",
+    transform: "p.transform",
+    active: "p.active",
+    createdAt: "p.created_at",
+    updatedAt: "p.updated_at",
+  },
+  devices: { id: "d.id", rid: "d.rid" },
+}));
 
 // publishObservationBatch is the non-collector publish sink; mock it so we can detect a publish
 // even if a future change drops the collector. (Tests below always pass a collector.)

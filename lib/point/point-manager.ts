@@ -138,24 +138,26 @@ export interface SessionInfo {
  * the table. But `updatePoint`'s WHERE had to move from `point_info.id` to `point_info.rid`, because
  * its `pointIndex` argument now arrives as a rid from these reads. See there.
  */
-const SERVED_POINT_COLUMNS = {
-  systemId: pgDevices.rid,
-  index: pgPoints.rid,
-  pointUid: pgPoints.id,
-  physicalPathTail: pgPoints.physicalPath,
-  logicalPathStem: pgPoints.logicalPath,
-  metricType: pgPoints.metricType,
-  metricUnit: pgPoints.unit,
-  defaultName: pgPoints.defaultName,
-  displayName: pgPoints.name,
-  subsystem: pgPoints.subsystem,
-  transform: pgPoints.transform,
-  active: pgPoints.active,
-  createdAt: pgPoints.createdAt,
-  updatedAt: pgPoints.updatedAt,
-} as const;
+function servedPointColumns() {
+  return {
+    systemId: pgDevices.rid,
+    index: pgPoints.rid,
+    pointUid: pgPoints.id,
+    physicalPathTail: pgPoints.physicalPath,
+    logicalPathStem: pgPoints.logicalPath,
+    metricType: pgPoints.metricType,
+    metricUnit: pgPoints.unit,
+    defaultName: pgPoints.defaultName,
+    displayName: pgPoints.name,
+    subsystem: pgPoints.subsystem,
+    transform: pgPoints.transform,
+    active: pgPoints.active,
+    createdAt: pgPoints.createdAt,
+    updatedAt: pgPoints.updatedAt,
+  } as const;
+}
 
-/** A row as projected by {@link SERVED_POINT_COLUMNS}. */
+/** A row as projected by {@link servedPointColumns}. */
 type ServedPointDbRow = {
   systemId: number;
   index: number;
@@ -173,10 +175,17 @@ type ServedPointDbRow = {
   updatedAt: Date | null;
 };
 
-/** `points ⋈ devices`, the only source of a served point since slice 1b. */
+/**
+ * `points ⋈ devices`, the only source of a served point since slice 1b.
+ *
+ * The projection is built per-call rather than held in a module-level const on purpose: a const would
+ * dereference the drizzle table objects at IMPORT time, which couples every consumer's test to having
+ * a complete `schema` mock. Two suites mock it as `{ pointInfo: {} }`, and a module-level projection
+ * turned that into a suite-level crash rather than a query assertion.
+ */
 function servedPointQuery() {
   return requirePlanetscaleDb()
-    .select(SERVED_POINT_COLUMNS)
+    .select(servedPointColumns())
     .from(pgPoints)
     .innerJoin(pgDevices, eq(pgDevices.id, pgPoints.deviceId));
 }
