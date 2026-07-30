@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { kv, kvKey } from "@/lib/kv";
+import { kv } from "@/lib/kv";
+import { latestValuesKeyPattern } from "@/lib/kv-keys";
 import {
   getAllSystemSummaries,
   getSystemSummary,
@@ -24,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     // Handle clear action - scan KV for matching keys and delete them
     if (action === "clear") {
-      const pattern = kvKey("latest:system:*");
+      const pattern = latestValuesKeyPattern();
       let cursor = 0;
       let clearedCount = 0;
 

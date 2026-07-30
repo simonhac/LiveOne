@@ -1,9 +1,23 @@
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import { Area, Device } from "@/lib/ids";
 import {
   updateLatestPointValue,
-  getLatestPointValues,
+  getLatestValues,
   buildSubscriptionRegistry,
 } from "../kv-cache-manager";
+
+// config-v4 Phase 13 PR 3: the KV keyspace is TypeID-native. Fixtures are real TypeIDs (minted once)
+// plus the raw uuids the SQL rows carry, so the key strings asserted below are the real thing rather
+// than a hand-written approximation.
+const SOURCE_HANDLE = 10;
+const SOURCE_DEVICE_UUID = "0199dddd-0000-7000-8000-00000000000a";
+const SOURCE_DEVICE = Device.encode(SOURCE_DEVICE_UUID);
+const SOURCE_AREA_UUID = "0199eeee-0000-7000-8000-00000000000a";
+const SOURCE_AREA = Area.encode(SOURCE_AREA_UUID);
+const AREA_A_UUID = "0199bbbb-0000-7000-8000-00000000000a";
+const AREA_A = Area.encode(AREA_A_UUID);
+const AREA_B_UUID = "0199cccc-0000-7000-8000-00000000000a";
+const AREA_B = Area.encode(AREA_B_UUID);
 
 // Mock the KV client
 jest.mock("../kv", () => ({
@@ -77,16 +91,24 @@ jest.mock("drizzle-orm", () => ({
   sql: jest.fn(() => "mock_sql"),
 }));
 
-// Mock identifiers
-jest.mock("../identifiers", () => ({
-  PointReference: {
-    parse: jest.fn((str: string) => {
-      const [systemId, pointId] = str.split(".");
-      return systemId && pointId
-        ? { systemId: parseInt(systemId), pointId: parseInt(pointId) }
-        : null;
-    }),
-  },
+// Mock the handle -> KV subject resolver (it reads `legacy_handles`). Handle 10 is given BOTH legs, the
+// shape 18 of 22 dev handles really have (every device gets an area-of-one) — so the read below must
+// visit both and the write must pick the device.
+jest.mock("../kv-subjects", () => ({
+  kvSourceSubjectForHandle: jest.fn(async (handle: number) =>
+    handle === 10 ? { kind: "device", id: SOURCE_DEVICE } : null,
+  ),
+  kvDeviceSubjectForHandle: jest.fn(async (handle: number) =>
+    handle === 10 ? { kind: "device", id: SOURCE_DEVICE } : null,
+  ),
+  kvSubjectsForHandle: jest.fn(async (handle: number) =>
+    handle === 10
+      ? [
+          { kind: "area", id: SOURCE_AREA },
+          { kind: "device", id: SOURCE_DEVICE },
+        ]
+      : [],
+  ),
 }));
 
 describe("kv-cache-manager", () => {
@@ -109,9 +131,9 @@ describe("kv-cache-manager", () => {
         "Test Point",
       );
 
-      // Should update the source system's cache
+      // Should update the source DEVICE's cache
       expect(kv.hset).toHaveBeenCalledWith(
-        "test:latest:system:10",
+        `test:latest:device:${SOURCE_DEVICE}`,
         expect.objectContaining({
           "source.solar.local/power": expect.objectContaining({
             value: 5234.5,
@@ -145,14 +167,15 @@ describe("kv-cache-manager", () => {
       expect(pointValue.receivedTimeMs).toBe(receivedTime);
     });
 
-    it("should update composite system caches when subscribers exist", async () => {
+    it("should update subscriber Area caches when subscribers exist", async () => {
       const { kv } = await import("../kv");
 
-      // Mock getPointSubscribers to return subscription registry with point-to-point mappings
+      // Mock getPointSubscribers to return subscription registry with point-to-Area mappings
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
         pointSubscribers: {
-          // keyed by the SOURCE POINT UUID since slice E PR 2b (was the integer index)
-          "0199aaaa-0000-7000-8000-00000000000a": ["100.0", "101.0"],
+          // keyed by the SOURCE POINT UUID since slice E PR 2b (was the integer index);
+          // the VALUES are `ar_` TypeIDs since PR 3 (was `"{areaHandle}.{ordinal}"`)
+          "0199aaaa-0000-7000-8000-00000000000a": [AREA_A, AREA_B],
         },
         lastUpdatedTimeMs: Date.now(),
       });
@@ -168,29 +191,58 @@ describe("kv-cache-manager", () => {
         "Test Point",
       );
 
-      // Should update source system + 2 composite systems = 3 total hset calls
+      // Should update source device + 2 subscriber areas = 3 total hset calls
       expect(kv.hset).toHaveBeenCalledTimes(3);
 
-      // Check source system update
+      // Check source device update
       expect(kv.hset).toHaveBeenCalledWith(
-        "test:latest:system:10",
+        `test:latest:device:${SOURCE_DEVICE}`,
         expect.any(Object),
       );
 
-      // Check composite system updates
+      // Check subscriber Area updates
       expect(kv.hset).toHaveBeenCalledWith(
-        "test:latest:system:100",
+        `test:latest:area:${AREA_A}`,
         expect.any(Object),
       );
       expect(kv.hset).toHaveBeenCalledWith(
-        "test:latest:system:101",
+        `test:latest:area:${AREA_B}`,
+        expect.any(Object),
+      );
+    });
+
+    it("ignores a pre-PR-3 `{handle}.{ordinal}` subscriber ref rather than mis-routing it", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: {
+          "0199aaaa-0000-7000-8000-00000000000a": ["100.0", "101.0"],
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValue(
+        SOURCE_HANDLE,
+        "0199aaaa-0000-7000-8000-00000000000a",
+        "source.solar.local/power",
+        5234.5,
+        1731627600000,
+        1731627605000,
+        "W",
+        "Test Point",
+      );
+
+      // Source device only — the stale refs contribute no subscriber writes.
+      expect(kv.hset).toHaveBeenCalledTimes(1);
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:device:${SOURCE_DEVICE}`,
         expect.any(Object),
       );
     });
   });
 
-  describe("getLatestPointValues", () => {
-    it("should retrieve latest values from KV cache", async () => {
+  describe("getLatestValues", () => {
+    it("unions every leg the handle names, device last", async () => {
       const { kv } = await import("../kv");
 
       const mockValues = {
@@ -210,82 +262,149 @@ describe("kv-cache-manager", () => {
         },
       };
 
-      (kv.hgetall as jest.MockedFunction<any>).mockResolvedValueOnce(
-        mockValues,
+      // area leg (read first), then device leg — the device's own value wins a path tie
+      (kv.hgetall as jest.MockedFunction<any>)
+        .mockResolvedValueOnce({
+          "load.hvac/power": { ...mockValues["load.hvac/power"], value: 1 },
+        })
+        .mockResolvedValueOnce(mockValues);
+
+      const result = await getLatestValues(SOURCE_HANDLE);
+
+      expect(kv.hgetall).toHaveBeenCalledWith(
+        `test:latest:area:${SOURCE_AREA}`,
       );
-
-      const result = await getLatestPointValues(10);
-
-      expect(kv.hgetall).toHaveBeenCalledWith("test:latest:system:10");
+      expect(kv.hgetall).toHaveBeenCalledWith(
+        `test:latest:device:${SOURCE_DEVICE}`,
+      );
       expect(result).toEqual(mockValues);
     });
 
     it("should return empty object when no values exist", async () => {
       const { kv } = await import("../kv");
 
-      (kv.hgetall as jest.MockedFunction<any>).mockResolvedValueOnce(null);
+      (kv.hgetall as jest.MockedFunction<any>).mockResolvedValue(null);
 
-      const result = await getLatestPointValues(10);
+      const result = await getLatestValues(SOURCE_HANDLE);
 
       expect(result).toEqual({});
+    });
+
+    it("returns empty and reads nothing for a handle that names no subject", async () => {
+      const { kv } = await import("../kv");
+
+      const result = await getLatestValues(9999);
+
+      expect(result).toEqual({});
+      expect(kv.hgetall).not.toHaveBeenCalled();
     });
   });
 
   describe("buildSubscriptionRegistry", () => {
-    // Mock getAreaBindings's query: select→from→innerJoin→leftJoin→innerJoin×2→orderBy → binding rows.
+    // Mock getAreaBindings's query. PR 3 dropped the `legacy_handles` LEFT JOIN (the subscriber is now
+    // named by `areas.id`, not its integer handle), so the chain is select→from→innerJoin×3→orderBy.
     const mockBindings = (rows: unknown[]) => {
       (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
         from: () => ({
-          // getAreaBindings joins `areas`, LEFT-joins `legacy_handles` for the integer handle (PR 5:
-          // the handle is no longer a column on `areas`), then `points` → `devices` (the latter pair
-          // supplies sourceSystemId now that area_bindings has no point_system_id column).
           innerJoin: () => ({
-            leftJoin: () => ({
-              innerJoin: () => ({
-                innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
-              }),
+            innerJoin: () => ({
+              innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
             }),
           }),
         }),
       });
     };
 
-    it("builds the reverse source→composite map from area_bindings", async () => {
+    it("builds the reverse source-device→subscriber-Area map from area_bindings", async () => {
       const { kv } = await import("../kv");
 
-      // handle 100: solar from sys6 (2 pts) + battery from sys5 (2 pts);
-      // handle 101: solar from sys6 (1) + load from sys7 (1). → source systems 5, 6, 7.
-      // Rows are keyed by point uuid; sourceSystemId comes from the point_info join.
+      // Area A: solar from device D6 (2 pts) + battery from device D5 (2 pts);
+      // Area B: solar from D6 (1) + load from D7 (1). → three SOURCE DEVICE keys.
+      const d = (n: number) => `0199f00${n}-0000-7000-8000-00000000000a`;
       mockBindings([
-        { handle: 100, sourceSystemId: 6, pointUid: "uid-6-17", ordinal: 0 },
-        { handle: 100, sourceSystemId: 6, pointUid: "uid-6-7", ordinal: 1 },
-        { handle: 100, sourceSystemId: 5, pointUid: "uid-5-7", ordinal: 2 },
-        { handle: 100, sourceSystemId: 5, pointUid: "uid-5-10", ordinal: 3 },
-        { handle: 101, sourceSystemId: 6, pointUid: "uid-6-17", ordinal: 0 },
-        { handle: 101, sourceSystemId: 7, pointUid: "uid-7-3", ordinal: 1 },
+        {
+          areaId: AREA_A_UUID,
+          sourceDeviceId: d(6),
+          pointUid: "uid-6-17",
+          ordinal: 0,
+        },
+        {
+          areaId: AREA_A_UUID,
+          sourceDeviceId: d(6),
+          pointUid: "uid-6-7",
+          ordinal: 1,
+        },
+        {
+          areaId: AREA_A_UUID,
+          sourceDeviceId: d(5),
+          pointUid: "uid-5-7",
+          ordinal: 2,
+        },
+        {
+          areaId: AREA_A_UUID,
+          sourceDeviceId: d(5),
+          pointUid: "uid-5-10",
+          ordinal: 3,
+        },
+        {
+          areaId: AREA_B_UUID,
+          sourceDeviceId: d(6),
+          pointUid: "uid-6-17",
+          ordinal: 0,
+        },
+        {
+          areaId: AREA_B_UUID,
+          sourceDeviceId: d(7),
+          pointUid: "uid-7-3",
+          ordinal: 1,
+        },
       ]);
 
       await buildSubscriptionRegistry();
 
-      for (const sys of [5, 6, 7]) {
+      for (const n of [5, 6, 7]) {
         expect(kv.set).toHaveBeenCalledWith(
-          `test:subscriptions:system:${sys}`,
+          `test:subscriptions:device:${Device.encode(d(n))}`,
           expect.objectContaining({
             pointSubscribers: expect.any(Object),
             lastUpdatedTimeMs: expect.any(Number),
           }),
         );
       }
+
+      // The shared source point fans out to BOTH Areas, as `ar_` TypeIDs with no ordinal half.
+      const d6Call = (kv.set as jest.MockedFunction<any>).mock.calls.find(
+        (c: any[]) =>
+          c[0] === `test:subscriptions:device:${Device.encode(d(6))}`,
+      )!;
+      expect(d6Call[1].pointSubscribers["uid-6-17"].sort()).toEqual(
+        [AREA_A, AREA_B].sort(),
+      );
     });
 
-    it("writes no subscriptions when there are no composite bindings", async () => {
+    it("writes no subscriptions when there are no area bindings", async () => {
       const { kv } = await import("../kv");
 
-      mockBindings([]); // no bindings (e.g. no composites)
+      mockBindings([]); // no bindings (e.g. no multi-device areas)
 
       await buildSubscriptionRegistry();
 
       expect(kv.set).not.toHaveBeenCalled();
+    });
+
+    it("deletes a stale entry the rebuild did not write, comparing WHOLE keys", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindings([]);
+      (kv.keys as jest.MockedFunction<any>).mockResolvedValueOnce([
+        "test:subscriptions:device:dv_0000000000000000000000000",
+      ]);
+
+      await buildSubscriptionRegistry();
+
+      expect(kv.del).toHaveBeenCalledWith(
+        "test:subscriptions:device:dv_0000000000000000000000000",
+      );
     });
   });
 });

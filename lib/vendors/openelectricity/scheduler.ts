@@ -11,7 +11,8 @@
  * can be unit-tested without KV or a clock.
  */
 
-import { kv, kvKey } from "@/lib/kv";
+import { kv } from "@/lib/kv";
+import { oeSchedulerStateKey } from "@/lib/kv-keys";
 import { ReadingsDao } from "@/lib/readings";
 import { DeviceRegistry } from "@/lib/registry";
 
@@ -171,17 +172,22 @@ export function applyObservation(
   return { ...state, delaySec, lastSeenIntervalEndMs: capturedIntervalEndMs };
 }
 
-function stateKey(systemId: number): string {
-  return kvKey(`oe:sched:system:${systemId}`);
-}
-
-/** Load KV state, or seed it (delay default + lastSeen from the newest stored interval). */
+/**
+ * Load KV state, or seed it (delay default + lastSeen from the newest stored interval).
+ *
+ * config-v4 Phase 13 PR 3 moved the key to `oe:sched:device:{dv_…}`. The `dv_` id was already resolved
+ * here for the seed path (`addrForHandle`), so the migration is free; the lookup simply moved above the
+ * cache read. The state is self-seeding, so orphaning the two old integer keys costs at most one
+ * mis-timed poll per OE device.
+ */
 export async function loadState(systemId: number): Promise<OeSchedState> {
-  const existing = await kv.get<OeSchedState>(stateKey(systemId));
+  const device = await DeviceRegistry.addrForHandle(systemId);
+  const existing = await kv.get<OeSchedState>(
+    oeSchedulerStateKey(device.deviceId),
+  );
   if (existing && typeof existing.delaySec === "number") return existing;
 
   let lastSeenIntervalEndMs = 0;
-  const device = await DeviceRegistry.addrForHandle(systemId);
   try {
     const ms = await ReadingsDao.latestAgg5mIntervalMsForDevice(
       device.deviceId,
@@ -203,7 +209,8 @@ export async function saveState(
   systemId: number,
   state: OeSchedState,
 ): Promise<void> {
-  await kv.set(stateKey(systemId), state);
+  const device = await DeviceRegistry.addrForHandle(systemId);
+  await kv.set(oeSchedulerStateKey(device.deviceId), state);
 }
 
 /** Record a freshly-captured interval, updating the learned delay (EWMA). */

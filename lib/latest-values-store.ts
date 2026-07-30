@@ -3,9 +3,16 @@
  *
  * This abstraction hides KV implementation details and provides a simple
  * key-value interface for "latest" values per system.
+ *
+ * This module owns the {@link LatestValue} SHAPE and the read/write primitives over the latest-values
+ * hash. It does NOT own the key string — `lib/kv-keys.ts` does, for every family (it used to hold a
+ * second, independent copy of the `latest:system:N` builder; see that module's header for why that is
+ * a silent-cache-split hazard rather than harmless duplication).
  */
 
-import { kv, kvKey } from "./kv";
+import { kv } from "./kv";
+import { latestValuesKey, type KvSubject } from "./kv-keys";
+import { kvSubjectsForHandle } from "./kv-subjects";
 
 /**
  * A latest value entry stored in the cache
@@ -27,7 +34,17 @@ export interface LatestValue {
    * next poll; a cold rebuild is `npm run db:rebuild-dev-kv` (dev).
    */
   pointReference?: string;
-  /** Source device handle (`devices.rid`) — the fact consumers used to split out of `pointReference`. */
+  /**
+   * Source device handle (`devices.rid`) — the fact consumers used to split out of `pointReference`.
+   *
+   * ⚠️ **PERSISTED in KV, and deliberately UNCHANGED by the Phase 13 PR 3 keyspace move** (name, type
+   * and meaning all identical). It is a payload field, not part of any key: nothing about the
+   * `latest:device:{dv_…}` / `latest:area:{ar_…}` rename requires it to move, and changing it would (a)
+   * invalidate the field in every entry written by an older build, for which readers have no
+   * discriminator (unlike `pointReference`, whose `pt_…` and `"9.7"` grammars are mutually
+   * unambiguous — an integer here stays a valid integer), and (b) change `/api/data`'s readings rows,
+   * which put it on the wire verbatim. It retires with the integer handle itself, in PR 6/Phase 14.
+   */
   sourceSystemId?: number;
   sessionId?: string; // Session ID that wrote this value (UUIDv7 text)
   sessionLabel?: string; // Session label/name for display
@@ -39,76 +56,41 @@ export interface LatestValue {
 export type LatestValuesMap = Record<string, LatestValue>;
 
 /**
- * Get the KV key for a system's latest values
+ * Get all latest values for ONE subject's hash.
+ *
+ * This is the ONLY reader of the latest-values hash. `kv-cache-manager.getLatestPointValues` was a
+ * byte-identical second copy of it (same key builder, same `hgetall`, same cast) and is gone.
  */
-function getLatestValuesKey(systemId: number): string {
-  return kvKey(`latest:system:${systemId}`);
+export async function getLatestValuesForSubject(
+  subject: KvSubject,
+): Promise<LatestValuesMap> {
+  const values = await kv.hgetall(latestValuesKey(subject));
+  return (values as LatestValuesMap) || {};
 }
 
 /**
- * Store multiple latest values for a system
+ * Get all latest values addressed by an integer handle — the **union over every subject that handle
+ * names**, device leg last (so a device's own direct reading wins a logicalPath tie over a propagated
+ * copy).
  *
- * Values are merged with existing values (does not delete existing keys).
- * Uses Redis hash for efficient batch operations.
+ * 🛑 The union is what makes the PR 3 keyspace split behaviour-preserving: before it, a handle's two
+ * legs shared one `latest:system:N` hash, so that hash *was* the union. See `lib/kv-subjects.ts` for the
+ * worked case (handle 13 = device Kutis + 3-member Area Kutis, whose 12-field hash is 6 of the device's
+ * own points and 6 propagated from device 16).
  *
- * @param systemId - System ID
- * @param values - Array of LatestValue objects to store
- */
-export async function setLatestValues(
-  systemId: number,
-  values: LatestValue[],
-): Promise<void> {
-  if (values.length === 0) return;
-
-  const key = getLatestValuesKey(systemId);
-
-  // Convert array to hash fields (logicalPath -> LatestValue)
-  const fields: Record<string, LatestValue> = {};
-  for (const value of values) {
-    fields[value.logicalPath] = value;
-  }
-
-  await kv.hset(key, fields);
-}
-
-/**
- * Get all latest values for a system
+ * The extra hash reads are issued concurrently, so wall-clock latency is unchanged, and at most two
+ * are ever issued (a handle has at most two legs).
  *
- * @param systemId - System ID
+ * @param systemId - Integer addressing handle
  * @returns Map of logicalPath to LatestValue, or empty object if none cached
  */
 export async function getLatestValues(
   systemId: number,
 ): Promise<LatestValuesMap> {
-  const key = getLatestValuesKey(systemId);
-  const values = await kv.hgetall(key);
+  const subjects = await kvSubjectsForHandle(systemId);
+  if (subjects.length === 0) return {};
+  if (subjects.length === 1) return getLatestValuesForSubject(subjects[0]);
 
-  return (values as LatestValuesMap) || {};
-}
-
-/**
- * Get a single latest value by logicalPath
- *
- * @param systemId - System ID
- * @param logicalPath - The path to retrieve (e.g., "bidi.grid.import/rate")
- * @returns The LatestValue or null if not found
- */
-export async function getLatestValue(
-  systemId: number,
-  logicalPath: string,
-): Promise<LatestValue | null> {
-  const key = getLatestValuesKey(systemId);
-  const value = await kv.hget(key, logicalPath);
-
-  return (value as LatestValue) || null;
-}
-
-/**
- * Clear all latest values for a system
- *
- * @param systemId - System ID
- */
-export async function clearLatestValues(systemId: number): Promise<void> {
-  const key = getLatestValuesKey(systemId);
-  await kv.del(key);
+  const maps = await Promise.all(subjects.map(getLatestValuesForSubject));
+  return Object.assign({}, ...maps) as LatestValuesMap;
 }

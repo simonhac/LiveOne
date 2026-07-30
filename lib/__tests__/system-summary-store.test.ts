@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import { Area, Device } from "@/lib/ids";
 import {
   aggregateSummaryReadings,
-  getSubscriberSystemIds,
+  getSubscriberAreaIds,
   updateSubscriberSummary,
   updateSubscriberSummaries,
 } from "../system-summary-store";
+
+// config-v4 Phase 13 PR 3: the KV keyspace is TypeID-native, so the fixtures are real TypeIDs rather
+// than integers. Minted once at module load — `Area.is()` rejects anything else, which is exactly the
+// guard that makes a stale pre-PR-3 ref degrade to "no subscribers".
+const SOURCE_HANDLE = 10;
+const SOURCE_DEVICE = Device.generate();
+const AREA_A = Area.generate();
+const AREA_B = Area.generate();
+const AREA_C = Area.generate();
 
 // Mock the KV client
 jest.mock("../kv", () => ({
@@ -25,9 +35,19 @@ jest.mock("../kv", () => ({
 
 // Mock the latest-values-store
 jest.mock("../latest-values-store", () => ({
-  getLatestValues: jest
+  getLatestValuesForSubject: jest
     .fn<() => Promise<Record<string, any>>>()
     .mockResolvedValue({}),
+}));
+
+// Mock the handle -> KV subject resolver (it reads `legacy_handles`).
+jest.mock("../kv-subjects", () => ({
+  kvDeviceSubjectForHandle: jest.fn(async (handle: number) =>
+    handle === 10 ? { kind: "device", id: SOURCE_DEVICE } : null,
+  ),
+  kvSourceSubjectForHandle: jest.fn(async (handle: number) =>
+    handle === 10 ? { kind: "device", id: SOURCE_DEVICE } : null,
+  ),
 }));
 
 describe("system-summary-store", () => {
@@ -128,54 +148,70 @@ describe("system-summary-store", () => {
     });
   });
 
-  describe("getSubscriberSystemIds", () => {
+  describe("getSubscriberAreaIds", () => {
     it("should return empty array when no subscriptions exist", async () => {
       const { kv } = await import("../kv");
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce(null);
 
-      const result = await getSubscriberSystemIds(10);
+      const result = await getSubscriberAreaIds(SOURCE_HANDLE);
 
       expect(result).toEqual([]);
     });
 
-    it("should extract unique subscriber system IDs from subscriptions", async () => {
+    it("should extract unique subscriber Area ids from subscriptions", async () => {
       const { kv } = await import("../kv");
 
-      // Mock subscription registry: source system 10 has subscribers
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
         pointSubscribers: {
-          "1": ["100.0", "101.0"], // Point 1 subscribed by systems 100 and 101
-          "2": ["100.1", "102.0"], // Point 2 subscribed by systems 100 and 102
+          "0199a1-1": [AREA_A, AREA_B],
+          "0199a1-2": [AREA_A, AREA_C],
         },
         lastUpdatedTimeMs: Date.now(),
       });
 
-      const result = await getSubscriberSystemIds(10);
+      const result = await getSubscriberAreaIds(SOURCE_HANDLE);
 
-      // Should return unique IDs: 100, 101, 102
       expect(result).toHaveLength(3);
-      expect(result).toContain(100);
-      expect(result).toContain(101);
-      expect(result).toContain(102);
+      expect(result).toContain(AREA_A);
+      expect(result).toContain(AREA_B);
+      expect(result).toContain(AREA_C);
     });
 
-    it("should use correct KV key for subscriptions", async () => {
+    it("should ignore pre-PR-3 `{handle}.{ordinal}` refs rather than mis-route them", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: { "0199a1-1": ["100.0", AREA_A, "101.2"] },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      const result = await getSubscriberAreaIds(SOURCE_HANDLE);
+
+      expect(result).toEqual([AREA_A]);
+    });
+
+    it("should read the device-keyed subscriptions entry", async () => {
       const { kv, kvKey } = await import("../kv");
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce(null);
 
-      await getSubscriberSystemIds(10);
+      await getSubscriberAreaIds(SOURCE_HANDLE);
 
-      expect(kvKey).toHaveBeenCalledWith("subscriptions:system:10");
+      expect(kvKey).toHaveBeenCalledWith(
+        `subscriptions:device:${SOURCE_DEVICE}`,
+      );
     });
   });
 
   describe("updateSubscriberSummary", () => {
-    it("should update summary using latest values from KV", async () => {
+    it("should update summary using the Area's own latest values", async () => {
       const { kv } = await import("../kv");
-      const { getLatestValues } = await import("../latest-values-store");
+      const { getLatestValuesForSubject } = await import(
+        "../latest-values-store"
+      );
 
-      // Mock latest values for composite system 100
-      (getLatestValues as jest.MockedFunction<any>).mockResolvedValueOnce({
+      (
+        getLatestValuesForSubject as jest.MockedFunction<any>
+      ).mockResolvedValueOnce({
         "source.solar/power": {
           logicalPath: "source.solar/power",
           value: 5000,
@@ -198,16 +234,19 @@ describe("system-summary-store", () => {
         },
       });
 
-      await updateSubscriberSummary(100);
+      await updateSubscriberSummary({ kind: "area", id: AREA_A });
 
-      // Should fetch latest values for system 100
-      expect(getLatestValues).toHaveBeenCalledWith(100);
+      // Reads the AREA's own hash, not a handle union
+      expect(getLatestValuesForSubject).toHaveBeenCalledWith({
+        kind: "area",
+        id: AREA_A,
+      });
 
-      // Should update the system-summaries hash
+      // Should update the system-summaries hash, keyed by the Area TypeID
       expect(kv.hset).toHaveBeenCalledWith(
         "test:system-summaries",
         expect.objectContaining({
-          "100": expect.objectContaining({
+          [AREA_A]: expect.objectContaining({
             measurementTimeMs: 1731627600000,
             readings: {
               "source.solar/power": 5000,
@@ -222,20 +261,28 @@ describe("system-summary-store", () => {
 
     it("should not update when no latest values exist", async () => {
       const { kv } = await import("../kv");
-      const { getLatestValues } = await import("../latest-values-store");
+      const { getLatestValuesForSubject } = await import(
+        "../latest-values-store"
+      );
 
-      (getLatestValues as jest.MockedFunction<any>).mockResolvedValueOnce({});
+      (
+        getLatestValuesForSubject as jest.MockedFunction<any>
+      ).mockResolvedValueOnce({});
 
-      await updateSubscriberSummary(100);
+      await updateSubscriberSummary({ kind: "area", id: AREA_A });
 
       expect(kv.hset).not.toHaveBeenCalled();
     });
 
     it("should skip non-numeric values", async () => {
       const { kv } = await import("../kv");
-      const { getLatestValues } = await import("../latest-values-store");
+      const { getLatestValuesForSubject } = await import(
+        "../latest-values-store"
+      );
 
-      (getLatestValues as jest.MockedFunction<any>).mockResolvedValueOnce({
+      (
+        getLatestValuesForSubject as jest.MockedFunction<any>
+      ).mockResolvedValueOnce({
         "source.solar/power": {
           logicalPath: "source.solar/power",
           value: 5000,
@@ -248,12 +295,12 @@ describe("system-summary-store", () => {
         },
       });
 
-      await updateSubscriberSummary(100);
+      await updateSubscriberSummary({ kind: "area", id: AREA_A });
 
       expect(kv.hset).toHaveBeenCalledWith(
         "test:system-summaries",
         expect.objectContaining({
-          "100": expect.objectContaining({
+          [AREA_A]: expect.objectContaining({
             readings: {
               "source.solar/power": 5000,
             },
@@ -264,20 +311,18 @@ describe("system-summary-store", () => {
   });
 
   describe("updateSubscriberSummaries", () => {
-    it("should update summaries for all subscribers", async () => {
+    it("should update summaries for all subscriber Areas", async () => {
       const { kv } = await import("../kv");
-      const { getLatestValues } = await import("../latest-values-store");
+      const { getLatestValuesForSubject } = await import(
+        "../latest-values-store"
+      );
 
-      // Mock subscriptions: source system 10 has subscribers 100 and 101
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
-        pointSubscribers: {
-          "1": ["100.0", "101.0"],
-        },
+        pointSubscribers: { "0199a1-1": [AREA_A, AREA_B] },
         lastUpdatedTimeMs: Date.now(),
       });
 
-      // Mock latest values for both subscribers
-      (getLatestValues as jest.MockedFunction<any>)
+      (getLatestValuesForSubject as jest.MockedFunction<any>)
         .mockResolvedValueOnce({
           "source.solar/power": {
             logicalPath: "source.solar/power",
@@ -293,42 +338,48 @@ describe("system-summary-store", () => {
           },
         });
 
-      await updateSubscriberSummaries(10);
+      await updateSubscriberSummaries(SOURCE_HANDLE);
 
-      // Should fetch latest values for both subscribers
-      expect(getLatestValues).toHaveBeenCalledWith(100);
-      expect(getLatestValues).toHaveBeenCalledWith(101);
+      expect(getLatestValuesForSubject).toHaveBeenCalledWith({
+        kind: "area",
+        id: AREA_A,
+      });
+      expect(getLatestValuesForSubject).toHaveBeenCalledWith({
+        kind: "area",
+        id: AREA_B,
+      });
 
       // Should update summaries for both
       expect(kv.hset).toHaveBeenCalledTimes(2);
     });
 
-    it("should not call getLatestValues when no subscribers exist", async () => {
+    it("should not read any latest values when no subscribers exist", async () => {
       const { kv } = await import("../kv");
-      const { getLatestValues } = await import("../latest-values-store");
+      const { getLatestValuesForSubject } = await import(
+        "../latest-values-store"
+      );
 
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce(null);
 
-      await updateSubscriberSummaries(10);
+      await updateSubscriberSummaries(SOURCE_HANDLE);
 
-      expect(getLatestValues).not.toHaveBeenCalled();
+      expect(getLatestValuesForSubject).not.toHaveBeenCalled();
       expect(kv.hset).not.toHaveBeenCalled();
     });
 
     it("should continue updating other subscribers if one fails", async () => {
       const { kv } = await import("../kv");
-      const { getLatestValues } = await import("../latest-values-store");
+      const { getLatestValuesForSubject } = await import(
+        "../latest-values-store"
+      );
 
-      // Mock subscriptions with 3 subscribers
       (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
-        pointSubscribers: {
-          "1": ["100.0", "101.0", "102.0"],
-        },
+        pointSubscribers: { "0199a1-1": [AREA_A, AREA_B, AREA_C] },
         lastUpdatedTimeMs: Date.now(),
       });
 
       // First subscriber fails, second and third succeed
-      (getLatestValues as jest.MockedFunction<any>)
+      (getLatestValuesForSubject as jest.MockedFunction<any>)
         .mockRejectedValueOnce(new Error("Network error"))
         .mockResolvedValueOnce({
           "source.solar/power": {
@@ -346,7 +397,9 @@ describe("system-summary-store", () => {
         });
 
       // Should not throw
-      await expect(updateSubscriberSummaries(10)).resolves.not.toThrow();
+      await expect(
+        updateSubscriberSummaries(SOURCE_HANDLE),
+      ).resolves.not.toThrow();
 
       // Should still update the successful subscribers
       expect(kv.hset).toHaveBeenCalledTimes(2);

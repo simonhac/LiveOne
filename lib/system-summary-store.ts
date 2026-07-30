@@ -1,17 +1,35 @@
 /**
  * System Summary Store
  *
- * Stores pre-aggregated power/energy readings per system in a single Redis hash
+ * Stores pre-aggregated power/energy readings per subject in a single Redis hash
  * for fast dashboard retrieval. This is IN ADDITION to the per-point
- * latest:system:{systemId} hashes.
+ * latest:device:{dv_…} / latest:area:{ar_…} hashes.
  *
- * KV Key: {env}:system-summaries (Redis Hash)
- * Fields: System IDs (strings)
+ * KV Key: {env}:system-summaries (Redis Hash) — the key name is unchanged.
+ * Fields: `dv_…` / `ar_…` TypeIDs. **config-v4 Phase 13 PR 3 moved these off the integer handle.**
+ *   The field names were the one integer-keyed KV family the Phase 13 brief almost missed; they are
+ *   migrated rather than left behind, because the fan-out that writes a SUBSCRIBER's summary now names
+ *   its subject with an `ar_` TypeID and keeping the field integer would have needed a reverse
+ *   handle lookup on the hot path for no benefit.
  * Values: SystemSummary objects
  */
 
-import { kv, kvKey } from "./kv";
-import { getLatestValues, LatestValuesMap } from "./latest-values-store";
+import { kv } from "./kv";
+import {
+  subscriptionsKey,
+  summariesField,
+  summariesKey,
+  type KvAreaSubject,
+} from "./kv-keys";
+import {
+  kvDeviceSubjectForHandle,
+  kvSourceSubjectForHandle,
+} from "./kv-subjects";
+import {
+  getLatestValuesForSubject,
+  LatestValuesMap,
+} from "./latest-values-store";
+import { Area, type AreaId } from "@/lib/ids";
 import { ROLE_IDS, ROLES } from "@/lib/roles/registry";
 
 /**
@@ -39,16 +57,9 @@ export interface SystemSummary {
 }
 
 /**
- * Map of system ID to summary
+ * Map of subject TypeID (`dv_…` / `ar_…`) to summary
  */
 export type SystemSummariesMap = Record<string, SystemSummary>;
-
-/**
- * Get the KV key for the system summaries hash
- */
-function getSummariesKey(): string {
-  return kvKey("system-summaries");
-}
 
 /**
  * Aggregate readings from point values into summary format, driven by the role registry
@@ -116,21 +127,25 @@ export async function updateSystemSummary(
     readings,
   };
 
-  const key = getSummariesKey();
-  await kv.hset(key, { [systemId.toString()]: summary });
+  // Device-first, with the same area fallback `updateLatestPointValue` uses, so a subject's summary
+  // always lands beside the latest values it was aggregated from.
+  const subject = await kvSourceSubjectForHandle(systemId);
+  if (!subject) return;
+  await kv.hset(summariesKey(), { [summariesField(subject)]: summary });
 }
 
 /**
- * Get summary for a single system
+ * Get summary for a single system, addressed by its integer handle.
  *
- * @param systemId - System ID
+ * @param systemId - Integer addressing handle
  * @returns Summary or null if not cached
  */
 export async function getSystemSummary(
   systemId: number,
 ): Promise<SystemSummary | null> {
-  const key = getSummariesKey();
-  const value = await kv.hget(key, systemId.toString());
+  const subject = await kvSourceSubjectForHandle(systemId);
+  if (!subject) return null;
+  const value = await kv.hget(summariesKey(), summariesField(subject));
   return (value as SystemSummary) || null;
 }
 
@@ -140,7 +155,7 @@ export async function getSystemSummary(
  * @returns Map of system ID to summary, or empty object if none cached
  */
 export async function getAllSystemSummaries(): Promise<SystemSummariesMap> {
-  const key = getSummariesKey();
+  const key = summariesKey();
   const values = await kv.hgetall(key);
   return (values as SystemSummariesMap) || {};
 }
@@ -157,7 +172,7 @@ export async function getSystemSummariesPaginated(
   cursor: number = 0,
   count: number = 100,
 ): Promise<{ cursor: number; summaries: SystemSummariesMap }> {
-  const key = getSummariesKey();
+  const key = summariesKey();
   const [nextCursor, results] = await kv.hscan(key, cursor, { count });
 
   // HSCAN returns flat array: [field1, value1, field2, value2, ...]
@@ -177,62 +192,57 @@ export async function getSystemSummariesPaginated(
  * @param systemId - System ID
  */
 export async function clearSystemSummary(systemId: number): Promise<void> {
-  const key = getSummariesKey();
-  await kv.hdel(key, systemId.toString());
+  const subject = await kvSourceSubjectForHandle(systemId);
+  if (!subject) return;
+  await kv.hdel(summariesKey(), summariesField(subject));
 }
 
 /**
- * Get the KV key for a system's subscription registry
- */
-function getSubscriptionsKey(systemId: number): string {
-  return kvKey(`subscriptions:system:${systemId}`);
-}
-
-/**
- * Get all subscriber system IDs that subscribe to a source system
+ * The Areas that subscribe to a source device, from its `subscriptions:device:{dv_…}` entry.
  *
- * @param sourceSystemId - Source system ID
- * @returns Array of unique subscriber system IDs
+ * config-v4 Phase 13 PR 3: was `getSubscriberSystemIds`, returning integer handles parsed out of the
+ * `"{areaHandle}.{ordinal}"` ref grammar with `ref.split(".")`. The grammar is gone — a ref IS the
+ * subscriber's `ar_` TypeID — so the split, the `parseInt` and the `isNaN` guard go with it. A ref left
+ * by a pre-PR-3 build fails `Area.is` and is dropped, so a stale entry degrades to "no subscribers".
+ *
+ * @param sourceSystemId - Source device's integer handle
  */
-export async function getSubscriberSystemIds(
+export async function getSubscriberAreaIds(
   sourceSystemId: number,
-): Promise<number[]> {
-  const key = getSubscriptionsKey(sourceSystemId);
+): Promise<AreaId[]> {
+  const device = await kvDeviceSubjectForHandle(sourceSystemId);
+  if (!device) return [];
   const entry = await kv.get<{
     pointSubscribers: Record<string, string[]>;
     lastUpdatedTimeMs: number;
-  }>(key);
+  }>(subscriptionsKey(device.id));
 
   if (!entry?.pointSubscribers) {
     return [];
   }
 
-  // Extract unique subscriber system IDs from all point subscribers
-  const subscriberIds = new Set<number>();
+  const areaIds = new Set<AreaId>();
   for (const subscriberRefs of Object.values(entry.pointSubscribers)) {
     for (const ref of subscriberRefs) {
-      // Parse "systemId.pointIndex" format
-      const [systemIdStr] = ref.split(".");
-      const systemId = parseInt(systemIdStr);
-      if (!isNaN(systemId)) {
-        subscriberIds.add(systemId);
-      }
+      if (Area.is(ref)) areaIds.add(ref);
     }
   }
 
-  return Array.from(subscriberIds);
+  return Array.from(areaIds);
 }
 
 /**
- * Update summary for a subscriber system using its current latest values
+ * Update the summary for a subscriber AREA from the latest values in its own hash.
  *
- * @param subscriberSystemId - Subscriber system ID to update
+ * Reads `latest:area:{ar_…}` directly (not the handle union): an Area's summary should describe the
+ * Area's resolved point set, which is exactly what the fan-out materialises there. For every subscriber
+ * that exists today this is value-identical to the pre-PR-3 union read, because every point in the
+ * colliding case (handle 13) is bound into the Area anyway.
  */
 export async function updateSubscriberSummary(
-  subscriberSystemId: number,
+  area: KvAreaSubject,
 ): Promise<void> {
-  // Get latest values for the subscriber system
-  const latestValues = await getLatestValues(subscriberSystemId);
+  const latestValues = await getLatestValuesForSubject(area);
 
   if (!latestValues || Object.keys(latestValues).length === 0) {
     return;
@@ -271,32 +281,28 @@ export async function updateSubscriberSummary(
     readings,
   };
 
-  const key = getSummariesKey();
-  await kv.hset(key, { [subscriberSystemId.toString()]: summary });
+  await kv.hset(summariesKey(), { [summariesField(area)]: summary });
 }
 
 /**
- * Update summaries for all subscribers of a source system
+ * Update summaries for all Areas subscribing to a source device.
  *
- * @param sourceSystemId - Source system ID
+ * @param sourceSystemId - Source device's integer handle
  */
 export async function updateSubscriberSummaries(
   sourceSystemId: number,
 ): Promise<void> {
-  const subscriberIds = await getSubscriberSystemIds(sourceSystemId);
+  const areaIds = await getSubscriberAreaIds(sourceSystemId);
 
-  if (subscriberIds.length === 0) {
+  if (areaIds.length === 0) {
     return;
   }
 
   // Update each subscriber's summary in parallel
   await Promise.all(
-    subscriberIds.map((subscriberId) =>
-      updateSubscriberSummary(subscriberId).catch((err) =>
-        console.error(
-          `Failed to update summary for subscriber ${subscriberId}:`,
-          err,
-        ),
+    areaIds.map((id) =>
+      updateSubscriberSummary({ kind: "area", id }).catch((err) =>
+        console.error(`Failed to update summary for subscriber ${id}:`, err),
       ),
     ),
   );

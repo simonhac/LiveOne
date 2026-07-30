@@ -1,487 +1,228 @@
-# KV Store Documentation
+# KV store
 
-> **Status:** current — last verified 2026-06-10.
+> **Status:** current — rewritten 2026-07-30 for config-v4 Phase 13 PR 3, which moved the whole
+> keyspace off the integer handle onto TypeIDs. Schema-of-record for the key shapes is
+> **`lib/kv-keys.ts`** — the single owner of every key string. If this doc and that module disagree,
+> the module is right.
 
-This document describes the Upstash Redis KV store key organization and usage patterns.
+The KV store (Upstash Redis, via `@vercel/kv`) is a **disposable cache**, not a datastore. Every entry
+in it is derivable from Postgres. Nothing is ever migrated in place: a key-shape change orphans the old
+entries and the new ones are rebuilt.
 
-## Overview
+## 🛑 ONE physical store, dev and prod separated only by a key prefix
 
-The application uses Upstash Redis shared across all environments. Proper namespace management is critical to prevent data conflicts between environments.
+There is a **single** Redis store shared by dev, preview, prod and tests. The only isolation is a key
+prefix applied by `kvKey()` (`lib/kv.ts`), driven by `getEnvironment()` (`lib/env.ts`):
 
-## Key Namespaces
+| Environment   | Condition                            | Prefix  |
+| ------------- | ------------------------------------ | ------- |
+| prod          | `VERCEL_ENV === "production"`        | `prod:` |
+| test          | `NODE_ENV === "test"` (Jest sets it) | `test:` |
+| dev / preview | everything else                      | `dev:`  |
 
-### Latest Point Values
+So the same `KV_REST_API_URL` / `KV_REST_API_TOKEN` are used everywhere and there is nothing to
+replicate between instances. **The corollary is the hazard:** any code path that resolves the
+environment wrongly, or any script run with the wrong `VERCEL_ENV`, writes into _prod's_ keyspace from a
+dev machine. Before running anything that writes KV, echo the resolved environment and the first key it
+will touch, and confirm the prefix. The two write-side scripts do this themselves
+(`rebuild-dev-kv-from-db.ts` refuses unless `getEnvironment() === "dev"`;
+`kv-drop-legacy-integer-keys.ts` prints the prefix and every doomed key and requires `--yes`).
 
-**Pattern:** `latest:system:{systemId}`
+## Addressing: subjects, not systems
 
-**Type:** Hash
+Everything the cache is keyed by is a **subject** — a device or an Area, named by its TypeID:
 
-**Description:** Stores the most recent value for each point in a system. Updated in real-time as new readings arrive.
+```ts
+type KvSubject =
+  | { kind: "device"; id: DeviceId }
+  | { kind: "area"; id: AreaId };
+```
 
-**Structure:**
+The integer handle survives only as a _lookup_: the KV layer's public functions still take a handle and
+resolve it at the boundary (`lib/kv-subjects.ts`). That module is where the one genuinely subtle rule
+lives, and it is worth reading before touching any of this:
 
-```typescript
+> **A handle names up to TWO subjects, and a read must visit both.** `legacy_handles` is a two-column
+> compatibility row, so the same integer may name an Area _and_ a device (18 of 22 dev handles do —
+> every device gets an area-of-one — and handle 13 is a real Sigenergy device _and_ a 3-member Area).
+> Before PR 3 both legs wrote to one `latest:system:N` hash, so that hash _was_ the union.
+> `getLatestValues(handle)` therefore reads every leg and merges them, device leg last.
+> Writes, by contrast, address the precise subject.
+
+## Key namespaces
+
+### `latest:device:{dv_…}` / `latest:area:{ar_…}` — latest point values
+
+**Type:** Hash. Field = `logicalPath` (`"path/metricType"`), value = a `LatestValue`.
+
+The most recent value of every point, updated in real time as readings arrive. A **device** hash holds
+that device's own points; an **Area** hash holds the Area's resolved point set, materialised by the
+subscription fan-out (below).
+
+```ts
 {
   "source.solar.local/power": {
     value: 5234.5,
+    logicalPath: "source.solar.local/power",
     measurementTimeMs: 1731627600000,
     receivedTimeMs: 1731627605000,
     metricUnit: "W",
-    displayName: "Solar Power"
-  },
-  "load.hvac/power": {
-    value: 1200,
-    measurementTimeMs: 1731627600000,
-    receivedTimeMs: 1731627605000,
-    metricUnit: "W",
-    displayName: "HVAC Load"
+    displayName: "Solar Power",
+    pointReference: "pt_01k9…",   // the source point's TypeID
+    sourceSystemId: 6,            // the source DEVICE's integer handle — see below
+    sessionId: "0199…",
+    sessionLabel: "poll",
   }
 }
 ```
 
-**Usage:**
+Two persisted fields deserve care, because changing either invalidates entries an older build wrote:
 
-- Written by: `updateLatestPointValue()` in `lib/kv-cache-manager.ts`
-- Read by: `getLatestPointValues()` in `lib/kv-cache-manager.ts`
-- API endpoint: `GET /api/system/{systemId}/points/latest`
+- **`pointReference`** is the source point's `pt_` TypeID. It used to be `"{systemId}.{pointIndex}"`;
+  the two grammars are mutually unambiguous, so a stale entry reads as absent rather than being
+  mis-parsed.
+- **`sourceSystemId`** is still the source device's **integer handle**, deliberately unchanged by the
+  keyspace move. It is a payload field, not part of a key; an integer here stays a valid integer, so
+  there would be no discriminator for old entries, and `/api/data`'s readings rows put it on the wire
+  verbatim. It retires with the handle itself.
 
-**TTL:** None (persists indefinitely, updated on each new reading)
+**Written by:** `updateLatestPointValue()` (`lib/kv-cache-manager.ts`) — six callers: the
+OpenElectricity and Amber adapters, `PointManager`, the HWS recompute, the battery-provenance blend,
+and the run-tracking publisher.
+**Read by:** `getLatestValues(handle)` / `getLatestValuesForSubject(subject)`
+(`lib/latest-values-store.ts`). `/api/data` is the serving consumer.
+**TTL:** none. Overwritten on each reading.
 
-### Subscription Registry
+### `subscriptions:device:{dv_…}` — subscription registry
 
-**Pattern:** `subscriptions:system:{systemId}`
+**Type:** JSON. Maps a source point to the Areas that subscribe to it, so a reading fans out only to the
+Areas that actually want it.
 
-**Type:** JSON object
-
-**Description:** Maps source points to composite points that subscribe to them. Enables efficient point-to-point updates where only subscribed points are cached.
-
-**Structure:**
-
-```typescript
+```ts
 {
   pointSubscribers: {
-    "1": ["100.0", "101.0"],  // Source point 1 subscribed by composite 100 point 0, composite 101 point 0
-    "2": ["100.1"],            // Source point 2 subscribed by composite 100 point 1
-    "3": ["100.2", "102.0"]    // Source point 3 subscribed by composite 100 point 2, composite 102 point 0
+    "0199a1…": ["ar_01ka…", "ar_01kb…"],  // source point uuid -> subscriber Area TypeIDs
+    "0199a2…": ["ar_01ka…"],
   },
-  lastUpdatedTimeMs: 1731627600000  // Unix timestamp in milliseconds when registry was last updated
+  lastUpdatedTimeMs: 1731627600000,
 }
 ```
 
-**Format Details:**
+- The outer key is a **device**, never an Area: it names the _source_ of a reading, and every point
+  belongs to a device (`points.device_id` is `NOT NULL` and FK-backed). An Area is only ever a
+  subscriber.
+- Inner keys are `points.id` uuids (they were the integer point index until config-v4 slice E PR 2b).
+- Values are bare `ar_` TypeIDs. They were `"{areaHandle}.{ordinal}"`; the ordinal half was always
+  vestigial (a subscriber's latest hash is keyed by `logicalPath`, and both consumers immediately split
+  it back off), so PR 3 dropped it. A ref left by an older build fails `Area.is()` and is ignored, so a
+  stale entry degrades to "no subscribers" rather than mis-routing a value.
 
-- Key: Source point ID (string, e.g., "1", "2", "3")
-- Value: Array of composite point references in format "systemId.pointIndex"
-- Example: "100.0" means composite system ID 100, point index 0
+**Written by:** `buildSubscriptionRegistry()` — a full rebuild from `area_bindings` (curated
+multi-device Areas) unioned with `getBindinglessAreaMemberPoints()` (union-default Areas).
+**Read by:** `getPointSubscribers()` (inside `updateLatestPointValue`) and `getSubscriberAreaIds()`
+(`lib/system-summary-store.ts`).
+**Rebuild triggers:** automatically via `refreshAreaServing` on every area/binding mutation; by hand
+with `npx tsx scripts/build-subscription-registry.ts`, or `GET /api/systems/subscriptions?action=build`
+(admin).
+**TTL:** none. Stale entries are garbage-collected by the next rebuild, which deletes any key matching
+the family pattern that it did not itself write (a whole-key-string comparison — the old code parsed the
+id back out with a `(\d+)` regex, which cannot match a TypeID).
 
-**Example:**
+### `system-summaries` — one hash for the whole environment
 
-- Key: `subscriptions:system:6`
-- Value: `{ pointSubscribers: { "1": ["100.0", "101.2"], "2": ["100.1"] }, lastUpdatedTimeMs: 1731627600000 }`
-- Meaning:
-  - Source system 6, point 1 is subscribed to by composite system 100 point 0 and composite system 101 point 2
-  - Source system 6, point 2 is subscribed to by composite system 100 point 1
-  - Registry last updated at timestamp
+**Type:** Hash. Field = a `dv_`/`ar_` subject TypeID, value = a `SystemSummary`.
 
-**Usage:**
+A pre-aggregated solar/load/battery/grid rollup per subject, so the admin list can render without
+reading every point hash. **The key name is unchanged by PR 3; the field names moved off the integer
+handle.** For a colliding handle this is a small improvement: a device's field now holds the device's own
+aggregate, instead of whichever of the device poll and the Area fan-out wrote the shared integer field
+last.
 
-- Written by: `buildSubscriptionRegistry()` in `lib/kv-cache-manager.ts`
-- Read by: `getPointSubscribers()` in `lib/kv-cache-manager.ts` (called by `updateLatestPointValue()`)
-- API endpoint: `GET /api/systems/subscriptions` (admin only, aggregates to system-level for compatibility)
+**Written by:** `updateSystemSummary()` (source device, from the poll's own batch) and
+`updateSubscriberSummary()` (a subscriber Area, from its own `latest:area:` hash).
+**Read by:** `getAllSystemSummaries()` / `getSystemSummary()` — `lib/admin/get-systems-data.ts` and
+`GET /api/admin/latest`.
 
-**TTL:** None (rebuilt when composite system metadata changes)
+### `oe:sched:device:{dv_…}` — OpenElectricity poll-scheduler state
 
-**Optimization:**
-This point-to-point mapping ensures that when a source point is updated, only the composite systems that actually subscribe to that specific point receive the update. This is more efficient than broadcasting all points to all composite systems.
+**Type:** JSON (`OeSchedState`: learned EWMA arrival delay + last-seen interval).
 
-### Username Cache
+Self-seeding: on a miss, `loadState` re-derives `lastSeenIntervalEndMs` from the newest stored interval
+and falls back to the default delay. That is why PR 3 migrated the key rather than leaving it behind —
+orphaning it costs at most one mis-timed poll per OE device.
 
-**Pattern:** `username:{username}`
+### `username:{username}` — Clerk username cache
 
-**Type:** String
+**Type:** String (JSON `{ clerkId, lastUpdatedTimeMs }`). Untouched by PR 3.
 
-**Description:** Fast lookup cache for username → Clerk user ID mappings. Lazy-populated on first access to avoid slow Clerk API calls.
+Lazy-populated on first access, because a Clerk API lookup is ~4–10 s against ~400–500 ms for a KV hit.
+Written by `cacheUsernameMapping()`, read by `getUserIdByUsername()`, invalidated by
+`invalidateUsernameCache()` / `updateUsernameCache()` (`lib/user-cache.ts`). No TTL — invalidated on a
+username change.
 
-**Structure:**
+## Rebuilding — the only supported way to change a key shape
 
-```typescript
-{
-  clerkId: "user_31xcrIbiSrjjTIKlXShEPilRow7", // Clerk user ID
-  lastUpdatedTimeMs: 1731627600000  // Unix timestamp in milliseconds when cache was last updated
-}
+**KV is disposable: rebuild, never migrate in place.** A key-shape change therefore has a **deploy
+step**, and it belongs in the PR body, not in a reviewer's memory:
+
+1. Deploy the new build.
+2. `npx tsx scripts/build-subscription-registry.ts` — the registry is a _persisted derived store_ keyed
+   off the thing that changed, so nothing fans out until it is rebuilt.
+3. Repopulate the latest values: in prod, the next poll cycle does it; in dev/preview, crons are off, so
+   run `npm run db:rebuild-dev-kv` (`scripts/utils/rebuild-dev-kv-from-db.ts`, which also runs
+   automatically after the 2-hourly DB sync — see [../sync-prod-to-dev.md](../sync-prod-to-dev.md)).
+4. Sweep the orphaned old keys —
+   `npx tsx --env-file=.env.local scripts/utils/kv-drop-legacy-integer-keys.ts` (dry run first, then
+   `--yes`). One-shot; delete the script once both environments are swept.
+
+Verify by running the same probe before and after and **diffing the inner keys** — a shape change that
+half-landed looks like an empty `latest` map, not an error.
+
+## Operations
+
+```ts
+import { kv } from "@/lib/kv";
+import { latestValuesKeyPattern, subscriptionsKeyPattern } from "@/lib/kv-keys";
+
+await kv.keys(latestValuesKeyPattern()); // this environment only
+await kv.keys(subscriptionsKeyPattern());
 ```
 
-**Example:**
-
-- Key: `username:simon`
-- Value: `{ clerkId: "user_31xcrIbiSrjjTIKlXShEPilRow7", lastUpdatedTimeMs: 1731627600000 }`
-
-**Usage:**
-
-- Written by: `cacheUsernameMapping()` in `lib/user-cache.ts`
-- Read by: `getUserIdByUsername()` in `lib/user-cache.ts`
-- Invalidated by: `invalidateUsernameCache()` / `updateUsernameCache()` in `lib/user-cache.ts`
-
-**TTL:** None (manually invalidated when username changes)
-
-**Performance:**
-
-- Cache hit: ~400-500ms (network latency to Upstash Tokyo)
-- Cache miss (Clerk API): ~4-10 seconds
-- Speedup: ~10x faster
-
-## Environment Separation Strategy
-
-### Current Implementation (Namespace Prefixes)
-
-**All environments share the same Upstash Redis instance with namespace prefixes for isolation.**
-
-Environment detection is automatic based on runtime environment variables:
-
-- **Production:** `VERCEL_ENV === "production"` → `prod:` namespace
-- **Test:** `NODE_ENV === "test"` → `test:` namespace
-- **Development:** Everything else → `dev:` namespace
-
-All keys are automatically prefixed by environment:
-
-```typescript
-// Development (auto-detected)
-`dev:latest:system:{systemId}``dev:subscriptions:system:{systemId}``dev:username:{username}`
-// Production (auto-detected via VERCEL_ENV)
-`prod:latest:system:{systemId}``prod:subscriptions:system:{systemId}``prod:username:{username}`
-// Test (auto-detected via NODE_ENV)
-`test:latest:system:{systemId}``test:subscriptions:system:{systemId}``test:username:{username}`;
-```
-
-**Implementation:**
-
-All KV operations use the `kvKey()` helper function from `lib/kv.ts`:
-
-```typescript
-import { kvKey } from "@/lib/kv";
-
-// Automatic namespace prefixing based on environment
-const key = kvKey("latest:system:123");
-// Returns: "dev:latest:system:123" in development
-// Returns: "prod:latest:system:123" in production
-// Returns: "test:latest:system:123" in tests
-```
-
-**Environment Detection:**
-
-Environment is automatically detected using `getEnvironment()` from `lib/env.ts`:
-
-```typescript
-import { getEnvironment, isDevelopment, isProduction, isTest } from "@/lib/env";
-
-// Get current environment
-const env = getEnvironment(); // "prod" | "dev" | "test"
-
-// Or use convenience functions
-if (isDevelopment()) {
-  /* ... */
-}
-if (isProduction()) {
-  /* ... */
-}
-if (isTest()) {
-  /* ... */
-}
-```
-
-**No environment variables required** - the environment is detected automatically based on:
-
-- `VERCEL_ENV === "production"` for production
-- `NODE_ENV === "test"` for tests (set automatically by Jest)
-- Everything else defaults to development
-
-**Benefits:**
-
-1. **Complete isolation** - No key collisions between environments
-2. **Shared infrastructure** - Single Upstash instance for all environments
-3. **Cost effective** - No need for multiple KV databases
-4. **Safe testing** - Integration tests use `test:` namespace
-5. **Easy cleanup** - Can delete all keys for one environment without affecting others
-
-## Key Management Operations
-
-### Listing All Keys by Pattern
-
-```typescript
-import { kvKey } from "@/lib/kv";
-
-// Get all subscription keys (current environment only)
-const keys = await kv.keys(kvKey("subscriptions:system:*"));
-
-// Get all latest value keys (current environment only)
-const keys = await kv.keys(kvKey("latest:system:*"));
-
-// Get all username cache keys (current environment only)
-const keys = await kv.keys(kvKey("username:*"));
-```
-
-### Deleting Keys
-
-```typescript
-import { kvKey } from "@/lib/kv";
-
-// Single key (current environment)
-await kv.del(kvKey("latest:system:123"));
-
-// Multiple keys (current environment)
-await kv.del(kvKey("latest:system:123"), kvKey("subscriptions:system:456"));
-```
-
-### Clearing Test Data
-
-Integration tests use `test:` namespace and high system IDs (99999, 99998, etc.):
-
-```typescript
-import { kvKey } from "@/lib/kv";
-
-// Cleanup test data (runs in test namespace)
-await kv.del(
-  kvKey("latest:system:99999"),
-  kvKey("latest:system:99998"),
-  kvKey("subscriptions:system:99999"),
-);
-```
-
-### Clearing All Keys for an Environment
+Never interpolate one of these key strings outside `lib/kv-keys.ts`. That module exists because the
+builders were previously duplicated — `latest:system:N` in two files, `subscriptions:system:N` in two
+others — and a duplicated key builder is a **silent cache split**: change one and miss the other and
+writes land under the new key while reads come from the old, with no error anywhere.
 
 ```bash
-# WARNING: This will delete ALL keys for the environment!
+# Clear this environment's latest-values hashes (admin, both kinds)
+curl -H "x-claude: true" "http://localhost:3000/api/admin/latest?action=clear"
 
-# Development keys
-redis-cli --pattern "dev:*" | xargs redis-cli DEL
+# Inspect the registry
+curl -H "x-claude: true" http://localhost:3000/api/systems/subscriptions
 
-# Test keys (safe to clear anytime)
-redis-cli --pattern "test:*" | xargs redis-cli DEL
+# Latest values for a handle (device leg ∪ area leg)
+curl -H "x-claude: true" "http://localhost:3000/api/data?systemId=13&include=readings"
 ```
 
-## Cache Invalidation Strategies
-
-### Latest Point Values
-
-**Strategy:** No explicit invalidation - values are overwritten on each update
-
-**Rationale:** Point values are time-series data; the latest value is always the most relevant
-
-### Subscription Registry
-
-**Strategy:** Full rebuild when composite system metadata changes
-
-**Function:** `buildSubscriptionRegistry()` in `lib/kv-cache-manager.ts`
-
-**Automatic rebuild triggers:**
-
-- When composite system metadata is updated via `PATCH /api/admin/systems/{systemId}/composite-config`
-- The registry rebuilds automatically after successful metadata update
-
-**Manual rebuild options:**
-
-- Call `buildSubscriptionRegistry()` programmatically
-- Use API endpoint: `GET /api/systems/subscriptions?build=true`
-- Run script: `npx tsx scripts/build-subscription-registry.ts`
-
-### Rebuilding the whole `dev:` cache from the DB
-
-The `dev:` namespace is not written organically (crons are off in dev/preview), so it is rebuilt
-from the synced `liveone-dev` Postgres DB — latest values, system summaries, and the subscription
-registry — by `scripts/utils/rebuild-dev-kv-from-db.ts` (`npm run db:rebuild-dev-kv`). This runs
-automatically after the 2-hourly DB sync. See [../sync-prod-to-dev.md](../sync-prod-to-dev.md).
-
-### Username Cache
-
-**Strategy:** Lazy invalidation on username change
-
-**Functions:**
-
-- `invalidateUsernameCache(oldUsername)` - Remove old username mapping
-- `updateUsernameCache(oldUsername, newUsername, clerkId)` - Atomic update
-
-**When to invalidate:**
-
-- User changes their username in Clerk
-- Requires webhook or manual trigger (not currently implemented)
-
-## Performance Characteristics
-
-### Network Latency
-
-Upstash Redis instance is in Tokyo region:
-
-- **Typical latency from development:** 400-900ms
-- **Typical latency from production (Sydney):** ~50-100ms (estimated)
-
-### Operation Performance
-
-| Operation      | Type   | Latency | Notes                    |
-| -------------- | ------ | ------- | ------------------------ |
-| `kv.get()`     | String | ~400ms  | Single key lookup        |
-| `kv.hgetall()` | Hash   | ~500ms  | Get all fields in hash   |
-| `kv.hset()`    | Hash   | ~400ms  | Set single field in hash |
-| `kv.keys()`    | Scan   | ~500ms  | Pattern matching scan    |
-| `kv.set()`     | String | ~400ms  | Set string value         |
-| `kv.del()`     | Delete | ~400ms  | Delete key               |
-
-**Note:** These are development machine latencies (Melbourne → Tokyo). Production latencies will be lower.
-
-## Monitoring and Debugging
-
-### View All Subscriptions
-
-```bash
-curl http://localhost:3000/api/systems/subscriptions \
-  -H "x-claude: true"
-```
-
-Returns:
-
-```json
-{
-  "subscriptions": {
-    "6": {
-      "subscribers": [100, 101],
-      "lastUpdated": "2025-11-14T23:45:00+10:00"
-    },
-    "5": {
-      "subscribers": [100],
-      "lastUpdated": "2025-11-14T23:45:00+10:00"
-    },
-    "7": {
-      "subscribers": [101],
-      "lastUpdated": "2025-11-14T23:45:00+10:00"
-    }
-  }
-}
-```
-
-### View Latest Values for a System
-
-```bash
-curl http://localhost:3000/api/system/123/points/latest \
-  -H "x-claude: true"
-```
-
-### Test Cache Performance
-
-```bash
-curl http://localhost:3000/api/test/cache
-```
-
-Returns statistics for 50 username cache lookups:
-
-```json
-{
-  "count": 50,
-  "first": 4936,
-  "min": 385,
-  "max": 4936,
-  "median": 446,
-  "avg": 946.4
-}
-```
-
-## Migration Notes
-
-### From No Cache → KV Cache
-
-When migrating to KV cache for latest point values:
-
-1. **Initial state:** KV is empty
-2. **First reading:** Populates cache for each point
-3. **Subsequent readings:** Update existing cached values
-4. **Composites:** Subscription registry must be built first
-
-**Build subscription registry:**
-
-```typescript
-import { buildSubscriptionRegistry } from "@/lib/kv-cache-manager";
-
-await buildSubscriptionRegistry();
-```
-
-### Testing KV Functionality
-
-Run integration tests (requires KV credentials in `.env.local`):
-
-```bash
-npm run test:integration kv-cache-manager
-```
-
-## Security Considerations
-
-### Access Control
-
-- **Admin-only endpoints:** `/api/systems/subscriptions`
-- **User-scoped endpoints:** `/api/system/{systemId}/points/latest` (checks ownership)
-- **Test endpoints:** `/api/test/cache` (should be removed in production)
-
-### Data Sensitivity
-
-- **Latest point values:** Contains real-time energy data (user-specific)
-- **Subscription registry:** System metadata (admin-only)
-- **Username cache:** Maps usernames to Clerk IDs (internal use)
-
-### Credentials
-
-- **KV_REST_API_TOKEN:** Full read/write access
-- **KV_REST_API_READ_ONLY_TOKEN:** Read-only access (not currently used)
-
-**Recommendation:** Use read-only token for monitoring/debugging operations
-
-## Future Enhancements
-
-### 1. Environment Namespacing
-
-Add `prod:`, `dev:`, `test:` prefixes to all keys (see "Environment Separation Strategy" above)
-
-### 2. TTL for Username Cache
-
-Set expiration time for username cache entries:
-
-```typescript
-await kv.set(`username:${username}`, clerkId, { ex: 86400 }); // 24 hour TTL
-```
-
-**Benefit:** Automatic cleanup of stale entries without manual invalidation
-
-### 3. Webhook for Username Changes
-
-Implement Clerk webhook to invalidate cache on username changes:
-
-```typescript
-// app/api/webhooks/clerk/route.ts
-if (event.type === "user.updated") {
-  const oldUsername = event.data.previous.username;
-  const newUsername = event.data.username;
-  const clerkId = event.data.id;
-
-  await updateUsernameCache(oldUsername, newUsername, clerkId);
-}
-```
-
-### 4. Cache Warming on Startup
-
-Pre-populate caches on application startup:
-
-- Build subscription registry
-- Warm username cache for active users
-
-### 5. Metrics and Monitoring
-
-Track cache performance:
-
-- Hit/miss ratios
-- Average latency
-- Error rates
-- Key counts by namespace
-
-### 6. Composite System Auto-Rebuild
-
-~~Automatically rebuild subscription registry when composite metadata changes~~ **✓ Implemented**
-
-- ✓ Automatically rebuilds when composite system metadata is updated via API
-- ✓ Implemented in `PATCH /api/admin/systems/{systemId}/composite-config`
-- ✓ Non-blocking - logs errors but doesn't fail the metadata update
+## Performance
+
+The store is in Tokyo, so a round trip is ~400–900 ms from a dev machine in Melbourne and ~50–100 ms
+from prod in Sydney. It is a real latency component of `/api/data` — `buildSystemPayload` spans it as
+`kv` in the `Server-Timing` header. The handle-union read issues its (at most two) hash reads
+concurrently, so wall-clock latency is unchanged from the single-hash era.
+
+| Operation                 | Type   | Notes                                       |
+| ------------------------- | ------ | ------------------------------------------- |
+| `kv.hgetall()`            | Hash   | one latest-values hash                      |
+| `kv.hset()`               | Hash   | one point's latest value                    |
+| `kv.get()` / `kv.set()`   | String | a subscription-registry entry               |
+| `kv.keys()` / `kv.scan()` | Scan   | pattern match within the environment prefix |
+
+## Security
+
+- **Admin-only:** `/api/systems/subscriptions`, `/api/admin/latest`.
+- **Share-token aware:** `/api/data` (`requireDashboardAccess`).
+- Latest values are user energy data; the registry is config metadata; the username cache maps usernames
+  to Clerk ids.
+- `KV_REST_API_TOKEN` is read/write. A read-only token exists in Upstash and is not currently wired up;
+  prefer it for any monitoring use.

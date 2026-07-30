@@ -69,11 +69,11 @@ export const kv = new Proxy({} as ReturnType<typeof createClient>, {
  * Automatically adds environment prefix (prod/dev/test) to prevent key collisions
  * in the shared KV store.
  *
- * @param pattern - Key pattern (e.g., "latest:system:123")
- * @returns Namespaced key (e.g., "dev:latest:system:123")
+ * @param pattern - Key pattern (e.g., "latest:device:dv_01k9…")
+ * @returns Namespaced key (e.g., "dev:latest:device:dv_01k9…")
  *
  * @example
- * kvKey("latest:system:123") // "dev:latest:system:123" in development
+ * kvKey("latest:device:dv_01k9…") // "dev:latest:device:dv_01k9…" in development
  * kvKey("username:simon")    // "prod:username:simon" in production
  */
 export function kvKey(pattern: string): string {

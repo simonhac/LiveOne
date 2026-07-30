@@ -263,7 +263,10 @@ export async function getAdminSystemsData(
   const systemsData: SystemData[] = [];
 
   for (const system of allSystems) {
-    const summary = summariesMap[system.id.toString()] || null;
+    // config-v4 Phase 13 PR 3: the summaries hash is keyed by `dv_`/`ar_` TypeID, not the integer
+    // handle. For a COLLIDING handle this is now the DEVICE's own aggregate rather than whichever of the
+    // device poll / area fan-out wrote the shared integer field last — strictly better for a device list.
+    const summary = summariesMap[system.deviceId] || null;
     const powerValues = extractPowerValuesFromSummary(summary);
     const pollStatus = system.pollingStatus;
     const userInfo = system.ownerClerkUserId
