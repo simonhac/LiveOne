@@ -1,10 +1,10 @@
 #!/usr/bin/env tsx
 /**
- * Mint a fresh gusher (gk_) key for an EXISTING Fronius/fusher system and store it as that system's
+ * Mint a fresh gusher (gk_) key for an EXISTING Fronius/fusher device and store it as that device's
  * credential, so `/api/gush` accepts the usher's pushes for it.
  *
- * Unlike scripts/deepsea/seed-system.ts, this NEVER creates a system — Kinkora already exists as
- * LiveOne system 5 (vendor_type=fusher, vendor_site_id=kinkora, created 2025-09-22, its 13 point_info
+ * Unlike scripts/deepsea/seed-device.ts, this NEVER creates a device — Kinkora already exists as
+ * LiveOne device 5 (vendor_type=fusher, vendor_site_id=kinkora, created 2025-09-22, its 13 point_info
  * rows already match the fusher manifest). This just rotates the key (the legacy FroniusPusher Pi's
  * key is replaced — retire the Pi at cutover) and prints KINKORA_API_KEY to paste into the usher's
  * env / Fly secret.
@@ -12,13 +12,13 @@
  * The credential lives in the OWNER's Clerk private metadata (see lib/secure-credentials.ts), so it
  * must be written to the SAME Clerk instance that prod /api/gush reads. Two ways to run:
  *
- *   (a) Clerk-only (no DB) — pass the known system id + owner directly (safest; no prod-DB read):
+ *   (a) Clerk-only (no DB) — pass the known device id + owner directly (safest; no prod-DB read):
  *       SYSTEM_ID=5 OWNER_CLERK_USER_ID=user_320RNHYT03KKO3S7XB24AYZqlLc \
  *       CLERK_SECRET_KEY="$PROD_CLERK_SECRET_KEY" \
  *       npx tsx --env-file=.env.local scripts/fronius/mint-gusher-key.ts
  *
  *   (b) Resolve from the DB by (vendorType, vendorSiteId) — needs PLANETSCALE_DATABASE_URL set to the
- *       DB whose system ids you're targeting (prod, since gusher runs on prod):
+ *       DB whose device ids you're targeting (prod, since gusher runs on prod):
  *       CLERK_SECRET_KEY="$PROD_CLERK_SECRET_KEY" \
  *       PLANETSCALE_DATABASE_URL="$PROD_URL" \
  *       npx tsx --env-file=.env.local scripts/fronius/mint-gusher-key.ts
@@ -33,7 +33,7 @@ import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 async function main() {
-  const { storeSystemCredentials } = await import("@/lib/secure-credentials");
+  const { storeDeviceCredentials } = await import("@/lib/secure-credentials");
 
   const vendorType = (process.env.VENDOR_TYPE ?? "fusher") as
     | "fusher"
@@ -69,7 +69,7 @@ async function main() {
     if (rows.length === 0) {
       console.error(
         `❌ No existing system for (${vendorType}, ${siteId}). This tool refuses to create one — ` +
-          `check the vendorType/siteId, or use scripts/deepsea/seed-system.ts to create a fresh system.`,
+          `check the vendorType/siteId, or use scripts/deepsea/seed-device.ts to create a fresh system.`,
       );
       process.exit(1);
     }
@@ -87,7 +87,7 @@ async function main() {
 
   // Mint + store the gusher apiKey (replaces any existing credential for this systemId).
   const apiKey = `gk_${randomBytes(24).toString("base64url")}`;
-  const res = await storeSystemCredentials(owner, systemId!, vendorType, {
+  const res = await storeDeviceCredentials(owner, systemId!, vendorType, {
     apiKey,
   });
   if (!res.success) {

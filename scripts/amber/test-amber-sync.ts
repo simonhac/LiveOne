@@ -1,6 +1,6 @@
 /**
  * Test script for Amber sync client
- * Tests the methodical audit-based syncing system
+ * Tests the methodical audit-based syncing device
  *
  * ⚠️  DRY RUN BY DEFAULT - No database writes unless --dry=false
  * ⚠️  SAMPLE RECORDS HIDDEN BY DEFAULT - Add --sample=true to show sample records
@@ -45,7 +45,7 @@ function formatAESTDateTime(timestampMs: number): string {
 }
 
 async function testSync() {
-  // Amber system ID (from dev database)
+  // Amber device ID (from dev database)
   const systemId = 10001;
 
   // Parse command line arguments
@@ -104,7 +104,7 @@ async function testSync() {
   const firstDay = parseDateISO(dateArg);
 
   // Credentials from environment — no fallbacks. In the app proper these live
-  // in the system's device config in Clerk; this dev-only script takes them from
+  // in the device's device config in Clerk; this dev-only script takes them from
   // env so it can run standalone. Test/tool-only secrets carry the TEST_ prefix
   // and live only in the dev 1Password vault (never prod).
   if (!process.env.TEST_AMBER_API_KEY) {

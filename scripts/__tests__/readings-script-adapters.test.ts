@@ -3,7 +3,7 @@ import { Point } from "@/lib/ids";
 import type { ActivePointLatest } from "@/lib/readings";
 import type { PointAddr } from "@/lib/registry";
 import { toAgg5mInsert } from "../openelectricity/bulk-ingest-helpers";
-import { groupLatestBySystem } from "../utils/rebuild-dev-kv-helpers";
+import { groupLatestByDevice } from "../utils/rebuild-dev-kv-helpers";
 
 describe("readings script adapters", () => {
   it("maps scalar, counter, delta, and invalid OE values to DAO inserts", () => {
@@ -73,7 +73,7 @@ describe("readings script adapters", () => {
       index: 1,
     });
     const rows = [row(p1), row(p2)];
-    const grouped = groupLatestBySystem(
+    const grouped = groupLatestByDevice(
       rows,
       new Map([
         [p1, address(p1, 7)],

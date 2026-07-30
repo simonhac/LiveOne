@@ -2,7 +2,7 @@
 /**
  * Sigenergy cloud API — CLI proof.
  *
- * Proves that a household Sigenergy system can be polled remotely from just the owner's mySigen
+ * Proves that a household Sigenergy device can be polled remotely from just the owner's mySigen
  * login: it logs in, discovers the station, prints a live PV/battery/grid/load/EV snapshot, then
  * loops repeated polls at a fixed interval to demonstrate that regular (5-minute) polling works
  * without tripping the cloud API's rate limit.

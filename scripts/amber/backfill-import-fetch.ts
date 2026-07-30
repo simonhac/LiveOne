@@ -2,13 +2,13 @@
 /**
  * Amber import backfill — PHASE 1 of 2: OBTAIN
  *
- * Fetches Amber `/usage` records for a system over a date range and writes the RAW
- * records to disk (one JSON file per chunk). Reads Amber's API and the system's
+ * Fetches Amber `/usage` records for a device over a date range and writes the RAW
+ * records to disk (one JSON file per chunk). Reads Amber's API and the device's
  * credentials (Clerk); writes NOTHING to our store. Safe and re-runnable. The saved
  * JSON is the sole input to phase 2 (`backfill-import-insert.ts`).
  *
  * Why: `derivePointKey` collapsed import (E1) and export (B1) onto one key, so the
- * grid-import price/cost/energy channels (system 9, points 2/7/8) went dead
+ * grid-import price/cost/energy channels (device 9, points 2/7/8) went dead
  * 2025-11-26. See docs/incidents/2025-11-26-amber-import-channel-collision.md.
  *
  * ⚠️ Reads PROD credentials (Clerk holds the Amber apiKey). Run with prod env; the
@@ -25,7 +25,7 @@ dotenv.config({ path: ".env.local" });
 import * as fs from "fs";
 import * as path from "path";
 import type { CalendarDate } from "@internationalized/date";
-import { getSystemCredentials } from "../../lib/secure-credentials";
+import { getDeviceCredentials } from "../../lib/secure-credentials";
 import { fetchAmberUsage } from "../../lib/vendors/amber/client";
 import { parseDateISO, getYesterdayInTimezone } from "../../lib/date-utils";
 import type { AmberCredentials } from "../../lib/vendors/amber/types";
@@ -44,29 +44,29 @@ const START = arg("start") ?? "2025-11-26"; // bug onset (import cost/energy die
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
-  const system = await DeviceConfigRegistry.deviceByHandle(SYSTEM_ID);
-  if (!system) throw new Error(`System ${SYSTEM_ID} not found`);
-  if (system.vendorType !== "amber")
-    throw new Error(`System ${SYSTEM_ID} is '${system.vendorType}', not amber`);
-  if (!system.ownerClerkUserId)
+  const device = await DeviceConfigRegistry.deviceByHandle(SYSTEM_ID);
+  if (!device) throw new Error(`System ${SYSTEM_ID} not found`);
+  if (device.vendorType !== "amber")
+    throw new Error(`System ${SYSTEM_ID} is '${device.vendorType}', not amber`);
+  if (!device.ownerClerkUserId)
     throw new Error(`System ${SYSTEM_ID} has no owner (need Clerk creds)`);
 
-  const base = await getSystemCredentials(system.ownerClerkUserId, system.id);
+  const base = await getDeviceCredentials(device.ownerClerkUserId, device.id);
   if (!base?.apiKey) throw new Error(`No Amber apiKey for system ${SYSTEM_ID}`);
   const credentials: AmberCredentials = {
     apiKey: base.apiKey,
-    siteId: system.vendorSiteId || undefined,
+    siteId: device.vendorSiteId || undefined,
   };
 
   const start = parseDateISO(START);
   const endArg = arg("end");
   const end = endArg
     ? parseDateISO(endArg)
-    : getYesterdayInTimezone(system.timezoneOffsetMin ?? 600);
+    : getYesterdayInTimezone(device.timezoneOffsetMin ?? 600);
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
   console.log(
-    `[fetch] system ${SYSTEM_ID} (${system.vendorSiteId}) ${start.toString()} .. ${end.toString()} ` +
+    `[fetch] system ${SYSTEM_ID} (${device.vendorSiteId}) ${start.toString()} .. ${end.toString()} ` +
       `in ${CHUNK}-day chunks → ${OUT_DIR}`,
   );
 

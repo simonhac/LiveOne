@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 /**
- * Seed OpenElectricity region systems — one liveone `system` per NEM region.
+ * Seed OpenElectricity region devices — one liveone `device` per NEM region.
  *
  * Idempotent: a region that already has an `openelectricity` device is skipped.
  * Point rows are NOT created here; they auto-create on the first poll via PointManager.
  *
  * Usage:
- *   npx tsx scripts/openelectricity/seed-systems.ts                  # all 5 NEM regions (default)
- *   npx tsx scripts/openelectricity/seed-systems.ts --regions=NSW1,VIC1
+ *   npx tsx scripts/openelectricity/seed-devices.ts                  # all 5 NEM regions (default)
+ *   npx tsx scripts/openelectricity/seed-devices.ts --regions=NSW1,VIC1
  *
  * Targets whatever DB .env.local points at (dev branch by default). To seed prod,
  * point PLANETSCALE_DATABASE_URL at the sydney branch and set ALLOW_PROD_DB_IN_DEV=true.
@@ -69,12 +69,12 @@ async function main() {
       continue;
     }
 
-    // Slice 1a: routed through `DeviceWriter.createSystem` instead of a hand-written `insert(systems)`
-    // plus a mirror call. This was the LAST `systems` writer outside `DeviceWriter` — a raw INSERT that
+    // Slice 1a: routed through `DeviceWriter.createDevice` instead of a hand-written `insert(devices)`
+    // plus a mirror call. This was the LAST `devices` writer outside `DeviceWriter` — a raw INSERT that
     // `tsc` could see but no reviewer would think to look for, and the reason `devices.rid`'s `nextval`
     // DEFAULT could not be trusted (two independent counters were live). Going through the writer also
     // gets the load-bearing four-step insert order for free rather than re-deriving it here.
-    const row = await DeviceWriter.createSystem({
+    const row = await DeviceWriter.createDevice({
       ownerClerkUserId: null,
       vendorType: "openelectricity",
       vendorSiteId: region,

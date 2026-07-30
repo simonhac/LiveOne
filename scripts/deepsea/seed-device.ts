@@ -1,16 +1,16 @@
 #!/usr/bin/env tsx
 /**
- * Onboard the DeepSea generator as a push (gusher) system.
+ * Onboard the DeepSea generator as a push (gusher) device.
  *
- * Idempotent: reuses an existing `(deepsea, <siteId>)` system, else creates one. Mints a `gk_` apiKey
- * and stores it as the system's credential (so gusher accepts pushes for it). Points auto-create on
+ * Idempotent: reuses an existing `(deepsea, <siteId>)` device, else creates one. Mints a `gk_` apiKey
+ * and stores it as the device's credential (so gusher accepts pushes for it). Points auto-create on
  * the first push via PointManager.ensurePointInfo.
  *
  * Targets whatever DB `.env.local` points at (liveone-dev by default). Writes to the DB + the owner's
- * Clerk private metadata. Owner defaults to the Daylesford system's owner (system 1), or DEEPSEA_OWNER.
+ * Clerk private metadata. Owner defaults to the Daylesford device's owner (device 1), or DEEPSEA_OWNER.
  *
- *   npx tsx --env-file=.env.local scripts/deepsea/seed-system.ts
- *   MUSHER_SITE_ID=sheephouse npx tsx --env-file=.env.local scripts/deepsea/seed-system.ts
+ *   npx tsx --env-file=.env.local scripts/deepsea/seed-device.ts
+ *   MUSHER_SITE_ID=sheephouse npx tsx --env-file=.env.local scripts/deepsea/seed-device.ts
  */
 
 import * as dotenv from "dotenv";
@@ -22,7 +22,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
   const { devices } = await import("@/lib/db/planetscale/schema");
-  const { storeSystemCredentials } = await import("@/lib/secure-credentials");
+  const { storeDeviceCredentials } = await import("@/lib/secure-credentials");
   const { DeviceWriter } = await import("@/lib/registry/device-writer");
 
   if (!planetscaleDb) {
@@ -37,7 +37,7 @@ async function main() {
   const displayName =
     process.env.DEEPSEA_DISPLAY_NAME ?? "Daylesford Generator";
 
-  // Resolve the owner: DEEPSEA_OWNER, else the Daylesford system (id 1), else any owned system.
+  // Resolve the owner: DEEPSEA_OWNER, else the Daylesford device (id 1), else any owned device.
   let owner = process.env.DEEPSEA_OWNER ?? null;
   if (!owner) {
     const owned = await planetscaleDb
@@ -65,7 +65,7 @@ async function main() {
     );
   }
 
-  // Idempotent: reuse an existing deepsea/<siteId> system.
+  // Idempotent: reuse an existing deepsea/<siteId> device.
   const existing = await planetscaleDb
     .select({ id: devices.rid })
     .from(devices)
@@ -81,8 +81,8 @@ async function main() {
       `• system already exists: id ${systemId} (deepsea/${siteId}) — reusing`,
     );
   } else {
-    // Use the `systems` writer so dev-id allocation (ids ≥ 10000) avoids colliding with restored prod ids.
-    const system = await DeviceWriter.createSystem({
+    // Use the `devices` writer so dev-id allocation (ids ≥ 10000) avoids colliding with restored prod ids.
+    const device = await DeviceWriter.createDevice({
       ownerClerkUserId: owner,
       vendorType,
       vendorSiteId: siteId,
@@ -92,13 +92,13 @@ async function main() {
       displayTimezone: "Australia/Melbourne",
       metadata: { source: "musher", device: "DeepSea DSE7410 MkII" },
     });
-    systemId = system.id;
+    systemId = device.id;
     console.log(`✓ created system id ${systemId} (deepsea/${siteId})`);
   }
 
   // Mint + store the gusher apiKey (regenerate each run so we always print a valid one).
   const apiKey = `gk_${randomBytes(24).toString("base64url")}`;
-  const res = await storeSystemCredentials(owner, systemId, vendorType as any, {
+  const res = await storeDeviceCredentials(owner, systemId, vendorType as any, {
     apiKey,
   });
   if (!res.success) {

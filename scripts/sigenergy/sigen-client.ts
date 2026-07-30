@@ -126,7 +126,7 @@ export interface SigenEnergyStats {
   raw: unknown;
 }
 
-/** OpenAPI system summary — running generation totals (kWh). */
+/** OpenAPI device summary — running generation totals (kWh). */
 export interface SigenSystemSummary {
   dailyPowerGeneration: number | null;
   monthlyPowerGeneration: number | null;
@@ -234,7 +234,7 @@ function extractStatRow(rec: unknown, date: string | null): SigenEnergyStatRow {
   };
 }
 
-/** Best-effort station-id extraction from a home/station/system response of unknown shape. */
+/** Best-effort station-id extraction from a home/station/device response of unknown shape. */
 function extractStationId(data: unknown): string | null {
   if (data == null) return null;
   const candidate = Array.isArray(data) ? data[0] : data;
@@ -675,7 +675,7 @@ export class SigenClient {
   }
 
   /**
-   * Fetch the OpenAPI system summary — running generation totals (kWh). READ-ONLY.
+   * Fetch the OpenAPI device summary — running generation totals (kWh). READ-ONLY.
    * Requires openapi auth (the legacy host has no equivalent `/summary`).
    */
   async getSystemSummary(systemId: string): Promise<SigenSystemSummary> {

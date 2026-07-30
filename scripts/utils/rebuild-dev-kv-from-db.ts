@@ -1,5 +1,5 @@
 /**
- * Rebuild the dev KV cache (latest point values + system summaries + subscription registry)
+ * Rebuild the dev KV cache (latest point values + device summaries + subscription registry)
  * purely from the already-synced `liveone-dev` Postgres DB. Companion to sync-prod-to-dev-db.ts.
  *
  * Why this exists: dev/preview run with crons OFF (CRONS_ENABLED unset), so nothing polls into
@@ -12,13 +12,13 @@
  * What it writes (all in the `dev:` namespace, see lib/kv.ts kvKey):
  *   - dev:latest:device:{dv_…}       per-point latest values for a device
  *   - dev:latest:area:{ar_…}         the same, propagated to each subscribing multi-device Area
- *   - dev:system-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
+ *   - dev:device-summaries           aggregated solar/load/battery/grid rollup, keyed by dv_/ar_ TypeID
  *   - dev:subscriptions:device:{dv_…}  reverse map source-point → subscribing Areas
  *
  * config-v4 Phase 13 PR 3 moved this keyspace off the integer handle. This script's own API is
  * unchanged (every function it calls still takes the integer handle), but running it is the
  * **latest-values half of that keyspace change's deploy step** on dev — entries written by an older
- * build sit under `dev:latest:system:{int}` and are simply never read again.
+ * build sit under `dev:latest:device:{int}` and are simply never read again.
  *
  * SAFETY
  *   - Refuses to run unless getEnvironment() === "dev" (would otherwise clobber prod's live KV).
@@ -47,7 +47,7 @@ import {
   updateSystemSummary,
   updateSubscriberSummaries,
 } from "@/lib/system-summary-store";
-import { groupLatestBySystem } from "./rebuild-dev-kv-helpers";
+import { groupLatestByDevice } from "./rebuild-dev-kv-helpers";
 
 // Bounded-concurrency runner. The KV writes below are independent per point, but Upstash is a
 // REST/HTTP store so each is a round trip — sequential awaits made the whole leg ~77s. Rejects (fails
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
   }
 
   // 1) Subscription registry first, so updateLatestPointValue can propagate each source
-  //    point to the composite systems that subscribe to it (same as live ingest).
+  //    point to the composite devices that subscribe to it (same as live ingest).
   console.log("Building subscription registry from area_bindings…");
   await buildSubscriptionRegistry();
 
@@ -113,11 +113,11 @@ async function main(): Promise<void> {
     rows.map((row) => row.point),
   );
 
-  // Group by system so we can write each system's summary once after its points.
-  const bySystem = groupLatestBySystem(rows, addresses);
+  // Group by device so we can write each device's summary once after its points.
+  const byDevice = groupLatestByDevice(rows, addresses);
 
   // Build the write tasks up front (pure JS, no awaits) so we can run them with bounded concurrency
-  // instead of one-at-a-time. Per-system summary inputs are collected the same way, to run AFTER all
+  // instead of one-at-a-time. Per-device summary inputs are collected the same way, to run AFTER all
   // point values land (updateSubscriberSummaries reads them back from KV).
   const pointTasks: Array<() => Promise<void>> = [];
   const systemSummaries: Array<{
@@ -126,11 +126,11 @@ async function main(): Promise<void> {
     maxMeasurementTimeMs: number;
   }> = [];
 
-  for (const [systemId, systemRows] of bySystem) {
+  for (const [systemId, deviceRows] of byDevice) {
     const summaryValues: Array<{ logicalPath: string; value: number }> = [];
     let maxMeasurementTimeMs = 0;
 
-    for (const row of systemRows) {
+    for (const row of deviceRows) {
       const address = addresses.get(row.point)!;
       const logicalPath = `${row.logicalPathStem}/${row.metricType}`;
       const cacheValue: number | string | null =
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
   });
 
   console.log(
-    `✓ Rebuilt dev: KV from DB — ${pointTasks.length} point value(s) across ${bySystem.size} source system(s).`,
+    `✓ Rebuilt dev: KV from DB — ${pointTasks.length} point value(s) across ${byDevice.size} source system(s).`,
   );
   process.exit(0);
 }
