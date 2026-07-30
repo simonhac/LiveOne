@@ -23,7 +23,13 @@ spelled `device` in code. No outstanding migration debt.
 
 Start at [Phase 14](#phase-14--v4-native-presentation-and-the-last-of-the-two-shapes). It is the largest
 phase by volume and the only one left: one dashboard shape, the v3 descriptor and adapter deleted, the
-unbuilt v4 mutation routes (**12**, not 10 — recounted 2026-07-31).
+unbuilt v4 mutation routes (**12** legacy handlers with no twin → **10** v4 handlers, since §9.2
+collapses two POST/DELETE pairs into a `PUT`).
+
+🛑 **The per-PR detail lives in [config-v4-phase14-prs.md](config-v4-phase14-prs.md)** — 22 PRs in seven
+waves, each with a measured inventory, its own proof and a DO-NOT list. **Migrations 0053/0054/0055 are
+RESERVED and assigned by the orchestrator only**; no agent may run `db:pg:generate` and claim a number
+(parallel worktrees collide).
 
 **Phase 14 has started.** Shipped so far:
 
@@ -39,8 +45,10 @@ unbuilt v4 mutation routes (**12**, not 10 — recounted 2026-07-31).
 Not the plan's original "start with `default-section`", which is neither cheap nor a duplicate.
 
 **Still open in Phase 14, untouched:** the `/api/data` `vendorSiteId` raw-uuid leak (real, confirmed —
-needs either a `devices.vendor_site_id` data migration or a new `ar_` wire field, so not code-only);
+fixed by a `devices.vendor_site_id` data migration, **0054**, decided 2026-07-31 over a new wire field);
 the `descriptor` drop migration (**not written**); every renderer port; every v4 mutation endpoint.
+
+🛑 **And a SECOND LIVE v3 RENDER PATH the plan did not know about — `/device/{id}`.** See Phase 14.
 
 **What Phase 13 leaves on the floor for 14**, deliberately:
 
@@ -86,8 +94,9 @@ Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehe
 | ~~**KV is integer-keyed**~~ ✅ **DONE (Phase 13)** — `latest:device:{dv_…}` / `latest:area:{ar_…}`, one key owner (`lib/kv-keys.ts`)                                         | ~~13~~     |
 | ~~**`/api/data` is handle-addressed**~~ ✅ **DONE (Phase 13)** — accepts `areaId=ar_…`/`deviceId=dv_…`; payload `{device\|area, latest}`; `?systemId=N` is a permanent alias | ~~13~~     |
 | **Dashboards dual-shape, v3-write** — `descriptor` and `doc` both NOT NULL and both written                                                                                  | Phase 14   |
-| **Zero v4-native renderers** — 19 plugins, two split registries, reached through `v4-adapt.ts`                                                                               | Phase 14   |
-| **All v4 mutation routes missing** — 10 unbuilt; 28 legacy handlers across 15 routes still serve                                                                             | Phase 14   |
+| **Two live v3 render paths** — `/device/{id}` server-builds a `DashboardV3`; `components/Dashboard.tsx` is still mounted                                                     | Phase 14   |
+| **Card plugins not v4-native** — 9 card plugins on `CardRenderProps`, two split registries, reached through `v4-adapt.ts` (the **9 tile** plugins already are v4-native)     | Phase 14   |
+| **All v4 mutation routes missing** — 12 legacy mutation handlers with no twin → **10** v4 handlers to build; 28 legacy handlers across 15 routes still serve                 | Phase 14   |
 
 ## The finish line
 
@@ -225,8 +234,13 @@ git is the archive; the PR bodies carry the measurements. What survives here is 
 **Goal:** one dashboard shape. Delete the v3 descriptor, the rewriter, the adapter and the legacy route
 handlers. Largest phase by volume; last because it depends on Phase 12's registries.
 
-- **Port the 19 plugins to v4-native** — one `CARD_RENDERERS` keyed on `card-types.ts`' 18 unified types,
-  replacing the split card (10) + tile (9) registries; then delete `v4-adapt.ts`.
+🛑 **Per-PR detail: [config-v4-phase14-prs.md](config-v4-phase14-prs.md)** — 22 PRs, seven waves, each
+with a measured inventory, its own proof and a DO-NOT list. Migrations **0053** (drop `descriptor`),
+**0054** (helper `vendor_site_id`) and **0055** (signal-neutral run stats) are **RESERVED**; the
+orchestrator assigns numbers, because parallel worktrees collide on `db:pg:generate`.
+
+- **Port the card plugins to v4-native** — one `CARD_RENDERERS` keyed on `card-types.ts`' 18 unified
+  types, replacing the split card (10) + tile (9) registries; then delete `v4-adapt.ts`.
 - **Build the v4 editor** so the write model is v4; move the page shell onto the doc, make
   `temporal-cards.ts` v4-aware.
   > ⚠️ **A2's fix regenerates `doc` UNCONDITIONALLY, which is only safe while `doc` has no independent
@@ -236,15 +250,21 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
 - **Build the missing `/api/v4` mutation endpoints**, then retire the 28 legacy handlers across 15
   routes.
 
-  > **Counts re-measured 2026-07-31.** "28 legacy handlers across 15 routes" is **correct** (16
-  > mutations, 12 reads). "**10** unbuilt mutation endpoints" was an **undercount — it is 12** (7 area
+  > **Counts re-measured 2026-07-31 against `fa64b2d2`.** "28 legacy handlers across 15 routes" is
+  > **correct**, but the split is **15 mutations / 13 reads**, not 16/12. Of the 12 mutation handlers
+  > with no v4 twin (7 area + 5 dashboard-sharing), §9.2 collapses `POST`+`DELETE …/devices` into one
+  > `PUT …/members` and `POST`+`DELETE …/grants` into one `PUT …/grants` — so it is **10 v4 handlers to
+  > build**, not 12. Of the 7 legacy READs with no twin, **3 are already dead**
+  > (`GET /api/areas?systemId=`, `GET …/bindings` — bindings ride inside the `[areaId]` GET payload —
+  > and `GET /api/dashboards/{id}`, integration-test-only) and 2 belong with the sharing port
+  > (`grants`, `share`), leaving **4 orphan area reads** to port: `candidate-devices`, `by-handle`,
+  > `provenance-daily`, `provenance-summary`.
   >
-  > - 5 dashboard-sharing); 11 if you exclude the ops-only `recompute-provenance` POST, and 10 only if
-  >   you _also_ fold `PATCH …/share` into the share POST. State the exclusions or use 12. Additionally,
-  >   **7 legacy READ handlers have no v4 twin either** (`GET /api/areas?systemId=`,
-  >   `candidate-devices`, `by-handle`, `provenance-daily`, `provenance-summary`, `grants`, `share`) —
-  >   port them or declare them out of scope, because the legacy routes cannot be retired while they are
-  >   the only address for those reads.
+  > 🛑 **Each v4 twin needs its own `lib/route-matchers.ts` entry.** `by-handle`,
+  > `provenance-summary` and `recompute-provenance` are in `publicRoutes` (they authenticate by
+  > `CRON_SECRET` in-handler); **`provenance-daily` is in `shareableRoutes`** — an anonymous `?access=`
+  > viewer fetches it for the battery-provenance panel. Middleware runs before the rewrites, so a
+  > missing entry is a silent edge 404 for anonymous viewers and invisible to a logged-in tester.
 
   > 🛑 **STEP 0, and it is not optional: the entire `/api/v4` surface is DARK.** Measured 2026-07-31 —
   > **zero callers and zero tests**. No `fetch()` anywhere in `app/`, `components/`, `lib/`, `hooks/`
@@ -260,36 +280,77 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
   > it is coupled to the editor port, not independent of it.
 
 - **Drop `dashboards.descriptor`**; delete `lib/dashboard/{v3,cards,v3-to-v4}.ts`, `v4-seed.ts`'s v3
-  detour, and every `isDashboardV3`/`isDashboardV4` branch. Retire the bridge tests (~362 LOC).
-- **Tighten to strict decode** — drop the dual-accept `areaRefToUuid` and the `rowToDashboard`
-  read-normalize. Precondition MET (prod 100% `ar_` as of 2026-07-27); re-assert before dropping, since
-  any dashboard created since must also be `ar_`. Fix the `/api/data` `vendorSiteId` raw-uuid leak.
+  detour, and every `isDashboardV3`/`isDashboardV4` branch. Retire the bridge tests — **285 LOC**, not
+  ~362 (`v3-to-v4.test.ts` 180 + `v4-adapt.test.ts` 105).
+
+  > 🛑 **Delete the field from `schema.ts` FIRST and let `tsc` enumerate the readers** (the trap below).
+  > And note **a v4 route already writes `descriptor`** — `app/api/v4/dashboards/route.ts:123` inserts
+  > `emptyDashboardV3()`, because the column is NOT NULL. "v4 doesn't touch descriptor" is false.
+
+- ~~**Tighten to strict decode**~~ ✅ **DONE (PR [#305](https://github.com/simonhac/LiveOne/pull/305)).**
+  Still open from that bullet: the `/api/data` `vendorSiteId` raw-uuid leak — helper devices carry
+  `helper:area:<raw uuid>` (`lib/areas/helper-site-id.ts:12`), emitted verbatim at
+  `lib/dashboard/serve-data.ts:169` and parsed back out client-side at
+  `components/dashboard/cards/battery-provenance-history.tsx:24-25`. **Fixed by migration 0054**
+  rewriting the column to `helper:area:ar_…`, dual-accept decoder deployed first.
 - **Queued card work, unblocked here:** HWS 7-day stripe → a generic `daily-stripe` card, and the heatmap
   → a `heatmap` card. See [hws-stripe-and-heatmap-cards.md](hws-stripe-and-heatmap-cards.md).
-- **Close out** — delete the phase-7/8 docs and this file; fold anything still true into
-  `docs/architecture/data-model.md`. Git is the archive.
+- **Close out** — delete the phase-7/8 docs; fold anything still true into
+  `docs/architecture/data-model.md`. Git is the archive. 🛑 **This file is KEPT** (Simon, 2026-07-31),
+  rewritten as the epic's completed record — that overrides the original "delete this file".
 
-**Risk:** the 19-plugin port is where visual regressions hide and there is no snapshot coverage. Port
+### 🛑 There are TWO live v3 render paths, not one
+
+The rest of this plan assumes one. Measured at `fa64b2d2`:
+
+- **`/dashboard/{…}`** — `components/DashboardClient.tsx:231` branches
+  `dashboard.doc ? <DashboardV4View> : <Dashboard>`. Since the Phase 8/10 cutover `doc` is NOT NULL,
+  **the v3 branch is never taken.**
+- **`/device/{id}`** — `app/device/[...slug]/page.tsx:262` server-builds a transient `DashboardV3` from
+  `buildAreaStrategyForHandle` and renders it through `components/DeviceViewer.tsx:169` →
+  `components/Dashboard.tsx`. **Live on every page view.**
+
+`components/Dashboard.tsx` has exactly two importers — `DeviceViewer.tsx:9` (live) and
+`DashboardClient.tsx:8` (the never-taken fallback). **`lib/dashboard/v3.ts` and the v3 renderer cannot
+die until `/device/{id}` is ported**, and `lib/dashboard/temporal-cards.ts` (both consumers) must walk
+a `DashboardV4` at the same time.
+
+**Risk:** the plugin port is where visual regressions hide and there is no snapshot coverage. Port
 plugin-by-plugin behind the still-present adapter and remove the adapter last, so each is independently
 revertible.
 
 **Port surface, measured 2026-07-31 — much smaller than "19 plugins" suggests:**
 
-- **9 of 19 (every tile) is ALREADY v4-native.** Tile plugins read `latest`/`data`/`systemId` and no
-  v3 descriptor at all; `V4TileCell` already calls them with identical props, bypassing the adapter.
-  The port is the **10 card plugins**, and 7 of those read nothing but `handle`.
-- The whole risk is **5 prop reads in 5 files**: `card.deviceSystemId` (`device-metrics`,
-  `generator-runs`), `section.areaId` (`battery-provenance-history`), `card.chart` (`chart`),
-  `card.tiles` (`tiles-card` — largely vestigial under v4, which promotes tiles to card nodes).
+- **9 of 19 (every tile) is ALREADY v4-native.** `TileRenderProps`
+  (`components/dashboard/tiles/types.ts:13-24`) has no `card` and no `section`; `V4TileCell`
+  (`components/dashboard/v4/node-view.tsx:107-134`) already calls them with identical props, bypassing
+  the adapter. Their only v3 tie is the `TileView` type import.
+- The port is the **card plugins**, and **5 of 10 read only `handle`** (`amber-now`, `amber-timeline`,
+  `battery-contents`, `chart`, `ev-provenance`); `sankey` reads no props at all (`Render: () => null`).
+- The whole risk is **5 prop reads in 4 files**: `card.deviceSystemId` (`device-metrics:14`,
+  `generator-runs:14`), `card.variant` (`device-metrics:24`), `card.chart` (`chart:42-46`, in
+  `collapseKey`), `section.areaId` (`battery-provenance-history:26-27`).
+- 🛑 **`tiles-card.tsx` is NOT ported — it is already unreachable from the v4 renderer.** `"tiles"` is
+  deliberately absent from `V4_CARD_TYPES` (`lib/dashboard/card-types.ts:18-39`; the rewriter turns a
+  v3 `tiles` card into a `row` group), so `v4CardRenderKind("tiles")` returns `"unknown"` and
+  `node-view.tsx:185-189` renders the placeholder, never `tilesPlugin`. Its only live mount is
+  `components/Dashboard.tsx`; it dies with that file.
 - 🛑 **Pixel equivalence is not provable at reasonable cost, and does not need to be.** Four card
   plugins bottom out in chart.js on a `<canvas>` (zero DOM) and `useTemporalRange` calls
   `useSearchParams()` during render; there is no React-rendering test in the repo and no
   jsdom/testing-library installed. **Prop-level equivalence is a sound substitute here**: the leaf
   components are unchanged, so identical props ⇒ identical pixels. Mock the leaves to capture props
   and all 19 become provable with **zero new dependencies** (`react-dom/server` is already present).
-- ⚠️ **Latent bug to decide about, not port mechanically:** `battery-provenance-history.tsx` branches
-  on `section.areaId.startsWith("device-")`, but `synthSectionV3` can only ever supply the area uuid
-  or `""`. That sentinel branch is **dead under v4**.
+- 🛑 **Two ways to write a React test that is silently never run.** All three jest configs are
+  `testEnvironment: "node"` with `testMatch: **/__tests__/**/*.test.ts` — **a `.tsx` test is not
+  collected** — and `roots` are `lib`/`app`/`scripts`/`packages`, so **anything under `components/` is
+  not collected either.** There is no `components/__tests__` today, so nothing has ever caught it. Put
+  the harness under `lib/**/__tests__/*.test.ts`.
+- ⚠️ **`battery-provenance-history.tsx:26`'s `section.areaId.startsWith("device-")` sentinel is dead on
+  the v4 path but NOT dead in the tree.** `synthSectionV3` can only supply the area uuid or `""` — but
+  the sentinel has a live producer at `app/device/[...slug]/page.tsx:261`
+  (`getAreaForDevice(...)?.id ?? \`device-${device.id}\``) feeding the v3 renderer. It dies with the
+`/device` port, not before.
 
 ---
 
