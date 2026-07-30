@@ -7,7 +7,7 @@
  * only shape the point resolver serves via membership/bindings). So a freshly-created site needs a
  * handle that collides with NO real system id and NO existing area handle.
  *
- * We pick `max(max(devices.rid), max(areas.legacy_system_id), BASE) + 1`. `BASE` is a reserved floor
+ * We pick `max(max(devices.rid), max(legacy_handles.handle), BASE) + 1`. `BASE` is a reserved floor
  * that sits clearly above prod serial device rids and the dev id band (10000+), so a synthetic handle
  * can never later collide with a real serial rid. This is a `max()+1` allocation (not a DB sequence —
  * that would be a schema change), guarded at the call site by the `areas_legacy_system_unique` index
@@ -21,7 +21,7 @@
  */
 import { max } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, devices } from "@/lib/db/planetscale/schema";
+import { devices, legacyHandles } from "@/lib/db/planetscale/schema";
 
 type Db = ReturnType<typeof requirePlanetscaleDb>;
 
@@ -29,9 +29,21 @@ type Db = ReturnType<typeof requirePlanetscaleDb>;
 export const AREA_HANDLE_BASE = 1_000_000;
 
 /**
- * Compute the next free synthetic area handle. Race-safe only in combination with the
- * `areas_legacy_system_unique` index + a caller retry (two concurrent creates can compute the same
- * value; the loser hits the unique violation and re-allocates — see `createArea`).
+ * Compute the next free synthetic area handle. Race-safe only in combination with a unique index on the
+ * allocated value + a caller retry (two concurrent creates can compute the same value; the loser hits
+ * the unique violation and re-allocates — see `createArea`).
+ *
+ * config-v4 Phase 13 PR 5: the handle leg reads `max(legacy_handles.handle)`, not
+ * `max(areas.legacy_system_id)`. Three reasons this is strictly safer, not merely equivalent:
+ *  1. `legacy_handles` outlives the column (PR 6 drops it), and the allocator must not be the last
+ *     thing standing between the drop and a handle collision — the same argument that moved the device
+ *     leg off `systems.id` in slice K2.
+ *  2. `handle` is `legacy_handles`' PRIMARY KEY, so it is the strongest of the remaining uniqueness
+ *     guards backing the retry (`areas_legacy_system_unique` disappears with the column).
+ *  3. It is a SUPERSET of the old read: it spans device handles as well as area handles. The floor can
+ *     therefore only ratchet UP, never down — it cannot hand out a handle below a live id even
+ *     transiently. The `devices.rid` leg is still needed regardless: a device can carry a `rid` with no
+ *     `legacy_handles` row at all.
  */
 export async function allocateAreaHandle(
   db: Db = requirePlanetscaleDb(),
@@ -40,7 +52,7 @@ export async function allocateAreaHandle(
     .select({ maxDeviceRid: max(devices.rid) })
     .from(devices);
   const [{ maxHandle }] = await db
-    .select({ maxHandle: max(areas.legacySystemId) })
-    .from(areas);
+    .select({ maxHandle: max(legacyHandles.handle) })
+    .from(legacyHandles);
   return Math.max(maxDeviceRid ?? 0, maxHandle ?? 0, AREA_HANDLE_BASE) + 1;
 }
