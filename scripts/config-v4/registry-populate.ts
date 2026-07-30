@@ -35,8 +35,38 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import { Area } from "@/lib/ids";
-// Shared with the mint mirror so the structured-spec parse (slice K1) has exactly ONE implementation.
-import { DEVICE_CONFIG_WITH_SPEC_SQL } from "@/lib/registry/v4-mirror";
+
+/**
+ * Extract the first positive number preceding `unit` from a free-text `systems` spec column, as SQL.
+ *
+ * ⚠️ INLINED HERE in slice 1a. It used to be `DEVICE_CONFIG_WITH_SPEC_SQL`, shared with the mint mirror
+ * so the structured-spec parse (slice K1) had exactly one implementation. Slice 1a deleted the mirror:
+ * the production writer now writes `devices.config.spec` DIRECTLY, so there is no longer a second
+ * implementation for this to be shared with — this one-shot population script is the only remaining
+ * caller, and the parse dies with `systems` when PR 2 drops it.
+ *
+ * The pattern uses `[ ]*` / `[.]` rather than `\s` / `\.` ON PURPOSE — a `\` inside a JS template
+ * literal is an unknown string escape that silently drops to the bare character, so `\s` would reach
+ * Postgres as `s` and match "9 skW". No backslashes, no trap. Lower-cased so "kW"/"kw"/"KWh" all match.
+ *
+ * `nullif(greatest(coalesce(…,0),0),0)` collapses "no match" and "not a positive number" to NULL, which
+ * `jsonb_strip_nulls` then removes: an absent spec field must mean exactly what an unparseable free-text
+ * value meant. System 3 carries the literal `solar_size` "-0.0 kW" — the capture group is unsigned so it
+ * reads 0.0, and this filters it.
+ */
+function specNum(col: string, unit: "kw" | "kwh" | "v"): string {
+  return `nullif(greatest(coalesce((substring(lower(${col}) from '([0-9]+([.][0-9]+)?)[ ]*${unit}'))::numeric, 0), 0), 0)`;
+}
+
+/** `devices.config` = `systems.config` plus the STRUCTURED spec parsed from the three free-text columns. */
+const DEVICE_CONFIG_WITH_SPEC_SQL = `
+  ((coalesce(s.config, '{}'::jsonb) - 'legacyRatings' - 'legacySolarSize' - 'legacyBatterySize')
+   || jsonb_strip_nulls(jsonb_build_object('spec', nullif(jsonb_strip_nulls(jsonb_build_object(
+        'solarSizeKw',     ${specNum("s.solar_size", "kw")},
+        'batterySizeKwh',  ${specNum("s.battery_size", "kwh")},
+        'inverterSizeKw',  ${specNum("s.ratings", "kw")},
+        'batteryVoltageV', ${specNum("s.ratings", "v")}
+      )), '{}'::jsonb))))`;
 
 /** Runs an SQL query and returns the already-unwrapped result rows. Both `db` and `tx` adapt to this. */
 export type RowsExec = (query: SQL) => Promise<Record<string, unknown>[]>;

@@ -351,6 +351,13 @@
       "when": 1785376302587,
       "tag": "0049_floor_device_rid_seq",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1785380056463,
+      "tag": "0050_drop_systems_fks_for_device_writer",
+      "breakpoints": true
     }
   ]
 }

@@ -120,6 +120,66 @@ export interface DeviceSpec {
   batteryVoltageV?: number;
 }
 
+/**
+ * Extract the first positive number preceding `unit` from a free-text spec string.
+ *
+ * The TypeScript counterpart of the `specNum(…)` SQL that used to live in the deleted
+ * `lib/registry/v4-mirror.ts`, added in config-v4 Phase 12 slice 1a. It is needed because the two CREATE
+ * paths that still receive free text — `POST /api/systems` (from a vendor adapter's `getSystemInfo`) and
+ * the Tesla OAuth callback — used to hand it to `systems.ratings`/`solar_size`/`battery_size` and let the
+ * mirror's SQL parse it on the way into `devices.config.spec`. With no `systems` row left to stage it in,
+ * the parse has to happen before the write.
+ *
+ * Semantics are deliberately identical to that SQL, so a device created after 1a gets the same `spec` a
+ * device created before it did:
+ *   - case-insensitive ("kW" / "kw" / "KWh" all match);
+ *   - the FIRST match wins, so "7.5kW, 48V" yields 7.5 for `kw` and 48 for `v`;
+ *   - **non-positive and unparseable both collapse to `undefined`**, never 0 — an absent spec field must
+ *     mean exactly what an unparseable free-text value meant, or the chart's y-axis hint moves. System 3
+ *     carries the literal `solar_size` "-0.0 kW"; the capture group is unsigned so it reads 0.0, which
+ *     this then rejects.
+ *
+ * One difference from the SQL, and it is a FIX rather than a drift: `kw` here refuses to match the "kw"
+ * inside "kwh" (the `(?![a-z])` guard). The SQL pattern had no such guard, so `inverterSizeKw` parsed out
+ * of a `ratings` string reading "63.6 kWh" would have picked up the battery figure. No live row exercises
+ * it — `ratings` is inverter/voltage text — but reproducing the bug for symmetry would be the wrong call.
+ */
+function specNum(
+  text: string | null | undefined,
+  unit: "kw" | "kwh" | "v",
+): number | undefined {
+  if (!text) return undefined;
+  const m = new RegExp(`([0-9]+(?:\\.[0-9]+)?)\\s*${unit}(?![a-z])`, "i").exec(
+    text.toLowerCase(),
+  );
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Build a {@link DeviceSpec} from the three legacy free-text strings, dropping absent/unparseable fields.
+ *
+ * Returns `undefined` when nothing parsed, so a caller can spread it without writing an empty `spec: {}`
+ * — matching the `nullif(jsonb_strip_nulls(…), '{}')` the SQL version used.
+ */
+export function specFromLegacyText(input: {
+  ratings?: string | null;
+  solarSize?: string | null;
+  batterySize?: string | null;
+}): DeviceSpec | undefined {
+  const spec: DeviceSpec = {};
+  const solar = specNum(input.solarSize, "kw");
+  const battery = specNum(input.batterySize, "kwh");
+  const inverter = specNum(input.ratings, "kw");
+  const voltage = specNum(input.ratings, "v");
+  if (solar !== undefined) spec.solarSizeKw = solar;
+  if (battery !== undefined) spec.batterySizeKwh = battery;
+  if (inverter !== undefined) spec.inverterSizeKw = inverter;
+  if (voltage !== undefined) spec.batteryVoltageV = voltage;
+  return Object.keys(spec).length > 0 ? spec : undefined;
+}
+
 export interface DeviceConfig {
   /** Force a derived capability ON (true) or OFF (false); absent ⇒ derive from points as normal. */
   capabilities?: Partial<Record<CapabilityId, boolean>>;

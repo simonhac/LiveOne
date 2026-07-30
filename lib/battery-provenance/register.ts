@@ -16,7 +16,7 @@ import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaBindings, pointInfo } from "@/lib/db/planetscale/schema";
 import { mintPoint } from "@/lib/point/mint-point";
-import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
+import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
 
 const BATTERY_STEM = "bidi.battery";
 

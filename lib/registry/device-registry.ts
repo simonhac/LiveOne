@@ -224,7 +224,34 @@ async function ensureAreaForHandle(
     });
 }
 
+/**
+ * The device uuid for an integer handle, read straight from `devices.rid`.
+ *
+ * Replaces the four call sites that used `ensureDeviceRow` purely FOR ITS RETURN VALUE
+ * (`lib/areas/create.ts` ×2, `lib/areas/helper.ts`, and the point mirror). Those were never mirroring
+ * anything — they wanted "handle → device uuid" and got it as a side effect of a `systems` copy. Now
+ * that `devices` is the registry rather than a mirror of one, the lookup IS the whole operation.
+ *
+ * Reads `devices.rid`, NOT `legacy_handles.device_id`, on purpose: `rid` is NOT NULL and uniquely
+ * indexed (`devices_rid_unique`), whereas `legacy_handles.device_id` is nullable and is legitimately
+ * unfilled for a handle that only ever named an Area. A miss here is a real error, so this throws
+ * rather than returning null — every caller is about to use the uuid as an FK target.
+ */
+async function uuidForRid(
+  rid: number,
+  exec: DeviceRegistryExec = requirePlanetscaleDb(),
+): Promise<string> {
+  const [row] = await exec
+    .select({ id: devices.id })
+    .from(devices)
+    .where(eq(devices.rid, rid))
+    .limit(1);
+  if (!row) throw new UnknownDeviceIdError("device-handle", rid);
+  return row.id;
+}
+
 export const DeviceRegistry = {
+  uuidForRid,
   addrForHandle,
   addrsForHandles,
   addrForDevice,

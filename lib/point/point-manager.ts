@@ -20,7 +20,7 @@ import {
 } from "@/lib/point/series-info";
 import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
-import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
+import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
 import {
   DeviceConfigRegistry,
   type DeviceConfigView,

@@ -3,10 +3,10 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { requireAuth } from "@/lib/api-auth";
 import { eq, desc } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { DeviceWriter } from "@/lib/registry/device-writer";
+import { specFromLegacyText } from "@/lib/capabilities/config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -62,9 +62,18 @@ export async function POST(request: NextRequest) {
       displayName: systemInfo.displayName || `${adapter.displayName} System`,
       model: systemInfo.model || null,
       serial: systemInfo.serial || null,
-      ratings: systemInfo.ratings || null,
-      solarSize: systemInfo.solarSize || null,
-      batterySize: systemInfo.batterySize || null,
+      // Slice 1a: the adapter still reports the vendor's free-text ratings/sizes, but `devices` has no
+      // counterpart to those three columns by design — they are parsed into the structured
+      // `config.spec` here instead of being staged in `systems` for the mirror's SQL to parse. Same
+      // parse, same rejection rules; see `specFromLegacyText`.
+      config: (() => {
+        const spec = specFromLegacyText({
+          ratings: systemInfo.ratings,
+          solarSize: systemInfo.solarSize,
+          batterySize: systemInfo.batterySize,
+        });
+        return spec ? { spec } : null;
+      })(),
       timezoneOffsetMin: 600, // Default to AEST
     });
 

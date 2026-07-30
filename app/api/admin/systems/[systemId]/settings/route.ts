@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { devices, systems } from "@/lib/db/planetscale/schema";
+import { devices } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
 import { DeviceWriter } from "@/lib/registry/device-writer";

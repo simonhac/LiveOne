@@ -147,7 +147,6 @@ export async function GET(request: NextRequest) {
         status: "active",
         displayName: teslaVehicle.display_name || "Tesla Vehicle",
         model: teslaVehicle.vin,
-        solarSize: null,
         location: null,
         timezoneOffsetMin,
         displayTimezone,
