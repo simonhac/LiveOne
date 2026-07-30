@@ -272,19 +272,20 @@ async function main() {
     const notAdopted = await dev.query(`SELECT 1 FROM areas WHERE id = $1`, [
       PROD_UUID_DRIFT,
     ]);
+    // 🛑 THE ONE ASSERTION THAT DEFINES "UNDETECTED": the drifted dev row SURVIVES, i.e. nothing was
+    // realigned. Whether prod's row also lands alongside it is a SEPARATE fact, and it CHANGED at
+    // migration 0052 — see the ruling printed below. Asserting `notAdopted === 0` here was correct only
+    // while `areas_legacy_system_unique` existed to block that insert, and pinning it now would pin the
+    // pre-drop world.
     if (stillDrifted.rowCount !== 1)
       fail("control invalid: drift was realigned even WITHOUT the cross key");
-    if (notAdopted.rowCount !== 0)
-      fail("control invalid: prod's uuid landed without the cross key");
     console.log(
-      "\n✓ NEGATIVE CONTROL: with crossKeys removed, the SAME drift is not realigned.",
+      "\n✓ NEGATIVE CONTROL: with crossKeys removed, the SAME drift is not realigned —",
     );
     console.log(
-      "  the drifted dev row survives and prod's uuid never lands, so the realignment",
+      "  the drifted dev row survives, so the realignment above is attributable specifically",
     );
-    console.log(
-      "  above is attributable specifically to the cross-table legacy_handles key.",
-    );
+    console.log("  to the cross-table legacy_handles key.");
     if (controlErr) {
       console.log(
         `\n  NOTE — it did not fail quietly, it ABORTED: ${controlErr}`,
@@ -296,20 +297,36 @@ async function main() {
         "  key abort, and it is gone. Some OTHER constraint is standing in for it — worth knowing,",
       );
       console.log("  but do not rely on it.");
-    } else {
+    } else if (notAdopted.rowCount === 1) {
       console.log(
-        "\n  NOTE: it failed SILENTLY (exit 0, nothing realigned) — the invisible mode, and the",
+        "\n  NOTE — it failed SILENTLY, and in the WORST shape: exit 0, nothing realigned, and prod's",
       );
       console.log(
-        "  EXPECTED post-0052 behaviour. `areas_legacy_system_unique` used to abort the sync on a",
+        "  row landed ALONGSIDE the drifted dev row — the same logical area now exists TWICE under",
       );
       console.log(
-        "  missed key; migration 0052 dropped it with the column, so this script is now the ONLY",
+        "  two uuids. This is the post-0052 behaviour and it is a genuine downgrade: while",
       );
       console.log(
-        "  instrument that can tell a working drift key from a broken one. Run it after any change",
+        "  `areas_legacy_system_unique` existed, that second insert collided and took the sync down",
+      );
+      console.log(
+        "  LOUDLY. Migration 0052 dropped it with the column, so this script is now the ONLY",
+      );
+      console.log(
+        "  instrument that can tell a working drift key from a broken one. Run it after ANY change",
       );
       console.log("  to the `areas` idDrift leg.");
+    } else {
+      console.log(
+        "\n  NOTE — it failed SILENTLY (exit 0, nothing realigned, prod's row never landed) — the",
+      );
+      console.log(
+        "  invisible mode. `areas_legacy_system_unique` used to abort the sync on a missed key;",
+      );
+      console.log(
+        "  migration 0052 dropped it, so this script is the only instrument that can see this.",
+      );
     }
   } finally {
     await cleanup();
