@@ -48,16 +48,25 @@ export const isPublicRoute = createRouteMatcher(publicRoutes);
 // GET/HEAD-only check in middleware.ts (a share token never authorizes a write). Add a route here only
 // after confirming its handler validates the token and exposes nothing beyond the dashboard's scope.
 //
-// Note the trailing slash: `/api/system/(.*)` matches `/api/system/1/...` but NOT the plural
-// `/api/systems` (admin). The composition dashboard descriptor is resolved server-side in page.tsx
+// Note the trailing slash: `/api/device/(.*)` matches `/api/device/1/...` but NOT the plural
+// `/api/devices` (admin). The composition dashboard descriptor is resolved server-side in page.tsx
 // (never client-fetched in the shared view), so no `/api/dashboard(.*)` entry is needed — and keeping
 // it out also stops it over-matching the plural `/api/dashboards` CRUD (which stays Clerk-gated).
 const shareableRoutes = [
   "/dashboard(.*)", // the shared dashboard page (validates the token server-side)
   "/api/data", // live values + readings — requireDashboardAccess
   "/api/history", // time series + sankey (?include=sankey) — requireDashboardAccess
-  "/api/system/(.*)", // per-system read endpoints the cards use (latest, run-periods)
+  "/api/device/(.*)", // per-device read endpoints the cards use (latest, run-periods)
   "/api/areas/(.*)/provenance-daily", // battery-provenance history panel — requireDashboardAccess
+  // ── COMPATIBILITY SHIM WITH AN EXPIRY — delete with the next.config rewrites ─────────
+  // The pre-Phase-13 spelling of the line above. Middleware runs BEFORE next.config
+  // rewrites and sees the ORIGINAL path, so a stale bundle in an already-open SHARED
+  // dashboard (anonymous viewer, cannot be told to reload) would otherwise be 404'd at the
+  // Clerk edge before the rewrite to `/api/device/*` ever happens.
+  // This grants NO new surface: every `/api/system/*` path rewrites into `/api/device/*`,
+  // which is already shareable in full. It is deliberately singular — `/api/systems/*`
+  // (now `/api/devices/*`, admin) stays Clerk-gated, same trailing-slash reasoning as above.
+  "/api/system/(.*)",
 ];
 
 export const isShareableRoute = createRouteMatcher(shareableRoutes);

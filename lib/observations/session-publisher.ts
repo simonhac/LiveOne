@@ -28,7 +28,7 @@ export interface SessionPublishInput {
 }
 
 /**
- * Format a Date as ISO 8601 with system's timezone offset
+ * Format a Date as ISO 8601 with device's timezone offset
  */
 function formatTimestamp(date: Date, timezoneOffsetMin: number): string {
   return formatTime_fromJSDate(date, timezoneOffsetMin);

@@ -22,7 +22,7 @@ import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { getQueryClient } from "@/app/get-query-client";
 import { queryKeys } from "@/lib/queries/keys";
 import { MY_DASHBOARDS_KEY, USER_PREFERENCES_KEY } from "@/lib/queries";
-import { getSystemDataForCache } from "@/lib/dashboard/serve-data";
+import { getDeviceDataForCache } from "@/lib/dashboard/serve-data";
 import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 import {
   listReadableDevices,
@@ -97,15 +97,15 @@ async function renderCompositionDashboard(
           : await resolveDevicesByIds(v4DeviceIds);
   const deviceById = new Map(readableDevices.map((d) => [d.id, d] as const));
 
-  // SP1.2: SSR-prefetch each referenced system's /api/data (latest values) in-process and seed a
+  // SP1.2: SSR-prefetch each referenced device's /api/data (latest values) in-process and seed a
   // React Query HydrationBoundary, so cards render filled from cache instead of a client round-trip.
   // Handles come from the areas already resolved + authorized server-side (sharedAreas for a shared/
-  // grantee view, initialReadableAreas for an owner) — we only prefetch systems the viewer may read.
+  // grantee view, initialReadableAreas for an owner) — we only prefetch devices the viewer may read.
   // Best-effort: a miss just means the card self-fetches, exactly as before.
   const areaById = new Map(
     (sharedAreas ?? initialReadableAreas ?? []).map((a) => [a.id, a] as const),
   );
-  // Section handles (the whole-area systems). These ALONE form the client's dashboardDataBatchQuery
+  // Section handles (the whole-area devices). These ALONE form the client's dashboardDataBatchQuery
   // key (Dashboard.tsx derives it from section handles, ignoring device pins), so keep them separate
   // from the expanded per-tile seed set below — folding pins into `batchIds` would break the key
   // match and force a client batch refetch.
@@ -119,7 +119,7 @@ async function renderCompositionDashboard(
   const queryClient = getQueryClient();
   const seeded: Record<string, unknown> = {};
   // A tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a public NEM
-  // region system; a member device for `device-metrics`). Those pins are NOT section handles, so
+  // region device; a member device for `device-metrics`). Those pins are NOT section handles, so
   // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
   const pins = new Set<number>();
   for (const s of descriptor.sections) {
@@ -144,9 +144,9 @@ async function renderCompositionDashboard(
   const prefetch = async () => {
     // SP1.2b: seed section handles (already authorized) unconditionally, plus device pins — but a pin
     // is seeded only if the payload we ALREADY fetch shows it's authorization-safe WITHOUT any extra
-    // lookup: a public (owner-less) system, e.g. the oe-grid NEM region system, or one owned by the
-    // viewer. `getSystemDataForCache` does no per-viewer auth, so this owner check off the fetched
-    // system is the guard. Anything else (a private pin we can't cheaply vouch for) falls through to
+    // lookup: a public (owner-less) device, e.g. the oe-grid NEM region device, or one owned by the
+    // viewer. `getDeviceDataForCache` does no per-viewer auth, so this owner check off the fetched
+    // device is the guard. Anything else (a private pin we can't cheaply vouch for) falls through to
     // a client self-fetch, where /api/data enforces access — exactly as before. No re-derivation of
     // the pin from the opaque descriptor, so no extra DB round-trips on the render's critical path.
     const pinIds = [...pins].filter((p) => !handles.includes(p));
@@ -156,7 +156,7 @@ async function renderCompositionDashboard(
         ...pinIds.map((id) => ({ id, isPin: true })),
       ].map(async ({ id, isPin }) => {
         try {
-          const value = await getSystemDataForCache(id);
+          const value = await getDeviceDataForCache(id);
           if (value == null) return;
           if (isPin) {
             // 🛑 Reads the DISCRIMINATED payload (config-v4 Phase 13 PR 1): `device` for a real
@@ -183,9 +183,9 @@ async function renderCompositionDashboard(
     );
   };
   await (timer ? timer.time("data", prefetch) : prefetch());
-  // A multi-system dashboard also runs dashboardDataBatchQuery(handles); seed its key (the same
+  // A multi-device dashboard also runs dashboardDataBatchQuery(handles); seed its key (the same
   // sorted string-id set the client derives from SECTION HANDLES — not the pins) so it doesn't
-  // refetch despite warm per-system caches. The extra pin entries in `seeded` are harmless (the
+  // refetch despite warm per-device caches. The extra pin entries in `seeded` are harmless (the
   // client seeds per-id from the same map shape).
   const batchIds = [...new Set(handles.map(String))].sort();
   if (batchIds.length > 1) {
@@ -259,9 +259,9 @@ async function renderCompositionDashboard(
 }
 
 /**
- * `/dashboard/*` serves only composition (v3) dashboards now. Per-system "device" views live at
- * `/device/*`; any system-shaped slug here 301s there. A composition is shareable via `?access=`
- * (read-only, no sign-in); the legacy per-system share path is retired.
+ * `/dashboard/*` serves only composition (v3) dashboards now. Per-device "device" views live at
+ * `/device/*`; any device-shaped slug here 301s there. A composition is shareable via `?access=`
+ * (read-only, no sign-in); the legacy per-device share path is retired.
  */
 export default async function DashboardPage({
   params,
@@ -338,7 +338,7 @@ export default async function DashboardPage({
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
     // A signed-in non-owner with a grant views read-only; a true stranger is bounced (a public,
     // sign-in-free share still arrives via ?access=). Grantees get the descriptor's Areas resolved
-    // server-side (like the token path) so the client never calls the system-scoped /api/areas/readable.
+    // server-side (like the token path) so the client never calls the device-scoped /api/areas/readable.
     const grant = canEdit ? null : await getGrant(dashboard.id, userId);
     if (!canEdit && !grant) redirect("/dashboard");
     const sharedAreas = grant
@@ -364,7 +364,7 @@ export default async function DashboardPage({
   }
 
   // Pretty owner-scoped alias: `/dashboard/{user}/{shortname}`. A composition dashboard the caller
-  // can edit wins; otherwise it's a system-shaped slug → redirect to the device view.
+  // can edit wins; otherwise it's a device-shaped slug → redirect to the device view.
   if (
     slug.length === 2 &&
     !/^\d+$/.test(slug[0]) &&
@@ -392,7 +392,7 @@ export default async function DashboardPage({
     // No matching composition dashboard → fall through to the device redirect below.
   }
 
-  // Everything else is a per-system "device" slug (numeric id, user/alias, or a sub-page). Devices
+  // Everything else is a per-device "device" slug (numeric id, user/alias, or a sub-page). Devices
   // now live at /device/*; 301 there preserving the path shape.
   redirect(`/device/${slug.join("/")}`);
 }

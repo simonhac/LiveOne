@@ -15,7 +15,7 @@ import { getValidTeslaToken } from "./tesla-auth";
 import { TESLA_POINTS } from "./point-metadata";
 import type {
   TeslaCredentials,
-  TeslaSystemMetadata,
+  TeslaDeviceMetadata,
   TeslaVehicleData,
 } from "./types";
 
@@ -23,18 +23,18 @@ import type {
 const DEFAULT_POLL_INTERVAL = 15;
 const CHARGING_POLL_INTERVAL = 5;
 
-// Resolved per-system Tesla polling config (defaults applied).
+// Resolved per-device Tesla polling config (defaults applied).
 interface ResolvedTeslaConfig {
   wakeToPoll: boolean;
   idleInterval: number;
   chargingInterval: number;
 }
 
-// Read the per-system overrides from `systems.metadata.tesla`, applying defaults and a
+// Read the per-device overrides from `systems.metadata.tesla`, applying defaults and a
 // 1-minute floor on the intervals. Absent/garbage metadata yields the legacy defaults.
-function resolveTeslaConfig(system: DeviceConfigView): ResolvedTeslaConfig {
+function resolveTeslaConfig(device: DeviceConfigView): ResolvedTeslaConfig {
   const meta =
-    ((system.metadata as { tesla?: TeslaSystemMetadata } | null) ?? {}).tesla ??
+    ((device.metadata as { tesla?: TeslaDeviceMetadata } | null) ?? {}).tesla ??
     {};
   const clampInterval = (
     value: number | undefined,
@@ -58,13 +58,13 @@ export class TeslaAdapter extends BaseVendorAdapter {
   readonly displayName = "Tesla";
   readonly dataSource = "poll" as const;
   // Onboarded via an in-dialog Fleet API OAuth redirect (no credential fields).
-  readonly supportsAddSystem = true;
-  readonly addSystemFlow = "oauth-redirect" as const;
+  readonly supportsAddDevice = true;
+  readonly addDeviceFlow = "oauth-redirect" as const;
 
   protected pollIntervalMinutes = DEFAULT_POLL_INTERVAL;
   protected toleranceSeconds = 60;
 
-  // Track last known charging state per system (in-memory cache)
+  // Track last known charging state per device (in-memory cache)
   private chargingStates = new Map<number, boolean>();
 
   /**
@@ -73,20 +73,20 @@ export class TeslaAdapter extends BaseVendorAdapter {
    * - 5 min when charging (from previous poll)
    */
   protected evaluateSchedule(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
-    // Determine interval based on last known charging state, honouring per-system overrides
-    const cfg = resolveTeslaConfig(system);
-    const isCharging = this.chargingStates.get(system.id) || false;
+    // Determine interval based on last known charging state, honouring per-device overrides
+    const cfg = resolveTeslaConfig(device);
+    const isCharging = this.chargingStates.get(device.id) || false;
     const interval = isCharging ? cfg.chargingInterval : cfg.idleInterval;
 
     // If never polled, poll now
     if (!lastPollTime) {
       const nextPollTime = getNextMinuteBoundary(
         interval,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
       return {
         shouldPoll: true,
@@ -102,7 +102,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
     if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
       const nextPollTime = getNextMinuteBoundary(
         interval,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
       return {
         shouldPoll: true,
@@ -115,7 +115,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
 
     const nextPollTime = getNextMinuteBoundary(
       interval,
-      system.timezoneOffsetMin,
+      device.timezoneOffsetMin,
     );
     return {
       shouldPoll: false,
@@ -129,22 +129,22 @@ export class TeslaAdapter extends BaseVendorAdapter {
    * Base adapter handles session creation, data insertion, and session completion
    */
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     _credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
     try {
       console.log(
-        `[Tesla] Polling system ${system.id} (${system.displayName})`,
+        `[Tesla] Polling system ${device.id} (${device.displayName})`,
       );
 
-      if (!system.ownerClerkUserId) {
+      if (!device.ownerClerkUserId) {
         return { success: false, error: "System has no owner" };
       }
 
       // Get valid access token (refreshes if needed)
       const { accessToken, credentials: teslaCredentials } =
-        await getValidTeslaToken(system.ownerClerkUserId, system.id);
+        await getValidTeslaToken(device.ownerClerkUserId, device.id);
 
       const vehicleId = (teslaCredentials as TeslaCredentials).vehicle_id;
       const client = getTeslaClient(
@@ -159,8 +159,8 @@ export class TeslaAdapter extends BaseVendorAdapter {
         return { success: false, error: `Vehicle ${vehicleId} not found` };
       }
 
-      // Per-system polling config (wake behaviour + intervals).
-      const cfg = resolveTeslaConfig(system);
+      // Per-device polling config (wake behaviour + intervals).
+      const cfg = resolveTeslaConfig(device);
 
       // Wake up vehicle if asleep
       if (vehicle.state !== "online") {
@@ -172,7 +172,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
           );
           const nextPollTime = getNextMinuteBoundary(
             cfg.idleInterval,
-            system.timezoneOffsetMin,
+            device.timezoneOffsetMin,
           );
           return {
             success: true,
@@ -196,7 +196,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
           );
           const nextPollTime = getNextMinuteBoundary(
             cfg.idleInterval,
-            system.timezoneOffsetMin,
+            device.timezoneOffsetMin,
           );
           return {
             success: true,
@@ -212,7 +212,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
 
       // Update charging state for next poll interval decision
       const isCharging = vehicleData.charge_state.charging_state === "Charging";
-      this.chargingStates.set(system.id, isCharging);
+      this.chargingStates.set(device.id, isCharging);
 
       // Transform data to point readings
       const measurementTime = context.startedAt.getTime();
@@ -239,14 +239,14 @@ export class TeslaAdapter extends BaseVendorAdapter {
       }
 
       console.log(
-        `[Tesla] System ${system.id}: Extracted ${readings.length} readings`,
+        `[Tesla] System ${device.id}: Extracted ${readings.length} readings`,
       );
 
       // Calculate next poll time based on current charging state
       const nextInterval = isCharging ? cfg.chargingInterval : cfg.idleInterval;
       const nextPollTime = getNextMinuteBoundary(
         nextInterval,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
 
       return {
@@ -256,7 +256,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
         rawResponse: vehicleData,
       };
     } catch (error) {
-      console.error(`[Tesla] Error polling system ${system.id}:`, error);
+      console.error(`[Tesla] Error polling system ${device.id}:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -268,13 +268,13 @@ export class TeslaAdapter extends BaseVendorAdapter {
    * Test connection with Tesla
    */
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     _credentials: any,
   ): Promise<TestConnectionResult> {
     try {
-      console.log(`[Tesla] Testing connection for system ${system.id}`);
+      console.log(`[Tesla] Testing connection for system ${device.id}`);
 
-      if (!system.ownerClerkUserId) {
+      if (!device.ownerClerkUserId) {
         return {
           success: false,
           error: "System has no owner",
@@ -283,7 +283,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
 
       // Get valid access token
       const { accessToken, credentials: teslaCredentials } =
-        await getValidTeslaToken(system.ownerClerkUserId, system.id);
+        await getValidTeslaToken(device.ownerClerkUserId, device.id);
 
       const vehicleId = (teslaCredentials as TeslaCredentials).vehicle_id;
       const client = getTeslaClient(
@@ -314,7 +314,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
         }
       }
 
-      const systemInfo = {
+      const deviceInfo = {
         vendorSiteId: vehicleId,
         displayName: vehicle.display_name,
         model: vehicle.vin,
@@ -349,7 +349,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
 
       return {
         success: true,
-        systemInfo,
+        deviceInfo,
         latestData,
         vendorResponse: vehicleData || vehicle,
       };

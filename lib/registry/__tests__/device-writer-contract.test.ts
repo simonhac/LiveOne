@@ -3,11 +3,11 @@
  * config-v4 Phase 12 slice 1a. Two things here are regression guards for defects that have already
  * reached production once each, and both are invisible to `tsc`.
  *
- * ## 1. `createSystem().id` must be the INTEGER handle
+ * ## 1. `createDevice().id` must be the INTEGER handle
  *
- * Callers use the returned `.id` as a handle: `POST /api/systems` passes it to `deleteSystem` on the
+ * Callers use the returned `.id` as a handle: `POST /api/devices` passes it to `deleteDevice` on the
  * rollback path, and both OAuth callbacks pass it to `storeTeslaTokens` / `storeEnphaseTokens` as the
- * system id credentials are filed under. The writer now INSERTS `devices`, whose own `id` column is a
+ * device id credentials are filed under. The writer now INSERTS `devices`, whose own `id` column is a
  * uuid — so the natural "return the row I just inserted" refactor silently swaps an int for a uuid.
  * Several of those call sites forward `.id` into `number` parameters only by inference, so `tsc` does
  * not catch it: it compiles and fails at runtime. That is the same failure shape as the 2026-07-27
@@ -18,7 +18,7 @@
  * `areas` → `devices` → `legacy_handles` → `area_members`, each required by the NEXT one's foreign key.
  * The fake exec below ENFORCES those FKs, which is what makes this a real test rather than a
  * transcription of the implementation: run it against the pre-fix ordering (handle mapping first) and it
- * fails with 23503, exactly as `POST /api/systems` and both connect callbacks did on production.
+ * fails with 23503, exactly as `POST /api/devices` and both connect callbacks did on production.
  */
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
@@ -153,7 +153,7 @@ const CREATE = {
 
 describe("DeviceWriter.createSystem — the returned handle", () => {
   it("returns `id` as the INTEGER rid, never the device uuid", async () => {
-    const created = await DeviceWriter.createSystem(CREATE);
+    const created = await DeviceWriter.createDevice(CREATE);
 
     // The load-bearing assertion. A `devices` row's own `id` is a uuid; `.id` here must not be it.
     expect(typeof created.id).toBe("number");
@@ -169,14 +169,14 @@ describe("DeviceWriter.createSystem — the returned handle", () => {
   });
 
   it("files the device under the rid it returns", async () => {
-    const created = await DeviceWriter.createSystem(CREATE);
+    const created = await DeviceWriter.createDevice(CREATE);
     expect(store.handles.get(created.id)?.deviceId).toBe(created.deviceUuid);
   });
 });
 
 describe("DeviceWriter.createSystem — the four-step insert order", () => {
   it("writes areas → devices → legacy_handles → area_members", async () => {
-    await DeviceWriter.createSystem(CREATE);
+    await DeviceWriter.createDevice(CREATE);
     expect(ops).toEqual([
       "areas",
       "devices",
@@ -187,7 +187,7 @@ describe("DeviceWriter.createSystem — the four-step insert order", () => {
   });
 
   it("mints the area-of-one and joins the device to it", async () => {
-    const created = await DeviceWriter.createSystem(CREATE);
+    const created = await DeviceWriter.createDevice(CREATE);
     expect(store.areas.has(created.areaId)).toBe(true);
     expect(store.members).toEqual([
       { areaId: created.areaId, deviceId: created.deviceUuid },

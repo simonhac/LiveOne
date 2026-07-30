@@ -50,7 +50,7 @@ import { CalendarX2 } from "lucide-react";
 
 interface SiteChartsCardProps {
   systemId: string;
-  system?: any; // System object from database
+  device?: any; // Device object from database
   /**
    * Whether to run the site-history query (the data behind the charts + sankey). The caller drives it
    * from a DATA signal ("this area has loads + sources", from capability chart-eligibility) rather than
@@ -68,7 +68,7 @@ interface SiteChartsCardProps {
   /**
    * Opaque key the Sankey display options are persisted under (localStorage `sankey.options:<key>`).
    * The dashboard composes it as `sankeyId:areaId:dashboardId` so each sankey remembers independently.
-   * Omitted (e.g. legacy per-system page) ⇒ falls back to `systemId`.
+   * Omitted (e.g. legacy per-device page) ⇒ falls back to `systemId`.
    */
   sankeyOptionsKey?: string;
 }
@@ -307,7 +307,7 @@ function StackedChart({
 
 export default function SiteChartsCard({
   systemId,
-  system,
+  device,
   siteCapable,
   cardVisible,
   onHistoryEmptyChange,
@@ -324,7 +324,7 @@ export default function SiteChartsCard({
     start: desiredStart,
     end: desiredEnd,
   } = useTemporalRange({
-    timezoneOffsetMin: system?.timezoneOffsetMin ?? 600,
+    timezoneOffsetMin: device?.timezoneOffsetMin ?? 600,
   });
   const desiredWindow = useMemo(
     () => ({ period: desiredPeriod, start: desiredStart, end: desiredEnd }),
@@ -403,7 +403,7 @@ export default function SiteChartsCard({
       period,
       start,
       end,
-      timezoneOffsetMin: system?.timezoneOffsetMin ?? 0,
+      timezoneOffsetMin: device?.timezoneOffsetMin ?? 0,
       paused: isAnyModalOpen,
       enabled: runSiteQuery && !!systemId,
     }),
@@ -446,7 +446,7 @@ export default function SiteChartsCard({
   // The Sankey's attributed payload (energy + emissions/renewable/cost legs) now rides the same
   // site-history fetch for every period (see `lib/site-data-processor.ts`) — no separate 30D query.
   // `toLocalYMD` maps a focused instant to the Area-local day string `attributedFlow.days` keys on.
-  const flowOffsetMin = system?.timezoneOffsetMin || 0;
+  const flowOffsetMin = device?.timezoneOffsetMin || 0;
   const toLocalYMD = (iso: string) =>
     new Date(new Date(iso).getTime() + flowOffsetMin * 60000)
       .toISOString()
@@ -606,7 +606,7 @@ export default function SiteChartsCard({
 
   return (
     <>
-      {/* Charts - For mondo/composite systems, show charts with tables in single container */}
+      {/* Charts - For mondo/composite devices, show charts with tables in single container */}
       {(cardVisible("chart:load") ||
         cardVisible("chart:generation") ||
         cardVisible("sankey")) && (
@@ -747,7 +747,7 @@ export default function SiteChartsCard({
                 ? combineSolarSources(matrix)
                 : matrix;
               const unit = focused && !isDateOnlyPeriod(period) ? "kW" : "kWh";
-              const tz = system?.timezoneOffsetMin;
+              const tz = device?.timezoneOffsetMin;
               // Label: the focused instant when hovering, else the window the sankey integrates over
               // (a TIME range for D/W, a DATE range for M/Y).
               const cd =

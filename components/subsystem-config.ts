@@ -12,7 +12,7 @@ import {
  * Shared display metadata for point subsystems.
  *
  * Single source of truth for the label/icon/colours used to render a subsystem
- * (Solar, Battery, Grid, Load, EV, …). Consumed by PointsTab (groups a system's
+ * (Solar, Battery, Grid, Load, EV, …). Consumed by PointsTab (groups a device's
  * points by subsystem) and CompositeTab (maps points into composite categories).
  * Each consumer renders its own ordered subset of these keys.
  */

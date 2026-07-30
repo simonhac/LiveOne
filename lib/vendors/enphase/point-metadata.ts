@@ -28,7 +28,7 @@ export interface EnphasePointConfig {
 }
 
 /**
- * Monitoring points for Enphase systems
+ * Monitoring points for Enphase devices
  *
  * Currently Enphase production_micro endpoint only provides solar production data.
  * Other endpoints may provide consumption, storage, and grid data but are not yet integrated.

@@ -257,7 +257,7 @@ async function buildSubscriptionsFromBindings(): Promise<
  * inner key from the integer point index to the point uuid.)
  *
  * Called automatically by `refreshAreaServing` on every area/binding mutation; run by hand with
- * `npx tsx scripts/build-subscription-registry.ts`, or via `GET /api/systems/subscriptions?action=build`.
+ * `npx tsx scripts/build-subscription-registry.ts`, or via `GET /api/devices/subscriptions?action=build`.
  */
 export async function buildSubscriptionRegistry(): Promise<void> {
   // Example: { "dv_01k9…": { "0199a1…": ["ar_01ka…", "ar_01kb…"] } }

@@ -105,7 +105,7 @@ export class PointInfo {
    * Get the PointReference for this point (composite database key)
    * Format: "systemId.pointIndex"
    *
-   * Example: PointReference(1, 5) for system 1, point index 5
+   * Example: PointReference(1, 5) for device 1, point index 5
    */
   getReference(): PointReference {
     return PointReference.fromIds(this.systemId, this.index);

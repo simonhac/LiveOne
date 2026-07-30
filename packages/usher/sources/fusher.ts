@@ -9,7 +9,7 @@
  *
  * A single fusher source = one site = one or more inverters (master + slave), aggregated. Its manifest
  * MIRRORS the server-side `FUSHER_POINTS` map exactly (same physicalPathTails / logical stems / units),
- * so an existing Fronius system's `point_info` rows are reused byte-for-byte — the "self-describing"
+ * so an existing Fronius device's `point_info` rows are reused byte-for-byte — the "self-describing"
  * move is simply relocating that map from the receiver to the pusher.
  */
 
@@ -172,7 +172,7 @@ export const FUSHER_MANIFEST: Manifest = [
 ];
 
 export interface FusherOptions {
-  /** gusher vendorSiteId — identifies the LiveOne system (e.g. "kinkora") */
+  /** gusher vendorSiteId — identifies the LiveOne device (e.g. "kinkora") */
   siteId: string;
   /** the site's inverters (master + slave), addressed by explicit host (no LAN discovery) */
   inverters: FroniusInverterConfig[];

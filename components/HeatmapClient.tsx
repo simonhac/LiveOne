@@ -27,7 +27,7 @@ interface PointListItem {
   active: boolean;
 }
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -38,24 +38,24 @@ interface AvailableSystem {
 
 interface HeatmapClientProps {
   systemIdentifier: string; // For display/routing purposes (can be "1586" or "simon/kinkora")
-  system: {
+  device: {
     id: number;
     displayName: string;
     displayTimezone: string;
   };
   userId: string;
   isAdmin: boolean;
-  availableSystems: AvailableSystem[];
+  availableDevices: AvailableDevice[];
 }
 
 export default function HeatmapClient({
   systemIdentifier,
-  system,
+  device,
   userId,
   isAdmin,
-  availableSystems,
+  availableDevices,
 }: HeatmapClientProps) {
-  const systemId = system.id;
+  const systemId = device.id;
   const searchParams = useSearchParams();
 
   const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
@@ -70,7 +70,7 @@ export default function HeatmapClient({
     endTime: ZonedDateTime | null;
   } | null>(null);
 
-  // Fetch system points on mount (one-shot)
+  // Fetch device points on mount (one-shot)
   const {
     data: pointsData,
     isPending,
@@ -79,7 +79,7 @@ export default function HeatmapClient({
   } = useQuery({
     queryKey: ["system", systemId, "points"],
     queryFn: () =>
-      fetchJson<{ points: PointListItem[] }>(`/api/system/${systemId}/points`),
+      fetchJson<{ points: PointListItem[] }>(`/api/device/${systemId}/points`),
     staleTime: 60_000,
     enabled: !!systemId,
   });
@@ -90,9 +90,9 @@ export default function HeatmapClient({
   );
 
   // Preserve original loading / error semantics:
-  //  - invalid system id  → immediate error
+  //  - invalid device id  → immediate error
   //  - fetch failure       → derived from the query error
-  //  - empty points        → "No points found for this system"
+  //  - empty points        → "No points found for this device"
   const loading = !!systemId && isPending;
   let error: string | null = null;
   if (!systemId) {
@@ -340,7 +340,7 @@ export default function HeatmapClient({
             <tbody>
               <tr>
                 <td className="pr-4 align-top">Timezone:</td>
-                <td>{system.displayTimezone}</td>
+                <td>{device.displayTimezone}</td>
               </tr>
               <tr>
                 <td className="pr-4 align-top">Physical Path:</td>
@@ -383,7 +383,7 @@ export default function HeatmapClient({
                     <span className="text-gray-600">
                       {fetchInfo.startTime &&
                         new Intl.DateTimeFormat("en-US", {
-                          timeZone: system.displayTimezone,
+                          timeZone: device.displayTimezone,
                           timeZoneName: "short",
                         })
                           .formatToParts(fetchInfo.startTime.toDate())
@@ -395,7 +395,7 @@ export default function HeatmapClient({
                     <span className="text-gray-600">
                       {fetchInfo.endTime &&
                         new Intl.DateTimeFormat("en-US", {
-                          timeZone: system.displayTimezone,
+                          timeZone: device.displayTimezone,
                           timeZoneName: "short",
                         })
                           .formatToParts(fetchInfo.endTime.toDate())
@@ -410,13 +410,13 @@ export default function HeatmapClient({
       )}
 
       {/* Heatmap */}
-      {selectedPoint && selectedPointInfo && system.displayTimezone ? (
+      {selectedPoint && selectedPointInfo && device.displayTimezone ? (
         <HeatmapChart
-          systemId={system.id}
+          systemId={device.id}
           pointPath={selectedPoint}
           pointUnit={getUnitDisplay(selectedPointInfo.metricUnit)}
           metricType={selectedPointInfo.metricType}
-          timezone={system.displayTimezone}
+          timezone={device.displayTimezone}
           palette={selectedPalette}
           className="w-full"
           onFetchInfo={setFetchInfo}

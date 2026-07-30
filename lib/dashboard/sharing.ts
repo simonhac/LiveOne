@@ -3,7 +3,7 @@
  *
  * A share token is a read-only public link scoped to ONE dashboard. A holder gets read access to
  * exactly the points that dashboard exposes (lib/dashboard/access.ts), resolved at consumption time —
- * never general system access. Reuses the 3-word phrase generator from lib/share-tokens.ts.
+ * never general device access. Reuses the 3-word phrase generator from lib/share-tokens.ts.
  *
  * config-v4: the two token tables are UNIFIED onto `share_tokens` (dashboard_id uuid NOT NULL, naive-UTC
  * `timestamp` columns; the legacy owner-scoped `share_tokens` rows were re-pointed at auto-created

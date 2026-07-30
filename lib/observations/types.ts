@@ -77,7 +77,7 @@ export interface Observation {
 
 /**
  * Session data for the queue
- * Represents a communication session with an energy system
+ * Represents a communication session with an energy device
  */
 export interface Session {
   /** Session ID from the database (UUIDv7 text; historical = stringified int) */
@@ -122,10 +122,10 @@ export interface QueueMessage {
   /** Environment: "prod" or "dev" */
   env: "prod" | "dev";
 
-  /** System ID for quick filtering */
+  /** Device ID for quick filtering */
   systemId: number;
 
-  /** System display name for convenience */
+  /** Device display name for convenience */
   systemName: string;
 
   /** ISO 8601 timestamp when this message was created (with system timezone) */

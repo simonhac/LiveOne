@@ -45,7 +45,7 @@ const DEFAULT_RUNTIME: PreviewSeedRuntime = {
 };
 
 /**
- * libpq (psql) doesn't understand node-pg's `sslmode=no-verify`, nor a `sslrootcert=system` file
+ * libpq (psql) doesn't understand node-pg's `sslmode=no-verify`, nor a `sslrootcert=device` file
  * path — normalise both connection strings to a plain TLS connection passed via PG* env vars (keeps
  * the password out of argv / the process list).
  */

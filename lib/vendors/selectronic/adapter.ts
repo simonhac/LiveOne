@@ -15,13 +15,13 @@ import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
- * Vendor adapter for Selectronic/Select.Live systems
+ * Vendor adapter for Selectronic/Select.Live devices
  */
 export class SelectronicAdapter extends BaseVendorAdapter {
   readonly vendorType = "selectronic";
   readonly displayName = "Selectronic";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = true;
+  readonly supportsAddDevice = true;
 
   // Selectronic polls every minute
   protected pollIntervalMinutes = 1;
@@ -57,7 +57,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
    * Base adapter handles session creation, data insertion, and session completion
    */
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
@@ -65,17 +65,17 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       const client = new SelectronicFetchClient({
         email: credentials.email,
         password: credentials.password,
-        systemNumber: system.vendorSiteId,
+        systemNumber: device.vendorSiteId,
       });
 
       // Try to use cached auth if available
-      const cacheKey = `${credentials.email}:${system.vendorSiteId}`;
+      const cacheKey = `${credentials.email}:${device.vendorSiteId}`;
       const cached = SelectronicAdapter.authCache.get(cacheKey);
 
       // If no valid cache, authenticate
       if (!cached || cached.expires < Date.now() + 300000) {
         console.log(
-          `[Selectronic] Authenticating for system ${system.vendorSiteId}...`,
+          `[Selectronic] Authenticating for system ${device.vendorSiteId}...`,
         );
         const authResult = await client.authenticate();
 
@@ -154,7 +154,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       );
 
       // Calculate next poll time at the beginning of the next minute
-      const nextPollTime = getNextMinuteBoundary(1, system.timezoneOffsetMin);
+      const nextPollTime = getNextMinuteBoundary(1, device.timezoneOffsetMin);
 
       return {
         success: true,
@@ -165,7 +165,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       };
     } catch (error) {
       console.error(
-        `[Selectronic] Error fetching data for system ${system.id}:`,
+        `[Selectronic] Error fetching data for system ${device.id}:`,
         error,
       );
       return {
@@ -175,16 +175,16 @@ export class SelectronicAdapter extends BaseVendorAdapter {
     }
   }
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult> {
     try {
-      // If no vendorSiteId provided, we need to discover available systems
-      if (!system.vendorSiteId) {
+      // If no vendorSiteId provided, we need to discover available devices
+      if (!device.vendorSiteId) {
         const discoveryClient = new SelectronicFetchClient({
           email: credentials.email,
           password: credentials.password,
-          systemNumber: "", // Empty to discover systems
+          systemNumber: "", // Empty to discover devices
         });
 
         // Authenticate first
@@ -196,22 +196,22 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           };
         }
 
-        // Get available systems
-        const availableSystems = await discoveryClient.getSystemsList();
+        // Get available devices
+        const availableDevices = await discoveryClient.getDevicesList();
 
-        if (!availableSystems || availableSystems.length === 0) {
+        if (!availableDevices || availableDevices.length === 0) {
           return {
             success: false,
             error: "No systems found for this Select.Live account",
           };
         }
 
-        // Use the first system (in future we could let user choose)
-        const firstSystem = availableSystems[0];
+        // Use the first device (in future we could let user choose)
+        const firstDevice = availableDevices[0];
         const vendorSiteId =
-          firstSystem.serialNumber || firstSystem.systemNumber;
+          firstDevice.serialNumber || firstDevice.systemNumber;
 
-        // Now test with the discovered system
+        // Now test with the discovered device
         const client = new SelectronicFetchClient({
           email: credentials.email,
           password: credentials.password,
@@ -226,22 +226,22 @@ export class SelectronicAdapter extends BaseVendorAdapter {
           };
         }
 
-        const systemInfo = await client.fetchSystemInfo();
+        const deviceInfo = await client.fetchDeviceInfo();
         const latestData = this.transformData(result.data);
 
         return {
           success: true,
-          systemInfo: {
+          deviceInfo: {
             vendorSiteId,
-            displayName: firstSystem.name || `Selectronic ${vendorSiteId}`,
-            model: systemInfo?.model || firstSystem.model || "SP PRO",
-            serial: systemInfo?.serial || firstSystem.serialNumber,
-            solarSize: systemInfo?.solarSize,
-            batterySize: systemInfo?.batterySize,
-            ratings: systemInfo?.ratings,
+            displayName: firstDevice.name || `Selectronic ${vendorSiteId}`,
+            model: deviceInfo?.model || firstDevice.model || "SP PRO",
+            serial: deviceInfo?.serial || firstDevice.serialNumber,
+            solarSize: deviceInfo?.solarSize,
+            batterySize: deviceInfo?.batterySize,
+            ratings: deviceInfo?.ratings,
           },
           latestData,
-          vendorResponse: { systems: availableSystems, data: result.data.raw },
+          vendorResponse: { devices: availableDevices, data: result.data.raw },
         };
       }
 
@@ -249,7 +249,7 @@ export class SelectronicAdapter extends BaseVendorAdapter {
       const client = new SelectronicFetchClient({
         email: credentials.email,
         password: credentials.password,
-        systemNumber: system.vendorSiteId,
+        systemNumber: device.vendorSiteId,
       });
 
       // Authenticate
@@ -270,18 +270,18 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         };
       }
 
-      // Also fetch system info
-      const systemInfo = await client.fetchSystemInfo();
+      // Also fetch device info
+      const deviceInfo = await client.fetchDeviceInfo();
       console.log(
         "[Selectronic] System info received:",
-        JSON.stringify(systemInfo, null, 2),
+        JSON.stringify(deviceInfo, null, 2),
       );
 
       const latestData = this.transformData(result.data);
 
       return {
         success: true,
-        systemInfo: systemInfo || undefined,
+        deviceInfo: deviceInfo || undefined,
         latestData,
         vendorResponse: result.data.raw, // Include raw vendor response
       };

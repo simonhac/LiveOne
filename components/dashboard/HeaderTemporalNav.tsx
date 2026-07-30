@@ -17,7 +17,7 @@ export function HeaderTemporalNav({
 }: {
   /** The primary section's Area handle — whose live `system.timezoneOffsetMin` labels the range. */
   handle: number;
-  /** Immediate tz fallback (the device route already knows its system tz); refined by the query. */
+  /** Immediate tz fallback (the device route already knows its device tz); refined by the query. */
   timezoneOffsetMin?: number;
 }) {
   const { data } = useQuery(dashboardDataQuery(handle));

@@ -51,23 +51,23 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
       );
     }
 
-    // Get system details
-    const system = await DeviceConfigRegistry.deviceByHandle(
+    // Get device details
+    const device = await DeviceConfigRegistry.deviceByHandle(
       parseInt(systemId),
     );
 
-    if (!system) {
+    if (!device) {
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    if (system.vendorType !== "enphase") {
+    if (device.vendorType !== "enphase") {
       return NextResponse.json(
         { error: "System is not an Enphase system" },
         { status: 400 },
       );
     }
 
-    if (!system.ownerClerkUserId) {
+    if (!device.ownerClerkUserId) {
       return NextResponse.json(
         { error: "System has no owner" },
         { status: 400 },
@@ -78,9 +78,9 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
     let accessToken: string;
     try {
       const authResult = await getValidEnphaseToken(
-        system.ownerClerkUserId,
-        system.id,
-        system.vendorSiteId,
+        device.ownerClerkUserId,
+        device.id,
+        device.vendorSiteId,
       );
       accessToken = authResult.accessToken;
     } catch (error) {
@@ -94,7 +94,7 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
     }
 
     // Replace {systemId} in URL with actual vendor site ID
-    const finalUrl = url.replace("{systemId}", system.vendorSiteId);
+    const finalUrl = url.replace("{systemId}", device.vendorSiteId);
 
     // Build full URL if it's a path
     const fullUrl = finalUrl.startsWith("http")
@@ -128,8 +128,8 @@ async function handleRequest(request: NextRequest, defaultMethod: string) {
       request: {
         method: method.toUpperCase(),
         url: fullUrl,
-        systemId: system.id,
-        vendorSiteId: system.vendorSiteId,
+        systemId: device.id,
+        vendorSiteId: device.vendorSiteId,
       },
       response: {
         status: response.status,

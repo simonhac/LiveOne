@@ -8,7 +8,7 @@ import { Dashboard } from "@/lib/ids";
  * User preferences (the `users` config table) — Postgres only.
  *
  * The default landing page is a composition **dashboard** (`default_dashboard_id` → `/dashboard/id/{id}`).
- * The legacy per-system default (`default_system_id`) was retired in P6: a device is no longer a
+ * The legacy per-device default (`default_system_id`) was retired in P6: a device is no longer a
  * default target — you star a dashboard, and every area already has one.
  */
 

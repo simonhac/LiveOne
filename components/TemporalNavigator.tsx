@@ -11,7 +11,7 @@ import { formatHoverTimestamp } from "@/lib/charts/scaffold";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
 
 interface TemporalNavigatorProps {
-  /** System/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
+  /** Device/area timezone offset (minutes) — used to format the range label and encode prev/next URLs. */
   timezoneOffsetMin: number;
   className?: string;
 }

@@ -728,7 +728,7 @@ describe("AmberReadingsBatch", () => {
     // Regression for the derivePointKey collision: production physicalPathTail carries
     // no vendor prefix ("E1/perKwh", not "amber/E1/perKwh"), so stripping the first
     // segment collapsed import (E1) and export (B1) onto one key and silently
-    // overwrote import with export every interval (system 9, points 2/7/8).
+    // overwrote import with export every interval (device 9, points 2/7/8).
     const dayStartMs = 1763474400000; // 2025-11-19 00:00:00 UTC
     const day = new CalendarDate(2025, 11, 19);
     const t = (dayStartMs + 30 * 60 * 1000) as Milliseconds; // interval 0

@@ -77,7 +77,7 @@ describe("assignEnergyToPeriods", () => {
   });
 });
 
-/** Daylesford's prod system-1 constants (config.batteryProvenance.generatorSource). */
+/** Daylesford's prod device-1 constants (config.batteryProvenance.generatorSource). */
 const DIESEL = constantIntensity({ priceC: 70, gPerKwh: 1000, renewable: 0 });
 
 describe("assignProvenanceToPeriods", () => {

@@ -5,7 +5,7 @@
  * `legacy_system_id`; `createArea` also registers it in `legacy_handles`, which is what
  * `DeviceConfigRegistry.areaByHandle` reads (and thus the
  * only shape the point resolver serves via membership/bindings). So a freshly-created site needs a
- * handle that collides with NO real system id and NO existing area handle.
+ * handle that collides with NO real device id and NO existing area handle.
  *
  * We pick `max(max(devices.rid), max(legacy_handles.handle), BASE) + 1`. `BASE` is a reserved floor
  * that sits clearly above prod serial device rids and the dev id band (10000+), so a synthetic handle

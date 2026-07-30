@@ -6,7 +6,7 @@
  */
 
 /**
- * System Identifier
+ * Device Identifier
  *
  * Formats:
  * - Numeric ID: "123"
@@ -23,7 +23,7 @@ export class SystemIdentifier {
   ) {}
 
   /**
-   * Parse a system identifier string
+   * Parse a device identifier string
    * Returns null if format is invalid
    *
    * @example
@@ -63,7 +63,7 @@ export class SystemIdentifier {
   }
 
   /**
-   * Create a system identifier from a string, throwing on invalid format
+   * Create a device identifier from a string, throwing on invalid format
    * Use this for internal code where you expect the format to be valid
    */
   static from(str: string): SystemIdentifier {
@@ -75,7 +75,7 @@ export class SystemIdentifier {
   }
 
   /**
-   * Create a system identifier from a numeric ID
+   * Create a device identifier from a numeric ID
    */
   static fromId(id: number): SystemIdentifier {
     if (id <= 0 || !Number.isInteger(id)) {
@@ -85,7 +85,7 @@ export class SystemIdentifier {
   }
 
   /**
-   * Create a system identifier from username and shortname
+   * Create a device identifier from username and shortname
    */
   static fromShortname(username: string, shortname: string): SystemIdentifier {
     if (!username || !shortname) {
@@ -124,7 +124,7 @@ export class SystemIdentifier {
  * Point Reference - Composite key for database lookups
  *
  * Format: "{systemId}.{pointId}"
- * Example: "1.5" (system 1, point 5)
+ * Example: "1.5" (device 1, point 5)
  */
 export class PointReference {
   private constructor(
@@ -218,11 +218,11 @@ export class PointReference {
  *
  * Format: "{systemIdentifier}/{pointPath}.{aggregationField}"
  * Examples:
- * - "1/load.hvac/power.avg" (numeric system ID)
+ * - "1/load.hvac/power.avg" (numeric device ID)
  * - "simon.kinkora/source.solar/power.avg" (user-scoped shortname)
  *
  * This combines:
- * - Which system (numeric ID or user.shortname)
+ * - Which device (numeric ID or user.shortname)
  * - Which point (including metric type)
  * - Which aggregation to use
  */
@@ -246,7 +246,7 @@ export class SeriesPath {
    * // }
    */
   static parse(str: string): SeriesPath | null {
-    // Find first slash (separates system from point path)
+    // Find first slash (separates device from point path)
     const firstSlash = str.indexOf("/");
     if (firstSlash === -1) {
       return null;
@@ -255,7 +255,7 @@ export class SeriesPath {
     const systemIdStr = str.substring(0, firstSlash);
     const remainder = str.substring(firstSlash + 1);
 
-    // Parse system identifier
+    // Parse device identifier
     const systemIdentifier = SystemIdentifier.parse(systemIdStr);
     if (!systemIdentifier) {
       return null;

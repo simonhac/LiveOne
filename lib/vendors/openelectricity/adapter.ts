@@ -1,7 +1,7 @@
 /**
  * OpenElectricity (NEM) vendor adapter.
  *
- * One system per NEM region (`vendorSiteId` = region code). 5m-native: each poll fetches
+ * One device per NEM region (`vendorSiteId` = region code). 5m-native: each poll fetches
  * the latest 5-minute intervals for the region and emits pre-aggregated readings, which the
  * receiver UPSERTs into `point_readings_agg_5m` (so late revisions heal). Three stored points:
  * emissions intensity (computed), spot price, renewable proportion — see ./point-metadata.
@@ -52,7 +52,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
   readonly vendorType = "openelectricity";
   readonly displayName = "OpenElectricity (NEM)";
   readonly dataSource = "poll" as const;
-  readonly supportsAddSystem = false; // single shared key; region systems are seeded
+  readonly supportsAddDevice = false; // single shared key; region devices are seeded
   // No credentialFields — the key is read from the environment.
 
   // Floor cadence; shouldPoll() overrides with the dynamic arrival-window scheduler.
@@ -63,7 +63,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
    * Dynamic schedule: poll only inside each interval's learned arrival window.
    */
   async shouldPoll(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     forcePollAll: boolean,
     now: Date,
   ): Promise<{
@@ -73,35 +73,35 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
   }> {
     if (forcePollAll) return { shouldPoll: true };
 
-    const state = await loadState(system.id);
+    const state = await loadState(device.id);
     const decision = decidePoll({ now, state });
-    await saveState(system.id, decision.newState);
+    await saveState(device.id, decision.newState);
 
     return {
       shouldPoll: decision.shouldPoll,
       reason: decision.reason,
       nextPoll: fromUnixTimestamp(
         Math.floor(decision.nextPollMs / 1000),
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       ),
     };
   }
 
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     _credentials: unknown,
     context: FetchContext,
   ): Promise<FetchResult> {
-    const region = system.vendorSiteId;
+    const region = device.vendorSiteId;
     if (!region || !isNemRegion(region)) {
       return {
         success: false,
-        error: `Unknown NEM region for system ${system.id}: ${region}`,
+        error: `Unknown NEM region for system ${device.id}: ${region}`,
         errorCode: "BAD_REGION",
       };
     }
     const network =
-      (system.metadata as { network?: string } | null)?.network ?? "NEM";
+      (device.metadata as { network?: string } | null)?.network ?? "NEM";
 
     // Adaptive lookback: normally re-pull the last DEFAULT_LOOKBACK_MS (45 min) so a just-published
     // interval lands — including the `data` leg (power/emissions), which trails `market` — and late
@@ -109,7 +109,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
     // back to the last interval we have so the gap auto-fills — capped at MAX_AUTOHEAL_MS. Gaps larger
     // than the cap need the backfill route / bulk ingestor.
     const baseMs = floor5(context.startedAt.getTime());
-    const sched = await loadState(system.id);
+    const sched = await loadState(device.id);
     const dateStartMs = adaptiveLookbackStartMs(
       baseMs,
       sched.lastSeenIntervalEndMs,
@@ -119,7 +119,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
       sched.lastSeenIntervalEndMs < baseMs - MAX_AUTOHEAL_MS
     ) {
       console.warn(
-        `[OpenElectricity] system ${system.id} is behind beyond the ${
+        `[OpenElectricity] system ${device.id} is behind beyond the ${
           MAX_AUTOHEAL_MS / 3_600_000
         }h auto-heal cap; intervals before ${new Date(
           dateStartMs,
@@ -175,14 +175,14 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
       );
       // Live dashboard cache + composite propagation (best-effort).
       try {
-        await this.pushLatestToKv(system.id, readings, context.session);
+        await this.pushLatestToKv(device.id, readings, context.session);
       } catch (err) {
         console.error("[OpenElectricity] KV latest update failed:", err);
       }
       // Feed the scheduler the observed publish delay (best-effort).
       try {
         await recordObservation({
-          systemId: system.id,
+          systemId: device.id,
           capturedIntervalEndMs: newestIntervalEndMs,
           observedAtMs: Date.now(),
         });
@@ -210,7 +210,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
     session: SessionInfo,
   ): Promise<void> {
     const pm = PointManager.getInstance();
-    const activePoints = await pm.getActivePointsForSystem(systemId);
+    const activePoints = await pm.getActivePointsForDevice(systemId);
     const byLogicalPath = new Map(
       activePoints
         .map((p) => [p.getLogicalPath(), p] as const)
@@ -246,14 +246,14 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
 
   /** Validate the API key and (if the region is set) smoke-test a tiny market request. */
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     _credentials: unknown,
   ): Promise<TestConnectionResult> {
     try {
       const apiKey = getApiKey();
       const me = await fetchMe(apiKey);
 
-      const region = system.vendorSiteId;
+      const region = device.vendorSiteId;
       let sample: unknown;
       if (region && isNemRegion(region)) {
         const now = new Date();
@@ -270,7 +270,7 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
 
       return {
         success: true,
-        systemInfo: {
+        deviceInfo: {
           vendorSiteId: region || undefined,
           displayName: `OpenElectricity (NEM ${region ?? ""})`.trim(),
         },

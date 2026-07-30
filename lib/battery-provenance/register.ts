@@ -1,5 +1,5 @@
 /**
- * Register the derived battery-provenance BLEND points for a system — the HWS/run-tracking derived-point
+ * Register the derived battery-provenance BLEND points for a device — the HWS/run-tracking derived-point
  * pattern (a normal `point_info` row + its own agg_5m + KV latest; NO new table/API/flag). Six points,
  * all on stem `bidi.battery`, describe "the energy currently in the battery":
  *   bidi.battery/carbon-intensity        (gCO2/kWh)
@@ -9,7 +9,7 @@
  *   bidi.battery/price-opportunity  (c/kWh)  — forgone export revenue component (Qf/E, ≥ 0)
  *   bidi.battery/stored-energy      (kWh)    — usable stored energy (E); the totals the Contents card
  *                                              shows are `intensity × stored-energy`, reconstructed exactly.
- * Their existence is what enables the recompute (lib/db/planetscale/battery-provenance-pg.ts). The system
+ * Their existence is what enables the recompute (lib/db/planetscale/battery-provenance-pg.ts). The device
  * must have a `bidi.battery` power point (the battery signal) to be eligible.
  */
 import { and, eq } from "drizzle-orm";
@@ -104,7 +104,7 @@ export interface EnsureBlendResult {
 
 /**
  * Ensure the three blend points exist on `systemId`. Idempotent (keyed by stem+metricType). Refuses if
- * the system has no `bidi.battery` power point. With `apply=false`, reports what it would do (dry run).
+ * the device has no `bidi.battery` power point. With `apply=false`, reports what it would do (dry run).
  */
 export async function ensureBatteryProvenancePoints(
   systemId: number,
@@ -113,7 +113,7 @@ export async function ensureBatteryProvenancePoints(
 ): Promise<EnsureBlendResult> {
   const db = requirePlanetscaleDb();
 
-  // A physical battery system must carry a `bidi.battery` power point to be eligible. The HELPER device
+  // A physical battery device must carry a `bidi.battery` power point to be eligible. The HELPER device
   // (which actually owns the blend points) has none by design, so the recompute passes false — eligibility
   // is already enforced upstream (the Area has a bound battery).
   if (opts.requireBatteryPoint !== false) {

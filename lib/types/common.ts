@@ -11,21 +11,21 @@ export interface CommonPollingData {
   timestamp: Date;
 
   // Power readings (Watts) - instantaneous values
-  solarW?: number | null;        // Total solar (solarLocalW + solarRemoteW)
-  solarLocalW?: number | null;   // Local solar from shunt/CT
-  solarRemoteW?: number | null;  // Remote solar from inverter
+  solarW?: number | null; // Total solar (solarLocalW + solarRemoteW)
+  solarLocalW?: number | null; // Local solar from shunt/CT
+  solarRemoteW?: number | null; // Remote solar from inverter
   loadW?: number | null;
   batteryW?: number | null;
   gridW?: number | null;
 
   // Battery state
-  batterySOC?: number | null;  // State of charge (0-100%)
+  batterySOC?: number | null; // State of charge (0-100%)
 
-  // System status
+  // Device status
   faultCode?: string | null;
-  faultTimestamp?: Date | null;  // Date of fault
+  faultTimestamp?: Date | null; // Date of fault
   generatorStatus?: number | null;
-  
+
   // Energy counters (Wh) - interval values (energy in this period)
   solarWhInterval?: number | null;
   loadWhInterval?: number | null;
@@ -33,7 +33,7 @@ export interface CommonPollingData {
   batteryOutWhInterval?: number | null;
   gridInWhInterval?: number | null;
   gridOutWhInterval?: number | null;
-  
+
   // Energy counters (kWh) - lifetime totals
   solarKwhTotal?: number | null;
   loadKwhTotal?: number | null;

@@ -60,7 +60,7 @@ export interface HistoryDataProvider {
    * @param seriesPatterns - Optional array of glob patterns to filter which series to fetch (OR logic)
    */
   fetch5MinuteData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     startTime: ZonedDateTime,
     endTime: ZonedDateTime,
     seriesPatterns?: string[],
@@ -72,7 +72,7 @@ export interface HistoryDataProvider {
    * @param seriesPatterns - Optional array of glob patterns to filter which series to fetch (OR logic)
    */
   fetchDailyData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     startDate: CalendarDate,
     endDate: CalendarDate,
     seriesPatterns?: string[],

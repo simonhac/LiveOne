@@ -4,7 +4,7 @@
  * Cause of Amber gaps: the poll fetches `/usage` for "yesterday, 1 day" only and never re-fetches, but
  * Amber settles metered kwh/cost per NEM trading day with a variable lag → whole-AEST-day holes in the
  * energy+cost points (E1/kwh, E1/cost, B1/kwh, B1/cost). This provider re-fetches one gap-day via the
- * exact poll primitive `updateUsage(system, day, 1, …, collector)` — publishing through the shared
+ * exact poll primitive `updateUsage(device, day, 1, …, collector)` — publishing through the shared
  * collector → QStash → receiver → agg_5m path. Gap DETECTION is the generic lib/coverage/find-gaps.
  */
 import { parseDate } from "@internationalized/date";
@@ -14,7 +14,7 @@ import {
   buildRecordsMapFromAmber,
   storeRecordsLocally,
 } from "@/lib/vendors/amber/client";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type { AmberCredentials } from "@/lib/vendors/amber/types";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import type { PollCollector } from "@/lib/observations/poll-collector";
@@ -89,17 +89,17 @@ export const amberProvider: CoverageRepairProvider<AmberCredentials> = {
   needsCredentials: true,
   hasDerivedFlow: true,
   bucketOffsetMin: () => 600, // Amber/NEM are fixed UTC+10, no DST
-  async prepare(system) {
-    if (!system.ownerClerkUserId)
+  async prepare(device) {
+    if (!device.ownerClerkUserId)
       return { ok: false, error: "no owner (Amber credentials required)" };
-    const base = await getSystemCredentials(system.ownerClerkUserId, system.id);
+    const base = await getDeviceCredentials(device.ownerClerkUserId, device.id);
     if (!base?.apiKey) return { ok: false, error: "no Amber credentials" };
     return {
       ok: true,
-      ctx: { apiKey: base.apiKey, siteId: system.vendorSiteId || undefined },
+      ctx: { apiKey: base.apiKey, siteId: device.vendorSiteId || undefined },
     };
   },
-  backfillDay(system, day, ctx, session, collector) {
-    return repairAmberDay(system.id, day, ctx, session, collector);
+  backfillDay(device, day, ctx, session, collector) {
+    return repairAmberDay(device.id, day, ctx, session, collector);
   },
 };

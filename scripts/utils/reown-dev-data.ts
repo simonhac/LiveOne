@@ -1,6 +1,6 @@
 /**
  * Re-own dev-mirror data from a PROD clerk id to a DEV clerk id, so your dev login sees the same
- * areas / dashboards / systems as prod — AND grant the prod id read-back access to what it just lost,
+ * areas / dashboards / devices as prod — AND grant the prod id read-back access to what it just lost,
  * so Vercel preview (which deliberately signs in with the LIVE prod Clerk session — see the
  * bind-preview skill — not this separate dev instance's id) can still see the same mirrored data.
  *
@@ -11,7 +11,7 @@
  * remaps the ownership columns prod→dev so dev-you genuinely owns the mirrored data — and then GRANTS
  * (viewer role, `dashboard_grants`, purely additive) the prod id back onto everything it just lost
  * ownership of, so a prod-Clerk-authenticated session (preview) still resolves it via
- * `getSystemsVisibleByUser`/`listAccessibleDashboards`'s existing owned-OR-granted logic. Idempotent
+ * `getDevicesVisibleByUser`/`listAccessibleDashboards`'s existing owned-OR-granted logic. Idempotent
  * (ON CONFLICT DO NOTHING) and never revokes/deletes a grant, matching the sync's own "full refresh,
  * upsert, no deletes" convention for small config tables.
  *
@@ -55,13 +55,13 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // NB `share_tokens.owner_clerk_user_id` was dropped by migration 0037 — share tokens are scoped by
     // `dashboard_id` alone now, and the dashboards row is reowned below, so there is nothing to reown
     // here. (Left as a comment because its absence is deliberate, not an oversight.)
-    // Legacy per-system dashboards (and their `system_id` column) were dropped in the P6 demolition
+    // Legacy per-device dashboards (and their `system_id` column) were dropped in the P6 demolition
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     // config-v4 cutover renamed clerk_user_id -> owner_user_id.
     { table: "dashboards", col: "owner_user_id" },
     // Only reown areas whose handle IS a real device row. An orphan/composite handle (a multi-device
     // area with no device row, e.g. a "Unified" area) was readable ONLY via ownership when this
-    // filter was written: `getSystemsVisibleByUser` excludes area views, and the then-current
+    // filter was written: `getDevicesVisibleByUser` excludes area views, and the then-current
     // `user_systems` grant-back inner-joined `systems`, so no grant could reach it. Reowning it to the
     // dev id stripped the prod-Clerk preview session's only read path (→ a blank dashboard on preview).
     // Since slice F re-pointed the granted leg at `dashboard_grants`, a grant CAN now reach an
@@ -167,11 +167,11 @@ async function main() {
       // rather than "just remapped by this run", so it also backfills anything remapped by an EARLIER
       // run (before this grant-back existed) or by a prior sync cycle.
       //
-      // ⚠️ There used to be a SECOND grant-back here, into `user_systems`, covering the systems leg.
+      // ⚠️ There used to be a SECOND grant-back here, into `user_systems`, covering the devices leg.
       // That table died in migration 0045 (config-v4 Phase 12 slice F), so `dashboard_grants` below is
-      // now the ONLY thing restoring the prod id's reach — and it carries the systems leg too:
-      // `getSystemsVisibleByUser` derives its granted systems from these dashboard grants via
-      // `grantedSystemScopeForUser`. Which means the dashboards remap and this grant-back are what
+      // now the ONLY thing restoring the prod id's reach — and it carries the devices leg too:
+      // `getDevicesVisibleByUser` derives its granted devices from these dashboard grants via
+      // `grantedDeviceScopeForUser`. Which means the dashboards remap and this grant-back are what
       // keep the preview switcher populated; if that regresses, look here first.
       try {
         // config-v4 cutover reshaped dashboard_grants: clerk_user_id -> user_id, created_at_ms ->

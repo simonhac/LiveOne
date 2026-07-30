@@ -173,7 +173,7 @@ export function intervalEndForMs(measurementTimeMs: number): number {
 
 /**
  * Convert a CalendarDate to the Unix timestamp range (seconds, UTC) that a daily
- * aggregate covers, in the system's local timezone: 00:05 of the given day to 00:00 of
+ * aggregate covers, in the device's local timezone: 00:05 of the given day to 00:00 of
  * the next day, inclusive — i.e. the 288 five-minute intervals (00:05, 00:10, …, 23:55,
  * 00:00). Used by the Postgres recompute to fix the day boundary (and therefore the 1d
  * business keys).

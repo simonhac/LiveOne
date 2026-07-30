@@ -65,7 +65,7 @@ export function getChannelMetadata(
 }
 
 /**
- * Create renewables percentage point (system-level, not channel-specific)
+ * Create renewables percentage point (device-level, not channel-specific)
  * Represents the grid-wide renewable energy percentage
  */
 export function createRenewablesPoint(): PointMetadata {
@@ -81,7 +81,7 @@ export function createRenewablesPoint(): PointMetadata {
 }
 
 /**
- * Create wholesale spot price point (system-level, not channel-specific)
+ * Create wholesale spot price point (device-level, not channel-specific)
  * Represents the NEM wholesale spot price
  */
 export function createSpotPricePoint(): PointMetadata {

@@ -6,8 +6,8 @@
  */
 
 import {
-  getSystemCredentials,
-  storeSystemCredentials,
+  getDeviceCredentials,
+  storeDeviceCredentials,
 } from "@/lib/secure-credentials";
 import { getTeslaClient } from "./tesla-client";
 import type { TeslaCredentials, TeslaTokens } from "./types";
@@ -36,20 +36,20 @@ export async function storeTeslaTokens(
     ...(fleetApiBaseUrl ? { fleet_api_base_url: fleetApiBaseUrl } : {}),
   };
 
-  return storeSystemCredentials(userId, systemId, "tesla", credentials);
+  return storeDeviceCredentials(userId, systemId, "tesla", credentials);
 }
 
 /**
- * Get valid Tesla access token for a system, refreshing if needed
+ * Get valid Tesla access token for a device, refreshing if needed
  *
  * This function:
- * 1. Retrieves stored credentials for the system
+ * 1. Retrieves stored credentials for the device
  * 2. Checks if the token is expiring soon (within 1 hour)
  * 3. Refreshes the token if needed and stores the new tokens
  * 4. Returns the valid access token and updated credentials
  *
  * @param userId - The user's Clerk ID
- * @param systemId - The system's database ID
+ * @param systemId - The device's database ID
  * @returns Valid access token and credentials
  * @throws Error if no credentials found or refresh fails
  */
@@ -58,7 +58,7 @@ export async function getValidTeslaToken(
   systemId: number,
 ): Promise<TeslaAuthResult> {
   // Get stored credentials
-  const credentials = await getSystemCredentials(userId, systemId);
+  const credentials = await getDeviceCredentials(userId, systemId);
 
   if (!credentials) {
     throw new Error(`No Tesla credentials found for system ${systemId}`);

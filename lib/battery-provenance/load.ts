@@ -78,8 +78,8 @@ async function readAgg5m(
 }
 
 /** Raw OE emissions-intensity + renewables series for `region` (unprocessed — caller forward-fills).
- *  `null` for a leg that has no OE system/point registered for the region. Three sequential round
- *  trips are inherent (system lookup → point lookup → point reads), but the two point reads (once
+ *  `null` for a leg that has no OE device/point registered for the region. Three sequential round
+ *  trips are inherent (device lookup → point lookup → point reads), but the two point reads (once
  *  point ids are known) run concurrently, and the whole chain runs alongside every other independent
  *  read in the caller's `Promise.all`. */
 async function loadOeRawSeries(
@@ -449,7 +449,7 @@ export async function loadProvenanceInputs(
     }
   }
 
-  // GENERATOR source: if the battery system declares a batteryProvenance.generatorSource, the inverter's
+  // GENERATOR source: if the battery device declares a batteryProvenance.generatorSource, the inverter's
   // AC-input ("bidi.grid") is a GENERATOR, not a mains grid — price that "grid" energy with the configured
   // constants, OVERRIDING any OE/Amber region signal above. Setting generatorSource IS the explicit
   // statement that this site's grid port is a generator, so it wins even when the area is geolocated in a

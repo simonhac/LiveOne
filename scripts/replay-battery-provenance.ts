@@ -13,8 +13,8 @@
  *
  * Usage:
  *   npx tsx scripts/replay-battery-provenance.ts --discover
- *   npx tsx scripts/replay-battery-provenance.ts --system=<handle> --days=3
- *   npx tsx scripts/replay-battery-provenance.ts --system=<handle> --start=2025-10-25 --end=2025-11-05 \
+ *   npx tsx scripts/replay-battery-provenance.ts --device=<handle> --days=3
+ *   npx tsx scripts/replay-battery-provenance.ts --device=<handle> --start=2025-10-25 --end=2025-11-05 \
  *        --floor=10 --solar=zero --eta=0.9 --no-soc
  */
 import * as dotenv from "dotenv";
@@ -94,11 +94,11 @@ async function runDiscover() {
         ),
       ),
     );
-  const bySystem = new Map<number, Set<string>>();
+  const byDevice = new Map<number, Set<string>>();
   for (const r of rows) {
     const key = `${r.stem}/${r.metric}`;
-    if (!bySystem.has(r.systemId)) bySystem.set(r.systemId, new Set());
-    bySystem.get(r.systemId)!.add(key);
+    if (!byDevice.has(r.systemId)) byDevice.set(r.systemId, new Set());
+    byDevice.get(r.systemId)!.add(key);
   }
   const areaRows = await db()
     .select({
@@ -111,7 +111,7 @@ async function runDiscover() {
   console.log(
     "\nCandidate systems (have battery SoC / EV load / Amber price):",
   );
-  for (const [systemId, feats] of bySystem)
+  for (const [systemId, feats] of byDevice)
     console.log(`  system ${systemId}: ${[...feats].sort().join(", ")}`);
   console.log("\nAreas (handle = --system):");
   for (const a of areaRows)

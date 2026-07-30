@@ -70,16 +70,16 @@ export interface CoverageRepairProvider<Ctx = unknown> {
 
   /** Local-day bucket offset (minutes east of UTC): fixed 600 for Amber/OE (NEM AEST, no DST),
    *  station-local `system.timezoneOffsetMin` for Sigenergy. Must match the vendor's write path. */
-  bucketOffsetMin(system: DeviceConfigView): number;
+  bucketOffsetMin(device: DeviceConfigView): number;
 
   /** Load credentials / build a client for a real backfill. Returns an error string if it can't run.
    *  Never called in dry-run. Keeps credential POLICY here so vendor primitives always get real creds. */
-  prepare(system: DeviceConfigView): Promise<PrepareResult<Ctx>>;
+  prepare(device: DeviceConfigView): Promise<PrepareResult<Ctx>>;
 
   /** Backfill ONE local gap-day: re-fetch + publish via the shared collector. Maps the vendor's native
    *  result → repaired (published rows) | unsettled (API had nothing) | error. */
   backfillDay(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     day: string,
     ctx: Ctx,
     session: SessionInfo,
@@ -87,9 +87,9 @@ export interface CoverageRepairProvider<Ctx = unknown> {
   ): Promise<DayRepair>;
 
   /** Optional: the vendor-reported commissioning / "birth" day (station-local, "YYYY-MM-DD") for this
-   *  system — the earliest date data could exist. Best-effort (may hit the vendor API). The runner uses
+   *  device — the earliest date data could exist. Best-effort (may hit the vendor API). The runner uses
    *  it to floor the repair window (so pre-commission days aren't flagged as phantom gaps, and genuine
    *  pre-onboarding history stays in range) and to lazily populate `systems.commissioned_on`. Returns
    *  null if unknown/unavailable. Implement only where the vendor exposes such a date. */
-  commissionDay?(system: DeviceConfigView): Promise<string | null>;
+  commissionDay?(device: DeviceConfigView): Promise<string | null>;
 }

@@ -11,8 +11,8 @@ import { sessionManager } from "@/lib/session-manager";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
-import { requireSystemAccess } from "@/lib/api-auth";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { requireDeviceAccess } from "@/lib/api-auth";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 
 /**
  * Format timestamp as AEST (UTC+10) time string (HH:MM)
@@ -49,8 +49,8 @@ export async function POST(request: NextRequest) {
       return new Response("Invalid system identifier", { status: 400 });
     }
 
-    // Check system access (owner or admin can sync)
-    const authResult = await requireSystemAccess(request, systemId, {
+    // Check device access (owner or admin can sync)
+    const authResult = await requireDeviceAccess(request, systemId, {
       requireWrite: true,
     });
     if (authResult instanceof NextResponse) return authResult;
@@ -66,11 +66,11 @@ export async function POST(request: NextRequest) {
 
     const firstDay = parseDateISO(startDate);
 
-    // Credentials from the system's device config in Clerk — the same source
+    // Credentials from the device's device config in Clerk — the same source
     // the minutely poll uses. No env vars, no fallbacks.
-    const { ownerClerkUserId } = authResult.system;
+    const { ownerClerkUserId } = authResult.device;
     const storedCredentials = ownerClerkUserId
-      ? await getSystemCredentials(ownerClerkUserId, systemId)
+      ? await getDeviceCredentials(ownerClerkUserId, systemId)
       : null;
     if (!storedCredentials?.apiKey) {
       return new Response(

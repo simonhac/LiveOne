@@ -14,9 +14,9 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
 
-// Every entry is a system the user OWNS — the per-system viewer grant (`user_systems`) was dropped in
+// Every entry is a device the user OWNS — the per-device viewer grant (`user_systems`) was dropped in
 // migration 0045, so there is no longer a `role` to distinguish.
-interface SystemAccess {
+interface DeviceAccess {
   systemId: number;
   systemNumber: string;
   displayName: string;
@@ -30,7 +30,7 @@ interface UserData {
   lastName?: string;
   username?: string;
   lastSignIn?: string;
-  systems: SystemAccess[];
+  devices: DeviceAccess[];
   isPlatformAdmin?: boolean;
 }
 
@@ -141,7 +141,7 @@ export default function UsersPageClient() {
                     User
                   </th>
                   <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    Systems
+                    Devices
                   </th>
                   <th className="text-left px-2 md:px-6 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider">
                     Last Sign In
@@ -190,9 +190,9 @@ export default function UsersPageClient() {
                     </td>
                     <td className="px-2 md:px-6 py-4 align-top">
                       <div className="space-y-1">
-                        {user.systems.length > 0 ? (
+                        {user.devices.length > 0 ? (
                           // Sort systems: non-removed first, then removed
-                          user.systems
+                          user.devices
                             .sort((a, b) => {
                               // Sort by status first (non-removed before removed)
                               if (
@@ -208,25 +208,25 @@ export default function UsersPageClient() {
                               // Then sort by name
                               return a.displayName.localeCompare(b.displayName);
                             })
-                            .map((system) => (
+                            .map((device) => (
                               <div
-                                key={system.systemId}
+                                key={device.systemId}
                                 className="flex items-center gap-1.5"
                               >
                                 <Link
-                                  href={`/device/${system.systemId}`}
+                                  href={`/device/${device.systemId}`}
                                   className={`text-sm transition-colors whitespace-nowrap ${
-                                    system.status === "removed"
+                                    device.status === "removed"
                                       ? "text-gray-500 line-through italic hover:text-gray-400"
                                       : "text-gray-300 hover:text-blue-400"
                                   }`}
                                 >
-                                  {system.displayName}
+                                  {device.displayName}
                                 </Link>
                                 <div className="relative group">
                                   <Crown
                                     className={`w-3 h-3 cursor-help ${
-                                      system.status === "removed"
+                                      device.status === "removed"
                                         ? "text-purple-700"
                                         : "text-purple-400"
                                     }`}
@@ -239,7 +239,7 @@ export default function UsersPageClient() {
                             ))
                         ) : (
                           <span className="text-sm text-gray-500">
-                            No system access
+                            No device access
                           </span>
                         )}
                       </div>

@@ -20,7 +20,7 @@ import { buildSeriesFromAggRows, type AggRow } from "../build-series";
 import type { SeriesInfo } from "@/lib/point/series-info";
 
 const FIVE = 5 * 60 * 1000;
-const system = { timezoneOffsetMin: 600 } as any;
+const device = { timezoneOffsetMin: 600 } as any;
 
 function fakePoint(opts: {
   index: number;
@@ -65,7 +65,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "avg")],
       "5m",
-      system,
+      device,
       FIVE,
       2 * FIVE,
     );
@@ -87,7 +87,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "avg")],
       "5m",
-      system,
+      device,
       FIVE,
       2 * FIVE,
     );
@@ -108,7 +108,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "quality")],
       "5m",
-      system,
+      device,
       FIVE,
       FIVE,
     );
@@ -127,7 +127,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "avg")],
       "30m",
-      system,
+      device,
       0,
       30 * 60 * 1000,
     );
@@ -144,7 +144,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "delta")],
       "1d",
-      system,
+      device,
       dayMs,
       dayMs,
     );
@@ -168,7 +168,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "avg")],
       "1d",
-      system,
+      device,
       d("2026-01-13"),
       d("2026-01-16"),
     );
@@ -190,7 +190,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "min")],
       "1d",
-      system,
+      device,
       d("2026-01-13"),
       d("2026-01-17"),
     );
@@ -207,7 +207,7 @@ describe("buildSeriesFromAggRows", () => {
       allRows,
       [seriesInfo(point, "avg")],
       "5m",
-      system,
+      device,
       FIVE,
       FIVE,
     );

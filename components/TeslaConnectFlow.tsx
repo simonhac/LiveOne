@@ -8,8 +8,8 @@ import { Loader2, AlertCircle, ExternalLink } from "lucide-react";
 
 interface TeslaConnectFlowProps {
   /**
-   * Retained for API compatibility with AddSystemDialog. Not called in the redirect
-   * flow — Tesla redirects back to /api/auth/tesla/callback, which creates the system
+   * Retained for API compatibility with AddDeviceDialog. Not called in the redirect
+   * flow — Tesla redirects back to /api/auth/tesla/callback, which creates the device
    * and forwards to /auth/tesla/result.
    */
   onConnected?: (systemId: number) => void;
@@ -21,7 +21,7 @@ interface TeslaConnectFlowProps {
  * In-dialog Tesla Fleet API onboarding (standard OAuth redirect).
  *
  * Clicking Connect navigates to Tesla's login; after approval Tesla redirects back to
- * our `/api/auth/tesla/callback`, which exchanges the code, creates the system, and
+ * our `/api/auth/tesla/callback`, which exchanges the code, creates the device, and
  * forwards to `/auth/tesla/result`. (The legacy Owner API paste-back flow was removed —
  * its `void/callback` redirect is de-registered.)
  */

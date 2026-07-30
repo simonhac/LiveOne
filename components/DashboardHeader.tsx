@@ -25,13 +25,13 @@ import {
   X,
 } from "lucide-react";
 import LastUpdateTime from "@/components/LastUpdateTime";
-import SystemInfoTooltip from "@/components/SystemInfoTooltip";
+import DeviceInfoTooltip from "@/components/DeviceInfoTooltip";
 import MobileHeaderMenu from "@/components/MobileHeaderMenu";
-import SystemsMenu from "@/components/SystemsMenu";
+import DevicesMenu from "@/components/DevicesMenu";
 import { usePrefetchDashboardsMenu } from "@/components/DashboardsMenu";
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
 
-interface SystemInfo {
+interface DeviceInfo {
   model?: string;
   serial?: string;
   ratings?: string;
@@ -39,7 +39,7 @@ interface SystemInfo {
   batterySize?: string;
 }
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -58,26 +58,26 @@ export interface DashboardHeaderProps {
   // Time and status
   lastUpdate: Date | null;
 
-  // System information
-  systemInfo?: SystemInfo | null;
+  // Device information
+  deviceInfo?: DeviceInfo | null;
   vendorType?: string;
   supportsPolling?: boolean;
-  systemStatus?: "active" | "disabled" | "removed";
+  deviceStatus?: "active" | "disabled" | "removed";
 
   // User and access
   isAdmin: boolean;
   userId?: string;
 
-  // Available systems for switching
-  availableSystems?: AvailableSystem[];
+  // Available devices for switching
+  availableDevices?: AvailableDevice[];
 
   // Callbacks
   onLogout: () => void;
   onTestConnection?: () => void;
   onViewData?: () => void;
   onPollNow?: (dryRun?: boolean) => void;
-  onAddSystem?: () => void;
-  onSystemSettings?: () => void;
+  onAddDevice?: () => void;
+  onDeviceSettings?: () => void;
   onUpdateCredentials?: () => void;
 
   // Shift key state (for dry run)
@@ -92,19 +92,19 @@ export default function DashboardHeader({
   systemId,
   vendorSiteId,
   lastUpdate,
-  systemInfo,
+  deviceInfo,
   vendorType,
   supportsPolling = false,
-  systemStatus,
+  deviceStatus,
   isAdmin,
   userId,
-  availableSystems = [],
+  availableDevices = [],
   onLogout,
   onTestConnection,
   onViewData,
   onPollNow,
-  onAddSystem,
-  onSystemSettings,
+  onAddDevice,
+  onDeviceSettings,
   onUpdateCredentials,
   shiftKeyDown = false,
   temporalNav,
@@ -112,7 +112,7 @@ export default function DashboardHeader({
   const pathname = usePathname();
   const router = useRouter();
 
-  // Warm the dashboards + default so the systems-menu's "Go to Dashboards" cross-nav resolves instantly.
+  // Warm the dashboards + default so the devices-menu's "Go to Dashboards" cross-nav resolves instantly.
   usePrefetchDashboardsMenu(!!userId);
 
   // Compute full title with subpage suffix (e.g., "Amber Test — Heatmap")
@@ -122,16 +122,16 @@ export default function DashboardHeader({
     ? `${displayName} — ${subpageTitle}`
     : displayName;
 
-  const [showSystemDropdown, setShowSystemDropdown] = useState(false);
+  const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isMobileSystemDropdownOpen, setIsMobileSystemDropdownOpen] =
+  const [isMobileDeviceDropdownOpen, setIsMobileDeviceDropdownOpen] =
     useState(false);
   const [longPressActive, setLongPressActive] = useState(false);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const settingsDropdownRef = useRef<HTMLDivElement>(null);
-  const mobileSystemDropdownRef = useRef<HTMLDivElement>(null);
+  const mobileDeviceDropdownRef = useRef<HTMLDivElement>(null);
 
   const isDryRunMode = shiftKeyDown || longPressActive;
 
@@ -157,25 +157,25 @@ export default function DashboardHeader({
     setLongPressActive(false);
   };
 
-  // Mobile system switch: SystemsMenu's mobile rows are buttons (no <Link>), so navigate here.
-  // Mirrors SystemsMenu's desktop href logic — pretty /device/{user}/{alias} when available, else id,
-  // preserving the current subpage (only /amber when the target is also an amber system).
-  const handleMobileSystemSelect = (selectedId: number) => {
-    const system = availableSystems.find((s) => s.id === selectedId);
+  // Mobile device switch: DevicesMenu's mobile rows are buttons (no <Link>), so navigate here.
+  // Mirrors DevicesMenu's desktop href logic — pretty /device/{user}/{alias} when available, else id,
+  // preserving the current subpage (only /amber when the target is also an amber device).
+  const handleMobileDeviceSelect = (selectedId: number) => {
+    const device = availableDevices.find((s) => s.id === selectedId);
     const basePath =
-      system?.ownerUsername && system?.alias
-        ? `/device/${system.ownerUsername}/${system.alias}`
+      device?.ownerUsername && device?.alias
+        ? `/device/${device.ownerUsername}/${device.alias}`
         : `/device/${selectedId}`;
     const knownSubpages = ["heatmap", "generator", "amber", "latest"];
     const pathParts = window.location.pathname.split("/").filter(Boolean);
     const lastPart = pathParts[pathParts.length - 1];
     const subpage = knownSubpages.includes(lastPart)
-      ? lastPart === "amber" && system?.vendorType !== "amber"
+      ? lastPart === "amber" && device?.vendorType !== "amber"
         ? ""
         : `/${lastPart}`
       : "";
     router.push(`${basePath}${subpage}`);
-    setIsMobileSystemDropdownOpen(false);
+    setIsMobileDeviceDropdownOpen(false);
   };
 
   // Reset long-press when menu closes
@@ -196,7 +196,7 @@ export default function DashboardHeader({
         dropdownRef.current &&
         !dropdownRef.current.contains(event.target as Node)
       ) {
-        setShowSystemDropdown(false);
+        setShowDeviceDropdown(false);
       }
       if (
         settingsDropdownRef.current &&
@@ -205,17 +205,17 @@ export default function DashboardHeader({
         setShowSettingsDropdown(false);
       }
       if (
-        mobileSystemDropdownRef.current &&
-        !mobileSystemDropdownRef.current.contains(event.target as Node)
+        mobileDeviceDropdownRef.current &&
+        !mobileDeviceDropdownRef.current.contains(event.target as Node)
       ) {
-        setIsMobileSystemDropdownOpen(false);
+        setIsMobileDeviceDropdownOpen(false);
       }
     };
 
     if (
-      showSystemDropdown ||
+      showDeviceDropdown ||
       showSettingsDropdown ||
-      isMobileSystemDropdownOpen
+      isMobileDeviceDropdownOpen
     ) {
       document.addEventListener("mousedown", handleClickOutside);
     }
@@ -223,7 +223,7 @@ export default function DashboardHeader({
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [showSystemDropdown, showSettingsDropdown, isMobileSystemDropdownOpen]);
+  }, [showDeviceDropdown, showSettingsDropdown, isMobileDeviceDropdownOpen]);
 
   return (
     <header className="sticky top-0 z-30 bg-gray-800 border-b border-gray-700">
@@ -231,17 +231,17 @@ export default function DashboardHeader({
         {/* Mobile Header Bar */}
         <div className="sm:hidden">
           <div className="flex justify-between items-center">
-            <div className="relative" ref={mobileSystemDropdownRef}>
+            <div className="relative" ref={mobileDeviceDropdownRef}>
               {userId ? (
                 <button
                   onClick={() =>
-                    setIsMobileSystemDropdownOpen(!isMobileSystemDropdownOpen)
+                    setIsMobileDeviceDropdownOpen(!isMobileDeviceDropdownOpen)
                   }
                   className="flex items-center gap-1 text-base font-bold text-white hover:text-blue-400 transition-colors"
                 >
                   {fullTitle || "Dashboards"}
                   <ChevronDown
-                    className={`w-4 h-4 transition-transform ${isMobileSystemDropdownOpen ? "rotate-180" : ""}`}
+                    className={`w-4 h-4 transition-transform ${isMobileDeviceDropdownOpen ? "rotate-180" : ""}`}
                   />
                 </button>
               ) : (
@@ -250,17 +250,17 @@ export default function DashboardHeader({
                 </h1>
               )}
 
-              {/* Systems Dropdown Menu (with "Go to Dashboards" cross-nav at the bottom) */}
-              {isMobileSystemDropdownOpen && userId && (
+              {/* Devices Dropdown Menu (with "Go to Dashboards" cross-nav at the bottom) */}
+              {isMobileDeviceDropdownOpen && userId && (
                 <div className="absolute top-full left-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
-                  <SystemsMenu
-                    availableSystems={availableSystems}
+                  <DevicesMenu
+                    availableDevices={availableDevices}
                     currentSystemId={systemId}
                     userId={userId}
                     isAdmin={isAdmin}
                     enabled={!!userId}
-                    onSystemSelect={handleMobileSystemSelect}
-                    onNavigate={() => setIsMobileSystemDropdownOpen(false)}
+                    onDeviceSelect={handleMobileDeviceSelect}
+                    onNavigate={() => setIsMobileDeviceDropdownOpen(false)}
                     isMobile={true}
                     itemClassName="w-full text-left px-4 py-2 text-sm hover:bg-gray-700 transition-colors first:rounded-t-lg last:rounded-b-lg text-white"
                     activeItemClassName="text-blue-400 bg-gray-700/50"
@@ -280,7 +280,7 @@ export default function DashboardHeader({
               {/* Admin Link */}
               {isAdmin && (
                 <Link
-                  href="/admin/systems"
+                  href="/admin/devices"
                   className="p-1.5 text-blue-500 hover:text-blue-400 transition-colors"
                   aria-label="Admin"
                 >
@@ -320,16 +320,16 @@ export default function DashboardHeader({
           isOpen={isMobileMenuOpen}
           onClose={() => setIsMobileMenuOpen(false)}
           onLogout={onLogout}
-          systemInfo={systemInfo}
+          deviceInfo={deviceInfo}
           vendorType={vendorType}
           supportsPolling={supportsPolling}
           isAdmin={isAdmin}
-          systemStatus={systemStatus}
+          deviceStatus={deviceStatus}
           onTestConnection={onTestConnection}
           onViewData={onViewData}
           onPollNow={onPollNow}
-          onAddSystem={onAddSystem}
-          onSystemSettings={onSystemSettings}
+          onAddDevice={onAddDevice}
+          onDeviceSettings={onDeviceSettings}
           onUpdateCredentials={onUpdateCredentials}
           isDryRunMode={isDryRunMode}
         />
@@ -340,26 +340,26 @@ export default function DashboardHeader({
             {userId ? (
               <>
                 <button
-                  onClick={() => setShowSystemDropdown(!showSystemDropdown)}
+                  onClick={() => setShowDeviceDropdown(!showDeviceDropdown)}
                   className="flex items-center gap-2 hover:bg-gray-700 rounded-lg px-3 py-2 transition-colors"
                 >
                   <h1 className="text-2xl font-bold text-white">{fullTitle}</h1>
                   <ChevronDown
-                    className={`w-5 h-5 text-gray-400 transition-transform ${showSystemDropdown ? "rotate-180" : ""}`}
+                    className={`w-5 h-5 text-gray-400 transition-transform ${showDeviceDropdown ? "rotate-180" : ""}`}
                   />
                 </button>
 
-                {showSystemDropdown && (
+                {showDeviceDropdown && (
                   <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
                     <div className="py-1">
-                      <SystemsMenu
-                        availableSystems={availableSystems}
+                      <DevicesMenu
+                        availableDevices={availableDevices}
                         currentSystemId={systemId}
                         userId={userId}
                         isAdmin={isAdmin}
                         enabled={!!userId}
-                        onSystemSelect={() => setShowSystemDropdown(false)}
-                        onNavigate={() => setShowSystemDropdown(false)}
+                        onDeviceSelect={() => setShowDeviceDropdown(false)}
+                        onNavigate={() => setShowDeviceDropdown(false)}
                       />
                     </div>
                   </div>
@@ -377,23 +377,23 @@ export default function DashboardHeader({
               />
             )}
             <LastUpdateTime lastUpdate={lastUpdate} />
-            {systemInfo && (
-              <SystemInfoTooltip
-                systemInfo={systemInfo}
+            {deviceInfo && (
+              <DeviceInfoTooltip
+                deviceInfo={deviceInfo}
                 systemNumber={vendorSiteId || ""}
               />
             )}
             {isAdmin && (
               <Link
-                href="/admin/systems"
+                href="/admin/devices"
                 className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
               >
                 <Shield className="w-4 h-4" />
                 Admin
               </Link>
             )}
-            {/* Settings dropdown - Only show for admin or non-removed systems */}
-            {(isAdmin || systemStatus !== "removed") && (
+            {/* Settings dropdown - Only show for admin or non-removed devices */}
+            {(isAdmin || deviceStatus !== "removed") && (
               <div className="relative" ref={settingsDropdownRef}>
                 <button
                   onClick={() => setShowSettingsDropdown(!showSettingsDropdown)}
@@ -419,7 +419,7 @@ export default function DashboardHeader({
                       </button>
                     )}
 
-                    {/* Poll Now - Show for admin users, disabled for systems that don't support polling */}
+                    {/* Poll Now - Show for admin users, disabled for devices that don't support polling */}
                     {isAdmin && onPollNow && (
                       <button
                         onClick={() => {
@@ -459,26 +459,26 @@ export default function DashboardHeader({
                       </button>
                     )}
 
-                    {/* Always show Add System */}
-                    {onAddSystem && (
+                    {/* Always show Add Device */}
+                    {onAddDevice && (
                       <button
                         onClick={() => {
                           setShowSettingsDropdown(false);
-                          onAddSystem();
+                          onAddDevice();
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                       >
                         <Plus className="w-4 h-4" />
-                        Add System…
+                        Add Device…
                       </button>
                     )}
 
                     {/* Device Settings */}
-                    {onSystemSettings && (
+                    {onDeviceSettings && (
                       <button
                         onClick={() => {
                           setShowSettingsDropdown(false);
-                          onSystemSettings();
+                          onDeviceSettings();
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2"
                       >

@@ -1,0 +1,62 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/api-auth";
+import { DeviceWriter } from "@/lib/registry/device-writer";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ systemId: string }> },
+) {
+  try {
+    const authResult = await requireAdmin(request);
+    if (authResult instanceof NextResponse) return authResult;
+
+    const { systemId: systemIdParam } = await params;
+    const systemId = parseInt(systemIdParam);
+    if (isNaN(systemId)) {
+      return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
+    }
+
+    const body = await request.json();
+    const { status } = body;
+
+    // Validate status
+    if (!status || !["active", "disabled", "removed"].includes(status)) {
+      return NextResponse.json(
+        {
+          error: "Invalid status. Must be one of: active, disabled, removed",
+        },
+        { status: 400 },
+      );
+    }
+
+    const existingDevice = await DeviceConfigRegistry.deviceByHandle(systemId);
+
+    if (!existingDevice) {
+      return NextResponse.json({ error: "System not found" }, { status: 404 });
+    }
+
+    await DeviceWriter.updateDevice(systemId, { status });
+
+    // Defaults are dashboard-based now (default_dashboard_id, ON DELETE SET NULL); a removed device
+    // leaves its dashboards intact, so there is no per-device default to clear here.
+    console.log(
+      `System ${systemId} status changed to ${status} by admin ${authResult.userId}`,
+    );
+
+    return NextResponse.json({
+      success: true,
+      device: { ...existingDevice, status, updatedAt: new Date() },
+      message: `System status updated to ${status}`,
+    });
+  } catch (error) {
+    console.error("Error updating system status:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Failed to update system status",
+      },
+      { status: 500 },
+    );
+  }
+}

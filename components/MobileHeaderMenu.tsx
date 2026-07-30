@@ -14,7 +14,7 @@ import {
   KeyRound,
 } from "lucide-react";
 
-interface SystemInfo {
+interface DeviceInfo {
   model?: string;
   serial?: string;
   ratings?: string;
@@ -26,16 +26,16 @@ interface MobileHeaderMenuProps {
   isOpen: boolean;
   onClose: () => void;
   onLogout: () => void;
-  systemInfo?: SystemInfo | null;
+  deviceInfo?: DeviceInfo | null;
   vendorType?: string;
   supportsPolling?: boolean;
   isAdmin?: boolean;
-  systemStatus?: "active" | "disabled" | "removed";
+  deviceStatus?: "active" | "disabled" | "removed";
   onTestConnection?: () => void;
   onViewData?: () => void;
   onPollNow?: (dryRun?: boolean) => void;
-  onAddSystem?: () => void;
-  onSystemSettings?: () => void;
+  onAddDevice?: () => void;
+  onDeviceSettings?: () => void;
   onUpdateCredentials?: () => void;
   isDryRunMode?: boolean;
 }
@@ -44,16 +44,16 @@ export default function MobileHeaderMenu({
   isOpen,
   onClose,
   onLogout,
-  systemInfo,
+  deviceInfo,
   vendorType,
   supportsPolling = false,
   isAdmin = false,
-  systemStatus,
+  deviceStatus,
   onTestConnection,
   onViewData,
   onPollNow,
-  onAddSystem,
-  onSystemSettings,
+  onAddDevice,
+  onDeviceSettings,
   onUpdateCredentials,
   isDryRunMode = false,
 }: MobileHeaderMenuProps) {
@@ -124,7 +124,7 @@ export default function MobileHeaderMenu({
                   </button>
                 )}
 
-                {/* Poll Now - Show for admin users, disabled for systems that don't support polling */}
+                {/* Poll Now - Show for admin users, disabled for devices that don't support polling */}
                 {onPollNow && isAdmin && (
                   <button
                     onClick={() => {
@@ -145,10 +145,10 @@ export default function MobileHeaderMenu({
                   </button>
                 )}
 
-                {/* Test Connection - Only show for vendors that support polling and for admin or non-removed systems */}
+                {/* Test Connection - Only show for vendors that support polling and for admin or non-removed devices */}
                 {onTestConnection &&
                   supportsPolling &&
-                  (isAdmin || systemStatus !== "removed") && (
+                  (isAdmin || deviceStatus !== "removed") && (
                     <button
                       onClick={() => {
                         onClose();
@@ -161,26 +161,26 @@ export default function MobileHeaderMenu({
                     </button>
                   )}
 
-                {/* Add System */}
-                {onAddSystem && (
+                {/* Add Device */}
+                {onAddDevice && (
                   <button
                     onClick={() => {
                       onClose();
-                      onAddSystem();
+                      onAddDevice();
                     }}
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
                     <Plus className="w-4 h-4" />
-                    Add System…
+                    Add Device…
                   </button>
                 )}
 
                 {/* Device Settings */}
-                {onSystemSettings && (
+                {onDeviceSettings && (
                   <button
                     onClick={() => {
                       onClose();
-                      onSystemSettings();
+                      onDeviceSettings();
                     }}
                     className="w-full p-3 bg-gray-700/50 hover:bg-gray-700 rounded text-left text-sm text-white transition-colors flex items-center gap-2"
                   >
@@ -204,47 +204,47 @@ export default function MobileHeaderMenu({
                 )}
               </div>
 
-              {/* System Info Section */}
-              {systemInfo && (
+              {/* Device Info Section */}
+              {deviceInfo && (
                 <div className="p-3 bg-gray-700/50 rounded space-y-2">
                   <div className="flex items-center gap-2 mb-2">
                     <Info className="w-4 h-4 text-gray-400" />
                     <p className="text-white font-medium text-sm">
-                      System Information
+                      Device Information
                     </p>
                   </div>
                   <div className="space-y-1 text-xs">
-                    {systemInfo.model && (
+                    {deviceInfo.model && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Model:</span>
-                        <span className="text-white">{systemInfo.model}</span>
+                        <span className="text-white">{deviceInfo.model}</span>
                       </div>
                     )}
-                    {systemInfo.serial && (
+                    {deviceInfo.serial && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Serial:</span>
-                        <span className="text-white">{systemInfo.serial}</span>
+                        <span className="text-white">{deviceInfo.serial}</span>
                       </div>
                     )}
-                    {systemInfo.ratings && (
+                    {deviceInfo.ratings && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Ratings:</span>
-                        <span className="text-white">{systemInfo.ratings}</span>
+                        <span className="text-white">{deviceInfo.ratings}</span>
                       </div>
                     )}
-                    {systemInfo.solarSize && (
+                    {deviceInfo.solarSize && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Solar:</span>
                         <span className="text-white">
-                          {systemInfo.solarSize}
+                          {deviceInfo.solarSize}
                         </span>
                       </div>
                     )}
-                    {systemInfo.batterySize && (
+                    {deviceInfo.batterySize && (
                       <div className="flex justify-between">
                         <span className="text-gray-400">Battery:</span>
                         <span className="text-white">
-                          {systemInfo.batterySize}
+                          {deviceInfo.batterySize}
                         </span>
                       </div>
                     )}

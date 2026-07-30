@@ -13,9 +13,9 @@
  *
  * ## Why the field names are still legacy-shaped
  *
- * `DeviceRecord` is deliberately field-for-field `SystemWithPolling` (minus the three spec columns,
+ * `DeviceRecord` is deliberately field-for-field `DeviceWithPolling` (minus the three spec columns,
  * which moved into `config.spec` — see below), NOT the `devices` column names. That is not laziness: it
- * makes slice K2's 89-call-site conversion a mechanical `getSystem(h)` → `deviceByHandle(h)` swap whose
+ * makes slice K2's 89-call-site conversion a mechanical `getDevice(h)` → `deviceByHandle(h)` swap whose
  * correctness is checkable by a field-by-field diff (`scripts/config-v4/verify-slice-k1-parity.ts`)
  * rather than by reading 89 diffs. The `system`→`device` FIELD rename is Phase 13's wholesale pass,
  * where it is one rename against one already-converted reader set instead of two moving parts at once.
@@ -66,7 +66,7 @@ export type DevicePollingState = typeof pgDeviceState.$inferSelect;
 /**
  * One device's full config, as the serving layer needs it.
  *
- * Field-compatible with `SystemWithPolling` (see the module header). Three columns are absent because
+ * Field-compatible with `DeviceWithPolling` (see the module header). Three columns are absent because
  * `devices` genuinely has no counterpart: `ratings`, `solarSize`, `batterySize` → `config.spec`.
  *
  * `location`, `timezoneOffsetMin` and `displayTimezone` come from the AREA-OF-ONE, not the device:
@@ -74,7 +74,7 @@ export type DevicePollingState = typeof pgDeviceState.$inferSelect;
  * placement. The join is therefore inner and can never drop a device.
  */
 export interface DeviceConfigView {
-  // --- SystemWithPolling-compatible surface (see module header) ---
+  // --- DeviceWithPolling-compatible surface (see module header) ---
   /** `devices.rid` — still the integer handle, so `?systemId=N` keeps resolving. */
   readonly id: number;
   readonly ownerClerkUserId: string | null;
@@ -119,7 +119,7 @@ export interface DeviceRecord extends DeviceConfigView {
   readonly primaryAreaId: string;
 }
 
-/** The trimmed shape the device switcher renders — mirrors `getSystemsVisibleByUser`'s projection. */
+/** The trimmed shape the device switcher renders — mirrors `getDevicesVisibleByUser`'s projection. */
 export interface VisibleDevice {
   readonly id: number;
   readonly displayName: string;
@@ -185,7 +185,7 @@ function toRecord(row: JoinRow): DeviceRecord {
 
 /**
  * The device's rid, as a branded seam key. `DeviceRecord.id` is a plain number so it stays a drop-in
- * for `SystemWithPolling.id`; this is the typed accessor for anything crossing into the readings seam.
+ * for `DeviceWithPolling.id`; this is the typed accessor for anything crossing into the readings seam.
  */
 export function ridOf(record: DeviceRecord): DeviceRid {
   return record.id as DeviceRid;
@@ -213,14 +213,14 @@ const fetchByVendorSite = cache(
   },
 );
 
-/** One device by its legacy integer handle (`devices.rid`). ← `SystemsManager.getSystem`. */
+/** One device by its legacy integer handle (`devices.rid`). ← `SystemsManager.getDevice`. */
 async function deviceByHandle(handle: number): Promise<DeviceRecord | null> {
   return fetchByHandle(handle);
 }
 
 /**
  * One device by vendor site id — first match; vendor site ids are NOT unique (indexed on
- * `systems`/`devices` for OAuth/webhook dedup). ← `SystemsManager.getSystemByVendorSiteId`.
+ * `systems`/`devices` for OAuth/webhook dedup). ← `SystemsManager.getDeviceByVendorSiteId`.
  */
 async function deviceByVendorSite(
   vendorSiteId: string,
@@ -230,7 +230,7 @@ async function deviceByVendorSite(
 
 /**
  * One device by its owner + slug — the `/device/{username}/{alias}` pretty URL.
- * ← `SystemsManager.getSystemByUsernameAndAlias`, minus the username→Clerk-id hop.
+ * ← `SystemsManager.getDeviceByUsernameAndAlias`, minus the username→Clerk-id hop.
  *
  * Needs NO new index: `devices_owner_slug_unique` already covers `(owner_user_id, slug)`, the exact
  * counterpart of `systems`' `alias_unique`.
@@ -257,7 +257,7 @@ async function deviceByUsernameAndSlug(
   return deviceByOwnerSlug(ownerUserId, slug);
 }
 
-/** All active devices. Inherently fleet-wide (poll-all cron / flow recompute). ← `getActiveSystems`. */
+/** All active devices. Inherently fleet-wide (poll-all cron / flow recompute). ← `getActiveDevices`. */
 async function activeDevices(): Promise<DeviceRecord[]> {
   const rows = await baseSelect().where(eq(pgDevices.status, "active"));
   return rows.map(toRecord);
@@ -265,14 +265,14 @@ async function activeDevices(): Promise<DeviceRecord[]> {
 
 /**
  * All devices, any status. Inherently fleet-wide — the admin table, which a later phase paginates.
- * Avoid in request-hot paths. ← `getAllSystems`.
+ * Avoid in request-hot paths. ← `getAllDevices`.
  */
 async function allDevices(): Promise<DeviceRecord[]> {
   const rows = await baseSelect();
   return rows.map(toRecord);
 }
 
-/** Devices owned by a user, any status. ← `getSystemsByOwner`. */
+/** Devices owned by a user, any status. ← `getDevicesByOwner`. */
 async function devicesByOwner(userId: string): Promise<DeviceRecord[]> {
   const rows = await baseSelect().where(eq(pgDevices.ownerUserId, userId));
   return rows.map(toRecord);
@@ -280,9 +280,9 @@ async function devicesByOwner(userId: string): Promise<DeviceRecord[]> {
 
 /**
  * Devices visible to a user for the switcher: OWNED, PUBLIC (ownerless, readable by everyone), or
- * reached by a DASHBOARD GRANT. ← `getSystemsVisibleByUser`.
+ * reached by a DASHBOARD GRANT. ← `getDevicesVisibleByUser`.
  *
- * The granted leg stays HANDLE-TYPED on purpose: `grantedSystemScopeForUser` returns integer handles
+ * The granted leg stays HANDLE-TYPED on purpose: `grantedDeviceScopeForUser` returns integer handles
  * and keeps doing so until Phase 13 makes the grant scope TypeID-native. Converting it here would be a
  * second moving part in a PR whose whole value is that the diff is checkable.
  *
@@ -310,8 +310,8 @@ async function devicesVisibleByUser(
     byHandle.set(rec.id, rec);
   }
 
-  const { grantedSystemScopeForUser } = await import("@/lib/dashboard/grants");
-  const grantedHandles = [...(await grantedSystemScopeForUser(userId))].filter(
+  const { grantedDeviceScopeForUser } = await import("@/lib/dashboard/grants");
+  const grantedHandles = [...(await grantedDeviceScopeForUser(userId))].filter(
     (h) => !byHandle.has(h),
   );
   if (grantedHandles.length > 0) {
@@ -342,7 +342,7 @@ async function devicesVisibleByUser(
 /**
  * The user's "primary" visible device — owned-first, else the first visible by display name, else
  * null. Single source of truth for the `/dashboard` landing and `/device` redirects.
- * ← `getPrimaryVisibleSystem`.
+ * ← `getPrimaryVisibleDevice`.
  */
 async function primaryVisibleDevice(
   userId: string,

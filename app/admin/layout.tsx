@@ -21,7 +21,7 @@ import {
 const navItems = [
   {
     name: "Systems",
-    href: "/admin/systems",
+    href: "/admin/devices",
     icon: Server,
     description: "Manage and monitor all systems",
   },
@@ -128,8 +128,8 @@ export default function AdminLayout({
                 {navItems.map((item) => {
                   const isActive =
                     pathname === item.href ||
-                    (item.href === "/admin/systems" &&
-                      pathname === "/admin/systems");
+                    (item.href === "/admin/devices" &&
+                      pathname === "/admin/devices");
                   const Icon = item.icon;
 
                   return (

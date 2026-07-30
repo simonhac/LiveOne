@@ -6,9 +6,9 @@
  * transitively: Dashboard → its Area(s) → `area_bindings` → `(system_id, point_id)`.
  *
  * The scope is the **union of the dashboard's section Areas**: each v3 section's `areaId` maps to its
- * addressable systemId (`legacy_system_id`), and `PointManager.getActivePointsForSystem` resolves each
- * to a composite's CHILD points or a single system's own points. The authorized set is BOTH the area
- * handles (whole-area cards address `/api/data?systemId=<handle>`) AND those child/member systems
+ * addressable systemId (`legacy_system_id`), and `PointManager.getActivePointsForDevice` resolves each
+ * to a composite's CHILD points or a single device's own points. The authorized set is BOTH the area
+ * handles (whole-area cards address `/api/data?systemId=<handle>`) AND those child/member devices
  * (member-scoped cards — generator-runs, device-metrics — address them directly), so the exposed set
  * matches what the dashboard renders by construction. (P6 dropped the legacy `dashboards.system_id`/
  * `area_id` seed: scope is now purely descriptor-derived.) Point-level narrowing within an Area is a
@@ -22,7 +22,7 @@ import { collectRefs } from "./v4-validate";
 import { DeviceRegistry } from "@/lib/registry";
 
 export interface DashboardReadAccess {
-  /** Distinct physical systems the dashboard's points live on (a composite spans children). */
+  /** Distinct physical devices the dashboard's points live on (a composite spans children). */
   systemIds: number[];
   /** The exact `(systemId, pointId)` points the dashboard exposes — the read-scope for a share grant. */
   points: { systemId: number; pointId: number }[];
@@ -69,7 +69,7 @@ async function resolveScope(input: DashboardScopeInput): Promise<{
     if (handle == null) continue; // dangling/deleted Area uuid → dropped.
     handles.push(handle);
     try {
-      const pts = await pm.getActivePointsForSystem(handle, false);
+      const pts = await pm.getActivePointsForDevice(handle, false);
       refs.push(...pts.map((p) => p.getReference()));
     } catch {
       // unresolvable handle → keep the handle, no member points.
@@ -83,7 +83,7 @@ async function resolveScope(input: DashboardScopeInput): Promise<{
       if (!device) continue;
       handles.push(device.handle);
       try {
-        const pts = await pm.getActivePointsForSystem(device.handle, false);
+        const pts = await pm.getActivePointsForDevice(device.handle, false);
         refs.push(...pts.map((p) => p.getReference()));
       } catch {
         // Keep the directly referenced device handle even if its points are unavailable.
@@ -96,8 +96,8 @@ async function resolveScope(input: DashboardScopeInput): Promise<{
 /**
  * The distinct systemIds a shared dashboard authorizes: for each Area its v3 descriptor references,
  * BOTH the area HANDLE (whole-area cards fetch `/api/data?systemId=<handle>`) AND the child/member
- * systems whose points the area actually shows. The member expansion is essential: member-scoped cards
- * (generator-runs → `/api/system/<member>/run-periods`, device-metrics → `/api/data?systemId=<member>`)
+ * devices whose points the area actually shows. The member expansion is essential: member-scoped cards
+ * (generator-runs → `/api/device/<member>/run-periods`, device-metrics → `/api/data?systemId=<member>`)
  * would otherwise 401 for an anonymous share viewer even though the dashboard renders their data.
  * Unresolvable Area uuids are dropped (no escalation). Empty/unresolvable descriptor → empty scope.
  */

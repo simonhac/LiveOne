@@ -16,8 +16,8 @@ import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 interface LinesChartCardProps {
   className?: string;
   maxPowerHint?: number; // Max power in kW
-  systemId: number; // System ID (e.g., 648, 1586)
-  /** System/area timezone offset (minutes) — drives the navigator label + historical URL encoding. */
+  systemId: number; // Device ID (e.g., 648, 1586)
+  /** Device/area timezone offset (minutes) — drives the navigator label + historical URL encoding. */
   timezoneOffsetMin: number;
 }
 

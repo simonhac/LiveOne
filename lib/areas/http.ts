@@ -4,7 +4,7 @@
  * ownership/handle facts a route needs to authorize an area edit.
  *
  * Plus the config-v4 read-side loaders (`findReadableArea` / `loadReadableArea`): parse an `ar_` TypeID
- * and resolve it within the caller's READABLE set (owner ∪ visible-system areas). The `/api/v4/areas/*`
+ * and resolve it within the caller's READABLE set (owner ∪ visible-device areas). The `/api/v4/areas/*`
  * routes are TypeID-native, so the `ar_`→uuid decode lives here in one place.
  *
  * `loadAreaForOwner` is the equivalent decode+auth seam for the legacy **area-builder** routes

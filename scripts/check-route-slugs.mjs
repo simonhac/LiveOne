@@ -3,7 +3,7 @@
  * Route-slug collision guard.
  *
  * Next.js App Router forbids two *different* dynamic slug names at the same path
- * level (e.g. `app/api/systems/[id]/` next to `app/api/systems/[systemId]/`).
+ * level (e.g. `app/api/devices/[id]/` next to `app/api/devices/[systemId]/`).
  * It doesn't fail at build time — `next build` ships a "Ready" deploy and the
  * route tree only crashes at runtime route resolution (every request under the
  * affected subtree hangs). That's exactly what took prod down on 2026-06-15
@@ -31,7 +31,7 @@ const DYNAMIC = /^\[.*\]$/; // matches [id], [...slug], [[...sign-in]]
  *
  * @param {string} appDir absolute path to the `app/` directory
  * @returns {Array<{ parent: string, names: string[] }>} collisions (parent is
- *   relative to appDir's parent, e.g. "app/api/systems")
+ *   relative to appDir's parent, e.g. "app/api/devices")
  */
 export function findSlugCollisions(appDir) {
   const collisions = [];

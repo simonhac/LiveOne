@@ -2,7 +2,7 @@
  * usher.yaml — the source config for a deployment. One file describes every source the usher runs;
  * the same file works on Fly (over WireGuard) or a Raspberry Pi (on-LAN) — only the device hosts and
  * whether a tunnel is needed differ. Secrets stay OUT of the file: `apiKeyEnv` names the env var /
- * secret that holds the system's `gk_` gusher key.
+ * secret that holds the device's `gk_` gusher key.
  *
  * Loaded + validated (zod) at startup. See core/factory.ts for how it becomes ScheduledEntry[].
  */

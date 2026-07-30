@@ -5,7 +5,7 @@
  * Connects to the DSE over the Teleport tunnel, reads the FULL mapped GenComm register
  * set (engine, generator AC, power, energy, run-stats, status, identity, alarms, and the
  * conditional mains block), decodes/interprets each, and prints them grouped by category.
- * Sanity-anchors on battery voltage (always populated on a 12V/24V system) to prove the
+ * Sanity-anchors on battery voltage (always populated on a 12V/24V device) to prove the
  * connection + register math.
  *
  * Run (the Teleport VPN must be up):
@@ -213,7 +213,7 @@ function fmtCompact(result: DumpResult): string {
   return `Batt ${s("batteryV", "V")}  Engine ${s("engineRpm", "rpm", 0)}  Freq ${s("genFreqHz", "Hz")}  GenPwr ${s("genTotalW", "W", 0)}  Load ${s("genLoadPct", "%")}`;
 }
 
-// Battery voltage should always read on a 12V or 24V system — this is the anchor
+// Battery voltage should always read on a 12V or 24V device — this is the anchor
 // that proves the connection + register math. Allow charging headroom on both.
 const BATTERY_MIN_V = 8;
 const BATTERY_MAX_V = 32;

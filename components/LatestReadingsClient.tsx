@@ -8,7 +8,7 @@ import { formatValueWithUnit } from "@/lib/point/format-value";
 import { latestReadingsQuery } from "@/lib/queries";
 import SessionInfoModal from "@/components/SessionInfoModal";
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -19,24 +19,24 @@ interface AvailableSystem {
 
 interface LatestReadingsClientProps {
   systemIdentifier: string;
-  system: {
+  device: {
     id: number;
     displayName: string;
   };
   userId: string;
   isAdmin: boolean;
-  availableSystems: AvailableSystem[];
+  availableDevices: AvailableDevice[];
 }
 
 export default function LatestReadingsClient({
-  system,
-  availableSystems,
+  device,
+  availableDevices,
 }: LatestReadingsClientProps) {
-  const systemId = system.id;
+  const systemId = device.id;
 
-  // Build lookup map for system names
-  const systemNameMap = new Map(
-    availableSystems.map((s) => [s.id, s.displayName]),
+  // Build lookup map for device names
+  const deviceNameMap = new Map(
+    availableDevices.map((s) => [s.id, s.displayName]),
   );
 
   const [showSpinner, setShowSpinner] = useState(false);
@@ -112,7 +112,7 @@ export default function LatestReadingsClient({
     return (
       <div className="p-4">
         <div className="text-gray-400">
-          No latest values cached for this system.
+          No latest values cached for this device.
         </div>
         {omittedCount > 0 && (
           <div className="mt-2 text-xs text-gray-500">
@@ -185,14 +185,14 @@ export default function LatestReadingsClient({
                         // half any more (it was `"{systemId}.{pointIndex}"` until the config-v4
                         // pre-terminal prep — see LatestValue.pointReference). The source device now
                         // arrives as its own field, so nothing is parsed out of the id string.
-                        const systemName =
+                        const deviceName =
                           item.sourceSystemId != null
-                            ? systemNameMap.get(item.sourceSystemId)
+                            ? deviceNameMap.get(item.sourceSystemId)
                             : undefined;
                         return (
                           <span className="group relative cursor-default">
                             <span className="text-gray-400">
-                              {systemName ?? "Unknown"}
+                              {deviceName ?? "Unknown"}
                             </span>
                             <span className="text-gray-600">
                               {" "}

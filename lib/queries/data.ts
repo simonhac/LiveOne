@@ -26,7 +26,7 @@ function reviveDashboardDates(result: unknown) {
 }
 
 /**
- * Main dashboard payload: `/api/data?systemId=` → `{ system, latest }`.
+ * Main dashboard payload: `/api/data?systemId=` → `{ device, latest }`.
  * Latest values are the low-latency path, so refetch every 30s and on window focus.
  * The cache holds plain JSON (ISO strings); `select` revives `latest` timestamps to Dates.
  *
@@ -49,8 +49,8 @@ export function dashboardDataQuery(
 }
 
 /**
- * Prefetch-and-seed accelerant for a dashboard with 2+ systems (e.g. an area's own handle + an
- * `oe-grid` tile's region system): one `/api/data?systemId=a,b,...` request instead of N, seeding
+ * Prefetch-and-seed accelerant for a dashboard with 2+ devices (e.g. an area's own handle + an
+ * `oe-grid` tile's region device): one `/api/data?systemId=a,b,...` request instead of N, seeding
  * each id's own `dashboardDataQuery` cache entry so the many per-card `useAreaDatum(systemId)`
  * subscribers across the page find fresh data already there. Purely additive — every card still
  * calls `dashboardDataQuery` itself and self-fetches exactly as before if this hasn't landed yet by

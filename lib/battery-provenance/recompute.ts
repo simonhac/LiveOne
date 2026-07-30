@@ -224,7 +224,7 @@ export interface RangeChunkInfo {
 
 /**
  * Daily heal / backfill: recompute an explicit range in bounded chunks. Covers EVERY complete logical
- * system — flow_attr_1d is the sole per-(area, day) flow matrix, so the rollup runs energy-only +
+ * device — flow_attr_1d is the sole per-(area, day) flow matrix, so the rollup runs energy-only +
  * grid/solar attribution for battery-less Areas as well as the battery blend.
  */
 export async function recomputeRange(

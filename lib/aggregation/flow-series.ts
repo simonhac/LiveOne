@@ -244,7 +244,7 @@ export function toIntervalKwh(
 }
 
 /**
- * Assemble the canonical source/load `FlowSeries` for the energy-flow matrix from a system's
+ * Assemble the canonical source/load `FlowSeries` for the energy-flow matrix from a device's
  * power points (each as signed kW on a shared timebase). This is the engine-side equivalent of
  * the browser's split / solar-aggregation / rest-of-house pipeline, kept pure so the two paths
  * resolve the same nodes:

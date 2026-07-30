@@ -11,7 +11,7 @@ import LatestReadingsClient from "@/components/LatestReadingsClient";
 import DeviceLayout from "@/components/DeviceLayout";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { getAreaForSystem } from "@/lib/areas/resolve";
+import { getAreaForDevice } from "@/lib/areas/resolve";
 import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
 import { getUserIdByUsername } from "@/lib/user-cache";
 import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
@@ -28,8 +28,8 @@ interface PageProps {
 }
 
 /**
- * Per-system read-only viewer ("Device") at `/device/{id}` and the pretty `/device/{user}/{alias}`,
- * plus the per-system sub-pages `/device/{id}/{heatmap|generator|amber|latest}`. Renders the system's
+ * Per-device read-only viewer ("Device") at `/device/{id}` and the pretty `/device/{user}/{alias}`,
+ * plus the per-device sub-pages `/device/{id}/{heatmap|generator|amber|latest}`. Renders the device's
  * DEFAULT layout — no Customise / Share / New-dashboard (those live on composition Dashboards at
  * `/dashboard/id/{id}`). A device is NOT shareable: there is no `?access=` token path here.
  */
@@ -51,7 +51,7 @@ export default async function DevicePage({ params }: PageProps) {
     ? (lastSegment as (typeof validSubPages)[number])
     : null;
 
-  let system = null;
+  let device = null;
   let systemId: string;
   let systemIdentifier: string | undefined;
 
@@ -62,8 +62,8 @@ export default async function DevicePage({ params }: PageProps) {
     const isNumericId = /^\d+$/.test(segment);
 
     if (isNumericId) {
-      system = await DeviceConfigRegistry.deviceByHandle(parseInt(segment));
-      systemId = system?.id?.toString() || segment;
+      device = await DeviceConfigRegistry.deviceByHandle(parseInt(segment));
+      systemId = device?.id?.toString() || segment;
       systemIdentifier = segment;
     } else {
       redirect("/dashboard");
@@ -71,11 +71,11 @@ export default async function DevicePage({ params }: PageProps) {
   } else if (subPageRoute && slug.length === 3) {
     // Special route with username/alias: /device/username/alias/[heatmap|generator|amber|latest]
     const [username, alias] = slug;
-    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+    device = await DeviceConfigRegistry.deviceByUsernameAndSlug(
       username,
       alias,
     );
-    systemId = system?.id?.toString() || `${username}/${alias}`;
+    systemId = device?.id?.toString() || `${username}/${alias}`;
     systemIdentifier = `${username}/${alias}`;
   } else if (slug.length === 1) {
     // Single segment: numeric ID
@@ -84,9 +84,9 @@ export default async function DevicePage({ params }: PageProps) {
 
     if (isNumericId) {
       // Numeric ID - look up and canonicalise to /device/{owner-username}/{alias} if it has an alias
-      system = await DeviceConfigRegistry.deviceByHandle(parseInt(segment));
+      device = await DeviceConfigRegistry.deviceByHandle(parseInt(segment));
 
-      if (system?.alias && system.ownerClerkUserId) {
+      if (device?.alias && device.ownerClerkUserId) {
         // Guard the Clerk lookup: the owner may be absent from THIS Clerk instance (dev mirrors prod
         // owner ids but runs a different Clerk instance) or deleted in prod — in which case skip the
         // canonical redirect and render by numeric id rather than 500. redirect() stays OUTSIDE the
@@ -94,17 +94,17 @@ export default async function DevicePage({ params }: PageProps) {
         let ownerUsername: string | null = null;
         try {
           const clerk = await clerkClient();
-          const owner = await clerk.users.getUser(system.ownerClerkUserId);
+          const owner = await clerk.users.getUser(device.ownerClerkUserId);
           ownerUsername = owner.username;
         } catch {
           // Owner not found in this Clerk instance — fall through without redirecting.
         }
         if (ownerUsername) {
-          redirect(`/device/${ownerUsername}/${system.alias}`);
+          redirect(`/device/${ownerUsername}/${device.alias}`);
         }
       }
 
-      systemId = system?.id?.toString() || segment;
+      systemId = device?.id?.toString() || segment;
     } else {
       // Non-numeric single segment: the `/device/{user}` browser landing. Resolve the username; if it's
       // the viewer (or an admin), land on that user's primary visible device — the persistent rail
@@ -124,42 +124,42 @@ export default async function DevicePage({ params }: PageProps) {
   } else if (slug.length === 2 && !subPageRoute) {
     // Two segments: username/alias format
     const [username, alias] = slug;
-    system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+    device = await DeviceConfigRegistry.deviceByUsernameAndSlug(
       username,
       alias,
     );
-    systemId = system?.id?.toString() || `${username}/${alias}`;
+    systemId = device?.id?.toString() || `${username}/${alias}`;
   } else {
     // Invalid route
     redirect("/dashboard");
   }
 
-  const systemExists = !!system;
+  const deviceExists = !!device;
 
-  // Block access to removed systems (even for admins)
-  if (system && system.status === "removed") {
+  // Block access to removed devices (even for admins)
+  if (device && device.status === "removed") {
     redirect("/dashboard");
   }
 
-  // Check if user has access to this system
+  // Check if user has access to this device
   let hasAccess = false;
 
   if (isAdmin) {
-    // Admins have access to all systems that exist
-    hasAccess = systemExists;
-  } else if (system) {
-    // Owner, or a public (ownerless) system — public systems are readable by everyone.
+    // Admins have access to all devices that exist
+    hasAccess = deviceExists;
+  } else if (device) {
+    // Owner, or a public (ownerless) device — public devices are readable by everyone.
     hasAccess =
-      system.ownerClerkUserId === userId || system.ownerClerkUserId == null;
+      device.ownerClerkUserId === userId || device.ownerClerkUserId == null;
   }
 
   // The viewer's visible devices (active only) + their username for pretty `/device/{user}/{alias}`
   // paths — shared (cache()d) with the rail layout so the query + Clerk lookup run once per request.
-  const { systems: systemsWithUsernames, currentUsername } =
+  const { devices: devicesWithUsernames, currentUsername } =
     await getViewerDevices(userId);
 
   // Render special routes based on last segment
-  if (systemIdentifier && system && subPageRoute) {
+  if (systemIdentifier && device && subPageRoute) {
     // Check access
     if (!hasAccess) {
       redirect("/dashboard");
@@ -169,80 +169,80 @@ export default async function DevicePage({ params }: PageProps) {
       case "heatmap":
         return (
           <DeviceLayout
-            system={withSpecDisplayStrings(system)}
+            device={withSpecDisplayStrings(device)}
             userId={userId}
             isAdmin={isAdmin}
-            availableSystems={systemsWithUsernames}
-            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+            availableDevices={devicesWithUsernames}
+            supportsPolling={VendorRegistry.supportsPolling(device.vendorType)}
           >
             <HeatmapClient
               systemIdentifier={systemIdentifier}
-              system={system}
+              device={device}
               userId={userId}
               isAdmin={isAdmin}
-              availableSystems={systemsWithUsernames}
+              availableDevices={devicesWithUsernames}
             />
           </DeviceLayout>
         );
       case "generator":
         return (
           <DeviceLayout
-            system={withSpecDisplayStrings(system)}
+            device={withSpecDisplayStrings(device)}
             userId={userId}
             isAdmin={isAdmin}
-            availableSystems={systemsWithUsernames}
-            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+            availableDevices={devicesWithUsernames}
+            supportsPolling={VendorRegistry.supportsPolling(device.vendorType)}
           >
             <GeneratorClient
               systemIdentifier={systemIdentifier}
-              system={system}
+              device={device}
               userId={userId}
               isAdmin={isAdmin}
-              availableSystems={systemsWithUsernames}
+              availableDevices={devicesWithUsernames}
             />
           </DeviceLayout>
         );
       case "amber":
         // Only amber vendorTypes can access /amber subpage
-        if (system.vendorType !== "amber") {
+        if (device.vendorType !== "amber") {
           const basePath =
-            system.alias && currentUsername
-              ? `/device/${currentUsername}/${system.alias}`
-              : `/device/${system.id}`;
+            device.alias && currentUsername
+              ? `/device/${currentUsername}/${device.alias}`
+              : `/device/${device.id}`;
           redirect(basePath);
         }
         return (
           <DeviceLayout
-            system={withSpecDisplayStrings(system)}
+            device={withSpecDisplayStrings(device)}
             userId={userId}
             isAdmin={isAdmin}
-            availableSystems={systemsWithUsernames}
-            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+            availableDevices={devicesWithUsernames}
+            supportsPolling={VendorRegistry.supportsPolling(device.vendorType)}
           >
             <AmberSync
               systemIdentifier={systemIdentifier}
-              system={system}
+              device={device}
               userId={userId}
               isAdmin={isAdmin}
-              availableSystems={systemsWithUsernames}
+              availableDevices={devicesWithUsernames}
             />
           </DeviceLayout>
         );
       case "latest":
         return (
           <DeviceLayout
-            system={withSpecDisplayStrings(system)}
+            device={withSpecDisplayStrings(device)}
             userId={userId}
             isAdmin={isAdmin}
-            availableSystems={systemsWithUsernames}
-            supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+            availableDevices={devicesWithUsernames}
+            supportsPolling={VendorRegistry.supportsPolling(device.vendorType)}
           >
             <LatestReadingsClient
               systemIdentifier={systemIdentifier}
-              system={system}
+              device={device}
               userId={userId}
               isAdmin={isAdmin}
-              availableSystems={systemsWithUsernames}
+              availableDevices={devicesWithUsernames}
             />
           </DeviceLayout>
         );
@@ -253,19 +253,19 @@ export default async function DevicePage({ params }: PageProps) {
   // When the device has no Area, use a stable synthetic section id only as a render key.
   // `buildAreaStrategyForHandle`
   // folds in grid context + generator tracking + config overrides — replacing the old client-side
-  // synthesis in DeviceViewer. Only for an accessible system; an Access-Denied render never uses it.
+  // synthesis in DeviceViewer. Only for an accessible device; an Access-Denied render never uses it.
   let descriptor: DashboardV3 | null = null;
   let area: ReadableArea | null = null;
-  if (system && hasAccess) {
+  if (device && hasAccess) {
     const areaId =
-      (await getAreaForSystem(system.id))?.id ?? `device-${system.id}`;
-    descriptor = await buildAreaStrategyForHandle(areaId, system.id, {
+      (await getAreaForDevice(device.id))?.id ?? `device-${device.id}`;
+    descriptor = await buildAreaStrategyForHandle(areaId, device.id, {
       leadWithDeviceMetrics: true,
     });
     area = {
       id: areaId,
-      displayName: system.displayName,
-      legacySystemId: system.id,
+      displayName: device.displayName,
+      legacySystemId: device.id,
     };
   }
 
@@ -273,24 +273,24 @@ export default async function DevicePage({ params }: PageProps) {
   // time-traveling component. Pure predicate over the same chartCapable the renderer gates on (here
   // undefined for a device area, so site charts — which also don't render — are excluded).
   const temporalNav =
-    system &&
+    device &&
     descriptor &&
     hasTimeTravelingCard(
       descriptor,
       area ? new Map([[area.id, area]]) : new Map(),
     )
-      ? { handle: system.id, timezoneOffsetMin: system.timezoneOffsetMin }
+      ? { handle: device.id, timezoneOffsetMin: device.timezoneOffsetMin }
       : null;
 
-  // Render the device viewer. When the system doesn't exist, render without the chrome (the viewer
+  // Render the device viewer. When the device doesn't exist, render without the chrome (the viewer
   // shows the Access-Denied state).
-  if (!system) {
+  if (!device) {
     return (
       <DeviceViewer
         systemId={systemId}
-        system={system}
+        device={device}
         hasAccess={hasAccess}
-        systemExists={systemExists}
+        deviceExists={deviceExists}
         isAdmin={isAdmin}
         userId={userId}
         descriptor={descriptor}
@@ -301,20 +301,20 @@ export default async function DevicePage({ params }: PageProps) {
 
   return (
     <DeviceLayout
-      system={withSpecDisplayStrings(system)}
+      device={withSpecDisplayStrings(device)}
       userId={userId}
       isAdmin={isAdmin}
-      availableSystems={systemsWithUsernames}
+      availableDevices={devicesWithUsernames}
       lastUpdate={null}
-      systemInfo={null}
-      supportsPolling={VendorRegistry.supportsPolling(system.vendorType)}
+      deviceInfo={null}
+      supportsPolling={VendorRegistry.supportsPolling(device.vendorType)}
       temporalNav={temporalNav}
     >
       <DeviceViewer
         systemId={systemId}
-        system={system}
+        device={device}
         hasAccess={hasAccess}
-        systemExists={systemExists}
+        deviceExists={deviceExists}
         isAdmin={isAdmin}
         userId={userId}
         descriptor={descriptor}

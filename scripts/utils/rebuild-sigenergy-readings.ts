@@ -28,7 +28,7 @@
  * USAGE
  *   npx tsx --env-file=.env.local scripts/utils/rebuild-sigenergy-readings.ts            # dry run
  *   npx tsx --env-file=.env.local scripts/utils/rebuild-sigenergy-readings.ts --apply
- *   … [--system=13] [--from=2026-07-01] [--to=2026-07-29] [--skip-aggregates]
+ *   … [--device=13] [--from=2026-07-01] [--to=2026-07-29] [--skip-aggregates]
  *
  * Dry run is the default and reports exactly what would change, per point.
  */

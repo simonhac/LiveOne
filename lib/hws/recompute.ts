@@ -1,8 +1,8 @@
 /**
  * Hot-water temperature recompute (HWS model).
  *
- * The modelled hot-tap temperature is a **derived point** in the generic readings system — NOT a
- * bespoke table. Each modelled system is an `output='point'` row in `derivations` (config-v4
+ * The modelled hot-tap temperature is a **derived point** in the generic readings device — NOT a
+ * bespoke table. Each modelled device is an `output='point'` row in `derivations` (config-v4
  * Phase 11) naming its `load.hws/power` signal and its `load.hws/temperature` output point; this
  * reads the power point's `point_readings_agg_5m.avg`, runs the pure thermal model
  * (`lib/hws-model.ts`), and writes the faucet temperature into the temperature point's own
@@ -152,7 +152,7 @@ export async function recomputeRange(
   startMs: number,
   endMs: number,
   onProgress?: (info: {
-    system: number;
+    device: number;
     chunkStartMs: number;
     chunkEndMs: number;
     rows: number;
@@ -168,7 +168,7 @@ export async function recomputeRange(
         const rows = await recomputePairWindow(pair, cs, ce, false);
         rowsWritten += rows;
         onProgress?.({
-          system: pair.systemId,
+          device: pair.systemId,
           chunkStartMs: cs,
           chunkEndMs: ce,
           rows,

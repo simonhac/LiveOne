@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { jsonResponse, transformDates } from "@/lib/json";
-import { buildSystemPayload } from "@/lib/dashboard/serve-data";
+import { buildDevicePayload } from "@/lib/dashboard/serve-data";
 import {
   resolveWireAddress,
   subjectForHandle,
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
           systemIds.map(async (id) => {
             const authResult = await requireDashboardAccess(request, id);
             if (authResult instanceof NextResponse) return null;
-            const payload = await buildSystemPayload(
+            const payload = await buildDevicePayload(
               authResult.subject,
               wantsReadings,
             );
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
     if (authResult instanceof NextResponse) return authResult;
     const subject = authResult.subject;
     const payload = await t.time("build", () =>
-      buildSystemPayload(subject, wantsReadings, t),
+      buildDevicePayload(subject, wantsReadings, t),
     );
     // Return with automatic date formatting and field renaming
     // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
@@ -118,7 +118,7 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * `include=readings` → also build the detailed readings table (the former /api/system/{id}/latest
+ * `include=readings` → also build the detailed readings table (the former /api/device/{id}/latest
  * route): every active point merged with its cached value, including expected-but-missing points +
  * session labels. Computed only on request so the hot dashboard poll stays lean. This makes /api/data
  * the single producer of the KV latest cache.

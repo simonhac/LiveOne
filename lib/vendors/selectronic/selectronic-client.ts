@@ -59,7 +59,7 @@ interface Credentials {
   systemNumber: string;
 }
 
-export interface SystemInfo {
+export interface DeviceInfo {
   model?: string;
   serial?: string;
   ratings?: string;
@@ -77,7 +77,7 @@ export class SelectronicFetchClient {
   private credentials: Credentials;
 
   constructor(credentials: Credentials) {
-    // Per-system credentials come from Clerk (see lib/secure-credentials.ts).
+    // Per-device credentials come from Clerk (see lib/secure-credentials.ts).
     this.credentials = credentials;
   }
 
@@ -206,9 +206,9 @@ export class SelectronicFetchClient {
   }
 
   /**
-   * Fetch system info from dashboard page
+   * Fetch device info from dashboard page
    */
-  public async fetchSystemInfo(): Promise<SystemInfo | null> {
+  public async fetchDeviceInfo(): Promise<DeviceInfo | null> {
     try {
       // Ensure we have cookies
       if (this.cookies.size === 0) {
@@ -240,13 +240,13 @@ export class SelectronicFetchClient {
 
       // Parse HTML using cheerio for robust extraction
       const $ = cheerio.load(html);
-      const systemInfo: SystemInfo = {};
+      const deviceInfo: DeviceInfo = {};
 
       // Debug: Check if we got a valid dashboard page
       const pageTitle = $("title").text();
       console.log(`[SystemInfo] Page title: ${pageTitle}`);
 
-      // Look for divs with table-cell display that contain system info
+      // Look for divs with table-cell display that contain device info
       // The structure is: <div class="table-row"><div>Label:</div><div>Value</div></div>
       $('div[style*="table-cell"]').each((_, element) => {
         const $el = $(element);
@@ -257,49 +257,49 @@ export class SelectronicFetchClient {
           // Look for the next sibling with table-cell style
           const value = $el.next('div[style*="table-cell"]').text().trim();
           console.log(`[SystemInfo] Found model: ${value}`);
-          if (value) systemInfo.model = value;
+          if (value) deviceInfo.model = value;
         } else if (text === "SP PRO Serial:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
-          if (value) systemInfo.serial = value;
+          if (value) deviceInfo.serial = value;
         } else if (text === "SP PRO Ratings:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
-          if (value) systemInfo.ratings = value;
+          if (value) deviceInfo.ratings = value;
         } else if (text === "Solar Size:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
-          if (value) systemInfo.solarSize = value;
+          if (value) deviceInfo.solarSize = value;
         } else if (text === "Battery Size:") {
           const value = $el.next('div[style*="table-cell"]').text().trim();
-          if (value) systemInfo.batterySize = value;
+          if (value) deviceInfo.batterySize = value;
         }
       });
 
       // Alternative approach: Look for elements by ID (if they have IDs)
-      if (!systemInfo.model) {
+      if (!deviceInfo.model) {
         const modelById = $("#sppro_model").text().trim();
-        if (modelById) systemInfo.model = modelById;
+        if (modelById) deviceInfo.model = modelById;
       }
-      if (!systemInfo.serial) {
+      if (!deviceInfo.serial) {
         // Note: The HTML shows the serial has wrong ID "sppro_model" instead of expected "sppro_serial"
         // This is why we rely on the label-based extraction above
       }
-      if (!systemInfo.ratings) {
+      if (!deviceInfo.ratings) {
         const ratingsById = $("#sppro_rating").text().trim();
-        if (ratingsById) systemInfo.ratings = ratingsById;
+        if (ratingsById) deviceInfo.ratings = ratingsById;
       }
-      if (!systemInfo.solarSize) {
+      if (!deviceInfo.solarSize) {
         const solarById = $("#solar_size").text().trim();
-        if (solarById) systemInfo.solarSize = solarById;
+        if (solarById) deviceInfo.solarSize = solarById;
       }
-      if (!systemInfo.batterySize) {
+      if (!deviceInfo.batterySize) {
         const batteryById = $("#battery_size").text().trim();
-        if (batteryById) systemInfo.batterySize = batteryById;
+        if (batteryById) deviceInfo.batterySize = batteryById;
       }
 
       console.log(
         "[SystemInfo] Extracted info:",
-        JSON.stringify(systemInfo, null, 2),
+        JSON.stringify(deviceInfo, null, 2),
       );
-      return systemInfo;
+      return deviceInfo;
     } catch (error) {
       console.error("[SystemInfo] Error fetching system info:", error);
       return null;
@@ -307,9 +307,9 @@ export class SelectronicFetchClient {
   }
 
   /**
-   * Get list of available systems for the authenticated user
+   * Get list of available devices for the authenticated user
    */
-  public async getSystemsList(): Promise<Array<{
+  public async getDevicesList(): Promise<Array<{
     systemNumber: string;
     name?: string;
     model?: string;
@@ -324,7 +324,7 @@ export class SelectronicFetchClient {
         }
       }
 
-      // Fetch the dashboard page to get system list
+      // Fetch the dashboard page to get device list
       const response = await fetch(`${SELECTLIVE_API.baseUrl}/dashboard`, {
         headers: {
           Cookie: this.getCookieString(),
@@ -340,35 +340,35 @@ export class SelectronicFetchClient {
       const html = await response.text();
       const $ = cheerio.load(html);
 
-      // Look for system selector or system information
-      const systems: Array<{
+      // Look for device selector or device information
+      const devices: Array<{
         systemNumber: string;
         name?: string;
         model?: string;
         serialNumber?: string;
       }> = [];
 
-      // Try to find system selector dropdown or similar
+      // Try to find device selector dropdown or similar
       $('select[name="system"], .system-selector option').each((_, el) => {
         const value = $(el).val() as string;
         const text = $(el).text().trim();
         if (value && value !== "") {
-          systems.push({
+          devices.push({
             systemNumber: value,
             name: text,
           });
         }
       });
 
-      // If no selector, look for single system info
-      if (systems.length === 0) {
-        // Try to extract from the current system being displayed
+      // If no selector, look for single device info
+      if (devices.length === 0) {
+        // Try to extract from the current device being displayed
         const systemNumber =
           $("[data-system-id], .system-number").first().text().trim() ||
           this.credentials.systemNumber;
 
         if (systemNumber) {
-          systems.push({
+          devices.push({
             systemNumber,
             name:
               $("[data-system-name], .system-name").first().text().trim() ||
@@ -377,8 +377,8 @@ export class SelectronicFetchClient {
         }
       }
 
-      console.log("[SystemsList] Found systems:", systems);
-      return systems.length > 0 ? systems : null;
+      console.log("[SystemsList] Found systems:", devices);
+      return devices.length > 0 ? devices : null;
     } catch (error) {
       console.error("[SystemsList] Error getting systems list:", error);
       return null;

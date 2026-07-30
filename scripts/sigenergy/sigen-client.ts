@@ -234,7 +234,7 @@ function extractStatRow(rec: unknown, date: string | null): SigenEnergyStatRow {
   };
 }
 
-/** Best-effort station-id extraction from a home/station/system response of unknown shape. */
+/** Best-effort station-id extraction from a home/station/device response of unknown shape. */
 function extractStationId(data: unknown): string | null {
   if (data == null) return null;
   const candidate = Array.isArray(data) ? data[0] : data;

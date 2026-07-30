@@ -72,11 +72,11 @@ import type { AreaConfig } from "@/lib/areas/types";
 // Its values are NOT reconstructible from the surviving schema.
 // ============================================================================
 
-// The `user_systems` junction table — the pre-Areas per-system access grant — was dropped by
+// The `user_systems` junction table — the pre-Areas per-device access grant — was dropped by
 // migration 0045 (config-v4 Phase 12 slice F), releasing an FK into `systems`. It held ZERO rows on
 // prod, and the clean-sheet retires it with no replacement: sharing is `dashboard_grants` +
 // `share_tokens`. Read access is now exactly owner ∪ ownerless-is-public ∪ admin, plus whatever a
-// dashboard grant implies (`grantedSystemScopeForUser`, lib/dashboard/grants.ts). The grant never
+// dashboard grant implies (`grantedDeviceScopeForUser`, lib/dashboard/grants.ts). The grant never
 // conveyed write access, so nothing about `canWrite` changed.
 
 // ============================================================================
@@ -86,7 +86,7 @@ export const users = pgTable(
   "users",
   {
     clerkUserId: text("clerk_user_id").primaryKey(),
-    // The default landing DASHBOARD (P6: the legacy per-system `default_system_id` was dropped). FK to
+    // The default landing DASHBOARD (P6: the legacy per-device `default_system_id` was dropped). FK to
     // dashboards.id, ON DELETE SET NULL so deleting the dashboard silently clears the default. (forward
     // ref: `dashboards` is declared later in this module.)
     // ⚠️ config-v4 CUTOVER SHAPE — transform stage 5d re-keys this int → the dashboards uuid.
@@ -105,7 +105,7 @@ export const users = pgTable(
 );
 
 // ============================================================================
-// Sessions table - tracks communication sessions with energy systems
+// Sessions table - tracks communication sessions with energy devices
 // ============================================================================
 export const sessions = pgTable(
   "sessions",
@@ -121,7 +121,7 @@ export const sessions = pgTable(
     // session write); the replacement is added `NOT VALID` and then `VALIDATE`d, so the ~10^6-row scan
     // runs under `SHARE UPDATE EXCLUSIVE` instead of holding `ACCESS EXCLUSIVE`.
     //
-    // The wire field is still called `systemId` (`SessionWithSystem`) — that grammar moves in Phase 13
+    // The wire field is still called `systemId` (`SessionWithDevice`) — that grammar moves in Phase 13
     // with the rest of the handle.
     deviceRid: integer("device_rid")
       .notNull()
@@ -302,8 +302,8 @@ export const pointReadingsAgg1d = pgTable(
 // time. A multi-day range is a plain `SUM(energy_kwh) GROUP BY (source_path, load_path)`.
 //
 // `area_id` is the LOGICAL SYSTEM / view the flows belong to (`resolveLogicalSystem`): an area-of-one
-// over a single physical system, OR a multi-device area whose points are drawn from CHILD systems (the
-// cross-system origin is collapsed into the Area; cross-system *edges* aren't representable). A
+// over a single physical device, OR a multi-device area whose points are drawn from CHILD devices (the
+// cross-device origin is collapsed into the Area; cross-device *edges* aren't representable). A
 // multi-device area and its members' areas-of-one each get their own rows, so a portfolio rollup must
 // never sum a multi-device area AND its members.
 //
@@ -319,7 +319,7 @@ export const pointReadingsFlowAttr1d = pgTable(
     areaId: uuid("area_id")
       .notNull()
       .references(() => areas.id),
-    day: text("day").notNull(), // YYYY-MM-DD, system-local (same convention as agg_1d)
+    day: text("day").notNull(), // YYYY-MM-DD, device-local (same convention as agg_1d)
     sourcePath: text("source_path").notNull(),
     loadPath: text("load_path").notNull(),
 
@@ -432,7 +432,7 @@ export type NewBatteryProvenanceDailyRow =
   typeof batteryProvenanceDaily.$inferInsert;
 
 // ============================================================================
-// Share tokens - view-only access links scoped to systems owned by the token's owner
+// Share tokens - view-only access links scoped to devices owned by the token's owner
 // (mirrors the legacy `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.
 // ============================================================================
@@ -500,14 +500,14 @@ export const observationsOutbox = pgTable(
 );
 
 // ============================================================================
-// Dashboards - moving from per-(user,system) to first-class COMPOSITION-FIRST (Phase 2b-2).
+// Dashboards - moving from per-(user,device) to first-class COMPOSITION-FIRST (Phase 2b-2).
 //
 // TARGET model: a dashboard is a NAMED, owner-scoped composition — `descriptor` is an ordered list of
-// cards, each bound to its OWN Area (`areaId`), with no home system/area. Addressed by id
+// cards, each bound to its OWN Area (`areaId`), with no home device/area. Addressed by id
 // (`/dashboard/{user}/id/{id}`) or `alias` (`/dashboard/{user}/{alias}`, an owner-unique shortname).
 //
 // TRANSITION (additive, migration 0017): `display_name` + `alias` are added and `system_id` is made
-// NULLABLE so new composition dashboards (null system_id) coexist with the legacy per-system rows
+// NULLABLE so new composition dashboards (null system_id) coexist with the legacy per-device rows
 // while the old path is still live. `area_id` + the `(user, system_id)` unique index are retained
 // (NULLs are distinct, so many composition dashboards are allowed). Phase 2b-2's final step retires
 // the legacy path and drops `system_id`/`area_id` + the old unique (migration 0018). `display_name`
@@ -525,7 +525,7 @@ export const dashboards = pgTable(
     legacyId: integer("legacy_id"),
     ownerUserId: text("owner_user_id").notNull(), // the owner
     // A dashboard's name + owner-unique shortname (the /dashboard/{user}/{slug} path). Nullable for
-    // an unnamed dashboard. The legacy per-system `system_id`/`area_id` handles were dropped in P6 —
+    // an unnamed dashboard. The legacy per-device `system_id`/`area_id` handles were dropped in P6 —
     // a dashboard is a composition whose sections each carry their own Area uuid.
     name: text("name"),
     slug: text("slug"), // owner-unique shortname for /dashboard/{user}/{slug}; null = unnamed
@@ -603,18 +603,18 @@ export type NewDashboardGrant = typeof dashboardGrants.$inferInsert;
 
 // ============================================================================
 // Areas - the SEMANTIC layer (P3). A named role-set that binds physical points
-// into a coherent energy site. Replaced vendor_type='composite' fake systems rows.
+// into a coherent energy site. Replaced vendor_type='composite' fake devices rows.
 //
 // An Area is a grouping of 1..N member devices (`area_members`):
-//   area-of-one   → 1:1 wrapper over a single physical system (its sole `area_members` member).
-//   multi-device  → points drawn from across ≥2 member systems (via `area_bindings`).
+//   area-of-one   → 1:1 wrapper over a single physical device (its sole `area_members` member).
+//   multi-device  → points drawn from across ≥2 member devices (via `area_bindings`).
 // The single-vs-multi distinction is STRUCTURAL (membership), not a stored `kind` — the
 // `kind` column was dropped in migration 0019, and the `source_system_id` seam in P6.
 //
 // `id` is a GUID (decoupled from systems.id). `legacy_system_id` is the integer ADDRESSING
 // HANDLE: an area-of-one's == its member's systems.id; a multi-device area's == the old
 // composite shim's systems.id. It drives the point_readings_flow_attr_1d.area_id keying.
-// Areas are organizational, NOT the access boundary (access stays system-granular until P4).
+// Areas are organizational, NOT the access boundary (access stays device-granular until P4).
 // ============================================================================
 export const areas = pgTable(
   "areas",
@@ -630,8 +630,8 @@ export const areas = pgTable(
     // AC1 "lockout": 35 area_bindings present and correct, 0 points served.
     ownerUserId: text("owner_user_id"),
     // The 1:1 migration seam + the stable integer ADDRESSING HANDLE. For a multi-device area it is
-    // the old composite shim's systems.id; no FK to systems, since that area outlives its `systems`
-    // row (deleted in migration 0014), and `getSystem(legacy_system_id)` then resolves to the
+    // the old composite shim's systems.id; no FK to devices, since that area outlives its `systems`
+    // row (deleted in migration 0014), and `getDevice(legacy_system_id)` then resolves to the
     // synthesized virtual system. The unique index below stays as the addressing invariant (one Area
     // per handle). RETAINED through the cutover (mapping key + backlog drain); dropped in Phase 9.
     legacySystemId: integer("legacy_system_id"),
@@ -672,7 +672,7 @@ export const areas = pgTable(
 // Area bindings - the typed role→point edges (P3). One representation that subsumes
 // all legacy composite metadata JSON shapes (v2 `mappings`; the dead base_system/
 // overrides). One role may bind several points and several metric_types (e.g. battery
-// binds a `power` point AND a `soc` point — possibly from different child systems).
+// binds a `power` point AND a `soc` point — possibly from different child devices).
 //
 // `metric_type` comes from the child point_info, NOT from the role — a single v2
 // mapping bucket holds mixed metrics (e.g. Kinkora's `grid` bucket is a power point
@@ -993,8 +993,8 @@ export const points = pgTable(
 //   • Fully rederivable, so the `area_id` CASCADE is safe and does NOT loosen
 //     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
 //   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
-//     membership, because `deleteSystem` ORPHANS its `devices` row rather than deleting it
-//     (`DeviceWriter.deleteSystem`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
+//     membership, because `deleteDevice` ORPHANS its `devices` row rather than deleting it
+//     (`DeviceWriter.deleteDevice`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
 //     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE
 //     here means such a member silently leaves its areas — fix the two together.
 export const areaMembers = pgTable(

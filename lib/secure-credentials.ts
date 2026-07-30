@@ -2,7 +2,7 @@
  * Secure credential management using Clerk's private metadata
  *
  * This module handles storing and retrieving credentials for various
- * solar system vendors (Select.Live, Enphase, etc.) securely in
+ * solar device vendors (Select.Live, Enphase, etc.) securely in
  * Clerk's private metadata, which is:
  * - Only accessible server-side
  * - Encrypted at rest
@@ -38,9 +38,9 @@ export interface CredentialsMetadataV11 {
 }
 
 /**
- * Store system credentials in Clerk private metadata
+ * Store device credentials in Clerk private metadata
  */
-export async function storeSystemCredentials(
+export async function storeDeviceCredentials(
   userId: string,
   systemId: number,
   vendor: VendorType,
@@ -70,7 +70,7 @@ export async function storeSystemCredentials(
       ...credentials,
     };
 
-    // Filter out existing credentials for this system
+    // Filter out existing credentials for this device
     const filteredCredentials = metadata.credentials.filter(
       (c) => c.systemId !== systemId,
     );
@@ -100,13 +100,13 @@ export async function storeSystemCredentials(
 }
 
 /**
- * Get system credentials from Clerk private metadata
+ * Get device credentials from Clerk private metadata
  */
-export async function getSystemCredentials(
+export async function getDeviceCredentials(
   userId: string,
   systemId: number,
 ): Promise<VendorCredentials | null> {
-  // Ownerless systems (e.g. openelectricity) authenticate with an app-wide env
+  // Ownerless devices (e.g. openelectricity) authenticate with an app-wide env
   // key and have no Clerk user — short-circuit before getUser() throws
   // "A valid resource ID is required." The minutely cron already rejects
   // per-user vendors with no owner upstream, so reaching here ownerless is a
@@ -141,9 +141,9 @@ export async function getSystemCredentials(
 }
 
 /**
- * Remove system credentials from Clerk private metadata
+ * Remove device credentials from Clerk private metadata
  */
-export async function removeSystemCredentials(
+export async function removeDeviceCredentials(
   userId: string,
   systemId: number,
 ) {
@@ -156,7 +156,7 @@ export async function removeSystemCredentials(
       return { success: true }; // Nothing to remove
     }
 
-    // Filter out credentials for this system
+    // Filter out credentials for this device
     const filteredCredentials = metadata.credentials.filter(
       (c) => c.systemId !== systemId,
     );

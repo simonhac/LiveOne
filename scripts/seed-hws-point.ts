@@ -12,9 +12,9 @@
  * evaluated at import, before the script's own dotenv.config runs).
  *
  * Usage:
- *   npx tsx --env-file=.env.local scripts/seed-hws-point.ts                # list candidate systems
- *   npx tsx --env-file=.env.local scripts/seed-hws-point.ts --system=6     # dry run for system 6
- *   npx tsx --env-file=.env.local scripts/seed-hws-point.ts --system=6 --apply
+ *   npx tsx --env-file=.env.local scripts/seed-hws-point.ts                # list candidate devices
+ *   npx tsx --env-file=.env.local scripts/seed-hws-point.ts --device=6     # dry run for device 6
+ *   npx tsx --env-file=.env.local scripts/seed-hws-point.ts --device=6 --apply
  */
 import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
@@ -29,8 +29,8 @@ import {
 
 const APPLY = process.argv.includes("--apply");
 const tag = APPLY ? "[APPLY]" : "[DRY-RUN]";
-const systemArg = process.argv.find((a) => a.startsWith("--system="));
-const systemId = systemArg ? parseInt(systemArg.split("=")[1], 10) : null;
+const deviceArg = process.argv.find((a) => a.startsWith("--system="));
+const systemId = deviceArg ? parseInt(deviceArg.split("=")[1], 10) : null;
 
 async function main() {
   const db = requirePlanetscaleDb();

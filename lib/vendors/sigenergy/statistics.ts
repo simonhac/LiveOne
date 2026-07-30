@@ -32,7 +32,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RECONCILE_TOLERANCE_WH = 5;
 
 /**
- * Parse a local "YYYYMMDD HH:MM" wall-clock into a UTC epoch-ms instant, given the system's timezone
+ * Parse a local "YYYYMMDD HH:MM" wall-clock into a UTC epoch-ms instant, given the device's timezone
  * offset (minutes east of UTC — e.g. Melbourne AEST = +600). Returns null on an unparseable string.
  */
 export function localDataTimeToUtcMs(
@@ -46,7 +46,7 @@ export function localDataTimeToUtcMs(
   return wallMs - tzOffsetMin * 60 * 1000;
 }
 
-/** UTC-ms of local midnight starting the given YYYYMMDD, for the system's tz offset. */
+/** UTC-ms of local midnight starting the given YYYYMMDD, for the device's tz offset. */
 function dayStartUtcMs(date: string, tzOffsetMin: number): number | null {
   return localDataTimeToUtcMs(`${date} 00:00`, tzOffsetMin);
 }

@@ -25,7 +25,7 @@ export interface GeneratorIntensity {
 }
 
 /**
- * Resolve a system's `generatorSource` config into intensity factors, or null when the config is
+ * Resolve a device's `generatorSource` config into intensity factors, or null when the config is
  * absent or fails the master gate — in which case the caller must fall back to its normal source
  * (the OE/Amber region signal for the fold; no provenance columns at all for a run period).
  */

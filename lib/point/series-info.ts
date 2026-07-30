@@ -2,7 +2,7 @@
  * Series Info - Complete information about a queryable data series
  *
  * This combines:
- * - Which system (SystemIdentifier)
+ * - Which device (SystemIdentifier)
  * - Which point (PointInfo)
  * - Which aggregation (e.g., "avg", "min", "max", "last", "delta")
  * - Which intervals are supported ("5m", "1d")
@@ -16,7 +16,7 @@ import { getSupportedIntervals } from "./point-series";
  * Complete information about a data series
  */
 export interface SeriesInfo {
-  /** System identifier */
+  /** Device identifier */
   systemIdentifier: SystemIdentifier;
 
   /** The point this series belongs to */

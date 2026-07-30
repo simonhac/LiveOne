@@ -62,7 +62,7 @@ function normalizeDay(value: unknown): string | null {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
 }
 
-interface SystemReport {
+interface DeviceReport {
   vendorType: string;
   systemId: number;
   name: string;
@@ -74,7 +74,7 @@ export interface CoverageRepairResult {
   status: "ok" | "warn" | "alert";
   dryRun: boolean;
   window: { firstDay: string; lastDay: string };
-  vendors: { vendorType: string; systems: number }[];
+  vendors: { vendorType: string; devices: number }[];
   totals: {
     repaired: number;
     unsettled: number;
@@ -87,7 +87,7 @@ export interface CoverageRepairResult {
     provenanceAreas: number;
     pending: number;
   };
-  reports: SystemReport[];
+  reports: DeviceReport[];
   reportText: string;
 }
 
@@ -100,13 +100,13 @@ export async function runCoverageRepair(
   const providers = COVERAGE_PROVIDERS.filter(
     (p) => !onlyVendor || p.vendorType === onlyVendor,
   );
-  const allSystems = await DeviceConfigRegistry.activeDevices();
+  const allDevices = await DeviceConfigRegistry.activeDevices();
 
-  const reports: SystemReport[] = [];
-  const pointsBySystem = new Map<number, CoveragePoint[]>();
-  const providerBySystem = new Map<number, CoverageRepairProvider<unknown>>();
+  const reports: DeviceReport[] = [];
+  const pointsByDevice = new Map<number, CoveragePoint[]>();
+  const providerByDevice = new Map<number, CoverageRepairProvider<unknown>>();
   const preRepairPresent = new Map<string, number>(); // `${sid}:${day}` → pre-repair maxPresent
-  const publishedBySystem = new Map<number, string[]>();
+  const publishedByDevice = new Map<number, string[]>();
   let deferredForCap = 0;
 
   // Representative window for the header (uniform 90/7, fixed +10 basis).
@@ -115,17 +115,17 @@ export async function runCoverageRepair(
   const windowLast = parseDate(headToday).subtract({ days: 7 }).toString();
 
   // ── Phases 0–2: enumerate → Stage 1 detect → Stage 2 backfill ──
-  // Vendors run CONCURRENTLY (independent APIs / per-owner keys); systems within a vendor stay
+  // Vendors run CONCURRENTLY (independent APIs / per-owner keys); devices within a vendor stay
   // sequential for now — see docs/architecture/coverage-repair.md (Parallelisation & scaling).
   await Promise.all(
     providers.map(async (provider) => {
-      const systems = allSystems.filter(
+      const devices = allDevices.filter(
         (s) => s.vendorType === provider.vendorType,
       );
       let repairBudget = MAX_DAYS_PER_RUN; // per-vendor budget (no cross-vendor starvation)
 
-      for (const system of systems) {
-        const offset = provider.bucketOffsetMin(system);
+      for (const device of devices) {
+        const offset = provider.bucketOffsetMin(device);
         const todayLocal = new Date(nowMs + offset * 60_000)
           .toISOString()
           .slice(0, 10);
@@ -136,41 +136,41 @@ export async function runCoverageRepair(
           .subtract({ days: provider.graceDays })
           .toString();
 
-        // Floor the window start at the system's "birth" so pre-existence days aren't flagged as
+        // Floor the window start at the device's "birth" so pre-existence days aren't flagged as
         // phantom gaps — and, when a vendor exposes an earlier true commission date, so genuine
         // pre-onboarding history stays in range. Source order: persisted `commissioned_on`; else (for
-        // a freshly-onboarded system only) the vendor's live commission day, lazily persisted; else
+        // a freshly-onboarded device only) the vendor's live commission day, lazily persisted; else
         // the LiveOne onboarding day (`created_at`).
-        let floor = normalizeDay(system.commissionedOn);
-        const createdDay = localDay(system.createdAt, offset);
+        let floor = normalizeDay(device.commissionedOn);
+        const createdDay = localDay(device.createdAt, offset);
         if (!floor) {
           // Pay for the vendor call only when onboarding itself is inside the lookback window (a
-          // recently-added system); for long-onboarded systems the lookback floor already dominates.
+          // recently-added device); for long-onboarded devices the lookback floor already dominates.
           if (
             provider.commissionDay &&
             createdDay &&
             createdDay > lookbackFirst
           ) {
             try {
-              const commissioned = await provider.commissionDay(system);
+              const commissioned = await provider.commissionDay(device);
               if (commissioned) {
                 floor = commissioned;
                 if (!dryRun) {
                   try {
                     // config-v4 slice K2: this was a hand-written `UPDATE systems` that bypassed
-                    // `updateSystem` and therefore the `devices` mirror entirely — a THIRD instance of
+                    // `updateDevice` and therefore the `devices` mirror entirely — a THIRD instance of
                     // the "wired at mint, not at edit" class, and the only one where the writer was not
                     // even the sanctioned one. `commissioned_on` is the coverage window's floor, so a
                     // drifted mirror manufactures phantom gaps once `devices` is the reader. Routed
                     // through the mirrored writer; the old statement's `AND commissioned_on IS NULL`
                     // guard is preserved by the enclosing `if (!floor)`, and this is a weekly single
                     // writer, so there is no concurrent update to lose.
-                    await DeviceWriter.updateSystem(system.id, {
+                    await DeviceWriter.updateDevice(device.id, {
                       commissionedOn: commissioned,
                     });
                   } catch (err) {
                     console.error(
-                      `[RepairCoverage] persist commissioned_on failed sys=${system.id}:`,
+                      `[RepairCoverage] persist commissioned_on failed sys=${device.id}:`,
                       err,
                     );
                   }
@@ -184,12 +184,12 @@ export async function runCoverageRepair(
         }
         const firstDay = floor && floor > lookbackFirst ? floor : lookbackFirst;
 
-        // Window collapses (system younger than the grace period) → nothing to scan.
+        // Window collapses (device younger than the grace period) → nothing to scan.
         if (firstDay > lastDay) {
           reports.push({
             vendorType: provider.vendorType,
-            systemId: system.id,
-            name: system.displayName,
+            systemId: device.id,
+            name: device.displayName,
             gaps: [],
             repairs: [],
           });
@@ -200,28 +200,28 @@ export async function runCoverageRepair(
         try {
           points = await resolveCoveragePoints(
             db,
-            system.id,
+            device.id,
             provider.expectedPointTails,
           );
         } catch (err) {
           reports.push({
             vendorType: provider.vendorType,
-            systemId: system.id,
-            name: system.displayName,
+            systemId: device.id,
+            name: device.displayName,
             gaps: [],
             repairs: [
-              errRepair(system.id, `point lookup failed: ${String(err)}`),
+              errRepair(device.id, `point lookup failed: ${String(err)}`),
             ],
           });
           continue;
         }
-        pointsBySystem.set(system.id, points);
-        providerBySystem.set(system.id, provider);
+        pointsByDevice.set(device.id, points);
+        providerByDevice.set(device.id, provider);
         if (points.length === 0) {
           reports.push({
             vendorType: provider.vendorType,
-            systemId: system.id,
-            name: system.displayName,
+            systemId: device.id,
+            name: device.displayName,
             gaps: [],
             repairs: [],
           });
@@ -233,7 +233,7 @@ export async function runCoverageRepair(
         try {
           gaps = await findCoverageGaps(
             db,
-            system.id,
+            device.id,
             points,
             provider.cadenceMinutes,
             offset,
@@ -243,10 +243,10 @@ export async function runCoverageRepair(
         } catch (err) {
           reports.push({
             vendorType: provider.vendorType,
-            systemId: system.id,
-            name: system.displayName,
+            systemId: device.id,
+            name: device.displayName,
             gaps: [],
-            repairs: [errRepair(system.id, `detection failed: ${String(err)}`)],
+            repairs: [errRepair(device.id, `detection failed: ${String(err)}`)],
           });
           continue;
         }
@@ -256,19 +256,19 @@ export async function runCoverageRepair(
         if (gaps.length > 0 && dryRun) {
           for (const g of gaps)
             repairs.push({
-              systemId: system.id,
+              systemId: device.id,
               day: g.day,
               publishedRows: 0,
               status: "would-repair",
             });
         } else if (gaps.length > 0) {
-          const prep = await provider.prepare(system);
+          const prep = await provider.prepare(device);
           if (!prep.ok) {
-            repairs.push(errRepair(system.id, prep.error));
+            repairs.push(errRepair(device.id, prep.error));
           } else {
             const session = await sessionManager.createSession({
               sessionLabel: "repair-coverage",
-              systemId: system.id,
+              systemId: device.id,
               cause: "CRON",
               started: new Date(),
             });
@@ -280,9 +280,9 @@ export async function runCoverageRepair(
                 continue;
               }
               repairBudget--;
-              preRepairPresent.set(`${system.id}:${g.day}`, g.maxPresent);
+              preRepairPresent.set(`${device.id}:${g.day}`, g.maxPresent);
               const r = await provider.backfillDay(
-                system,
+                device,
                 g.day,
                 prep.ctx,
                 session,
@@ -290,9 +290,9 @@ export async function runCoverageRepair(
               );
               repairs.push(r);
               if (r.status === "repaired") {
-                if (!publishedBySystem.has(system.id))
-                  publishedBySystem.set(system.id, []);
-                publishedBySystem.get(system.id)!.push(g.day);
+                if (!publishedByDevice.has(device.id))
+                  publishedByDevice.set(device.id, []);
+                publishedByDevice.get(device.id)!.push(g.day);
               }
             }
             // Flush the batched observations to the queue at session close.
@@ -314,8 +314,8 @@ export async function runCoverageRepair(
         }
         reports.push({
           vendorType: provider.vendorType,
-          systemId: system.id,
-          name: system.displayName,
+          systemId: device.id,
+          name: device.displayName,
           gaps,
           repairs,
         });
@@ -332,23 +332,23 @@ export async function runCoverageRepair(
   );
 
   // ── Phase 3: wait for landing, then Phase 4: scoped recompute ──
-  const landedBySystem = new Map<number, string[]>();
+  const landedByDevice = new Map<number, string[]>();
   const recompute = {
     agg1dDays: 0,
     provenanceAreas: 0,
     pending: 0,
   };
-  if (!dryRun && publishedBySystem.size > 0) {
+  if (!dryRun && publishedByDevice.size > 0) {
     const deadline = Date.now() + LANDING_WAIT_SECONDS * 1000;
     const pending = new Map(
-      [...publishedBySystem].map(([sid, days]) => [sid, new Set(days)]),
+      [...publishedByDevice].map(([sid, days]) => [sid, new Set(days)]),
     );
     while (Date.now() < deadline) {
       for (const [sid, days] of pending) {
-        const points = pointsBySystem.get(sid) ?? [];
-        const provider = providerBySystem.get(sid)!;
-        const system = allSystems.find((s) => s.id === sid)!;
-        const offset = provider.bucketOffsetMin(system);
+        const points = pointsByDevice.get(sid) ?? [];
+        const provider = providerByDevice.get(sid)!;
+        const device = allDevices.find((s) => s.id === sid)!;
+        const offset = provider.bucketOffsetMin(device);
         const expected = Math.round(1440 / provider.cadenceMinutes);
         for (const day of [...days]) {
           let present = 0;
@@ -365,8 +365,8 @@ export async function runCoverageRepair(
           // reach `expected`, so strict equality would hang forever).
           if (present >= expected || present > pre) {
             days.delete(day);
-            if (!landedBySystem.has(sid)) landedBySystem.set(sid, []);
-            landedBySystem.get(sid)!.push(day);
+            if (!landedByDevice.has(sid)) landedByDevice.set(sid, []);
+            landedByDevice.get(sid)!.push(day);
           }
         }
         if (days.size === 0) pending.delete(sid);
@@ -376,13 +376,13 @@ export async function runCoverageRepair(
     }
     recompute.pending = [...pending.values()].reduce((a, s) => a + s.size, 0);
 
-    for (const [sid, days] of landedBySystem) {
-      const system = allSystems.find((s) => s.id === sid);
-      if (!system || days.length === 0) continue;
+    for (const [sid, days] of landedByDevice) {
+      const device = allDevices.find((s) => s.id === sid);
+      if (!device || days.length === 0) continue;
 
       for (const day of days) {
         try {
-          await recomputeAgg1dForDay(db, system, parseDate(day));
+          await recomputeAgg1dForDay(db, device, parseDate(day));
           recompute.agg1dDays++;
         } catch (err) {
           console.error(
@@ -517,10 +517,10 @@ export async function runCoverageRepair(
   const lines: string[] = [
     `${icon} LiveOne weekly coverage repair${dryRun ? " [DRY-RUN]" : ""} — window ${windowFirst}..${windowLast} (7–90d); ${vendorCounts}`,
   ];
-  const systemsToReport = reports.filter(
+  const devicesToReport = reports.filter(
     (r) => r.gaps.length > 0 || r.repairs.some((x) => x.status === "error"),
   );
-  for (const r of systemsToReport) {
+  for (const r of devicesToReport) {
     lines.push(
       `• ${r.vendorType} system ${r.systemId} (${r.name}): ${r.gaps.length} gap-day(s)`,
     );
@@ -541,7 +541,7 @@ export async function runCoverageRepair(
       if (rep.status === "error" && !gapDays.has(rep.day))
         lines.push(`    – ${rep.day}: error: ${rep.error}`);
   }
-  if (systemsToReport.length === 0)
+  if (devicesToReport.length === 0)
     lines.push(`• no gaps found across ${reports.length} system(s)`);
   lines.push(
     `Totals: repaired ${repaired}, unsettled ${unsettled}, errors ${errors}, deferred(cap) ${deferredForCap}` +
@@ -558,7 +558,7 @@ export async function runCoverageRepair(
     window: { firstDay: windowFirst, lastDay: windowLast },
     vendors: providers.map((p) => ({
       vendorType: p.vendorType,
-      systems: reports.filter((r) => r.vendorType === p.vendorType).length,
+      devices: reports.filter((r) => r.vendorType === p.vendorType).length,
     })),
     totals: { repaired, unsettled, errors, deferredForCap, wouldRepair },
     recompute,

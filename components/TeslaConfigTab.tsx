@@ -85,7 +85,7 @@ export default function TeslaConfigTab({
     queryKey: ["system", systemId, "metadata", "tesla"],
     queryFn: () =>
       fetchJson<TeslaConfigResponse>(
-        `/api/admin/systems/${systemId}/metadata?key=tesla`,
+        `/api/admin/devices/${systemId}/metadata?key=tesla`,
       ),
     enabled: shouldLoad && systemId !== -1,
   });

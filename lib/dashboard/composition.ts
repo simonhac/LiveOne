@@ -2,7 +2,7 @@
  * Composition-first dashboards (Phase 2b-2) — helpers for building their descriptors.
  *
  * A composition dashboard reuses the existing `DashboardDescriptor`, with the convention that EVERY
- * card carries its own `areaId` (no home system/area). The renderer iterates the cards and each
+ * card carries its own `areaId` (no home device/area). The renderer iterates the cards and each
  * self-fetches its Area's data. `layout` is vestigial for composition dashboards (the renderer is a
  * flat ordered list, not a vendor template).
  */
@@ -22,7 +22,7 @@ export function emptyCompositionDescriptor(): DashboardV3 {
 
 /**
  * The distinct Area ids a dashboard descriptor references (its scope set). Handles BOTH shapes: v3
- * (each section's `areaId`) and the legacy per-system v2 (each card's `areaId`). Used by the read-access
+ * (each section's `areaId`) and the legacy per-device v2 (each card's `areaId`). Used by the read-access
  * scope (access.ts) and the authoring no-escalation check, so it must never assume one shape.
  */
 export function descriptorAreaIds(descriptor: unknown): string[] {

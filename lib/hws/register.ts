@@ -1,11 +1,11 @@
 /**
- * Register the derived hot-water temperature point for a system, and the `derivations` row that
+ * Register the derived hot-water temperature point for a device, and the `derivations` row that
  * turns it on.
  *
- * The modelled faucet temperature lives in the generic readings system as a normal `point_info`
+ * The modelled faucet temperature lives in the generic readings device as a normal `point_info`
  * row (`load.hws/temperature`, °C). Since config-v4 Phase 11 the point alone no longer enables
  * modelling — an `output='point'`, `kind='hws-model'` derivation naming it does (that is what
- * lib/hws/recompute.ts discovers). Both steps are idempotent; a system still needs a sibling
+ * lib/hws/recompute.ts discovers). Both steps are idempotent; a device still needs a sibling
  * `load.hws/power` point to model from.
  */
 import { and, eq } from "drizzle-orm";
@@ -19,7 +19,7 @@ import {
 } from "@/lib/derivations/resolve";
 
 const HWS_STEM = "load.hws";
-const TEMP_PHYSICAL_PATH = "derived/load.hws/temperature"; // synthetic, unique per system
+const TEMP_PHYSICAL_PATH = "derived/load.hws/temperature"; // synthetic, unique per device
 const TEMP_UNIT = "°C";
 const TEMP_DISPLAY_NAME = "Hot Water";
 
@@ -32,7 +32,7 @@ export interface EnsureResult {
 
 /**
  * Ensure a `load.hws/temperature` point exists for `systemId`. Idempotent: returns the existing
- * point if present, creates it (next index) otherwise, and refuses if the system has no
+ * point if present, creates it (next index) otherwise, and refuses if the device has no
  * `load.hws/power` signal point. When `apply` is false, reports what it would do without writing.
  */
 export async function ensureHwsTemperaturePoint(

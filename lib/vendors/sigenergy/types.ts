@@ -14,7 +14,7 @@ export interface SigenergyCredentials {
   region?: SigenRegion; // default "aus"
 }
 
-/** Station metadata (from /device/owner/station/home), used to provision a LiveOne system. */
+/** Station metadata (from /device/owner/station/home), used to provision a LiveOne device. */
 export interface SigenergyStationInfo {
   stationId: string;
   name?: string;

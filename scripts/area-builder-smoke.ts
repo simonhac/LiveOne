@@ -1,9 +1,9 @@
 #!/usr/bin/env tsx
 /**
  * End-to-end smoke test for the self-serve **area builder** write path (lib/areas/create.ts), driving
- * the REAL serving resolver (`PointManager.getActivePointsForSystem` → `_resolvePointsForHandle`).
+ * the REAL serving resolver (`PointManager.getActivePointsForDevice` → `_resolvePointsForHandle`).
  * It creates a throwaway multi-device "site" area and asserts:
- *   1. a synthetic handle is allocated (≥ AREA_HANDLE_BASE, no real systems row);
+ *   1. a synthetic handle is allocated (≥ AREA_HANDLE_BASE, no real devices row);
  *   2. the handle resolves to an area and to NO device (`areaByHandle` / `deviceByHandle`);
  *   3. with no bindings, the point set is the UNION of its members' own points;
  *   4. with bindings, the point set is exactly the BOUND points (override);
@@ -61,7 +61,7 @@ async function main() {
   const pm = PointManager.getInstance();
 
   const countPoints = async (id: number) =>
-    (await pm.getActivePointsForSystem(id, false, false)).length;
+    (await pm.getActivePointsForDevice(id, false, false)).length;
 
   // Membership is uuid-keyed since slice H; this script asserts in integer handles, so convert.
   const memberHandles = async (id: string) => {
@@ -70,7 +70,7 @@ async function main() {
     return deviceIds.map((d) => rids.get(d)!);
   };
 
-  // Choose member devices: --members override, else auto-pick the first 3 active real systems that
+  // Choose member devices: --members override, else auto-pick the first 3 active real devices that
   // have points.
   let members: number[];
   const override = getArg("members");
@@ -142,7 +142,7 @@ async function main() {
     //    The point must SATISFY the role it is bound to — `replaceBindings` enforces shape, so a blind
     //    `seedPoints[0]` fails whenever the first point happens to be, say, a `proportion` metric.
     //    Search for a (role, point) pair that actually matches rather than assuming one.
-    const seedPoints = await pm.getActivePointsForSystem(seed[0], false, false);
+    const seedPoints = await pm.getActivePointsForDevice(seed[0], false, false);
     let chosen: { role: RoleId; point: (typeof seedPoints)[number] } | null =
       null;
     for (const point of seedPoints) {

@@ -3,7 +3,7 @@
  *
  * A grant is the "invite a specific person" counterpart to the public `?access=` share token. Like a
  * token, a grant is READ-scoped to exactly what the dashboard shows — Dashboard → its Area(s) →
- * `area_bindings` → points (lib/dashboard/access.ts) — never general system access. role ∈
+ * `area_bindings` → points (lib/dashboard/access.ts) — never general device access. role ∈
  * admin|viewer (config-v4 narrowed away `owner`); today invites are viewer (read-only) and `role`
  * is plumbed for a future editable variant.
  */
@@ -105,11 +105,11 @@ export async function revokeGrant(
 }
 
 /**
- * The union of system handles this user may READ via their grants — `allowedSystemIds` across every
+ * The union of device handles this user may READ via their grants — `allowedSystemIds` across every
  * dashboard they're granted. The read-scope enforced in `requireDashboardAccess` (a grant on a
- * dashboard implies read access to the systems that dashboard's data shows, nothing more).
+ * dashboard implies read access to the devices that dashboard's data shows, nothing more).
  */
-export async function grantedSystemScopeForUser(
+export async function grantedDeviceScopeForUser(
   clerkUserId: string,
 ): Promise<Set<number>> {
   const dashboardIds = await listGrantsForUser(clerkUserId);

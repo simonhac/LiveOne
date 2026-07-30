@@ -17,12 +17,12 @@ import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
 
 function AreaBatteryProvenanceHistory({ section, handle }: CardRenderProps) {
   const { datum } = useAreaDatum(handle!);
-  const system = subjectOf(datum);
-  if (!system) return <ChartSkeleton />;
+  const device = subjectOf(datum);
+  if (!device) return <ChartSkeleton />;
 
   let areaRef: string | null;
-  if (system.vendorType === "helper") {
-    areaRef = parentAreaIdFromHelperSiteId(system.vendorSiteId ?? "");
+  if (device.vendorType === "helper") {
+    areaRef = parentAreaIdFromHelperSiteId(device.vendorSiteId ?? "");
   } else if (!section.areaId.startsWith("device-")) {
     areaRef = section.areaId;
   } else {
@@ -34,7 +34,7 @@ function AreaBatteryProvenanceHistory({ section, handle }: CardRenderProps) {
   return (
     <BatteryProvenancePanel
       areaId={areaId}
-      timezoneOffsetMin={system.timezoneOffsetMin}
+      timezoneOffsetMin={device.timezoneOffsetMin}
     />
   );
 }

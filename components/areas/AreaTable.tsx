@@ -3,7 +3,7 @@
 import { MapPin, Pencil, Plus } from "lucide-react";
 import type {
   AdminAreaData,
-  AreaSourceSystem,
+  AreaSourceDevice,
 } from "@/lib/admin/get-areas-data";
 
 /**
@@ -16,9 +16,9 @@ import type {
  * Format an area's source systems: "drawn from Kinkora Fronius and ID: 9".
  * Uses the display name where available, falling back to "ID: X".
  */
-function formatSourceSystems(systems: AreaSourceSystem[]): string {
-  if (systems.length === 0) return "(no systems)";
-  const formatted = systems.map((s) => s.displayName || `ID: ${s.id}`);
+function formatSourceDevices(devices: AreaSourceDevice[]): string {
+  if (devices.length === 0) return "(no systems)";
+  const formatted = devices.map((s) => s.displayName || `ID: ${s.id}`);
   if (formatted.length === 1) return `drawn from ${formatted[0]}`;
   if (formatted.length === 2)
     return `drawn from ${formatted[0]} and ${formatted[1]}`;
@@ -111,7 +111,7 @@ export function AreaTable({
             ) : (
               areas.map((area) => {
                 const location = formatLocation(area);
-                const sourceLine = formatSourceSystems(area.memberSystems);
+                const sourceLine = formatSourceDevices(area.memberDevices);
                 return (
                   <tr
                     key={area.id}

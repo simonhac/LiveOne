@@ -66,7 +66,7 @@ function constraintOf(err: unknown): string | undefined {
 /**
  * Assert the caller may pull each `systemId` into an area they own — the no-escalation firewall. A
  * member is allowed when the caller can READ it (admin / owner / public-ownerless): you can only
- * aggregate data you can already see. (Read, not write: public grid-region systems — e.g. an
+ * aggregate data you can already see. (Read, not write: public grid-region devices — e.g. an
  * OpenElectricity NEM region — are legitimately added as members without owning them.)
  *
  * A fourth `user_systems` viewer-grant term was dropped with that table in migration 0045 (slice F).
@@ -319,7 +319,7 @@ export async function getAreaBindingsForEditor(
  * transaction. Validates each role is known, each point's owning device is a current member, and there
  * are no duplicate (role, metricType, pointId) tuples — the same triple `area_bindings_unique` enforces
  * since migration 0047. `metricType` comes from the chosen point's `point_info.metric_type` (the caller
- * sources it from `/api/system/[id]/points`).
+ * sources it from `/api/device/[id]/points`).
  */
 export async function replaceBindings(
   areaId: string,
@@ -353,7 +353,7 @@ export async function replaceBindings(
   // Collected in binding order so the INSERT can name `point_uid` without re-looking-up (and without a
   // non-null assertion — the loop below has already proven every point resolves).
   const resolvedUids: string[] = [];
-  // The owning system of each resolved point, in binding order — read from `points ⋈ devices`, not from the
+  // The owning device of each resolved point, in binding order — read from `points ⋈ devices`, not from the
   // wire, so a caller cannot claim a point belongs to a device it does not.
   const resolvedSystemIds: number[] = [];
   for (let bi = 0; bi < bindings.length; bi++) {
@@ -403,7 +403,7 @@ export async function replaceBindings(
   }
   const db = requirePlanetscaleDb();
   // The battery/power point's OWNING device, for the area-config carry-over below. Sourced from the
-  // resolved `point_info` row (the wire no longer names a system), so it stays an int `systems.id`
+  // resolved `point_info` row (the wire no longer names a device), so it stays an int `systems.id`
   // exactly as the `systems.config` lookup needs.
   const batteryIdx = bindings.findIndex(
     (binding) => binding.role === "battery" && binding.metricType === "power",

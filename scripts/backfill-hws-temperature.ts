@@ -52,7 +52,7 @@ async function main() {
   const started = nowMs;
   const summary = await recomputeRange(startMs, nowMs, (info) => {
     console.log(
-      `  system ${info.system} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}` +
+      `  system ${info.device} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}` +
         `..${new Date(info.chunkEndMs).toISOString().slice(0, 10)} → ${info.rows}`,
     );
   });

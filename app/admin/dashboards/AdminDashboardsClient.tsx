@@ -32,7 +32,7 @@ export default function AdminDashboardsClient({
               </span>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Per-user dashboard customizations, keyed on (owner, system).
+              Per-user dashboard customizations, keyed on (owner, device).
             </p>
           </div>
 

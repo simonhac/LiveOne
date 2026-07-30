@@ -85,7 +85,7 @@ interface ViewDataModalProps {
   isOpen: boolean;
   onClose: () => void;
   systemId: number;
-  systemName: string;
+  deviceName: string;
   vendorType: string;
   vendorSiteId: string;
   timezoneOffsetMin: number;
@@ -121,13 +121,13 @@ export default function ViewDataModal({
   isOpen,
   onClose,
   systemId,
-  systemName,
+  deviceName,
   vendorType,
   vendorSiteId,
   timezoneOffsetMin,
 }: ViewDataModalProps) {
   const queryClient = useQueryClient();
-  const [selectedSystem, setSelectedSystem] = useState<{
+  const [selectedDevice, setSelectedDevice] = useState<{
     id: number;
     vendorType: string;
     vendorSiteId: string;
@@ -205,7 +205,7 @@ export default function ViewDataModal({
       }
 
       const result = await fetchJson<any>(
-        `/api/admin/systems/${systemId}/point-readings?${params}`,
+        `/api/admin/devices/${systemId}/point-readings?${params}`,
       );
 
       // Convert headers object to Map. Typed as `PointInfoWire` rather than cast through
@@ -386,12 +386,12 @@ export default function ViewDataModal({
     )
       return;
 
-    setSelectedSystem({
+    setSelectedDevice({
       id: systemId,
       vendorType: vendorType,
       vendorSiteId: vendorSiteId,
-      displayName: systemName,
-      alias: metadata?.systemShortName || undefined,
+      displayName: deviceName,
+      alias: metadata?.deviceShortName || undefined,
     });
     setSelectedPoint(pointInfo);
     setIsPointInfoModalOpen(true);
@@ -414,7 +414,7 @@ export default function ViewDataModal({
   ) => {
     try {
       const response = await fetch(
-        `/api/system/${systemId}/point/${pointIndex}`,
+        `/api/device/${systemId}/point/${pointIndex}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -658,7 +658,7 @@ export default function ViewDataModal({
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div>
             <h3 className="text-lg font-semibold text-white">
-              Data for {systemName}{" "}
+              Data for {deviceName}{" "}
               <span className="text-gray-500">ID: {systemId}</span>
             </h3>
           </div>
@@ -812,7 +812,7 @@ export default function ViewDataModal({
                     No monitoring points configured
                   </p>
                   <p className="text-sm">
-                    This system doesn&apos;t have any point_info records yet.
+                    This device doesn&apos;t have any point_info records yet.
                   </p>
                 </>
               ) : (
@@ -1122,7 +1122,7 @@ export default function ViewDataModal({
       <PointInfoModal
         isOpen={isPointInfoModalOpen}
         onClose={() => setIsPointInfoModalOpen(false)}
-        system={selectedSystem}
+        device={selectedDevice}
         point={selectedPoint}
         onUpdate={handleUpdatePointInfo}
       />
@@ -1152,8 +1152,8 @@ export default function ViewDataModal({
           }
           initialSource={source}
           pointInfo={selectedReading.pointInfo}
-          system={{
-            name: systemName,
+          device={{
+            name: deviceName,
             vendorType: vendorType,
             vendorSiteId: vendorSiteId,
             ownerUsername: metadata?.ownerUsername,

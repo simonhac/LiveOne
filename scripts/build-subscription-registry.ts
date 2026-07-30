@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Build subscription registry for composite systems
+ * Build subscription registry for composite devices
  *
- * This script builds the reverse mapping from source systems to composite systems
+ * This script builds the reverse mapping from source devices to composite devices
  * that subscribe to their points. Should be run after creating/updating composite systems.
  *
  * Usage: npx tsx scripts/build-subscription-registry.ts

@@ -2,7 +2,7 @@
 /**
  * Print the derived CAPABILITY set + eligible cards for each live install — the P0 parity baseline for
  * the capability model. Read-only. Compares:
- *   - config caps   = capabilitiesForSystem(handle)      (server, from point_info + trackers + grid)
+ *   - config caps   = capabilitiesForDevice(handle)      (server, from point_info + trackers + grid)
  *   - presence caps = capabilitiesFromLatest(KV latest)  (client, from the KV latest hash)
  *   - eligible cards (area-scoped) and tiles from each.
  *
@@ -12,7 +12,7 @@
  * Usage:
  *   npx tsx --env-file=.env.local --env-file=.env.development.local scripts/capabilities/print-capabilities.ts
  */
-import { capabilitiesForSystem } from "@/lib/capabilities/server";
+import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { capabilitiesFromLatest } from "@/lib/capabilities/derive";
 import {
   availableTilesFromCaps,
@@ -33,7 +33,7 @@ async function main() {
   for (const { name, handle } of INSTALLS) {
     console.log(`\n══ ${name} — handle ${handle} ══`);
 
-    const config = await capabilitiesForSystem(handle);
+    const config = await capabilitiesForDevice(handle);
     const latest = ((await getLatestValues(handle)) ?? {}) as LatestPointValues;
     const presence = capabilitiesFromLatest(latest);
 

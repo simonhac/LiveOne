@@ -2,7 +2,7 @@ import type { EnphaseCredentials } from "@/lib/types/enphase";
 import type {
   EnphaseTokens,
   EnphaseTelemetryResponse,
-  EnphaseSystem,
+  EnphaseDevice,
 } from "./types";
 
 /**
@@ -56,7 +56,7 @@ export interface IEnphaseClient {
   getAuthorizationUrl(state: string, origin?: string): string;
   exchangeCodeForTokens(code: string): Promise<EnphaseTokens>;
   refreshTokens(refreshToken: string): Promise<EnphaseTokens>;
-  getSystems(accessToken: string): Promise<EnphaseSystem[]>;
+  getDevices(accessToken: string): Promise<EnphaseDevice[]>;
 }
 
 // Real Enphase Client
@@ -223,8 +223,8 @@ export class EnphaseClient implements IEnphaseClient {
     }
   }
 
-  async getSystems(accessToken: string): Promise<EnphaseSystem[]> {
-    // Fetching user systems
+  async getDevices(accessToken: string): Promise<EnphaseDevice[]> {
+    // Fetching user devices
 
     try {
       const response = await fetch(`${this.baseUrl}/api/v4/systems`, {
@@ -240,15 +240,15 @@ export class EnphaseClient implements IEnphaseClient {
       }
 
       const data = await response.json();
-      // Found systems
-      return data.systems || [];
+      // Found devices
+      return data.devices || [];
     } catch (error) {
       console.error("ENPHASE: Error fetching systems:", error);
       throw error;
     }
   }
 
-  // Methods removed - use storeEnphaseTokens and getSystemCredentials directly
+  // Methods removed - use storeEnphaseTokens and getDeviceCredentials directly
 }
 
 // Factory function to get the Enphase client

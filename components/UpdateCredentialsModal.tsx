@@ -29,7 +29,7 @@ interface VendorInfo {
   vendorType: string;
   displayName: string;
   credentialFields: CredentialField[];
-  addSystemFlow?: "credentials" | "oauth-redirect";
+  addDeviceFlow?: "credentials" | "oauth-redirect";
 }
 
 interface UpdateCredentialsModalProps {
@@ -41,10 +41,10 @@ interface UpdateCredentialsModalProps {
 }
 
 /**
- * Rotate an existing system's vendor credentials (e.g. a new Amber API key). Mirrors
- * AddSystemDialog's test-before-commit flow: the new credentials must pass a live connection
+ * Rotate an existing device's vendor credentials (e.g. a new Amber API key). Mirrors
+ * AddDeviceDialog's test-before-commit flow: the new credentials must pass a live connection
  * test before Save is enabled, then they're written to the owner's Clerk metadata via
- * PUT /api/systems/[systemId]/credentials. Fields start blank — we never round-trip the
+ * PUT /api/devices/[systemId]/credentials. Fields start blank — we never round-trip the
  * existing secret to the browser.
  */
 export default function UpdateCredentialsModal({
@@ -102,7 +102,7 @@ export default function UpdateCredentialsModal({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch(`/api/systems/${systemId}/credentials`, {
+      const response = await fetch(`/api/devices/${systemId}/credentials`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ credentials }),

@@ -14,7 +14,7 @@ import {
   fromDate,
 } from "@internationalized/date";
 
-interface SystemContext {
+interface DeviceContext {
   name: string;
   vendorType: string;
   vendorSiteId: string | number;
@@ -29,7 +29,7 @@ interface PointReadingInspectorModalProps {
   targetDate?: CalendarDate; // For daily data
   initialSource: "raw" | "5m" | "daily";
   pointInfo: PointInfo;
-  system: SystemContext;
+  device: DeviceContext;
 }
 
 interface ReadingData {
@@ -60,7 +60,7 @@ export default function PointReadingInspectorModal({
   targetDate,
   initialSource,
   pointInfo,
-  system,
+  device,
 }: PointReadingInspectorModalProps) {
   const [source, setSource] = useState<"raw" | "5m" | "daily">(initialSource);
   const [showSpinner, setShowSpinner] = useState(false);
@@ -86,7 +86,7 @@ export default function PointReadingInspectorModal({
       source,
       targetTime ? formatTimeAEST(targetTime) : null,
       targetDate ? formatDateAEST(targetDate) : null,
-      system.timezoneOffsetMin,
+      device.timezoneOffsetMin,
     ],
     queryFn: () => {
       // Convert typed timestamp to API format
@@ -108,14 +108,14 @@ export default function PointReadingInspectorModal({
           // ZonedDateTime → "2025-11-09_14.30" (URL-encoded format)
           encodedTime = encodeUrlDate(
             formatTimeAEST(targetTime),
-            system.timezoneOffsetMin,
+            device.timezoneOffsetMin,
             false,
           );
         } else if (targetDate) {
           // CalendarDate - convert to start of day
           encodedTime = encodeUrlDate(
             `${targetDate.year}-${String(targetDate.month).padStart(2, "0")}-${String(targetDate.day).padStart(2, "0")}T00:00:00Z`,
-            system.timezoneOffsetMin,
+            device.timezoneOffsetMin,
             false,
           );
         } else {
@@ -123,7 +123,7 @@ export default function PointReadingInspectorModal({
         }
       }
 
-      const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
+      const encodedOffset = encodeUrlOffset(device.timezoneOffsetMin);
       // Use "date" parameter for daily data, "time" for raw/5m
       const timeParam = source === "daily" ? "date" : "time";
       return fetchJson<{ readings?: ReadingData[] }>(
@@ -291,7 +291,7 @@ export default function PointReadingInspectorModal({
         {/* Header */}
         <div className="flex items-center justify-between p-4">
           <h2 className="text-lg font-semibold text-white">
-            Point Readings for {system.name} {pointInfo.name}{" "}
+            Point Readings for {device.name} {pointInfo.name}{" "}
             <span className="text-gray-500">
               ID: {pointIdentifier}
               {pointPath && ` (${pointPath})`}

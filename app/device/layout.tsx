@@ -22,14 +22,14 @@ export default async function DeviceShellLayout({
     redirect("/sign-in");
   }
 
-  const { systems } = await getViewerDevices(userId);
+  const { devices } = await getViewerDevices(userId);
 
   return (
     <div className="flex min-h-screen bg-gray-900">
       <aside className="sticky top-0 hidden h-screen w-64 shrink-0 overflow-y-auto border-r border-gray-800 bg-gray-900 lg:block">
         {/* useSearchParams (period preservation) → Suspense boundary. */}
         <Suspense fallback={null}>
-          <DeviceRail devices={systems} currentUserId={userId} />
+          <DeviceRail devices={devices} currentUserId={userId} />
         </Suspense>
       </aside>
       <div className="min-w-0 flex-1">{children}</div>

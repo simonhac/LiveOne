@@ -9,7 +9,7 @@
  *  - grouping raw readings (current interval vs previous-interval previousLast), incl. the
  *    prevStart-boundary JS guard that reproduces the legacy half-open `(prevStart, intervalEnd]`,
  *  - the exact windows + args handed to ReadingsDao (readRaw/insert5m/read5m/upsert1d),
- *  - the value-only 5m upsert (`preserveVendorMeta`) and the per-system advisory lock.
+ *  - the value-only 5m upsert (`preserveVendorMeta`) and the per-device advisory lock.
  *
  * The readings seam is mocked: `ReadingsDao.readRaw/read5m` return canned per-point series keyed by
  * the real `PointId` (built from each point_info row's `point_uid` via the real codec), and

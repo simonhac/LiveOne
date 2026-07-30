@@ -5,17 +5,14 @@ import {
   type VisibleDevice,
 } from "@/lib/registry/device-config";
 
-/** The exact element shape `devicesVisibleByUser` returns (a projection, narrower than DeviceRecord). */
-type VisibleSystem = VisibleDevice;
-
 /** A visible device with the viewer's Clerk username attached to the ones they own (for pretty URLs). */
-export type ViewerDevice = VisibleSystem & { ownerUsername: string | null };
+export type ViewerDevice = VisibleDevice & { ownerUsername: string | null };
 
 export interface ViewerDevices {
   /** The viewer's Clerk username (null if unset / lookup failed) — used for `/device/{user}/{alias}`. */
   currentUsername: string | null;
   /** The viewer's visible devices (owned ∪ public ∪ granted, active only), owned ones tagged with the username. */
-  systems: ViewerDevice[];
+  devices: ViewerDevice[];
 }
 
 /**
@@ -27,7 +24,7 @@ export interface ViewerDevices {
  */
 export const getViewerDevices = cache(
   async (userId: string): Promise<ViewerDevices> => {
-    const availableSystems = await DeviceConfigRegistry.devicesVisibleByUser(
+    const availableDevices = await DeviceConfigRegistry.devicesVisibleByUser(
       userId,
       true,
     );
@@ -41,11 +38,11 @@ export const getViewerDevices = cache(
       currentUsername = null;
     }
 
-    const systems: ViewerDevice[] = availableSystems.map((sys) => ({
+    const devices: ViewerDevice[] = availableDevices.map((sys) => ({
       ...sys,
       ownerUsername: sys.ownerClerkUserId === userId ? currentUsername : null,
     }));
 
-    return { currentUsername, systems };
+    return { currentUsername, devices };
   },
 );

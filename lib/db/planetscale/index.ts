@@ -44,8 +44,8 @@ function getPoolConfig(): PoolConfig | null {
   if (url) {
     // Parse the URL ourselves and set TLS explicitly instead of letting
     // node-postgres' bundled pg-connection-string interpret the ssl params.
-    // It can't handle `sslrootcert=system` (the Node "use the OS trust store"
-    // value) — it tries to `open('system')` as a file → ENOENT and the
+    // It can't handle `sslrootcert=device` (the Node "use the OS trust store"
+    // value) — it tries to `open('device')` as a file → ENOENT and the
     // connection dies. Managed Postgres here connects encrypted-without-strict-CA
     // (same as the DB_* path below), so strip the URL's ssl params and apply that
     // explicitly. `sslmode=disable` (or DB_SSL=disable) still opts out, for a

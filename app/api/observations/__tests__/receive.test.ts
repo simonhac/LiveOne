@@ -85,7 +85,7 @@ function tableName(table: unknown): string {
 /**
  * Build a fake `db` matching the slice of the drizzle node-postgres surface that
  * processQueueMessage touches:
- *   db.select({...}).from(systems).where(...).limit(1) → [{ vendorType }]   (5m-native lookup)
+ *   db.select({...}).from(devices).where(...).limit(1) → [{ vendorType }]   (5m-native lookup)
  *   db.transaction(fn) → fn(tx)
  *   tx.insert(table).values(...).onConflictDoNothing()/onConflictDoUpdate().returning()
  * Every insert pushes the resolved table name onto `order` (sequencing) and records which
@@ -124,7 +124,7 @@ function makeFakeDb(opts?: { vendorType?: string }) {
   };
 
   const db = {
-    // 5m-native vendor lookup (isSystemFiveMinuteNative): resolves to one row.
+    // 5m-native vendor lookup (isDeviceFiveMinuteNative): resolves to one row.
     select: () => ({
       from: () => ({
         where: () => ({
@@ -304,7 +304,7 @@ describe.skip("processQueueMessage (5m conflict mode depends on vendor)", () => 
     debug: { ...rawObs().debug! },
   });
 
-  // Distinct systemIds per case: isSystemFiveMinuteNative caches by systemId across the module,
+  // Distinct systemIds per case: isDeviceFiveMinuteNative caches by systemId across the module,
   // so each case uses its own id to stay hermetic from the other describe block (systemId=1).
 
   it("UPSERTS 5m for a 5m-native vendor (Amber) so late refinements heal", async () => {

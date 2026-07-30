@@ -37,12 +37,12 @@ export interface RawObservationInput {
  * Build the MQTT-style topic for an observation
  * Format: liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}
  */
-function buildTopic(system: DeviceConfigView, point: PointInfo): string {
-  return `liveone/${system.vendorType}/${system.vendorSiteId}/${point.physicalPathTail}`;
+function buildTopic(device: DeviceConfigView, point: PointInfo): string {
+  return `liveone/${device.vendorType}/${device.vendorSiteId}/${point.physicalPathTail}`;
 }
 
 /**
- * Format a millisecond timestamp as ISO 8601 with system's timezone offset
+ * Format a millisecond timestamp as ISO 8601 with device's timezone offset
  * Includes milliseconds so sub-second precision survives the queue round-trip.
  * Example: "2025-01-15T20:30:00.123+10:00"
  */
@@ -54,20 +54,20 @@ function formatTimestamp(timeMs: number, timezoneOffsetMin: number): string {
  * Convert raw observation inputs to Observation objects
  */
 export function buildObservations(
-  system: DeviceConfigView,
+  device: DeviceConfigView,
   inputs: RawObservationInput[],
 ): Observation[] {
   return inputs.map((input) => ({
     sessionId: input.sessionId,
     pointUid: input.point.pointUid,
-    topic: buildTopic(system, input.point),
+    topic: buildTopic(device, input.point),
     measurementTime: formatTimestamp(
       input.measurementTimeMs,
-      system.timezoneOffsetMin,
+      device.timezoneOffsetMin,
     ),
     receivedTime: formatTimestamp(
       input.receivedTimeMs,
-      system.timezoneOffsetMin,
+      device.timezoneOffsetMin,
     ),
     value: input.value,
     interval: input.interval,
@@ -91,11 +91,11 @@ export function buildObservations(
  * Error handling: Failures are logged but do NOT break the database insertion.
  * If QStash is not configured (no token), this silently no-ops.
  *
- * @param system - The system the readings belong to
+ * @param device - The device the readings belong to
  * @param inputs - Array of raw observation inputs
  */
 export async function publishObservationBatch(
-  system: DeviceConfigView,
+  device: DeviceConfigView,
   inputs: RawObservationInput[],
 ): Promise<void> {
   // Skip if no QStash client configured
@@ -116,12 +116,12 @@ export async function publishObservationBatch(
 
   try {
     // Build the observation batch
-    const observations = buildObservations(system, inputs);
+    const observations = buildObservations(device, inputs);
     const message: QueueMessage = {
       env: process.env.NODE_ENV === "production" ? "prod" : "dev",
-      systemId: system.id,
-      systemName: system.displayName,
-      batchTime: formatTimestamp(Date.now(), system.timezoneOffsetMin),
+      systemId: device.id,
+      systemName: device.displayName,
+      batchTime: formatTimestamp(Date.now(), device.timezoneOffsetMin),
       observations,
     };
 
@@ -138,12 +138,12 @@ export async function publishObservationBatch(
     });
 
     console.log(
-      `[ObservationPublisher] Published batch: ${observations.length} observations for system ${system.id}`,
+      `[ObservationPublisher] Published batch: ${observations.length} observations for system ${device.id}`,
     );
   } catch (error) {
     // Log error but don't throw - database writes should not be blocked by queue failures
     console.error(
-      `[ObservationPublisher] Failed to publish batch for system ${system.id}:`,
+      `[ObservationPublisher] Failed to publish batch for system ${device.id}:`,
       error,
     );
   }

@@ -44,14 +44,14 @@ describe("isPublicRoute — middleware allow-list", () => {
   const protectedPaths = [
     "/",
     "/admin",
-    "/admin/systems",
+    "/admin/devices",
     "/dashboard",
     "/labs/kinkora-hws",
     "/api/data",
     "/api/admin/storage",
     "/api/share-tokens",
-    "/api/systems",
-    "/api/system/1/point/0",
+    "/api/devices",
+    "/api/device/1/point/0",
     // The battery-provenance ops allow-list is surgical — sibling area routes stay Clerk-gated.
     "/api/areas",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6",
@@ -86,21 +86,29 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/dashboard/simon/home",
     "/api/data",
     "/api/history",
-    "/api/system/1/latest",
-    "/api/system/1/run-periods",
+    "/api/device/1/latest",
+    "/api/device/1/run-periods",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",
+    // Phase-13 compat shim: the PRE-rename spelling must stay shareable, because middleware
+    // sees the ORIGINAL path and the next.config rewrite to `/api/device/*` runs after it.
+    // Delete this entry with the shim.
+    "/api/system/1/points",
   ];
   it.each(shareable)("allows %s via a share token", (p) => {
     expect(isShareableRoute(req(p))).toBe(true);
   });
 
-  // A stray ?access= must NOT reach these — they stay Clerk-gated. Note the plural `/api/systems`
-  // (admin) must NOT be caught by the singular `/api/system/(.*)` rule; likewise the plural
+  // A stray ?access= must NOT reach these — they stay Clerk-gated. Note the plural `/api/devices`
+  // (admin) must NOT be caught by the singular `/api/device/(.*)` rule; likewise the plural
   // `/api/dashboards` CRUD (there is no `/api/dashboard(.*)` shareable entry).
   const notShareable = [
     "/api/test/cache",
     "/api/admin/storage",
+    "/api/devices",
+    // The compat shim is singular-only: the legacy PLURAL spelling (now `/api/devices`,
+    // admin) must NOT become shareable via `/api/system/(.*)`.
     "/api/systems",
+    "/api/systems/1/credentials",
     "/api/dashboards/5",
     "/api/share-tokens",
     "/api/user/preferences",

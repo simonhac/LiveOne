@@ -34,7 +34,7 @@ export function usePrefetchDashboardsMenu(enabled = true) {
 
 /**
  * The contents of the header title dropdown — the signed-in user's composition dashboards. A drop-in
- * repurpose of `SystemsMenu`: same row styling + default star, but rows link to `/dashboard/id/{id}`
+ * repurpose of `DevicesMenu`: same row styling + default star, but rows link to `/dashboard/id/{id}`
  * and the data is client-fetched (react-query, invalidated by create/rename/delete) rather than passed
  * in. A footer "New dashboard…" row creates one (its dialog is owned by the parent, reached via onNew).
  */
@@ -115,8 +115,8 @@ export default function DashboardsMenu({
         Manage sites
       </Link>
 
-      {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible system,
-          whose header dropdown is the symmetric SystemsMenu (with "Go to Dashboards"). */}
+      {/* Cross-nav to the systems/devices world — `/device` redirects to the first visible device,
+          whose header dropdown is the symmetric DevicesMenu (with "Go to Dashboards"). */}
       <div className="my-1 border-t border-gray-700" />
       <Link
         href="/device"

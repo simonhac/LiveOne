@@ -53,19 +53,19 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   protected alignToBoundary = false;
 
   /**
-   * Evaluate whether this system should be polled now
-   * @param system - The system to evaluate
+   * Evaluate whether this device should be polled now
+   * @param device - The device to evaluate
    * @param lastPollTime - Time of last poll
    * @param now - Current time
    * @returns Evaluation result with shouldPoll flag, reason, and next poll time
    */
   protected evaluateSchedule(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     lastPollTime: Date | null,
     now: Date,
   ): ScheduleEvaluation {
     if (this.alignToBoundary) {
-      return this.evaluateBoundarySchedule(system, now);
+      return this.evaluateBoundarySchedule(device, now);
     }
 
     const targetIntervalMs = this.pollIntervalMinutes * 60 * 1000;
@@ -76,7 +76,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       // Next poll will be one interval from now, aligned to minute boundary
       const nextPollTime = getNextMinuteBoundary(
         this.pollIntervalMinutes,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
       return {
         shouldPoll: true,
@@ -92,7 +92,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       // Next poll will be one interval from now, aligned to minute boundary
       const nextPollTime = getNextMinuteBoundary(
         this.pollIntervalMinutes,
-        system.timezoneOffsetMin,
+        device.timezoneOffsetMin,
       );
       return {
         shouldPoll: true,
@@ -104,7 +104,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     // Not time yet - calculate when next poll should be, aligned to minute boundary
     const nextPollTime = getNextMinuteBoundary(
       this.pollIntervalMinutes,
-      system.timezoneOffsetMin,
+      device.timezoneOffsetMin,
     );
 
     return {
@@ -118,19 +118,19 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Boundary-aligned schedule (opt-in via `alignToBoundary`). Poll on absolute
    * `pollIntervalMinutes` boundaries and, until a reading is recorded for the current window, retry
    * every minute (the minutely cron re-evaluates each tick). Keyed off `lastSuccessTime`, which is
-   * already loaded with the system, so it needs no extra state and survives serverless cold starts.
+   * already loaded with the device, so it needs no extra state and survives serverless cold starts.
    */
   private evaluateBoundarySchedule(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     now: Date,
   ): ScheduleEvaluation {
     const intervalMs = this.pollIntervalMinutes * 60 * 1000;
     const boundaryMs = Math.floor(now.getTime() / intervalMs) * intervalMs;
-    const lastSuccess = system.pollingStatus?.lastSuccessTime ?? null;
+    const lastSuccess = device.pollingStatus?.lastSuccessTime ?? null;
     const recorded = lastSuccess != null && lastSuccess.getTime() >= boundaryMs;
     const nextPollTime = getNextMinuteBoundary(
       this.pollIntervalMinutes,
-      system.timezoneOffsetMin,
+      device.timezoneOffsetMin,
     );
 
     if (recorded) {
@@ -152,27 +152,27 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
-   * Get the last poll time for this system
-   * Uses the polling status that's already loaded with the system
-   * @param system - The system to check
+   * Get the last poll time for this device
+   * Uses the polling status that's already loaded with the device
+   * @param device - The device to check
    * @returns Time of last poll, or null if never polled
    */
   protected async getLastPollTime(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
   ): Promise<Date | null> {
     // The polling status is already loaded with the device by the config registry
-    return system.pollingStatus?.lastPollTime || null;
+    return device.pollingStatus?.lastPollTime || null;
   }
 
   /**
-   * Check if system should be polled based on schedule
-   * @param system - The system to check
+   * Check if device should be polled based on schedule
+   * @param device - The device to check
    * @param forcePollAll - If true, always returns { shouldPoll: true }
    * @param now - Current time
    * @returns Object with shouldPoll flag, reason if skipped, and nextPoll time
    */
   async shouldPoll(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     forcePollAll: boolean,
     now: Date,
   ): Promise<{
@@ -191,8 +191,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       return { shouldPoll: true };
     }
 
-    const lastPollTime = await this.getLastPollTime(system);
-    const evaluation = this.evaluateSchedule(system, lastPollTime, now);
+    const lastPollTime = await this.getLastPollTime(device);
+    const evaluation = this.evaluateSchedule(device, lastPollTime, now);
 
     return {
       shouldPoll: evaluation.shouldPoll,
@@ -205,12 +205,12 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Poll for new data using template method pattern.
    * Handles full lifecycle: check schedule → create session → fetch data → process → complete session
    *
-   * @param system - The system to poll
+   * @param device - The device to poll
    * @param credentials - Vendor credentials
    * @param options - Poll options including sessionLabel, cause, dryRun, and onProgress callback
    */
   async poll(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
     options: PollOptions,
   ): Promise<PollingResult> {
@@ -227,7 +227,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     const stages: PollStage[] = [];
 
     // 1. Check shouldPoll
-    const check = await this.shouldPoll(system, forcePollAll, startedAt);
+    const check = await this.shouldPoll(device, forcePollAll, startedAt);
     if (!check.shouldPoll) {
       return this.skipped(check.reason, check.nextPoll);
     }
@@ -235,7 +235,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     // 2. Create session
     const session = await sessionManager.createSession({
       sessionLabel,
-      systemId: system.id,
+      systemId: device.id,
       cause: sessionCause,
       started: startedAt,
     });
@@ -247,7 +247,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     // 3. Notify caller that session has started (for SSE updates)
     if (onSessionStart) {
       onSessionStart({
-        systemId: system.id,
+        systemId: device.id,
         sessionId: session.id,
         sessionLabel,
       });
@@ -288,7 +288,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     try {
       // 3. Fetch data (vendor implementation) - track "fetch" stage with live updates
       const result = await withProgress("fetch", () =>
-        this.fetchData(system, credentials, {
+        this.fetchData(device, credentials, {
           startedAt,
           dryRun,
           session,
@@ -298,7 +298,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
       if (!result.success) {
         await this.completeSessionError(
-          system.id,
+          device.id,
           session,
           startedAt,
           result,
@@ -315,7 +315,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       const recordsProcessed = await withProgress("process", async () => {
         if (dryRun) return result.recordsProcessed ?? 0;
         const insertedCount = await this.insertAndPublishReadings(
-          system.id,
+          device.id,
           session,
           result,
           collector,
@@ -327,7 +327,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
       // 5. Complete session and update polling status
       await this.completeSessionSuccess(
-        system.id,
+        device.id,
         session,
         startedAt,
         recordsProcessed,
@@ -345,7 +345,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       await this.completeSessionError(
-        system.id,
+        device.id,
         session,
         startedAt,
         {
@@ -360,19 +360,19 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
   /**
    * Fetch data from vendor API - vendors must implement this method.
-   * Push-only systems should not override this method.
+   * Push-only devices should not override this method.
    *
-   * @param system - The system to poll
+   * @param device - The device to poll
    * @param credentials - Vendor credentials
    * @param context - Context including startedAt timestamp and dryRun flag
    * @returns FetchResult with readings data or error
    */
   protected async fetchData(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
     context: FetchContext,
   ): Promise<FetchResult> {
-    // Default implementation for push-only systems (should never be called)
+    // Default implementation for push-only devices (should never be called)
     return {
       success: false,
       error: "This vendor does not support polling",
@@ -383,7 +383,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * @deprecated Use fetchData() instead. This method will be removed after migration.
    */
   protected async doPoll(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
     session: SessionInfo,
     pollReason: string,
@@ -497,10 +497,10 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   }
 
   /**
-   * Test connection with vendor. Only poll-based systems can test connections.
+   * Test connection with vendor. Only poll-based devices can test connections.
    */
   async testConnection(
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult> {
     if (this.dataSource !== "poll") {

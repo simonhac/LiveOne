@@ -14,7 +14,7 @@
 | Mode             | Mechanism                                                              | Used by                         |
 | ---------------- | ---------------------------------------------------------------------- | ------------------------------- |
 | User             | Clerk session (`requireAuth`)                                          | Dashboard/data endpoints        |
-| System access    | Clerk session + grant check (`requireSystemAccess`)                    | Per-system endpoints            |
+| Device access    | Clerk session + grant check (`requireDeviceAccess`)                    | Per-device endpoints            |
 | Admin            | Clerk session with admin role (`requireAdmin`)                         | `/api/admin/*`                  |
 | Cron             | `Authorization: Bearer ${CRON_SECRET}` or admin (`requireCronOrAdmin`) | `/api/cron/*`                   |
 | QStash signature | Upstash request signing                                                | `/api/observations/receive`     |
@@ -29,7 +29,7 @@ Standard status codes: 400/401/403/404/409/500.
 **OpenNEM v4.1 format** (`network: "liveone"`, series ids like
 `liveone.1.source.solar.power.avg`).
 
-**Time-series queries** (`/api/system/[id]/series`, `/api/history`): `interval` = `5m`/`30m`/`1d`;
+**Time-series queries** (`/api/device/[id]/series`, `/api/history`): `interval` = `5m`/`30m`/`1d`;
 range via `last=7d` style relative or `startTime`+`endTime` absolute. Range caps: 7.5 days @5m,
 30 days @30m, 13 months @1d. `series=` accepts glob patterns (micromatch).
 
@@ -58,13 +58,13 @@ Hand-refreshed 2026-06-10 (generation script COMING SOON).
 
 | Route                                                                | Purpose                                                            |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `GET /api/system/[id]/points`                                        | List active points (`?short=true` for paths only)                  |
-| `GET /api/system/[id]/points/latest` · `GET /api/system/[id]/latest` | Latest values (KV-backed)                                          |
-| `GET·PATCH /api/system/[id]/point/[pointId]`                         | Point detail / update user-settable fields                         |
-| `GET /api/system/[id]/series`                                        | Time-series, OpenNEM format                                        |
+| `GET /api/device/[id]/points`                                        | List active points (`?short=true` for paths only)                  |
+| `GET /api/device/[id]/points/latest` · `GET /api/device/[id]/latest` | Latest values (KV-backed)                                          |
+| `GET·PATCH /api/device/[id]/point/[pointId]`                         | Point detail / update user-settable fields                         |
+| `GET /api/device/[id]/series`                                        | Time-series, OpenNEM format                                        |
 | `GET /api/history`                                                   | Historical series, OpenNEM format (single unified path)            |
 | `GET /api/data`                                                      | Legacy combined latest+history payload (Selectronic-era dashboard) |
-| `GET·POST /api/systems`, `GET /api/systems/subscriptions`            | Create/list systems; composite subscription registry               |
+| `GET·POST /api/devices`, `GET /api/devices/subscriptions`            | Create/list devices; composite subscription registry               |
 | `GET /api/vendors`                                                   | Available vendor types                                             |
 | `POST /api/test-connection`, `POST /api/setup`                       | Setup wizard                                                       |
 | `GET·PUT /api/user/preferences`                                      | User preferences                                                   |
@@ -77,7 +77,7 @@ Hand-refreshed 2026-06-10 (generation script COMING SOON).
 
 | Route                                                                                                | Purpose                                                           |
 | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `/api/admin/systems` + `[systemId]/{settings,admin-settings,composite-config,status,point-readings}` | System management                                                 |
+| `/api/admin/devices` + `[systemId]/{settings,admin-settings,composite-config,status,point-readings}` | Device management                                                 |
 | `/api/admin/users`, `/api/admin/user/[userId]/points`                                                | User management; per-user point catalogue                         |
 | `/api/admin/sessions`, `[sessionId]`, `filter-options`                                               | Poll-session observability                                        |
 | `/api/admin/observations/{dlq,info,messages,stats}`                                                  | Queue + outbox observability                                      |
@@ -91,7 +91,7 @@ Hand-refreshed 2026-06-10 (generation script COMING SOON).
 
 | Route                                | Purpose                                                                                                              |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/cron/minutely`             | Poll active systems (per-vendor smart schedules; dev params `systemId`, `force`, `date`)                             |
+| `GET /api/cron/minutely`             | Poll active devices (per-vendor smart schedules; dev params `systemId`, `force`, `date`)                             |
 | `GET·POST /api/cron/daily`           | Daily aggregation at 00:05 (actions: `aggregate`/`regenerate`/`delete`; date ranges via `date`/`start`+`end`/`last`) |
 | `GET /api/cron/relay-outbox`         | Drain `observations_outbox` → QStash (Phase 4)                                                                       |
 | `GET /api/cron/monitor-observations` | Queue/outbox health monitoring (signals + alerts: see [operations.md](../operations.md))                             |

@@ -6,7 +6,7 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
 
 // Minimal DeviceConfigView fixture. Only the fields read by buildPollMessages
 // / buildObservations matter; everything else is cast away.
-const system = {
+const device = {
   id: 1,
   displayName: "Test System",
   vendorType: "select.live",
@@ -54,7 +54,7 @@ describe("buildPollMessages", () => {
   it("small poll → exactly 1 message with session and all observations in order", () => {
     const inputs = [makeInput(1, 100), makeInput(2, 200), makeInput(3, 300)];
 
-    const messages = buildPollMessages({ system, session, inputs });
+    const messages = buildPollMessages({ device, session, inputs });
 
     expect(messages).toHaveLength(1);
     const [message] = messages;
@@ -63,8 +63,8 @@ describe("buildPollMessages", () => {
     expect(message.observations).toHaveLength(3);
     expect(message.observations!.map((o) => o.value)).toEqual([100, 200, 300]);
     // Sanity: identity / metadata of the message.
-    expect(message.systemId).toBe(system.id);
-    expect(message.systemName).toBe(system.displayName);
+    expect(message.systemId).toBe(device.id);
+    expect(message.systemName).toBe(device.displayName);
     expect(typeof message.batchTime).toBe("string");
     expect(["prod", "dev"]).toContain(message.env);
   });
@@ -75,7 +75,7 @@ describe("buildPollMessages", () => {
     // Tiny maxBytes forces many chunks (each message base + session is already
     // larger than this, so chunks will hold one observation each).
     const messages = buildPollMessages({
-      system,
+      device,
       session,
       inputs,
       maxBytes: 400,
@@ -98,7 +98,7 @@ describe("buildPollMessages", () => {
   });
 
   it("empty inputs → exactly 1 message with session and no/empty observations", () => {
-    const messages = buildPollMessages({ system, session, inputs: [] });
+    const messages = buildPollMessages({ device, session, inputs: [] });
 
     expect(messages).toHaveLength(1);
     const [message] = messages;
@@ -112,7 +112,7 @@ describe("buildPollMessages", () => {
 
     // maxBytes far smaller than even a single-observation message.
     const messages = buildPollMessages({
-      system,
+      device,
       session,
       inputs,
       maxBytes: 10,
@@ -132,7 +132,7 @@ describe("buildPollMessages", () => {
 
     // Compute the size of a single-observation message, then allow ~3 per chunk.
     const single = buildPollMessages({
-      system,
+      device,
       session,
       inputs: [makeInput(1, 1)],
       maxBytes: 10,
@@ -143,7 +143,7 @@ describe("buildPollMessages", () => {
       Buffer.byteLength(JSON.stringify(single[0].observations![0]), "utf8") + 1;
     const maxBytes = singleBytes + obsBytes * 2 + 5;
 
-    const messages = buildPollMessages({ system, session, inputs, maxBytes });
+    const messages = buildPollMessages({ device, session, inputs, maxBytes });
 
     // Should be fewer messages than one-per-observation.
     expect(messages.length).toBeGreaterThan(1);

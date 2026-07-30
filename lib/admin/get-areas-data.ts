@@ -2,8 +2,8 @@
  * Shared function to fetch admin areas data (server-side rendering + API).
  *
  * Areas are the SEMANTIC layer: an Area is a grouping of 1..N **member devices** (`area_members`). A
- * single-device Area wraps one physical system; a multi-device Area draws points from several (the
- * former vendor_type='composite' fake systems, now areas-backed virtual systems). Membership is read
+ * single-device Area wraps one physical device; a multi-device Area draws points from several (the
+ * former vendor_type='composite' fake devices, now areas-backed virtual devices). Membership is read
  * uniformly from `area_members` — there is no `kind` branch. This powers /admin/areas (all areas)
  * and the owner-facing /areas page (the caller's own active areas).
  */
@@ -18,7 +18,7 @@ import type { AreaLocation } from "@/lib/areas/types";
 import { Area } from "@/lib/ids";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
-export interface AreaSourceSystem {
+export interface AreaSourceDevice {
   id: number;
   alias: string | null;
   displayName: string | null;
@@ -42,7 +42,7 @@ export interface AdminAreaData {
   /** Number of `area_bindings` (role→point overrides). 0 for a plain membership-only Area. */
   bindingCount: number;
   /** The Area's member devices (from `area_members`); length 1 = single-device, >1 = multi-device. */
-  memberSystems: AreaSourceSystem[];
+  memberDevices: AreaSourceDevice[];
 }
 
 export interface AdminAreasResult {
@@ -53,21 +53,21 @@ export interface AdminAreasResult {
 }
 
 /** Resolve a physical device handle to its display fields (null if no such device). */
-async function resolveSystem(
+async function resolveDevice(
   systemId: number,
-): Promise<AreaSourceSystem | null> {
-  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
-  if (!system) return null;
+): Promise<AreaSourceDevice | null> {
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+  if (!device) return null;
   return {
-    id: system.id,
-    alias: system.alias,
-    displayName: system.displayName,
+    id: device.id,
+    alias: device.alias,
+    displayName: device.displayName,
   };
 }
 
 /**
  * Shape a set of already-selected `areas` rows into full `AdminAreaData` — the expensive part
- * (binding counts, Clerk owner batch-fetch, member-system resolution). Shared by the global admin
+ * (binding counts, Clerk owner batch-fetch, member-device resolution). Shared by the global admin
  * view and the owner-scoped `/areas` view so the shaping lives in exactly one place.
  */
 async function shapeAreas(
@@ -123,16 +123,16 @@ async function shapeAreas(
     const userInfo = area.ownerUserId ? userCache.get(area.ownerUserId) : null;
 
     // Uniform: an Area's member devices are its `area_members` rows — no single-vs-multi branch.
-    // `resolveSystem` is int-keyed, so the uuid membership converts back; the `!` is safe by the
+    // `resolveDevice` is int-keyed, so the uuid membership converts back; the `!` is safe by the
     // `area_members.device_id` FK.
     const memberDeviceIds = await getAreaMemberDeviceIds(area.id);
     const memberRids = await DeviceRegistry.ridsForDevices(memberDeviceIds);
     const memberIds = memberDeviceIds.map((id) => memberRids.get(id)!);
-    const memberSystems: AreaSourceSystem[] = (
+    const memberDevices: AreaSourceDevice[] = (
       await Promise.all(
         memberIds.map(
           async (id) =>
-            (await resolveSystem(id)) ?? {
+            (await resolveDevice(id)) ?? {
               id,
               alias: null,
               displayName: null,
@@ -156,7 +156,7 @@ async function shapeAreas(
         userName: userInfo?.userName || null,
       },
       bindingCount: bindingCounts.get(area.id) ?? 0,
-      memberSystems,
+      memberDevices,
     });
   }
 

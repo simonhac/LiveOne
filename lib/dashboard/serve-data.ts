@@ -110,7 +110,7 @@ export interface AreaBlock extends SubjectBlockCommon {
  * 🛑 The INTERIOR is still integer-handle-keyed: the KV latest cache (PR 3), the active-points list and
  * polling status all take `subject.handle` exactly as they took `system.id`.
  */
-export async function buildSystemPayload(
+export async function buildDevicePayload(
   subject: ServingSubject,
   wantsReadings: boolean,
   timer?: ServerTimer,
@@ -128,7 +128,7 @@ export async function buildSystemPayload(
       ? timer.time("kv", () => getLatestValues(handle))
       : getLatestValues(handle),
     wantsReadings
-      ? PointManager.getInstance().getActivePointsForSystem(handle)
+      ? PointManager.getInstance().getActivePointsForDevice(handle)
       : Promise.resolve(undefined),
   ]);
 
@@ -288,7 +288,7 @@ export async function buildSystemPayload(
 }
 
 /**
- * SSR prefetch helper: build the single-system `/api/data` **cache value** (date-transformed to ISO
+ * SSR prefetch helper: build the single-device `/api/data` **cache value** (date-transformed to ISO
  * strings, exactly the shape `dashboardDataQuery(handle)` caches) in-process, so the dashboard server
  * component can seed a React Query `HydrationBoundary` and cards render filled without a client
  * `/api/data` round-trip (SP1.2). Returns null if the handle doesn't resolve to a subject.
@@ -301,11 +301,11 @@ export async function buildSystemPayload(
  * (`queryKeys.data(handle)`). A different precedence here would seed a DIFFERENT payload shape under
  * the key the client then reads — silent cache poisoning, not a compile error.
  */
-export async function getSystemDataForCache(
+export async function getDeviceDataForCache(
   systemId: number,
 ): Promise<unknown | null> {
   const subject = await subjectForHandle(systemId, "device");
   if (!subject) return null;
-  const payload = await buildSystemPayload(subject, false);
+  const payload = await buildDevicePayload(subject, false);
   return transformDates(payload, subjectTimezoneOffsetMin(subject));
 }

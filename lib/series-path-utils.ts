@@ -13,28 +13,28 @@ import {
  * - system.3/load.hvac/power.avg
  *
  * Components:
- * - systemIdentifier: Identifies the system (either "system.{id}" or a shortname)
+ * - systemIdentifier: Identifies the device (either "system.{id}" or a shortname)
  * - pointPath: type.subtype.extension (e.g., "bidi.battery", "source.solar")
  * - pointFlavour: metricType.aggregation (e.g., "power.avg", "energy.delta")
  *
- * The "series path" (without system prefix) is: {pointPath}/{pointFlavour}
+ * The "series path" (without device prefix) is: {pointPath}/{pointFlavour}
  */
 
 /**
- * Resolve a system identifier to a system
+ * Resolve a device identifier to a device
  *
- * @param systemIdentifier - Numeric system ID (e.g., "3" or "10")
- * @returns System or null if not found
+ * @param systemIdentifier - Numeric device ID (e.g., "3" or "10")
+ * @returns Device or null if not found
  *
  * TODO: Support username.shortname format (e.g., "simon.kinkora_complete") when we have
  * a cheap username lookup mechanism. Currently would require adding a username column
  * to the systems table or calling Clerk API which has rate limits and latency.
  *
  * @example
- * await resolveSystemFromIdentifier("3")
- * // Returns system with id=3
+ * await resolveDeviceFromIdentifier("3")
+ * // Returns device with id=3
  */
-export async function resolveSystemFromIdentifier(
+export async function resolveDeviceFromIdentifier(
   systemIdentifier: string,
 ): Promise<DeviceConfigView | null> {
   // Only support numeric ID for now
@@ -48,7 +48,7 @@ export async function resolveSystemFromIdentifier(
 /**
  * Build a full series ID from components
  *
- * @param systemIdentifier - System identifier (either "system.{id}" or a shortname)
+ * @param systemIdentifier - Device identifier (either "system.{id}" or a shortname)
  * @param pointPath - Point path (e.g., "bidi.battery", "source.solar")
  * @param pointFlavour - Metric type and aggregation (e.g., "power.avg", "energy.delta")
  * @returns Full series ID in format {systemIdentifier}/{pointPath}/{pointFlavour}
@@ -69,9 +69,9 @@ export function buildSeriesId(
 }
 
 /**
- * Get the site identifier for a system
+ * Get the site identifier for a device
  *
- * @param system - System to get identifier for
+ * @param device - Device to get identifier for
  * @returns Site identifier (shortname if available, otherwise "system.{id}")
  *
  * @example
@@ -81,14 +81,14 @@ export function buildSeriesId(
  * getSiteIdentifier({ id: 10, alias: null, ... })
  * // Returns: "system.10"
  */
-export function getSiteIdentifier(system: DeviceConfigView): string {
-  return system.alias || `system.${system.id}`;
+export function getSiteIdentifier(device: DeviceConfigView): string {
+  return device.alias || `system.${device.id}`;
 }
 
 /**
- * Build a siteId from a system
+ * Build a siteId from a device
  * @deprecated Use getSiteIdentifier() instead
  */
-export function buildSiteIdFromSystem(system: DeviceConfigView): string {
-  return getSiteIdentifier(system);
+export function buildSiteIdFromDevice(device: DeviceConfigView): string {
+  return getSiteIdentifier(device);
 }

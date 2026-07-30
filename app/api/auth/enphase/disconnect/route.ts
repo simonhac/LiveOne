@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { DeviceWriter } from "@/lib/registry/device-writer";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -30,19 +30,19 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log("ENPHASE: User disconnecting Enphase:", userDisplay);
 
-    // Note: We don't clear tokens anymore - systems are just marked as removed
-    // and credentials are ignored for removed systems
+    // Note: We don't clear tokens anymore - devices are just marked as removed
+    // and credentials are ignored for removed devices
 
     // The read is the config registry (`devices`); each Enphase device is then marked removed through
     // the `systems` writer, keyed by handle.
 
-    const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
-    const enphaseSystems = ownedSystems.filter(
+    const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
+    const enphaseDevices = ownedDevices.filter(
       (s) => s.vendorType === "enphase",
     );
 
-    for (const s of enphaseSystems) {
-      await DeviceWriter.updateSystem(s.id, {
+    for (const s of enphaseDevices) {
+      await DeviceWriter.updateDevice(s.id, {
         ownerClerkUserId: null,
         status: "removed",
       });
@@ -83,26 +83,26 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const system = await DeviceConfigRegistry.deviceByHandle(
+    const device = await DeviceConfigRegistry.deviceByHandle(
       parseInt(systemId),
     );
 
     if (
-      !system ||
-      system.ownerClerkUserId !== userId ||
-      system.vendorType !== "enphase" ||
-      system.status !== "active"
+      !device ||
+      device.ownerClerkUserId !== userId ||
+      device.vendorType !== "enphase" ||
+      device.status !== "active"
     ) {
       return NextResponse.json({ connected: false });
     }
 
-    // Check if credentials exist for this system
-    const credentials = await getSystemCredentials(userId, system.id);
+    // Check if credentials exist for this device
+    const credentials = await getDeviceCredentials(userId, device.id);
 
     return NextResponse.json({
       connected: credentials !== null,
-      systemId: system.id,
-      systemName: system.displayName,
+      systemId: device.id,
+      deviceName: device.displayName,
       expiresAt: (credentials as any)?.expires_at,
     });
   } catch (error) {

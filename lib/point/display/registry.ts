@@ -4,10 +4,10 @@
  * code stays purely semantic (metricType/metricUnit) and knows nothing about display.
  *
  * A point resolves by `${vendorType}:${subsystem}` → the device manifest, then `physicalPathTail`
- * → its display entry. `subsystem` is the device-type discriminator (e.g. a deepsea system's
+ * → its display entry. `subsystem` is the device-type discriminator (e.g. a deepsea device's
  * "generator" points). Adding a device type = drop in a JSON file + one import/entry below.
  *
- * Resolution is done SERVER-SIDE (where the system's vendorType is known); the resolved
+ * Resolution is done SERVER-SIDE (where the device's vendorType is known); the resolved
  * `{ unit, format }` rides to the client, which just applies the format via applyExcelFormat.
  */
 

@@ -3,7 +3,7 @@ import {
   PollingStateManager,
   getPollingStateManager,
   type PollingSessionState,
-  type SystemPollingState,
+  type DevicePollingState,
 } from "../polling-state-manager";
 
 // Reset the singleton between tests
@@ -21,7 +21,7 @@ describe("PollingStateManager", () => {
       const state = manager.getState();
       expect(state.isConnected).toBe(false);
       expect(state.isComplete).toBe(false);
-      expect(state.systems.size).toBe(0);
+      expect(state.devices.size).toBe(0);
       expect(state.error).toBeUndefined();
     });
   });
@@ -69,14 +69,14 @@ describe("PollingStateManager", () => {
 
       // Different object references
       expect(state1).not.toBe(state2);
-      expect(state1.systems).not.toBe(state2.systems);
+      expect(state1.devices).not.toBe(state2.devices);
     });
   });
 
   describe("getSystemsArray", () => {
     it("should return empty array initially", () => {
-      const systems = manager.getSystemsArray();
-      expect(systems).toEqual([]);
+      const devices = manager.getDevicesArray();
+      expect(devices).toEqual([]);
     });
   });
 
@@ -88,7 +88,7 @@ describe("PollingStateManager", () => {
       const state = manager.getState();
       expect(state.isConnected).toBe(false);
       expect(state.isComplete).toBe(false);
-      expect(state.systems.size).toBe(0);
+      expect(state.devices.size).toBe(0);
     });
 
     it("should notify listeners on reset", () => {
@@ -127,7 +127,7 @@ describe("Event handling (internal)", () => {
       const startData = {
         sessionId: "abc12/1",
         sessionStartTime: testDate, // Date object (from iso8601Revivor)
-        systems: [
+        devices: [
           { systemId: 1, displayName: "System 1", vendorType: "selectronic" },
           { systemId: 2, displayName: "System 2", vendorType: "enphase" },
         ],
@@ -139,9 +139,9 @@ describe("Event handling (internal)", () => {
       const state = manager.getState();
       expect(state.sessionId).toBe("abc12/1");
       expect(state.sessionStartTime).toEqual(testDate);
-      expect(state.systems.size).toBe(2);
+      expect(state.devices.size).toBe(2);
 
-      const sys1 = state.systems.get(1);
+      const sys1 = state.devices.get(1);
       expect(sys1).toEqual({
         systemId: 1,
         displayName: "System 1",
@@ -153,9 +153,9 @@ describe("Event handling (internal)", () => {
 
   describe("handleProgressEvent", () => {
     it("should update system with progress data", () => {
-      // Initialize system
+      // Initialize device
       (manager as any).handleStartEvent({
-        systems: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
+        devices: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
       });
 
       // Progress event
@@ -167,7 +167,7 @@ describe("Event handling (internal)", () => {
         stages: [{ name: "login", startMs: 100, endMs: 200 }],
       });
 
-      const sys = manager.getState().systems.get(1);
+      const sys = manager.getState().devices.get(1);
       expect(sys?.status).toBe("polling");
       expect(sys?.sessionLabel).toBe("abc12/1.1");
       expect(sys?.stages).toHaveLength(1);
@@ -175,7 +175,7 @@ describe("Event handling (internal)", () => {
 
     it("should set error status on ERROR action", () => {
       (manager as any).handleStartEvent({
-        systems: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
+        devices: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
       });
 
       (manager as any).handleProgressEvent({
@@ -184,14 +184,14 @@ describe("Event handling (internal)", () => {
         error: "Connection failed",
       });
 
-      const sys = manager.getState().systems.get(1);
+      const sys = manager.getState().devices.get(1);
       expect(sys?.status).toBe("error");
       expect(sys?.error).toBe("Connection failed");
     });
 
     it("should set skipped status on SKIPPED action", () => {
       (manager as any).handleStartEvent({
-        systems: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
+        devices: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
       });
 
       (manager as any).handleProgressEvent({
@@ -200,14 +200,14 @@ describe("Event handling (internal)", () => {
         reason: "Recently polled",
       });
 
-      const sys = manager.getState().systems.get(1);
+      const sys = manager.getState().devices.get(1);
       expect(sys?.status).toBe("skipped");
       expect(sys?.reason).toBe("Recently polled");
     });
 
     it("should set completed status when POLLED and not inProgress", () => {
       (manager as any).handleStartEvent({
-        systems: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
+        devices: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
       });
 
       (manager as any).handleProgressEvent({
@@ -217,14 +217,14 @@ describe("Event handling (internal)", () => {
         recordsProcessed: 16,
       });
 
-      const sys = manager.getState().systems.get(1);
+      const sys = manager.getState().devices.get(1);
       expect(sys?.status).toBe("completed");
       expect(sys?.recordsProcessed).toBe(16);
     });
 
     it("should include sessionLabel in progress events", () => {
       (manager as any).handleStartEvent({
-        systems: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
+        devices: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
       });
 
       // First progress event includes sessionLabel (merged from old session-start)
@@ -237,7 +237,7 @@ describe("Event handling (internal)", () => {
         stages: [{ name: "login", startMs: 100, endMs: 200 }],
       });
 
-      const sys = manager.getState().systems.get(1);
+      const sys = manager.getState().devices.get(1);
       expect(sys?.status).toBe("polling");
       expect(sys?.sessionLabel).toBe("abc12/1.1");
       expect(sys?.sessionId).toBe(123);
@@ -247,7 +247,7 @@ describe("Event handling (internal)", () => {
   describe("handleCompleteEvent", () => {
     it("should update state with completion data (no results - client has them from progress)", () => {
       (manager as any).handleStartEvent({
-        systems: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
+        devices: [{ systemId: 1, displayName: "Sys 1", vendorType: "test" }],
       });
 
       // Simulate progress event that would have happened before complete
@@ -284,8 +284,8 @@ describe("Event handling (internal)", () => {
         skipped: 0,
       });
 
-      // System state came from progress event, not complete
-      const sys = state.systems.get(1);
+      // Device state came from progress event, not complete
+      const sys = state.devices.get(1);
       expect(sys?.status).toBe("completed");
       expect(sys?.sessionLabel).toBe("abc12/1.1");
     });

@@ -463,8 +463,8 @@ function attachErrorHandler(client: Client, label: string): Client {
 
 // Build a pg Client the same way the app's pool does (lib/db/planetscale): parse
 // the URL and set TLS EXPLICITLY, because node-postgres' bundled
-// pg-connection-string can't handle PlanetScale's `sslrootcert=system` (it tries
-// to open('system') as a file → ENOENT and the connection dies). Managed Postgres
+// pg-connection-string can't handle PlanetScale's `sslrootcert=device` (it tries
+// to open('device') as a file → ENOENT and the connection dies). Managed Postgres
 // here connects encrypted-without-strict-CA; `sslmode=disable`/`DB_SSL=disable`
 // still opts out for a local plaintext server.
 function makeClient(url: string, label: string): Client {

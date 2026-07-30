@@ -1,7 +1,7 @@
 /**
  * Shared transform: aggregate rows → OpenNEM series.
  *
- * Extracted verbatim from `app/api/history/route.ts` (`getSystemHistoryInOpenNEMFormat`, the block
+ * Extracted verbatim from `app/api/history/route.ts` (`getDeviceHistoryInOpenNEMFormat`, the block
  * that ran after the DB fetch). It is the source-agnostic half of the read path: given a uniform
  * `AggRow[]` it produces the served `OpenNEMDataSeries[]`, independent of where those rows came
  * from.
@@ -237,11 +237,11 @@ export async function buildSeriesFromAggRows(
       rows = dense;
     }
 
-    // Get source system for series ID
-    const sourceSystem = await DeviceConfigRegistry.deviceByHandle(
+    // Get source device for series ID
+    const sourceDevice = await DeviceConfigRegistry.deviceByHandle(
       series.point.systemId,
     );
-    if (!sourceSystem) continue;
+    if (!sourceDevice) continue;
 
     // Build series ID using SeriesPath
     const seriesPath = getSeriesPath(series);

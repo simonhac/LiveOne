@@ -717,7 +717,7 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
   it("distinctSystemsByRawCreatedAtSince returns the distinct-system count", async () => {
     const { exec } = makeFakeExec([{ n: 7 }]);
     expect(
-      await ReadingsDao.distinctSystemsByRawCreatedAtSince(
+      await ReadingsDao.distinctDevicesByRawCreatedAtSince(
         1_700_000_000_000,
         exec,
       ),
@@ -744,7 +744,7 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(
       await ReadingsDao.maxAgg5mIntervalMsForDevices([d1], emptyRows.exec),
     ).toBeNull();
-    // Empty system set short-circuits (no query issued).
+    // Empty device set short-circuits (no query issued).
     const noQuery = makeFakeExec([{ intervalEnd: new Date(1) }]);
     expect(
       await ReadingsDao.maxAgg5mIntervalMsForDevices([], noQuery.exec),

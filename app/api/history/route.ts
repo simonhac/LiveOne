@@ -137,7 +137,7 @@ function parseBasicParams(searchParams: URLSearchParams): ValidationResult & {
 function parseTimeRangeParams(
   searchParams: URLSearchParams,
   interval: "5m" | "30m" | "1d",
-  systemTimezoneOffsetMin: number,
+  deviceTimezoneOffsetMin: number,
 ): ValidationResult & {
   startTime?: ZonedDateTime | CalendarDate;
   endTime?: ZonedDateTime | CalendarDate;
@@ -156,13 +156,13 @@ function parseTimeRangeParams(
       [startTime, endTime] = parseRelativeTime(
         lastParam,
         interval,
-        systemTimezoneOffsetMin,
+        deviceTimezoneOffsetMin,
       );
     } else if (startTimeParam && endTimeParam) {
       // Parse timezone offset if provided, otherwise use system timezone
       const offsetMin = timezoneOffsetParam
         ? parseInt(timezoneOffsetParam)
-        : systemTimezoneOffsetMin;
+        : deviceTimezoneOffsetMin;
 
       // Decode URL-safe strings to CalendarDate or ZonedDateTime
       // The function automatically determines the format based on the string
@@ -294,7 +294,7 @@ function validateTimeRange(
 // Data Fetching using new abstraction
 // ============================================================================
 
-async function getSystemHistoryInOpenNEMFormat(
+async function getDeviceHistoryInOpenNEMFormat(
   /**
    * The integer addressing handle, and the subject's UTC offset. Phase 13 PR 2: this took the legacy
    * device-shaped view (`synthesizeAreaView`'s fabrication for an Area) and read only `.id` and
@@ -322,7 +322,7 @@ async function getSystemHistoryInOpenNEMFormat(
   // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
   const intervalForFiltering = interval === "30m" ? "5m" : interval;
 
-  const seriesInfos = await pointManager.getSeriesForSystem(
+  const seriesInfos = await pointManager.getSeriesForDevice(
     handle,
     filterPatterns,
     intervalForFiltering,
@@ -679,7 +679,7 @@ export async function GET(request: NextRequest) {
       flowMatrixOmittedReason,
       avgCache,
     } = await t.time("fetch", () =>
-      getSystemHistoryInOpenNEMFormat(
+      getDeviceHistoryInOpenNEMFormat(
         handle,
         tzOffsetMin,
         timeRange.startTime!,

@@ -5,9 +5,9 @@
  *
  * Before this module the taxonomy was copy-pasted across four places:
  *   - lib/aggregation/logical-system.ts        (isCompleteRoleSet)
- *   - lib/system-summary-store.ts              (aggregateSummaryReadings)
+ *   - lib/device-summary-store.ts              (aggregateSummaryReadings)
  *   - components/CompositeTab.tsx              (category panels + patterns)
- *   - app/api/admin/systems/[systemId]/composite-config/route.ts  (path validation)
+ *   - app/api/admin/devices/[systemId]/composite-config/route.ts  (path validation)
  * They all import from here now, so adding a role (or its HA metadata) is a one-line change.
  *
  * Roles carry Home Assistant export metadata (`device_class` / `state_class` / `unit`) so the
@@ -66,7 +66,7 @@ export interface RoleDef {
    */
   validatesCompositePath: boolean;
   /**
-   * System-summary participation. When set, {@link aggregateSummaryReadings} emits
+   * Device-summary participation. When set, {@link aggregateSummaryReadings} emits
    * `${stem}/${metric}`: for `aggregable` roles it uses the master point or, failing that, the sum
    * of its dotted children; for non-aggregable roles it reads the single point directly. Roles
    * without `summary` (ev) are not summarised.

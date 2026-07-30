@@ -19,14 +19,14 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  * Owner/admin edit of a single Area (the area builder's General/Location tab), addressed by its
  * opaque `ar_` TypeID (decoded to the raw uuid at the seam, `loadAreaForOwner`).
  *   PATCH  → rename / re-alias / retime / relocate / set status.
- *   DELETE → soft-delete (`status = 'archived'`); refuses legacy real-system-handle Areas.
+ *   DELETE → soft-delete (`status = 'archived'`); refuses legacy real-device-handle Areas.
  * Access is area-ownership (owner or admin) — the caller must own the area to edit it.
  */
 
 /**
  * GET → the area builder's edit payload for one area: its metadata, member systemIds, and current
  * role→point bindings. Owner/admin only. Member display names are joined client-side against
- * /api/areas/candidate-systems.
+ * /api/areas/candidate-devices.
  */
 export async function GET(
   request: NextRequest,

@@ -45,17 +45,17 @@ export interface AggFetchParams {
   endDate?: string;
 }
 
-function groupPointIdsBySystem(pairs: AggFetchPoint[]): Map<number, number[]> {
-  const bySystem = new Map<number, number[]>();
+function groupPointIdsByDevice(pairs: AggFetchPoint[]): Map<number, number[]> {
+  const byDevice = new Map<number, number[]>();
   for (const { systemId, pointId } of pairs) {
-    let arr = bySystem.get(systemId);
+    let arr = byDevice.get(systemId);
     if (!arr) {
       arr = [];
-      bySystem.set(systemId, arr);
+      byDevice.set(systemId, arr);
     }
     arr.push(pointId);
   }
-  return bySystem;
+  return byDevice;
 }
 
 /**
@@ -92,10 +92,10 @@ export async function fetchAggRowsPg(
    *  span's flow-series read can reuse them instead of re-querying `agg_5m` (§1.3a). 5m/30m only. */
   avgCache?: Agg5mAvgCache,
 ): Promise<AggRow[]> {
-  const idsBySystem = groupPointIdsBySystem(p.uniquePairs);
+  const idsByDevice = groupPointIdsByDevice(p.uniquePairs);
   const { pairToPoint, pointToInt } = resolvePairs(p.uniquePairs);
 
-  // The resolved PointIds for a system's requested indices, preserving the caller's order (skipping
+  // The resolved PointIds for a device's requested indices, preserving the caller's order (skipping
   // any unresolved address).
   const pointsFor = (systemId: number, ids: number[]): PointId[] =>
     ids
@@ -103,13 +103,13 @@ export async function fetchAggRowsPg(
       .filter((x): x is PointId => x !== undefined);
 
   if (p.interval === "1d") {
-    // One DAO read per system, run CONCURRENTLY (independent systems don't need to serialize on the
-    // pool) — `Promise.all` preserves `idsBySystem`'s insertion order in the result array regardless
-    // of completion order. Cross-point/cross-system row order is irrelevant downstream: the shared 1d
+    // One DAO read per device, run CONCURRENTLY (independent devices don't need to serialize on the
+    // pool) — `Promise.all` preserves `idsByDevice`'s insertion order in the result array regardless
+    // of completion order. Cross-point/cross-device row order is irrelevant downstream: the shared 1d
     // transform re-densifies each series from a Map keyed by day, and the DAO already returns each
     // point's days ascending.
-    const perSystem = await Promise.all(
-      Array.from(idsBySystem, async ([systemId, ids]) => {
+    const perDevice = await Promise.all(
+      Array.from(idsByDevice, async ([systemId, ids]) => {
         const pointIds = pointsFor(systemId, ids);
         const byPoint = await ReadingsDao.read1d(pointIds, {
           startDay: p.startDate!,
@@ -135,16 +135,16 @@ export async function fetchAggRowsPg(
         return rows;
       }),
     );
-    return perSystem.flat();
+    return perDevice.flat();
   }
 
-  // 5m / 30m: read the sparse rows, then densify to the exact grid. One DAO read per system, run
+  // 5m / 30m: read the sparse rows, then densify to the exact grid. One DAO read per device, run
   // CONCURRENTLY (see the 1d path's note above — same guarantee applies here).
   const queryFirstEpoch = p.queryFirstEpoch!;
   const lastEpoch = p.lastEpoch!;
 
-  const perSystem = await Promise.all(
-    Array.from(idsBySystem, async ([systemId, ids]) => {
+  const perDevice = await Promise.all(
+    Array.from(idsByDevice, async ([systemId, ids]) => {
       const pointIds = pointsFor(systemId, ids);
       const byPoint = await ReadingsDao.read5m(pointIds, {
         fromMs: queryFirstEpoch,
@@ -152,7 +152,7 @@ export async function fetchAggRowsPg(
       });
 
       // §1.3a: reconstruct the PRE-densify sparse rows the avgCache expects (`{pointId, intervalEnd:
-      // Date, avg}`), byte-identical to the former raw select. Populated per system over the same
+      // Date, avg}`), byte-identical to the former raw select. Populated per device over the same
       // [queryFirstEpoch, lastEpoch] window; densify below is unaffected.
       if (avgCache) {
         const resolvedInts: number[] = [];
@@ -180,14 +180,14 @@ export async function fetchAggRowsPg(
       // Densify: emit a dense grid — seed at queryFirstEpoch, step 5min, and include the first grid
       // point that reaches/passes lastEpoch (R+5min for every R < lastEpoch, so the largest emitted
       // value is the first grid point ≥ lastEpoch). Rows ascending per point.
-      const systemRows: AggRow[] = [];
+      const deviceRows: AggRow[] = [];
       for (const pointId of pointIds) {
         const intId = pointToInt.get(pointId)!;
         const byMs = new Map<number, Agg5mReading>();
         for (const r of byPoint.get(pointId)!) byMs.set(r.intervalEndMs, r);
         for (let t = queryFirstEpoch; ; t += FIVE_MIN_MS) {
           const hit = byMs.get(t);
-          systemRows.push({
+          deviceRows.push({
             system_id: systemId,
             point_id: intId,
             interval_end: t,
@@ -201,8 +201,8 @@ export async function fetchAggRowsPg(
           if (t >= lastEpoch) break;
         }
       }
-      return systemRows;
+      return deviceRows;
     }),
   );
-  return perSystem.flat();
+  return perDevice.flat();
 }

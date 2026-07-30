@@ -91,13 +91,13 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockAddrsForDevices.mockResolvedValue(new Map());
   });
 
-  /** Wire getActivePointsForSystem(handle) → the given points, keyed by handle. */
+  /** Wire getActivePointsForDevice(handle) → the given points, keyed by handle. */
   function withPoints(map: Record<number, ReturnType<typeof pt>[]>) {
-    const getActivePointsForSystem = jest.fn(
+    const getActivePointsForDevice = jest.fn(
       async (sid: number) => map[sid] ?? [],
     );
     mockGetInstance.mockReturnValue({
-      getActivePointsForSystem,
+      getActivePointsForDevice,
     } as unknown as ReturnType<typeof PointManager.getInstance>);
   }
 
@@ -110,7 +110,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
   });
 
   it("an area-of-one → just its own systemId", async () => {
-    mockGetLegacy.mockResolvedValue(7); // area → real system 7
+    mockGetLegacy.mockResolvedValue(7); // area → real device 7
     withPoints({ 7: [pt(7, 0), pt(7, 1)] });
     const out = await allowedSystemIds({
       descriptor: descriptor([{ type: "tiles", areaId: AREA.a7 }]),
@@ -136,7 +136,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     );
     withPoints({
       1000002: [pt(1, 0), pt(14, 0)],
-      8: [pt(5, 0), pt(6, 0)], // Kinkora-style child systems
+      8: [pt(5, 0), pt(6, 0)], // Kinkora-style child devices
     });
     const out = await allowedSystemIds({
       descriptor: descriptor([
@@ -158,11 +158,11 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
 
   it("keeps the handle even when its points can't resolve (throw caught)", async () => {
     mockGetLegacy.mockResolvedValue(1000002);
-    const getActivePointsForSystem = jest.fn(async () => {
+    const getActivePointsForDevice = jest.fn(async () => {
       throw new Error("System not found");
     });
     mockGetInstance.mockReturnValue({
-      getActivePointsForSystem,
+      getActivePointsForDevice,
     } as unknown as ReturnType<typeof PointManager.getInstance>);
     const out = await allowedSystemIds({
       descriptor: descriptor([{ type: "tiles", areaId: AREA.site }]),
@@ -206,12 +206,12 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
   });
 
   it("unions a composite area's child points", async () => {
-    mockGetLegacy.mockResolvedValue(10001); // composite virtual-system handle
-    const getActivePointsForSystem = jest.fn(async (sid: number) =>
+    mockGetLegacy.mockResolvedValue(10001); // composite virtual-device handle
+    const getActivePointsForDevice = jest.fn(async (sid: number) =>
       sid === 10001 ? [pt(5, 7), pt(6, 9), pt(6, 13)] : [],
     );
     mockGetInstance.mockReturnValue({
-      getActivePointsForSystem,
+      getActivePointsForDevice,
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
@@ -225,12 +225,12 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     mockGetLegacy.mockImplementation(async (areaId: string) =>
       areaId === AREA.good ? 5 : 999,
     );
-    const getActivePointsForSystem = jest.fn(async (sid: number) => {
+    const getActivePointsForDevice = jest.fn(async (sid: number) => {
       if (sid === 5) return [pt(5, 0), pt(5, 1)];
       throw new Error(`System not found: ${sid}`); // mirrors PointManager behaviour
     });
     mockGetInstance.mockReturnValue({
-      getActivePointsForSystem,
+      getActivePointsForDevice,
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({

@@ -4,22 +4,22 @@
  * arrived. This is the server half of the capability model; the client half is `capabilitiesFromLatest`
  * (runtime presence). Both consume the same registry rule table.
  *
- * ONE entry point for a real device OR an area: `getActivePointsForSystem(handle)` already unions an
+ * ONE entry point for a real device OR an area: `getActivePointsForDevice(handle)` already unions an
  * area's member points (areas-backed → member/bound points; real device → its own), so the ATOMIC
  * capabilities fall straight out of `capabilitiesFromPoints`. COMPOUND capabilities are predicates:
  *  - `generator-running` — any member device has an enabled generator run-detector `derivations` row.
- *  - `grid-signals`      — the area's location derives a NEM region backed by a seeded OE system
- *                          (`resolveGridContextForSystem`).
+ *  - `grid-signals`      — the area's location derives a NEM region backed by a seeded OE device
+ *                          (`resolveGridContextForDevice`).
  *
  * Server-only (imports the DB/point layer). Do NOT import from a client component — use
  * `capabilitiesFromLatest` there.
  */
 import { PointManager } from "@/lib/point/point-manager";
-import { getAreaForSystem } from "@/lib/areas/resolve";
+import { getAreaForDevice } from "@/lib/areas/resolve";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
 import { hasEnabledRunDetector } from "@/lib/derivations/resolve";
-import { resolveGridContextForSystem } from "@/lib/grid/context";
+import { resolveGridContextForDevice } from "@/lib/grid/context";
 import {
   capabilitiesFromPoints,
   isAggregateFromPoints,
@@ -42,7 +42,7 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  * `area_members.device_id` FK — see `DeviceRegistry.ridsForDevices`.
  */
 export async function memberSystemIds(handle: number): Promise<number[]> {
-  const area = await getAreaForSystem(handle);
+  const area = await getAreaForDevice(handle);
   if (area) {
     const memberIds = await getAreaMemberDeviceIds(area.id);
     if (memberIds.length) {
@@ -54,7 +54,7 @@ export async function memberSystemIds(handle: number): Promise<number[]> {
 }
 
 /**
- * Shared computation behind `capabilitiesForSystem` and `derivedCapabilitiesForSystem`: the DERIVED
+ * Shared computation behind `capabilitiesForDevice` and `derivedCapabilitiesForDevice`: the DERIVED
  * capability set (atomic points + the generator/grid-signals compound predicates) plus the merged
  * per-member config overrides — everything except the final `applyCapabilityConfig`.
  */
@@ -63,7 +63,7 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
   overrides: DeviceConfig["capabilities"];
 }> {
   const pm = PointManager.getInstance();
-  const points = await pm.getActivePointsForSystem(handle, false, false);
+  const points = await pm.getActivePointsForDevice(handle, false, false);
   const caps = capabilitiesFromPoints(points);
 
   // Walk the member devices once: gather generator-run-tracking + merge their config overrides
@@ -81,16 +81,16 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
   if (hasGenerator) caps.add("generator-running");
 
   // grid-signals: the area's location derives a NEM region + a seeded OE region system.
-  if (await resolveGridContextForSystem(handle)) caps.add("grid-signals");
+  if (await resolveGridContextForDevice(handle)) caps.add("grid-signals");
 
   return { derived: caps, overrides };
 }
 
 /**
- * The capability set a handle offers from config. `handle` is a real system id OR an area's
- * `legacy_system_id` — both resolve through `getActivePointsForSystem`.
+ * The capability set a handle offers from config. `handle` is a real device id OR an area's
+ * `legacy_system_id` — both resolve through `getActivePointsForDevice`.
  */
-export async function capabilitiesForSystem(
+export async function capabilitiesForDevice(
   handle: number,
 ): Promise<Set<CapabilityId>> {
   const { derived, overrides } = await resolveDeviceCapabilities(handle);
@@ -101,13 +101,13 @@ export async function capabilitiesForSystem(
 /**
  * Cheap CONFIG-only eligibility check for the chart/sankey cards (`{all:["solar/power"]}`) — just the
  * points scan + the same catalog rule `capabilitiesFromLatest` checks client-side against `latest`,
- * skipping the generator/grid-signals compound predicates `capabilitiesForSystem` also computes
+ * skipping the generator/grid-signals compound predicates `capabilitiesForDevice` also computes
  * (irrelevant to chart eligibility). Lets a dashboard-descriptor read thread a synchronous "will this
  * area ever show a chart" fact to the client, so `SiteChartsGroup` doesn't have to wait on
  * `/api/data`'s live `latest` map before firing its (expensive) history/sankey fetch.
  */
 export async function hasChartCapability(handle: number): Promise<boolean> {
-  const points = await PointManager.getInstance().getActivePointsForSystem(
+  const points = await PointManager.getInstance().getActivePointsForDevice(
     handle,
     false,
     false,
@@ -117,10 +117,10 @@ export async function hasChartCapability(handle: number): Promise<boolean> {
 
 /**
  * The capability set a handle offers **before** its own config overrides are applied — the "Default"
- * baseline the configurator annotates each toggle with. Same computation as `capabilitiesForSystem`
+ * baseline the configurator annotates each toggle with. Same computation as `capabilitiesForDevice`
  * minus the final `applyCapabilityConfig`.
  */
-export async function derivedCapabilitiesForSystem(
+export async function derivedCapabilitiesForDevice(
   handle: number,
 ): Promise<Set<CapabilityId>> {
   return (await resolveDeviceCapabilities(handle)).derived;
@@ -139,9 +139,9 @@ export async function buildAreaStrategyForHandle(
   opts?: { leadWithDeviceMetrics?: boolean },
 ): Promise<DashboardV3> {
   const pm = PointManager.getInstance();
-  const points = await pm.getActivePointsForSystem(handle, false, false);
-  const capabilities = await capabilitiesForSystem(handle);
-  const gridDeviceSystemId = (await resolveGridContextForSystem(handle))
+  const points = await pm.getActivePointsForDevice(handle, false, false);
+  const capabilities = await capabilitiesForDevice(handle);
+  const gridDeviceSystemId = (await resolveGridContextForDevice(handle))
     ?.regionSystemId;
   return buildAreaStrategy({
     areaId,

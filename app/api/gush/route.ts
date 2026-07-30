@@ -6,7 +6,7 @@ import {
 import { sessionManager } from "@/lib/session-manager";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type { PointReadingInput } from "@/lib/vendors/types";
 import type { GushRequestBody } from "@/lib/push/types";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -16,7 +16,7 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  *
  * Any pusher (musher/fusher/…) POSTs self-describing point readings here; each reading carries its
  * own `point_info` metadata, so this route needs no per-vendor knowledge. Auth is siteId + apiKey
- * (validated against the system owner's stored credential), mirroring the fusher push model. Readings
+ * (validated against the device owner's stored credential), mirroring the fusher push model. Readings
  * flow through the same pipeline as polls: `insertPointReadingsRaw` → collector → outbox/QStash →
  * `/api/observations/receive` (single writer) → `point_readings` (+ PG 5m recompute). Idempotent on
  * `(systemId, pointId, measurementTime)`.
@@ -103,32 +103,32 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const system = await DeviceConfigRegistry.deviceByVendorSite(
+    const device = await DeviceConfigRegistry.deviceByVendorSite(
       data.vendorSiteId,
     );
-    if (!system) {
+    if (!device) {
       console.error(
         `[gush] System not found for vendorSiteId: ${data.vendorSiteId}`,
       );
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    if (!system.ownerClerkUserId) {
+    if (!device.ownerClerkUserId) {
       return NextResponse.json(
         { error: "System has no owner configured" },
         { status: 500 },
       );
     }
 
-    const credentials = await getSystemCredentials(
-      system.ownerClerkUserId,
-      system.id,
+    const credentials = await getDeviceCredentials(
+      device.ownerClerkUserId,
+      device.id,
     );
     // The apiKey check implicitly gates to push systems: poll vendors store login creds, not an apiKey.
     if (!credentials || credentials.apiKey !== data.apiKey) {
       await recordFailedSession(
         sessionStart,
-        system.id,
+        device.id,
         "401",
         credentials ? "Invalid API key" : "No credentials configured",
         { action: data.action, vendorSiteId: data.vendorSiteId },
@@ -144,7 +144,7 @@ export async function POST(request: NextRequest) {
     // action=test — validate auth without storing
     if (data.action === "test") {
       await sessionManager.recordSession({
-        systemId: system.id,
+        systemId: device.id,
         cause: "PUSH",
         started: sessionStart,
         duration: Date.now() - sessionStart.getTime(),
@@ -156,8 +156,8 @@ export async function POST(request: NextRequest) {
         success: true,
         action: "test",
         message: "Authentication successful",
-        systemId: system.id,
-        displayName: system.displayName,
+        systemId: device.id,
+        displayName: device.displayName,
       });
     }
 
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(
-      `[gush] system ${system.id} (${system.displayName}) seq=${data.sessionLabel} ` +
+      `[gush] system ${device.id} (${device.displayName}) seq=${data.sessionLabel} ` +
         `readings=${data.readings?.length ?? 0} stored=${readingsToInsert.length}`,
     );
 
@@ -201,7 +201,7 @@ export async function POST(request: NextRequest) {
         "No storable readings: every reading is missing metricType/metricUnit, has an invalid measurementTime, or a null value";
       await recordFailedSession(
         sessionStart,
-        system.id,
+        device.id,
         "422",
         error,
         redactedBody,
@@ -213,7 +213,7 @@ export async function POST(request: NextRequest) {
     try {
       session = await sessionManager.createSession({
         sessionLabel: data.sessionLabel,
-        systemId: system.id,
+        systemId: device.id,
         cause: "PUSH",
         started: sessionStart,
       });
@@ -231,14 +231,14 @@ export async function POST(request: NextRequest) {
     try {
       if (readingsToInsert.length > 0) {
         await PointManager.getInstance().insertPointReadingsRaw(
-          system.id,
+          device.id,
           session,
           readingsToInsert,
           collector,
         );
       }
 
-      await updatePollingStatusSuccess(system.id, {
+      await updatePollingStatusSuccess(device.id, {
         sessionLabel: data.sessionLabel,
         readings: readingsToInsert.length,
       });
@@ -258,7 +258,7 @@ export async function POST(request: NextRequest) {
         success: true,
         action: "store",
         message: "Readings received and stored",
-        systemId: system.id,
+        systemId: device.id,
         pointsStored: readingsToInsert.length,
       });
     } catch (dbError) {
@@ -266,12 +266,12 @@ export async function POST(request: NextRequest) {
       // Error out hard with a RETRYABLE 503 (never a 2xx): the pusher retries, then spools the
       // batch locally until we can persist again. Status/session updates below are best-effort —
       // in a full DB outage they'll fail too, and must not mask the 503.
-      console.error(`[gush] DB error for system ${system.id}:`, dbError);
+      console.error(`[gush] DB error for system ${device.id}:`, dbError);
       const errorMessage =
         dbError instanceof Error ? dbError.message : String(dbError);
       try {
         await updatePollingStatusError(
-          system.id,
+          device.id,
           dbError instanceof Error ? dbError : "Database error",
         );
         await sessionManager.updateSessionResult(

@@ -3,7 +3,7 @@
  * Amber import backfill — CSV → chunk files (feeds PHASE 2 insert)
  *
  * Amber support supplied a `/usage` CSV to fill the part of the import-channel-collision
- * gap (system 9, points 2/7/8) that the API's rolling ~90-day window can no longer reach
+ * gap (device 9, points 2/7/8) that the API's rolling ~90-day window can no longer reach
  * (2025-11-26 → 2026-04-12). See docs/incidents/2025-11-26-amber-import-channel-collision.md.
  *
  * This tool converts that CSV into the SAME raw-`AmberUsageRecord[]` chunk-file shape that
@@ -14,7 +14,7 @@
  * The serving store is keyed on `new Date(record.endTime)` and the Amber batch grids on
  * FIXED UTC+10 / AEST (amber-readings-batch.ts:16-39). The CSV's "NEM Time" column is the
  * matching fixed-+10 interval clock: DB `interval_end` == parse(NEM Time, +10:00). Verified
- * 2026-07-16 against system-9 export pts 5/6 (distinct cost values line up exactly). So each
+ * 2026-07-16 against device-9 export pts 5/6 (distinct cost values line up exactly). So each
  * record's endTime = NEM Time @ +10:00; chunks are framed by AEST calendar day (an interval
  * ending at AEST 00:00 belongs to the previous day). No DST handling is required — the CSV's
  * Start/End columns are DST-aware Melbourne local and are deliberately NOT used.

@@ -52,12 +52,12 @@ const formatPairJSX = (
 };
 
 interface TestConnectionModalProps {
-  // For existing systems (from dashboard or admin)
+  // For existing devices (from dashboard or admin)
   systemId?: number;
   displayName?: string | null;
   vendorType?: string | null;
 
-  // For new systems (from add system dialog) - not implemented yet
+  // For new devices (from add device dialog) - not implemented yet
   // credentials would be passed another way
 
   onClose: () => void;
@@ -144,7 +144,7 @@ export default function TestConnectionModal({
       setVendorResponse(result.vendorResponse);
       setData({
         latest: result.latest,
-        systemInfo: result.systemInfo,
+        deviceInfo: result.deviceInfo,
       });
       setError(null);
     },
@@ -363,42 +363,42 @@ export default function TestConnectionModal({
                 </div>
               </div>
 
-              {/* System Info Section */}
-              {data.systemInfo && (
+              {/* Device Info Section */}
+              {data.deviceInfo && (
                 <div className="bg-gray-900 rounded-lg p-4">
                   <h4 className="text-sm font-semibold text-gray-400 mb-3">
-                    System Information
+                    Device Information
                   </h4>
                   <div className="grid grid-cols-4 gap-4">
-                    {data.systemInfo.model && (
+                    {data.deviceInfo.model && (
                       <div>
                         <p className="text-xs text-gray-400">Model</p>
                         <p className="text-sm text-white">
-                          {data.systemInfo.model}
+                          {data.deviceInfo.model}
                         </p>
                       </div>
                     )}
-                    {data.systemInfo.serial && (
+                    {data.deviceInfo.serial && (
                       <div>
                         <p className="text-xs text-gray-400">Serial</p>
                         <p className="text-sm text-white">
-                          {data.systemInfo.serial}
+                          {data.deviceInfo.serial}
                         </p>
                       </div>
                     )}
-                    {data.systemInfo.solarSize && (
+                    {data.deviceInfo.solarSize && (
                       <div>
                         <p className="text-xs text-gray-400">Solar Size</p>
                         <p className="text-sm text-white">
-                          {data.systemInfo.solarSize}
+                          {data.deviceInfo.solarSize}
                         </p>
                       </div>
                     )}
-                    {data.systemInfo.batterySize && (
+                    {data.deviceInfo.batterySize && (
                       <div>
                         <p className="text-xs text-gray-400">Battery Size</p>
                         <p className="text-sm text-white">
-                          {data.systemInfo.batterySize}
+                          {data.deviceInfo.batterySize}
                         </p>
                       </div>
                     )}

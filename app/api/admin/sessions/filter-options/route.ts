@@ -7,13 +7,13 @@ export async function GET(request: NextRequest) {
     const authResult = await requireAdmin(request);
     if (authResult instanceof NextResponse) return authResult;
 
-    // Derive from the in-memory systems registry (Postgres-backed) — only ~9 rows.
-    const allSystems = await DeviceConfigRegistry.allDevices();
-    const systemNames = [
-      ...new Set(allSystems.map((s) => s.displayName)),
+    // Derive from the in-memory devices registry (Postgres-backed) — only ~9 rows.
+    const allDevices = await DeviceConfigRegistry.allDevices();
+    const deviceNames = [
+      ...new Set(allDevices.map((s) => s.displayName)),
     ].sort();
     const vendorTypes = [
-      ...new Set(allSystems.map((s) => s.vendorType)),
+      ...new Set(allDevices.map((s) => s.vendorType)),
     ].sort();
     // Hardcoded - these are finite values defined in code
     const causes = ["ADMIN", "CRON", "POLL", "PUSH", "USER", "USER-TEST"];
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       filterOptions: {
-        systemName: systemNames,
+        deviceName: deviceNames,
         vendorType: vendorTypes,
         cause: causes,
         successful: statuses,

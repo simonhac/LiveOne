@@ -38,7 +38,7 @@ function toKw(value: number | null, unit: string | null): number | null {
  * Build the `EnergyFlowMatrix` for a logical system from in-memory signed 5m rows.
  *
  * @param allRows  the agg_5m rows already fetched for the request (5m, or 30m pre-bucketing)
- * @param logicalSystem  the role→point mapping (`resolveLogicalSystem`); its points may span systems
+ * @param logicalSystem  the role→point mapping (`resolveLogicalSystem`); its points may span devices
  * @returns the matrix, or null if no participating point has data / no source or load resolves
  */
 export function buildFlowMatrixFromAggRows(

@@ -13,7 +13,7 @@ export default async function DashboardPage() {
   }
 
   // 1) The user's saved default, if any (a composition dashboard → `/dashboard/id/{id}`, or a
-  //    per-system default → `/device/{id}`). Validated + auto-cleared inside; null → fall through.
+  //    per-device default → `/device/{id}`). Validated + auto-cleared inside; null → fall through.
   const defaultRoute = await resolveDefaultDashboardRoute(userId);
   if (defaultRoute) {
     redirect(defaultRoute);
@@ -31,8 +31,8 @@ export default async function DashboardPage() {
   }
 
   // 3) No default and no dashboards → a friendly empty state. Offer "Browse devices" when the user
-  //    still has a visible system, so a device-only viewer isn't stranded here.
-  const primarySystem = await DeviceConfigRegistry.primaryVisibleDevice(userId);
+  //    still has a visible device, so a device-only viewer isn't stranded here.
+  const primaryDevice = await DeviceConfigRegistry.primaryVisibleDevice(userId);
 
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -42,9 +42,9 @@ export default async function DashboardPage() {
           You don&apos;t have any dashboards yet, and none have been shared with
           you.
         </p>
-        {primarySystem && (
+        {primaryDevice && (
           <Link
-            href={`/device/${primarySystem.id}`}
+            href={`/device/${primaryDevice.id}`}
             className="mt-4 inline-block rounded-md bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
           >
             Browse devices

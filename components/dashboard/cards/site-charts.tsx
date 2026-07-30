@@ -31,12 +31,12 @@ export function SiteChartsGroup({
   chartCapable?: boolean;
 }) {
   const { datum } = useAreaDatum(systemId);
-  const system = subjectOf(datum);
+  const device = subjectOf(datum);
   if (!chartCapable) return null;
   return (
     <SiteChartsCard
       systemId={String(systemId)}
-      system={system}
+      device={device}
       siteCapable={chartCapable}
       cardVisible={(k) => keys.has(k)}
       sankeyOptionsKey={sankeyOptionsKey}

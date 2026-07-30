@@ -369,7 +369,7 @@ export class Inverter {
             location = `Storage #${storageNumber}`;
           }
 
-          // Check for Continental Control Systems meters
+          // Check for Continental Control Devices meters
           let manufacturer = firstMeter.Details?.Manufacturer || "Unknown";
           const model =
             firstMeter.Details?.Model || firstMeter.Details?.Type || "Unknown";

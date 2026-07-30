@@ -22,7 +22,7 @@ export interface ResolvedArea {
 }
 
 /** The Area the handle `systemId` names, per `legacy_handles`, or null when it names no Area. */
-export async function getAreaForSystem(
+export async function getAreaForDevice(
   systemId: number,
 ): Promise<ResolvedArea | null> {
   const [row] = await requirePlanetscaleDb()
@@ -36,9 +36,9 @@ export async function getAreaForSystem(
 }
 
 /**
- * The integer addressing handle for an Area uuid — the inverse of `getAreaForSystem`. For an
+ * The integer addressing handle for an Area uuid — the inverse of `getAreaForDevice`. For an
  * area-of-one this is the physical device's `rid`; for a multi-device area it is the areas-backed
- * virtual-system handle that `getActivePointsForSystem` resolves to child points. Returns null when
+ * virtual-device handle that `getActivePointsForDevice` resolves to child points. Returns null when
  * the uuid is unknown or the Area carries no handle. Used to map a dashboard's per-card Areas back to
  * the systemIds its share scope authorizes.
  *

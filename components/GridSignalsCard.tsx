@@ -17,7 +17,7 @@ export interface GridSignalsCardProps {
  * Presentational "<region> Grid" card (e.g. "NSW Grid"). Shows four live grid signals for the
  * household's local NEM region: spot price ($/MWh), emissions intensity (g CO₂e/kWh),
  * renewables (%), and operational demand (MW). No data fetching happens here — the typed `values`
- * prop is supplied by the caller (cross-system OE region fetch).
+ * prop is supplied by the caller (cross-device OE region fetch).
  *
  * Layout: four compact, label-less stats (bold value + a power-card-style unit, like solar's
  * "kW") in an `@container` grid that reflows by the card's OWN width — 1 column when narrow, then

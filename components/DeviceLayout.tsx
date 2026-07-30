@@ -10,13 +10,13 @@ import UpdateCredentialsModal from "@/components/UpdateCredentialsModal";
 import PollNowModal from "@/components/PollNowModal";
 import ServerErrorModal from "@/components/ServerErrorModal";
 import SessionTimeoutModal from "@/components/SessionTimeoutModal";
-import { AddSystemDialog } from "@/components/AddSystemDialog";
+import { AddDeviceDialog } from "@/components/AddDeviceDialog";
 import ViewDataModal from "@/components/ViewDataModal";
-import SystemSettingsDialog from "@/components/SystemSettingsDialog";
+import DeviceSettingsDialog from "@/components/DeviceSettingsDialog";
 import ConnectionNotification from "@/components/ConnectionNotification";
 import { ChartFocusProvider } from "@/lib/charts/ChartFocusContext";
 
-interface SystemInfo {
+interface DeviceInfo {
   model?: string;
   serial?: string;
   ratings?: string;
@@ -24,7 +24,7 @@ interface SystemInfo {
   batterySize?: string;
 }
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -34,7 +34,7 @@ interface AvailableSystem {
   ownerUsername?: string | null;
 }
 
-interface System {
+interface Device {
   id: number;
   vendorType: string;
   vendorSiteId: string;
@@ -54,15 +54,15 @@ interface System {
 }
 
 interface DeviceLayoutProps {
-  system: System;
+  device: Device;
   userId: string;
   isAdmin: boolean;
-  availableSystems: AvailableSystem[];
+  availableDevices: AvailableDevice[];
   lastUpdate?: Date | null;
-  systemInfo?: SystemInfo | null;
+  deviceInfo?: DeviceInfo | null;
   supportsPolling?: boolean;
   children: ReactNode;
-  onSystemUpdate?: (updates?: {
+  onDeviceUpdate?: (updates?: {
     displayName?: string;
     alias?: string | null;
   }) => void;
@@ -71,20 +71,20 @@ interface DeviceLayoutProps {
 }
 
 /**
- * Chrome for the read-only per-system viewer ("Device") at /device/{id}: the header (admin/util
+ * Chrome for the read-only per-device viewer ("Device") at /device/{id}: the header (admin/util
  * tools + Device Settings) plus the device's admin modals. Recut from the former DashboardLayout —
  * NO DashboardCustomizeProvider, so the header's Customise/Share/Location items self-hide.
  */
 export default function DeviceLayout({
-  system,
+  device,
   userId,
   isAdmin,
-  availableSystems,
+  availableDevices,
   lastUpdate,
-  systemInfo,
+  deviceInfo,
   supportsPolling,
   children,
-  onSystemUpdate,
+  onDeviceUpdate,
   temporalNav,
 }: DeviceLayoutProps) {
   const router = useRouter();
@@ -93,8 +93,8 @@ export default function DeviceLayout({
     isOpen: boolean;
     dryRun: boolean;
   }>({ isOpen: false, dryRun: false });
-  const [showAddSystemDialog, setShowAddSystemDialog] = useState(false);
-  const [showSystemSettingsDialog, setShowSystemSettingsDialog] =
+  const [showAddDeviceDialog, setShowAddDeviceDialog] = useState(false);
+  const [showDeviceSettingsDialog, setShowDeviceSettingsDialog] =
     useState(false);
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
@@ -114,15 +114,15 @@ export default function DeviceLayout({
       fetchJson<{
         vendors: {
           vendorType: string;
-          addSystemFlow?: string;
+          addDeviceFlow?: string;
           credentialFields: unknown[];
         }[];
       }>("/api/vendors"),
   });
   const canUpdateCredentials = !!vendorsData?.vendors.some(
     (v) =>
-      v.vendorType === system.vendorType &&
-      v.addSystemFlow !== "oauth-redirect" &&
+      v.vendorType === device.vendorType &&
+      v.addDeviceFlow !== "oauth-redirect" &&
       (v.credentialFields?.length ?? 0) > 0,
   );
 
@@ -153,12 +153,12 @@ export default function DeviceLayout({
     router.push("/sign-in");
   };
 
-  const handleUpdateSystemSettings = async (updates?: {
+  const handleUpdateDeviceSettings = async (updates?: {
     displayName?: string;
     alias?: string | null;
   }) => {
-    if (onSystemUpdate) {
-      await onSystemUpdate(updates);
+    if (onDeviceUpdate) {
+      await onDeviceUpdate(updates);
     }
     // Refresh server components to update systems list (e.g., if display name changed)
     router.refresh();
@@ -173,25 +173,25 @@ export default function DeviceLayout({
         {/* Header */}
         <DashboardHeader
           temporalNav={temporalNav}
-          displayName={system.displayName}
-          systemId={system.id.toString()}
-          vendorSiteId={system.vendorSiteId}
+          displayName={device.displayName}
+          systemId={device.id.toString()}
+          vendorSiteId={device.vendorSiteId}
           lastUpdate={lastUpdate ?? null}
-          systemInfo={systemInfo ?? null}
-          vendorType={system.vendorType}
-          supportsPolling={supportsPolling ?? system.supportsPolling ?? false}
-          systemStatus={system.status as "active" | "disabled" | "removed"}
+          deviceInfo={deviceInfo ?? null}
+          vendorType={device.vendorType}
+          supportsPolling={supportsPolling ?? device.supportsPolling ?? false}
+          deviceStatus={device.status as "active" | "disabled" | "removed"}
           isAdmin={isAdmin}
           userId={userId}
-          availableSystems={availableSystems}
+          availableDevices={availableDevices}
           onLogout={handleLogout}
           onTestConnection={() => setShowTestConnection(true)}
           onViewData={() => setShowViewDataModal(true)}
           onPollNow={(dryRun) =>
             setShowPollNow({ isOpen: true, dryRun: dryRun || false })
           }
-          onAddSystem={() => setShowAddSystemDialog(true)}
-          onSystemSettings={() => setShowSystemSettingsDialog(true)}
+          onAddDevice={() => setShowAddDeviceDialog(true)}
+          onDeviceSettings={() => setShowDeviceSettingsDialog(true)}
           onUpdateCredentials={
             canUpdateCredentials
               ? () => setShowUpdateCredentials(true)
@@ -206,9 +206,9 @@ export default function DeviceLayout({
         {/* Test Connection Modal */}
         {showTestConnection && (
           <TestConnectionModal
-            systemId={system.id}
-            displayName={system.displayName}
-            vendorType={system.vendorType}
+            systemId={device.id}
+            displayName={device.displayName}
+            vendorType={device.vendorType}
             onClose={() => setShowTestConnection(false)}
           />
         )}
@@ -216,9 +216,9 @@ export default function DeviceLayout({
         {/* Update Credentials Modal */}
         {showUpdateCredentials && (
           <UpdateCredentialsModal
-            systemId={system.id}
-            displayName={system.displayName}
-            vendorType={system.vendorType}
+            systemId={device.id}
+            displayName={device.displayName}
+            vendorType={device.vendorType}
             onClose={() => setShowUpdateCredentials(false)}
             onUpdated={() => router.refresh()}
           />
@@ -227,18 +227,18 @@ export default function DeviceLayout({
         {/* Poll Now Modal */}
         {showPollNow.isOpen && (
           <PollNowModal
-            systemId={system.id}
-            displayName={system.displayName}
-            vendorType={system.vendorType}
+            systemId={device.id}
+            displayName={device.displayName}
+            vendorType={device.vendorType}
             dryRun={showPollNow.dryRun}
             onClose={() => setShowPollNow({ isOpen: false, dryRun: false })}
           />
         )}
 
-        {/* Add System Dialog */}
-        <AddSystemDialog
-          open={showAddSystemDialog}
-          onOpenChange={setShowAddSystemDialog}
+        {/* Add Device Dialog */}
+        <AddDeviceDialog
+          open={showAddDeviceDialog}
+          onOpenChange={setShowAddDeviceDialog}
         />
 
         <ServerErrorModal
@@ -261,24 +261,24 @@ export default function DeviceLayout({
           <ViewDataModal
             isOpen={showViewDataModal}
             onClose={() => setShowViewDataModal(false)}
-            systemId={system.id}
-            systemName={system.displayName}
-            vendorType={system.vendorType}
-            vendorSiteId={system.vendorSiteId}
-            timezoneOffsetMin={system.timezoneOffsetMin}
+            systemId={device.id}
+            deviceName={device.displayName}
+            vendorType={device.vendorType}
+            vendorSiteId={device.vendorSiteId}
+            timezoneOffsetMin={device.timezoneOffsetMin}
           />
         )}
 
         {/* Device Settings Dialog */}
-        <SystemSettingsDialog
-          isOpen={showSystemSettingsDialog}
-          onClose={() => setShowSystemSettingsDialog(false)}
-          systemId={system.id}
-          vendorType={system.vendorType}
-          metadata={system.metadata}
-          ownerClerkUserId={system.ownerClerkUserId ?? undefined}
+        <DeviceSettingsDialog
+          isOpen={showDeviceSettingsDialog}
+          onClose={() => setShowDeviceSettingsDialog(false)}
+          systemId={device.id}
+          vendorType={device.vendorType}
+          metadata={device.metadata}
+          ownerClerkUserId={device.ownerClerkUserId ?? undefined}
           isAdmin={isAdmin}
-          onUpdate={handleUpdateSystemSettings}
+          onUpdate={handleUpdateDeviceSettings}
         />
       </div>
     </ChartFocusProvider>

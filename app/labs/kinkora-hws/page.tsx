@@ -67,13 +67,13 @@ export default async function KinkoraHwsPage({
 }) {
   const { access } = await searchParams;
 
-  const system = await DeviceConfigRegistry.deviceByUsernameAndSlug(
+  const device = await DeviceConfigRegistry.deviceByUsernameAndSlug(
     "simon",
     "kinkora",
   );
-  if (!system) notFound();
+  if (!device) notFound();
 
-  // Access check: a valid (unified) dashboard share token whose dashboard is owned by the system's
+  // Access check: a valid (unified) dashboard share token whose dashboard is owned by the device's
   // owner is sufficient — config-v4 re-pointed the legacy owner-scoped token at an owner-wide
   // auto-created dashboard, so owner-match preserves the pre-cutover scope. Else fall back to Clerk auth.
   let viaShareToken = false;
@@ -81,7 +81,7 @@ export default async function KinkoraHwsPage({
     const validated = await validateDashboardShareToken(access);
     if (validated) {
       const dash = await getDashboard(validated.dashboardId);
-      if (dash && dash.ownerClerkUserId === system.ownerClerkUserId) {
+      if (dash && dash.ownerClerkUserId === device.ownerClerkUserId) {
         viaShareToken = true;
       }
     }
@@ -90,26 +90,26 @@ export default async function KinkoraHwsPage({
     const authResult = await auth();
     const { userId } = authResult;
     if (!userId) redirect("/sign-in");
-    const isOwner = system.ownerClerkUserId === userId;
+    const isOwner = device.ownerClerkUserId === userId;
     const isAdmin = isOwner ? false : await isUserAdmin(authResult);
     if (!isOwner && !isAdmin) redirect("/dashboard");
   }
 
-  const tempPoint = await hwsPoint(system.id, "temperature");
-  const powerPoint = await hwsPoint(system.id, "power");
+  const tempPoint = await hwsPoint(device.id, "temperature");
+  const powerPoint = await hwsPoint(device.id, "power");
   if (tempPoint === null) {
     return (
       <main className="min-h-screen bg-gray-900 text-gray-100 p-8">
         <h1 className="text-xl font-semibold mb-2">Kinkora HWS</h1>
         <p className="text-red-400">
-          No load.hws/temperature point for system {system.id}. Register it with
+          No load.hws/temperature point for device {device.id}. Register it with
           scripts/seed-hws-point.ts.
         </p>
       </main>
     );
   }
 
-  const tz = system.timezoneOffsetMin;
+  const tz = device.timezoneOffsetMin;
   const nowMs = Date.now();
   const todayLocalMidnightMs =
     Math.floor((nowMs + tz * 60_000) / DAY_MS) * DAY_MS - tz * 60_000;

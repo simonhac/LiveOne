@@ -46,7 +46,7 @@ export function uuidv5(
 }
 
 /**
- * Deterministic point identity from vendor identity. Inputs are all non-null point/system columns
+ * Deterministic point identity from vendor identity. Inputs are all non-null point/device columns
  * (`systems.vendor_type`, `systems.vendor_site_id`, `point_info.physical_path_tail`). The backfill and
  * `PointManager.ensurePointInfo` MUST use this same derivation so existing and new rows agree.
  */

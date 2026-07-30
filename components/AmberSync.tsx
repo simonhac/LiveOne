@@ -2,9 +2,9 @@
 
 import { useState, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { invalidateSystem } from "@/lib/queries";
+import { invalidateDevice } from "@/lib/queries";
 
-interface AvailableSystem {
+interface AvailableDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -15,21 +15,21 @@ interface AvailableSystem {
 
 interface AmberSyncProps {
   systemIdentifier: string; // For display/routing purposes
-  system: {
+  device: {
     id: number;
     displayName: string;
   };
   userId: string;
   isAdmin: boolean;
-  availableSystems: AvailableSystem[];
+  availableDevices: AvailableDevice[];
 }
 
 export default function AmberSync({
   systemIdentifier,
-  system,
+  device,
   userId,
   isAdmin,
-  availableSystems,
+  availableDevices,
 }: AmberSyncProps) {
   const queryClient = useQueryClient();
   const [action, setAction] = useState<"usage" | "pricing" | "both">("both");
@@ -166,9 +166,9 @@ export default function AmberSync({
       ]);
     } finally {
       setIsRunning(false);
-      // Invalidate the system's queries (incl. ['amber', id]) so retroactively-upgraded
+      // Invalidate the device's queries (incl. ['amber', id]) so retroactively-upgraded
       // billable data surfaces on the dashboard cards and timeline.
-      invalidateSystem(queryClient, system.id);
+      invalidateDevice(queryClient, device.id);
     }
   };
 

@@ -15,26 +15,26 @@ export interface EnphaseTokens {
 
 export interface EnphaseTelemetryResponse {
   system_id?: string;
-  production_power?: number | null;        // Watts
-  consumption_power?: number | null;       // Watts
-  storage_power?: number | null;          // Watts (negative = charging)
-  grid_power?: number | null;             // Watts
+  production_power?: number | null; // Watts
+  consumption_power?: number | null; // Watts
+  storage_power?: number | null; // Watts (negative = charging)
+  grid_power?: number | null; // Watts
   storage_energy_charged?: number | null; // Wh
   storage_energy_discharged?: number | null; // Wh
   production_energy_lifetime?: number | null; // Wh
   consumption_energy_lifetime?: number | null; // Wh
-  storage_soc?: number | null;            // Percentage
-  last_report_at?: number | null;         // Unix timestamp
+  storage_soc?: number | null; // Percentage
+  last_report_at?: number | null; // Unix timestamp
   // Additional fields from summary endpoint
-  energy_today?: number | null;           // Wh for today
-  energy_lifetime?: number | null;        // Total lifetime Wh
-  system_size?: number | null;            // System size in W
+  energy_today?: number | null; // Wh for today
+  energy_lifetime?: number | null; // Total lifetime Wh
+  system_size?: number | null; // Device size in W
   // Raw vendor response for consistency with SelectronicData
   raw?: Record<string, any>;
-  rawResponse?: any;                       // Raw response object from API
+  rawResponse?: any; // Raw response object from API
 }
 
-export interface EnphaseSystem {
+export interface EnphaseDevice {
   system_id: string;
   name: string;
   timezone: string;

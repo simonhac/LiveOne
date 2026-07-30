@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
       agg5m,
       raw24h,
       agg5m24h,
-      systems24h,
+      devices24h,
       lastIngestedMs,
       sessionsRes,
     ] = await Promise.all([
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
       ReadingsDao.createdAtHistogramSince("agg5m", sinceMs).then(toBuckets),
       ReadingsDao.countByCreatedAtSince("raw", sinceMs),
       ReadingsDao.countByCreatedAtSince("agg5m", sinceMs),
-      ReadingsDao.distinctSystemsByRawCreatedAtSince(sinceMs),
+      ReadingsDao.distinctDevicesByRawCreatedAtSince(sinceMs),
       ReadingsDao.latestRawCreatedAtMs(),
       db.execute(
         sql`SELECT count(*)::int AS n FROM sessions WHERE created_at >= ${since}`,
@@ -108,7 +108,7 @@ export async function GET(request: NextRequest) {
         raw24h,
         agg5m24h,
         sessions24h,
-        systems24h,
+        devices24h,
         lastIngestedAt:
           lastIngestedMs != null
             ? new Date(lastIngestedMs).toISOString()

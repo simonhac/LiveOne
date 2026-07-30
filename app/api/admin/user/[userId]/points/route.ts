@@ -16,20 +16,20 @@ export async function GET(
 
     const { userId } = await params;
 
-    // Systems owned by this user (excluding composite/area systems and non-active systems)
-    const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
-    const activeSystems = ownedSystems.filter((s) => s.status === "active");
+    // Devices owned by this user (excluding composite/area devices and non-active devices)
+    const ownedDevices = await DeviceConfigRegistry.devicesByOwner(userId);
+    const activeDevices = ownedDevices.filter((s) => s.status === "active");
 
-    if (activeSystems.length === 0) {
+    if (activeDevices.length === 0) {
       return NextResponse.json({
         success: true,
         availablePoints: [],
-        referencedSystems: [],
+        referencedDevices: [],
       });
     }
 
-    // Get all active points from these systems
-    const systemIds = activeSystems.map((s) => s.id);
+    // Get all active points from these devices
+    const systemIds = activeDevices.map((s) => s.id);
     // `points ⋈ devices` since slice 1b. Projected explicitly rather than `select()`-ing the row,
     // because the served shape PointInfo.from() wants is no longer one table's columns: `systemId` is
     // the owning device's handle and `index` is the global `points.rid`.
@@ -60,19 +60,19 @@ export async function GET(
       updatedAtMs: p.updatedAt ? p.updatedAt.getTime() : null,
     }));
 
-    // Filter to only points from the owner's systems and build the response
+    // Filter to only points from the owner's devices and build the response
     const availablePoints: Array<{
       id: string;
       logicalPath: string;
       pointName: string;
       systemId: number;
-      systemName: string;
+      deviceName: string;
     }> = [];
 
     const referencedSystemIds = new Set<number>();
 
     for (const row of points) {
-      // Skip points not from the owner's systems
+      // Skip points not from the owner's devices
       if (!systemIds.includes(row.systemId)) {
         continue;
       }
@@ -82,9 +82,9 @@ export async function GET(
         continue;
       }
 
-      // Find the system for this point
-      const system = activeSystems.find((s) => s.id === row.systemId);
-      if (!system) {
+      // Find the device for this point
+      const device = activeDevices.find((s) => s.id === row.systemId);
+      if (!device) {
         continue;
       }
 
@@ -96,14 +96,14 @@ export async function GET(
         logicalPath: point.getLogicalPath()!,
         pointName: point.name,
         systemId: point.systemId,
-        systemName: system.displayName,
+        deviceName: device.displayName,
       });
 
       referencedSystemIds.add(point.systemId);
     }
 
-    // Build the referencedSystems list
-    const referencedSystems = activeSystems
+    // Build the referencedDevices list
+    const referencedDevices = activeDevices
       .filter((s) => referencedSystemIds.has(s.id))
       .map((s) => ({
         id: s.id,
@@ -114,7 +114,7 @@ export async function GET(
     return NextResponse.json({
       success: true,
       availablePoints,
-      referencedSystems,
+      referencedDevices,
     });
   } catch (error) {
     console.error("Error fetching available points for user:", error);

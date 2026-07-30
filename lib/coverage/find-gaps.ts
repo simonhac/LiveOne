@@ -2,7 +2,7 @@
  * Coverage-repair framework — Stage 1: the generic gap-finder (vendor-agnostic).
  *
  * Generalizes the original Amber-only detector: scan the 5m aggregates (via the readings DAO —
- * ReadingsDao.countAgg5mByLocalDay / countAgg5mForLocalDay) for missing intervals in a system's
+ * ReadingsDao.countAgg5mByLocalDay / countAgg5mForLocalDay) for missing intervals in a device's
  * coverage points over a local-day range, parameterized by cadence (→ expected intervals per day) and
  * the local-day bucket offset. One function serves 30-min (Amber, 48/day) and 5-min (OpenElectricity,
  * Sigenergy, 288/day) vendors alike. READ-ONLY.
@@ -24,7 +24,7 @@ function localMidnightUtcMs(day: string, offsetMin: number): number {
 }
 
 /**
- * Resolve a provider's expected point tails to this system's coverage points (only those that exist).
+ * Resolve a provider's expected point tails to this device's coverage points (only those that exist).
  *
  * Sourced from `points`, not `point_info`: `CoveragePoint.id` used to be `point_info.index`, whose
  * table the terminal window drops and which `points` has no counterpart to. It is now `points.rid` —
@@ -71,7 +71,7 @@ function eachDay(firstDay: string, lastDay: string): string[] {
 }
 
 /**
- * Find coverage gaps for one system over the local-day window [firstDay, lastDay]. A day is a gap if
+ * Find coverage gaps for one device over the local-day window [firstDay, lastDay]. A day is a gap if
  * ANY coverage point has fewer than `expected = 1440/cadenceMinutes` intervals that day (missing rows,
  * not zeros — these vendors emit a row per interval even at zero). Points absent from `point_info` are
  * simply not scanned (a channel a site lacks is never falsely flagged).
@@ -143,7 +143,7 @@ export async function findCoverageGaps(
   return gaps;
 }
 
-/** Best present-count across the coverage points for `(system, day)`. Used by the runner's landing
+/** Best present-count across the coverage points for `(device, day)`. Used by the runner's landing
  *  wait: a day is "landed" when this rises above the pre-repair value (progress) or reaches `expected`. */
 export async function countMaxPresent(
   db: PgDb,

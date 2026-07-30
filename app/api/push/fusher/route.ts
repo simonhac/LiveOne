@@ -7,7 +7,7 @@ import { sessionManager } from "@/lib/session-manager";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { FUSHER_POINTS } from "@/lib/vendors/fusher/point-metadata";
-import { getSystemCredentials } from "@/lib/secure-credentials";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
@@ -35,7 +35,7 @@ export interface FusherPushData {
   // Battery state
   batterySOC?: number | null; // State of charge (0-100%)
 
-  // System status
+  // Device status
   faultCode?: string | null;
   faultTimestamp?: string | null; // ISO8601 timestamp of fault
   generatorStatus?: number | null;
@@ -111,29 +111,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Use siteId to find system, defaulting to "kinkora" for backwards compatibility
+    // Use siteId to find device, defaulting to "kinkora" for backwards compatibility
     const siteId = data.siteId || "kinkora";
 
-    // Find the system by vendorSiteId
-    const system = await DeviceConfigRegistry.deviceByVendorSite(siteId);
+    // Find the device by vendorSiteId
+    const device = await DeviceConfigRegistry.deviceByVendorSite(siteId);
 
-    if (!system) {
+    if (!device) {
       console.error(`[Fusher Push] System not found for siteId: ${siteId}`);
-      // Note: Cannot record session without valid system (requires JOIN with systems table)
+      // Note: Cannot record session without valid device (requires JOIN with systems table)
       return NextResponse.json({ error: "System not found" }, { status: 404 });
     }
 
-    // Verify it's a Fusher system (accept both "fusher" and legacy "fronius")
-    if (system.vendorType !== "fusher" && system.vendorType !== "fronius") {
+    // Verify it's a Fusher device (accept both "fusher" and legacy "fronius")
+    if (device.vendorType !== "fusher" && device.vendorType !== "fronius") {
       console.error(
-        `[Fusher Push] System ${system.id} is not a Fusher system (type: ${system.vendorType})`,
+        `[Fusher Push] System ${device.id} is not a Fusher system (type: ${device.vendorType})`,
       );
 
       await recordFailedSession(
         sessionStart,
-        system.id,
+        device.id,
         "400",
-        `System is configured as ${system.vendorType}, not fusher`,
+        `System is configured as ${device.vendorType}, not fusher`,
         { action: data.action, siteId },
       );
 
@@ -144,9 +144,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate API key against Clerk credentials
-    if (!system.ownerClerkUserId) {
+    if (!device.ownerClerkUserId) {
       console.error(
-        `[Fusher Push] System ${system.id} has no owner - cannot validate credentials`,
+        `[Fusher Push] System ${device.id} has no owner - cannot validate credentials`,
       );
       return NextResponse.json(
         { error: "System has no owner configured" },
@@ -154,9 +154,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const credentials = await getSystemCredentials(
-      system.ownerClerkUserId,
-      system.id,
+    const credentials = await getDeviceCredentials(
+      device.ownerClerkUserId,
+      device.id,
     );
 
     // Accept both "fusher" and legacy "fronius" credentials
@@ -166,11 +166,11 @@ export async function POST(request: NextRequest) {
         credentials.vendorType !== "fronius")
     ) {
       console.error(
-        `[Fusher Push] No Fusher credentials found for system ${system.id}`,
+        `[Fusher Push] No Fusher credentials found for system ${device.id}`,
       );
       await recordFailedSession(
         sessionStart,
-        system.id,
+        device.id,
         "401",
         "No credentials configured for this system",
         { action: data.action, siteId },
@@ -183,11 +183,11 @@ export async function POST(request: NextRequest) {
 
     if (credentials.apiKey !== data.apiKey) {
       console.error(
-        `[Fusher Push] Invalid API key for system ${system.id} (${system.displayName})`,
+        `[Fusher Push] Invalid API key for system ${device.id} (${device.displayName})`,
       );
       await recordFailedSession(
         sessionStart,
-        system.id,
+        device.id,
         "401",
         "Invalid API key",
         { action: data.action, siteId },
@@ -198,13 +198,13 @@ export async function POST(request: NextRequest) {
     // If action is 'test', return success without storing data
     if (data.action === "test") {
       console.log(
-        `[Fusher Push] Test authentication successful for system ${system.id} (${system.displayName})`,
+        `[Fusher Push] Test authentication successful for system ${device.id} (${device.displayName})`,
       );
 
       // Record successful test session
       const duration = Date.now() - sessionStart.getTime();
       await sessionManager.recordSession({
-        systemId: system.id,
+        systemId: device.id,
         cause: "PUSH",
         started: sessionStart,
         duration,
@@ -217,8 +217,8 @@ export async function POST(request: NextRequest) {
         success: true,
         action: "test",
         message: "Authentication successful",
-        systemId: system.id,
-        displayName: system.displayName,
+        systemId: device.id,
+        displayName: device.displayName,
       });
     }
 
@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
 
     // Log the push
     console.log(
-      `[Fusher Push] Received data for system ${system.id} (${system.displayName})`,
+      `[Fusher Push] Received data for system ${device.id} (${device.displayName})`,
     );
     console.log(
       `[Fusher Push] Timestamp: ${data.timestamp}, Sequence: ${data.sequence}, Delay: ${delaySeconds}s`,
@@ -246,7 +246,7 @@ export async function POST(request: NextRequest) {
     try {
       session = await sessionManager.createSession({
         sessionLabel: data.sequence,
-        systemId: system.id,
+        systemId: device.id,
         cause: "PUSH",
         started: sessionStart,
       });
@@ -295,19 +295,19 @@ export async function POST(request: NextRequest) {
       // Batch insert all readings - this will automatically ensure point_info entries exist
       if (readingsToInsert.length > 0) {
         await PointManager.getInstance().insertPointReadingsRaw(
-          system.id,
+          device.id,
           session,
           readingsToInsert,
           collector,
         );
         console.log(
-          `[Fusher Push] Inserted ${readingsToInsert.length} point readings for system ${system.id}`,
+          `[Fusher Push] Inserted ${readingsToInsert.length} point readings for system ${device.id}`,
         );
       }
 
       // Update polling status to show successful data receipt
       // Store the parsed JSON object
-      await updatePollingStatusSuccess(system.id, data);
+      await updatePollingStatusSuccess(device.id, data);
 
       // Update session with success
       const duration = Date.now() - sessionStart.getTime();
@@ -323,26 +323,26 @@ export async function POST(request: NextRequest) {
       );
 
       console.log(
-        `[Fusher Push] Successfully stored data for system ${system.id}`,
+        `[Fusher Push] Successfully stored data for system ${device.id}`,
       );
 
       return NextResponse.json({
         success: true,
         action: "store",
         message: "Data received and stored",
-        systemId: system.id,
+        systemId: device.id,
         timestamp: inverterTime.toISOString(),
         delaySeconds,
       });
     } catch (dbError) {
       console.error(
-        `[Fusher Push] Database error for system ${system.id}:`,
+        `[Fusher Push] Database error for system ${device.id}:`,
         dbError,
       );
 
       // Update polling status with error
       await updatePollingStatusError(
-        system.id,
+        device.id,
         dbError instanceof Error ? dbError : "Database error",
       );
 
@@ -401,7 +401,7 @@ export async function GET() {
       always: ["apiKey", "action"], // apiKey for authentication, action is 'test' or 'store'
       forStoreAction: ["timestamp", "sequence"],
       optional: [
-        "siteId", // Identifies the system (defaults to "kinkora" if not provided)
+        "siteId", // Identifies the device (defaults to "kinkora" if not provided)
         "solarW",
         "solarLocalW",
         "solarRemoteW",

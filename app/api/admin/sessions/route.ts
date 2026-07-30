@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const label = searchParams.get("label");
 
     // New server-side filtering/sorting parameters
-    const systemParam = searchParams.get("system");
+    const deviceParam = searchParams.get("system");
     const vendorParam = searchParams.get("vendor");
     const causeParam = searchParams.get("cause");
     const statusParam = searchParams.get("status");
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
 
     // If using new query parameters, use querySessions
     if (
-      systemParam ||
+      deviceParam ||
       vendorParam ||
       causeParam ||
       statusParam ||
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
       pageParam
     ) {
       // Parse filters
-      const systemNames = systemParam ? systemParam.split(",") : undefined;
+      const deviceNames = deviceParam ? deviceParam.split(",") : undefined;
       const vendorTypes = vendorParam ? vendorParam.split(",") : undefined;
       const causes = causeParam ? causeParam.split(",") : undefined;
       // Parse status filter: "success" → true, "error" → false, "pending" → null
@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
 
       // Query sessions
       const result = await sessionManager.querySessions({
-        systemNames,
+        deviceNames,
         vendorTypes,
         causes,
         successful,

@@ -37,7 +37,7 @@ export interface SessionData {
 }
 
 /**
- * Full session record with system info (from JOIN with systems table)
+ * Full session record with device info (from JOIN with systems table)
  * Used by: getSessions, getLastSessions, getSessionsByLabel, getSessionById
  *
  * Session reads are served from Postgres. `id` is the app-minted UUIDv7 (text);
@@ -45,12 +45,12 @@ export interface SessionData {
  * its `createdAt` holds the legacy store's `started` value, so `started`/`createdAt`
  * are both mapped from PG `createdAt`.
  */
-export interface SessionWithSystem {
+export interface SessionWithDevice {
   id: string;
   sessionLabel: string | null;
   systemId: number;
   vendorType: string; // from systems.vendorType
-  systemName: string; // from systems.displayName
+  deviceName: string; // from systems.displayName
   cause: string;
   started: Date;
   duration: number;
@@ -66,7 +66,7 @@ export interface SessionWithSystem {
  * Session summary without response field (for list views)
  * Used by: querySessions
  */
-export type SessionSummary = Omit<SessionWithSystem, "response">;
+export type SessionSummary = Omit<SessionWithDevice, "response">;
 
 /**
  * In-process registry of pending sessions. `createSession` stashes the session's
@@ -101,7 +101,7 @@ export class SessionManager {
    * The session id is an app-minted UUIDv7 (text, time-ordered) — this removes
    * the dependency on the legacy store's autoincrement (decision E). The
    * authoritative copy is written to Postgres via the queue.
-   * Note: vendorType and systemName are no longer stored - they're retrieved via JOIN with systems table
+   * Note: vendorType and deviceName are no longer stored - they're retrieved via JOIN with systems table
    */
   async createSession(data: {
     sessionLabel?: string | null;
@@ -203,13 +203,13 @@ export class SessionManager {
       // Emit a single combined message (session + all readings) to the queue,
       // which the receiver materialises into Postgres. The session is included
       // even when there are zero readings.
-      const system = await DeviceConfigRegistry.deviceByHandle(
+      const device = await DeviceConfigRegistry.deviceByHandle(
         pending.systemId,
       );
-      if (system) {
+      if (device) {
         await publishPoll(
-          system,
-          buildSessionPayload(sessionPublishInput, system.timezoneOffsetMin),
+          device,
+          buildSessionPayload(sessionPublishInput, device.timezoneOffsetMin),
           pollObservations,
         );
       }
@@ -221,7 +221,7 @@ export class SessionManager {
   }
 
   /**
-   * Record a communication session with an energy system
+   * Record a communication session with an energy device
    * @deprecated Use createSession() and updateSessionResult() instead
    */
   async recordSession(data: SessionData): Promise<void> {
@@ -259,11 +259,11 @@ export class SessionManager {
 
       // Publish the completed session to the queue (→ Postgres via the receiver);
       // a session-only message with no readings.
-      const system = await DeviceConfigRegistry.deviceByHandle(data.systemId);
-      if (system) {
+      const device = await DeviceConfigRegistry.deviceByHandle(data.systemId);
+      if (device) {
         await publishPoll(
-          system,
-          buildSessionPayload(sessionPublishInput, system.timezoneOffsetMin),
+          device,
+          buildSessionPayload(sessionPublishInput, device.timezoneOffsetMin),
           [],
         );
       }
@@ -314,20 +314,20 @@ export class SessionManager {
   }
 
   /**
-   * Get system info for session recording
+   * Get device info for session recording
    */
-  async getSystemInfo(
+  async getDeviceInfo(
     systemId: number,
-  ): Promise<{ vendorType: string; systemName: string } | null> {
+  ): Promise<{ vendorType: string; deviceName: string } | null> {
     try {
-      const system = await DeviceConfigRegistry.deviceByHandle(systemId);
-      if (!system) {
+      const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+      if (!device) {
         return null;
       }
 
       return {
-        vendorType: system.vendorType,
-        systemName: system.displayName || `System ${systemId}`,
+        vendorType: device.vendorType,
+        deviceName: device.displayName || `System ${systemId}`,
       };
     } catch (error) {
       console.error("[SessionManager] Failed to get system info:", error);
@@ -336,20 +336,20 @@ export class SessionManager {
   }
 
   /**
-   * Map a joined Postgres (sessions ⋈ devices) row to SessionWithSystem.
+   * Map a joined Postgres (sessions ⋈ devices) row to SessionWithDevice.
    * Postgres has no `started` column — `createdAt` holds the legacy store's
    * `started` value, so both `started` and `createdAt` are derived from it.
    */
   private mapPgRow(r: {
     sessions: typeof pgSessions.$inferSelect;
     devices: typeof pgDevices.$inferSelect;
-  }): SessionWithSystem {
+  }): SessionWithDevice {
     return {
       id: r.sessions.id,
       sessionLabel: r.sessions.sessionLabel,
       systemId: r.sessions.deviceRid,
       vendorType: r.devices.vendor,
-      systemName: r.devices.name,
+      deviceName: r.devices.name,
       cause: r.sessions.cause,
       started: r.sessions.createdAt,
       duration: r.sessions.duration,
@@ -371,7 +371,7 @@ export class SessionManager {
     _start: number,
     count: number,
     before?: Date,
-  ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
+  ): Promise<{ sessions: SessionWithDevice[]; count: number }> {
     if (!planetscaleDb) return { sessions: [], count: 0 };
     try {
       const { lt, desc } = await import("drizzle-orm");
@@ -398,7 +398,7 @@ export class SessionManager {
    */
   async getLastSessions(
     count: number,
-  ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
+  ): Promise<{ sessions: SessionWithDevice[]; count: number }> {
     if (!planetscaleDb) return { sessions: [], count: 0 };
     try {
       const { desc } = await import("drizzle-orm");
@@ -424,7 +424,7 @@ export class SessionManager {
    */
   async getSessionsByLabel(
     label: string,
-  ): Promise<{ sessions: SessionWithSystem[]; count: number }> {
+  ): Promise<{ sessions: SessionWithDevice[]; count: number }> {
     if (!planetscaleDb) return { sessions: [], count: 0 };
     try {
       const { desc } = await import("drizzle-orm");
@@ -450,7 +450,7 @@ export class SessionManager {
   /**
    * Get a single session by ID. Served from Postgres.
    */
-  async getSessionById(sessionId: string): Promise<SessionWithSystem | null> {
+  async getSessionById(sessionId: string): Promise<SessionWithDevice | null> {
     if (!planetscaleDb) return null;
     try {
       const results = await planetscaleDb
@@ -474,7 +474,7 @@ export class SessionManager {
    */
   async querySessions(params: {
     // Filters
-    systemNames?: string[];
+    deviceNames?: string[];
     vendorTypes?: string[];
     causes?: string[];
     successful?: (boolean | null)[]; // null = pending/in-progress
@@ -515,8 +515,8 @@ export class SessionManager {
       // Build WHERE conditions
       const conditions = [];
 
-      if (params.systemNames && params.systemNames.length > 0) {
-        conditions.push(inArray(pgDevices.name, params.systemNames));
+      if (params.deviceNames && params.deviceNames.length > 0) {
+        conditions.push(inArray(pgDevices.name, params.deviceNames));
       }
 
       if (params.vendorTypes && params.vendorTypes.length > 0) {
@@ -592,7 +592,7 @@ export class SessionManager {
         sessionLabel: r.sessions.sessionLabel,
         systemId: r.sessions.deviceRid,
         vendorType: r.devices.vendor,
-        systemName: r.devices.name,
+        deviceName: r.devices.name,
         cause: r.sessions.cause,
         started: r.sessions.createdAt,
         duration: r.sessions.duration,

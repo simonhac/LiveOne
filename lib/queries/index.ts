@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { isSystemQuery, type SystemIdLike } from "./keys";
+import { isDeviceQuery, type SystemIdLike } from "./keys";
 
 export * from "./keys";
 export * from "./fetcher";
@@ -38,15 +38,15 @@ export {
 } from "./preferences";
 
 /**
- * Invalidate every live/historical query for a system — the React Query replacement for
+ * Invalidate every live/historical query for a device — the React Query replacement for
  * the old `triggerDashboardRefresh()` event bus. Call after a manual Poll-Now or Amber-Sync.
  * Works across routes because the QueryClient is a global singleton.
  */
-export function invalidateSystem(
+export function invalidateDevice(
   queryClient: QueryClient,
   systemId: SystemIdLike,
 ): Promise<void> {
   return queryClient.invalidateQueries({
-    predicate: (query) => isSystemQuery(systemId, query.queryKey),
+    predicate: (query) => isDeviceQuery(systemId, query.queryKey),
   });
 }

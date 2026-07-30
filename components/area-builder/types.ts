@@ -10,8 +10,8 @@
 import type { AreaLocation } from "@/lib/areas/types";
 import type { PointId } from "@/lib/ids";
 
-/** A device the caller may add as a member — one row of `GET /api/areas/candidate-systems`. */
-export interface CandidateSystem {
+/** A device the caller may add as a member — one row of `GET /api/areas/candidate-devices`. */
+export interface CandidateDevice {
   id: number;
   displayName: string;
   vendorSiteId: string;
@@ -21,8 +21,8 @@ export interface CandidateSystem {
   alias: string | null;
 }
 
-export interface CandidateSystemsResponse {
-  systems: CandidateSystem[];
+export interface CandidateDevicesResponse {
+  devices: CandidateDevice[];
 }
 
 /** One typed role→point edge — the shape both the editor and `PUT .../bindings` use. */
@@ -54,8 +54,8 @@ export interface AreaEditPayload {
   bindings: AreaBinding[];
 }
 
-/** One point of a member device — one row of `GET /api/system/[id]/points?showActive=true`. */
-export interface SystemPoint {
+/** One point of a member device — one row of `GET /api/device/[id]/points?showActive=true`. */
+export interface DevicePoint {
   logicalPath: string;
   physicalPath: string;
   name: string;
@@ -68,8 +68,8 @@ export interface SystemPoint {
   active: boolean;
 }
 
-export interface SystemPointsResponse {
-  points: SystemPoint[];
+export interface DevicePointsResponse {
+  points: DevicePoint[];
 }
 
 /** The logical-path stem = the part before the "/" (e.g. "source.solar/power" → "source.solar"). */
