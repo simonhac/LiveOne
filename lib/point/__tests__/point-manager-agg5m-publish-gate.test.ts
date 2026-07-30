@@ -30,7 +30,7 @@ jest.mock("../../observations/publisher", () => ({
 }));
 
 // The device config registry returns the vendorType under test (config-v4 slice K2 — was
-// `SystemsManager.getSystem`).
+// `SystemsManager.getSystem`, deleted in K3).
 let currentVendorType = "selectronic";
 // `isAreaHandle` joined this mock in slice K3, when the area-view resolution moved off `SystemsManager`.
 jest.mock("@/lib/registry/device-config", () => ({

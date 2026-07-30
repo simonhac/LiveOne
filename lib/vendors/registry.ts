@@ -110,7 +110,7 @@ export class VendorRegistry {
 
   /**
    * Get an adapter for a specific system by its ID
-   * Uses SystemsManager to look up the system's vendor type
+   * Uses the device config registry to look up the device's vendor type
    */
   static async getAdapterForSystem(
     systemId: number,

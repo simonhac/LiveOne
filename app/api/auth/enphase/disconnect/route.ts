@@ -33,9 +33,8 @@ export async function POST(request: NextRequest) {
     // Note: We don't clear tokens anymore - systems are just marked as removed
     // and credentials are ignored for removed systems
 
-    // Read the user's systems from the SystemsManager cache (PG-served, the same store
-    // updateSystem writes), then mark each Enphase system removed via updateSystem (keyed
-    // by id).
+    // The read is the config registry (`devices`); each Enphase device is then marked removed through
+    // the `systems` writer, keyed by handle.
     const systemsManager = SystemsManager.getInstance();
     const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
     const enphaseSystems = ownedSystems.filter(
@@ -84,8 +83,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Use SystemsManager to get the system
-    const systemsManager = SystemsManager.getInstance();
     const system = await DeviceConfigRegistry.deviceByHandle(
       parseInt(systemId),
     );

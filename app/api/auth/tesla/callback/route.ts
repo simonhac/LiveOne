@@ -123,8 +123,7 @@ export async function GET(request: NextRequest) {
     const vehicleId = String(teslaVehicle.id);
     console.log("TESLA: Using vehicle:", vehicleId, teslaVehicle.display_name);
 
-    // Check if system already exists (read via SystemsManager so it honours
-    // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
+    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
     const systemsManager = SystemsManager.getInstance();
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(vehicleId);

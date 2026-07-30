@@ -30,9 +30,8 @@ export async function POST(request: NextRequest) {
     const userDisplay = await getUserDisplay(userId);
     console.log("TESLA: User disconnecting Tesla:", userDisplay);
 
-    // Read the user's systems from the SystemsManager cache (PG-served, the same store
-    // updateSystem writes), then mark each Tesla system removed via updateSystem (keyed
-    // by id).
+    // The read is the config registry (`devices`); each Tesla device is then marked removed through
+    // the `systems` writer, keyed by handle.
     const systemsManager = SystemsManager.getInstance();
     const ownedSystems = await DeviceConfigRegistry.devicesByOwner(userId);
     const teslaSystems = ownedSystems.filter((s) => s.vendorType === "tesla");
@@ -79,8 +78,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Use SystemsManager to get the system
-    const systemsManager = SystemsManager.getInstance();
     const system = await DeviceConfigRegistry.deviceByHandle(
       parseInt(systemId),
     );

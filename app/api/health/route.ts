@@ -67,7 +67,8 @@ export interface V4MirrorState {
  * without one) — i.e. registry-sync has run. The check is silent until then, and arms itself
  * automatically afterwards. A single incidental `devices` row (the mirror creating one on a point mint)
  * deliberately does NOT arm it; requiring `devicesMissing === 0` is what makes the signal trustworthy.
- * `SystemsManager.createSystem` mirrors into `devices` too, so a new system cannot silently disarm it.
+ * `SystemsManager.createSystem` (the surviving `systems` writer) mirrors into `devices` too, so a new
+ * system cannot silently disarm it.
  */
 async function readV4Mirror(): Promise<V4MirrorState> {
   const result = (await requirePlanetscaleDb().execute(sql`

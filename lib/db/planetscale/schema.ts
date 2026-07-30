@@ -738,7 +738,7 @@ export const areas = pgTable(
     // display_name→name, alias→slug IN-WINDOW, so this build only works against a TRANSFORMED database.
     // This is the all-or-nothing cutover build (deployed at step 7) — it must not reach `main` before the
     // window. Why a stale name here is dangerous rather than merely wrong: a projection-less `.select()`
-    // on this table (`fetchAreaByHandle`, lib/systems-manager.ts:116) makes drizzle expand EVERY column
+    // on this table (`fetchAreaForHandle`, lib/registry/device-config.ts) makes drizzle expand EVERY column
     // below, so a mismatch is not a type error — it is a runtime 42703 that `lib/dashboard/access.ts`'s
     // per-area `catch {}` swallows, silently resolving the area to ZERO points. That is exactly the Run-5
     // AC1 "lockout": 35 area_bindings present and correct, 0 points served.
@@ -1108,7 +1108,7 @@ export const points = pgTable(
 //     point_readings_flow_attr_1d's data-loss firewall (that table is untouched).
 //   • The migration-0014 case still holds — a member whose `systems` row was deleted keeps its
 //     membership, because `deleteSystem` ORPHANS its `devices` row rather than deleting it
-//     (lib/systems-manager.ts, noted there as a known gap). That is what makes a hard `device_id` FK
+//     (`SystemsManager.deleteSystem`, noted there as a deliberate gap). That is what makes a hard `device_id` FK
 //     satisfiable where the old int deliberately had none. If that gap is ever closed, the CASCADE
 //     here means such a member silently leaves its areas — fix the two together.
 export const areaMembers = pgTable(

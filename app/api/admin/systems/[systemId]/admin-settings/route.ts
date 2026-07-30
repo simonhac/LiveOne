@@ -24,7 +24,7 @@ export async function GET(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
-    // Get the system to find the owner (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
+    // Get the device to find the owner (config registry read)
     const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {
@@ -65,7 +65,7 @@ export async function PATCH(
     const body = await request.json();
     const { ownerClerkUserId } = body;
 
-    // Verify system exists (read via SystemsManager → honours CONFIG_SERVE_FROM_PG)
+    // Verify the device exists (config registry read)
     const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {

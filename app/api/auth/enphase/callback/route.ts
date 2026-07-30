@@ -115,8 +115,7 @@ export async function GET(request: NextRequest) {
     const systemId = String(enphaseSystem.system_id);
     console.log("ENPHASE: Using system:", systemId, enphaseSystem.name);
 
-    // Check if system already exists (read via SystemsManager so it honours
-    // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
+    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
     const systemsManager = SystemsManager.getInstance();
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(systemId);
