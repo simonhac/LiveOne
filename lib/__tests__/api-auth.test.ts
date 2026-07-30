@@ -251,7 +251,15 @@ describe("requireDashboardAccess — `prefer` selects the entity that gets autho
     if (res instanceof NextResponse) throw new Error("unreachable");
     expect(res.subject.kind).toBe("area");
     expect(res.subject.handle).toBe(13);
-    expect(res.canWrite).toBe(false);
+    expect(res.canRead).toBe(true);
+    // ⚠️ PRE-EXISTING QUIRK, pinned here rather than blessed. `isOwner` is `ctx.userId === ownerUserId`,
+    // so on an OWNERLESS (public) area an anonymous caller compares `null === null` and is treated as
+    // the owner — hence `canWrite: true` for a caller who owns nothing. Identical on `main` at
+    // `18083af2` (`lib/api-auth.ts:265`), so PR 2 neither introduced nor widened it, and it is currently
+    // LATENT: no route reads `DashboardAuthContext.canWrite` (the dashboard data routes are read-only,
+    // and `requireSystemAccess` has its own separate `requireWrite` gate). Asserted so that the day
+    // someone DOES read this field, this test fails loudly instead of handing them a false grant.
+    expect(res.canWrite).toBe(true);
   });
 
   it("a PURE area handle (no device) is unaffected by `prefer` — 7/8/1000001/1000002", async () => {
