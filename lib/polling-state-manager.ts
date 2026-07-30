@@ -15,25 +15,25 @@
 import type { PollStage } from "@/lib/vendors/types";
 import { iso8601Revivor } from "@/lib/json";
 
-// Status of an individual system during polling
-export type SystemPollingStatus =
+// Status of an individual device during polling
+export type DevicePollingStatus =
   | "pending"
   | "polling"
   | "completed"
   | "skipped"
   | "error";
 
-// State for a single system
-export interface SystemPollingState {
+// State for a single device
+export interface DevicePollingState {
   systemId: number;
   displayName?: string;
   vendorType: string;
-  status: SystemPollingStatus;
+  status: DevicePollingStatus;
   sessionLabel?: string;
   sessionId?: string;
   stages?: PollStage[];
   error?: string;
-  reason?: string; // For skipped systems
+  reason?: string; // For skipped devices
   recordsProcessed?: number;
   durationMs?: number;
   startMs?: number;
@@ -53,7 +53,7 @@ export interface PollingSessionState {
   sessionEndTime?: Date;
   durationMs?: number;
   error?: string;
-  systems: Map<number, SystemPollingState>;
+  devices: Map<number, DevicePollingState>;
   summary?: {
     total: number;
     successful: number;
@@ -87,7 +87,7 @@ export class PollingStateManager {
     return {
       isConnected: false,
       isComplete: false,
-      systems: new Map(),
+      devices: new Map(),
     };
   }
 
@@ -110,15 +110,15 @@ export class PollingStateManager {
   getState(): PollingSessionState {
     return {
       ...this.state,
-      systems: new Map(this.state.systems),
+      devices: new Map(this.state.devices),
     };
   }
 
   /**
-   * Get systems as array (convenient for rendering)
+   * Get devices as array (convenient for rendering)
    */
-  getSystemsArray(): SystemPollingState[] {
-    return Array.from(this.state.systems.values());
+  getDevicesArray(): DevicePollingState[] {
+    return Array.from(this.state.devices.values());
   }
 
   private notifyListeners(): void {
@@ -131,17 +131,17 @@ export class PollingStateManager {
     this.notifyListeners();
   }
 
-  private updateSystem(
+  private updateDevice(
     systemId: number,
-    updates: Partial<SystemPollingState>,
+    updates: Partial<DevicePollingState>,
   ): void {
-    const existing = this.state.systems.get(systemId);
+    const existing = this.state.devices.get(systemId);
     if (existing) {
       // Merge updates, preserving existing fields (like sessionLabel)
-      this.state.systems.set(systemId, { ...existing, ...updates });
+      this.state.devices.set(systemId, { ...existing, ...updates });
     } else {
-      // New system entry
-      this.state.systems.set(systemId, {
+      // New device entry
+      this.state.devices.set(systemId, {
         systemId,
         vendorType: "unknown",
         status: "pending",
@@ -251,10 +251,10 @@ export class PollingStateManager {
   }
 
   private handleStartEvent(data: any): void {
-    // Initialize all systems from the start event
-    const systemsList = data.systems || [];
-    for (const sys of systemsList) {
-      this.state.systems.set(sys.systemId, {
+    // Initialize all devices from the start event
+    const devicesList = data.devices || [];
+    for (const sys of devicesList) {
+      this.state.devices.set(sys.systemId, {
         systemId: sys.systemId,
         displayName: sys.displayName,
         vendorType: sys.vendorType,
@@ -270,7 +270,7 @@ export class PollingStateManager {
 
   private handleProgressEvent(data: any): void {
     // Determine status based on action and inProgress
-    let status: SystemPollingStatus = "polling";
+    let status: DevicePollingStatus = "polling";
     if (data.action === "ERROR") {
       status = "error";
     } else if (data.action === "SKIPPED") {
@@ -279,7 +279,7 @@ export class PollingStateManager {
       status = "completed";
     }
 
-    this.updateSystem(data.systemId, {
+    this.updateDevice(data.systemId, {
       status,
       displayName: data.displayName,
       vendorType: data.vendorType,
@@ -301,10 +301,10 @@ export class PollingStateManager {
 
   private handleCompleteEvent(data: any): void {
     // Complete event now only has session summary (no results - client already has them from progress)
-    // Mark all systems as no longer in progress
-    this.state.systems.forEach((sys, systemId) => {
+    // Mark all devices as no longer in progress
+    this.state.devices.forEach((sys, systemId) => {
       if (sys.inProgress) {
-        this.state.systems.set(systemId, { ...sys, inProgress: false });
+        this.state.devices.set(systemId, { ...sys, inProgress: false });
       }
     });
 

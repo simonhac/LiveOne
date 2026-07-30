@@ -22,7 +22,7 @@ export interface HistoryQueryParams {
   series?: string;
   /** Extra comma-joined includes, e.g. "sankey". */
   include?: string;
-  /** Drives boundary-aligned refetch in the system's local time. */
+  /** Drives boundary-aligned refetch in the device's local time. */
   timezoneOffsetMin?: number;
   /** When true (modal open) suspend background polling. */
   paused?: boolean;
@@ -78,7 +78,7 @@ export function historyQuery(p: HistoryQueryParams) {
     staleTime,
     // Keep the previous chart on screen while a newly-navigated (uncached) window loads —
     // prevents the blank → spinner thrash. Only when just the time window changed (same
-    // system + interval + series); never flash another system/period/series' data.
+    // device + interval + series); never flash another device/period/series' data.
     placeholderData: (prev, prevQuery) => {
       const k = prevQuery?.queryKey;
       return k &&

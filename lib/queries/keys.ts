@@ -2,8 +2,8 @@
  * Query-key conventions for React Query.
  *
  * Every key starts `[resource, systemId, ...]` (systemId normalized to string) so a
- * manual Poll-Now / Amber-Sync can invalidate a whole system's data by resource, and
- * `invalidateSystem()` can sweep all of them.
+ * manual Poll-Now / Amber-Sync can invalidate a whole device's data by resource, and
+ * `invalidateDevice()` can sweep all of them.
  *
  * `rangeKey` distinguishes a LIVE trailing window from an explicit SETTLED past window:
  *   - live (no explicit start/end)  → the literal "live". The trailing window is advanced
@@ -36,7 +36,7 @@ export function rangeKeyFor(
 }
 
 export const queryKeys = {
-  /** Root for a system — `invalidateQueries({ queryKey: systemRoot(id) })` is too broad;
+  /** Root for a device — `invalidateQueries({ queryKey: deviceRoot(id) })` is too broad;
    *  prefer the per-resource keys below. Kept for predicate-style sweeps. */
   all: ["system"] as const,
 
@@ -44,7 +44,7 @@ export const queryKeys = {
    * `/api/data` — the discriminated `{device|area, latest}` payload (config-v4 Phase 13 PR 1). The key
    * did NOT need a shape-version bump with that rename: there is no query-client persister in this app
    * (grep `persistQueryClient`), so every cache entry is created and read by ONE build — including the
-   * SSR seed, which `getSystemDataForCache` writes under this same key from the same build.
+   * SSR seed, which `getDeviceDataForCache` writes under this same key from the same build.
    */
   data: (systemId: SystemIdLike) => ["data", sid(systemId)] as const,
 
@@ -84,8 +84,8 @@ export const queryKeys = {
 } as const;
 
 /**
- * Resource keys that represent a system's live/historical data — used to invalidate
- * everything for a system after a manual poll or sync. Matches any query whose key's
+ * Resource keys that represent a device's live/historical data — used to invalidate
+ * everything for a device after a manual poll or sync. Matches any query whose key's
  * second element equals the systemId for one of these resources.
  */
 const SYSTEM_RESOURCES = [
@@ -98,8 +98,8 @@ const SYSTEM_RESOURCES = [
   "runPeriods",
 ] as const;
 
-/** Predicate for `invalidateQueries({ predicate })` — true for any of this system's data queries. */
-export function isSystemQuery(
+/** Predicate for `invalidateQueries({ predicate })` — true for any of this device's data queries. */
+export function isDeviceQuery(
   systemId: SystemIdLike,
   queryKey: readonly unknown[],
 ): boolean {

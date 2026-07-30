@@ -404,7 +404,7 @@ describe("calculateEnergyFlowMatrix", () => {
   });
 
   it("does not double-count solar: uses leaves over the bare total, attributing correctly", () => {
-    // System exposes a bare total source.solar (= local + remote) AND the two leaves, plus a
+    // Device exposes a bare total source.solar (= local + remote) AND the two leaves, plus a
     // discharging battery. Summing bare+leaves would inflate solar's share and starve the
     // battery; using the leaves attributes the load truthfully.
     const timestamps = [

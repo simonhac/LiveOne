@@ -52,7 +52,7 @@ jest.mock("../../observations/publisher", () => ({
 }));
 
 // The device config registry returns the vendorType under test (config-v4 slice K2 — was
-// `SystemsManager.getSystem`, deleted in K3).
+// `SystemsManager.getDevice`, deleted in K3).
 let currentVendorType = "selectronic";
 // config-v4 Phase 13 PR 2 deleted `isAreaHandle`; the dispatch now consults `areaByHandle` only when
 // `deviceByHandle` came back empty. This stub always resolves a device, so the area leg is never

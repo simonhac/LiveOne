@@ -8,7 +8,7 @@ import {
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
-import { grantedSystemScopeForUser } from "@/lib/dashboard/grants";
+import { grantedDeviceScopeForUser } from "@/lib/dashboard/grants";
 import type { ServerTimer } from "@/lib/server-timing";
 import {
   subjectForHandle,
@@ -29,9 +29,9 @@ export interface AuthenticatedContext extends AuthContext {
   userId: string;
 }
 
-// System access result
-export interface SystemAuthContext extends AuthenticatedContext {
-  system: DeviceConfigView;
+// Device access result
+export interface DeviceAuthContext extends AuthenticatedContext {
+  device: DeviceConfigView;
   isOwner: boolean;
   canRead: boolean;
   canWrite: boolean;
@@ -134,30 +134,30 @@ export async function requireCronOrAdmin(
   return forbidden("Cron or admin access required");
 }
 
-// Require system access (owner, viewer, or admin)
-export async function requireSystemAccess(
+// Require device access (owner, viewer, or admin)
+export async function requireDeviceAccess(
   request: NextRequest,
   systemId: number,
   options: { requireWrite?: boolean } = {},
   timer?: ServerTimer,
-): Promise<SystemAuthContext | NextResponse> {
+): Promise<DeviceAuthContext | NextResponse> {
   const ctx = await getAuthContext(request, timer);
 
   // Get the device's config. Strictly real devices — the area-view path is requireDashboardAccess's.
-  const system = await DeviceConfigRegistry.deviceByHandle(systemId);
-  if (!system) {
+  const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+  if (!device) {
     return NextResponse.json({ error: "System not found" }, { status: 404 });
   }
 
   // Check access levels
-  const isOwner = ctx.userId === system.ownerClerkUserId;
-  // Ownerless systems are PUBLIC: readable by everyone (but writable only by admins).
-  const isPublic = system.ownerClerkUserId == null;
+  const isOwner = ctx.userId === device.ownerClerkUserId;
+  // Ownerless devices are PUBLIC: readable by everyone (but writable only by admins).
+  const isPublic = device.ownerClerkUserId == null;
 
-  // There used to be a fourth read term here — a `user_systems` probe for a per-system viewer grant.
+  // There used to be a fourth read term here — a `user_systems` probe for a per-device viewer grant.
   // That table was dropped in migration 0045 (slice F); it held 0 rows on prod and never conveyed
   // write access, so `canWrite` is unchanged and `canRead` only narrowed. A dashboard grantee still
-  // gets in via requireDashboardAccess's grantedSystemScopeForUser fallback below.
+  // gets in via requireDashboardAccess's grantedDeviceScopeForUser fallback below.
   const canRead = ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic;
   const canWrite = ctx.isAdmin || isOwner;
 
@@ -174,14 +174,14 @@ export async function requireSystemAccess(
   return {
     ...ctx,
     userId: ctx.userId!,
-    system,
+    device,
     isOwner,
     canRead,
     canWrite,
   };
 }
 
-// Dashboard access context — like a read-only SystemAuthContext but userId may be null when access
+// Dashboard access context — like a read-only DeviceAuthContext but userId may be null when access
 // is granted via a public per-dashboard share token.
 export interface DashboardAuthContext {
   /**
@@ -216,9 +216,9 @@ async function subjectFor(
 
 /**
  * Access to a dashboard's data routes (P4). Grants READ via a valid per-dashboard share token
- * (`?access=`) whose dashboard targets this exact `systemId` — a public, read-only, single-system
- * grant that mirrors the existing ownerless-system public path. Otherwise falls through to
- * `requireSystemAccess` (owner/admin/viewer/public). A bad or mismatched token never blocks normal
+ * (`?access=`) whose dashboard targets this exact `systemId` — a public, read-only, single-device
+ * grant that mirrors the existing ownerless-device public path. Otherwise falls through to
+ * `requireDeviceAccess` (owner/admin/viewer/public). A bad or mismatched token never blocks normal
  * auth (the caller may also be logged in).
  *
  * 🛑 **`prefer` selects WHICH ENTITY is authorized, not merely which one is returned.** A handle can name
@@ -252,7 +252,7 @@ export async function requireDashboardAccess(
         if (allowed.includes(systemId)) {
           // The handle must still name something under the requested preference. `allowedSystemIds` is
           // deliberately leg-agnostic: its scope is computed through
-          // `PointManager.getActivePointsForSystem`, which is device-first-ALWAYS at the interior, so a
+          // `PointManager.getActivePointsForDevice`, which is device-first-ALWAYS at the interior, so a
           // token whose dashboard names an Area can only ever have been credited with the device's own
           // points — `allowed.includes(13)` never certifies more than "this dashboard shows handle 13".
           // Both legs resolve to that same interior-locked point set, so either is safe to grant.
@@ -289,7 +289,7 @@ export async function requireDashboardAccess(
     // A grantee of a dashboard whose scope includes this area handle gets read-only access.
     const grantReadOk =
       ctx.userId != null &&
-      (await grantedSystemScopeForUser(ctx.userId)).has(systemId);
+      (await grantedDeviceScopeForUser(ctx.userId)).has(systemId);
     const canRead =
       ctx.isAdmin || ctx.isClaudeDev || isOwner || isPublic || grantReadOk;
     if (!canRead && !ctx.userId) return unauthorized();
@@ -303,15 +303,15 @@ export async function requireDashboardAccess(
     };
   }
 
-  const result = await requireSystemAccess(request, systemId, {}, timer);
+  const result = await requireDeviceAccess(request, systemId, {}, timer);
   if (result instanceof NextResponse) {
-    // Grant fallback: an authed grantee gets read-only access to systems within the scope of any
-    // dashboard shared with them (the same scope a share token would grant), without needing system
-    // ownership/viewer access. Only consulted once normal system auth has denied.
+    // Grant fallback: an authed grantee gets read-only access to devices within the scope of any
+    // dashboard shared with them (the same scope a share token would grant), without needing device
+    // ownership/viewer access. Only consulted once normal device auth has denied.
     const ctx = await getAuthContext(request, timer);
     if (
       ctx.userId != null &&
-      (await grantedSystemScopeForUser(ctx.userId)).has(systemId)
+      (await grantedDeviceScopeForUser(ctx.userId)).has(systemId)
     ) {
       const subject = await subjectForHandle(systemId, prefer);
       if (subject) {
@@ -327,7 +327,7 @@ export async function requireDashboardAccess(
     return result;
   }
   return {
-    // `requireSystemAccess` authorized the DEVICE, so the subject is the device — regardless of
+    // `requireDeviceAccess` authorized the DEVICE, so the subject is the device — regardless of
     // `prefer`. An `?areaId=` request only reaches here when the handle names no area, in which case
     // there is no area leg to prefer.
     subject: await subjectFor(systemId, "device"),

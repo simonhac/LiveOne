@@ -82,7 +82,7 @@ describe("preview readings transfer", () => {
     before("devices", "legacy_handles"); // legacy_handles.device_id
     before("areas", "area_members");
     before("devices", "area_members");
-    // `before("systems", "point_info")` retired: migration 0051 dropped both tables.
+    // `before("devices", "point_info")` retired: migration 0051 dropped both tables.
     before("areas", "area_bindings"); // area_bindings.area_id
     before("dashboards", "users"); // users.default dashboard
     before("points", "point_readings"); // the hot-table rid FK — the copy this fix unblocks

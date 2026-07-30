@@ -3,7 +3,7 @@
  * DO NOT import this on the frontend - use PointInfo directly instead
  *
  * This is the single source of truth for all point operations:
- * - Reading point definitions (getActivePointsForSystem, getSeriesForSystem)
+ * - Reading point definitions (getActivePointsForDevice, getSeriesForDevice)
  * - Writing point definitions (createPoint, updatePoint, ensurePointInfo)
  * - Inserting point readings (insertPointReading, insertPointReadingsRaw, insertPointReadingsAgg5m)
  */
@@ -23,9 +23,7 @@ import {
 } from "@/lib/point/series-info";
 import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
-import {
-  DeviceConfigRegistry,
-} from "@/lib/registry/device-config";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
@@ -98,7 +96,7 @@ export interface SessionInfo {
  *
  * ## `index` is now `points.rid`, and that is the whole point of this slice
  *
- * `points` has neither `point_info.system_id` nor `point_info.id` (the per-system sequential
+ * `points` has neither `point_info.system_id` nor `point_info.id` (the per-device sequential
  * "index"). The handle comes back via the `devices` join; the index is re-sourced from
  * `points.rid`.
  *
@@ -113,7 +111,7 @@ export interface SessionInfo {
  * false and the Sankey is omitted with reason `"incomplete-series-set"` — no error, no log. Worse,
  * the energy overlay is already reference-keyed on both sides, so the two legs could not merely
  * miss each other but COLLIDE — one point's old `index` can equal another point's `rid` on the same
- * system, which yields plausible-but-wrong numbers.
+ * device, which yields plausible-but-wrong numbers.
  *
  * Sourcing both from one integer makes that divergence UNREPRESENTABLE instead of merely tested
  * for. Two addresses that must agree is the most expensive pattern in this phase; this collapses
@@ -121,12 +119,12 @@ export interface SessionInfo {
  *
  * ## Consequences, stated deliberately
  *
- * `point_info.id` was per-system sequential (1..19 on dev); `points.rid` is global (1..134). They
+ * `point_info.id` was per-device sequential (1..19 on dev); `points.rid` is global (1..134). They
  * are equal only for points minted since slice M — 17 of 134 rows on dev, so **117 change value**.
  * Nothing persists a point reference (`PointReference.parse` has no production caller, no DB column
  * or dashboard descriptor stores one, and the KV `pointReference` is already a `pt_` TypeID), so
  * the change cannot invalidate stored data. Two wire fields carry the new integer —
- * `/api/system/[id]/points`'s `reference` and `/api/history`'s `path` fallback — both display/keying
+ * `/api/device/[id]/points`'s `reference` and `/api/history`'s `path` fallback — both display/keying
  * only; see the PR body.
  *
  * ⚠️ WRITERS ARE NOT CONVERTED BY THIS SLICE. `point_info` is still written (as the write-behind
@@ -218,7 +216,7 @@ function pgPointInfoRowsToServed(pgRows: ServedPointDbRow[]): PointInfoRow[] {
 }
 
 /**
- * Manages monitoring points for systems (backend only)
+ * Manages monitoring points for devices (backend only)
  */
 export class PointManager {
   private static instance: PointManager;
@@ -268,7 +266,7 @@ export class PointManager {
 
   /**
    * Load a device's own points directly from `points` (joined to `devices` for the handle).
-   * PRIVATE: External callers should use getActivePointsForSystem instead.
+   * PRIVATE: External callers should use getActivePointsForDevice instead.
    */
   private async _loadOwnPoints(systemId: number): Promise<PointInfo[]> {
     const pgRows = await servedPointQuery().where(eq(pgDevices.rid, systemId));
@@ -278,20 +276,20 @@ export class PointManager {
   }
 
   /**
-   * Get all series for a system (includes all active points, even without type hierarchy)
-   * Results are cached per system
+   * Get all series for a device (includes all active points, even without type hierarchy)
+   * Results are cached per device
    * Works for any viewable handle (a real device or a multi-device area)
    *
    * @param handle - The integer addressing handle (a real device or a multi-device area)
    */
-  private async getAllSeriesForSystem(handle: number): Promise<SeriesInfo[]> {
+  private async getAllSeriesForDevice(handle: number): Promise<SeriesInfo[]> {
     // Check cache first
     const cached = this.seriesCache.get(handle);
     if (cached) {
       return cached;
     }
 
-    // Get all points for this system (areas-backed → bound refs; real device → own point_info)
+    // Get all points for this device (areas-backed → bound refs; real device → own point_info)
     const allPoints = await this._resolvePointsForHandle(handle);
     const systemIdentifier = SystemIdentifier.fromId(handle);
 
@@ -327,15 +325,15 @@ export class PointManager {
   }
 
   /**
-   * Resolve the viewable points for a system handle — the single "resolve viewable" path.
+   * Resolve the viewable points for a device handle — the single "resolve viewable" path.
    *
    * An Area is a grouping of 1..N member devices. A **real device** (an area-of-one's source, addressed
-   * by its own `systems.id`) loads its own `point_info`. A **multi-device area** (an areas-backed handle
-   * with no real `systems` row) resolves under the membership + override model: its typed `area_bindings`
+   * by its own `devices.id`) loads its own `point_info`. A **multi-device area** (an areas-backed handle
+   * with no real `devices` row) resolves under the membership + override model: its typed `area_bindings`
    * SELECT the points (the override), and a curated multi-device area HAS bindings, so its bound child
    * refs ARE the set (unchanged). An area with NO bindings DEFAULTS to the union of its member devices'
    * own points (a plain "several devices in one area"). Dispatched on the structural area-handle signal
-   * (no real `systems` row), not a vendorType string.
+   * (no real `devices` row), not a vendorType string.
    *
    * Parity: an area-of-one's union-of-one is byte-identical to loading the device's own points, and
    * every existing multi-device area has bindings, so the union-default branch is dormant for current
@@ -351,7 +349,7 @@ export class PointManager {
    * shared dashboard in the direction that GRANTS access. Both readers are per-request memoized, so
    * asking two questions costs no extra round trip.
    *
-   * PRIVATE: external callers should use getActivePointsForSystem instead.
+   * PRIVATE: external callers should use getActivePointsForDevice instead.
    */
   private async _resolvePointsForHandle(handle: number): Promise<PointInfo[]> {
     // A real device loads its own point_info. A multi-device area (an area handle with no device of its
@@ -393,24 +391,24 @@ export class PointManager {
   }
 
   /**
-   * Get series for a system (works for any viewable handle — a real device or a multi-device area)
+   * Get series for a device (works for any viewable handle — a real device or a multi-device area)
    *
    * Uses cache and applies filtering by pattern/interval/typedOnly
    *
    * @param handle - The integer addressing handle (a real device or a multi-device area)
-   * @param filter - Optional array of glob patterns to match against series paths (without system prefix)
+   * @param filter - Optional array of glob patterns to match against series paths (without device prefix)
    * @param interval - Optional interval to filter by ("5m" or "1d")
    * @param typedOnly - If true, only includes points with type hierarchy (excludes fallback paths). Default: false
    * @returns Series matching the criteria
    */
-  async getSeriesForSystem(
+  async getSeriesForDevice(
     handle: number,
     filter?: string[],
     interval?: "5m" | "1d",
     typedOnly: boolean = false,
   ): Promise<SeriesInfo[]> {
-    // Get all series for this system (uses cache)
-    let seriesInfos = await this.getAllSeriesForSystem(handle);
+    // Get all series for this device (uses cache)
+    let seriesInfos = await this.getAllSeriesForDevice(handle);
 
     // Filter by interval if provided
     if (interval) {
@@ -435,11 +433,11 @@ export class PointManager {
         // Format: "systemId/pointPath.aggregationField" (e.g., "1/source.solar/power.avg")
         const pathStr = seriesPath.toString();
 
-        // Remove system identifier prefix to match against point path patterns
-        // Pattern format: "source.solar/power.avg" (without system prefix)
-        const pathWithoutSystem = pathStr.substring(pathStr.indexOf("/") + 1);
+        // Remove device identifier prefix to match against point path patterns
+        // Pattern format: "source.solar/power.avg" (without device prefix)
+        const pathWithoutDevice = pathStr.substring(pathStr.indexOf("/") + 1);
 
-        return micromatch.isMatch(pathWithoutSystem, filter);
+        return micromatch.isMatch(pathWithoutDevice, filter);
       });
     }
 
@@ -447,14 +445,14 @@ export class PointManager {
   }
 
   /**
-   * Get all active points for a system (handles any viewable handle — a real device or a multi-device area)
+   * Get all active points for a device (handles any viewable handle — a real device or a multi-device area)
    * This is the primary public API for getting point information
    *
-   * @param systemId - The system ID
+   * @param systemId - The device ID
    * @param typedOnly - If true, only includes points with type hierarchy. Default: false
    * @returns Array of unique PointInfo objects
    */
-  async getActivePointsForSystem(
+  async getActivePointsForDevice(
     systemId: number,
     typedOnly: boolean = false,
     includeInactive: boolean = false,
@@ -494,7 +492,7 @@ export class PointManager {
   }
 
   /**
-   * Invalidate the series cache for a specific system
+   * Invalidate the series cache for a specific device
    * Call this after any write operations to point_info
    */
   invalidateSeriesCache(systemId: number): void {
@@ -503,7 +501,7 @@ export class PointManager {
 
   /**
    * Update a point's information
-   * Automatically invalidates the series cache for the affected system
+   * Automatically invalidates the series cache for the affected device
    *
    * config-v4 Phase 12 terminal window: this writes `points` DIRECTLY. It used to update `point_info`
    * and mirror into `points` in one transaction — the mirror existed because an earlier shape wrote only
@@ -514,7 +512,7 @@ export class PointManager {
    *
    * ⚠️ The predicate is driven POSITIVELY on both legs — `points.rid` AND the owning device — rather than
    * on `rid` alone. `rid` is globally unique, so the device leg is not needed for correctness today, but
-   * dropping it would silently widen the statement to "any system's point with this rid" the moment a
+   * dropping it would silently widen the statement to "any device's point with this rid" the moment a
    * caller passes a mismatched pair.
    */
   async updatePoint(
@@ -559,7 +557,7 @@ export class PointManager {
         ),
       );
 
-    // Invalidate cache for this system
+    // Invalidate cache for this device
     this.invalidateSeriesCache(systemId);
   }
 
@@ -568,7 +566,7 @@ export class PointManager {
   // ============================================================================
 
   /**
-   * Load all point_info entries for a system and create a lookup map
+   * Load all point_info entries for a device and create a lookup map
    * Uses physicalPathTail as the key
    */
   async loadPointInfoMap(systemId: number): Promise<PointInfoMap> {
@@ -676,7 +674,7 @@ export class PointManager {
    * Batch insert readings for multiple monitoring points
    * Automatically ensures point_info entries exist and converts values based on metadata
    *
-   * @param systemId - The system ID
+   * @param systemId - The device ID
    * @param session - Session info containing id and started timestamp
    * @param readings - Array of readings to insert (receivedTimeMs comes from session.started)
    */
@@ -694,7 +692,7 @@ export class PointManager {
   ): Promise<void> {
     if (readings.length === 0) return;
 
-    // Load existing points for this system
+    // Load existing points for this device
     const pointMap = await this.loadPointInfoMap(systemId);
 
     // Get receivedTimeMs from session start time
@@ -731,8 +729,8 @@ export class PointManager {
     }
 
     // Publish observations to queue (before database insert)
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
-    if (system) {
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+    if (device) {
       const inputs = valuesToInsert.map((v) => ({
         sessionId: session.id,
         point: Object.values(pointMap).find((p) => p.index === v.pointId)!,
@@ -744,7 +742,7 @@ export class PointManager {
       if (collector) {
         collector.add(inputs);
       } else {
-        await publishObservationBatch(system, inputs);
+        await publishObservationBatch(device, inputs);
       }
     }
 
@@ -775,7 +773,7 @@ export class PointManager {
    *    - avg = min = max = last = value (single measurement per interval)
    *    - delta = null
    *
-   * @param systemId - The system ID
+   * @param systemId - The device ID
    * @param session - Session info (null for historical backfills without a session)
    * @param readings - Array of readings to insert
    */
@@ -793,7 +791,7 @@ export class PointManager {
   ): Promise<void> {
     if (readings.length === 0) return;
 
-    // Load existing points for this system
+    // Load existing points for this device
     const pointMap = await this.loadPointInfoMap(systemId);
 
     // Process each reading
@@ -846,16 +844,16 @@ export class PointManager {
 
     // Publish observations to queue (before database insert)
     // Only publish if we have a session (skip historical backfills)
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     // 5m-native vendors (Amber, Enphase) have NO raw point_readings, so their 5m
     // is authoritative and must be published to the queue (→ Postgres via the
     // receiver). Raw vendors' 5m is recomputed in Postgres from their raw
     // point_readings, so there is nothing to publish (or write) here.
     const isNative =
-      system != null && isFiveMinuteNativeVendor(system.vendorType);
+      device != null && isFiveMinuteNativeVendor(device.vendorType);
 
-    if (system && session && aggregatesToInsert.length > 0 && isNative) {
+    if (device && session && aggregatesToInsert.length > 0 && isNative) {
       const inputs = aggregatesToInsert.map((a) => ({
         sessionId: session.id,
         point: Object.values(pointMap).find((p) => p.index === a.pointId)!,
@@ -880,11 +878,11 @@ export class PointManager {
       if (collector) {
         collector.add(inputs);
       } else {
-        await publishObservationBatch(system, inputs);
+        await publishObservationBatch(device, inputs);
       }
-    } else if (system && session && aggregatesToInsert.length > 0) {
+    } else if (device && session && aggregatesToInsert.length > 0) {
       console.log(
-        `[PointManager] raw-vendor 5m for system ${systemId} (${system!.vendorType}) is recomputed in Postgres from raw; nothing to publish (${aggregatesToInsert.length} intervals)`,
+        `[PointManager] raw-vendor 5m for system ${systemId} (${device!.vendorType}) is recomputed in Postgres from raw; nothing to publish (${aggregatesToInsert.length} intervals)`,
       );
     }
 
@@ -959,11 +957,11 @@ export class PointManager {
     }>,
   ): Promise<void> {
     try {
-      const points = await this.getActivePointsForSystem(systemId, false);
+      const points = await this.getActivePointsForDevice(systemId, false);
 
-      // Get system name for sourceSystemName in KV cache
-      const system = await DeviceConfigRegistry.deviceByHandle(systemId);
-      const sourceSystemName = system?.displayName;
+      // Get device name for sourceSystemName in KV cache
+      const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+      const sourceSystemName = device?.displayName;
 
       // Build summary values and cache updates together
       const summaryValues: Array<{ logicalPath: string; value: number }> = [];
@@ -976,7 +974,7 @@ export class PointManager {
         const cacheValue = val.value ?? val.valueStr ?? null;
         // Only cache active points with a proper logicalPath and a value
         if (point && cacheValue !== null && logicalPath && point.active) {
-          // Collect for system summary (only numeric values)
+          // Collect for device summary (only numeric values)
           if (typeof cacheValue === "number") {
             summaryValues.push({
               logicalPath,
@@ -1005,7 +1003,7 @@ export class PointManager {
       });
       await Promise.all(cacheUpdates);
 
-      // Update system summary (fire-and-forget, don't block)
+      // Update device summary (fire-and-forget, don't block)
       if (summaryValues.length > 0) {
         updateSystemSummary(systemId, summaryValues, maxMeasurementTimeMs)
           .then(() => {

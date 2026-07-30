@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 /**
  * Guards against the Next.js App Router dynamic-slug collision that took prod
- * down on 2026-06-15 (PR #98: `app/api/systems/[id]/` next to
- * `app/api/systems/[systemId]/`). Runs the real `prebuild` gate as a subprocess
+ * down on 2026-06-15 (PR #98: `app/api/devices/[id]/` next to
+ * `app/api/devices/[systemId]/`). Runs the real `prebuild` gate as a subprocess
  * and asserts a clean exit over the live `app/` tree.
  *
  * See scripts/check-route-slugs.mjs.

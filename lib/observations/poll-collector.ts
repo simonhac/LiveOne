@@ -81,27 +81,27 @@ function messageByteLength(message: QueueMessage): number {
  *   alone — data is never dropped.
  */
 export function buildPollMessages(args: {
-  system: DeviceConfigView;
+  device: DeviceConfigView;
   session: Session;
   inputs: RawObservationInput[];
   maxBytes?: number;
 }): QueueMessage[] {
-  const { system, session, inputs } = args;
+  const { device, session, inputs } = args;
   const maxBytes = args.maxBytes ?? getDefaultMaxBytes();
 
   const env: QueueMessage["env"] =
     process.env.NODE_ENV === "production" ? "prod" : "dev";
-  const batchTime = formatTime_fromJSDate(new Date(), system.timezoneOffsetMin);
+  const batchTime = formatTime_fromJSDate(new Date(), device.timezoneOffsetMin);
 
   const baseMessage = (): QueueMessage => ({
     env,
-    systemId: system.id,
-    systemName: system.displayName,
+    systemId: device.id,
+    systemName: device.displayName,
     batchTime,
     session,
   });
 
-  const observations = buildObservations(system, inputs);
+  const observations = buildObservations(device, inputs);
 
   // No observations → a single session-only message.
   if (observations.length === 0) {
@@ -154,7 +154,7 @@ export function buildPollMessages(args: {
  * must not break the main poll flow.
  */
 export async function publishPoll(
-  system: DeviceConfigView,
+  device: DeviceConfigView,
   session: Session,
   inputs: RawObservationInput[],
 ): Promise<void> {
@@ -170,7 +170,7 @@ export async function publishPoll(
   }
 
   try {
-    const messages = buildPollMessages({ system, session, inputs });
+    const messages = buildPollMessages({ device, session, inputs });
 
     // Durably capture the messages in PG first (a tee, in parallel with the live
     // direct enqueue below). Best-effort — never throws — so the direct enqueue and
@@ -191,7 +191,7 @@ export async function publishPoll(
       0,
     );
     console.log(
-      `[PollCollector] Published poll for system ${system.id}: ` +
+      `[PollCollector] Published poll for system ${device.id}: ` +
         `${messages.length} message(s), ${totalObservations} observations, ` +
         `session ${session.sessionId}`,
     );
@@ -199,7 +199,7 @@ export async function publishPoll(
     // Log error but don't throw - the main poll flow must not be blocked by
     // queue failures.
     console.error(
-      `[PollCollector] Failed to publish poll for system ${system.id}:`,
+      `[PollCollector] Failed to publish poll for system ${device.id}:`,
       error,
     );
   }

@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // requireDashboardAccess funnels every share-token data read. Mock the token validation, the dashboard
-// lookup, the scope set, the systems cache, and the anonymous-auth fallthrough so we can prove:
-//   (1) a token grants its dashboard's own system, (2) it grants a multi-area card's system, and
+// lookup, the scope set, the devices cache, and the anonymous-auth fallthrough so we can prove:
+//   (1) a token grants its dashboard's own device, (2) it grants a multi-area card's device, and
 //   (3) an escalation attempt (?systemId=<not in scope>) is rejected (falls through to denied auth).
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(async () => ({ userId: null })),
@@ -18,10 +18,10 @@ jest.mock("@/lib/dashboard/sharing", () => ({
 }));
 jest.mock("@/lib/dashboard/dashboards", () => ({ getDashboard: jest.fn() }));
 jest.mock("@/lib/dashboard/access", () => ({ allowedSystemIds: jest.fn() }));
-// config-v4 slice K2 + K3: `requireSystemAccess` AND the polymorphic-handle area views both read the
+// config-v4 slice K2 + K3: `requireDeviceAccess` AND the polymorphic-handle area views both read the
 // device config registry now, so it is the only config seam to mock.
 // Phase 13 PR 1 adds `areaByHandle` — the area-native leg of `ServingSubject`. It MUST be mocked here:
-// `requireDashboardAccess` now returns a `subject` alongside `system`, and without this entry the area
+// `requireDashboardAccess` now returns a `subject` alongside `device`, and without this entry the area
 // leg would throw rather than resolve (a real device short-circuits before reaching it, so the device
 // tests below would still have passed while the area path was broken).
 // Phase 13 PR 2 deleted `viewableByHandle`/`isAreaHandle`: `requireDashboardAccess` now asks the two
@@ -55,8 +55,8 @@ function req(systemId: number, token: string): NextRequest {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // Any system resolves to an OWNED (non-public) system, so the anonymous fallthrough denies.
-  const getSystem = jest.fn(async (sid: number) => ({
+  // Any device resolves to an OWNED (non-public) device, so the anonymous fallthrough denies.
+  const getDevice = jest.fn(async (sid: number) => ({
     id: sid,
     ownerClerkUserId: "owner_x",
     vendorType: "selectronic",
@@ -64,7 +64,7 @@ beforeEach(() => {
     displayName: `sys ${sid}`,
   }));
   mockDeviceByHandle.mockImplementation(
-    getSystem as unknown as typeof DeviceConfigRegistry.deviceByHandle,
+    getDevice as unknown as typeof DeviceConfigRegistry.deviceByHandle,
   );
   // These tests use REAL devices by default, so the area leg is never taken unless a test opts in.
   mockAreaByHandle.mockResolvedValue(null);
@@ -142,7 +142,7 @@ describe("requireDashboardAccess — share-token scope enforcement", () => {
   it("REJECTS an escalation to a system outside the dashboard's scope", async () => {
     mockAllowed.mockResolvedValue([42]); // 99 is NOT in scope
     const res = await requireDashboardAccess(req(99, "tok"), 99);
-    // Falls through to requireSystemAccess; anonymous caller on an owned system → 401.
+    // Falls through to requireDeviceAccess; anonymous caller on an owned device → 401.
     expect(res).toBeInstanceOf(NextResponse);
     expect((res as NextResponse).status).toBe(401);
   });
@@ -257,7 +257,7 @@ describe("requireDashboardAccess — `prefer` selects the entity that gets autho
     // the owner — hence `canWrite: true` for a caller who owns nothing. Identical on `main` at
     // `18083af2` (`lib/api-auth.ts:265`), so PR 2 neither introduced nor widened it, and it is currently
     // LATENT: no route reads `DashboardAuthContext.canWrite` (the dashboard data routes are read-only,
-    // and `requireSystemAccess` has its own separate `requireWrite` gate). Asserted so that the day
+    // and `requireDeviceAccess` has its own separate `requireWrite` gate). Asserted so that the day
     // someone DOES read this field, this test fails loudly instead of handing them a false grant.
     expect(res.canWrite).toBe(true);
   });

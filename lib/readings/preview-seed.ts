@@ -45,7 +45,7 @@ const DEFAULT_RUNTIME: PreviewSeedRuntime = {
 };
 
 /**
- * libpq (psql) doesn't understand node-pg's `sslmode=no-verify`, nor a `sslrootcert=system` file
+ * libpq (psql) doesn't understand node-pg's `sslmode=no-verify`, nor a `sslrootcert=device` file
  * path — normalise both connection strings to a plain TLS connection passed via PG* env vars (keeps
  * the password out of argv / the process list).
  */
@@ -63,9 +63,9 @@ function pgEnv(url: string): Record<string, string> {
 // All config tables (small; full copy), in FK-parent-first order.
 //
 // This list went stale once at the config-v4 cutover: it still named only the legacy six, so a freshly
-// seeded preview got `systems`/`point_info` but no `areas`/`devices`/`points` — and the time-series
+// seeded preview got `devices`/`point_info` but no `areas`/`devices`/`points` — and the time-series
 // COPY that follows then failed the point_readings.point_rid → points.rid FK. Rebuilt from the live FK
-// graph (Phase 12 slice C, which is what put `device_state` on the ingest path), and `systems`,
+// graph (Phase 12 slice C, which is what put `device_state` on the ingest path), and `devices`,
 // `point_info` and `polling_status` were removed again when migration 0051 dropped them.
 //
 // Order is a topological sort of the FK edges: areas/dashboards have no parents;
@@ -168,7 +168,7 @@ export async function seedPreviewDatabase(
   }
 
   // Config: only load if the target is empty (so re-runs preserve config + saved dashboards).
-  // `devices`, not `systems` — 0051 dropped the latter. Raw `psql` is invisible to tsc, so this is the
+  // `devices`, not `devices` — 0051 dropped the latter. Raw `psql` is invisible to tsc, so this is the
   // class of reference that has to be DRIVEN to be verified, not compiled.
   const deviceCount = Number(psql(dstEnv, `SELECT count(*) FROM devices`));
   if (deviceCount === 0) {

@@ -9,7 +9,7 @@
  *  - grouping raw readings (current interval vs previous-interval previousLast), incl. the
  *    prevStart-boundary JS guard that reproduces the legacy half-open `(prevStart, intervalEnd]`,
  *  - the exact windows + args handed to ReadingsDao (readRaw/insert5m/read5m/upsert1d),
- *  - the value-only 5m upsert (`preserveVendorMeta`) and the per-system advisory lock.
+ *  - the value-only 5m upsert (`preserveVendorMeta`) and the per-device advisory lock.
  *
  * The readings seam is mocked: `ReadingsDao.readRaw/read5m` return canned per-point series keyed by
  * the real `PointId` (built from each point_info row's `point_uid` via the real codec), and
@@ -95,7 +95,7 @@ function pointRow(transform: string | null, metricType: string) {
  * Minimal fake db: `select().from().innerJoin().where()` → the canned point rows; tx + advisory lock.
  *
  * `innerJoin` arrived with slice 1b — the point enumeration reads `points ⋈ devices` (it needs
- * `devices.rid` to select the system's points now that the handle is not a column on the point row).
+ * `devices.rid` to select the device's points now that the handle is not a column on the point row).
  */
 function makeFakeDb(pointRows: unknown[]) {
   const executed: unknown[] = [];

@@ -44,7 +44,7 @@ export class Agg5mAvgCache {
   /**
    * Record fetch's raw sparse rows for `pointIds` of `systemId`, queried over `[from, to]` inclusive.
    * Every queried point is marked covered (even with zero matching rows). All records in one request
-   * share the same window — fetch queries every system over the same `[queryFirstEpoch, lastEpoch]`.
+   * share the same window — fetch queries every device over the same `[queryFirstEpoch, lastEpoch]`.
    */
   record(
     systemId: number,

@@ -20,7 +20,7 @@ const asDeviceRid = (n: number): DeviceRid => n as DeviceRid;
 export interface DeviceAddr {
   deviceId: DeviceId;
   uuid: string;
-  /** Current systems.id; becomes devices.rid at cutover. */
+  /** Current devices.id; becomes devices.rid at cutover. */
   rid: DeviceRid;
   /** Permanent compatibility handle. */
   handle: number;
@@ -122,7 +122,7 @@ async function addrForDevice(
  * today (18/18 on dev, zero handle<>rid mismatches); this just makes agreement unnecessary.
  *
  * Callers are the membership consumers that still join int-keyed columns (`point_info.system_id`,
- * `systems.id`). Phase 13 moves those to uuid and deletes every one. (`area_bindings` no longer has an
+ * `devices.id`). Phase 13 moves those to uuid and deletes every one. (`area_bindings` no longer has an
  * int pair — slice E PR 2b / migration 0048.)
  */
 async function ridsForDevices(
@@ -229,7 +229,7 @@ async function ensureAreaForHandle(
  *
  * Replaces the four call sites that used `ensureDeviceRow` purely FOR ITS RETURN VALUE
  * (`lib/areas/create.ts` ×2, `lib/areas/helper.ts`, and the point mirror). Those were never mirroring
- * anything — they wanted "handle → device uuid" and got it as a side effect of a `systems` copy. Now
+ * anything — they wanted "handle → device uuid" and got it as a side effect of a `devices` copy. Now
  * that `devices` is the registry rather than a mirror of one, the lookup IS the whole operation.
  *
  * Reads `devices.rid`, NOT `legacy_handles.device_id`, on purpose: `rid` is NOT NULL and uniquely

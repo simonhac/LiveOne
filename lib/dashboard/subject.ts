@@ -73,7 +73,7 @@ export function subjectTimezoneOffsetMin(s: ServingSubject): number {
  * The subject's IANA display timezone. Non-null for BOTH kinds: `areas.display_timezone` is `NOT NULL`
  * in the schema, and a device's own `displayTimezone` is projected from its area-of-one's column by
  * `deviceByHandle`. The annotation was widened to `string | null` until Phase 13 PR 2 gave it a caller
- * (`/api/system/{id}/run-periods`, moved off the deleted legacy view's non-null `displayTimezone`) that
+ * (`/api/device/{id}/run-periods`, moved off the deleted legacy view's non-null `displayTimezone`) that
  * needs the true type.
  */
 export function subjectDisplayTimezone(s: ServingSubject): string {

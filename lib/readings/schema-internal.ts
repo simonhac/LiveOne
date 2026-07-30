@@ -9,7 +9,7 @@
  * `(system_id, point_id) → point_rid` re-key touches only this directory.
  *
  * Deliberately re-exports ONLY the three hot tables (+ their inferred row types) — not `point_info`,
- * `sessions`, `systems`, or the flow/provenance tables, which stay broadly importable. This file is
+ * `sessions`, `devices`, or the flow/provenance tables, which stay broadly importable. This file is
  * NOT re-exported from `lib/db/planetscale/index.ts`, so the schema barrel keeps exposing the raw
  * symbols for the drizzle-kit schema/migration tooling while application imports of them are blocked.
  *

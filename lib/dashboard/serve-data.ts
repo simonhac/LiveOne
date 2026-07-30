@@ -98,7 +98,7 @@ export interface AreaBlock extends SubjectBlockCommon {
  * (`jsonResponse`/`transformDates`) before returning/caching.
  *
  * config-v4 Phase 13 PR 1: the payload is now DISCRIMINATED — `{device, latest}` for a real device,
- * `{area, latest}` for an Area served as an Area. Previously an Area was served as `{system, latest}`
+ * `{area, latest}` for an Area served as an Area. Previously an Area was served as `{device, latest}`
  * built from `synthesizeAreaView`, whose only invented fields were `vendorType:"area"`,
  * `vendorSiteId:"area:{handle}"` and null `model`/`serial`/`metadata`/`config`; every other field was
  * already a real `areas` column, so the area branch reads that row directly and simply DOES NOT EMIT
@@ -108,9 +108,9 @@ export interface AreaBlock extends SubjectBlockCommon {
  * handles 7 / 8 / 1000001 / 1000002.
  *
  * 🛑 The INTERIOR is still integer-handle-keyed: the KV latest cache (PR 3), the active-points list and
- * polling status all take `subject.handle` exactly as they took `system.id`.
+ * polling status all take `subject.handle` exactly as they took `device.id`.
  */
-export async function buildSystemPayload(
+export async function buildDevicePayload(
   subject: ServingSubject,
   wantsReadings: boolean,
   timer?: ServerTimer,
@@ -128,7 +128,7 @@ export async function buildSystemPayload(
       ? timer.time("kv", () => getLatestValues(handle))
       : getLatestValues(handle),
     wantsReadings
-      ? PointManager.getInstance().getActivePointsForSystem(handle)
+      ? PointManager.getInstance().getActivePointsForDevice(handle)
       : Promise.resolve(undefined),
   ]);
 
@@ -288,7 +288,7 @@ export async function buildSystemPayload(
 }
 
 /**
- * SSR prefetch helper: build the single-system `/api/data` **cache value** (date-transformed to ISO
+ * SSR prefetch helper: build the single-device `/api/data` **cache value** (date-transformed to ISO
  * strings, exactly the shape `dashboardDataQuery(handle)` caches) in-process, so the dashboard server
  * component can seed a React Query `HydrationBoundary` and cards render filled without a client
  * `/api/data` round-trip (SP1.2). Returns null if the handle doesn't resolve to a subject.
@@ -301,11 +301,11 @@ export async function buildSystemPayload(
  * (`queryKeys.data(handle)`). A different precedence here would seed a DIFFERENT payload shape under
  * the key the client then reads — silent cache poisoning, not a compile error.
  */
-export async function getSystemDataForCache(
+export async function getDeviceDataForCache(
   systemId: number,
 ): Promise<unknown | null> {
   const subject = await subjectForHandle(systemId, "device");
   if (!subject) return null;
-  const payload = await buildSystemPayload(subject, false);
+  const payload = await buildDevicePayload(subject, false);
   return transformDates(payload, subjectTimezoneOffsetMin(subject));
 }

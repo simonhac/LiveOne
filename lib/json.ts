@@ -153,7 +153,7 @@ export function transformForStorage(
  *       receivedTimeMs: 1731627425000      // Will become "receivedTime": "2025-11-15T05:57:05+10:00"
  *     }
  *   }
- * }, system.timezoneOffsetMin);
+ * }, device.timezoneOffsetMin);
  * ```
  */
 export function jsonResponse(

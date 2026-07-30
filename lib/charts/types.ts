@@ -34,7 +34,7 @@ export interface LineChartData {
   batterySOC: number[];
   batterySOCMin?: number[]; // Min SOC for daily data
   batterySOCMax?: number[]; // Max SOC for daily data
-  grid?: number[]; // Grid power/energy (optional - not all systems have grid data)
+  grid?: number[]; // Grid power/energy (optional - not all devices have grid data)
   mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 

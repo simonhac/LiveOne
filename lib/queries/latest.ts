@@ -34,7 +34,7 @@ interface DataReadingsResponse {
 /**
  * Raw latest readings table — `/api/data?include=readings` → `readings: [...]`, mapped to
  * `{ values }` for the table. `/api/data` is the single producer of the KV latest cache (the former
- * `/api/system/{id}/latest` route was folded in). Low-latency path — same 30s/focus cadence as the
+ * `/api/device/{id}/latest` route was folded in). Low-latency path — same 30s/focus cadence as the
  * dashboard payload, and a manual Poll-Now invalidates `['latest', systemId]`.
  */
 export function latestReadingsQuery(

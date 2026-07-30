@@ -1,5 +1,5 @@
 /**
- * Shared function to fetch admin systems data
+ * Shared function to fetch admin devices data
  * Used by both the API route and server-side rendering
  */
 
@@ -16,7 +16,7 @@ import {
 } from "@/lib/system-summary-store";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
-export interface SystemData {
+export interface DeviceData {
   systemId: number;
   owner: {
     clerkId: string;
@@ -37,7 +37,7 @@ export interface SystemData {
   metadata?: any;
   status: "active" | "disabled" | "removed";
   timezoneOffsetMin: number;
-  systemInfo?: {
+  deviceInfo?: {
     model?: string | null;
     serial?: string | null;
     ratings?: string | null;
@@ -67,10 +67,10 @@ export interface SystemData {
   } | null;
 }
 
-export interface AdminSystemsResult {
+export interface AdminDevicesResult {
   success: true;
-  systems: SystemData[];
-  totalSystems: number;
+  devices: DeviceData[];
+  totalDevices: number;
   timestamp: string;
   latestValuesIncluded: boolean;
 }
@@ -132,7 +132,7 @@ function extractPowerValues(latestValues: LatestValuesMap) {
 }
 
 /**
- * Extract power values from system summary (fast path - single KV call for all systems)
+ * Extract power values from device summary (fast path - single KV call for all devices)
  */
 function extractPowerValuesFromSummary(summary: SystemSummary | null) {
   if (!summary) {
@@ -156,7 +156,7 @@ function extractPowerValuesFromSummary(summary: SystemSummary | null) {
   };
 }
 
-interface GetAdminSystemsOptions {
+interface GetAdminDevicesOptions {
   /** Timeout for fetching latest values (ms). If exceeded, returns without latest values. Default: 100 */
   latestValuesTimeoutMs?: number;
   /** Skip fetching latest values entirely */
@@ -164,21 +164,21 @@ interface GetAdminSystemsOptions {
 }
 
 /**
- * Get admin systems data - shared between API and server-side rendering
+ * Get admin devices data - shared between API and server-side rendering
  */
-export async function getAdminSystemsData(
-  options: GetAdminSystemsOptions = {},
-): Promise<AdminSystemsResult> {
+export async function getAdminDevicesData(
+  options: GetAdminDevicesOptions = {},
+): Promise<AdminDevicesResult> {
   const { latestValuesTimeoutMs = 100, skipLatestValues = false } = options;
 
-  // Only real (physical, polled) systems belong in the admin Systems list. Areas-backed virtual
-  // systems are never in the systems table (synthesized on demand) and live on /admin/areas.
-  const allSystems = await DeviceConfigRegistry.allDevices();
+  // Only real (physical, polled) devices belong in the admin Devices list. Areas-backed virtual
+  // devices are never in the devices table (synthesized on demand) and live on /admin/areas.
+  const allDevices = await DeviceConfigRegistry.allDevices();
 
   // Get unique owner user IDs to fetch user info in batch
   const ownerUserIds = [
     ...new Set(
-      allSystems
+      allDevices
         .map((s) => s.ownerClerkUserId)
         .filter((id): id is string => Boolean(id)),
     ),
@@ -229,7 +229,7 @@ export async function getAdminSystemsData(
     }
   }
 
-  // Fetch system summaries with timeout (single KV call for all systems)
+  // Fetch device summaries with timeout (single KV call for all devices)
   let summariesMap: SystemSummariesMap = {};
   let latestValuesIncluded = false;
 
@@ -259,49 +259,49 @@ export async function getAdminSystemsData(
     }
   }
 
-  // Build systems data
-  const systemsData: SystemData[] = [];
+  // Build devices data
+  const devicesData: DeviceData[] = [];
 
-  for (const system of allSystems) {
+  for (const device of allDevices) {
     // config-v4 Phase 13 PR 3: the summaries hash is keyed by `dv_`/`ar_` TypeID, not the integer
     // handle. For a COLLIDING handle this is now the DEVICE's own aggregate rather than whichever of the
     // device poll / area fan-out wrote the shared integer field last — strictly better for a device list.
-    const summary = summariesMap[system.deviceId] || null;
+    const summary = summariesMap[device.deviceId] || null;
     const powerValues = extractPowerValuesFromSummary(summary);
-    const pollStatus = system.pollingStatus;
-    const userInfo = system.ownerClerkUserId
-      ? userCache.get(system.ownerClerkUserId)
+    const pollStatus = device.pollingStatus;
+    const userInfo = device.ownerClerkUserId
+      ? userCache.get(device.ownerClerkUserId)
       : null;
 
-    systemsData.push({
-      systemId: system.id,
+    devicesData.push({
+      systemId: device.id,
       owner: {
-        clerkId: system.ownerClerkUserId || "",
+        clerkId: device.ownerClerkUserId || "",
         email: userInfo?.email || null,
         userName: userInfo?.userName || null,
         firstName: userInfo?.firstName || null,
         lastName: userInfo?.lastName || null,
       },
-      displayName: system.displayName,
-      alias: system.alias,
+      displayName: device.displayName,
+      alias: device.alias,
       vendor: {
-        type: system.vendorType,
-        siteId: system.vendorSiteId,
+        type: device.vendorType,
+        siteId: device.vendorSiteId,
         userId: null,
-        supportsPolling: VendorRegistry.supportsPolling(system.vendorType),
+        supportsPolling: VendorRegistry.supportsPolling(device.vendorType),
       },
-      location: system.location,
-      metadata: system.metadata,
-      status: system.status as "active" | "disabled" | "removed",
-      timezoneOffsetMin: system.timezoneOffsetMin,
-      systemInfo: {
-        model: system.model,
-        serial: system.serial,
+      location: device.location,
+      metadata: device.metadata,
+      status: device.status as "active" | "disabled" | "removed",
+      timezoneOffsetMin: device.timezoneOffsetMin,
+      deviceInfo: {
+        model: device.model,
+        serial: device.serial,
         // config-v4 slice K2: projected from `config.spec` — no longer columns on `devices`.
-        ...specToDisplayStrings(system.config?.spec),
+        ...specToDisplayStrings(device.config?.spec),
       },
       polling: {
-        isActive: system.status === "active",
+        isActive: device.status === "active",
         lastPollTime: pollStatus?.lastPollTime
           ? formatTimeAEST(
               fromDate(pollStatus.lastPollTime, "Australia/Brisbane"),
@@ -348,8 +348,8 @@ export async function getAdminSystemsData(
 
   return {
     success: true,
-    systems: systemsData,
-    totalSystems: systemsData.length,
+    devices: devicesData,
+    totalDevices: devicesData.length,
     timestamp: new Date().toISOString(),
     latestValuesIncluded,
   };

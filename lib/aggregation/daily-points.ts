@@ -3,9 +3,9 @@
  *
  * Replaces the former legacy SQLite writer (removed in the Phase 5 decommission
  * of the legacy store). The daily cron computes each
- * system/day's 1d aggregates in Postgres from PG `point_readings_agg_5m` via
+ * device/day's 1d aggregates in Postgres from PG `point_readings_agg_5m` via
  * `recomputeAgg1dForDay`, and materialises the energy-flow matrix per logical
- * system. Idempotent: re-running a day just heals it.
+ * device. Idempotent: re-running a day just heals it.
  */
 import { CalendarDate } from "@internationalized/date";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
@@ -26,15 +26,15 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 // Earliest date for point data aggregation (when point data collection began)
 const LIVEONE_BIRTHDATE = new CalendarDate(2025, 8, 16);
 
-/** Resolve the timezone offset of the first active system (for today/yesterday math). */
-async function firstSystemTimezoneOffsetMin(): Promise<number> {
-  const systems = await DeviceConfigRegistry.activeDevices();
-  if (systems.length === 0) throw new Error("No systems found");
-  return systems[0].timezoneOffsetMin;
+/** Resolve the timezone offset of the first active device (for today/yesterday math). */
+async function firstDeviceTimezoneOffsetMin(): Promise<number> {
+  const devices = await DeviceConfigRegistry.activeDevices();
+  if (devices.length === 0) throw new Error("No systems found");
+  return devices[0].timezoneOffsetMin;
 }
 
 /**
- * Delete daily aggregations for a date range (all systems) from Postgres.
+ * Delete daily aggregations for a date range (all devices) from Postgres.
  * @param start - Start date (inclusive) or null for earliest available
  * @param end - End date (inclusive) or null for latest available
  */
@@ -59,7 +59,7 @@ export async function deleteRange(
       earliestDate.getMonth() + 1,
       earliestDate.getDate(),
     );
-    endDate = getTodayInTimezone(await firstSystemTimezoneOffsetMin());
+    endDate = getTodayInTimezone(await firstDeviceTimezoneOffsetMin());
   } else if (start === null || end === null) {
     throw new Error(
       "Both start and end must be null, or both must be provided",
@@ -96,7 +96,7 @@ export async function deleteRange(
 }
 
 /**
- * Aggregate daily point data for a date range (all systems) in Postgres.
+ * Aggregate daily point data for a date range (all devices) in Postgres.
  * @param start - Start date (inclusive) or null for earliest available
  * @param end - End date (inclusive) or null for latest available
  */
@@ -121,7 +121,7 @@ export async function aggregateRange(
       earliestDate.getMonth() + 1,
       earliestDate.getDate(),
     );
-    endDate = getYesterdayInTimezone(await firstSystemTimezoneOffsetMin());
+    endDate = getYesterdayInTimezone(await firstDeviceTimezoneOffsetMin());
   } else if (start === null || end === null) {
     throw new Error(
       "Both start and end must be null, or both must be provided",
@@ -147,7 +147,7 @@ export async function aggregateRange(
     return {
       startDate: startStr,
       endDate: endStr,
-      systemsProcessed: 0,
+      devicesProcessed: 0,
       daysAggregated: 0,
       pointsAggregated: 0,
       rowsCreated: 0,
@@ -175,8 +175,8 @@ export async function aggregateRange(
 
   for (const deviceId of deviceIds) {
     const { handle: systemId } = await DeviceRegistry.addrForDevice(deviceId);
-    const system = await DeviceConfigRegistry.deviceByHandle(systemId);
-    if (!system) {
+    const device = await DeviceConfigRegistry.deviceByHandle(systemId);
+    if (!device) {
       console.warn(
         `[Daily Points] System ${systemId} not in the registry — skipping its 1d aggregation.`,
       );
@@ -186,7 +186,7 @@ export async function aggregateRange(
     let aggregatedCount = 0;
     for (const day of allDays) {
       try {
-        const { rowsUpserted } = await recomputeAgg1dForDay(db, system, day);
+        const { rowsUpserted } = await recomputeAgg1dForDay(db, device, day);
         queryCount++;
         aggregatedCount += rowsUpserted;
       } catch (error) {
@@ -212,7 +212,7 @@ export async function aggregateRange(
   }
 
   // NOTE: the per-(area, day) energy-flow matrix (`point_readings_flow_attr_1d`) is materialised by the
-  // battery-provenance heal pass below (it iterates every complete logical system — energy-only +
+  // battery-provenance heal pass below (it iterates every complete logical device — energy-only +
   // grid/solar attribution for battery-less Areas, plus the blend for battery Areas). The legacy
   // `point_readings_flow_1d` writer was retired, so there is no separate flow-matrix pass here.
 
@@ -227,7 +227,7 @@ export async function aggregateRange(
 
   // Daily heal of the derived hot-water temperature over the aggregated range (best-effort).
   // Runs AFTER the 5m aggregation above, since it reads point_readings_agg_5m. No-op when no
-  // system has a load.hws/temperature point.
+  // device has a load.hws/temperature point.
   try {
     await recomputeHwsTemperatureRange(rangeStartMs, Date.now());
   } catch (error) {
@@ -236,7 +236,7 @@ export async function aggregateRange(
 
   // Daily heal of the flow matrix + battery-provenance blend over the aggregated range (best-effort).
   // Runs LAST — it reads agg_5m (battery + grid + solar) which the passes above have materialised. It
-  // materialises `point_readings_flow_attr_1d` for EVERY complete logical system (energy-only +
+  // materialises `point_readings_flow_attr_1d` for EVERY complete logical device (energy-only +
   // grid/solar attribution for battery-less Areas; the blend too for battery Areas) — this is the sole
   // flow-matrix pass since flow_1d was retired. First run THE learn (η → C → losses over the incremental
   // battery_provenance_daily cache — ordering enforced inside), so the blend/rollup recompute below
@@ -274,7 +274,7 @@ export async function aggregateRange(
   return {
     startDate: startStr,
     endDate: endStr,
-    systemsProcessed: results.length,
+    devicesProcessed: results.length,
     daysAggregated: allDays.length,
     pointsAggregated: totalPoints,
     rowsCreated: totalRowsCreated,

@@ -42,7 +42,7 @@ export interface EnergyFlowMatrix {
 
 /** One day's raw energy matrix, aligned to the shared {@link DailyFlowMatrices} node order. */
 export interface DailyFlowMatrix {
-  day: string; // system-local YYYY-MM-DD
+  day: string; // device-local YYYY-MM-DD
   matrix: number[][]; // [sourceIdx][loadIdx] = that day's energy (kWh)
   // ── Metric legs — present ONLY for `source=modern` (from point_readings_flow_attr_1d). Same
   //    [sourceIdx][loadIdx] axes as `matrix`, and ADDITIVE over days like energy. `null` cell = the
@@ -740,7 +740,7 @@ export function logEnergyFlowMatrix(matrix: EnergyFlowMatrix): void {
 
   // Validation check
   // Note: With master load (path="load"), source totals may not equal load totals
-  // due to system losses (inverter efficiency, battery roundtrip, etc.)
+  // due to device losses (inverter efficiency, battery roundtrip, etc.)
   // This is expected and not an error.
   const sourceSum = matrix.sourceTotals.reduce((a, b) => a + b, 0);
   const loadSum = matrix.loadTotals.reduce((a, b) => a + b, 0);

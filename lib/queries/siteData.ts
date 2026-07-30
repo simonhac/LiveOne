@@ -64,7 +64,7 @@ export function siteDataQuery(p: SiteDataQueryParams) {
     staleTime,
     // Keep the previous day's chart on screen while a newly-navigated (uncached) window
     // loads — prevents the blank → axis-jump-to-now → spinner thrash. Only when just the
-    // time window changed (same system + period); never flash another system/period's data.
+    // time window changed (same device + period); never flash another device/period's data.
     placeholderData: (prev, prevQuery) => {
       const k = prevQuery?.queryKey;
       return k && k[1] === String(p.systemId) && k[2] === p.period

@@ -28,7 +28,7 @@ export interface SessionPublishInput {
 }
 
 /**
- * Format a Date as ISO 8601 with system's timezone offset
+ * Format a Date as ISO 8601 with device's timezone offset
  */
 function formatTimestamp(date: Date, timezoneOffsetMin: number): string {
   return formatTime_fromJSDate(date, timezoneOffsetMin);
@@ -41,7 +41,7 @@ function formatTimestamp(date: Date, timezoneOffsetMin: number): string {
  * object, formatting timestamps using the supplied timezone offset.
  *
  * @param input - Session data to convert
- * @param timezoneOffsetMin - System timezone offset in minutes
+ * @param timezoneOffsetMin - Device timezone offset in minutes
  */
 export function buildSessionPayload(
   input: SessionPublishInput,

@@ -4,10 +4,10 @@
  * part it plays in an energy site.
  *
  * Before this module the taxonomy was copy-pasted across four places:
- *   - lib/aggregation/logical-system.ts        (isCompleteRoleSet)
- *   - lib/system-summary-store.ts              (aggregateSummaryReadings)
+ *   - lib/aggregation/logical-device.ts        (isCompleteRoleSet)
+ *   - lib/device-summary-store.ts              (aggregateSummaryReadings)
  *   - components/CompositeTab.tsx              (category panels + patterns)
- *   - app/api/admin/systems/[systemId]/composite-config/route.ts  (path validation)
+ *   - app/api/admin/devices/[systemId]/composite-config/route.ts  (path validation)
  * They all import from here now, so adding a role (or its HA metadata) is a one-line change.
  *
  * Roles carry Home Assistant export metadata (`device_class` / `state_class` / `unit`) so the
@@ -66,7 +66,7 @@ export interface RoleDef {
    */
   validatesCompositePath: boolean;
   /**
-   * System-summary participation. When set, {@link aggregateSummaryReadings} emits
+   * Device-summary participation. When set, {@link aggregateSummaryReadings} emits
    * `${stem}/${metric}`: for `aggregable` roles it uses the master point or, failing that, the sum
    * of its dotted children; for non-aggregable roles it reads the single point directly. Roles
    * without `summary` (ev) are not summarised.
@@ -219,7 +219,7 @@ export function classifyEnergyStem(stem: string): EnergyStemClass | null {
 
 /**
  * Whether a set of logical-path stems forms a complete energy-flow role set (≥1 source and ≥1
- * load). Moved verbatim from logical-system.ts.
+ * load). Moved verbatim from logical-device.ts.
  *
  * Note the deliberate asymmetry preserved from the original: `bidi.battery` / `bidi.grid` match
  * EXACTLY (they are single canonical stems), while solar/load match by prefix. Battery and grid

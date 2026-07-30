@@ -27,10 +27,10 @@ export interface Observation {
   /** MQTT-style topic: "liveone/{vendorType}/{vendorSiteId}/{physicalPathTail}" */
   topic: string;
 
-  /** ISO 8601 with system timezone offset: "2025-01-15T20:30:00+10:00" */
+  /** ISO 8601 with device timezone offset: "2025-01-15T20:30:00+10:00" */
   measurementTime: string;
 
-  /** ISO 8601 with system timezone offset */
+  /** ISO 8601 with device timezone offset */
   receivedTime: string;
 
   /** The reading value (numeric, string for text metrics, or null for errors) */
@@ -77,7 +77,7 @@ export interface Observation {
 
 /**
  * Session data for the queue
- * Represents a communication session with an energy system
+ * Represents a communication session with an energy device
  */
 export interface Session {
   /** Session ID from the database (UUIDv7 text; historical = stringified int) */
@@ -89,7 +89,7 @@ export interface Session {
   /** What triggered the session: CRON, ADMIN, USER, PUSH, etc. */
   cause: string;
 
-  /** ISO 8601 with system timezone offset */
+  /** ISO 8601 with device timezone offset */
   started: string;
 
   /** Duration in milliseconds */
@@ -110,7 +110,7 @@ export interface Session {
   /** Count of data rows received */
   numRows: number;
 
-  /** ISO 8601 with system timezone offset - when session record was created */
+  /** ISO 8601 with device timezone offset - when session record was created */
   startTime: string;
 }
 
@@ -122,13 +122,13 @@ export interface QueueMessage {
   /** Environment: "prod" or "dev" */
   env: "prod" | "dev";
 
-  /** System ID for quick filtering */
+  /** Device ID for quick filtering */
   systemId: number;
 
-  /** System display name for convenience */
+  /** Device display name for convenience */
   systemName: string;
 
-  /** ISO 8601 timestamp when this message was created (with system timezone) */
+  /** ISO 8601 timestamp when this message was created (with device timezone) */
   batchTime: string;
 
   /** Array of observations from this poll (optional) */

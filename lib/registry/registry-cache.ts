@@ -41,7 +41,7 @@ import { Point, type PointId } from "@/lib/ids";
 declare const __ridBrand: unique symbol;
 export type Rid<Tag extends string> = number & { readonly [__ridBrand]: Tag };
 export type PointRid = Rid<"pt">;
-/** == systems.id pre-cutover (there is no device uuid column yet); becomes the minted device rid at cutover. */
+/** == devices.id pre-cutover (there is no device uuid column yet); becomes the minted device rid at cutover. */
 export type DeviceRid = Rid<"dv">;
 
 const asPointRid = (n: number): PointRid => n as PointRid;
@@ -123,7 +123,7 @@ function toAddr(row: {
  * same value `point_info.point_uid` held — `points.id` IS that column, per the schema note), `rid` is
  * `points.rid` (equal to `point_info.rid` by construction: one sequence, asserted by
  * verify-slice-k1-parity), and `systemId` is the owning device's handle `devices.rid` (== the old
- * `point_info.system_id` by the slice invariant `devices.rid == systems.id`). No column is dropped
+ * `point_info.system_id` by the slice invariant `devices.rid == devices.id`). No column is dropped
  * and none is re-derived, so a resolved {@link PointAddr} is identical before and after.
  */
 function addrQuery() {

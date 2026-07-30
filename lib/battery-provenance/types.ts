@@ -29,7 +29,7 @@ export interface ProvenanceInputs {
   handle: number;
   areaId: string;
   region: string | null; // NEM region (OE) or null when off-NEM
-  /** The system that owns the battery (bound battery power point). */
+  /** The device that owns the battery (bound battery power point). */
   batterySystemId: number | null;
   /** The Area's fixed standard offset (minutes) — for local-day boundaries in the per-day rollup. */
   timezoneOffsetMin: number;

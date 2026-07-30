@@ -1,6 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
-// resolveLogicalSystem fans out to the systems cache, the point manager, and the Areas resolver —
+// resolveLogicalSystem fans out to the devices cache, the point manager, and the Areas resolver —
 // mock all three so we can drive the loud-skip / null-area guard deterministically.
 // config-v4 Phase 13 PR 2: `viewableByHandle` is gone. `resolveLogicalSystem` only ever used it as an
 // EXISTENCE check on the handle, so it now asks the two real readers — a device, else an area. These
@@ -12,7 +12,7 @@ jest.mock("@/lib/point/point-manager", () => ({
   PointManager: { getInstance: jest.fn() },
 }));
 jest.mock("@/lib/areas/resolve", () => ({
-  getAreaForSystem: jest.fn(),
+  getAreaForDevice: jest.fn(),
 }));
 jest.mock("@/lib/areas/members", () => ({
   listFlowEligibleAreaHandles: jest.fn(),
@@ -25,7 +25,7 @@ import {
 } from "../logical-system";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { PointManager } from "@/lib/point/point-manager";
-import { getAreaForSystem } from "@/lib/areas/resolve";
+import { getAreaForDevice } from "@/lib/areas/resolve";
 import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
 
 describe("isCompleteRoleSet", () => {
@@ -74,7 +74,7 @@ function fakePoint(stem: string, name: string) {
 
 describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () => {
   // resolveLogicalSystem checks the handle exists (a device, else an area), then the points, then the
-  // mandatory Area. Areas are EXPLICIT now — a system with no Area returns null (never minted here);
+  // mandatory Area. Areas are EXPLICIT now — a device with no Area returns null (never minted here);
   // flow belongs only to Areas.
   const deviceByHandle = jest.mocked(
     DeviceConfigRegistry.deviceByHandle,
@@ -82,27 +82,27 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
   const areaByHandle = jest.mocked(
     DeviceConfigRegistry.areaByHandle,
   ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
-  const getActivePointsForSystem =
+  const getActivePointsForDevice =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
 
   beforeEach(() => {
     jest.clearAllMocks();
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
-      getActivePointsForSystem,
+      getActivePointsForDevice,
     });
     areaByHandle.mockResolvedValue(null);
     deviceByHandle.mockResolvedValue({
       vendorType: "selectronic",
       timezoneOffsetMin: 600,
     });
-    getActivePointsForSystem.mockResolvedValue([
+    getActivePointsForDevice.mockResolvedValue([
       fakePoint("source.solar.local", "Solar"),
       fakePoint("load.hws", "Hot Water"),
     ]);
   });
 
   it("returns a logical system carrying the resolved Area id", async () => {
-    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue({
+    (getAreaForDevice as jest.MockedFunction<any>).mockResolvedValue({
       id: "area-uuid-1",
     });
     const ls = await resolveLogicalSystem(1);
@@ -113,18 +113,18 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
   });
 
   it("returns null for a COMPLETE system with no Area (never mints one — flow is area-only)", async () => {
-    // A complete role set used to lazy-heal an area-of-one; now a system with no Area simply has no
+    // A complete role set used to lazy-heal an area-of-one; now a device with no Area simply has no
     // flow view. Devices get a flow matrix only once grouped into an explicit Area.
-    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
+    (getAreaForDevice as jest.MockedFunction<any>).mockResolvedValue(null);
     const ls = await resolveLogicalSystem(1);
     expect(ls).toBeNull();
   });
 
   it("returns null for an INCOMPLETE system with no Area", async () => {
-    getActivePointsForSystem.mockResolvedValue([
+    getActivePointsForDevice.mockResolvedValue([
       fakePoint("source.solar", "Solar"),
     ]);
-    (getAreaForSystem as jest.MockedFunction<any>).mockResolvedValue(null);
+    (getAreaForDevice as jest.MockedFunction<any>).mockResolvedValue(null);
     const ls = await resolveLogicalSystem(1);
     expect(ls).toBeNull();
   });
@@ -135,7 +135,7 @@ describe("resolveLogicalSystem (Area is mandatory — flow is area-only)", () =>
     areaByHandle.mockResolvedValue(null);
     const ls = await resolveLogicalSystem(999);
     expect(ls).toBeNull();
-    expect(getAreaForSystem).not.toHaveBeenCalled();
+    expect(getAreaForDevice).not.toHaveBeenCalled();
   });
 });
 
@@ -146,13 +146,13 @@ describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handle
   const areaByHandle = jest.mocked(
     DeviceConfigRegistry.areaByHandle,
   ) as unknown as jest.Mock<(id: number) => Promise<unknown>>;
-  const getActivePointsForSystem =
+  const getActivePointsForDevice =
     jest.fn<(id: number, typedOnly: boolean) => Promise<unknown[]>>();
 
   beforeEach(() => {
     jest.clearAllMocks();
     (PointManager.getInstance as jest.MockedFunction<any>).mockReturnValue({
-      getActivePointsForSystem,
+      getActivePointsForDevice,
     });
     areaByHandle.mockResolvedValue(null);
     deviceByHandle.mockResolvedValue({
@@ -166,7 +166,7 @@ describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handle
     (listFlowEligibleAreaHandles as jest.MockedFunction<any>).mockResolvedValue(
       [7, 8, 9],
     );
-    getActivePointsForSystem.mockImplementation(async (id: number) =>
+    getActivePointsForDevice.mockImplementation(async (id: number) =>
       id === 9
         ? [fakePoint("source.solar", "Solar")]
         : [
@@ -174,13 +174,13 @@ describe("listCompleteLogicalSystems (area-only, driven off flow-eligible handle
             fakePoint("load.hws", "HW"),
           ],
     );
-    (getAreaForSystem as jest.MockedFunction<any>).mockImplementation(
+    (getAreaForDevice as jest.MockedFunction<any>).mockImplementation(
       async (id: number) => (id === 8 ? null : { id: `area-${id}` }),
     );
 
     const list = await listCompleteLogicalSystems();
     expect(list.map((l) => l.id)).toEqual([7]);
-    // Never enumerates raw systems: only the flow-eligible handles are consulted.
+    // Never enumerates raw devices: only the flow-eligible handles are consulted.
     expect(listFlowEligibleAreaHandles).toHaveBeenCalledTimes(1);
   });
 });

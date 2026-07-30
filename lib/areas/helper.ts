@@ -37,7 +37,7 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
 
   // Membership is uuid-keyed since slice H, so this reads `devices` and returns `devices.rid`. Since
   // slice 1a `devices` is not a mirror of anything — it is the registry — so `vendor` is written here
-  // directly rather than copied from `systems.vendor_type`.
+  // directly rather than copied from `devices.vendor_type`.
   const existing = await db
     .select({ rid: devices.rid })
     .from(devices)
@@ -57,7 +57,7 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
   // The uuid comes straight off the create (slice 1a): `createHelperDevice` INSERTS the `devices` row
   // rather than mirroring one, so it already knows the identity and hands it back. This used to
   // re-derive it via `ensureDeviceRow(helper.id)` to "re-assert the row in case the mirror hiccupped" — a
-  // hedge that only meant something while the row was a COPY of a `systems` row written by someone else.
+  // hedge that only meant something while the row was a COPY of a `devices` row written by someone else.
   // There is no second writer to lose a race with now, so the extra round trip goes with it.
   const helperDeviceId = helper.deviceId;
   await ensureAreaMember(db, areaId, helperDeviceId, HELPER_MEMBER_ORDINAL);

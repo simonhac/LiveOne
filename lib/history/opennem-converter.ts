@@ -5,7 +5,7 @@ import { formatDataArray } from "./format-opennem";
 import { CalendarDate, ZonedDateTime } from "@internationalized/date";
 import { toUnixTimestamp } from "@/lib/date-utils";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
-import { buildSeriesId, buildSiteIdFromSystem } from "@/lib/series-path-utils";
+import { buildSeriesId, buildSiteIdFromDevice } from "@/lib/series-path-utils";
 
 /**
  * Converts MeasurementSeries data to OpenNEM format
@@ -19,12 +19,12 @@ export class OpenNEMConverter {
     measurementSeries: MeasurementSeries[],
     fields: string[],
     interval: "5m" | "30m" | "1d",
-    system: DeviceConfigView,
+    device: DeviceConfigView,
     requestedStartTime?: CalendarDate | ZonedDateTime,
     requestedEndTime?: CalendarDate | ZonedDateTime,
   ): OpenNEMDataSeries[] {
-    // Build siteId from system (uses shortname if available, otherwise system.{id})
-    const siteId = buildSiteIdFromSystem(system);
+    // Build siteId from device (uses shortname if available, otherwise device.{id})
+    const siteId = buildSiteIdFromDevice(device);
     const dataSeries: OpenNEMDataSeries[] = [];
 
     // Determine the actual time range to use
@@ -205,7 +205,7 @@ export class OpenNEMConverter {
           data: formatDataArray(fieldData),
         },
         network: "liveone",
-        source: system.vendorType,
+        source: device.vendorType,
         label,
         ...(path && { path }),
       });

@@ -1,10 +1,10 @@
 /**
- * Resolve the grid-signals context for a dashboard's system: the NEM region the system's identity
- * Area sits in, and the public OpenElectricity system that serves that region's live signals.
+ * Resolve the grid-signals context for a dashboard's device: the NEM region the device's identity
+ * Area sits in, and the public OpenElectricity device that serves that region's live signals.
  *
- * The card it backs reads a DIFFERENT (public OE region) system than the dashboard it lives on, so
- * this is the cross-system seam. Returns null whenever the card should not render: no Area, no
- * derivable region, the system is off-grid (no `bidi.grid*` point), or no public OE system exists
+ * The card it backs reads a DIFFERENT (public OE region) device than the dashboard it lives on, so
+ * this is the cross-device seam. Returns null whenever the card should not render: no Area, no
+ * derivable region, the device is off-grid (no `bidi.grid*` point), or no public OE device exists
  * for the region. See docs/architecture/areas-and-dashboards.md.
  */
 
@@ -24,10 +24,10 @@ import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
 import type { GridContext } from "@/lib/grid/types";
 
 /**
- * Whether a system plays the grid role — a real device checks its own `bidi.grid*` points. Returns
- * false for off-grid systems.
+ * Whether a device plays the grid role — a real device checks its own `bidi.grid*` points. Returns
+ * false for off-grid devices.
  */
-async function systemPlaysGridRole(
+async function devicePlaysGridRole(
   db: ReturnType<typeof requirePlanetscaleDb>,
   systemId: number,
 ): Promise<boolean> {
@@ -42,7 +42,7 @@ async function systemPlaysGridRole(
   );
 }
 
-export async function resolveGridContextForSystem(
+export async function resolveGridContextForDevice(
   systemId: number,
 ): Promise<GridContext | null> {
   // This runs inline on the dashboard server render. It is a gated, additive feature, so any DB
@@ -71,14 +71,14 @@ export async function resolveGridContextForSystem(
     const region = nemRegionForLocation(location);
     if (!region) return null;
 
-    // d. Grid-connected check: the system must play the grid role. A multi-device area has no own
-    //    point_info — its grid role is a binding to a child system's grid point — so check its
-    //    bindings; a single device checks its own points. Off-grid systems have neither.
-    const hasGridPoint = await systemPlaysGridRole(db, systemId);
+    // d. Grid-connected check: the device must play the grid role. A multi-device area has no own
+    //    point_info — its grid role is a binding to a child device's grid point — so check its
+    //    bindings; a single device checks its own points. Off-grid devices have neither.
+    const hasGridPoint = await devicePlaysGridRole(db, systemId);
     if (!hasGridPoint) return null;
 
-    // e. Resolve the public OpenElectricity system serving this region.
-    const [oeSystem] = await db
+    // e. Resolve the public OpenElectricity device serving this region.
+    const [oeDevice] = await db
       .select({ id: devices.rid })
       .from(devices)
       .where(
@@ -90,9 +90,9 @@ export async function resolveGridContextForSystem(
         ),
       )
       .limit(1);
-    if (!oeSystem) {
-      // Region derived but no public OE system seeded for it — the card silently can't render.
-      // Surface it so the gap is observable (seed via scripts/openelectricity/seed-systems.ts).
+    if (!oeDevice) {
+      // Region derived but no public OE device seeded for it — the card silently can't render.
+      // Surface it so the gap is observable (seed via scripts/openelectricity/seed-devices.ts).
       console.warn(
         `[grid-context] system ${systemId} is in NEM region ${region} but no public ` +
           `OpenElectricity system is seeded for it — Local Grid card hidden.`,
@@ -100,7 +100,7 @@ export async function resolveGridContextForSystem(
       return null;
     }
 
-    return { region, regionSystemId: oeSystem.id };
+    return { region, regionSystemId: oeDevice.id };
   } catch (err) {
     console.error(
       `[grid-context] failed to resolve grid context for system ${systemId}; hiding card.`,

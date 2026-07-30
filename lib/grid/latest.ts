@@ -2,7 +2,7 @@
  * Derive the Local Grid (NEM) card's live values from a `dashboardDataQuery` payload.
  *
  * The card reads the SAME generic `/api/data?systemId=` `latest` map every other live card on the
- * dashboard reads — just for the public OpenElectricity region system (resolved via gridContext).
+ * dashboard reads — just for the public OpenElectricity region device (resolved via gridContext).
  * No bespoke endpoint: this is a pure selector over that payload.
  *
  * The four OE grid-signal logical-path keys (logicalPathStem + "/" + metricType):

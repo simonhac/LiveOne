@@ -11,7 +11,7 @@ import {
  * Get the last polling status for a device, by its legacy integer handle.
  *
  * Reads `device_state` (config-v4 Phase 12 slice C — `polling_status` is frozen until slice N
- * drops it). The handle bridges via the verbatim-rid invariant `devices.rid == systems.id`.
+ * drops it). The handle bridges via the verbatim-rid invariant `devices.rid == devices.id`.
  */
 export async function getPollingStatus(systemId: number) {
   const [row] = await requirePlanetscaleDb()
@@ -96,7 +96,7 @@ export async function updatePollingStatusError(
 // (`devices.rid = systemId`, an index-only probe of devices_rid_unique) rather than in a second
 // round trip on the ingest hot path. Deliberately NOT via DeviceRegistry.addrForHandle: that is an
 // uncached extra query AND it throws UnknownDeviceIdError, which would breach the
-// LOG-BUT-DON'T-THROW contract above. Here a system with no device row inserts 0 rows, silently.
+// LOG-BUT-DON'T-THROW contract above. Here a device with no device row inserts 0 rows, silently.
 //
 // ⚠️ Timestamps are passed as `toISOString()` + an explicit `::timestamp` cast. Handing node-pg a
 // Date serialises it with the *local* UTC offset, which a `timestamp without time zone` column then
@@ -205,15 +205,15 @@ export interface PollingResult {
 }
 
 /**
- * Validate a system for polling
+ * Validate a device for polling
  * Returns a PollingResult with error if validation fails, or null if valid
  */
-export function validateSystemForPolling(
-  system: any,
+export function validateDeviceForPolling(
+  device: any,
   expectedVendorType?: string,
 ): PollingResult | null {
-  // Check if system exists
-  if (!system) {
+  // Check if device exists
+  if (!device) {
     return {
       systemId: 0,
       status: "error",
@@ -222,26 +222,26 @@ export function validateSystemForPolling(
   }
 
   // Check vendor type if specified
-  if (expectedVendorType && system.vendorType !== expectedVendorType) {
+  if (expectedVendorType && device.vendorType !== expectedVendorType) {
     return {
-      systemId: system.id,
-      displayName: system.displayName || undefined,
-      vendorType: system.vendorType,
+      systemId: device.id,
+      displayName: device.displayName || undefined,
+      vendorType: device.vendorType,
       status: "error",
-      error: `Not a ${expectedVendorType} system (type: ${system.vendorType})`,
+      error: `Not a ${expectedVendorType} system (type: ${device.vendorType})`,
     };
   }
 
-  // Check if owner is configured. Public/ownerless systems are allowed when the vendor
+  // Check if owner is configured. Public/ownerless devices are allowed when the vendor
   // authenticates with an app-wide credential (e.g. openelectricity).
   if (
-    !system.ownerClerkUserId &&
-    !vendorUsesAppCredentials(system.vendorType)
+    !device.ownerClerkUserId &&
+    !vendorUsesAppCredentials(device.vendorType)
   ) {
     return {
-      systemId: system.id,
-      displayName: system.displayName || undefined,
-      vendorType: system.vendorType,
+      systemId: device.id,
+      displayName: device.displayName || undefined,
+      vendorType: device.vendorType,
       status: "error",
       error: "No owner configured",
     };

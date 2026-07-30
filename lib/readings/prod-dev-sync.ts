@@ -165,7 +165,7 @@ export interface SyncProdToDevOptions {
 
 // Small config tables — full refresh, FK parents first.
 const FULL: FullTable[] = [
-  // `systems`, `polling_status` and `point_info` were dropped by migration 0051 (the Phase 12 terminal
+  // `devices`, `polling_status` and `point_info` were dropped by migration 0051 (the Phase 12 terminal
   // window) and their legs are gone with them: `devices`/`device_state`/`points` are the live tables and
   // are already synced below. The manifest is not type-checked against the schema — a stale entry here
   // would fail at RUNTIME on the next dispatch, not at build.
@@ -463,8 +463,8 @@ function attachErrorHandler(client: Client, label: string): Client {
 
 // Build a pg Client the same way the app's pool does (lib/db/planetscale): parse
 // the URL and set TLS EXPLICITLY, because node-postgres' bundled
-// pg-connection-string can't handle PlanetScale's `sslrootcert=system` (it tries
-// to open('system') as a file → ENOENT and the connection dies). Managed Postgres
+// pg-connection-string can't handle PlanetScale's `sslrootcert=device` (it tries
+// to open('device') as a file → ENOENT and the connection dies). Managed Postgres
 // here connects encrypted-without-strict-CA; `sslmode=disable`/`DB_SSL=disable`
 // still opts out for a local plaintext server.
 function makeClient(url: string, label: string): Client {

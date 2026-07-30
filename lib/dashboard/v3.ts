@@ -11,7 +11,7 @@
  * Key ideas:
  *  - An AreaSection binds one Area (the unified view = exactly ONE section; composition = N).
  *  - A Tile = (view, deviceSystemId?): omit the device -> the section's own handle (whole-area tile);
- *    name a device -> that specific member (e.g. the OpenElectricity region system for the `oe-grid`
+ *    name a device -> that specific member (e.g. the OpenElectricity region device for the `oe-grid`
  *    view, a member device of the Area).
  */
 import type { DashboardCardType, DashboardLayout, TileId } from "./cards";

@@ -1,7 +1,7 @@
 /**
  * Viewer-scoped and trusted device resolvers for config-v4 dashboard refs.
  *
- * Public identity comes from `legacy_handles.device_id`; data still addresses the current system
+ * Public identity comes from `legacy_handles.device_id`; data still addresses the current device
  * through its integer handle until the devices table lands at cutover.
  */
 import { eq, inArray, isNull, or } from "drizzle-orm";
@@ -21,7 +21,7 @@ export interface ReadableDevice {
 /**
  * Devices this user may read: owned, or ownerless-and-therefore-public. A third `user_systems` viewer
  * grant term was dropped with that table in migration 0045 (slice F) — the grant-based read path is
- * now `requireDashboardAccess`/`grantedSystemScopeForUser`, and this function's callers
+ * now `requireDashboardAccess`/`grantedDeviceScopeForUser`, and this function's callers
  * (app/dashboard/[...slug]/page.tsx, lib/dashboard/v4-routes.ts) pass the DASHBOARD OWNER's id, for
  * whom ownership is the operative term.
  */
@@ -81,10 +81,10 @@ export async function resolveDevicesByIds(
     })
     .from(devices)
     .where(inArray(devices.rid, handles));
-  const systemsById = new Map(rows.map((r) => [r.id, r]));
+  const devicesById = new Map(rows.map((r) => [r.id, r]));
   return unique.flatMap((id) => {
     const mapped = mappings.get(id);
-    const row = mapped ? systemsById.get(mapped.handle) : undefined;
+    const row = mapped ? devicesById.get(mapped.handle) : undefined;
     return mapped && row
       ? [
           {

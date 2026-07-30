@@ -65,8 +65,8 @@ export interface AreaBindingRow {
 /**
  * Every multi-device Area's bindings, flattened with the Area's integer addressing handle. Drives
  * `buildSubscriptionRegistry` — the reverse `point_uid → subscriber` index, in SQL. Migration 0048
- * removed `area_bindings`' own `(point_system_id, point_id)`, so the source system id is recovered by
- * hopping `points.device_id → devices.rid` — the `devices.rid == systems.id` seam invariant (verified
+ * removed `area_bindings`' own `(point_system_id, point_id)`, so the source device id is recovered by
+ * hopping `points.device_id → devices.rid` — the `devices.rid == devices.id` seam invariant (verified
  * 72/72 agreeing with `point_info.system_id` on dev).
  *
  * NOT via `point_info`, deliberately, for two reasons. (a) Lifetime: slice N drops `point_info` BEFORE

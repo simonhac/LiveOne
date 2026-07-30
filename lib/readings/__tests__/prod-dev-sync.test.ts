@@ -95,7 +95,7 @@ describe("prod→dev readings transfer", () => {
     const manifest = prodDevSyncManifest();
     const names = manifest.map((table) => table.name);
     expect(names).toEqual([
-      // `systems`, `polling_status` and `point_info` left this list when migration 0051 dropped them.
+      // `devices`, `polling_status` and `point_info` left this list when migration 0051 dropped them.
       "dashboards",
       "users",
       "share_tokens",

@@ -103,8 +103,8 @@ export function parseDateYYYYMMDD(dateStr: string): CalendarDate {
 }
 
 /**
- * Get yesterday's date in YYYY-MM-DD format in the system's timezone
- * @param timezoneOffsetMinutes - System's timezone offset in minutes (e.g., 600 for AEST)
+ * Get yesterday's date in YYYY-MM-DD format in the device's timezone
+ * @param timezoneOffsetMinutes - Device's timezone offset in minutes (e.g., 600 for AEST)
  * @returns Date string in YYYY-MM-DD format
  */
 export function getYesterdayDate(timezoneOffsetMinutes: number): string {
@@ -132,16 +132,16 @@ export function getYesterdayDate(timezoneOffsetMinutes: number): string {
  * Accepts either ISO8601 datetime or date-only strings
  * @param startStr - Start time/date string
  * @param endStr - End time/date string
- * @param systemTimezoneOffsetMin - System's standard timezone offset in minutes (e.g., 600 for AEST)
+ * @param deviceTimezoneOffsetMin - Device's standard timezone offset in minutes (e.g., 600 for AEST)
  * @returns Tuple of [startTime, endTime] as ZonedDateTime objects
  */
 export function parseTimeRange(
   startStr: string,
   endStr: string,
-  systemTimezoneOffsetMin: number,
+  deviceTimezoneOffsetMin: number,
 ): [ZonedDateTime, ZonedDateTime] {
-  const startTime = parseTimeString(startStr, systemTimezoneOffsetMin, true);
-  const endTime = parseTimeString(endStr, systemTimezoneOffsetMin, false);
+  const startTime = parseTimeString(startStr, deviceTimezoneOffsetMin, true);
+  const endTime = parseTimeString(endStr, deviceTimezoneOffsetMin, false);
 
   return [startTime, endTime];
 }
@@ -149,12 +149,12 @@ export function parseTimeRange(
 /**
  * Parse a single time/date string into ZonedDateTime
  * @param timeStr - ISO8601 datetime or date string
- * @param systemTimezoneOffsetMin - System's standard timezone offset in minutes
+ * @param deviceTimezoneOffsetMin - Device's standard timezone offset in minutes
  * @param isStartOfDay - If date-only, whether to use start (00:00) or end (23:59:59.999) of day
  */
 function parseTimeString(
   timeStr: string,
-  systemTimezoneOffsetMin: number,
+  deviceTimezoneOffsetMin: number,
   isStartOfDay: boolean,
 ): ZonedDateTime {
   // Check if it's a date-only string (YYYY-MM-DD)
@@ -163,9 +163,9 @@ function parseTimeString(
     const date = parseDate(timeStr);
 
     // Create timezone string (e.g., "+10:00" for AEST, no DST)
-    const offsetHours = Math.floor(Math.abs(systemTimezoneOffsetMin) / 60);
-    const offsetMinutes = Math.abs(systemTimezoneOffsetMin) % 60;
-    const offsetSign = systemTimezoneOffsetMin >= 0 ? "+" : "-";
+    const offsetHours = Math.floor(Math.abs(deviceTimezoneOffsetMin) / 60);
+    const offsetMinutes = Math.abs(deviceTimezoneOffsetMin) % 60;
+    const offsetSign = deviceTimezoneOffsetMin >= 0 ? "+" : "-";
     const tzOffset = `${offsetSign}${String(offsetHours).padStart(2, "0")}:${String(offsetMinutes).padStart(2, "0")}`;
 
     // Create datetime string at start or end of day
@@ -311,13 +311,13 @@ export function getTimeDifferenceMs(
  * Parse relative time (e.g., "7d", "24h", "30m")
  * @param lastParam - Relative time string
  * @param interval - The interval type (5m, 30m, 1d)
- * @param systemTimezoneOffsetMin - System's standard timezone offset in minutes
+ * @param deviceTimezoneOffsetMin - Device's standard timezone offset in minutes
  * @returns Tuple of [start, end] as either ZonedDateTime or CalendarDate based on interval
  */
 export function parseRelativeTime(
   lastParam: string,
   interval: string,
-  systemTimezoneOffsetMin: number,
+  deviceTimezoneOffsetMin: number,
 ): [ZonedDateTime | CalendarDate, ZonedDateTime | CalendarDate] {
   const match = lastParam.match(/^(\d+)([dhm])$/i);
   if (!match) {
@@ -651,7 +651,7 @@ export function formatTime_fromJSDate(
 }
 
 /**
- * Format a Date as HH:mm+TZ in the system's timezone
+ * Format a Date as HH:mm+TZ in the device's timezone
  * @param date - JavaScript Date object (in UTC)
  * @param timezoneOffsetMin - Timezone offset in minutes (positive for east of UTC)
  * @returns Time string in HH:mm+TZ format (e.g., "14:30+10:00")

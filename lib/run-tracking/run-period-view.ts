@@ -16,7 +16,7 @@
 
 /**
  * How to present the signal a run detector follows. Resolved server-side (the display registry
- * needs the system's `vendorType`) and carried to the client, which just applies `format`.
+ * needs the device's `vendorType`) and carried to the client, which just applies `format`.
  */
 export interface RunSignalMeta {
   /** `point_info.display_name`, e.g. "Engine Speed" — the column-label stem ("Avg Engine Speed"). */
@@ -115,7 +115,7 @@ const RANGE_DASH = "–";
 
 /**
  * One human-readable "when" for a run — the merged replacement for the old Date / Start / End
- * columns. Operates on the strings the server already formatted in the system's display timezone
+ * columns. Operates on the strings the server already formatted in the device's display timezone
  * (`formatInTimezone`), so no timezone logic leaks to the client.
  *
  * `endDate` is set by the server ONLY when the run ends on a different local day than it started;

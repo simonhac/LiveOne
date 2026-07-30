@@ -13,7 +13,7 @@
  * `collectRefs` (the §8.3 scope walk) is re-exported so callers have one import for doc resolution.
  *
  * The real `ShellResolver` is viewer-scoped: areas resolve to their current handle and stable device
- * refs resolve through `legacy_handles` to the current system address.
+ * refs resolve through `legacy_handles` to the current device address.
  */
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { DashboardV4, DashboardNode } from "./v4";

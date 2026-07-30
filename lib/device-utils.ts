@@ -1,16 +1,16 @@
 /**
- * Utility functions for system identification and formatting
+ * Utility functions for device identification and formatting
  */
 
 /**
- * Format system information for logging and display
- * @param system - System object with vendorType, vendorSiteId, and displayName
+ * Format device information for logging and display
+ * @param device - Device object with vendorType, vendorSiteId, and displayName
  * @returns Formatted string like "selectronic/1234 ('My Site')"
  */
-export function formatSystemId(system: {
+export function formatSystemId(device: {
   vendorType: string;
   vendorSiteId: string;
   displayName: string;
 }): string {
-  return `${system.vendorType}/${system.vendorSiteId} ('${system.displayName}')`;
+  return `${device.vendorType}/${device.vendorSiteId} ('${device.displayName}')`;
 }

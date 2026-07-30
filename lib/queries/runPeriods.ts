@@ -9,7 +9,7 @@ import type {
 export type { RunPeriodColumns, RunSignalMeta };
 
 /**
- * One persisted device run period, as shaped by `/api/system/{id}/run-periods`. Covers BOTH the
+ * One persisted device run period, as shaped by `/api/device/{id}/run-periods`. Covers BOTH the
  * legacy generator-events fields and the richer enrichment (ISO times, duration, power). Consumers
  * read the subset they need.
  */
@@ -47,7 +47,7 @@ export interface RunPeriodEvent {
 }
 
 /**
- * `/api/system/{id}/run-periods` response. The endpoint has two modes:
+ * `/api/device/{id}/run-periods` response. The endpoint has two modes:
  *   - paged (`limit`/`offset`)  → `{ events, limit, offset, hasMore, running }`
  *   - period (`period`/`start&end`) → `{ events, totalEnergyKwh, running }`
  * so the mode-specific fields are optional.
@@ -100,7 +100,7 @@ export interface RunPeriodsQueryParams {
 
 /** Build the run-periods URL for the requested mode (paged takes precedence over period/range). */
 function buildRunPeriodsUrl(p: RunPeriodsQueryParams): string {
-  let url = `/api/system/${p.systemId}/run-periods?role=${encodeURIComponent(p.role)}`;
+  let url = `/api/device/${p.systemId}/run-periods?role=${encodeURIComponent(p.role)}`;
   if (p.limit != null) {
     url += `&limit=${p.limit}&offset=${p.offset ?? 0}`;
   } else if (p.start && p.end) {
@@ -119,13 +119,13 @@ function modeKey(p: RunPeriodsQueryParams): string {
 }
 
 /**
- * Bounded, indexed read of a system's persisted device run periods (generator now, pump later).
- * The single shared accessor for `/api/system/{id}/run-periods` — replaces the per-component inline
+ * Bounded, indexed read of a device's persisted device run periods (generator now, pump later).
+ * The single shared accessor for `/api/device/{id}/run-periods` — replaces the per-component inline
  * fetches in GeneratorRunsCard and GeneratorClient so both share one key, param style, and
  * freshness policy. `role` is a query param, so this is a GENERIC resource, not a per-device API.
  *
  * Run periods are bounded tabular history (not live latest values), so a single staleTime with no
- * polling is right; a manual Poll-Now sweeps it via `invalidateSystem` (key resource "runPeriods").
+ * polling is right; a manual Poll-Now sweeps it via `invalidateDevice` (key resource "runPeriods").
  */
 export function runPeriodsQuery(p: RunPeriodsQueryParams) {
   return queryOptions<RunPeriodsResponse>({

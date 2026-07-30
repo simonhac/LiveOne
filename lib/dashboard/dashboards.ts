@@ -1,7 +1,7 @@
 /**
  * Composition-first dashboard CRUD (Phase 2b-2) — first-class, owner-scoped, id/alias-addressed.
  *
- * Distinct from the legacy per-(user,system) `store.ts` (retired with the old path). A row here has
+ * Distinct from the legacy per-(user,device) `store.ts` (retired with the old path). A row here has
  * `display_name`, an optional owner-unique `alias`, and a composition `descriptor` (every card
  * area-bound); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
  *

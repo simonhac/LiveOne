@@ -1,12 +1,12 @@
 /**
- * Per-device CONFIG — the typed, user-editable "all sorts of stuff" blob stored on `systems.config`
- * (jsonb). Distinct from `systems.metadata`, which is the adapter-owned credentials/diagnostics bag
+ * Per-device CONFIG — the typed, user-editable "all sorts of stuff" blob stored on `devices.config`
+ * (jsonb). Distinct from `devices.metadata`, which is the adapter-owned credentials/diagnostics bag
  * (secure-credentials, vendor network, device descriptors). `config` is the clean home for the
  * per-device knobs the capability cleanup is data-driving instead of hardcoding — it grows WITHOUT
  * migrations (the HA `.storage` model), because the column already exists.
  *
  * Today: capability on/off overrides, the structured device `spec` (config-v4 slice K1 — the successor
- * to the free-text `systems.ratings`/`solar_size`/`battery_size` columns, which `devices` does not
+ * to the free-text `devices.ratings`/`solar_size`/`battery_size` columns, which `devices` does not
  * have), and `nameplateKw`/`updateCadenceSeconds`. `updateCadenceSeconds` is still a forward seam to
  * retire the hardcoded `vendorType === 'enphase' ? 2100 : 300` stale-threshold branch.
  *
@@ -95,28 +95,28 @@ export interface BatteryProvenanceConfig {
 }
 
 /**
- * The device's PHYSICAL SPEC, structured — the successor to the three free-text `systems` columns
+ * The device's PHYSICAL SPEC, structured — the successor to the three free-text `devices` columns
  * `ratings` / `solar_size` / `battery_size` (clean-sheet §4.8 "what dies": `devices` has no counterpart
  * to any of them, deliberately).
  *
  * Why structured rather than carried across verbatim: the only *behavioural* consumer of the free text
- * is `maxPowerHintFromSystemInfo`, which regex-scrapes a number back out of strings a vendor scraper
+ * is `maxPowerHintFromDeviceInfo`, which regex-scrapes a number back out of strings a vendor scraper
  * happened to produce ("9 kW", "7.5kW, 48V", "11.9kW"). A number that has to be re-parsed on every read
  * is a number that was never stored. Every field here is the value that regex was trying to recover, so
  * the regex retires (config-v4 Phase 12 slice K1) and the strings stop being an interface.
  *
  * All fields optional and absent-when-unknown: absent must keep meaning exactly what an unparseable
- * free-text value meant, or the chart's y-axis hint moves. Non-positive values are never stored (system
+ * free-text value meant, or the chart's y-axis hint moves. Non-positive values are never stored (device
  * 3 carries the literal `solar_size` "-0.0 kW", which the old regex also rejected).
  */
 export interface DeviceSpec {
-  /** PV array nameplate (kW DC) — was `systems.solar_size` ("9 kW"). */
+  /** PV array nameplate (kW DC) — was `devices.solar_size` ("9 kW"). */
   solarSizeKw?: number;
-  /** Battery nominal capacity (kWh) — was `systems.battery_size` ("63.6 kWh"). */
+  /** Battery nominal capacity (kWh) — was `devices.battery_size` ("63.6 kWh"). */
   batterySizeKwh?: number;
-  /** Inverter continuous rating (kW) — was the first half of `systems.ratings` ("7.5kW, 48V"). */
+  /** Inverter continuous rating (kW) — was the first half of `devices.ratings` ("7.5kW, 48V"). */
   inverterSizeKw?: number;
-  /** Battery nominal DC bus voltage (V) — the second half of `systems.ratings`. Display-only. */
+  /** Battery nominal DC bus voltage (V) — the second half of `devices.ratings`. Display-only. */
   batteryVoltageV?: number;
 }
 
@@ -125,9 +125,9 @@ export interface DeviceSpec {
  *
  * The TypeScript counterpart of the `specNum(…)` SQL that used to live in the deleted
  * `lib/registry/v4-mirror.ts`, added in config-v4 Phase 12 slice 1a. It is needed because the two CREATE
- * paths that still receive free text — `POST /api/systems` (from a vendor adapter's `getSystemInfo`) and
- * the Tesla OAuth callback — used to hand it to `systems.ratings`/`solar_size`/`battery_size` and let the
- * mirror's SQL parse it on the way into `devices.config.spec`. With no `systems` row left to stage it in,
+ * paths that still receive free text — `POST /api/devices` (from a vendor adapter's `getDeviceInfo`) and
+ * the Tesla OAuth callback — used to hand it to `devices.ratings`/`solar_size`/`battery_size` and let the
+ * mirror's SQL parse it on the way into `devices.config.spec`. With no `devices` row left to stage it in,
  * the parse has to happen before the write.
  *
  * Semantics are deliberately identical to that SQL, so a device created after 1a gets the same `spec` a
@@ -135,7 +135,7 @@ export interface DeviceSpec {
  *   - case-insensitive ("kW" / "kw" / "KWh" all match);
  *   - the FIRST match wins, so "7.5kW, 48V" yields 7.5 for `kw` and 48 for `v`;
  *   - **non-positive and unparseable both collapse to `undefined`**, never 0 — an absent spec field must
- *     mean exactly what an unparseable free-text value meant, or the chart's y-axis hint moves. System 3
+ *     mean exactly what an unparseable free-text value meant, or the chart's y-axis hint moves. Device 3
  *     carries the literal `solar_size` "-0.0 kW"; the capture group is unsigned so it reads 0.0, which
  *     this then rejects.
  *
@@ -194,9 +194,9 @@ export interface DeviceConfig {
 }
 
 /**
- * The line chart's y-axis scaling hint (kW) — the SUCCESSOR to `maxPowerHintFromSystemInfo`
+ * The line chart's y-axis scaling hint (kW) — the SUCCESSOR to `maxPowerHintFromDeviceInfo`
  * (components/dashboard/cards/shared.tsx), which regex-scrapes the same two numbers out of the free-text
- * `systems.solar_size`/`ratings` on every render. Same rule: the larger of the PV array and the inverter,
+ * `devices.solar_size`/`ratings` on every render. Same rule: the larger of the PV array and the inverter,
  * whichever of the two is known; undefined when neither is.
  *
  * Client-safe (no DB imports) so the card can call it directly once slice K2 puts `config` on the wire.
@@ -221,11 +221,11 @@ export function maxPowerHintFromSpec(
 
 /**
  * Render a {@link DeviceSpec} back into the three free-text display strings the WIRE still carries
- * (`/api/data`'s `systemInfo.ratings`/`solarSize`/`batterySize`, the admin systems table).
+ * (`/api/data`'s `deviceInfo.ratings`/`solarSize`/`batterySize`, the admin devices table).
  *
  * This is deliberately a one-way DISPLAY projection, not a round-trip. Slice K2 flips the config reads
  * onto `devices`, which has no counterpart to the three columns — but four components still render the
- * strings verbatim (`SystemInfoTooltip`, `MobileHeaderMenu`, `DeviceLayout`, `AdminDashboardClient`),
+ * strings verbatim (`DeviceInfoTooltip`, `MobileHeaderMenu`, `DeviceLayout`, `AdminDashboardClient`),
  * so dropping them from the payload would silently blank a panel rather than fail a build. Emitting them
  * from the structured spec keeps the payload stable while making `config.spec` the sole SOURCE.
  *
@@ -255,7 +255,7 @@ export function specToDisplayStrings(spec: DeviceSpec | null | undefined): {
 
 /**
  * A device config record widened with the three legacy display strings — the shape the page chrome
- * (`DeviceLayout` → `SystemInfoTooltip` / `MobileHeaderMenu`) still declares. A function rather than a
+ * (`DeviceLayout` → `DeviceInfoTooltip` / `MobileHeaderMenu`) still declares. A function rather than a
  * precomputed const so it composes with TypeScript's narrowing at the call site.
  */
 export function withSpecDisplayStrings<

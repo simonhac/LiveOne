@@ -81,12 +81,12 @@ export async function resolveIntensitySeries(
   if (det.role !== GENERATOR_ROLE) return null;
 
   // WHERE THE CONSTANTS LIVE, and why this is two hops. `generatorSource` is config on the site's
-  // BATTERY system — the one the fold reads (lib/battery-provenance/load.ts resolves it through the
+  // BATTERY device — the one the fold reads (lib/battery-provenance/load.ts resolves it through the
   // area's `role=battery, metric=power` binding). But a detector's OWN area is typically a
   // device-level area-of-one with no bindings at all (Daylesford's generator detector hangs off the
   // Selectronic's area; the battery binding is on the "Daylesford" site area that contains it). So:
   // detector's area → its member devices → every area those devices belong to → the battery
-  // binding → that system's config. One place to configure: a site that prices its Sankey prices
+  // binding → that device's config. One place to configure: a site that prices its Sankey prices
   // its runs.
   const member = alias(areaMembers, "member");
   const sibling = alias(areaMembers, "sibling");
@@ -103,7 +103,7 @@ export async function resolveIntensitySeries(
       ),
     )
     // The battery binding's device, reached through the binding's uuid (`points.device_id`) since
-    // slice E PR 2a. Slice K2 deleted the trailing `devices.rid → systems.id` bridge: `devices.config`
+    // slice E PR 2a. Slice K2 deleted the trailing `devices.rid → devices.id` bridge: `devices.config`
     // IS the config, so the hop carried nothing. Both joins are INNER, exactly as the single one they
     // replace was: `point_uid` is NOT NULL with an FK into `points`, and `points.device_id` an FK into
     // `devices`, so neither can drop a row — and removing the bridge removed the one hop that could
@@ -111,11 +111,11 @@ export async function resolveIntensitySeries(
     .innerJoin(points, eq(points.id, areaBindings.pointUid))
     .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(eq(member.areaId, det.areaId))
-    // ORDINAL, not priority — this must agree with the fold, which picks the battery system as the
+    // ORDINAL, not priority — this must agree with the fold, which picks the battery device as the
     // first `role=battery, metric=power` of `boundPoints`, ordered by `ordinal`
     // (lib/battery-provenance/load.ts). Ordering by `priority` looks equivalent and is not: the two
     // columns are independent, so a site with two battery bindings could price its runs off one
-    // system and its Sankey off the other.
+    // device and its Sankey off the other.
     //
     // `areaId` is the tiebreak, and it is load-bearing rather than cosmetic: this query fans out
     // across EVERY area the device belongs to, while `ordinal` is only meaningful WITHIN one area

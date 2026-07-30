@@ -38,12 +38,12 @@ export function registerSeries(
   // Determine which pattern matched (if patterns were provided)
   let matchedPattern: string | undefined;
   if (debug.patterns && debug.patterns.length > 0) {
-    // Remove system identifier prefix to match against point path patterns
-    const pathWithoutSystem = seriesId.substring(seriesId.indexOf("/") + 1);
+    // Remove device identifier prefix to match against point path patterns
+    const pathWithoutDevice = seriesId.substring(seriesId.indexOf("/") + 1);
 
     // Find first matching pattern
     for (const pattern of debug.patterns) {
-      if (micromatch.isMatch(pathWithoutSystem, pattern)) {
+      if (micromatch.isMatch(pathWithoutDevice, pattern)) {
         matchedPattern = pattern;
         break;
       }

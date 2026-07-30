@@ -9,7 +9,7 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
  * the legacy inline write. See lib/date-utils.ts formatTime_fromJSDate(includeMillis).
  */
 describe("buildObservations", () => {
-  const system = {
+  const device = {
     id: 6,
     vendorType: "mondo",
     vendorSiteId: "site-1",
@@ -29,7 +29,7 @@ describe("buildObservations", () => {
     const measurementTimeMs = 1749081599611; // …:59.611
     const receivedTimeMs = 1749081596775; // …:56.775
 
-    const [obs] = buildObservations(system, [
+    const [obs] = buildObservations(device, [
       {
         sessionId: "s1",
         point,
@@ -49,7 +49,7 @@ describe("buildObservations", () => {
   });
 
   it("carries the point's pointUid on the payload (v2, for the DAO-seam receiver)", () => {
-    const [obs] = buildObservations(system, [
+    const [obs] = buildObservations(device, [
       {
         sessionId: "s1",
         point,

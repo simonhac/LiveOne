@@ -9,7 +9,7 @@
  *
  * Cutover seams are deliberately confined to this file and fall into three explicit categories:
  * point-keyed reads/writes (`PointId` → current composite address), device-keyed fleet/admin probes
- * (`DeviceId` → current system handle), and keyless maintenance operations. Every occurrence is tagged
+ * (`DeviceId` → current device handle), and keyless maintenance operations. Every occurrence is tagged
  * `// SEAM:` so the Phase-8 harness must exercise it against both table shapes.
  *
  * Time crosses this boundary as epoch-ms UTC (every existing caller speaks epoch-ms; `Date` is a
@@ -178,7 +178,7 @@ async function readRaw(
   const db = exec ?? requirePlanetscaleDb();
   const from = new Date(window.fromMs);
   const to = new Date(window.toMs);
-  // SEAM: rid-keyed WHERE (single query, no per-system fan-out).
+  // SEAM: rid-keyed WHERE (single query, no per-device fan-out).
   const ridByPoint = await RegistryCache.ridsForPoints(points);
   const rids = [...ridByPoint.values()];
   const pointByRid = new Map<number, PointId>(
@@ -230,7 +230,7 @@ async function read5m(
   const db = exec ?? requirePlanetscaleDb();
   const from = new Date(window.fromMs);
   const to = new Date(window.toMs);
-  // SEAM: rid-keyed WHERE (single query, no per-system fan-out).
+  // SEAM: rid-keyed WHERE (single query, no per-device fan-out).
   const ridByPoint = await RegistryCache.ridsForPoints(points);
   const rids = [...ridByPoint.values()];
   const pointByRid = new Map<number, PointId>(
@@ -290,7 +290,7 @@ async function read1d(
   const out: SeriesByPoint<Agg1dReading> = new Map(points.map((p) => [p, []]));
   if (points.length === 0) return out;
   const db = exec ?? requirePlanetscaleDb();
-  // SEAM: rid-keyed WHERE (single query, no per-system fan-out).
+  // SEAM: rid-keyed WHERE (single query, no per-device fan-out).
   const ridByPoint = await RegistryCache.ridsForPoints(points);
   const rids = [...ridByPoint.values()];
   const pointByRid = new Map<number, PointId>(
@@ -907,9 +907,9 @@ async function earliestAgg5mMs(exec?: ReadingsExec): Promise<number | null> {
 }
 
 /**
- * Distinct device (system) ids with `agg_5m` rows at/after `sinceMs`.
+ * Distinct device (device) ids with `agg_5m` rows at/after `sinceMs`.
  * // SEAM: reads `system_id` directly today; Phase 8 → DISTINCT device via a `point_rid` join. The
- * return shape (device ids == system ids == device_rids) is stable across the cutover.
+ * return shape (device ids == device ids == device_rids) is stable across the cutover.
  */
 async function deviceIdsWithAgg5mSince(
   sinceMs: number,
@@ -926,7 +926,7 @@ async function deviceIdsWithAgg5mSince(
 }
 
 /**
- * Latest `agg_5m` `interval_end` (epoch-ms UTC) for ONE device (system), or null when it has no rows.
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) for ONE device (device), or null when it has no rows.
  * Seeds the OE scheduler's KV state (`loadState`).
  * // SEAM: filters `system_id` directly today; Phase 8 → a device_rid join. The return shape is stable
  * across the cutover because the public DeviceId is resolved inside this seam.
@@ -1053,11 +1053,11 @@ async function createdAtHistogramSince(
 }
 
 /**
- * Distinct raw-`point_readings` device (system) ids with `created_at >= sinceMs` (stats `systems_24h`).
+ * Distinct raw-`point_readings` device (device) ids with `created_at >= sinceMs` (stats `systems_24h`).
  * // SEAM: reads `system_id` directly today; Phase 8 → DISTINCT device via a `point_rid` join. The
- * return count (device ids == system ids == device_rids) is stable across the cutover.
+ * return count (device ids == device ids == device_rids) is stable across the cutover.
  */
-async function distinctSystemsByRawCreatedAtSince(
+async function distinctDevicesByRawCreatedAtSince(
   sinceMs: number,
   exec?: ReadingsExec,
 ): Promise<number> {
@@ -1110,9 +1110,9 @@ async function rawLandingHealth(
 }
 
 /**
- * Latest `agg_5m` `interval_end` (epoch-ms UTC) across a SET of devices (systems), or null when the set
+ * Latest `agg_5m` `interval_end` (epoch-ms UTC) across a SET of devices (devices), or null when the set
  * is empty or has no rows (the battery-provenance blend-freshness probe — caller passes the helper-vendor
- * system ids). // SEAM: filters `system_id` directly today; Phase 8 → a device_rid `IN`. Stable shape.
+ * device ids). // SEAM: filters `system_id` directly today; Phase 8 → a device_rid `IN`. Stable shape.
  */
 async function maxAgg5mIntervalMsForDevices(
   deviceIds: DeviceId[],
@@ -1132,7 +1132,7 @@ async function maxAgg5mIntervalMsForDevices(
 }
 
 /**
- * Delete every `agg_1d` row in the inclusive `[startDay, endDay]` range across ALL points/systems
+ * Delete every `agg_1d` row in the inclusive `[startDay, endDay]` range across ALL points/devices
  * (day-keyed maintenance delete, not point-scoped). Returns the number of rows removed. Cutover-invariant:
  * the `day` text key is unchanged post-cutover (no composite/rid columns in the WHERE).
  */
@@ -1364,7 +1364,7 @@ async function readAdminPivot(
 }
 
 /**
- * Does device (system) `systemId` have ANY rows in `store`? (`SELECT 1 … LIMIT 1`, index-friendly —
+ * Does device (device) `systemId` have ANY rows in `store`? (`SELECT 1 … LIMIT 1`, index-friendly —
  * never `COUNT(*)`). The admin pivot's "is there data in the other store?" probe.
  * // SEAM: filters `system_id` directly (Phase 8 → device_rid).
  */
@@ -1385,7 +1385,7 @@ async function hasReadingsForDevice(
 }
 
 /**
- * Does device (system) `systemId` have any `store` row strictly older / newer than `boundary`? (the
+ * Does device (device) `systemId` have any `store` row strictly older / newer than `boundary`? (the
  * admin pivot's hasOlder / hasNewer pagination probes; `SELECT 1 … LIMIT 1`). `boundary` is a
  * YYYY-MM-DD string for `agg1d` (string compare) or epoch-ms for raw/5m (→ `to_timestamp`).
  * `direction`: "older" → `<`, "newer" → `>`. // SEAM: filters `system_id` directly (Phase 8 → device_rid).
@@ -1556,7 +1556,7 @@ export const ReadingsDao = {
   latestAgg5mIntervalMsForDevice,
   countByCreatedAtSince,
   createdAtHistogramSince,
-  distinctSystemsByRawCreatedAtSince,
+  distinctDevicesByRawCreatedAtSince,
   latestRawCreatedAtMs,
   rawLandingHealth,
   maxAgg5mIntervalMsForDevices,

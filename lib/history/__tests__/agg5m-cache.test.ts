@@ -38,7 +38,7 @@ describe("Agg5mAvgCache (§1.3a)", () => {
     const c = new Agg5mAvgCache();
     c.record(8, [10], 1000, 5000, []);
     expect(c.slice(8, 99, 1000, 5000).covered).toBe(false); // point not queried
-    expect(c.slice(7, 10, 1000, 5000).covered).toBe(false); // different system
+    expect(c.slice(7, 10, 1000, 5000).covered).toBe(false); // different device
   });
 
   it("covered=false when the cache window does not reach endMs (tail-gap fail-safe)", () => {

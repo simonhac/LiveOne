@@ -42,7 +42,7 @@ describe("applyCapabilityConfig", () => {
 
 /**
  * `maxPowerHintFromSpec` (config-v4 slice K1) is the successor to the free-text regex
- * `maxPowerHintFromSystemInfo`. Its RULE must match ("larger of PV array and inverter"); its INPUT
+ * `maxPowerHintFromDeviceInfo`. Its RULE must match ("larger of PV array and inverter"); its INPUT
  * deliberately does not (see the function's own note on Kutis / "11.9kW"). The cross-environment
  * proof that no OTHER device's hint moves is `scripts/config-v4/verify-slice-k1-parity.ts` block 3.
  */

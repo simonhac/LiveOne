@@ -51,13 +51,13 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 type PgExecutor = PgDb | Parameters<Parameters<PgDb["transaction"]>[0]>[0];
 
 /**
- * Fixed namespace for the per-system 5m-recompute advisory lock (paired with the systemId as
+ * Fixed namespace for the per-device 5m-recompute advisory lock (paired with the systemId as
  * the second key) so it can't collide with any other advisory-lock use. Value is arbitrary.
  */
 const AGG5M_RECOMPUTE_LOCK_NS = 0x41475335; // ascii "AGS5"
 
-/** Minimal system shape the 1d recompute needs (a `systems` row satisfies it). */
-interface SystemForDailyAgg {
+/** Minimal device shape the 1d recompute needs (a `devices` row satisfies it). */
+interface DeviceForDailyAgg {
   id: number;
   timezoneOffsetMin: number;
 }
@@ -111,10 +111,10 @@ export function withSuccessorIntervals(intervalEndsMs: number[]): number[] {
  *
  * ORDER-INDEPENDENT (parallelism > 1 safe): callers pass each touched interval together with
  * its immediate successor (`withSuccessorIntervals`), and the recompute runs inside one
- * transaction guarded by a per-system advisory lock, with the raw already committed by the
+ * transaction guarded by a per-device advisory lock, with the raw already committed by the
  * receiver. So out-of-order / parallel delivery still converges to the correct value — when
  * interval N's raw lands we also rebuild N+1 (whose delta depends on N), and the advisory lock
- * makes the last writer for any interval observe all committed raw (different systems never
+ * makes the last writer for any interval observe all committed raw (different devices never
  * contend). The value reconciler is still run over a settled window as a backstop.
  */
 export async function recomputeAgg5mForIntervals(
@@ -125,7 +125,7 @@ export async function recomputeAgg5mForIntervals(
   if (intervalEndsMs.length === 0) {
     return { intervalsProcessed: 0, rowsUpserted: 0 };
   }
-  // Serialize recomputes for THIS system: one transaction holding a per-system advisory lock,
+  // Serialize recomputes for THIS device: one transaction holding a per-device advisory lock,
   // so concurrent queue messages can't interleave a read-then-write on a shared interval and
   // lose an update. Transaction-scoped lock → released at commit, safe under the pooler.
   return db.transaction(async (tx) => {
@@ -138,7 +138,7 @@ export async function recomputeAgg5mForIntervals(
 
 /**
  * Inner recompute: read raw via the DAO → group by point → upsert 5m for the given intervals,
- * against a transaction handle so the caller's advisory lock serializes it per system.
+ * against a transaction handle so the caller's advisory lock serializes it per device.
  *
  * The point set is driven from `point_info` (so every point resolves to a `PointId`); the DAO reads
  * raw by that list. A point present in raw but absent from `point_info` is impossible (the composite
@@ -150,7 +150,7 @@ async function recompute5mIntervalsWithin(
   systemId: number,
   intervalEndsMs: number[],
 ): Promise<{ intervalsProcessed: number; rowsUpserted: number }> {
-  // point metadata (transform / metric_type) + identity (points.id → PointId) for the system.
+  // point metadata (transform / metric_type) + identity (points.id → PointId) for the device.
   const points = await db
     .select({
       pointUid: pointsTable.id,
@@ -274,18 +274,18 @@ async function recompute5mIntervalsWithin(
 }
 
 /**
- * Recompute a system/day's 1d aggregates from PG 5m (via the DAO), upserting into 1d. Mirrors the
+ * Recompute a device/day's 1d aggregates from PG 5m (via the DAO), upserting into 1d. Mirrors the
  * legacy `aggregateDailyPointData` writer: the day spans 00:05..00:00-next-day, and `last` is taken
  * from the previous day's 00:00 interval.
  */
 export async function recomputeAgg1dForDay(
   db: PgDb,
-  system: SystemForDailyAgg,
+  device: DeviceForDailyAgg,
   day: CalendarDate,
 ): Promise<{ rowsUpserted: number }> {
   const [dayStartUnix, dayEndUnix] = dayToUnixRangeForAggregation(
     day,
-    system.timezoneOffsetMin,
+    device.timezoneOffsetMin,
   );
   const dayStartMs = dayStartUnix * 1000;
   const dayEndMs = dayEndUnix * 1000;
@@ -293,13 +293,13 @@ export async function recomputeAgg1dForDay(
   const previousDayEndMs = dayStartMs - FIVE_MIN_MS;
   const dayStr = day.toString();
 
-  // Enumerate the system's points as PointIds — the DAO reads 5m by PointId. (This path didn't read
+  // Enumerate the device's points as PointIds — the DAO reads 5m by PointId. (This path didn't read
   // the point table before; 5m FKs to it, so the point set is identical to the old broad scan.)
   const points = await db
     .select({ pointUid: pointsTable.id })
     .from(pointsTable)
     .innerJoin(devices, eq(devices.id, pointsTable.deviceId))
-    .where(eq(devices.rid, system.id));
+    .where(eq(devices.rid, device.id));
   const pointIds: PointId[] = [];
   for (const p of points) {
     try {
@@ -320,7 +320,7 @@ export async function recomputeAgg1dForDay(
   } catch (err) {
     if (err instanceof UnknownIdError) {
       console.warn(
-        `[PG-Agg1d] system=${system.id} day=${dayStr}: skipped — ${err.message}`,
+        `[PG-Agg1d] system=${device.id} day=${dayStr}: skipped — ${err.message}`,
       );
       return { rowsUpserted: 0 };
     }
@@ -389,7 +389,7 @@ export async function recompute5mForRawObservationsBestEffort(
   try {
     // Rebuild each touched interval AND its immediate successor: a transform='d' interval's
     // delta depends on the previous interval's last reading, so when raw for N lands, N+1 must
-    // be rebuilt too. This (plus the per-system advisory lock in recomputeAgg5mForIntervals) is
+    // be rebuilt too. This (plus the per-device advisory lock in recomputeAgg5mForIntervals) is
     // what makes the recompute independent of queue delivery order — so parallelism > 1 is safe.
     const intervals = withSuccessorIntervals(
       affectedIntervalEndsMs(rawObservations),
@@ -405,26 +405,26 @@ export async function recompute5mForRawObservationsBestEffort(
 }
 
 /**
- * 1d cron hook: recompute a system/day's 1d aggregates in PG from PG 5m. Best-effort.
+ * 1d cron hook: recompute a device/day's 1d aggregates in PG from PG 5m. Best-effort.
  * No-op if PG isn't configured.
  */
 export async function recompute1dForDayBestEffort(
-  system: SystemForDailyAgg,
+  device: DeviceForDailyAgg,
   day: CalendarDate,
 ): Promise<void> {
   if (!planetscaleDb) return;
   try {
     const { rowsUpserted } = await recomputeAgg1dForDay(
       planetscaleDb,
-      system,
+      device,
       day,
     );
     console.log(
-      `[PG-Agg1d] system=${system.id} day=${day.toString()} upserted=${rowsUpserted}`,
+      `[PG-Agg1d] system=${device.id} day=${day.toString()} upserted=${rowsUpserted}`,
     );
   } catch (err) {
     console.error(
-      `[PG-Agg1d] recompute failed for system=${system.id} day=${day.toString()}:`,
+      `[PG-Agg1d] recompute failed for system=${device.id} day=${day.toString()}:`,
       err,
     );
   }

@@ -6,7 +6,7 @@
  * built on this helper share byte-identical edges by construction.
  *
  * DB-touching but domain-light: it reads signed 5-minute `avg` for the given point refs (which may
- * span child systems for a multi-device area), aligns them onto one dense timeline, converts to kW +
+ * span child devices for a multi-device area), aligns them onto one dense timeline, converts to kW +
  * applies each point's transform, and hands off to the pure `buildFlowSeries` for the role split
  * (battery/grid direction, solar leaf/residual, rest-of-house).
  */
@@ -27,7 +27,7 @@ import type { PointId } from "@/lib/ids";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
-/** A logical power point to integrate: its physical origin (may be a child system) + its semantics. */
+/** A logical power point to integrate: its physical origin (may be a child device) + its semantics. */
 export interface FlowSeriesPoint {
   /**
    * The point's identity, supplied by the caller (`LogicalSystemPoint.point`). Reading it here

@@ -3,7 +3,7 @@
  *
  * `listReadableAreas` powers the "add a card from another area" picker and the client-side
  * areaId→systemId+label resolution map: it is the set of Areas a user may bind a card to, derived
- * from the systems they can already see (no escalation — you can only compose areas you can read).
+ * from the devices they can already see (no escalation — you can only compose areas you can read).
  * `resolveAreasByIds` resolves a specific set of Area uuids to their addressing handle + label,
  * used by the read-only shared view (where the scope is already fixed by the token).
  */
@@ -42,7 +42,7 @@ async function withChartCapabilityIfRequested<
 }
 
 /**
- * The Areas a user may read = Areas they own plus any Area whose handle is one of their visible systems.
+ * The Areas a user may read = Areas they own plus any Area whose handle is one of their visible devices.
  * The dashboard owner can compose a card from any of these, and the authoring check
  * (PUT /api/dashboard/[systemId]) rejects a card binding any Area outside this set.
  */
@@ -50,11 +50,11 @@ export async function listReadableAreas(
   userId: string,
   opts: { withChartCapability?: boolean } = {},
 ): Promise<ReadableArea[]> {
-  const systems = await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
-  const systemIds = systems.map((s) => s.id);
+  const devices = await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
+  const systemIds = devices.map((s) => s.id);
 
   // Areas a user can read: explicit Areas they own, plus legacy explicit Areas still addressed by a
-  // visible system id.
+  // visible device id.
   const accessCond =
     systemIds.length > 0
       ? or(

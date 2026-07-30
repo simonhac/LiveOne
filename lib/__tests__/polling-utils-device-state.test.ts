@@ -77,7 +77,7 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
 
     const q = flat(capture.deviceState[0].sql);
     expect(q).toContain("INSERT INTO device_state");
-    // The device is resolved in the SAME statement, by the verbatim rid, and a system with no device
+    // The device is resolved in the SAME statement, by the verbatim rid, and a device with no device
     // row inserts zero rows instead of throwing.
     expect(q).toContain("FROM devices d WHERE d.rid = $");
     // Conflict target is device_state's PK, not polling_status's unique index.

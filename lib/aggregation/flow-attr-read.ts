@@ -18,8 +18,8 @@ type PgDb = NonNullable<typeof planetscaleDb>;
 
 /**
  * `reason` explains an empty result so a blank Sankey isn't read as "no energy":
- *   - `not-a-logical-system` — no resolvable/complete logical system for the Area.
- *   - `not-materialized` — a complete system, but no `flow_attr_1d` rows in the window yet.
+ *   - `not-a-logical-device` — no resolvable/complete logical device for the Area.
+ *   - `not-materialized` — a complete device, but no `flow_attr_1d` rows in the window yet.
  */
 export async function readAttributedDailyMatrices(
   db: PgDb,
