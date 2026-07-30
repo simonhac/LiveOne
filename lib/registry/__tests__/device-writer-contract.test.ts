@@ -28,7 +28,10 @@ const ops: string[] = [];
 const store = {
   areas: new Set<string>(),
   devices: new Map<string, number>(), // uuid -> rid
-  handles: new Map<number, { deviceId: string | null; areaId: string | null }>(),
+  handles: new Map<
+    number,
+    { deviceId: string | null; areaId: string | null }
+  >(),
   members: [] as { areaId: string; deviceId: string }[],
 };
 

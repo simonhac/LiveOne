@@ -35,7 +35,6 @@ import {
   areaMembers,
   devices,
   points,
-  systems,
 } from "@/lib/db/planetscale/schema";
 import { resolveGeneratorIntensity } from "@/lib/battery-provenance/generator-source";
 import type { ResolvedRunDetector } from "@/lib/derivations/resolve";

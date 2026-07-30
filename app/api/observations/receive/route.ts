@@ -22,7 +22,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withQstashSignatureVerification } from "@/lib/observations/qstash-receiver";
 import { eq } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { devices, sessions, systems } from "@/lib/db/planetscale/schema";
+import { devices, sessions } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings";
 import type { RawInsert, Agg5mInsert } from "@/lib/readings";
 import { Point } from "@/lib/ids";
