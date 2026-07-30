@@ -25,9 +25,11 @@ import type {
   ChartCardConfig,
   DashboardV3,
   TileV3,
-  TileView,
 } from "@/lib/dashboard/v3";
 import type { DashboardCardType } from "@/lib/dashboard/cards";
+// The tile vocabulary lives in card-types.ts since Phase 14 stage 4 (#308) — v3.ts imports it, so it
+// cannot be re-imported from there.
+import type { TileView } from "@/lib/dashboard/card-types";
 
 export interface StrategyV3ProjectionOptions {
   /** The raw `section.areaId` the v3 consumers expect (uuid, or the `/device/{id}` synthetic key). */

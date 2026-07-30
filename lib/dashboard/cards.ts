@@ -24,4 +24,3 @@ export type DashboardCardType =
   | "battery-contents"
   | "ev-provenance"
   | "battery-provenance-history";
-
