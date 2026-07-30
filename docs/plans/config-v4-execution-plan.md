@@ -23,7 +23,24 @@ spelled `device` in code. No outstanding migration debt.
 
 Start at [Phase 14](#phase-14--v4-native-presentation-and-the-last-of-the-two-shapes). It is the largest
 phase by volume and the only one left: one dashboard shape, the v3 descriptor and adapter deleted, the
-10 unbuilt v4 mutation routes.
+unbuilt v4 mutation routes (**12**, not 10 — recounted 2026-07-31).
+
+**Phase 14 has started.** Shipped so far:
+
+- **PR 1 — strict area-ref decode ([#305](https://github.com/simonhac/LiveOne/pull/305), OPEN).**
+  `areaRefToUuid` strict, `rowToDashboard`'s read-normalize gone, and `PATCH /api/dashboards/{id}`
+  now 400s a non-`ar_` section ref — it previously stored `body.descriptor` **verbatim** (POST
+  encoded, PATCH did not), which combined with strict decode would have let a write skip the
+  no-escalation check. Precondition re-asserted on prod **and** dev: 16/16 `ar_` in both
+  `descriptor` and `doc`, zero raw uuids, newest dashboard 2026-07-26. `areaRefToArId` stays
+  dual-accept (three live raw-uuid producers).
+
+**▶ NEXT: exercise the `/api/v4` surface — it has never run.** See the 🛑 STEP 0 note under Phase 14.
+Not the plan's original "start with `default-section`", which is neither cheap nor a duplicate.
+
+**Still open in Phase 14, untouched:** the `/api/data` `vendorSiteId` raw-uuid leak (real, confirmed —
+needs either a `devices.vendor_site_id` data migration or a new `ar_` wire field, so not code-only);
+the `descriptor` drop migration (**not written**); every renderer port; every v4 mutation endpoint.
 
 **What Phase 13 leaves on the floor for 14**, deliberately:
 
@@ -216,8 +233,32 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
   > author.** The moment this phase ships an editor that writes `doc` directly, a descriptor PATCH will
   > **clobber v4-authored structure** — so the editor work must turn this into a reject-or-merge
   > decision, not an overwrite. Dropping `descriptor` is the real fix.
-- **Build the 10 missing `/api/v4` mutation endpoints**, then retire the 28 legacy handlers across 15
-  routes. `/api/areas/[areaId]/default-section` is already a straight duplicate of its v4 twin.
+- **Build the missing `/api/v4` mutation endpoints**, then retire the 28 legacy handlers across 15
+  routes.
+
+  > **Counts re-measured 2026-07-31.** "28 legacy handlers across 15 routes" is **correct** (16
+  > mutations, 12 reads). "**10** unbuilt mutation endpoints" was an **undercount — it is 12** (7 area
+  >
+  > - 5 dashboard-sharing); 11 if you exclude the ops-only `recompute-provenance` POST, and 10 only if
+  >   you _also_ fold `PATCH …/share` into the share POST. State the exclusions or use 12. Additionally,
+  >   **7 legacy READ handlers have no v4 twin either** (`GET /api/areas?systemId=`,
+  >   `candidate-devices`, `by-handle`, `provenance-daily`, `provenance-summary`, `grants`, `share`) —
+  >   port them or declare them out of scope, because the legacy routes cannot be retired while they are
+  >   the only address for those reads.
+
+  > 🛑 **STEP 0, and it is not optional: the entire `/api/v4` surface is DARK.** Measured 2026-07-31 —
+  > **zero callers and zero tests**. No `fetch()` anywhere in `app/`, `components/`, `lib/`, `hooks/`
+  > or `scripts/` hits any `/api/v4/*` route, and there are no tests under `app/api/v4/`. So no legacy
+  > handler may be retired onto a v4 twin until that twin has been exercised at least once — expect
+  > defects, since this code has never run. Driving it is cheap: a real Clerk session JWT from
+  > `scripts/utils/get-test-token.ts` passes the middleware (verified 2026-07-31).
+
+  > ⚠️ **`/api/areas/[areaId]/default-section` is NOT "already a straight duplicate of its v4 twin"**
+  > and is a poor first move. The legacy route returns a v3 **section**; the v4 twin returns a v4
+  > **group node**. Its sole caller (`components/AddAreaDialog.tsx`) immediately PATCHes the section
+  > into a v3 descriptor, so retiring it means replacing **two** calls (default-group + a doc `PUT`) —
+  > it is coupled to the editor port, not independent of it.
+
 - **Drop `dashboards.descriptor`**; delete `lib/dashboard/{v3,cards,v3-to-v4}.ts`, `v4-seed.ts`'s v3
   detour, and every `isDashboardV3`/`isDashboardV4` branch. Retire the bridge tests (~362 LOC).
 - **Tighten to strict decode** — drop the dual-accept `areaRefToUuid` and the `rowToDashboard`
@@ -231,6 +272,24 @@ handlers. Largest phase by volume; last because it depends on Phase 12's registr
 **Risk:** the 19-plugin port is where visual regressions hide and there is no snapshot coverage. Port
 plugin-by-plugin behind the still-present adapter and remove the adapter last, so each is independently
 revertible.
+
+**Port surface, measured 2026-07-31 — much smaller than "19 plugins" suggests:**
+
+- **9 of 19 (every tile) is ALREADY v4-native.** Tile plugins read `latest`/`data`/`systemId` and no
+  v3 descriptor at all; `V4TileCell` already calls them with identical props, bypassing the adapter.
+  The port is the **10 card plugins**, and 7 of those read nothing but `handle`.
+- The whole risk is **5 prop reads in 5 files**: `card.deviceSystemId` (`device-metrics`,
+  `generator-runs`), `section.areaId` (`battery-provenance-history`), `card.chart` (`chart`),
+  `card.tiles` (`tiles-card` — largely vestigial under v4, which promotes tiles to card nodes).
+- 🛑 **Pixel equivalence is not provable at reasonable cost, and does not need to be.** Four card
+  plugins bottom out in chart.js on a `<canvas>` (zero DOM) and `useTemporalRange` calls
+  `useSearchParams()` during render; there is no React-rendering test in the repo and no
+  jsdom/testing-library installed. **Prop-level equivalence is a sound substitute here**: the leaf
+  components are unchanged, so identical props ⇒ identical pixels. Mock the leaves to capture props
+  and all 19 become provable with **zero new dependencies** (`react-dom/server` is already present).
+- ⚠️ **Latent bug to decide about, not port mechanically:** `battery-provenance-history.tsx` branches
+  on `section.areaId.startsWith("device-")`, but `synthSectionV3` can only ever supply the area uuid
+  or `""`. That sentinel branch is **dead under v4**.
 
 ---
 
