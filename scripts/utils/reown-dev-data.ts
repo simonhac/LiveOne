@@ -45,14 +45,12 @@ import { Client } from "pg";
 // grant-back lived here too until migration 0045 dropped the table.)
 const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
   [
-    { table: "systems", col: "owner_clerk_user_id" },
-    // config-v4: `devices.owner_user_id` MIRRORS `systems.owner_clerk_user_id`, so it has to be reowned
-    // alongside it or the mirror is inconsistent on dev. It was missing here, and dev carried 9 devices
-    // still owned by the PROD clerk id (measured 2026-07-28). Harmless while the column is dark —
-    // nothing reads it, `listReadableDevices` authorizes off `systems` — but slice K makes `devices` the
-    // config registry, at which point a stale owner here is a real dev/preview auth bug. `ensureDeviceRow`
-    // now re-copies this column on every `systems` write, so the two converge either way; listing it here
-    // means the whole set heals on the next sync instead of one device at a time as each is next edited.
+    // The `systems.owner_clerk_user_id` entry died with the table (migration 0051). `devices` below is
+    // the sole owner column now — it used to MIRROR `systems.owner_clerk_user_id` and was for a while
+    // missing from this list entirely, leaving dev with 9 devices still owned by the PROD clerk id
+    // (measured 2026-07-28). That was harmless only while the column was dark; slice K made `devices` the
+    // config registry, so a stale owner here is a real dev/preview auth bug and this is now the ONLY
+    // thing that fixes it — there is no `systems` row left to converge back from.
     { table: "devices", col: "owner_user_id" },
     // NB `share_tokens.owner_clerk_user_id` was dropped by migration 0037 — share tokens are scoped by
     // `dashboard_id` alone now, and the dashboards row is reowned below, so there is nothing to reown
@@ -61,8 +59,8 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     // config-v4 cutover renamed clerk_user_id -> owner_user_id.
     { table: "dashboards", col: "owner_user_id" },
-    // Only reown areas whose handle IS a real `systems` row. An orphan/composite handle (a multi-device
-    // area with no `systems` row, e.g. a "Unified" area) was readable ONLY via ownership when this
+    // Only reown areas whose handle IS a real device row. An orphan/composite handle (a multi-device
+    // area with no device row, e.g. a "Unified" area) was readable ONLY via ownership when this
     // filter was written: `getSystemsVisibleByUser` excludes area views, and the then-current
     // `user_systems` grant-back inner-joined `systems`, so no grant could reach it. Reowning it to the
     // dev id stripped the prod-Clerk preview session's only read path (→ a blank dashboard on preview).
@@ -74,7 +72,10 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
       table: "areas",
       // config-v4 cutover renamed owner_clerk_user_id -> owner_user_id.
       col: "owner_user_id",
-      where: "legacy_system_id IN (SELECT id FROM systems)",
+      // `devices.rid`, not `systems.id` — 0051 dropped `systems`, and `devices.rid == systems.id`
+      // verbatim, so the row set is unchanged. Hand-written `sql` is invisible to tsc: this predicate had
+      // to be found by grep and has to be DRIVEN to be verified.
+      where: "legacy_system_id IN (SELECT rid FROM devices)",
     },
   ];
 

@@ -128,7 +128,10 @@ export interface SyncProdToDevOptions {
 
 // Small config tables — full refresh, FK parents first.
 const FULL: FullTable[] = [
-  { name: "systems", mode: "full", onConflict: "update" },
+  // `systems`, `polling_status` and `point_info` were dropped by migration 0051 (the Phase 12 terminal
+  // window) and their legs are gone with them: `devices`/`device_state`/`points` are the live tables and
+  // are already synced below. The manifest is not type-checked against the schema — a stale entry here
+  // would fail at RUNTIME on the next dispatch, not at build.
   // dashboards' uuid PK is minted independently by each environment's own config-transform run at
   // cutover, so dev and prod hold different uuids for "the same" dashboard (matched only by the frozen
   // legacy_id). A plain by-PK upsert would leave dev's own (divergent) row in place and never touch it,
@@ -158,7 +161,7 @@ const FULL: FullTable[] = [
       children: [],
     },
   },
-  ...["users", "polling_status", "share_tokens"].map(
+  ...["users", "share_tokens"].map(
     (name): FullTable => ({ name, mode: "full", onConflict: "update" }),
   ),
   // areas' uuid PK is generated independently on dev, so dev can hold the same logical Area (same
@@ -262,41 +265,16 @@ const FULL: FullTable[] = [
     onConflict: "update",
     replaceConflicts: [["device_id"], ["area_id"]],
   },
-  // point_info's serial `id` is BOTH assigned independently on dev AND the FK-join key every readings
-  // row carries — so, unlike area_bindings, dev must ADOPT prod's id (can't exclude it). When dev holds
-  // the same logical point under a different id (e.g. derived helper points numbered in a different
-  // order), the by-PK upsert trips one of point_info's THREE secondary unique indexes and aborts the
-  // whole sync. `idDrift` clears those blockers (and their FK children) first. FK-first: point_info
-  // here, then area_bindings, then the incremental readings legs re-sync the children.
-  {
-    name: "point_info",
-    mode: "full",
-    onConflict: "update",
-    idDrift: {
-      uniqueKeys: [
-        ["system_id", "physical_path_tail"], // pi_system_physical_path_unique
-        ["system_id", "logical_path_stem", "metric_type"], // pi_system_stem_metric_unique
-        ["point_uid"], // pi_point_uid_unique (system-independent)
-        ["rid"], // pi_rid_unique (system-independent; config-v4 Phase 2) — dev adopts prod's rid,
-        // so clear any dev row holding an incoming prod rid before the by-PK upsert (like point_uid)
-      ],
-      children: [
-        // config-v4 CUTOVER SHAPE: the three hot stores now key on the internal point_rid (FK→points.rid),
-        // so id-drift cleanup clears them by point_rid rather than the retired (system_id, point_id).
-        { table: "point_readings_agg_5m", cols: ["point_rid"] },
-        { table: "point_readings_agg_1d", cols: ["point_rid"] },
-        { table: "point_readings", cols: ["point_rid"] },
-        // config-v4 Phase 12 slice E PR 2a: `area_bindings` no longer keys on the `point_info`
-        // (system_id, id) pair — migration 0047 dropped `area_bindings_point_info_fk` (the LAST FK
-        // into `point_info`) and re-based the binding's identity onto `point_uid`. The remaining
-        // int pair carries no constraint and no reader, so a `point_info` id drift cannot block the
-        // upsert and there is nothing here left to clear.
-        // config-v4 Phase 11: derivations cite their source/output points by uuid inside jsonb
-        // (`source_points`) and `output_point_id`, neither of which carries an FK or unique index
-        // into point_info — so an id drift can't block the upsert and there is nothing to clear.
-      ],
-    },
-  },
+  // The `point_info` leg (a full upsert with a four-key `idDrift` block) was REMOVED with the table in
+  // migration 0051. `points` above is the replacement and needs none of that machinery: its `id` is
+  // deterministic (uuidv5), so both environments mint the SAME id for the same logical point and a plain
+  // by-PK upsert lands.
+  //
+  // ⚠️ Residual, PRE-EXISTING and deliberately unchanged here: `points_rid_unique` can still drift, since
+  // each environment's `point_rid_seq` allocates independently — and the `points` leg has never carried an
+  // `idDrift` for it. Removing `point_info`'s `["rid"]` key does NOT create that gap: that key protected the
+  // `point_info` DELETE, not the `points` upsert. Left as-is rather than folded into a drop migration's PR;
+  // it surfaces as a loud unique violation on a dispatch, never as silent data loss.
   // Surrogate-key tables: the PK (uuid/serial `id`) is assigned independently on
   // dev, so dev and prod hold the same row under different ids. Upsert on the
   // NATURAL unique key and exclude `id` (like point_readings) — otherwise the

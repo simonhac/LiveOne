@@ -286,7 +286,9 @@ async function insertSession(
     .values({
       id: session.sessionId,
       sessionLabel: session.sessionLabel,
-      systemId,
+      // config-v4 Phase 12 terminal window: the column is `device_rid` now, FK -> `devices.rid`. The
+      // value is unchanged — the handle IS the device rid (`devices.rid == systems.id` verbatim).
+      deviceRid: systemId,
       cause: session.cause,
       duration: session.durationMs,
       successful: session.successful,

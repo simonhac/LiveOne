@@ -59,83 +59,18 @@ import type { DeviceConfig } from "@/lib/capabilities/config";
 import type { AreaConfig } from "@/lib/areas/types";
 
 // ============================================================================
-// Systems table - stores inverter system information
+// `systems` — DROPPED by migration 0051 (config-v4 Phase 12, the terminal window).
+//
+// `devices` is the device registry (see its declaration below); `devices.rid == systems.id` verbatim, so
+// every integer handle that used to address a `systems` row now addresses a `devices` row. The drop was
+// irreversible: PITR + the 2-hourly R2 dump are the only recovery path.
 // ============================================================================
-export const systems = pgTable(
-  "systems",
-  {
-    id: serial("id").primaryKey(),
-    ownerClerkUserId: text("owner_clerk_user_id"),
-    vendorType: text("vendor_type").notNull(),
-    vendorSiteId: text("vendor_site_id").notNull(),
-    status: text("status").notNull().default("active"),
-    displayName: text("display_name").notNull(),
-    alias: text("alias"),
-    model: text("model"),
-    serial: text("serial"),
-    ratings: text("ratings"),
-    solarSize: text("solar_size"),
-    batterySize: text("battery_size"),
-    location: jsonb("location"),
-    metadata: jsonb("metadata"),
-    // Typed, user-editable per-device config (capability on/off overrides, nameplate kW, update
-    // cadence, …). Distinct from `metadata` (adapter-owned credentials/diagnostics). Grows without
-    // migrations. See lib/capabilities/config.ts.
-    config: jsonb("config").$type<DeviceConfig>(),
-    timezoneOffsetMin: integer("timezone_offset_min").notNull(),
-    displayTimezone: text("display_timezone").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-    // Vendor-reported commissioning / "open" day (local calendar date, "YYYY-MM-DD"): the system's
-    // earliest-possible data date. Distinct from `created_at` (LiveOne onboarding). Floors the
-    // coverage-repair window so pre-commission days aren't flagged as phantom gaps AND genuine
-    // pre-onboarding history stays in range. Null when unknown → the runner falls back to created_at.
-    // Populated at onboarding (e.g. Sigenergy `stationOpenTime`) and lazily on first repair.
-    commissionedOn: date("commissioned_on"),
-  },
-  (table) => ({
-    ownerClerkUserIdx: index("owner_clerk_user_idx").on(table.ownerClerkUserId),
-    statusIdx: index("systems_status_idx").on(table.status),
-    // Indexed lookup for getSystemByVendorSiteId (OAuth/webhook dedup) — avoids a fleet scan at scale.
-    vendorSiteIdIdx: index("systems_vendor_site_id_idx").on(table.vendorSiteId),
-    aliasUnique: uniqueIndex("alias_unique").on(
-      table.ownerClerkUserId,
-      table.alias,
-    ),
-  }),
-);
 
 // ============================================================================
-// Polling Status table — track health and errors.
-//
-// ⚠️ FROZEN as of config-v4 Phase 12 slice C (2026-07-28). `device_state` is the live table; nothing
-// reads or writes this one. It is kept, unchanged, as the pre-flip rollback snapshot until slice N
-// drops it (with `point_info` and `systems`, in FK order). Do not add a reader or a writer.
+// `polling_status` — DROPPED by migration 0051. It had been FROZEN since slice C (2026-07-28) with no
+// reader and no writer, kept only as the pre-flip rollback snapshot; `device_state` is the live table.
+// Its values are NOT reconstructible from the surviving schema.
 // ============================================================================
-export const pollingStatus = pgTable(
-  "polling_status",
-  {
-    id: serial("id").primaryKey(),
-    systemId: integer("system_id")
-      .notNull()
-      .references(() => systems.id, { onDelete: "cascade" }),
-    lastPollTime: timestamp("last_poll_time"),
-    lastSuccessTime: timestamp("last_success_time"),
-    lastErrorTime: timestamp("last_error_time"),
-    lastError: text("last_error"),
-    lastResponse: jsonb("last_response"),
-    consecutiveErrors: integer("consecutive_errors").notNull().default(0),
-    totalPolls: integer("total_polls").notNull().default(0),
-    successfulPolls: integer("successful_polls").notNull().default(0),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  },
-  (table) => ({
-    systemIdx: index("polling_system_idx").on(table.systemId),
-    systemIdUnique: uniqueIndex("polling_status_system_id_unique").on(
-      table.systemId,
-    ),
-  }),
-);
 
 // The `user_systems` junction table — the pre-Areas per-system access grant — was dropped by
 // migration 0045 (config-v4 Phase 12 slice F), releasing an FK into `systems`. It held ZERO rows on
@@ -179,14 +114,18 @@ export const sessions = pgTable(
     // Was `serial`; the receiver always supplies an explicit id.
     id: text("id").primaryKey(),
     sessionLabel: text("session_label"),
-    // config-v4 Phase 12 slice 1a (migration 0050): the FK to `systems.id` is GONE. `DeviceWriter` now
-    // writes `devices`, so a device created after 1a has no `systems` row — and this is the HOT INGEST
-    // path, so the constraint would have 23503'd the first session write for every new device. The
-    // replacement FK (-> `devices.rid`) arrives with the rename in the terminal migration, not here:
-    // between the two, session -> device reachability is an ACCEPTED, bounded coverage gap that the
-    // window's G2 asserts. Deliberately accepting the "removing a FK turns a join onto the replacement
-    // key into a silent filter" trap for that interval.
-    systemId: integer("system_id").notNull(),
+    // config-v4 Phase 12 terminal window (migration 0051): `system_id` was RENAMED to `device_rid` and
+    // re-constrained onto `devices.rid`. Catalog-only — `devices.rid == systems.id` verbatim, so there is
+    // no value migration. 0050 had dropped the old FK into `systems.id` (a device created after slice 1a
+    // has no `systems` row, and this is the HOT INGEST path, so the constraint 23503'd that device's first
+    // session write); the replacement is added `NOT VALID` and then `VALIDATE`d, so the ~10^6-row scan
+    // runs under `SHARE UPDATE EXCLUSIVE` instead of holding `ACCESS EXCLUSIVE`.
+    //
+    // The wire field is still called `systemId` (`SessionWithSystem`) — that grammar moves in Phase 13
+    // with the rest of the handle.
+    deviceRid: integer("device_rid")
+      .notNull()
+      .references(() => devices.rid),
     cause: text("cause").notNull(),
     duration: integer("duration").notNull(), // milliseconds
     successful: boolean("successful"),
@@ -202,7 +141,10 @@ export const sessions = pgTable(
     // separate-session-publish path; with UUIDv7 text PKs the id alone
     // guarantees distinctness, and the unique would reject legitimate
     // same-instant sessions — dropped in PR-7b.
-    systemIdx: index("sessions_system_idx").on(table.systemId),
+    // ⚠️ A `RENAME COLUMN` does NOT rename the indexes over it, so 0051 renames this one by hand
+    // (`sessions_system_idx` -> `sessions_device_rid_idx`) and this declaration moves in step. Leaving
+    // either side alone ships permanent `db:pg:generate` drift.
+    deviceRidIdx: index("sessions_device_rid_idx").on(table.deviceRid),
     createdAtIdx: index("sessions_created_at_idx").on(table.createdAt),
     causeIdx: index("sessions_cause_idx").on(table.cause),
   }),
@@ -218,77 +160,10 @@ export const sessions = pgTable(
 // them). Below the uuid↔rid seam, hot tables re-key to `rid` at cutover; nothing above the seam reads it.
 export const pointRidSeq = pgSequence("point_rid_seq");
 
-export const pointInfo = pgTable(
-  "point_info",
-  {
-    // Composite primary key (systemId, index)
-    // config-v4 Phase 12 slice 1a (migration 0050): the FK to `systems.id` is GONE, for the same reason
-    // as `sessions.system_id` above — a device created after 1a has no `systems` row, so minting its
-    // first point 23503'd. No replacement FK: `point_info` itself dies in the terminal migration.
-    systemId: integer("system_id").notNull(),
-    index: integer("id").notNull(), // Sequential per system
-
-    // Global integer identity, sequence-allocated (see pointRidSeq). Additive — the per-system
-    // (system_id, id) ADDRESS and all composite FKs are untouched.
-    //
-    // Since config-v4 slice M `point_info` is the WRITE-BEHIND copy: `points` is written first and
-    // allocates the rid from its own DEFAULT on the SAME sequence, and `mintPoint` then names BOTH
-    // `rid` and `index` here with that value (index == rid). So the old "writers must NEVER name rid"
-    // rule is superseded — what remains absolute is that the value comes from `point_rid_seq` (via the
-    // `points` row), NEVER from a scan: introduce no max(rid)+1 / max(index)+1 pattern.
-    rid: integer("rid")
-      .notNull()
-      .default(sql`nextval('point_rid_seq')`),
-
-    // Paths
-    physicalPathTail: text("physical_path_tail").notNull(),
-    logicalPathStem: text("logical_path_stem"),
-
-    // Metric info
-    metricType: text("metric_type").notNull(),
-    metricUnit: text("metric_unit").notNull(),
-
-    // Display
-    defaultName: text("point_name").notNull(),
-    displayName: text("display_name").notNull(),
-    subsystem: text("subsystem"),
-
-    // Flags
-    transform: text("transform"),
-    active: boolean("active").notNull().default(true),
-
-    // Stable, vendor-derived IDENTITY (HA `unique_id` analog), distinct from the renameable
-    // (system_id, index) ADDRESS. Deterministic uuidv5 over (vendor_type, vendor_site_id,
-    // physical_path_tail) — see lib/identifiers/point-uid.ts — so re-onboarding the same physical
-    // point reproduces the same uid; a duplicate-site collision falls back to a random uid. Nullable
-    // for now (backfilled + minted by ensurePointInfo going forward); a later migration may tighten
-    // to NOT NULL. See docs/plans/identity-address-split-and-labels.md (Part 1).
-    // Tightened to NOT NULL in config-v4 Phase 2 (migration 0030) after the backfill + writer-fix.
-    pointUid: uuid("point_uid").notNull(),
-
-    // Timestamps
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at"),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.systemId, table.index] }),
-    systemPhysicalPathUnique: uniqueIndex("pi_system_physical_path_unique").on(
-      table.systemId,
-      table.physicalPathTail,
-    ),
-    // NULLs are distinct in Postgres, so this permits many un-backfilled (null) rows while still
-    // enforcing one row per non-null identity.
-    pointUidUnique: uniqueIndex("pi_point_uid_unique").on(table.pointUid),
-    ridUnique: uniqueIndex("pi_rid_unique").on(table.rid),
-    systemStemMetricUnique: uniqueIndex("pi_system_stem_metric_unique").on(
-      table.systemId,
-      table.logicalPathStem,
-      table.metricType,
-    ),
-    systemIdx: index("pi_system_idx").on(table.systemId),
-    subsystemIdx: index("pi_subsystem_idx").on(table.subsystem),
-  }),
-);
+// `point_info` — DROPPED by migration 0051. `points` (declared below) is the only point table: `points.id`
+// was `point_info.point_uid` and `points.rid` was `point_info.rid`, both verbatim, so nothing addressable
+// was lost. The `(system_id, id)` composite ADDRESS died with it — `points.rid` is the point id now, which
+// is why `mintPoint` reports `index === rid`.
 
 // ============================================================================
 // Point Readings table - stores raw time-series data
@@ -591,7 +466,11 @@ export const observationsOutbox = pgTable(
   "observations_outbox",
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
-    systemId: integer("system_id").notNull(),
+    // config-v4 Phase 12 terminal window (migration 0051): renamed `system_id` -> `device_rid`.
+    // ⚠️ NO FK, and none is to be added. An outbox is a BUFFER: an FK here would turn a device delete
+    // into an ingest-path failure, and a stale published row for a since-deleted device would become a
+    // migration blocker. Reachability into `devices` is therefore ADVISORY, never gating.
+    deviceRid: integer("device_rid").notNull(),
     // NULL for the no-collector publishObservationBatch path (no session).
     sessionId: text("session_id"),
     // Chunk index within a poll's multi-message set (0 for single-message paths).
@@ -612,9 +491,10 @@ export const observationsOutbox = pgTable(
       .on(table.createdAt)
       .where(sql`published_at IS NULL`),
     // Dedup poll-path rows on publish retry. publishObservationBatch rows have no
-    // session, so the unique only covers session-bearing rows.
+    // session, so the unique only covers session-bearing rows. Its NAME carries no column reference, so
+    // 0051 deliberately leaves it alone — only `sessions_system_idx` needed a hand rename.
     sessionSeqUnique: uniqueIndex("outbox_session_seq_unique")
-      .on(table.systemId, table.sessionId, table.seq)
+      .on(table.deviceRid, table.sessionId, table.seq)
       .where(sql`session_id IS NOT NULL`),
   }),
 );
@@ -1022,10 +902,10 @@ export const devices = pgTable(
   "devices",
   {
     id: uuid("id").primaryKey(),
-    // Sequence-allocated (0043). ⚠️ INERT while `systems` still exists: systems_id_seq advances
-    // independently, so a device minted from the default could later collide with a new systems.id
-    // on devices_rid_unique. Every writer (ensureDeviceRow) must keep naming rid as systems.id
-    // verbatim until Phase 12 slice N drops `systems` and re-asserts the setval.
+    // Sequence-allocated (0043). LIVE and now the SOLE allocator of device handles: migration 0051
+    // dropped `systems` (and with it `systems_id_seq`, the second counter this used to have to avoid) and
+    // re-floored `device_rid_seq` with `setval(greatest(…))`, so a device minted from the default can no
+    // longer collide with anything on `devices_rid_unique`. Never introduce a `max(rid)+1` scan here.
     rid: integer("rid")
       .notNull()
       .default(sql`nextval('device_rid_seq')`),
@@ -1156,8 +1036,6 @@ export const deviceState = pgTable("device_state", {
 // ============================================================================
 // Type exports
 // ============================================================================
-export type System = typeof systems.$inferSelect;
-export type NewSystem = typeof systems.$inferInsert;
 // NB `DeviceRow`/`PointRow`, not `Device`/`Point`: `lib/ids` already exports `Device` and `Point` as
 // the TypeID codecs (`Device.encode(...)`), and the seam/registry modules import both.
 export type DeviceRow = typeof devices.$inferSelect;
@@ -1168,14 +1046,10 @@ export type AreaMember = typeof areaMembers.$inferSelect;
 export type NewAreaMember = typeof areaMembers.$inferInsert;
 export type DeviceState = typeof deviceState.$inferSelect;
 export type NewDeviceState = typeof deviceState.$inferInsert;
-export type PollingStatus = typeof pollingStatus.$inferSelect;
-export type NewPollingStatus = typeof pollingStatus.$inferInsert;
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
-export type PointInfo = typeof pointInfo.$inferSelect;
-export type NewPointInfo = typeof pointInfo.$inferInsert;
 export type PointReading = typeof pointReadings.$inferSelect;
 export type NewPointReading = typeof pointReadings.$inferInsert;
 export type PointReadingAgg5m = typeof pointReadingsAgg5m.$inferSelect;

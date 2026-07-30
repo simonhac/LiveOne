@@ -62,28 +62,25 @@ function pgEnv(url: string): Record<string, string> {
 }
 // All config tables (small; full copy), in FK-parent-first order.
 //
-// This list went stale at the config-v4 cutover: it still named only the legacy six, so a freshly
+// This list went stale once at the config-v4 cutover: it still named only the legacy six, so a freshly
 // seeded preview got `systems`/`point_info` but no `areas`/`devices`/`points` — and the time-series
-// COPY that follows then failed the point_readings.point_rid → points.rid FK. Rebuilt here from the
-// live FK graph (Phase 12 slice C, which is what put `device_state` on the ingest path).
+// COPY that follows then failed the point_readings.point_rid → points.rid FK. Rebuilt from the live FK
+// graph (Phase 12 slice C, which is what put `device_state` on the ingest path), and `systems`,
+// `point_info` and `polling_status` were removed again when migration 0051 dropped them.
 //
-// Order is a topological sort of the FK edges: areas/systems/dashboards have no parents;
-// devices → areas; points → devices; area_members → areas + devices;
-// area_bindings → areas + point_info + points.
+// Order is a topological sort of the FK edges: areas/dashboards have no parents;
+// devices → areas; points → devices; area_members → areas + devices; area_bindings → areas + points.
 const CONFIG_TABLES = [
   "areas",
-  "systems",
   "dashboards",
   "users",
   "devices",
   "points",
-  "point_info",
   "legacy_handles",
   "area_members",
   "area_bindings",
   "derivations",
   "device_state",
-  "polling_status",
   "share_tokens",
   "dashboard_grants",
   "dashboard_revisions",
@@ -171,12 +168,14 @@ export async function seedPreviewDatabase(
   }
 
   // Config: only load if the target is empty (so re-runs preserve config + saved dashboards).
-  const systemsCount = Number(psql(dstEnv, `SELECT count(*) FROM systems`));
-  if (systemsCount === 0) {
+  // `devices`, not `systems` — 0051 dropped the latter. Raw `psql` is invisible to tsc, so this is the
+  // class of reference that has to be DRIVEN to be verified, not compiled.
+  const deviceCount = Number(psql(dstEnv, `SELECT count(*) FROM devices`));
+  if (deviceCount === 0) {
     log("Config: loading (target is empty)…");
     for (const t of CONFIG_TABLES) copyTable(t);
   } else {
-    log(`Config: present (${systemsCount} systems) — skipping`);
+    log(`Config: present (${deviceCount} devices) — skipping`);
   }
 
   // Time-series: truncate + reload the slice every run.

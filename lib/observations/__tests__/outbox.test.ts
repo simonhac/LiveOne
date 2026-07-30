@@ -54,13 +54,21 @@ function msg(systemId: number, sessionId: string | null): QueueMessage {
 }
 
 describe("buildOutboxRows", () => {
-  it("maps systemId, session id, seq and the full payload per chunk", () => {
+  it("maps the message systemId onto device_rid, plus session id, seq and the full payload per chunk", () => {
     const messages = [msg(7, "sess-a"), msg(7, "sess-a")];
     const rows = buildOutboxRows(messages);
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ systemId: 7, sessionId: "sess-a", seq: 0 });
-    expect(rows[1]).toMatchObject({ systemId: 7, sessionId: "sess-a", seq: 1 });
+    expect(rows[0]).toMatchObject({
+      deviceRid: 7,
+      sessionId: "sess-a",
+      seq: 0,
+    });
+    expect(rows[1]).toMatchObject({
+      deviceRid: 7,
+      sessionId: "sess-a",
+      seq: 1,
+    });
     // Payload is the message verbatim (republished by the relay).
     expect(rows[0].payload).toBe(messages[0]);
     expect(rows[1].payload).toBe(messages[1]);

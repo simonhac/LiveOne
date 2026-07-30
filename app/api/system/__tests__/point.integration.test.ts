@@ -9,12 +9,12 @@
  */
 
 import { describe, it, expect, beforeAll } from "@jest/globals";
-// Phase 5: the legacy store was decommissioned. The point lookup now reads Postgres. The PG `pointInfo`
-// schema mirrors the same fields the seed uses (systemId, index, displayName, active,
-// transform), so this is a drop-in re-point of the same .select().from().where().limit()
-// query. See docs/deferred/postgres-integration-test-harness.md.
+// Phase 5: the legacy store was decommissioned; the point lookup reads Postgres. config-v4 Phase 12
+// terminal window: it reads `points ⋈ devices` — `point_info` was dropped by migration 0051. `points.rid`
+// IS the `pointId` the route takes (`index` and `rid` are one column now), so the endpoint arguments are
+// unchanged. See docs/deferred/postgres-integration-test-harness.md.
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { pointInfo } from "@/lib/db/planetscale/schema";
+import { devices, points } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -81,17 +81,19 @@ describe("GET /api/system/[systemId]/point/[pointId]", () => {
     }
 
     // Find a point for this system
-    const [point] = await planetscaleDb
-      .select()
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, testSystemId))
+    const [row] = await planetscaleDb
+      .select({ points })
+      .from(points)
+      .innerJoin(devices, eq(devices.id, points.deviceId))
+      .where(eq(devices.rid, testSystemId))
       .limit(1);
 
-    if (!point) {
+    if (!row) {
       throw new Error("No points found for test system");
     }
 
-    testPointId = point.index;
+    const point = row.points;
+    testPointId = point.rid;
   });
 
   describe("Authentication", () => {
@@ -157,21 +159,23 @@ describe("PATCH /api/system/[systemId]/point/[pointId]", () => {
     }
 
     // Find a point for this system
-    const [point] = await planetscaleDb
-      .select()
-      .from(pointInfo)
-      .where(eq(pointInfo.systemId, testSystemId))
+    const [row] = await planetscaleDb
+      .select({ points })
+      .from(points)
+      .innerJoin(devices, eq(devices.id, points.deviceId))
+      .where(eq(devices.rid, testSystemId))
       .limit(1);
 
-    if (!point) {
+    if (!row) {
       throw new Error("No points found for test system");
     }
 
-    testPointId = point.index;
+    const point = row.points;
+    testPointId = point.rid;
 
     // Store original data to restore later
     originalPointData = {
-      displayName: point.displayName,
+      displayName: point.name,
       active: point.active,
       transform: point.transform,
     };

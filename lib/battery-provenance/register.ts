@@ -14,14 +14,8 @@
  */
 import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import {
-  areaBindings,
-  devices,
-  pointInfo,
-  points,
-} from "@/lib/db/planetscale/schema";
+import { areaBindings, devices, points } from "@/lib/db/planetscale/schema";
 import { mintPoint } from "@/lib/point/mint-point";
-import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/point-mirror";
 
 const BATTERY_STEM = "bidi.battery";
 
@@ -182,21 +176,16 @@ export async function ensureBatteryProvenancePoints(
         row.displayName === row.defaultName &&
         row.defaultName !== p.displayName
       ) {
-        // config-v4 slice M: this rename used to write `point_info` ONLY — the third instance of slice
-        // A2's leak class (an unmirrored point_info UPDATE), which silently drifted `points.name`.
-        await db.transaction(async (tx) => {
-          const [updated] = await tx
-            .update(pointInfo)
-            .set({ displayName: p.displayName, defaultName: p.displayName })
-            .where(
-              // `point_info.rid`, NOT `.index`: `row` now carries a `points.rid`, and the two
-              // integers differ for legacy rows. Matching on `index` would rename the WRONG point
-              // (or none) — the same trap the seam commit fixed in `updatePoint`.
-              and(eq(pointInfo.systemId, systemId), eq(pointInfo.rid, row.rid)),
-            )
-            .returning();
-          if (updated) await mirrorPoint(toMirrorPointInput(updated), tx);
-        });
+        // config-v4 Phase 12 terminal window: writes `points` DIRECTLY. This rename originally wrote
+        // `point_info` ONLY — the third instance of slice A2's leak class (an unmirrored point_info
+        // UPDATE, which silently drifted `points.name`); slice M added the mirror, and dropping
+        // `point_info` removes the second home altogether, so neither the mirror nor the transaction is
+        // needed. `row.pointUid` is `points.id`, so the predicate names the row by its PRIMARY KEY — no
+        // rid/index ambiguity of the kind that trap was about.
+        await db
+          .update(points)
+          .set({ name: p.displayName, defaultName: p.displayName })
+          .where(eq(points.id, row.pointUid));
       }
     }
   }
