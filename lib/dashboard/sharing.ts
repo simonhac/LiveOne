@@ -11,6 +11,7 @@
  */
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import { shareTokens } from "@/lib/db/planetscale/schema";
 import { generateTokenString, isWellFormedToken } from "@/lib/share-tokens";
 import { Dashboard } from "@/lib/ids";
@@ -47,8 +48,13 @@ export async function createDashboardShareToken(
         });
       return { token, expiresAtMs };
     } catch (err: unknown) {
-      // Token PK collision → SQLSTATE 23505 (unique_violation); retry with a fresh phrase.
-      if ((err as { code?: string })?.code === "23505") continue;
+      // Token PK collision → SQLSTATE 23505 on `share_tokens_pkey`; retry with a fresh phrase.
+      //
+      // config-v4 Phase 14 stage 2b: this read `(err as {code?: string})?.code`, which drizzle ≥0.44
+      // never populates (the SQLSTATE is on the wrapping `DrizzleQueryError`'s `cause`). So the `continue`
+      // was unreachable and the whole retry loop was DECORATIVE — a 3-word-phrase collision, the only
+      // thing it exists for, rethrew on the first attempt and 500'd the mint. See `lib/db/pg-error.ts`.
+      if (isUniqueViolationOn(err, "share_tokens_pkey")) continue;
       throw err;
     }
   }

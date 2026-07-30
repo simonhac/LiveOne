@@ -43,6 +43,7 @@
 import { and, eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import { devices, points } from "@/lib/db/planetscale/schema";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
 import { DeviceRegistry } from "@/lib/registry/device-registry";
@@ -121,13 +122,18 @@ function toMintedRow(
  *
  * Matches `points_pkey` only — `pi_point_uid_unique` died with `point_info`. A non-uid unique error
  * (e.g. `points_device_logical_metric_unique`) is deliberately NOT matched and is rethrown unchanged.
+ *
+ * 🛑 config-v4 Phase 14 stage 2b — this is on the LIVE INGEST PATH and it was dead. The predicate read
+ * `err.code`, which drizzle ≥0.44 leaves undefined (the `pg` error is on `.cause`), so it returned false
+ * on the first line and a derived-uid collision failed the mint hard instead of retrying with a random
+ * uuid. The `message.includes("points_pkey")` fallback below it — written precisely because
+ * `err.constraint` is unreliable — was therefore UNREACHABLE, which is why nothing caught this: the
+ * belt-and-braces line was correct and never ran. Both halves now go through
+ * `isUniqueViolationOn` (lib/db/pg-error.ts), which unwraps the cause chain and reads the index name
+ * from the `message` when PlanetScale strips `constraint` (always, measured).
  */
 export function isPointUidCollision(e: unknown): boolean {
-  if (!e || typeof e !== "object") return false;
-  const err = e as { code?: unknown; constraint?: unknown; message?: unknown };
-  if (err.code !== "23505") return false;
-  if (err.constraint === "points_pkey") return true;
-  return typeof err.message === "string" && err.message.includes("points_pkey");
+  return isUniqueViolationOn(e, "points_pkey");
 }
 
 /** Derive the stable point identity from the device's vendor identity; random uuid if unresolvable. */

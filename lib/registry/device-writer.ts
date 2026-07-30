@@ -1,6 +1,7 @@
 import { eq, max, sql } from "drizzle-orm";
 import { isProduction } from "@/lib/env";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { uniqueViolationDetail, violatedUniqueName } from "@/lib/db/pg-error";
 import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
 import type { AreaLocation } from "@/lib/areas/types";
 import type { DeviceConfig } from "@/lib/capabilities/config";
@@ -112,16 +113,6 @@ export type CreatedDevice = {
   displayName: string;
   alias: string | null;
 };
-
-/**
- * Detect a Postgres unique_violation (SQLSTATE '23505'), e.g. the slug-unique collision.
- * `pg` puts the SQLSTATE on the error's `code` field.
- */
-function isPgUniqueViolation(e: unknown): boolean {
-  return (
-    !!e && typeof e === "object" && (e as { code?: unknown }).code === "23505"
-  );
-}
 
 /**
  * Allocate the integer handle for a new device.
@@ -247,9 +238,18 @@ async function insertDeviceToPg(
       };
     });
   } catch (e) {
-    if (isPgUniqueViolation(e)) {
+    // Diagnostic only — the error is rethrown either way and `POST /api/devices` renders it as a 500.
+    //
+    // config-v4 Phase 14 stage 2b: this was a private `(e as {code?}).code === "23505"` predicate, which
+    // drizzle ≥0.44 never satisfies, so the warning NEVER fired and a create that died on a unique
+    // violation reached the log with no hint of which one. It now names the violated index, because on
+    // this database that name lives in the pg `message` and nowhere else (see `lib/db/pg-error.ts`);
+    // `insertDeviceToPg` can trip `devices_owner_slug_unique`, `devices_rid_unique`, `areas_pkey` and
+    // both `legacy_handles` uniques, and the old message asserted the first of those unconditionally.
+    const violated = violatedUniqueName(e);
+    if (violated) {
       console.warn(
-        `[DeviceWriter] Postgres slug-unique collision (23505) creating device for user ${data.ownerClerkUserId}`,
+        `[DeviceWriter] Postgres unique violation (23505) on ${violated} creating device for user ${data.ownerClerkUserId}: ${uniqueViolationDetail(e) ?? "(no detail)"}`,
       );
     }
     throw e;
