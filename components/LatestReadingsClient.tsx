@@ -181,10 +181,14 @@ export default function LatestReadingsClient({
                   <td className="px-3 py-2 text-sm">
                     {item.pointReference ? (
                       (() => {
-                        const refSystemId = parseInt(
-                          item.pointReference.split(".")[0],
-                        );
-                        const systemName = systemNameMap.get(refSystemId);
+                        // `pointReference` is the source point's `pt_` TypeID and carries no device
+                        // half any more (it was `"{systemId}.{pointIndex}"` until the config-v4
+                        // pre-terminal prep — see LatestValue.pointReference). The source device now
+                        // arrives as its own field, so nothing is parsed out of the id string.
+                        const systemName =
+                          item.sourceSystemId != null
+                            ? systemNameMap.get(item.sourceSystemId)
+                            : undefined;
                         return (
                           <span className="group relative cursor-default">
                             <span className="text-gray-400">

@@ -131,14 +131,13 @@ function makeFakeExec(selectRows: any[] = []) {
   return { exec, inserts, deletes };
 }
 
-function point(rid: number, systemId: number, index: number) {
+function point(rid: number, systemId: number) {
   const id = Point.generate();
   addrMap.set(id, {
     pointId: id,
     uuid: Point.toUuid(id),
     rid: rid as never,
     systemId,
-    index,
   });
   return id;
 }
@@ -164,7 +163,7 @@ beforeEach(() => {
 
 describe("ReadingsDao writes — rid-keyed value-building", () => {
   it("insertRaw builds pointRid rows with Date times and first-write-wins", async () => {
-    const p = point(11, 1, 3);
+    const p = point(11, 1);
     const { exec, inserts } = makeFakeExec();
     const res = await ReadingsDao.insertRaw(
       [
@@ -194,7 +193,7 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
   });
 
   it("insert5m upserts when upsert:true, first-write-wins when false", async () => {
-    const p = point(12, 2, 0);
+    const p = point(12, 2);
     const base = {
       point: p,
       intervalEndMs: 1_700_000_000_000,
@@ -222,7 +221,7 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
   });
 
   it("insert5m upsert overwrites the vendor-meta columns by default", async () => {
-    const p = point(14, 2, 0);
+    const p = point(14, 2);
     const base = {
       point: p,
       intervalEndMs: 1_700_000_000_000,
@@ -258,7 +257,7 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
   });
 
   it("insert5m upsert with preserveVendorMeta leaves session/value_str/data_quality untouched", async () => {
-    const p = point(15, 2, 0);
+    const p = point(15, 2);
     const base = {
       point: p,
       intervalEndMs: 1_700_000_000_000,
@@ -299,7 +298,7 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
   });
 
   it("insert5m upsert with preserveVendorMeta + writeDataQuality re-adds data_quality only", async () => {
-    const p = point(16, 2, 0);
+    const p = point(16, 2);
     const base = {
       point: p,
       intervalEndMs: 1_700_000_000_000,
@@ -341,7 +340,7 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
   });
 
   it("upsert1d always upserts into agg_1d keyed by day", async () => {
-    const p = point(13, 3, 1);
+    const p = point(13, 3);
     const { exec, inserts } = makeFakeExec();
     await ReadingsDao.upsert1d(
       [
@@ -378,7 +377,7 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
 
 describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-ms", () => {
   it("read5m returns a per-point ascending series keyed by PointId", async () => {
-    const p = point(21, 7, 4); // rid 21
+    const p = point(21, 7); // rid 21
     const rows = [
       {
         pointRid: 21,
@@ -421,14 +420,14 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("latestForPoints returns null for a point with no rows", async () => {
-    const p = point(22, 8, 0);
+    const p = point(22, 8);
     const { exec } = makeFakeExec([]); // no rows
     const out = await ReadingsDao.latestForPoints([p], exec);
     expect(out.get(p)).toBeNull();
   });
 
   it("latest5mForPoints maps the latest agg_5m row per point (incl. createdAtMs), null when none", async () => {
-    const p = point(23, 9, 2); // rid 23
+    const p = point(23, 9); // rid 23
     const rows = [
       {
         pointRid: 23,
@@ -469,7 +468,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("countAgg5mByLocalDay maps per-point per-local-day counts", async () => {
-    const p = point(31, 9, 2);
+    const p = point(31, 9);
     const { exec } = makeFakeExec([
       { local_day: "2026-07-20", point_rid: 31, n: 48 },
       { local_day: "2026-07-21", point_rid: 31, n: 47 },
@@ -488,8 +487,8 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("countAgg5mForLocalDay maps per-point count for one day (0 when absent)", async () => {
-    const p = point(32, 9, 2);
-    const absent = point(33, 9, 3);
+    const p = point(32, 9);
+    const absent = point(33, 9);
     const { exec } = makeFakeExec([{ point_rid: 32, n: 288 }]);
     const out = await ReadingsDao.countAgg5mForLocalDay(
       [p, absent],
@@ -501,8 +500,8 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("latestAgg5mIntervalMsForPoints maps per-point MAX(interval_end) to epoch-ms, null when absent", async () => {
-    const p1 = point(41, 7, 4); // rid 41 — has a row
-    const p2 = point(42, 7, 5); // rid 42 — no matching row → null
+    const p1 = point(41, 7); // rid 41 — has a row
+    const p2 = point(42, 7); // rid 42 — no matching row → null
     const { exec } = makeFakeExec([
       { pointRid: 41, m: new Date(1_700_000_300_000) },
     ]);
@@ -515,7 +514,7 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
   });
 
   it("latestAgg5mUpdatedAtForPoint returns MAX(updated_at) epoch-ms, null when no rows / null max", async () => {
-    const p = point(43, 7, 4);
+    const p = point(43, 7);
     const window = {
       afterIntervalEndMs: 0,
       throughIntervalEndMs: 2_000_000_000_000,
@@ -582,8 +581,8 @@ describe("ReadingsDao operational readers", () => {
   });
 
   it("returns per-point agg5m coverage and null for missing points", async () => {
-    const p1 = point(11, 1, 3);
-    const p2 = point(12, 1, 4);
+    const p1 = point(11, 1);
+    const p2 = point(12, 1);
     const { exec } = makeFakeExec([
       {
         pointRid: 11,
@@ -769,7 +768,7 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
       ];
       const { exec } = makeFakeExec(canned);
       const d1 = device(1);
-      const p0 = point(1, 1, 0);
+      const p0 = point(1, 1);
       const out = await ReadingsDao.readAdminPivot(
         {
           device: d1,
@@ -837,7 +836,7 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
   // invisible here. Do not read a green as "the query is right". Pinning the SQL text needs a real
   // driver — see the Group-B SQL-capture harness.
   it("readRawWindowAround resolves the PointId and coerces measurement/received times, passing other fields through verbatim", async () => {
-    const p = point(41, 1, 3); // systemId 1, index 3
+    const p = point(41, 1); // systemId 1
     const canned = [
       {
         sessionId: null,
@@ -863,7 +862,7 @@ describe("ReadingsDao admin views — relocated verbatim from readings-read-pg",
   });
 
   it("read5mRowWindowAround coerces intervalEnd and preserves row_num from the verbatim SELECT ranked.*", async () => {
-    const p = point(42, 1, 3);
+    const p = point(42, 1);
     const canned = [
       {
         sessionId: null,

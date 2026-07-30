@@ -23,6 +23,7 @@ interface LatestReadingRow {
   physicalPath: string;
   logicalPath: string | null;
   pointReference?: string;
+  sourceSystemId?: number;
   measurementTimeMs?: number;
   receivedTimeMs?: number;
   metricUnit: string;
@@ -144,6 +145,9 @@ export async function buildSystemPayload(
             logicalPath: cached.logicalPath,
             ...(cached.pointReference != null && {
               pointReference: cached.pointReference,
+            }),
+            ...(cached.sourceSystemId != null && {
+              sourceSystemId: cached.sourceSystemId,
             }),
             ...(cached.measurementTimeMs != null && {
               measurementTimeMs: cached.measurementTimeMs,

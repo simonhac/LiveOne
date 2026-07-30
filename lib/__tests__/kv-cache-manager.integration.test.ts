@@ -19,6 +19,9 @@ import {
 } from "../kv-cache-manager";
 import { kv, kvKey } from "../kv";
 
+const testUid = (n: number | string) =>
+  `0199aaaa-0000-7000-8000-${String(n).padStart(12, "0")}`;
+
 // Skip these tests if KV is not configured
 const isKVConfigured = !!(
   process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
@@ -63,8 +66,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
@@ -92,8 +94,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // First update
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         firstValue,
         measurementTimeMs,
@@ -107,8 +108,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // Second update (should overwrite)
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         secondValue,
         measurementTimeMs + 60000,
@@ -137,8 +137,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       for (const point of points) {
         await updateLatestPointValue(
           testSystemId,
-          point.id,
-          `uid-${point.id}`, // point uid — the subscription-map key (slice E PR 2b)
+          testUid(point.id), // point uid — the subscription-map key (slice E PR 2b)
           point.path,
           point.value,
           measurementTimeMs,
@@ -174,8 +173,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath1,
         5000,
         measurementTimeMs,
@@ -185,8 +183,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       );
       await updateLatestPointValue(
         testSystemId,
-        2, // test point ID
-        "uid-2", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(2), // point uid — the subscription-map key (slice E PR 2b)
         pointPath2,
         1200,
         measurementTimeMs,
@@ -233,8 +230,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
@@ -283,8 +279,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       for (const point of points) {
         await updateLatestPointValue(
           testSystemId,
-          point.id,
-          `uid-${point.id}`, // point uid — the subscription-map key (slice E PR 2b)
+          testUid(point.id), // point uid — the subscription-map key (slice E PR 2b)
           point.path,
           point.value,
           measurementTimeMs,
@@ -341,8 +336,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
 
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,
@@ -385,8 +379,7 @@ describeIfKV("kv-cache-manager (integration)", () => {
       // Write
       await updateLatestPointValue(
         testSystemId,
-        1, // test point ID
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath,
         value,
         measurementTimeMs,

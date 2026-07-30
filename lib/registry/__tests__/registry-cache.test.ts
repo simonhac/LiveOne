@@ -19,7 +19,6 @@ interface Row {
   uuid: string;
   rid: number;
   systemId: number;
-  index: number;
 }
 
 /**
@@ -53,10 +52,10 @@ function makeFakeDb() {
 }
 
 /** Mint a PointId + the point_info fill row a DB would return for it. */
-function makePoint(rid: number, systemId: number, index: number) {
+function makePoint(rid: number, systemId: number) {
   const id = Point.generate();
   const uuid = Point.toUuid(id);
-  const row: Row = { uuid, rid, systemId, index };
+  const row: Row = { uuid, rid, systemId };
   return { id, uuid, row };
 }
 
@@ -69,13 +68,13 @@ beforeEach(() => {
 
 describe("RegistryCache", () => {
   it("resolves a batch of PointIds in ONE DB round-trip and caches them", async () => {
-    const a = makePoint(101, 1, 5);
-    const b = makePoint(102, 1, 6);
+    const a = makePoint(101, 1);
+    const b = makePoint(102, 1);
     fake.queue([a.row, b.row]);
 
     const addrs = await RegistryCache.addrsForPoints([a.id, b.id]);
-    expect(addrs.get(a.id)).toMatchObject({ rid: 101, systemId: 1, index: 5 });
-    expect(addrs.get(b.id)).toMatchObject({ rid: 102, systemId: 1, index: 6 });
+    expect(addrs.get(a.id)).toMatchObject({ rid: 101, systemId: 1 });
+    expect(addrs.get(b.id)).toMatchObject({ rid: 102, systemId: 1 });
     expect(fake.calls()).toBe(1);
 
     // Second resolution is fully cached — no new query.
@@ -84,7 +83,7 @@ describe("RegistryCache", () => {
   });
 
   it("derives rids and resolves rid→point/addr from the same cached fill (no extra query)", async () => {
-    const a = makePoint(200, 2, 0);
+    const a = makePoint(200, 2);
     fake.queue([a.row]);
     await RegistryCache.addrForPoint(a.id);
     expect(fake.calls()).toBe(1);
@@ -92,8 +91,8 @@ describe("RegistryCache", () => {
     const rids = await RegistryCache.ridsForPoints([a.id]);
     expect(rids.get(a.id)).toBe(200);
     expect(await RegistryCache.pointForRid(200 as never)).toBe(a.id);
-    expect(await RegistryCache.pointForAddr(2, 0)).toBe(a.id);
-    expect(fake.calls()).toBe(1); // all served from the byUuid/byRid/byAddr indexes
+    expect((await RegistryCache.addrForRid(200 as never)).systemId).toBe(2);
+    expect(fake.calls()).toBe(1); // all served from the byUuid/byRid indexes
   });
 
   it("throws UnknownIdError for a genuinely absent point", async () => {
@@ -105,7 +104,7 @@ describe("RegistryCache", () => {
   });
 
   it("does NOT negatively cache — a point minted after a miss resolves immediately", async () => {
-    const p = makePoint(300, 3, 9);
+    const p = makePoint(300, 3);
     fake.queue([]); // first lookup: not yet committed
     await expect(RegistryCache.addrForPoint(p.id)).rejects.toBeInstanceOf(
       UnknownIdError,
@@ -118,7 +117,7 @@ describe("RegistryCache", () => {
   });
 
   it("invalidate() clears the cache so the next lookup refetches", async () => {
-    const a = makePoint(400, 4, 1);
+    const a = makePoint(400, 4);
     fake.queue([a.row]);
     await RegistryCache.addrForPoint(a.id);
     expect(fake.calls()).toBe(1);
@@ -129,14 +128,18 @@ describe("RegistryCache", () => {
     expect(fake.calls()).toBe(2);
   });
 
-  it("invalidate(id) evicts a single point from all three indexes", async () => {
-    const a = makePoint(500, 5, 2);
+  it("invalidate(id) evicts a single point from BOTH indexes", async () => {
+    const a = makePoint(500, 5);
     fake.queue([a.row]);
     await RegistryCache.addrForPoint(a.id);
 
     RegistryCache.invalidate(a.id);
     fake.queue([a.row]);
-    await RegistryCache.pointForAddr(5, 2); // must refetch (byAddr was evicted too)
+    // The rid→uuid reverse index must have been evicted too, not just byUuid — so a rid lookup has to
+    // go back to the DB. (This assertion USED to be made through `pointForAddr`/byAddr, which the
+    // pre-terminal prep retired with the legacy address grammar; byRid is the remaining reverse index
+    // and the only one still unenforced elsewhere.)
+    await RegistryCache.pointForRid(500 as never);
     expect(fake.calls()).toBe(2);
   });
 });

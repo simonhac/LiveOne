@@ -33,13 +33,8 @@ import type { WithProcessQueueMessage } from "../receive/route";
 // unchanged. Without this, loading `@/lib/registry` pulls in `requirePlanetscaleDb()`
 // ("not configured" in a unit test) and `addrs.get(point)` is undefined.
 jest.mock("@/lib/registry", () => {
-  const fakePoint = (systemId: number, index: number) =>
-    `pt_fake${systemId}${index}`;
   return {
     RegistryCache: {
-      pointForAddr: jest.fn(async (systemId: number, index: number) =>
-        fakePoint(systemId, index),
-      ),
       addrsForPoints: jest.fn(
         async (ids: string[]) =>
           new Map(
@@ -50,7 +45,6 @@ jest.mock("@/lib/registry", () => {
                 uuid: "00000000-0000-7000-8000-000000000000",
                 rid: 1,
                 systemId: 1,
-                index: 0,
               },
             ]),
           ),

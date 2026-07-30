@@ -23,27 +23,36 @@ function localMidnightUtcMs(day: string, offsetMin: number): number {
   return Date.parse(`${day}T00:00:00Z`) - offsetMin * 60_000;
 }
 
-/** Resolve a provider's expected point tails to this system's point ids (only those that exist). */
+/**
+ * Resolve a provider's expected point tails to this system's coverage points (only those that exist).
+ *
+ * Sourced from `points`, not `point_info`: `CoveragePoint.id` used to be `point_info.index`, whose
+ * table the terminal window drops and which `points` has no counterpart to. It is now `points.rid` —
+ * globally unique, so it keys the internal maps below at least as well, and reproducible after the
+ * drop. Both hops (`points.device_id → devices.id`, `devices.rid` = the handle) are FK-backed and
+ * NOT NULL, so neither can silently filter a point out.
+ */
 export async function resolveCoveragePoints(
   db: PgDb,
   systemId: number,
   tails: readonly string[],
 ): Promise<CoveragePoint[]> {
   if (tails.length === 0) return [];
-  // `point_uid` comes back on the same row as `id`/`tail` — the readings DAO is keyed on it, so the
+  // The uuid comes back on the same row as `rid`/`tail` — the readings DAO is keyed on it, so the
   // callers below need no registry lookup at all (slice D).
   const res = await db.execute(sql`
-    SELECT id, physical_path_tail AS tail, point_uid
-    FROM point_info
-    WHERE system_id = ${systemId}
-      AND physical_path_tail IN (${sql.join(
+    SELECT p.rid AS rid, p.physical_path AS tail, p.id AS point_uid
+    FROM points p
+    JOIN devices d ON d.id = p.device_id
+    WHERE d.rid = ${systemId}
+      AND p.physical_path IN (${sql.join(
         tails.map((t) => sql`${t}`),
         sql`, `,
       )})
-    ORDER BY id
+    ORDER BY p.rid
   `);
   return (res.rows ?? []).map((r) => ({
-    id: Number((r as { id: unknown }).id),
+    id: Number((r as { rid: unknown }).rid),
     tail: String((r as { tail: unknown }).tail),
     point: Point.encode(String((r as { point_uid: unknown }).point_uid)),
   }));
@@ -84,7 +93,7 @@ export async function findCoverageGaps(
 
   // Each coverage point already carries its registry identity (resolveCoveragePoints), so there is
   // nothing to look up and nothing that can be missing.
-  const pointByIndex = new Map<number, PointId>(
+  const pointByRid = new Map<number, PointId>(
     points.map((p) => [p.id, p.point]),
   );
   const ids: PointId[] = points.map((p) => p.point);
@@ -94,10 +103,10 @@ export async function findCoverageGaps(
     db,
   );
 
-  // Rebuild the (local_day → (point index → count)) map the day-by-day loop below expects.
+  // Rebuild the (local_day → (point rid → count)) map the day-by-day loop below expects.
   const counts = new Map<string, Map<number, number>>();
   for (const p of points) {
-    const id = pointByIndex.get(p.id);
+    const id = pointByRid.get(p.id);
     if (!id) continue;
     for (const [day, n] of byPoint.get(id) ?? []) {
       if (!counts.has(day)) counts.set(day, new Map());

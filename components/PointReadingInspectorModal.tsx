@@ -6,6 +6,7 @@ import SessionInfoModal from "./SessionInfoModal";
 import { formatDateTime, formatDate } from "@/lib/fe-date-format";
 import { encodeUrlOffset, encodeUrlDate } from "@/lib/url-date";
 import { PointInfo } from "@/lib/point/point-info";
+import { Point } from "@/lib/ids";
 import { formatTimeAEST, formatDateAEST } from "@/lib/date-utils";
 import {
   type ZonedDateTime,
@@ -68,7 +69,11 @@ export default function PointReadingInspectorModal({
   );
   const [isSessionInfoModalOpen, setIsSessionInfoModalOpen] = useState(false);
 
-  const pointIdentifier = `${pointInfo.systemId}.${pointInfo.index}`;
+  // config-v4 pre-terminal prep: the admin route's URL segment is the point's `pt_` TypeID. It used to
+  // be `"{systemId}.{pointIndex}"`, whose index half came from `point_info.index` — a column `points`
+  // has no counterpart to, so the terminal drop would have left the URL unresolvable. `PointInfo` has
+  // carried `pointUid` since slice D PR 2, so this is a re-read of a field already in hand.
+  const pointIdentifier = Point.encode(pointInfo.pointUid);
 
   const {
     data,
@@ -77,8 +82,7 @@ export default function PointReadingInspectorModal({
   } = useQuery({
     queryKey: [
       "pointReading",
-      pointInfo.systemId,
-      pointInfo.index,
+      pointIdentifier,
       source,
       targetTime ? formatTimeAEST(targetTime) : null,
       targetDate ? formatDateAEST(targetDate) : null,
@@ -122,7 +126,6 @@ export default function PointReadingInspectorModal({
       const encodedOffset = encodeUrlOffset(system.timezoneOffsetMin);
       // Use "date" parameter for daily data, "time" for raw/5m
       const timeParam = source === "daily" ? "date" : "time";
-      // Use numeric format: systemId.pointId
       return fetchJson<{ readings?: ReadingData[] }>(
         `/api/admin/point/${pointIdentifier}/readings?${timeParam}=${encodedTime}&offset=${encodedOffset}&source=${source}`,
       );
@@ -290,7 +293,7 @@ export default function PointReadingInspectorModal({
           <h2 className="text-lg font-semibold text-white">
             Point Readings for {system.name} {pointInfo.name}{" "}
             <span className="text-gray-500">
-              ID: {pointInfo.systemId}.{pointInfo.index}
+              ID: {pointIdentifier}
               {pointPath && ` (${pointPath})`}
             </span>
           </h2>

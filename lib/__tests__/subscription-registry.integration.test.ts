@@ -26,6 +26,10 @@ import {
   pointInfo as pointInfoTable,
 } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
+
+const testUid = (n: number | string) =>
+  `0199aaaa-0000-7000-8000-${String(n).padStart(12, "0")}`;
+
 const db = planetscaleDb as unknown as Record<string, any>;
 
 // Skip these tests if KV is not configured
@@ -302,8 +306,7 @@ describeIfKV("Subscription Registry (integration)", () => {
       // Update point 1 (subscribed by both composites)
       await updateLatestPointValue(
         testSourceSystemId,
-        1, // Point index
-        "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(1), // point uid — the subscription-map key (slice E PR 2b)
         pointPath1,
         5000,
         Date.now(),
@@ -315,8 +318,7 @@ describeIfKV("Subscription Registry (integration)", () => {
       // Update point 2 (subscribed by composite 1 only)
       await updateLatestPointValue(
         testSourceSystemId,
-        2, // Point index
-        "uid-2", // point uid — the subscription-map key (slice E PR 2b)
+        testUid(2), // point uid — the subscription-map key (slice E PR 2b)
         pointPath2,
         85,
         Date.now(),
@@ -361,8 +363,7 @@ describeIfKV("Subscription Registry (integration)", () => {
       await Promise.all([
         updateLatestPointValue(
           testSourceSystemId,
-          1,
-          "uid-1", // point uid — the subscription-map key (slice E PR 2b)
+          testUid(1), // point uid — the subscription-map key (slice E PR 2b)
           pointPath1,
           6000,
           now,
@@ -372,8 +373,7 @@ describeIfKV("Subscription Registry (integration)", () => {
         ),
         updateLatestPointValue(
           testSourceSystemId,
-          2,
-          "uid-2", // point uid — the subscription-map key (slice E PR 2b)
+          testUid(2), // point uid — the subscription-map key (slice E PR 2b)
           pointPath2,
           90,
           now,

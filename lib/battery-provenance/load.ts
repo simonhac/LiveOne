@@ -207,10 +207,10 @@ export interface BoundPoint {
  * The Area's curated points via `area_bindings` joined to point_info (dedupes overlapping devices).
  *
  * The join is on `point_uid` since slice E PR 2a. `systemId`/`pointId` therefore come from the joined
- * `point_info` row rather than the binding — which is what keeps them a genuine LEGACY side for the
- * slice-D parity gate (`scripts/config-v4/verify-slice-d-parity.ts` block 1 compares `point` against
- * `pointForAddr(systemId, pointId)`; sourcing them from the same uuid would make that check circular).
- * Their remaining production consumers are the two `devices.config` lookups in this module and
+ * `point_info` row rather than the binding. That used to matter because it kept them a genuine LEGACY
+ * side for the slice-D parity gate, which compared `point` against `pointForAddr(systemId, pointId)`;
+ * the pre-terminal prep retired `pointForAddr` and the gate with it, so there is no second address left
+ * to disagree with. Their remaining production consumers are the two `devices.config` lookups here and
  * `battery-provenance-daily-pg.ts`, both of which read the device through `points`/`devices` instead.
  */
 export async function boundPoints(

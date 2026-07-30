@@ -164,6 +164,60 @@ export const DEVICE_CONFIG_WITH_SPEC_SQL = `
  *
  * @returns the area uuid
  */
+/**
+ * Propagate a placement EDIT on `systems` down to the device's area-of-one.
+ *
+ * ## The ninth "wired at MINT, not at EDIT"
+ *
+ * `PATCH /api/admin/systems/[systemId]/settings` writes `displayTimezone` (and `DeviceWriter.updateSystem`
+ * accepts `timezoneOffsetMin`) to `systems` only. `ensureAreaOfOne`'s heal above cannot cover it: that
+ * heal is `location`-only and fill-if-NULL, and `areas.timezone_offset_min` / `display_timezone` are
+ * NOT NULL, so they never look "missing". The area-of-one's tz was therefore frozen at mint, every tz
+ * edit since was stranded on `systems`, and the terminal window DROPS `systems` — so a value living only
+ * there is destroyed, not merely stale. `lib/registry/device-config.ts` (slice K1) already sources tz
+ * from the area-of-one, which means the edit never reached anything that reads it.
+ *
+ * Measured before the fix: 0 tz drift on BOTH environments. The leak was armed but had not fired, so
+ * there is no data repair to do — only the leak to close.
+ *
+ * ## Why this is authority-respecting, and not the blanket copy-down the heal above forbids
+ *
+ * `ensureAreaOfOne`'s reconcile runs with no user intent behind it, which is exactly why it must never
+ * overwrite an area-level value (handle 13 / Kutis is the live case). THIS function runs only from
+ * `updateSystem`, i.e. only when a caller has explicitly PATCHed a timezone. An explicit edit is the
+ * authority for that field in that moment, so writing it through is one-directional intent propagation,
+ * not a blanket sync. Only the fields NAMED in the patch are written; nothing else is touched, and
+ * `location` is deliberately excluded — it is the field whose area-side value is authoritative and
+ * whose `systems` side is a known-stale named divergence.
+ *
+ * ## Why BOTH tables, not the area alone
+ *
+ * `systems` keeps its write until the table drops, for three reasons: the columns are NOT NULL there and
+ * still populated at create; `verify-slice-k1-parity.ts` block 3 asserts `systems` tz == area tz, so
+ * writing only the area would turn the gate's 324 checks into a standing divergence and destroy the one
+ * cross-check available before the drop; and a revert of this commit then cannot lose an edit.
+ *
+ * `dayOffsetMin` moves with `timezoneOffsetMin`, matching `updateAreaMeta` (lib/areas/create.ts) — the
+ * area's own writer — rather than inventing a second coupling rule.
+ */
+export async function mirrorPlacementToAreaOfOne(
+  systemId: number,
+  patch: { timezoneOffsetMin?: number; displayTimezone?: string },
+  exec: Exec,
+): Promise<void> {
+  const set: Partial<typeof areas.$inferInsert> = {};
+  if (patch.timezoneOffsetMin !== undefined) {
+    set.timezoneOffsetMin = patch.timezoneOffsetMin;
+    set.dayOffsetMin = patch.timezoneOffsetMin;
+  }
+  if (patch.displayTimezone !== undefined)
+    set.displayTimezone = patch.displayTimezone;
+  if (Object.keys(set).length === 0) return;
+
+  set.updatedAt = new Date();
+  await exec.update(areas).set(set).where(eq(areas.legacySystemId, systemId));
+}
+
 async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
   const [existing] = await exec
     .select({ id: areas.id, location: areas.location })
