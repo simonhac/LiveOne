@@ -1,11 +1,18 @@
 /**
- * Config-v4 seed builders — capability-derived v3 strategy rewritten with authoritative area/device
- * identities. Preview and persistence intentionally share the exact same resolver.
+ * Config-v4 seed builders — the capability-derived area strategy, built as v4 and stamped with
+ * authoritative area/device identities. Preview and persistence intentionally share the exact same
+ * resolution, so a previewed seed is byte-identical to the one that gets saved.
+ *
+ * Phase 14 stage 8: `buildAreaStrategy` now emits a v4 `GroupNode` natively, so there is no
+ * v3-descriptor detour through `rewriteV3ToV4` here any more. This module's remaining job is the two
+ * IDENTITY hops the pure builder cannot do: the area uuid → `ar_` ref, and the strategy's one device
+ * pin (the `oe-grid` card's OE region device) legacy handle → `dv_`.
  */
 import { DeviceRegistry } from "@/lib/registry";
-import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
-import { rewriteV3ToV4, pureAreaRef, type LegacyRefResolver } from "./v3-to-v4";
-import type { DashboardV3 } from "./v3";
+import { resolveAreaStrategyInputs } from "@/lib/capabilities/server";
+import { buildAreaStrategy } from "@/lib/capabilities/strategy";
+import { areaRefToArId } from "@/lib/areas/ref";
+import { normalizeDocV4 } from "./v4-validate";
 import type { DashboardV4, GroupNode } from "./v4";
 
 export class MissingDeviceMappingError extends Error {
@@ -15,37 +22,37 @@ export class MissingDeviceMappingError extends Error {
   }
 }
 
-function devicePins(v3: DashboardV3): number[] {
-  const pins = new Set<number>();
-  for (const section of v3.sections) {
-    for (const card of section.cards) {
-      if (card.deviceSystemId != null) pins.add(card.deviceSystemId);
-      for (const tile of card.tiles ?? []) {
-        if (tile.deviceSystemId != null) pins.add(tile.deviceSystemId);
-      }
-    }
-  }
-  return [...pins];
-}
-
 async function buildSeedDoc(
   areaUuid: string,
   handle: number,
 ): Promise<DashboardV4> {
-  const v3 = await buildAreaStrategyForHandle(areaUuid, handle);
-  const pins = devicePins(v3);
-  const mapped = await DeviceRegistry.addrsForHandles(pins);
-  const missing = pins.filter((pin) => !mapped.has(pin));
-  if (missing.length > 0) throw new MissingDeviceMappingError(missing);
-  const resolver: LegacyRefResolver = {
-    areaRef: pureAreaRef,
-    deviceRef: (legacyHandle) => {
-      const device = mapped.get(legacyHandle);
-      if (!device) throw new MissingDeviceMappingError([legacyHandle]);
-      return device.deviceId;
-    },
-  };
-  return rewriteV3ToV4(v3, resolver);
+  const inputs = await resolveAreaStrategyInputs(handle);
+  const gridHandle = inputs.gridDeviceSystemId;
+  // A persisted seed must never carry a fabricated device ref — an unmapped pin is a hard failure
+  // (the routes surface it as 503), not a silently-dropped card.
+  const gridDevice =
+    gridHandle != null
+      ? (await DeviceRegistry.addrsForHandles([gridHandle])).get(gridHandle)
+          ?.deviceId
+      : undefined;
+  if (gridHandle != null && !gridDevice) {
+    throw new MissingDeviceMappingError([gridHandle]);
+  }
+
+  // Dual-accept (raw uuid OR already `ar_`); a seed is machine-built, so neither is a user error.
+  const area = areaRefToArId(areaUuid);
+  if (!area) throw new TypeError(`not a valid area ref: ${areaUuid}`);
+
+  const group = buildAreaStrategy({
+    area,
+    capabilities: inputs.capabilities,
+    aggregate: inputs.aggregate,
+    gridDevice,
+  });
+  return normalizeDocV4({
+    version: 4,
+    root: { kind: "group", direction: "column", children: [group] },
+  });
 }
 
 export async function buildSeedGroupPreview(

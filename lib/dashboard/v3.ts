@@ -14,7 +14,7 @@
  *    name a device -> that specific member (e.g. the OpenElectricity region device for the `oe-grid`
  *    view, a member device of the Area).
  */
-import type { DashboardCardType, DashboardLayout } from "./cards";
+import type { DashboardCardType } from "./cards";
 import type { TileFeature, TileView } from "./card-types";
 
 /** A chart card's config — lines (sidebar) vs stacked-areas (site load/generation halves). */
@@ -67,8 +67,6 @@ export interface CardV3 {
 export interface AreaSectionV3 {
   /** The Area this section reads. Its legacy_system_id (the handle) + vendorType are resolved here. */
   areaId: string;
-  /** Optional layout OVERRIDE; omitted => getLayout(area.vendorType). */
-  layout?: DashboardLayout;
   hidden?: boolean;
   cards: CardV3[];
 }

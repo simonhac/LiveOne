@@ -1,38 +1,30 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
-import { Device, newUuidV7, type DeviceId } from "@/lib/ids";
-import type { DashboardV3 } from "../v3";
+import { Area, Device, newUuidV7, type DeviceId } from "@/lib/ids";
 
 jest.mock("@/lib/capabilities/server", () => ({
-  buildAreaStrategyForHandle: jest.fn(),
+  resolveAreaStrategyInputs: jest.fn(),
 }));
 jest.mock("@/lib/registry", () => ({
   DeviceRegistry: { addrsForHandles: jest.fn() },
 }));
 
-import { buildAreaStrategyForHandle } from "@/lib/capabilities/server";
+import { resolveAreaStrategyInputs } from "@/lib/capabilities/server";
 import { DeviceRegistry } from "@/lib/registry";
 import { buildPersistableSeedDoc, buildSeedGroupPreview } from "../v4-seed";
 import { collectRefs, validateDocV4 } from "../v4-validate";
+import type { CapabilityId } from "@/lib/capabilities/registry";
 
-const mockStrategy = jest.mocked(buildAreaStrategyForHandle);
+const mockInputs = jest.mocked(resolveAreaStrategyInputs);
 const mockMappings = jest.mocked(DeviceRegistry.addrsForHandles);
 
-function seedLikeV3(areaId = newUuidV7()): DashboardV3 {
+const caps = (...ids: CapabilityId[]) => new Set<CapabilityId>(ids);
+
+/** A tiles-and-chart area that also carries the OE grid pin (legacy handle 12). */
+function seedInputs(gridDeviceSystemId?: number) {
   return {
-    version: 3,
-    sections: [
-      {
-        areaId,
-        cards: [
-          {
-            type: "tiles",
-            tiles: [{ view: "solar" }, { view: "oe-grid", deviceSystemId: 14 }],
-          },
-          { type: "device-metrics", deviceSystemId: 1 },
-          { type: "generator-runs", deviceSystemId: 9 },
-        ],
-      },
-    ],
+    capabilities: caps("solar/power", "load/power", "grid/power"),
+    aggregate: false,
+    gridDeviceSystemId,
   };
 }
 
@@ -42,12 +34,7 @@ function mapped(handles: number[]): Map<number, any> {
       const deviceId: DeviceId = Device.generate();
       return [
         handle,
-        {
-          deviceId,
-          uuid: Device.toUuid(deviceId),
-          rid: handle,
-          handle,
-        },
+        { deviceId, uuid: Device.toUuid(deviceId), rid: handle, handle },
       ];
     }),
   );
@@ -55,14 +42,14 @@ function mapped(handles: number[]): Map<number, any> {
 
 describe("authoritative config-v4 seeds", () => {
   beforeEach(() => {
-    mockStrategy.mockReset();
+    mockInputs.mockReset();
     mockMappings.mockReset();
   });
 
   it("preview and persistence keep the same real device refs", async () => {
     const areaId = newUuidV7();
-    mockStrategy.mockResolvedValue(seedLikeV3(areaId));
-    const mappings = mapped([14, 1, 9]);
+    mockInputs.mockResolvedValue(seedInputs(12));
+    const mappings = mapped([12]);
     mockMappings.mockResolvedValue(mappings);
 
     const [doc, group] = await Promise.all([
@@ -71,22 +58,49 @@ describe("authoritative config-v4 seeds", () => {
     ]);
 
     expect(validateDocV4(doc).valid).toBe(true);
-    expect(collectRefs(doc).devices.sort()).toEqual(
-      [...mappings.values()].map((m) => m.deviceId).sort(),
-    );
+    expect(collectRefs(doc)).toEqual({
+      areas: [Area.encode(areaId)],
+      devices: [mappings.get(12)!.deviceId],
+    });
     expect(group).toEqual(doc.root.children[0]);
-    expect(mockMappings).toHaveBeenCalledWith([14, 1, 9]);
+    expect(mockMappings).toHaveBeenCalledWith([12]);
   });
 
   it("fails explicitly rather than fabricating an unmapped device", async () => {
     const areaId = newUuidV7();
-    mockStrategy.mockResolvedValue(seedLikeV3(areaId));
-    mockMappings.mockResolvedValue(mapped([14, 1]));
+    mockInputs.mockResolvedValue(seedInputs(12));
+    mockMappings.mockResolvedValue(new Map());
     await expect(buildPersistableSeedDoc(areaId, 1000001)).rejects.toEqual(
       expect.objectContaining({
         name: "MissingDeviceMappingError",
-        handles: [9],
+        handles: [12],
       }),
     );
+  });
+
+  it("skips the device lookup entirely for an area with no grid context", async () => {
+    const areaId = newUuidV7();
+    mockInputs.mockResolvedValue(seedInputs(undefined));
+
+    const doc = await buildPersistableSeedDoc(areaId, 1000001);
+
+    expect(validateDocV4(doc).valid).toBe(true);
+    expect(collectRefs(doc)).toEqual({
+      areas: [Area.encode(areaId)],
+      devices: [],
+    });
+    expect(mockMappings).not.toHaveBeenCalled();
+  });
+
+  it("binds the seed group to the area and never widens scope (§8.3)", async () => {
+    const areaId = newUuidV7();
+    mockInputs.mockResolvedValue(seedInputs(undefined));
+
+    const group = await buildSeedGroupPreview(areaId, 1000001);
+
+    expect(group.area).toBe(Area.encode(areaId));
+    expect(group.heading).toBe(true);
+    // Every scope ref lives in the envelope: no child re-binds an area.
+    for (const child of group.children) expect(child.area).toBeUndefined();
   });
 });

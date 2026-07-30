@@ -30,7 +30,10 @@ import {
   type DeviceConfig,
 } from "@/lib/capabilities/config";
 import { buildAreaStrategy } from "@/lib/capabilities/strategy";
+import { areaStrategyGroupToV3 } from "@/lib/capabilities/strategy-v3";
 import type { CapabilityId } from "@/lib/capabilities/registry";
+import type { CapabilitySet } from "@/lib/capabilities/derive";
+import type { DeviceId } from "@/lib/ids";
 import type { DashboardV3 } from "@/lib/dashboard/v3";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -127,27 +130,70 @@ export async function derivedCapabilitiesForDevice(
 }
 
 /**
- * Build the default dashboard (the "area strategy") for a handle straight from its CONFIG capabilities —
- * the server-side, vendor-free seed builder that replaces `buildDefaultDashboardV3(vendorType, …)`.
- * `areaId` is the section's Area uuid (what the descriptor stores); `handle` is the integer
- * `legacy_system_id` the resolvers key on. A capability-correct seed: it includes the generator-runs
- * card / oe-grid tile / only the supported tiles when the area actually has them.
+ * The CONFIG-derived inputs behind a handle's area strategy — its capability set, whether it
+ * aggregates multiple sources, and the OE region device (as a legacy handle) the `oe-grid` card binds.
+ * Split out so the v4 seed path (`lib/dashboard/v4-seed.ts`, which resolves that handle to a `dv_`)
+ * and the v3 projection below share one resolution.
+ */
+export interface AreaStrategyInputs {
+  capabilities: CapabilitySet;
+  aggregate: boolean;
+  /** The OE region device's legacy `system_id`; absent when the area has no grid context. */
+  gridDeviceSystemId?: number;
+}
+
+export async function resolveAreaStrategyInputs(
+  handle: number,
+): Promise<AreaStrategyInputs> {
+  const pm = PointManager.getInstance();
+  const points = await pm.getActivePointsForDevice(handle, false, false);
+  const capabilities = await capabilitiesForDevice(handle);
+  const gridDeviceSystemId = (await resolveGridContextForDevice(handle))
+    ?.regionSystemId;
+  return {
+    capabilities,
+    aggregate: isAggregateFromPoints(points),
+    gridDeviceSystemId,
+  };
+}
+
+/**
+ * 🛑 TEMPORARY — the v3-shaped default dashboard (the "area strategy") for a handle, for the three
+ * consumers that still read v3: `/device/{id}` (stage 9) plus `GET /api/areas/{id}/default-section`
+ * and `POST /api/dashboards` (stage 13). It builds the v4 group and projects it back
+ * (`strategy-v3.ts`); both this function and that projection go when the last consumer does.
+ *
+ * `areaId` is the section's Area uuid (what the descriptor stores) — or `/device/{id}`'s synthetic
+ * `device-{id}` key, which is not an area ref at all, hence the group is built unbound and the raw
+ * string re-attached on the way back. `handle` is the integer `legacy_system_id` the resolvers key on.
+ *
+ * The one device pin the strategy emits (the `oe-grid` card) is resolved to a `dv_` so the v4 builder
+ * can carry it in the envelope, then mapped straight back. An unresolvable handle degrades to "no
+ * oe-grid card" — matching `resolveGridContextForDevice`'s own posture that the grid card is additive
+ * and must never break the page.
  */
 export async function buildAreaStrategyForHandle(
   areaId: string,
   handle: number,
   opts?: { leadWithDeviceMetrics?: boolean },
 ): Promise<DashboardV3> {
-  const pm = PointManager.getInstance();
-  const points = await pm.getActivePointsForDevice(handle, false, false);
-  const capabilities = await capabilitiesForDevice(handle);
-  const gridDeviceSystemId = (await resolveGridContextForDevice(handle))
-    ?.regionSystemId;
-  return buildAreaStrategy({
-    areaId,
-    capabilities,
-    aggregate: isAggregateFromPoints(points),
-    gridDeviceSystemId,
+  const inputs = await resolveAreaStrategyInputs(handle);
+  const gridHandle = inputs.gridDeviceSystemId;
+  const gridDevice: DeviceId | undefined =
+    gridHandle != null
+      ? (await DeviceRegistry.addrsForHandles([gridHandle])).get(gridHandle)
+          ?.deviceId
+      : undefined;
+  const group = buildAreaStrategy({
+    capabilities: inputs.capabilities,
+    aggregate: inputs.aggregate,
+    gridDevice,
     leadWithDeviceMetrics: opts?.leadWithDeviceMetrics,
+  });
+  return areaStrategyGroupToV3(group, {
+    areaId,
+    handleForDevice: new Map(
+      gridDevice && gridHandle != null ? [[gridDevice, gridHandle]] : [],
+    ),
   });
 }
