@@ -30,7 +30,7 @@ const REGION_NAMES: Record<string, string> = {
 async function main() {
   const { planetscaleDb } = await import("@/lib/db/planetscale");
   const { systems, devices } = await import("@/lib/db/planetscale/schema");
-  const { DeviceRegistry } = await import("@/lib/registry");
+  const { ensureDeviceRow } = await import("@/lib/registry/v4-mirror");
 
   if (!planetscaleDb) {
     console.error(
@@ -84,7 +84,9 @@ async function main() {
           metadata: { network: "NEM" },
         })
         .returning({ id: devices.rid });
-      await DeviceRegistry.ensureDeviceForHandle(inserted.id, tx);
+      // `ensureDeviceRow`, not `ensureDeviceForHandle`: the handle mapping FKs `devices(id)`, so the
+      // device row must be inserted first (same defect as `insertSystemToPg` had).
+      await ensureDeviceRow(inserted.id, tx);
       return inserted;
     });
 

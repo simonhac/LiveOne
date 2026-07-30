@@ -37,11 +37,13 @@
 
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
-import { Area } from "@/lib/ids";
+import { Area, Device } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
   areaMembers,
+  devices,
+  legacyHandles,
   pointInfo,
   points,
   systems,
@@ -253,19 +255,27 @@ async function ensureAreaOfOne(systemId: number, exec: Exec): Promise<string> {
  * NEVER overwritten on conflict: `rid`, `primary_area_id` and `created_at` — those are identity. `rid`
  * in particular is the `devices.rid == systems.id` seam invariant.
  *
+ * ⚠️ **WRITE ORDER IS LOAD-BEARING: `devices` first, `legacy_handles` second.** Migration 0036 gave
+ * `legacy_handles.device_id` an FK to `devices(id)`, and this function used to open by calling
+ * `ensureDeviceForHandle` — which INSERTs the handle row pointing at a not-yet-existent uuid. Every
+ * *first* mint of a device therefore failed with 23503 (`POST /api/systems` and the Tesla/Enphase
+ * connect callbacks 500'd); re-mints survived only because the `ON CONFLICT` `coalesce` kept the
+ * already-valid uuid. The uuid is now resolved read-only first, `devices` is inserted, and the handle
+ * mapping is filled last.
+ *
  * @returns the device uuid
  */
 export async function ensureDeviceRow(
   systemId: number,
   exec: Exec = requirePlanetscaleDb(),
 ): Promise<string> {
-  const addr = await DeviceRegistry.ensureDeviceForHandle(systemId, exec);
+  const uuid = await resolveOrMintDeviceUuid(systemId, exec);
   const areaId = await ensureAreaOfOne(systemId, exec);
 
   await exec.execute(sql`
     INSERT INTO devices (id, rid, owner_user_id, vendor, vendor_site_id, status, name, slug, model, serial,
                          primary_area_id, config, adapter_state, commissioned_on, created_at, updated_at)
-    SELECT ${addr.uuid}::uuid, s.id, s.owner_clerk_user_id, s.vendor_type, s.vendor_site_id, s.status,
+    SELECT ${uuid}::uuid, s.id, s.owner_clerk_user_id, s.vendor_type, s.vendor_site_id, s.status,
            s.display_name, s.alias, s.model, s.serial,
            ${areaId}::uuid,
            ${sql.raw(DEVICE_CONFIG_WITH_SPEC_SQL)},
@@ -286,12 +296,50 @@ export async function ensureDeviceRow(
       commissioned_on = EXCLUDED.commissioned_on,
       updated_at      = EXCLUDED.updated_at`);
 
+  // ONLY NOW is the handle mapping safe to write: `legacy_handles.device_id` FKs `devices.id`
+  // (migration 0036), so filling it before the INSERT above raises 23503 for any device that does not
+  // already have a row. Ordering, not coalescing, is what satisfies the FK — see the ⚠️ note above.
+  await DeviceRegistry.ensureDeviceForHandle(
+    systemId,
+    exec,
+    Device.encode(uuid),
+  );
+
   await exec
     .insert(areaMembers)
-    .values({ areaId, deviceId: addr.uuid, ordinal: 0 })
+    .values({ areaId, deviceId: uuid, ordinal: 0 })
     .onConflictDoNothing();
 
-  return addr.uuid;
+  return uuid;
+}
+
+/**
+ * The device uuid for a legacy handle: the one already recorded if there is one, otherwise a freshly
+ * minted candidate. READ-ONLY — it deliberately does not write `legacy_handles`.
+ *
+ * `legacy_handles` is the authority, but it is not the only place an identity can already exist: a
+ * device row whose handle mapping was never filled (or was cleared) must be re-adopted by `rid` rather
+ * than given a second uuid, because `devices_rid_unique` would then reject the INSERT.
+ */
+async function resolveOrMintDeviceUuid(
+  systemId: number,
+  exec: Exec,
+): Promise<string> {
+  const [handleRow] = await exec
+    .select({ deviceId: legacyHandles.deviceId })
+    .from(legacyHandles)
+    .where(eq(legacyHandles.handle, systemId))
+    .limit(1);
+  if (handleRow?.deviceId != null) return handleRow.deviceId;
+
+  const [deviceRow] = await exec
+    .select({ id: devices.id })
+    .from(devices)
+    .where(eq(devices.rid, systemId))
+    .limit(1);
+  if (deviceRow) return deviceRow.id;
+
+  return Device.toUuid(Device.generate());
 }
 
 /**
