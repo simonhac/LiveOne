@@ -13,16 +13,21 @@ import {
 } from "@/lib/dashboard/v4-routes";
 
 /**
- * config-v4 dashboard doc surface (§9.1), DARK — no dashboard has a `doc` yet; writes go live at
- * cutover. Owner/admin only (Clerk-gated at the edge; ownership enforced here).
+ * config-v4 dashboard doc surface (§9.1). Owner/admin only (Clerk-gated at the edge; ownership
+ * enforced here). Addressed by the opaque `db_…` id.
  *
- *   GET → 200 { id, name, alias, revision, doc } + ETag: "<revision>"
+ *   GET → 200 { id, name, slug, revision, doc } + ETag: "<revision>"
  *   PUT { doc } [If-Match: "<rev>"] → 200 { revision, doc, warnings } + ETag
+ *        · 400 { error:"invalid-if-match" } (If-Match present but not a bare/quoted revision)
  *        · 422 { errors, warnings }        (validation — nothing persisted)
- *        · 403 { error }                   (a ref points at an unreadable area — §8.4)
+ *        · 403 { error }                   (a ref points at an unreadable area/device — §8.4)
  *        · 412 { error:"revision-conflict", current }   (If-Match mismatch)
+ *   PATCH { name?, slug? } → 200 { success } · 400 (empty name) · 409 (slug taken)
+ *   DELETE → 200 { success }
  *
- * Addressed by the current serial id; `db_…` TypeID addressing lands at cutover.
+ * Wire vocabulary is v4 (`name`/`slug`), NOT the DAO's legacy `displayName`/`alias`: PATCH has always
+ * taken `{name, slug}`, so GET echoing `alias` made a plain GET→edit→PATCH round trip impossible. The
+ * surface had never been called, so nothing observed the mismatch (config-v4 Phase 14 STEP 0).
  */
 export async function GET(
   request: NextRequest,
@@ -36,7 +41,7 @@ export async function GET(
     {
       id: d.id,
       name: d.displayName,
-      alias: d.alias,
+      slug: d.alias,
       revision: d.revision,
       doc: d.doc,
     },
