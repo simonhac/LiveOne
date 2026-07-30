@@ -7,7 +7,7 @@
  * admin|viewer (config-v4 narrowed away `owner`); today invites are viewer (read-only) and `role`
  * is plumbed for a future editable variant.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { dashboardGrants } from "@/lib/db/planetscale/schema";
 import type { DashboardGrant } from "@/lib/db/planetscale/schema";
@@ -102,6 +102,100 @@ export async function revokeGrant(
     )
     .returning();
   return result.length > 0;
+}
+
+/** One member of the target state handed to {@link replaceDashboardGrants}. */
+export interface DashboardGrantInput {
+  clerkUserId: string;
+  role: DashboardGrantRole;
+}
+
+/** What a full replace actually did, by grantee. Every id appears in exactly one bucket. */
+export interface GrantReplaceResult {
+  added: string[];
+  updated: string[]; // present before and after, role changed
+  unchanged: string[]; // present before and after, same role
+  removed: string[];
+}
+
+/**
+ * Declarative FULL REPLACE of a dashboard's membership (clean-sheet §9.2: `PUT` = full replace —
+ * the server diffs, applies transactionally, and returns the new state).
+ *
+ * 🛑 The delete is driven POSITIVELY. It deletes `inArray(user_id, <the ids computed to be leaving>)`
+ * rather than `notInArray(user_id, <the ids staying>)`. Two reasons, and the second is the one that
+ * bites:
+ *
+ *  1. `notInArray(col, [])` is a degenerate predicate — an empty keep-list is exactly the
+ *     "remove everyone" case, i.e. the one where getting it wrong is most destructive.
+ *  2. A negative predicate cannot be checked by the caller. The positive one is returned as
+ *     `removed`, so an over-delete (a kept grantee vanishing) and an under-delete (a revoked grantee
+ *     surviving) are both VISIBLE in the response instead of silent. Both failure modes look
+ *     identical from a naive `{ok:true}`.
+ *
+ * Rows that stay are UPDATED in place, never deleted-and-reinserted, so a kept grantee's `created_at`
+ * (and therefore "member since" in the UI) survives a replace that removes someone else.
+ */
+export async function replaceDashboardGrants(
+  dashboardId: string,
+  members: DashboardGrantInput[],
+): Promise<GrantReplaceResult> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) throw new Error("invalid dashboard id");
+  const wanted = new Map(members.map((m) => [m.clerkUserId, m.role]));
+  if (wanted.size !== members.length) {
+    throw new Error("replaceDashboardGrants: duplicate grantee");
+  }
+  return requirePlanetscaleDb().transaction(async (tx) => {
+    const current = await tx
+      .select({ userId: dashboardGrants.userId, role: dashboardGrants.role })
+      .from(dashboardGrants)
+      .where(eq(dashboardGrants.dashboardId, uuid));
+    const before = new Map(current.map((r) => [r.userId, r.role]));
+
+    const removed = current
+      .filter((r) => !wanted.has(r.userId))
+      .map((r) => r.userId);
+    const added: string[] = [];
+    const updated: string[] = [];
+    const unchanged: string[] = [];
+    for (const [userId, role] of wanted) {
+      const was = before.get(userId);
+      if (was === undefined) added.push(userId);
+      else if (was !== role) updated.push(userId);
+      else unchanged.push(userId);
+    }
+
+    if (removed.length > 0) {
+      await tx
+        .delete(dashboardGrants)
+        .where(
+          and(
+            eq(dashboardGrants.dashboardId, uuid),
+            inArray(dashboardGrants.userId, removed),
+          ),
+        );
+    }
+    if (members.length > 0) {
+      await tx
+        .insert(dashboardGrants)
+        .values(
+          members.map((m) => ({
+            dashboardId: uuid,
+            userId: m.clerkUserId,
+            role: m.role,
+            createdAt: new Date(),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [dashboardGrants.dashboardId, dashboardGrants.userId],
+          // `excluded.role` — the row we tried to insert. `created_at` is deliberately NOT in the SET,
+          // so a re-stated member keeps their original join date.
+          set: { role: sql`excluded.role` },
+        });
+    }
+    return { added, updated, unchanged, removed };
+  });
 }
 
 /**
