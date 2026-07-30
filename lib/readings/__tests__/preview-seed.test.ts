@@ -4,7 +4,7 @@ import { seedPreviewDatabase, type PreviewSeedRuntime } from "../preview-seed";
 const SOURCE = "postgres://source_user:source_secret@source.example/db";
 const TARGET = "postgres://target_user:target_secret@target.example/db";
 
-function runtime(systemsCount: number, fk = "readings_session_fk") {
+function runtime(deviceCount: number, fk = "readings_session_fk") {
   const calls: Array<{
     file: string;
     args: readonly string[];
@@ -19,8 +19,8 @@ function runtime(systemsCount: number, fk = "readings_session_fk") {
     calls.push({ file, args, env: options?.env });
     const statement = args.at(-1) ?? "";
     if (statement.includes("FROM pg_constraint")) return fk;
-    if (statement === "SELECT count(*) FROM systems")
-      return String(systemsCount);
+    if (statement === "SELECT count(*) FROM devices")
+      return String(deviceCount);
     if (statement.includes("SELECT 'sessions='")) return "sessions=7";
     return "";
   }) as PreviewSeedRuntime["execFileSync"];
@@ -52,7 +52,7 @@ describe("preview readings transfer", () => {
     const statements = calls.map((call) => call.args.at(-1) ?? "");
     expect(statements[0]).toContain("FROM pg_constraint");
     expect(statements[1]).toContain("ALTER TABLE point_readings");
-    expect(statements[2]).toBe("SELECT count(*) FROM systems");
+    expect(statements[2]).toBe("SELECT count(*) FROM devices");
     expect(statements).toContainEqual(
       expect.stringContaining(
         "TRUNCATE sessions, point_readings, point_readings_agg_5m, point_readings_agg_1d",
@@ -82,7 +82,8 @@ describe("preview readings transfer", () => {
     before("devices", "legacy_handles"); // legacy_handles.device_id
     before("areas", "area_members");
     before("devices", "area_members");
-    before("systems", "point_info"); // point_info.system_id
+    // `before("systems", "point_info")` retired: migration 0051 dropped both tables.
+    before("areas", "area_bindings"); // area_bindings.area_id
     before("dashboards", "users"); // users.default dashboard
     before("points", "point_readings"); // the hot-table rid FK — the copy this fix unblocks
     before("sessions", "point_readings");
@@ -101,7 +102,7 @@ describe("preview readings transfer", () => {
     expect(logs.at(-1)).toContain("sessions=7");
   });
 
-  it("skips config copies when the target already has systems", async () => {
+  it("skips config copies when the target already has devices", async () => {
     const { fake, calls, removed } = runtime(16, "");
     await seedPreviewDatabase(
       {
@@ -116,7 +117,7 @@ describe("preview readings transfer", () => {
     const statements = calls.map((call) => call.args.at(-1) ?? "");
     expect(
       statements.some((statement) =>
-        statement.includes("\\copy (SELECT * FROM systems"),
+        statement.includes("\\copy (SELECT * FROM devices"),
       ),
     ).toBe(false);
     expect(removed).toHaveLength(6);

@@ -61,8 +61,8 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     // config-v4 cutover renamed clerk_user_id -> owner_user_id.
     { table: "dashboards", col: "owner_user_id" },
-    // Only reown areas whose handle IS a real `systems` row. An orphan/composite handle (a multi-device
-    // area with no `systems` row, e.g. a "Unified" area) was readable ONLY via ownership when this
+    // Only reown areas whose handle IS a real device row. An orphan/composite handle (a multi-device
+    // area with no device row, e.g. a "Unified" area) was readable ONLY via ownership when this
     // filter was written: `getSystemsVisibleByUser` excludes area views, and the then-current
     // `user_systems` grant-back inner-joined `systems`, so no grant could reach it. Reowning it to the
     // dev id stripped the prod-Clerk preview session's only read path (→ a blank dashboard on preview).
@@ -74,7 +74,10 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
       table: "areas",
       // config-v4 cutover renamed owner_clerk_user_id -> owner_user_id.
       col: "owner_user_id",
-      where: "legacy_system_id IN (SELECT id FROM systems)",
+      // `devices.rid`, not `systems.id` — 0051 dropped `systems`, and `devices.rid == systems.id`
+      // verbatim, so the row set is unchanged. Hand-written `sql` is invisible to tsc: this predicate had
+      // to be found by grep and has to be DRIVEN to be verified.
+      where: "legacy_system_id IN (SELECT rid FROM devices)",
     },
   ];
 

@@ -47,57 +47,6 @@ async function readMigrations(): Promise<Migrations> {
   };
 }
 
-/** config-v4 mirror completeness (guardrail C7). `commissioned:false` ⇒ registry-sync has not run yet. */
-export interface V4MirrorState {
-  commissioned: boolean;
-  pointsMissing: number; // point_info rows with no `points` row
-  devicesMissing: number; // systems rows with no `devices` row
-  complete: boolean;
-}
-
-/**
- * Standing C7 invariant: once the v4 registries are populated they must stay COMPLETE.
- *
- * The cutover's hot tables carry `FK point_rid → points(rid) NOT VALID`, which still enforces on new
- * inserts — so a `point_info` row without a `points` row is a reading that will fail to materialise and
- * be retried forever by QStash. `lib/registry/v4-mirror.ts` makes that structurally impossible at mint
- * time; this is the alarm that proves it, continuously, for the whole pre-window period.
- *
- * `commissioned` means the DEVICE registry is fully populated (at least one row, and no `systems` row
- * without one) — i.e. registry-sync has run. The check is silent until then, and arms itself
- * automatically afterwards. A single incidental `devices` row (the mirror creating one on a point mint)
- * deliberately does NOT arm it; requiring `devicesMissing === 0` is what makes the signal trustworthy.
- * `DeviceWriter.createSystem` (the surviving `systems` writer) mirrors into `devices` too, so a new
- * system cannot silently disarm it.
- */
-async function readV4Mirror(): Promise<V4MirrorState> {
-  const result = (await requirePlanetscaleDb().execute(sql`
-    SELECT
-      (SELECT count(*)::int FROM devices) AS device_rows,
-      (SELECT count(*)::int FROM point_info pi
-         WHERE NOT EXISTS (SELECT 1 FROM points p WHERE p.id = pi.point_uid)) AS points_missing,
-      (SELECT count(*)::int FROM systems s
-         WHERE NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = s.id)) AS devices_missing
-  `)) as unknown as {
-    rows: {
-      device_rows: number | string;
-      points_missing: number | string;
-      devices_missing: number | string;
-    }[];
-  };
-  const row = result.rows[0];
-  const pointsMissing = Number(row?.points_missing ?? 0);
-  const devicesMissing = Number(row?.devices_missing ?? 0);
-  const commissioned =
-    Number(row?.device_rows ?? 0) > 0 && devicesMissing === 0;
-  return {
-    commissioned,
-    pointsMissing,
-    devicesMissing,
-    complete: pointsMissing === 0 && devicesMissing === 0,
-  };
-}
-
 /**
  * Liveness check against the Postgres store (the sole store after the Phase 5
  * decommission of the legacy store).
@@ -115,7 +64,6 @@ export async function GET(request: NextRequest) {
       status: string;
       database: string;
       migrations?: Migrations | { error: string };
-      v4Mirror?: V4MirrorState | { error: string };
     } = { status: "ok", database: "postgres" };
     // Opt-in (`?migrations=1`): the cheap prod↔dev migration-drift probe. Off by default so the
     // liveness path stays a single query and the `db` timing control stays clean. Best-effort — a
@@ -127,15 +75,10 @@ export async function GET(request: NextRequest) {
         body.migrations = { error: e instanceof Error ? e.message : String(e) };
       }
     }
-    // Opt-in (`?v4mirror=1`): the standing C7 completeness probe. Same best-effort contract — the
-    // cutover-prep invariant must never turn liveness red.
-    if (request.nextUrl.searchParams.get("v4mirror") === "1") {
-      try {
-        body.v4Mirror = await t.time("v4m", () => readV4Mirror());
-      } catch (e) {
-        body.v4Mirror = { error: e instanceof Error ? e.message : String(e) };
-      }
-    }
+    // The `?v4mirror=1` C7 completeness probe was REMOVED in the Phase 12 terminal window: it counted
+    // `point_info` rows with no `points` row and `systems` rows with no `devices` row, and both of its
+    // left-hand tables are gone. It was retained deliberately until the drop — with one home per config
+    // object there is no mirror left to be incomplete.
     return NextResponse.json(body, { headers: serverTimingHeaders(t) });
   } catch (error) {
     return NextResponse.json(

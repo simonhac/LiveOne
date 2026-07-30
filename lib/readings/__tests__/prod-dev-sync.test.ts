@@ -89,10 +89,9 @@ describe("prod→dev readings transfer", () => {
     const manifest = prodDevSyncManifest();
     const names = manifest.map((table) => table.name);
     expect(names).toEqual([
-      "systems",
+      // `systems`, `polling_status` and `point_info` left this list when migration 0051 dropped them.
       "dashboards",
       "users",
-      "polling_status",
       "share_tokens",
       "areas",
       "devices",
@@ -100,7 +99,6 @@ describe("prod→dev readings transfer", () => {
       "area_members",
       "device_state",
       "legacy_handles",
-      "point_info",
       "area_bindings",
       "derivations",
       "sessions",
@@ -443,14 +441,7 @@ describe("prod→dev readings transfer", () => {
       new Map([
         [
           "area_bindings",
-          [
-            "id",
-            "area_id",
-            "role",
-            "metric_type",
-            "point_uid",
-            "priority",
-          ],
+          ["id", "area_id", "role", "metric_type", "point_uid", "priority"],
         ],
       ]),
       new Map([["area_bindings", ["id"]]]),
@@ -489,34 +480,27 @@ describe("prod→dev readings transfer", () => {
     ).rejects.toThrow("upsert failed");
     expect(failed.devSql.at(-1)).toBe("ROLLBACK");
 
-    const pointInfo = prodDevSyncManifest().find(
-      (entry) => entry.name === "point_info",
+    // The id-drift child-DELETE path used to be exercised through `point_info` (dropped by migration
+    // 0051 along with its four-key idDrift block). `areas` is the surviving manifest entry that carries
+    // `children`, so it pins the behaviour now.
+    const areas = prodDevSyncManifest().find(
+      (entry) => entry.name === "areas",
     )!;
     const drift = copyClients();
     await syncTable(
       drift.prod,
       drift.dev,
-      pointInfo,
-      new Map([
-        [
-          "point_info",
-          [
-            "system_id",
-            "id",
-            "physical_path_tail",
-            "logical_path_stem",
-            "metric_type",
-            "point_uid",
-            "rid",
-          ],
-        ],
-      ]),
-      new Map([["point_info", ["system_id", "id"]]]),
+      areas,
+      new Map([["areas", ["id", "legacy_system_id", "owner_user_id", "slug"]]]),
+      new Map([["areas", ["id"]]]),
     );
     const driftSql = drift.devSql.at(-1)!;
     expect(driftSql).toContain("ANALYZE _drift");
-    expect(driftSql).toContain("DELETE FROM public.point_readings ");
-    expect(driftSql).toContain("DELETE FROM public.point_readings_agg_5m ");
-    expect(driftSql).toContain("DELETE FROM public.point_readings_agg_1d ");
+    expect(driftSql).toContain("DELETE FROM public.area_bindings ");
+    expect(driftSql).toContain(
+      "DELETE FROM public.point_readings_flow_attr_1d ",
+    );
+    expect(driftSql).toContain("DELETE FROM public.battery_provenance_daily ");
+    expect(driftSql).toContain("DELETE FROM public.legacy_handles ");
   });
 });

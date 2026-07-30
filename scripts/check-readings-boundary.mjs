@@ -78,10 +78,9 @@ function isStructurallyAllowed(rel) {
     rel === "scripts/check-readings-boundary.mjs" || // this guard (contains the literals)
     rel.startsWith("lib/readings/") || // the seam
     rel.startsWith("lib/registry/") ||
-    // config-v4 cutover tooling: it REWRITES the hot tables (rid-keyed twin build + rename-swap) — a
-    // table swap can't go through the DAO seam by definition. Runs only on throwaway rehearsal branches
-    // and the one cutover, then is deleted in Phase 9. See docs/plans/config-v4-phase7-rehearsal-harness.md.
-    rel.startsWith("scripts/config-v4/") ||
+    // The `scripts/config-v4/` exemption (cutover tooling that rewrote the hot tables, so it could not
+    // go through the DAO seam by definition) was removed with the directory itself in the Phase 12
+    // terminal window. Nothing outside the seam may name a hot table again.
     rel.startsWith("drizzle/") || // migrations (raw SQL DDL)
     rel.startsWith("drizzle-planetscale/")
   );
