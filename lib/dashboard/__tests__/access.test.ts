@@ -1,8 +1,8 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
-import { Device, newUuidV7, type DeviceId } from "@/lib/ids";
+import { Area, Device, newUuidV7, type DeviceId } from "@/lib/ids";
 import type { DeviceAddr, DeviceRid } from "@/lib/registry";
 
-// dashboardAreaUuids now requires a v3 section.areaId to be a real (canonical uuid or `ar_`) area ref
+// dashboardAreaUuids requires a v3 section.areaId to be an `ar_` area ref (STRICT as of Phase 14)
 // — short mnemonic labels ("site", "A", "ghost") no longer decode. Mint one real uuid per mnemonic so
 // the fixtures below can keep their readable labels while satisfying the decode.
 const AREA = new Proxy({} as Record<string, string>, {
@@ -45,7 +45,14 @@ function descriptor(
   ];
   return {
     version: 3,
-    sections: areaIds.map((areaId) => ({ areaId, cards: [] })),
+    // config-v4 Phase 14: decode is STRICT, so a stored `section.areaId` must be `ar_`. Encode here
+    // rather than minting `ar_` in the AREA proxy, because the mocks above (getLegacySystemIdForArea)
+    // are keyed on the RAW uuid — the form that travels below the seam. Encoding at exactly this
+    // boundary is what the real write path does, so every assertion below is unchanged.
+    sections: areaIds.map((areaId) => ({
+      areaId: Area.encode(areaId),
+      cards: [],
+    })),
   };
 }
 
