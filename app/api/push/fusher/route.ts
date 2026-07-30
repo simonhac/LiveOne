@@ -111,8 +111,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Get SystemsManager instance
-
     // Use siteId to find system, defaulting to "kinkora" for backwards compatibility
     const siteId = data.siteId || "kinkora";
 

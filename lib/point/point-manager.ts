@@ -21,7 +21,6 @@ import {
 import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
 import { mirrorPoint, toMirrorPointInput } from "@/lib/registry/v4-mirror";
-import { SystemsManager } from "@/lib/systems-manager";
 import {
   DeviceConfigRegistry,
   type DeviceConfigView,
@@ -266,7 +265,7 @@ export class PointManager {
     // A real device loads its own point_info. A multi-device area (an area handle with no real
     // `systems` row) resolves area-natively: its typed `area_bindings` SELECT the points (the
     // override); an area with no bindings DEFAULTS to the union of its member devices' own points.
-    if (!(await SystemsManager.getInstance().isAreaHandle(system.id))) {
+    if (!(await DeviceConfigRegistry.isAreaHandle(system.id))) {
       return this._loadOwnPoints(system.id);
     }
 
@@ -368,8 +367,7 @@ export class PointManager {
     includeInactive: boolean = false,
   ): Promise<PointInfo[]> {
     // Resolve a real system OR an area view (multi-device Area handle) for the read data path.
-    const systemsManager = SystemsManager.getInstance();
-    const system = await systemsManager.getViewableSystem(systemId);
+    const system = await DeviceConfigRegistry.viewableByHandle(systemId);
 
     if (!system) {
       throw new Error(`System not found: ${systemId}`);

@@ -20,9 +20,16 @@
  * rather than by reading 89 diffs. The `system`→`device` FIELD rename is Phase 13's wholesale pass,
  * where it is one rename against one already-converted reader set instead of two moving parts at once.
  *
+ * ## What IS here as of slice K3
+ *
+ * **Area views** (`viewableByHandle` / `isAreaHandle` / `synthesizeAreaView`) — moved off
+ * `SystemsManager`. The device leg is unchanged (`deviceByHandle`, i.e. `devices.rid`); only the AREA
+ * leg changed source, from the `areas.legacy_system_id` probe to `DeviceRegistry.resolveHandle`
+ * (`legacy_handles`, the authoritative handle map, kept current by `createArea` inside the area's own
+ * transaction). Precedence stays DEVICE-FIRST — see {@link viewableByHandle}.
+ *
  * ## What is NOT here
  *
- * - **Area views.** `getViewableSystem` / `isAreaHandle` / `synthesizeAreaView` — slice K3.
  * - **Writes.** `devices.rid` is documented inert while `systems_id_seq` still allocates, so `devices`
  *   cannot become the write target until `systems` drops. Reads flip now; writes flip in the terminal
  *   window. This module is read-only by construction.
@@ -41,6 +48,7 @@ import type { AreaLocation } from "@/lib/areas/types";
 import type { DeviceConfig } from "@/lib/capabilities/config";
 import { Device, type DeviceId } from "@/lib/ids";
 import { getUserIdByUsername } from "@/lib/user-cache";
+import { DeviceRegistry } from "./device-registry";
 import type { DeviceRid } from "./registry-cache";
 
 /**
@@ -92,14 +100,15 @@ export interface DeviceConfigView {
  * One device's full config, WITH its v4 identity — what every read in this module returns.
  *
  * The identity is split out from {@link DeviceConfigView} because of ONE caller that cannot supply it:
- * `synthesizeAreaView` (slice K3) fabricates this shape from a multi-device Area, which by definition
+ * `synthesizeAreaView` (below) fabricates this shape from a multi-device Area, which by definition
  * has no `devices` row and therefore no `deviceId`/`uuid`/`primary_area_id`. Making the identity
  * non-optional on the shape the serving and vendor layers consume would have forced K2 and K3 into a
  * single PR: `getSystem` and `getViewableSystem` converge on the same `system:` parameter in
  * `api-auth.ts`, `serve-data.ts`, `point-manager.ts` and `history/`, so the PARAMETER type has to be
  * satisfiable by both producers before either can move. Splitting the type lets the type conversion
- * land whole-tree here while the area-view RESOLUTION stays K3's problem — and K3 finishes the job by
- * deleting the synthesis and collapsing `DeviceConfigView` back into `DeviceRecord`.
+ * land whole-tree in K2 while the area-view RESOLUTION stayed K3's problem. The split OUTLIVES K3: the
+ * synthesis MOVED here rather than dying, so `DeviceConfigView` collapses back into `DeviceRecord` only
+ * in Phase 13, when the handle stops being polymorphic and an area is addressed as an area.
  *
  * Rule of thumb: a function that only READS config takes `DeviceConfigView`; one that needs to address
  * a real device (points, readings, v4 writes) takes `DeviceRecord`.
@@ -347,8 +356,101 @@ async function primaryVisibleDevice(
   return owned.length > 0 ? owned[0] : visible[0];
 }
 
+// ---------------------------------------------------------------------------
+// Area views — the polymorphic-handle leg (← `SystemsManager.getViewableSystem` / `isAreaHandle`).
+// ---------------------------------------------------------------------------
+
+/**
+ * An "area view" — a {@link DeviceConfigView} synthesized from a multi-device Area whose integer
+ * addressing handle has NO device of its own. It is the SERVER-ONLY resolution of that handle for the
+ * dashboard data path (points/flow/auth then resolve via `area_bindings` + members); it is deliberately
+ * kept OUT of the devices/admin lists. Owns no points and never polls, so device/polling fields are null.
+ *
+ * `id`/`vendorSiteId` come from the HANDLE the caller asked for, not from `areas.legacy_system_id`: the
+ * handle is how we got here (via `legacy_handles`) and `legacy_system_id` is a Phase-13 casualty.
+ */
+function synthesizeAreaView(
+  handle: number,
+  area: typeof pgAreas.$inferSelect,
+): DeviceConfigView {
+  return {
+    id: handle,
+    ownerClerkUserId: area.ownerUserId,
+    vendorType: "area",
+    vendorSiteId: `area:${handle}`,
+    status: area.status,
+    displayName: area.name,
+    alias: area.slug,
+    model: null,
+    serial: null,
+    location: area.location,
+    metadata: null,
+    config: null,
+    timezoneOffsetMin: area.timezoneOffsetMin,
+    displayTimezone: area.displayTimezone,
+    createdAt: area.createdAt,
+    updatedAt: area.updatedAt,
+    commissionedOn: null, // area views own no points and never poll — no vendor commission date
+    pollingStatus: null,
+  };
+}
+
+/**
+ * The Area a handle names, per `legacy_handles` — per-request memoized, like every read above.
+ *
+ * The discriminator is `DeviceRegistry.resolveHandle`, NOT the old `areas.legacy_system_id` probe.
+ * `legacy_handles` is the authoritative handle map (`createArea` fills it inside the area's own
+ * transaction; `ensureAreaOfOne` fills it for devices), it is what survives Phase 13, and it is the one
+ * place that knows a handle can name BOTH an area and a device. Verified 22/22 areas and 18/18 devices
+ * agreeing with `legacy_system_id`/`devices.rid` on `liveone-dev` before the swap.
+ */
+const fetchAreaForHandle = cache(
+  async (handle: number): Promise<typeof pgAreas.$inferSelect | null> => {
+    const targets = await DeviceRegistry.resolveHandle(handle);
+    if (!targets?.areaId) return null;
+    const [area] = await requirePlanetscaleDb()
+      .select()
+      .from(pgAreas)
+      .where(eq(pgAreas.id, targets.areaId))
+      .limit(1);
+    return area ?? null;
+  },
+);
+
+/**
+ * Resolve a handle for the DASHBOARD DATA PATH: a real device, OR an area view (an area handle with no
+ * device of its own). Use this — not `deviceByHandle` — wherever an Area's whole-area data/auth/flow is
+ * served; `deviceByHandle` stays device-only (devices/admin/polling).
+ *
+ * 🔒 **Precedence is DEVICE-FIRST and LOCKED.** A handle can name both an area and a device (handle 13
+ * is a real Sigenergy device AND a multi-member area). Today's serving behaviour is real-row-first, so
+ * device-first is the behaviour-preserving order; resolving area-first would silently WIDEN handle 13's
+ * point set from the device's own 12 points to the area's bindings (6 on device 13 + 6 on the derived
+ * helper 16) — a scope change on a shared dashboard, in the direction that removes access. See trap D-l
+ * in `docs/plans/config-v4-phase8-cutover.md`, and the standing gate
+ * `lib/point/__tests__/point-manager-area-of-one-parity.test.ts`. `DeviceRegistry.resolveHandle`'s own
+ * doc argues for area-first; that ordering belongs to Phase 13, where areas are addressed as areas —
+ * it must NOT be applied to this compatibility path.
+ */
+async function viewableByHandle(
+  handle: number,
+): Promise<DeviceConfigView | null> {
+  const device = await deviceByHandle(handle); // device-first — LOCKED, see above
+  if (device) return device;
+  const area = await fetchAreaForHandle(handle);
+  return area ? synthesizeAreaView(handle, area) : null;
+}
+
+/** Whether `handle` resolves to an area view (an area handle with no device of its own). */
+async function isAreaHandle(handle: number): Promise<boolean> {
+  if (await deviceByHandle(handle)) return false; // device-first — LOCKED, see viewableByHandle
+  return (await fetchAreaForHandle(handle)) != null;
+}
+
 export const DeviceConfigRegistry = {
   deviceByHandle,
+  viewableByHandle,
+  isAreaHandle,
   deviceByVendorSite,
   deviceByOwnerSlug,
   deviceByUsernameAndSlug,

@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * End-to-end smoke test for the self-serve **area builder** write path (lib/areas/create.ts), driving
- * the REAL serving resolver (`PointManager.getActivePointsForSystem` → `getViewableSystem` →
+ * the REAL serving resolver (`PointManager.getActivePointsForSystem` → `viewableByHandle` →
  * `_resolvePointsForViewable`). It creates a throwaway multi-device "site" area and asserts:
  *   1. a synthetic handle is allocated (≥ AREA_HANDLE_BASE, no real systems row);
  *   2. it resolves as an area view (`isAreaHandle`, vendorType "area");
@@ -42,7 +42,6 @@ async function main() {
   );
   const { AREA_HANDLE_BASE } = await import("@/lib/areas/handles");
   const { PointManager } = await import("@/lib/point/point-manager");
-  const { SystemsManager } = await import("@/lib/systems-manager");
   const { getAreaBindingRefs } = await import("@/lib/areas/bindings");
   const { Point } = await import("@/lib/ids");
   const { getAreaMemberDeviceIds } = await import("@/lib/areas/members");
@@ -60,7 +59,6 @@ async function main() {
   }
   const db = requirePlanetscaleDb();
   const pm = PointManager.getInstance();
-  const sm = SystemsManager.getInstance();
 
   const countPoints = async (id: number) =>
     (await pm.getActivePointsForSystem(id, false, false)).length;
@@ -122,15 +120,18 @@ async function main() {
     );
 
     // 2. Resolver identity.
-    assert(await sm.isAreaHandle(H), "isAreaHandle(handle) === true");
-    const view = await sm.getViewableSystem(H);
+    assert(
+      await DeviceConfigRegistry.isAreaHandle(H),
+      "isAreaHandle(handle) === true",
+    );
+    const view = await DeviceConfigRegistry.viewableByHandle(H);
     assert(
       view?.vendorType === "area",
-      'getViewableSystem().vendorType === "area"',
+      'viewableByHandle().vendorType === "area"',
     );
     assert(
       (await DeviceConfigRegistry.deviceByHandle(H)) === null,
-      "no real systems row at the handle",
+      "no device of its own at the handle",
     );
 
     // 3. Union-default (no bindings) = sum of members' own points.

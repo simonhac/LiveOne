@@ -47,7 +47,7 @@ const fmt = (s: DeviceSpec | null) =>
  * the area-of-one **where the area's is NULL**.
  *
  * Why this lives here. `ensureAreaOfOne` copies `location`/tz up from `systems` at MINT and never again
- * (`SystemsManager.updateSystem` re-mirrors `devices` but not the area) — the eighth instance of the
+ * (`DeviceWriter.updateSystem` re-mirrors `devices` but not the area) — the eighth instance of the
  * plan's "every v4 column was wired at MINT and not at EDIT" trap. `DeviceRecord` serves `location` from
  * the AREA, so any area whose location is NULL while its device's is set would start serving null the
  * moment K2 lands. That is a loss, and `location` is what derives the NEM region.

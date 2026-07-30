@@ -7,7 +7,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaMembers, areas, devices } from "@/lib/db/planetscale/schema";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { ensureDeviceRow } from "@/lib/registry/v4-mirror";
 import { Device } from "@/lib/ids";
 import { helperSiteId } from "./helper-site-id";
@@ -48,7 +48,7 @@ export async function ensureHelperDevice(areaId: string): Promise<number> {
     .limit(1);
   if (existing.length > 0) return existing[0].rid;
 
-  const helper = await SystemsManager.getInstance().createHelperDevice({
+  const helper = await DeviceWriter.createHelperDevice({
     ownerClerkUserId: area.owner,
     vendorSiteId: helperSiteId(areaId),
     displayName: `${area.displayName ?? "Area"} · derived`,

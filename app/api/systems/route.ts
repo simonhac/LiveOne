@@ -6,7 +6,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { systems as pgSystems } from "@/lib/db/planetscale/schema";
 import { storeSystemCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 
 export async function POST(request: NextRequest) {
   try {
@@ -54,9 +54,7 @@ export async function POST(request: NextRequest) {
     // Allow multiple systems for the same vendor site
     // This is useful for testing, multiple users monitoring the same site, etc.
 
-    // Create the system using SystemsManager
-    const systemsManager = SystemsManager.getInstance();
-    const newSystem = await systemsManager.createSystem({
+    const newSystem = await DeviceWriter.createSystem({
       ownerClerkUserId: userId,
       vendorType,
       vendorSiteId: systemInfo.vendorSiteId,
@@ -80,8 +78,8 @@ export async function POST(request: NextRequest) {
 
     if (!credentialResult.success) {
       // If credential storage failed, delete the system.
-      // Routed through SystemsManager so the rollback honours CONFIG_WRITES_TO_PG.
-      await systemsManager.deleteSystem(newSystem.id);
+      // Routed through the `systems` writer so the rollback matches the insert.
+      await DeviceWriter.deleteSystem(newSystem.id);
 
       return NextResponse.json(
         { error: credentialResult.error || "Failed to store credentials" },

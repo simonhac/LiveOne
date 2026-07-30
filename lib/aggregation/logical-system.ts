@@ -14,7 +14,7 @@
 import { PointReference } from "@/lib/identifiers";
 import { Point, type PointId } from "@/lib/ids";
 import { PointManager } from "@/lib/point/point-manager";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { classifyEnergyStem, isCompleteRoleSet } from "@/lib/roles/registry";
 import { getAreaForSystem } from "@/lib/areas/resolve";
 import { listFlowEligibleAreaHandles } from "@/lib/areas/members";
@@ -80,7 +80,7 @@ export async function resolveLogicalSystem(
   systemId: number,
 ): Promise<LogicalSystem | null> {
   // Resolve a real system OR an area view. Only handles that map to an explicit Area continue below.
-  const system = await SystemsManager.getInstance().getViewableSystem(systemId);
+  const system = await DeviceConfigRegistry.viewableByHandle(systemId);
   if (!system) return null;
 
   // typedOnly=true drops points without a logical_path_stem (same exclusion as the engine recompute).

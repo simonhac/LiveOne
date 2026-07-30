@@ -2,7 +2,8 @@
  * Resolve the Area that represents a logical system. An Area is located by its addressing handle
  * (`legacy_system_id == systemId`, a UNIQUE index): a single-device Area wraps one physical system
  * (handle == its `systems.id`); a multi-device Area draws its points across child systems via
- * `area_bindings` (handle has no `systems` row — resolved as an area view in SystemsManager). The
+ * `area_bindings` (the handle names no device of its own — resolved as an area view by
+ * `DeviceConfigRegistry.viewableByHandle`). The
  * single-vs-multi distinction is structural (membership), not a stored `kind`.
  */
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";

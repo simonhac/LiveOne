@@ -160,7 +160,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   protected async getLastPollTime(
     system: DeviceConfigView,
   ): Promise<Date | null> {
-    // The polling status is already loaded with the system from SystemsManager
+    // The polling status is already loaded with the device by the config registry
     return system.pollingStatus?.lastPollTime || null;
   }
 

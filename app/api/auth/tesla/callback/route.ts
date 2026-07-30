@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getTeslaClient } from "@/lib/vendors/tesla/tesla-client";
 import { storeTeslaTokens } from "@/lib/vendors/tesla/tesla-auth";
 import { clerkClient } from "@clerk/nextjs/server";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { kv } from "@/lib/kv";
 import {
   teslaOAuthStateKey,
@@ -123,9 +123,8 @@ export async function GET(request: NextRequest) {
     const vehicleId = String(teslaVehicle.id);
     console.log("TESLA: Using vehicle:", vehicleId, teslaVehicle.display_name);
 
-    // Check if system already exists (read via SystemsManager so it honours
-    // CONFIG_SERVE_FROM_PG — the same store createSystem/updateSystem write to).
-    const systemsManager = SystemsManager.getInstance();
+    // Existence check reads the config registry (`devices`); the writers below are still `systems`.
+
     const existingByVendorSiteId =
       await DeviceConfigRegistry.deviceByVendorSite(vehicleId);
     const existingSystem =
@@ -141,7 +140,7 @@ export async function GET(request: NextRequest) {
       const timezoneOffsetMin = 600; // UTC+10
       const displayTimezone = "Australia/Melbourne";
 
-      const newSystem = await systemsManager.createSystem({
+      const newSystem = await DeviceWriter.createSystem({
         ownerClerkUserId: userId,
         vendorType: "tesla",
         vendorSiteId: vehicleId,
@@ -172,7 +171,7 @@ export async function GET(request: NextRequest) {
       // Update existing system (reactivate if it was removed)
       console.log("TESLA: Updating existing system");
 
-      await systemsManager.updateSystem(existingSystem.id, {
+      await DeviceWriter.updateSystem(existingSystem.id, {
         ownerClerkUserId: userId,
         displayName: teslaVehicle.display_name || existingSystem.displayName,
         status: "active", // Reactivate the system if it was removed

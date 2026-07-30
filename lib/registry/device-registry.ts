@@ -174,16 +174,18 @@ export interface HandleTargets {
 /**
  * Resolve an old integer handle to whatever it names, WITHOUT the structural `isAreaHandle` DB probe.
  *
- * Today the polymorphic handle is disambiguated by `SystemsManager.isAreaHandle` — a lookup against
- * `areas.legacy_system_id` — and an area handle is then rendered through the fabricated virtual system
- * `synthesizeAreaView`. Phase 8 deletes both: `legacy_handles` already carries the authoritative mapping
- * (backfilled by `backfill-foundation.ts`, kept current by `registry-populate.ts`), so the handle
- * resolves in one indexed read and every device renders through its real area-of-one.
+ * The polymorphic handle used to be disambiguated by a lookup against `areas.legacy_system_id`.
+ * `legacy_handles` carries the authoritative mapping (kept current by `createArea` and
+ * `ensureAreaOfOne`, inside their own transactions), so the handle resolves in one indexed read against
+ * a table that outlives `areas.legacy_system_id`. This is also what backs the permanently-retained
+ * `?systemId=N` compatibility alias.
  *
- * Area-first, matching today's dispatch order: a handle that names BOTH (an area-of-one whose legacy id
- * equals its device's) must resolve as the area, or a `?systemId=N` request would narrow from the area's
- * bindings to the bare device. Callers land in Phase 8 — this is dark until then, and is also what backs
- * the permanently-retained `?systemId=N` compatibility alias.
+ * ⚠️ **This function states no precedence, and the one live caller is DEVICE-first.** An earlier draft of
+ * this comment asserted "area-first, matching today's dispatch order" — that was WRONG about the tree:
+ * the v3 resolver was real-row-first, and `DeviceConfigRegistry.viewableByHandle` (slice K3, the only
+ * caller) keeps that. Resolving area-first would silently widen handle 13 from its device's own points to
+ * its area's bindings; see trap D-l in `docs/plans/config-v4-phase8-cutover.md`. Any future caller must
+ * choose deliberately — the returned `HandleTargets` can carry BOTH.
  */
 async function resolveHandle(
   handle: number,

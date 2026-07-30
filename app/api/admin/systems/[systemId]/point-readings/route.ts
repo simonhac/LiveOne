@@ -63,7 +63,7 @@ export async function GET(
     // Track database elapsed time
     let dbElapsedMs = 0;
 
-    // Get system from SystemsManager (already cached in memory)
+    // Get the device from the config registry (per-request memoized)
     const system = await DeviceConfigRegistry.deviceByHandle(systemId);
 
     if (!system) {

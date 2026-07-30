@@ -2,7 +2,8 @@
  * Allocate a synthetic **addressing handle** (`areas.legacy_system_id`) for a multi-device area.
  *
  * A multi-device (site) area has NO real `systems` row — it is addressed purely by its integer
- * `legacy_system_id`, which is the only shape `SystemsManager.isAreaHandle` recognises (and thus the
+ * `legacy_system_id`; `createArea` also registers it in `legacy_handles`, which is what
+ * `DeviceConfigRegistry.isAreaHandle` reads (and thus the
  * only shape the point resolver serves via membership/bindings). So a freshly-created site needs a
  * handle that collides with NO real system id and NO existing area handle.
  *

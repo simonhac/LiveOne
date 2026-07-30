@@ -7,12 +7,12 @@
  * Four blocks:
  *
  * 1. **Field-by-field**, over EVERY handle (`systems.id` ∪ `devices.rid`, so a row present on only one
- *    side is a failure rather than an absence): `SystemsManager.getSystem(h)` vs
+ *    side is a failure rather than an absence): the script-local `systems` oracle (see below) vs
  *    `DeviceConfigRegistry.deviceByHandle(h)`. Drives the real code paths, not a re-derivation in SQL,
  *    so a mistake in the new module is caught and not just a data mismatch. The three spec columns are
  *    excluded — `devices` has no counterpart by design, and block 3 covers them.
  *
- * 2. **Polling state.** `getSystem` reaches `device_state` through the `deviceStateByHandle` subquery
+ * 2. **Polling state.** The legacy side reaches `device_state` through the `legacyPollingByHandle` subquery
  *    (re-keying it onto the handle via `devices.rid`); the new read joins `device_state` on
  *    `devices.id` NATIVELY. Two different routes to the same row, so they are compared as a whole
  *    object — this is the check that says the subquery can be DELETED, not moved.
@@ -25,20 +25,68 @@
  *    reports "0 differences" after quietly widening what counts as no difference is worse than no gate,
  *    so an unlisted divergence AND an unfired expectation both fail.
  *
- * 4. **The mint-not-edit leak.** `SystemsManager.updateSystem` re-mirrors `devices` but NEVER re-copies
+ * 4. **The mint-not-edit leak.** `DeviceWriter.updateSystem` re-mirrors `devices` but NEVER re-copies
  *    `location` / `timezone_offset_min` / `display_timezone` to the area-of-one, which
  *    `ensureAreaOfOne` only ever wrote at MINT. Since `DeviceRecord` sources all three from the AREA,
  *    any drift is a live defect that K2 would turn into wrong served config. This block measures it.
  */
-import { sql } from "drizzle-orm";
+import { eq, getTableColumns, sql } from "drizzle-orm";
+import type { InferSelectModel } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import { SystemsManager, type SystemWithPolling } from "@/lib/systems-manager";
+import {
+  systems as pgSystems,
+  devices as pgDevices,
+  deviceState as pgDeviceState,
+} from "@/lib/db/planetscale/schema";
 import { DeviceConfigRegistry, type DeviceRecord } from "@/lib/registry";
 import { maxPowerHintFromSpec } from "@/lib/capabilities/config";
 import { maxPowerHintFromSystemInfo } from "@/components/dashboard/cards/shared";
 
 const db = planetscaleDb!;
-const sm = SystemsManager.getInstance();
+
+/**
+ * ## Slice K3: the legacy side moved IN HERE, verbatim
+ *
+ * Blocks 1 + 2 need an INDEPENDENT `systems`-side reading to diff the new module against. Until K3 that
+ * was `SystemsManager.getSystem` + its `deviceStateByHandle` subquery — retained in `lib/` for this gate
+ * alone, with zero production callers. K3 deleted `lib/systems-manager.ts` outright, so
+ * the oracle is copied here rather than either (a) keeping a callerless `systems` reader alive in the
+ * serving tree, or (b) retiring the gate.
+ *
+ * Copying it does not weaken the gate: the old side had no production callers, so "it drives real code
+ * paths" was already only true of the SQL, and the SQL is reproduced verbatim (same join via
+ * `devices.rid`, same projection, same flattening). What IS lost is nothing measurable; what is gained is
+ * that `lib/` no longer contains a second definition of "read one device's config". The gate stays valid
+ * until `systems` is dropped in the terminal window, and dies with the table.
+ */
+const legacyPollingByHandle = new QueryBuilder()
+  .select({ handle: pgDevices.rid, ...getTableColumns(pgDeviceState) })
+  .from(pgDeviceState)
+  .innerJoin(pgDevices, eq(pgDevices.id, pgDeviceState.deviceId))
+  .as("device_state");
+
+type LegacySystem = InferSelectModel<typeof pgSystems> & {
+  pollingStatus: InferSelectModel<typeof pgDeviceState> | null;
+};
+
+async function legacySystemByHandle(id: number): Promise<LegacySystem | null> {
+  const [row] = await db
+    .select()
+    .from(pgSystems)
+    .leftJoin(
+      legacyPollingByHandle,
+      eq(legacyPollingByHandle.handle, pgSystems.id),
+    )
+    .where(eq(pgSystems.id, id))
+    .limit(1);
+  if (!row) return null;
+  if (!row.device_state) return { ...row.systems, pollingStatus: null };
+  // `handle` only carries the join key out of the subquery — drop it so `pollingStatus` is exactly a
+  // `device_state` row.
+  const { handle: _handle, ...state } = row.device_state;
+  return { ...row.systems, pollingStatus: state };
+}
 
 /**
  * The ONLY permitted `maxPowerHint` divergences, by legacy handle. Each must fire exactly as stated.
@@ -119,17 +167,17 @@ async function main() {
   // ---- Blocks 1 + 2: field-by-field, and polling state -------------------------------------------
   let compared = 0;
   let fieldChecks = 0;
-  const oldByHandle = new Map<number, SystemWithPolling>();
+  const oldByHandle = new Map<number, LegacySystem>();
   const newByHandle = new Map<number, DeviceRecord>();
 
   for (const h of handles) {
     const [oldRec, newRec] = await Promise.all([
-      sm.getSystem(h),
+      legacySystemByHandle(h),
       DeviceConfigRegistry.deviceByHandle(h),
     ]);
     if (!oldRec || !newRec) {
       fail(
-        `handle ${h}: getSystem=${oldRec ? "row" : "null"} deviceByHandle=${newRec ? "row" : "null"}`,
+        `handle ${h}: systems=${oldRec ? "row" : "null"} deviceByHandle=${newRec ? "row" : "null"}`,
       );
       continue;
     }

@@ -18,27 +18,28 @@ jest.mock("@/lib/dashboard/sharing", () => ({
 }));
 jest.mock("@/lib/dashboard/dashboards", () => ({ getDashboard: jest.fn() }));
 jest.mock("@/lib/dashboard/access", () => ({ allowedSystemIds: jest.fn() }));
-jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: { getInstance: jest.fn() },
-}));
-// config-v4 slice K2: `requireSystemAccess` reads the config registry directly, so the DEVICE registry
-// is what has to be mocked. `getViewableSystem`/`isAreaHandle` are still SystemsManager (slice K3).
+// config-v4 slice K2 + K3: `requireSystemAccess` AND the polymorphic-handle area views both read the
+// device config registry now, so it is the only config seam to mock.
 jest.mock("@/lib/registry/device-config", () => ({
-  DeviceConfigRegistry: { deviceByHandle: jest.fn() },
+  DeviceConfigRegistry: {
+    deviceByHandle: jest.fn(),
+    viewableByHandle: jest.fn(),
+    isAreaHandle: jest.fn(),
+  },
 }));
 
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
-import { SystemsManager } from "@/lib/systems-manager";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const mockValidate = jest.mocked(validateDashboardShareToken);
 const mockGetDashboard = jest.mocked(getDashboard);
 const mockAllowed = jest.mocked(allowedSystemIds);
-const mockGetInstance = jest.mocked(SystemsManager.getInstance);
 const mockDeviceByHandle = jest.mocked(DeviceConfigRegistry.deviceByHandle);
+const mockViewableByHandle = jest.mocked(DeviceConfigRegistry.viewableByHandle);
+const mockIsAreaHandle = jest.mocked(DeviceConfigRegistry.isAreaHandle);
 
 function req(systemId: number, token: string): NextRequest {
   return {
@@ -61,12 +62,12 @@ beforeEach(() => {
   mockDeviceByHandle.mockImplementation(
     getSystem as unknown as typeof DeviceConfigRegistry.deviceByHandle,
   );
-  mockGetInstance.mockReturnValue({
-    // These tests use REAL devices, so the area-handle branch is never taken and a viewable
-    // system resolves to the device itself.
-    getViewableSystem: getSystem,
-    isAreaHandle: jest.fn(async () => false),
-  } as unknown as ReturnType<typeof SystemsManager.getInstance>);
+  // These tests use REAL devices, so the area-handle branch is never taken and a viewable system
+  // resolves to the device itself.
+  mockViewableByHandle.mockImplementation(
+    getSystem as unknown as typeof DeviceConfigRegistry.viewableByHandle,
+  );
+  mockIsAreaHandle.mockResolvedValue(false);
   mockValidate.mockResolvedValue({ token: "tok", dashboardId: "d1" });
   mockGetDashboard.mockResolvedValue({
     id: "d1",

@@ -4,7 +4,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { devices, systems } from "@/lib/db/planetscale/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { requireAdmin, requireSystemAccess } from "@/lib/api-auth";
-import { SystemsManager } from "@/lib/systems-manager";
+import { DeviceWriter } from "@/lib/registry/device-writer";
 import { isValidTimezone } from "@/lib/timezones";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
@@ -208,7 +208,7 @@ export async function PATCH(
       }
     }
 
-    await SystemsManager.getInstance().updateSystem(systemId, updates);
+    await DeviceWriter.updateSystem(systemId, updates);
 
     // Revalidate dashboard paths to refresh server-side data
     revalidatePath("/dashboard", "layout");

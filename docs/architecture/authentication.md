@@ -199,14 +199,14 @@ link), both enforced by `requireDashboardAccess`. See
 
 Nothing computes access ad hoc — everything routes through `lib/api-auth.ts`:
 
-| Helper                     | Answers                                                                    |
-| -------------------------- | -------------------------------------------------------------------------- |
-| `requireSystemAccess`      | may this caller read/write this system? Returns a `SystemAuthContext`.      |
-| `requireDashboardAccess`   | same question for a dashboard, and share-token aware (`userId` may be null) |
-| `requireAdmin`             | platform admin only                                                        |
-| `requireCronOrAdmin`       | cron secret or admin                                                       |
+| Helper                   | Answers                                                                     |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `requireSystemAccess`    | may this caller read/write this system? Returns a `SystemAuthContext`.      |
+| `requireDashboardAccess` | same question for a dashboard, and share-token aware (`userId` may be null) |
+| `requireAdmin`           | platform admin only                                                         |
+| `requireCronOrAdmin`     | cron secret or admin                                                        |
 
-`SystemsManager.getSystemsVisibleByUser` (`lib/systems-manager.ts`) builds the device-switcher list:
+`DeviceConfigRegistry.devicesVisibleByUser` (`lib/registry/device-config.ts`) builds the device-switcher list:
 systems the user **owns**, systems that are **public**, and systems a **dashboard grant** reaches (via
 `grantedSystemScopeForUser`). That third leg used to be an inner join on `user_systems`; it was
 re-pointed at `dashboard_grants` rather than deleted, because it is load-bearing for Vercel preview —
@@ -369,12 +369,12 @@ const authResult = await requireSystemAccess(request, systemId, {
 
 `requireSystemAccess` checks these access levels:
 
-| Level      | canRead | canWrite | Description                                            |
-| ---------- | ------- | -------- | ------------------------------------------------------ |
-| Admin      | ✅      | ✅       | Platform admin                                         |
-| Owner      | ✅      | ✅       | System owner (`ownerClerkUserId`)                      |
-| Public     | ✅      | ❌       | Ownerless system (`ownerClerkUserId IS NULL`)          |
-| Claude dev | ✅      | ❌       | `x-claude` header, development only                    |
+| Level      | canRead | canWrite | Description                                   |
+| ---------- | ------- | -------- | --------------------------------------------- |
+| Admin      | ✅      | ✅       | Platform admin                                |
+| Owner      | ✅      | ✅       | System owner (`ownerClerkUserId`)             |
+| Public     | ✅      | ❌       | Ownerless system (`ownerClerkUserId IS NULL`) |
+| Claude dev | ✅      | ❌       | `x-claude` header, development only           |
 
 Exactly: `canRead = isAdmin || isClaudeDev || isOwner || isPublic` and `canWrite = isAdmin || isOwner`.
 

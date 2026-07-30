@@ -23,9 +23,11 @@ jest.mock("@/lib/db/planetscale", () => ({
 }));
 jest.mock("@/lib/db/planetscale/schema", () => ({ pointInfo: {} }));
 
+// config-v4 slice K3: the polymorphic-handle discriminator moved from `SystemsManager.isAreaHandle` to
+// `DeviceConfigRegistry.isAreaHandle`. This gate is unchanged in what it asserts — only the seam it stubs.
 const isAreaHandle = jest.fn<(id: number) => Promise<boolean>>();
-jest.mock("@/lib/systems-manager", () => ({
-  SystemsManager: { getInstance: () => ({ isAreaHandle }) },
+jest.mock("@/lib/registry/device-config", () => ({
+  DeviceConfigRegistry: { isAreaHandle },
 }));
 
 const getAreaBindingRefs = jest.fn<(id: number) => Promise<unknown[]>>();

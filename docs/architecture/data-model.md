@@ -82,9 +82,12 @@ Readings can carry `value` (numeric), `value_str` (e.g. tariff codes), or `error
 ### Multi-device areas (formerly "composite systems")
 
 A **multi-device Area** groups several physical systems' points into one view (the former "composite").
-It is **not** a `systems` row — it is an **areas-backed virtual system**: `SystemsManager` synthesizes one
-on demand (runtime `vendor_type = 'composite'`, never polled, no credentials, no nesting), keyed on
-`areas.legacy_system_id` (its stable integer handle). Membership and the role→point mapping live in the
+It is **not** a `systems` row — it is an **areas-backed virtual system**:
+`DeviceConfigRegistry.viewableByHandle` (`lib/registry/device-config.ts`) synthesizes one on demand
+(runtime `vendor_type = 'area'`, never polled, no credentials, no nesting) for any integer handle that
+names an Area but no device. Precedence is **device-first**: a handle that names both resolves to the
+device. The handle→area mapping is read from `legacy_handles` (config-v4 Phase 12 slice K3; it was
+`areas.legacy_system_id`, which Phase 13 drops). Membership and the role→point mapping live in the
 **semantic layer**, not `systems.metadata` (that JSON blob is retired):
 
 - **`area_members`** — the Area's 1..N member devices, `(area_id, device_id → devices.id, ordinal)`.
