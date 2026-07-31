@@ -108,7 +108,8 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
       alias: d.slug,
       // config-v4 Phase 14 stage 15: counted off the v4 `doc`. The old v3-`descriptor` count read
       // zero for every dashboard created after the v4 cutover — the seed goes to `doc`, and
-      // `descriptor` (dropped by stage 16) stayed empty. Measured on this very page at stage 13.
+      // `descriptor` (dropped from the database by stage 16's migration 0054) stayed empty.
+      // Measured on this very page at stage 13.
       cardCount: isDashboardV4(d.doc) ? countCardNodes(d.doc) : 0,
       shareTokenCount: shareCounts.get(d.id) ?? 0,
       grantCount: grantCounts.get(d.id) ?? 0,

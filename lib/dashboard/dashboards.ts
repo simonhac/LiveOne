@@ -5,9 +5,8 @@
  * `display_name`, an optional owner-unique `alias`, and a v4 `doc` (the node-tree document, every
  * scope ref on the envelope); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
  *
- * config-v4 Phase 14 stage 15: `dashboards.descriptor` (the retired v3 shape) is no longer READ
- * anywhere and is WRITTEN exactly once — the literal `'{}'::jsonb` in `createDashboard`, which exists
- * only to satisfy the column's NOT NULL until stage 16 drops it. See that insert for why it is raw SQL.
+ * config-v4 Phase 14 stage 16: `dashboards.descriptor` (the retired v3 shape) is GONE — made inert by
+ * stage 15, dropped from the database by migration 0054. `doc` is the only dashboard document.
  *
  * config-v4 id boundary: the `dashboards` PK is a uuid, but this module's PUBLIC surface speaks the
  * opaque `db_…` TypeID (the `id` field of every returned object; every id PARAM). The raw uuid is decoded
@@ -15,7 +14,7 @@
  * treat the id as an opaque handle and never touch `lib/ids`. A malformed/foreign id decodes to null and
  * reads as "not found".
  */
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import { dashboards } from "@/lib/db/planetscale/schema";
@@ -92,30 +91,12 @@ function isAliasCollision(err: unknown): boolean {
  * The row is created EMPTY — an `emptyDashboardV4()` doc. Content arrives immediately afterwards via
  * `updateDashboardDoc` (`POST /api/v4/dashboards` seeds, then PUTs), which is the document's only author.
  *
- * 🛑 **Why this is raw SQL and not `db.insert(dashboards)` — config-v4 Phase 14 stage 15.**
- * `dashboards.descriptor` is retired but still `NOT NULL` **with no DB default** until stage 16 drops
- * it, so *something* must put a value in it. The column is deliberately NOT declared in `schema.ts`
- * (a projection-less `.select()` must never name a column that is about to disappear — that is what
- * breaks the instant the DROP lands), which also means drizzle cannot write it. Hence one hand-written
- * INSERT supplying the constant `'{}'::jsonb`.
- *
- * The alternative — a DB-level `DEFAULT '{}'::jsonb` — was rejected: it needs its own migration applied
- * to prod AND dev *before* this code deploys, i.e. an extra ordered DDL step, to buy nothing that
- * survives stage 16. This way stage 16 is exactly: `ALTER TABLE dashboards DROP COLUMN descriptor`,
- * plus restoring the drizzle insert below. Values are parameterized (`sql` interpolation binds them),
- * so this is not a string-concatenation hazard.
- *
- * 🧹 STAGE 16: delete the `descriptor` column + value from the statement and put back:
- *
- *     const [row] = await requirePlanetscaleDb()
- *       .insert(dashboards)
- *       .values({
- *         ownerUserId: args.ownerClerkUserId,
- *         name: args.displayName,
- *         slug: args.alias ?? null,
- *         doc: emptyDashboardV4(),
- *       })
- *       .returning({ id: dashboards.id });
+ * ✅ **Back on drizzle as of config-v4 Phase 14 stage 16.** Stage 15 had to write this as one
+ * hand-rolled `INSERT` because `dashboards.descriptor` was retired but still `NOT NULL` with no DB
+ * default, and it was deliberately absent from `schema.ts` (so a projection-less `.select()` could
+ * never name a column about to disappear) — which also meant drizzle could not supply it. Migration
+ * 0054 drops the column, so the statement is a plain typed insert again and there is exactly one
+ * dashboard shape on the row.
  *
  * (No `id` is supplied — the uuid PK carries DEFAULT gen_random_uuid(); defect D-a was it inheriting
  * no default and 23502-ing on the first POST.)
@@ -126,21 +107,17 @@ export async function createDashboard(args: {
   alias?: string | null;
 }): Promise<string> {
   try {
-    const doc = emptyDashboardV4();
-    const res = await requirePlanetscaleDb().execute<{ id: string }>(sql`
-      INSERT INTO dashboards (owner_user_id, name, slug, doc, descriptor)
-      VALUES (
-        ${args.ownerClerkUserId},
-        ${args.displayName},
-        ${args.alias ?? null},
-        ${JSON.stringify(doc)}::jsonb,
-        '{}'::jsonb
-      )
-      RETURNING id
-    `);
-    const id = res.rows[0]?.id;
-    if (!id) throw new Error("createDashboard: INSERT returned no id");
-    return Dashboard.encode(id);
+    const [row] = await requirePlanetscaleDb()
+      .insert(dashboards)
+      .values({
+        ownerUserId: args.ownerClerkUserId,
+        name: args.displayName,
+        slug: args.alias ?? null,
+        doc: emptyDashboardV4(),
+      })
+      .returning({ id: dashboards.id });
+    if (!row?.id) throw new Error("createDashboard: INSERT returned no id");
+    return Dashboard.encode(row.id);
   } catch (err) {
     if (isAliasCollision(err)) throw new DashboardAliasTakenError();
     throw err;

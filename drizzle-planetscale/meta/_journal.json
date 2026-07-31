@@ -379,6 +379,13 @@
       "when": 1785504044403,
       "tag": "0053_helper_vendor_site_id_typeid",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1785507644403,
+      "tag": "0054_drop_dashboards_descriptor",
+      "breakpoints": true
     }
   ]
 }
