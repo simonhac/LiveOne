@@ -7,6 +7,7 @@
  * SiteChartsGroup (chart:load / chart:generation).
  */
 import LinesChartCard from "@/components/LinesChartCard";
+import type { ChartConfig } from "@/lib/dashboard/card-types";
 import type { CardPlugin, CardRenderProps } from "./types";
 import { maxPowerHintFromDeviceInfo, subjectOf, useAreaDatum } from "./shared";
 
@@ -39,11 +40,13 @@ function AreaLinesChart({ handle }: CardRenderProps) {
 
 export const chartPlugin: CardPlugin = {
   type: "chart",
-  collapseKey: (card) =>
-    card.chart?.variant === "stacked-areas"
-      ? card.chart.split === "generation"
+  collapseKey: (node) => {
+    const config = node.config as ChartConfig | undefined;
+    return config?.variant === "stacked-areas"
+      ? config.split === "generation"
         ? "chart:generation"
         : "chart:load"
-      : null,
+      : null;
+  },
   Render: AreaLinesChart,
 };

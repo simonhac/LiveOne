@@ -2,14 +2,14 @@
   "n_amber_now": {
     "plugin": "card:amber-now",
     "renderProps": {
-      "card": {
-        "id": "n_amber_now",
-        "type": "amber-now"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "id": "n_amber_now",
+        "kind": "card",
+        "type": "amber-now"
       }
     },
     "leaves": [
@@ -30,14 +30,14 @@
   "n_amber_timeline": {
     "plugin": "card:amber-timeline",
     "renderProps": {
-      "card": {
-        "id": "n_amber_timeline",
-        "type": "amber-timeline"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "id": "n_amber_timeline",
+        "kind": "card",
+        "type": "amber-timeline"
       }
     },
     "leaves": [
@@ -54,15 +54,16 @@
   "n_b_dm": {
     "plugin": "card:device-metrics",
     "renderProps": {
-      "card": {
-        "deviceSystemId": 11,
-        "id": "n_b_dm",
-        "type": "device-metrics"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000002",
+        "device": "dv_01j4q2m000e00800000000000h"
       },
+      "deviceSystemId": 11,
       "handle": 2,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000002",
-        "cards": []
+      "node": {
+        "id": "n_b_dm",
+        "kind": "card",
+        "type": "device-metrics"
       }
     },
     "leaves": [
@@ -78,14 +79,14 @@
   "n_batt_contents": {
     "plugin": "card:battery-contents",
     "renderProps": {
-      "card": {
-        "id": "n_batt_contents",
-        "type": "battery-contents"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "id": "n_batt_contents",
+        "kind": "card",
+        "type": "battery-contents"
       }
     },
     "leaves": [
@@ -100,14 +101,14 @@
   "n_batt_prov": {
     "plugin": "card:battery-provenance-history",
     "renderProps": {
-      "card": {
-        "id": "n_batt_prov",
-        "type": "battery-provenance-history"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "id": "n_batt_prov",
+        "kind": "card",
+        "type": "battery-provenance-history"
       }
     },
     "leaves": [
@@ -123,17 +124,17 @@
   "n_chart_lines": {
     "plugin": "card:chart",
     "renderProps": {
-      "card": {
-        "chart": {
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
+      },
+      "handle": 1,
+      "node": {
+        "config": {
           "variant": "lines"
         },
         "id": "n_chart_lines",
+        "kind": "card",
         "type": "chart"
-      },
-      "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
       }
     },
     "leaves": [
@@ -151,16 +152,20 @@
   "n_dm_device": {
     "plugin": "card:device-metrics",
     "renderProps": {
-      "card": {
-        "deviceSystemId": 11,
-        "id": "n_dm_device",
-        "type": "device-metrics",
-        "variant": "table"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001",
+        "device": "dv_01j4q2m000e00800000000000h"
       },
+      "deviceSystemId": 11,
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "config": {
+          "variant": "table"
+        },
+        "device": "dv_01j4q2m000e00800000000000h",
+        "id": "n_dm_device",
+        "kind": "card",
+        "type": "device-metrics"
       }
     },
     "leaves": [
@@ -177,15 +182,17 @@
   "n_dm_inherit": {
     "plugin": "card:device-metrics",
     "renderProps": {
-      "card": {
-        "id": "n_dm_inherit",
-        "type": "device-metrics",
-        "variant": "grid"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "config": {
+          "variant": "grid"
+        },
+        "id": "n_dm_inherit",
+        "kind": "card",
+        "type": "device-metrics"
       }
     },
     "leaves": [
@@ -202,14 +209,14 @@
   "n_ev_prov": {
     "plugin": "card:ev-provenance",
     "renderProps": {
-      "card": {
-        "id": "n_ev_prov",
-        "type": "ev-provenance"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "id": "n_ev_prov",
+        "kind": "card",
+        "type": "ev-provenance"
       }
     },
     "leaves": [
@@ -227,15 +234,17 @@
   "n_gen_device": {
     "plugin": "card:generator-runs",
     "renderProps": {
-      "card": {
-        "deviceSystemId": 12,
-        "id": "n_gen_device",
-        "type": "generator-runs"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001",
+        "device": "dv_01j4q2m000e00800000000000j"
       },
+      "deviceSystemId": 12,
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "device": "dv_01j4q2m000e00800000000000j",
+        "id": "n_gen_device",
+        "kind": "card",
+        "type": "generator-runs"
       }
     },
     "leaves": [
@@ -251,14 +260,14 @@
   "n_gen_inherit": {
     "plugin": "card:generator-runs",
     "renderProps": {
-      "card": {
-        "id": "n_gen_inherit",
-        "type": "generator-runs"
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
       },
       "handle": 1,
-      "section": {
-        "areaId": "01912e2a-0000-7000-8000-000000000001",
-        "cards": []
+      "node": {
+        "id": "n_gen_inherit",
+        "kind": "card",
+        "type": "generator-runs"
       }
     },
     "leaves": [
@@ -282,7 +291,11 @@
           "sankeyOptionsKey": "n_sankey:01912e2a-0000-7000-8000-000000000001:db_fixture",
           "siteCapable": true,
           "systemId": "1",
-          "visibleKeys": ["chart:generation", "chart:load", "sankey"]
+          "visibleKeys": [
+            "chart:generation",
+            "chart:load",
+            "sankey"
+          ]
         }
       }
     ]
