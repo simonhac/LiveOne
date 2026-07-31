@@ -121,10 +121,6 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     // the absence of: without it the v4 route 404s at the Clerk edge for every ANONYMOUS `?access=`
     // shared-dashboard viewer and works perfectly for everyone else.
     "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-daily",
-    // Phase-13 compat shim: the PRE-rename spelling must stay shareable, because middleware
-    // sees the ORIGINAL path and the next.config rewrite to `/api/device/*` runs after it.
-    // Delete this entry with the shim.
-    "/api/system/1/points",
   ];
   it.each(shareable)("allows %s via a share token", (p) => {
     expect(isShareableRoute(req(p))).toBe(true);
@@ -137,8 +133,13 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/test/cache",
     "/api/admin/storage",
     "/api/devices",
-    // The compat shim is singular-only: the legacy PLURAL spelling (now `/api/devices`,
-    // admin) must NOT become shareable via `/api/system/(.*)`.
+    // 🛑 config-v4 Phase 14 stage 18 — the PRE-Phase-13 spellings, after the compat shim was
+    // deleted. `/api/system/(.*)` used to sit in `shareableRoutes` so that an anonymous
+    // `?access=` viewer running a stale bundle got past the Clerk edge and into the
+    // next.config rewrite to `/api/device/*`. Both halves are gone, so these paths are now
+    // just unrouted strings: no rewrite, no bypass. The negative assertion is what keeps the
+    // entry from being reintroduced by muscle memory — nothing else in the suite would notice.
+    "/api/system/1/points",
     "/api/systems",
     "/api/systems/1/credentials",
     "/api/dashboards/5",

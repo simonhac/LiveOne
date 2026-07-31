@@ -54,11 +54,12 @@ the `descriptor` drop migration (**not written**); every renderer port; every v4
 
 - **Plugin props still carry `handle`** — absorb it at the `v4-adapt.ts` boundary rather than touching 19
   plugins twice.
-- **The `?systemId=N` → `/api/device/*` back-compat rewrites** (`next.config.js` + the legacy
-  `"/api/system/(.*)"` entry in `lib/route-matchers.ts`) are a **shim with an expiry**. They exist for the
-  stale-browser-bundle window. Delete both halves together; each names the other.
-- **`scripts/utils/kv-drop-legacy-integer-keys.ts`** — one-shot sweep of the ~30 orphaned
-  `prod:*:system:*` keys. Unread by the live build. Delete the script once both environments are swept.
+- ~~**The `/api/system*` → `/api/device*` back-compat rewrites**~~ ✅ **DELETED (Phase 14 stage 18,
+  2026-07-31)** — both halves (`next.config.js` + the legacy `"/api/system/(.*)"` entry in
+  `lib/route-matchers.ts`). They existed only for the stale-browser-bundle window.
+- ~~**`scripts/utils/kv-drop-legacy-integer-keys.ts`**~~ ✅ **DELETED (Phase 14 stage 18)** — both
+  environments swept; a final dry run found 0 legacy keys and 0 integer summary fields in `dev:` and
+  `prod:` alike.
 
 ---
 
@@ -118,10 +119,11 @@ Historical detail: [config-v4-phase7-rehearsal-harness.md](config-v4-phase7-rehe
 `lib/registry/{registry-cache,device-registry}.ts`, `scripts/check-readings-boundary.mjs` (the permanent
 seam wall), and `scripts/utils/verify-areas-drift-key.ts` (the only remaining drift-key alarm).
 
-**Shims WITH an expiry — delete deliberately, not permanently kept:** the `/api/system*` → `/api/device*`
-rewrites in `next.config.js` **plus** the legacy `"/api/system/(.*)"` entry in `lib/route-matchers.ts`
-(both halves together — each names the other), and `scripts/utils/kv-drop-legacy-integer-keys.ts` once
-both environments are swept.
+**Shims WITH an expiry — delete deliberately, not permanently kept:** ✅ **all expired and deleted**
+(Phase 14 stage 18, 2026-07-31) — the `/api/system*` → `/api/device*` rewrites in `next.config.js` plus
+the paired legacy `"/api/system/(.*)"` entry in `lib/route-matchers.ts`, and the one-shot
+`scripts/utils/kv-drop-legacy-integer-keys.ts`. Nothing on this list remains; do not confuse it with the
+permanent list above, which is deliberately kept forever.
 
 **Sequencing.** Phases 12 and 13 (done) unblocked the rest: the handle could not die while
 `SystemsManager` was the config API, and the v4 mutation routes need `devices`/`points` as primary.

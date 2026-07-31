@@ -24,9 +24,9 @@ So the same `KV_REST_API_URL` / `KV_REST_API_TOKEN` are used everywhere and ther
 replicate between instances. **The corollary is the hazard:** any code path that resolves the
 environment wrongly, or any script run with the wrong `VERCEL_ENV`, writes into _prod's_ keyspace from a
 dev machine. Before running anything that writes KV, echo the resolved environment and the first key it
-will touch, and confirm the prefix. The two write-side scripts do this themselves
-(`rebuild-dev-kv-from-db.ts` refuses unless `getEnvironment() === "dev"`;
-`kv-drop-legacy-integer-keys.ts` prints the prefix and every doomed key and requires `--yes`).
+will touch, and confirm the prefix. `rebuild-dev-kv-from-db.ts` does this itself — it refuses unless
+`getEnvironment() === "dev"` — and any future sweeper should follow the same pattern: print the resolved
+prefix and every doomed key, and require an explicit `--yes` before deleting.
 
 ## Addressing: subjects, not systems
 
@@ -171,9 +171,11 @@ step**, and it belongs in the PR body, not in a reviewer's memory:
 3. Repopulate the latest values: in prod, the next poll cycle does it; in dev/preview, crons are off, so
    run `npm run db:rebuild-dev-kv` (`scripts/utils/rebuild-dev-kv-from-db.ts`, which also runs
    automatically after the 2-hourly DB sync — see [../sync-prod-to-dev.md](../sync-prod-to-dev.md)).
-4. Sweep the orphaned old keys —
-   `npx tsx --env-file=.env.local scripts/utils/kv-drop-legacy-integer-keys.ts` (dry run first, then
-   `--yes`). One-shot; delete the script once both environments are swept.
+4. Sweep the orphaned old keys. The new key shape is built alongside the old one, never over it, so the
+   retired keys survive the rebuild — invisible to every current SCAN pattern, holding stale readings
+   forever. Write a one-shot delete-only sweeper scoped to `kvKey()`'s prefix, run it dry first, read the
+   list, re-run with `--yes`, then delete the script (git is the archive). The config-v4 Phase 13
+   integer→TypeID sweeper (`kv-drop-legacy-integer-keys.ts`) is the worked example — see its history.
 
 Verify by running the same probe before and after and **diffing the inner keys** — a shape change that
 half-landed looks like an empty `latest` map, not an error.
