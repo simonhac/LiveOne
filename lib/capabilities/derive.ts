@@ -1,6 +1,6 @@
 /**
  * Capability derivation — the ONE place a capability set is computed. Collapses the three duplicated
- * point-path derivers (`availableTiles`/`chartHasData` in lib/dashboard/cards.ts and the old
+ * point-path derivers (`availableTiles`/`chartHasData`, once in the retired lib/dashboard/cards.ts, and the old
  * `useTileNodes.available`, now the tile plugins' `isAvailable` predicates in
  * components/dashboard/tiles/) into a single rule pass over the capability registry.
  *

@@ -502,9 +502,10 @@ export const observationsOutbox = pgTable(
 // ============================================================================
 // Dashboards - moving from per-(user,device) to first-class COMPOSITION-FIRST (Phase 2b-2).
 //
-// TARGET model: a dashboard is a NAMED, owner-scoped composition — `descriptor` is an ordered list of
-// cards, each bound to its OWN Area (`areaId`), with no home device/area. Addressed by id
-// (`/dashboard/{user}/id/{id}`) or `alias` (`/dashboard/{user}/{alias}`, an owner-unique shortname).
+// TARGET model, and REACHED as of config-v4 Phase 14: a dashboard is a NAMED, owner-scoped
+// composition — `doc` is a node tree whose groups each bind their OWN Area, with no home device/area.
+// Addressed by id (`/dashboard/{user}/id/{id}`) or `slug` (`/dashboard/{user}/{slug}`, an owner-unique
+// shortname). (The v3 `descriptor` this paragraph originally described was dropped by migration 0054.)
 //
 // TRANSITION (additive, migration 0017): `display_name` + `alias` are added and `system_id` is made
 // NULLABLE so new composition dashboards (null system_id) coexist with the legacy per-device rows
@@ -529,12 +530,9 @@ export const dashboards = pgTable(
     // a dashboard is a composition whose sections each carry their own Area uuid.
     name: text("name"),
     slug: text("slug"), // owner-unique shortname for /dashboard/{user}/{slug}; null = unnamed
-    // ⚠️ `descriptor` (jsonb, NOT NULL, no DB default) IS DELIBERATELY NOT DECLARED HERE — config-v4
-    // Phase 14 stage 15. The column still EXISTS in the database and is dropped by stage 16; it is
-    // declared nowhere so that a projection-less `.select()` can never name it (the running build's
-    // column list is what breaks the moment the DROP lands). The one remaining write is the literal
-    // `'{}'::jsonb` in `createDashboard` (lib/dashboard/dashboards.ts), which exists solely to satisfy
-    // NOT NULL and dies with the column. Nothing reads it.
+    // 🪦 `descriptor` (the v3 document) is GONE — dropped from the database by migration 0054
+    // (config-v4 Phase 14 stage 16), having been made inert by stage 15. `doc` below is the only
+    // dashboard document there is. Do not reintroduce a second one.
     // The v4 node-tree document (clean-sheet §8). ⚠️ config-v4 CUTOVER SHAPE — NOT NULL (transform stage 5d
     // `ALTER COLUMN doc SET NOT NULL`); it is now the ONLY document on the row.
     doc: jsonb("doc").notNull(),

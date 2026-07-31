@@ -17,7 +17,8 @@
  *   - Layout = child order + optional `size:{columns:1–12}` on a 12-col grid + group flex. No (x,y).
  *
  * This module is PURE TYPES (no zod, client-safe). Runtime validation/normalization lives in
- * v4-validate.ts; the v3→v4 rewriter in v3-to-v4.ts. Refs are the branded `AreaId`/`DeviceId` from
+ * v4-validate.ts. (The v3→v4 rewriter that seeded these documents, v3-to-v4.ts, was deleted at Phase 14
+ * stage 16 with the rest of the v3 island.) Refs are the branded `AreaId`/`DeviceId` from
  * lib/ids — the security invariant is expressed in the type, not just prose.
  *
  * DARK: the v3 app does not read `dashboards.doc`; this ships behind the unchanged renderer.

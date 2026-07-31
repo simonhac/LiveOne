@@ -1,18 +1,19 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
 /**
- * `dashboards.descriptor` is INERT — config-v4 Phase 14 stage 15.
+ * `dashboards.descriptor` is GONE — config-v4 Phase 14 stages 15 (inert) and 16 (migration 0054
+ * dropped the column).
  *
  * This suite used to assert that `rowToDashboard` handed the descriptor out VERBATIM (Phase 14 having
- * removed the read-normalize that laundered a raw-uuid section ref into `ar_`). That property is moot
- * now: nothing reads the column, so there is nothing to launder.
+ * removed the read-normalize that laundered a raw-uuid section ref into `ar_`). That property is moot:
+ * nothing reads the column, so there is nothing to launder.
  *
- * What replaces it is the precondition **stage 16 depends on**, and it is worth an executable gate
- * rather than a claim in a PR body: a row may still carry a `descriptor` — the column is dropped in a
- * later PR and every existing row has one — and reading it must not surface, consume, or care about
- * it. If anyone re-declares the column in `schema.ts` and re-exposes it on `CompositionDashboard`,
- * this file goes red, and the DROP that follows would otherwise have 500'd every projection-less
- * `.select()` in the running build.
+ * Stage 15 rewrote it as the executable gate on the DROP. **It is KEPT after the DROP, and its job
+ * changes from precondition to standing guard:** nothing may reintroduce a second dashboard shape by
+ * re-declaring the column in `schema.ts` and re-exposing it on `CompositionDashboard`. The fixture row
+ * below still carries a `descriptor` deliberately — a row shape that no longer exists in the database
+ * is exactly the adversarial input this asserts is ignored, so the test does not need the column to
+ * exist and does not go stale with it.
  *
  * Mock the drizzle select, table-aware, mirroring lib/__tests__/user-preferences.test.ts.
  */
@@ -59,7 +60,7 @@ beforeEach(() => {
 
 describe("getDashboard — `descriptor` is neither read nor surfaced", () => {
   it("does not expose a `descriptor` field, even when the row carries one", async () => {
-    // Exactly what every row on prod and dev still looks like until stage 16 drops the column.
+    // Exactly what every row on prod and dev looked like before migration 0054 dropped the column.
     dashboardRow!.descriptor = {
       version: 3,
       sections: [{ areaId: Area.encode(AREA_UUID_1), cards: [] }],

@@ -17,8 +17,8 @@
  * ⚠️ **`areaRefToArId` REMAINS dual-accept — but it is down to ONE producer** (config-v4 Phase 14,
  * reconciled at the stage-15 rebase). Of the three the original note listed, all three are now gone:
  *   * `buildAreaStrategyForHandle` died with **stage 13** (both legacy route trees deleted).
- *   * `lib/dashboard/v3-to-v4.ts`'s `pureAreaRef` lost its last caller in **stage 15** — nothing
- *     rewrites a v3 descriptor any more.
+ *   * `lib/dashboard/v3-to-v4.ts`'s `pureAreaRef` lost its last caller in **stage 15**, and the
+ *     module itself was deleted in **stage 16** — nothing rewrites a v3 descriptor any more.
  *   * The helper-device `vendorSiteId` was retired at the source in **stage 17**: `helperSiteId`
  *     mints `helper:area:ar_…`, migration **0053** rewrote every stored row (applied to prod AND
  *     dev), and `parentAreaIdFromHelperSiteId` now always returns `ar_`.
@@ -43,7 +43,7 @@ export function areaRefToUuid(ref: string): string | null {
 
 /**
  * Normalize EITHER a raw uuid or an `ar_` TypeID to the `ar_` TypeID. Null if neither.
- * Intentionally still dual-accept — two live raw-uuid producers feed it (see the header).
+ * Intentionally still dual-accept — ONE live raw-uuid producer feeds it (see the header).
  */
 export function areaRefToArId(ref: string): AreaId | null {
   if (Area.is(ref)) return ref;

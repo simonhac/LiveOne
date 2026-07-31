@@ -1,7 +1,8 @@
 /**
  * The area "strategy" — the default dashboard for an area, generated from its CAPABILITIES (the HA
  * Lovelace-strategy idea). Capability-driven replacement for the vendor-keyed `buildDefaultDashboardV3`
- * in lib/dashboard/v3.ts: no `vendorType`, no `getLayout`, no `availableViews`/`hasGenerator` opts —
+ * in the retired lib/dashboard/v3.ts (deleted at Phase 14 stage 16): no `vendorType`, no `getLayout`,
+ * no `availableViews`/`hasGenerator` opts —
  * the card set falls out of the capability set + one structural `aggregate` flag.
  *
  * config-v4 Phase 14: this emits a **v4 `GroupNode` natively** (clean-sheet §8.1) — an area-bound

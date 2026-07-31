@@ -27,14 +27,23 @@ let nextFailure: unknown = null;
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb() {
     return {
-      // config-v4 Phase 14 stage 15: `createDashboard` INSERTs via raw `sql` rather than
-      // `db.insert(dashboards)`, because `descriptor` is NOT NULL but deliberately undeclared in
-      // schema.ts (see that function). The error path is unchanged — `isUniqueViolationOn` walks the
-      // `cause` chain and never inspects which drizzle API raised it — but the mock must follow the
-      // call that is actually made, or every assertion below would pass against nothing.
-      async execute() {
-        if (nextFailure) throw nextFailure;
-        return { rows: [{ id: "019f0000-0000-7000-8000-0000000000aa" }] };
+      // config-v4 Phase 14 stage 16: `createDashboard` is back on `db.insert(dashboards)` now that
+      // migration 0054 has dropped `descriptor` (stage 15 had to hand-roll the SQL because that column
+      // was NOT NULL but deliberately undeclared in schema.ts). The error path is unchanged —
+      // `isUniqueViolationOn` walks the `cause` chain and never inspects which drizzle API raised it —
+      // but the mock must follow the call that is actually made, or every assertion below would pass
+      // against nothing. That is not hypothetical: this suite went red on exactly this swap.
+      insert() {
+        return {
+          values() {
+            return {
+              async returning() {
+                if (nextFailure) throw nextFailure;
+                return [{ id: "019f0000-0000-7000-8000-0000000000aa" }];
+              },
+            };
+          },
+        };
       },
       update() {
         const chain = {

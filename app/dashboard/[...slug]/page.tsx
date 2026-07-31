@@ -78,8 +78,8 @@ async function renderCompositionDashboard(
   userId?: string | null,
 ) {
   // The v4 node tree is what renders (DashboardV4View, inside DashboardClient), and as of config-v4
-  // Phase 14 stage 15 it is the ONLY shape: `descriptor` is neither read nor written and stage 16
-  // drops it. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and its one write path validates it,
+  // Phase 14 stage 16 it is the ONLY shape: `descriptor` was made inert at stage 15 and dropped from
+  // the database by migration 0054. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and its one write path validates it,
   // so this guard is a defence against a corrupt jsonb only — and a failed guard renders an EMPTY
   // document. That is deliberate: quietly serving a second, divergent shape from a shape-guard
   // failure is exactly the drift the cutover set out to end.
