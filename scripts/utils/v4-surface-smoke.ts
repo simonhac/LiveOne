@@ -56,7 +56,11 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { shareTokens } from "@/lib/db/planetscale/schema";
 import { eq, like } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  dashboards as dashboardsTable,
+  legacyHandles,
+} from "@/lib/db/planetscale/schema";
 // The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
 // `replaceBindings` validates against.
 import { bindingShapeMatches } from "@/lib/areas/slots";
@@ -374,6 +378,34 @@ async function callAnon(
  * rows it removed so the caller can report a clean run. `legacy_handles.area_id` has no ON DELETE, so
  * that row must go first or the area delete is refused by the FK.
  */
+/**
+ * Hard-delete every scratch DASHBOARD by name prefix, over a direct DB connection — the backstop for
+ * the HTTP teardown, not a replacement for it.
+ *
+ * 🛑 WHY THIS EXISTS (found by the stage-7 agent reviewing this file, config-v4 Phase 14):
+ * `trash()` deletes over HTTP and used to treat **404 as success**, on the reading "already gone".
+ * But a Clerk-edge 404 is byte-identical to a not-found 404 — an expired JWT, a `route-matchers.ts`
+ * change, a dev server restarted mid-run all produce one — so a *live* scratch dashboard silently
+ * counted as deleted. On a SHARED database that is not untidiness: a leaked scratch dashboard can
+ * carry live share tokens, which are anonymous credentials.
+ *
+ * The HTTP delete still runs first and is still the thing under test (it exercises the route and
+ * asserts the cascade). This only catches what the HTTP path could not confirm, and it REPORTS what
+ * it caught, so a leak becomes a visible number instead of a silent row. `share_tokens` and
+ * `dashboard_grants` are both ON DELETE CASCADE, so the dashboard row is the only one to remove.
+ */
+async function sweepScratchDashboards(): Promise<number> {
+  const db = requirePlanetscaleDb();
+  const rows = await db
+    .select({ id: dashboardsTable.id })
+    .from(dashboardsTable)
+    .where(like(dashboardsTable.name, `${SCRATCH_PREFIX}%`));
+  for (const row of rows) {
+    await db.delete(dashboardsTable).where(eq(dashboardsTable.id, row.id));
+  }
+  return rows.length;
+}
+
 async function sweepScratchAreas(): Promise<number> {
   const db = requirePlanetscaleDb();
   const rows = await db
@@ -547,11 +579,18 @@ async function main(): Promise<void> {
   console.log(`target: ${BASE}`);
 
   const scratch = new Set<string>();
+  /**
+   * Delete the scratch dashboards over HTTP. A 200 is proof; anything else — INCLUDING 404 — is only
+   * "unconfirmed", and is left to `sweepScratchDashboards()` to settle against the database. See that
+   * function for why a 404 cannot be read as "already gone".
+   */
   const trash = async (): Promise<void> => {
     for (const id of scratch) {
       const r = await call("DELETE", `/api/v4/dashboards/${id}`);
-      if (r.status !== 200 && r.status !== 404)
-        console.error(`  ! failed to delete scratch ${id}: ${r.status}`);
+      if (r.status !== 200)
+        console.error(
+          `  ! scratch ${id}: DELETE answered ${r.status}, not 200 — deferring to the DB sweep`,
+        );
       scratch.delete(id);
     }
   };
@@ -565,6 +604,14 @@ async function main(): Promise<void> {
     }
   }
   await trash();
+  // The DB sweep also runs at the START, and it is the one that actually finds a crashed run's debris:
+  // the discovery above goes through `GET /api/v4/dashboards`, which has the same 404-at-the-edge
+  // blind spot as the DELETE — if that GET is refused, the loop finds nothing and reports nothing.
+  const preSweptDash = await sweepScratchDashboards();
+  if (preSweptDash > 0)
+    console.log(
+      `  (swept ${preSweptDash} leftover scratch dashboard(s) the HTTP teardown had missed)`,
+    );
   const preSwept = await sweepScratchAreas();
   if (preSwept > 0)
     console.log(
@@ -2324,10 +2371,18 @@ async function main(): Promise<void> {
     // ==================================================================
   } finally {
     await trash();
+    // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
+    // A non-zero count here means the HTTP teardown believed it had deleted something it had not.
+    const leaked = await sweepScratchDashboards();
     const swept = await sweepScratchAreas();
     console.log(
       `\ncleaned up scratch dashboards, and hard-deleted ${swept} scratch area(s)`,
     );
+    if (leaked > 0)
+      console.error(
+        `  ! ${leaked} scratch dashboard(s) survived the HTTP teardown and were swept from the DB — ` +
+          `the DELETE did not do what its status code claimed`,
+      );
   }
 
   console.log(
