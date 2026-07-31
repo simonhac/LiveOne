@@ -66,17 +66,27 @@ export default function DashboardSettingsDialog({
     typeof window === "undefined"
       ? ""
       : `${window.location.origin}/dashboard/id/${id}?access=${token}`;
+  //
+  // ⚠️ Three deliberate wire differences from the legacy `/share` twin, none of which `tsc` can see:
+  //  - the response CONTAINER key is still `tokens` (§9.2 renames the route, not the payload) — a
+  //    rename there would have been an invisible `?? []` that renders "no links" forever;
+  //  - `expiresInDays` must be a NUMBER. The legacy route silently coerced `"7"` to "never expires";
+  //    the v4 route 422s. `ShareLinksPanel` already holds `number | null`, so this is proof, not a fix;
+  //  - PATCH/DELETE of an unknown token answer 404/409 instead of `200 {ok:false}` — the legacy pair
+  //    reported "nothing happened" as success, which on a revoke is the difference between "revoked"
+  //    and "still live". `res.ok` therefore now means it really happened.
   const shareApi = useMemo<ShareApi>(
     () => ({
       list: async () => {
-        const res = await fetch(`/api/dashboards/${id}/share`);
+        const res = await fetch(`/api/v4/dashboards/${id}/shares`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return ((await res.json()).tokens ?? []) as ShareTokenRow[];
       },
       create: async (label, expiresInDays) => {
-        const res = await fetch(`/api/dashboards/${id}/share`, {
+        const res = await fetch(`/api/v4/dashboards/${id}/shares`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          // `null` = never expires; anything else must already be a number (422 otherwise).
           body: JSON.stringify({ label, expiresInDays }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -84,13 +94,13 @@ export default function DashboardSettingsDialog({
       },
       revoke: async (token) => {
         const res = await fetch(
-          `/api/dashboards/${id}/share?token=${encodeURIComponent(token)}`,
+          `/api/v4/dashboards/${id}/shares?token=${encodeURIComponent(token)}`,
           { method: "DELETE" },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       },
       rename: async (token, label) => {
-        const res = await fetch(`/api/dashboards/${id}/share`, {
+        const res = await fetch(`/api/v4/dashboards/${id}/shares`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token, label }),
@@ -138,12 +148,13 @@ export default function DashboardSettingsDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/dashboards/${id}`, {
+      // v4 meta vocabulary: `name`/`slug`, not `displayName`/`alias`. An empty `slug` clears it.
+      const res = await fetch(`/api/v4/dashboards/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          displayName: name.trim(),
-          alias: normalizeAlias(alias),
+          name: name.trim(),
+          slug: normalizeAlias(alias),
         }),
       });
       if (!res.ok) {
@@ -163,7 +174,7 @@ export default function DashboardSettingsDialog({
   const remove = async () => {
     setBusy(true);
     try {
-      const res = await fetch(`/api/dashboards/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/v4/dashboards/${id}`, { method: "DELETE" });
       if (res.ok) {
         await queryClient.invalidateQueries({ queryKey: MY_DASHBOARDS_KEY });
         await queryClient.invalidateQueries({ queryKey: USER_PREFERENCES_KEY });

@@ -56,13 +56,41 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { shareTokens } from "@/lib/db/planetscale/schema";
 import { eq, like } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
+import {
+  areas,
+  dashboards as dashboardsTable,
+  legacyHandles,
+} from "@/lib/db/planetscale/schema";
 // The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
 // `replaceBindings` validates against.
 import { bindingShapeMatches } from "@/lib/areas/slots";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 
 const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
+
+/**
+ * 🛑 DELIBERATELY GLOBAL, NOT PER-RUN — and that makes CONCURRENT RUNS UNSAFE, by design.
+ *
+ * Note the asymmetry with `SCRATCH_SLUG` below, which *is* per-run: the slug only has to avoid a
+ * uniqueness collision, whereas this prefix is what the opening sweep matches on. Because it carries
+ * no run id, a second run starting mid-flight will hard-delete the FIRST run's live scratch
+ * dashboards — and `share_tokens.dashboard_id` / `dashboard_grants.dashboard_id` are both ON DELETE
+ * CASCADE, so its live share tokens go with them and it then fails somewhere unrelated, with failure
+ * text that points nowhere near the cause.
+ *
+ * That is accepted, because the alternative is worse. A per-run suffix would make overlapping runs
+ * safe but would DESTROY the property the opening sweep exists for: adopting debris from a run that
+ * died without its `finally` (a crash, a timeout, a hard kill — which has actually happened on this
+ * project). A sweep that only recognises its own suffix can never clean up after a previous run, and
+ * silent accumulation on a SHARED database is the failure this script was written to avoid.
+ *
+ * So the invariant is operational, not structural: **one mutating HTTP driver against `liveone-dev`
+ * at a time.** If concurrent runs are ever actually wanted, the change is a per-run suffix on the
+ * prefix *plus* a sweep that adopts only its own — and it must be paired with some other answer for
+ * crashed-run debris, or it is a straight regression. (`AREA_PREFIX` has always had this property;
+ * extending the sweep to dashboards is what moved the blast radius onto the rows carrying the share
+ * tokens. Raised by the stage-7 agent, config-v4 Phase 14.)
+ */
 const SCRATCH_PREFIX = "v4-smoke ·";
 const SCRATCH_SLUG = `v4-smoke-${Math.random().toString(36).slice(2, 8)}`;
 /** Scratch AREAS carry their own prefix — the ledger's namespace for Phase 14 stage 10. */
@@ -90,39 +118,19 @@ function skip(label: string, why: string): void {
   console.log(`  ⚠ SKIPPED ${label} — ${why}`);
 }
 
-/**
- * The assertion this file exists for. Compare a v4 payload against its legacy twin KEY BY KEY and
- * VALUE BY VALUE, with every rename spelled out. A dropped field is a defect (STEP 0's D2: the
- * dashboard renders permanent skeletons, no error anywhere); a rename must be declared, so a field
- * that quietly changes name shows up as "dropped" here rather than passing unnoticed.
+/*
+ * 🛑 `compareKeyByKey` LIVED HERE UNTIL config-v4 Phase 14 stage 13, and its removal is a deliberate
+ * loss of oracle, not an oversight. It diffed a v4 payload against its LEGACY TWIN key-by-key — the
+ * check that caught STEP 0's D2 (`GET /api/v4/areas` silently dropping `legacySystemId`, which renders
+ * every card as a permanent skeleton with no error anywhere). Stage 13 deleted both legacy trees, so
+ * there is no twin left to diff against.
+ *
+ * What replaces it: each moved client's exact key set is now asserted DIRECTLY, at the section for the
+ * route that serves it, naming the client module and what breaks if the key goes. That is weaker than a
+ * differential check — it cannot notice a field neither side has — but it is what the wire contract has
+ * become now that the legacy shape is gone, and it is stronger in one way: it states what the CLIENT
+ * reads rather than what a retired route happened to emit.
  */
-function compareKeyByKey(
-  label: string,
-  legacy: Record<string, unknown>,
-  v4: Record<string, unknown>,
-  opts: { rename?: Record<string, string>; valueMayDiffer?: string[] } = {},
-): void {
-  const rename = opts.rename ?? {};
-  const mayDiffer = new Set(opts.valueMayDiffer ?? []);
-  const dropped: string[] = [];
-  const changed: { key: string; legacy: unknown; v4: unknown }[] = [];
-  for (const k of Object.keys(legacy)) {
-    const target = rename[k] ?? k;
-    if (!(target in v4)) {
-      dropped.push(`${k}${target === k ? "" : ` (→ ${target})`}`);
-      continue;
-    }
-    if (!mayDiffer.has(k) && !isDeepStrictEqual(legacy[k], v4[target]))
-      changed.push({ key: k, legacy: legacy[k], v4: v4[target] });
-  }
-  ok(
-    Object.keys(legacy).length > 0 &&
-      dropped.length === 0 &&
-      changed.length === 0,
-    `${label}: carries every legacy key, same values (no silent narrowing)`,
-    { dropped, changed, legacyKeys: Object.keys(legacy) },
-  );
-}
 
 // --- auth -------------------------------------------------------------------
 const clerk = createClerkClient({
@@ -305,30 +313,40 @@ async function driveSharedProvenanceDaily(areas: any[]): Promise<void> {
 
   for (const { token } of tokens) {
     for (const a of areas) {
-      const path = `/api/areas/${a.id}/provenance-daily?last=3d&access=${token}`;
-      const legacy = await request("GET", path, { as: "anon" });
-      if (legacy.status !== 200) continue;
-      console.log(`  using token …${token.slice(-6)} on ${a.displayName}`);
+      // 🛑 The search itself is the check that matters. Until stage 13 this loop probed the LEGACY route
+      // first and used it as the oracle; that route is deleted, so the v4 route is now driven blind —
+      // and a missing `shareableRoutes` entry would make EVERY (token, area) pair 404 and the whole leg
+      // skip with a plausible-looking message. The skip at the bottom therefore distinguishes
+      // "404 everywhere" (the matcher is gone: FAIL) from "403/404 per token" (genuinely out of scope).
       const v4 = await request(
         "GET",
         `/api/v4/areas/${a.id}/provenance-daily?last=3d&access=${token}`,
         { as: "anon" },
       );
-      // 404 here is EXACTLY the missing-`shareableRoutes`-entry failure, and it is why this check is
-      // worth the DB read: it is invisible to every other assertion in this file.
+      if (v4.status !== 200) continue;
+      console.log(`  using token …${token.slice(-6)} on ${a.displayName}`);
       ok(
-        v4.status !== 404,
-        "an anonymous share-token viewer reaches the v4 route (not 404'd at the Clerk edge)",
+        v4.status === 200,
+        "an anonymous share-token viewer reaches the v4 route and is authorized by the handler",
         v4.status,
       );
-      ok(v4.status === 200, "…and is authorized by the handler", v4.status);
       ok(
-        isDeepStrictEqual(v4.body, legacy.body),
-        "…and gets a payload identical to the legacy twin's",
-        {
-          v4: Object.keys(v4.body ?? {}),
-          legacy: Object.keys(legacy.body ?? {}),
-        },
+        Array.isArray(v4.body?.days) || typeof v4.body?.systemId === "number",
+        "…and gets the dense columnar ProvenanceDailyResponse the panel charts",
+        Object.keys(v4.body ?? {}),
+      );
+      // 🛑 The LEGACY path is gone, and so is its `shareableRoutes` entry (stage 13). Anonymous, WITH a
+      // live token, it must not answer 200 — that would mean the route or the bypass outlived the
+      // client that moved off it.
+      const legacyGone = await request(
+        "GET",
+        `/api/areas/${a.id}/provenance-daily?last=3d&access=${token}`,
+        { as: "anon" },
+      );
+      ok(
+        legacyGone.status === 404,
+        "the deleted LEGACY provenance-daily path answers 404 to the same live token",
+        legacyGone.status,
       );
       // The token must not become a skeleton key: another area outside the dashboard's scope stays shut.
       const other = areas.find((o) => o.id !== a.id);
@@ -338,15 +356,10 @@ async function driveSharedProvenanceDaily(areas: any[]): Promise<void> {
           `/api/v4/areas/${other.id}/provenance-daily?last=3d&access=${token}`,
           { as: "anon" },
         );
-        const legacyEscalate = await request(
-          "GET",
-          `/api/areas/${other.id}/provenance-daily?last=3d&access=${token}`,
-          { as: "anon" },
-        );
         ok(
-          escalate.status === legacyEscalate.status,
-          "an out-of-scope area answers the token exactly as the legacy twin does (no widened scope)",
-          { v4: escalate.status, legacy: legacyEscalate.status },
+          escalate.status !== 200,
+          "an out-of-scope area refuses the same token (no widened scope)",
+          escalate.status,
         );
       }
       return;
@@ -354,7 +367,7 @@ async function driveSharedProvenanceDaily(areas: any[]): Promise<void> {
   }
   skip(
     "the share-token leg",
-    "no (token, area) pair is authorized even on the LEGACY route — nothing to compare against",
+    "no (token, area) pair is authorized — if EVERY pair 404'd, the `shareableRoutes` entry is missing",
   );
 }
 
@@ -389,6 +402,34 @@ async function callAnon(
  * rows it removed so the caller can report a clean run. `legacy_handles.area_id` has no ON DELETE, so
  * that row must go first or the area delete is refused by the FK.
  */
+/**
+ * Hard-delete every scratch DASHBOARD by name prefix, over a direct DB connection — the backstop for
+ * the HTTP teardown, not a replacement for it.
+ *
+ * 🛑 WHY THIS EXISTS (found by the stage-7 agent reviewing this file, config-v4 Phase 14):
+ * `trash()` deletes over HTTP and used to treat **404 as success**, on the reading "already gone".
+ * But a Clerk-edge 404 is byte-identical to a not-found 404 — an expired JWT, a `route-matchers.ts`
+ * change, a dev server restarted mid-run all produce one — so a *live* scratch dashboard silently
+ * counted as deleted. On a SHARED database that is not untidiness: a leaked scratch dashboard can
+ * carry live share tokens, which are anonymous credentials.
+ *
+ * The HTTP delete still runs first and is still the thing under test (it exercises the route and
+ * asserts the cascade). This only catches what the HTTP path could not confirm, and it REPORTS what
+ * it caught, so a leak becomes a visible number instead of a silent row. `share_tokens` and
+ * `dashboard_grants` are both ON DELETE CASCADE, so the dashboard row is the only one to remove.
+ */
+async function sweepScratchDashboards(): Promise<number> {
+  const db = requirePlanetscaleDb();
+  const rows = await db
+    .select({ id: dashboardsTable.id })
+    .from(dashboardsTable)
+    .where(like(dashboardsTable.name, `${SCRATCH_PREFIX}%`));
+  for (const row of rows) {
+    await db.delete(dashboardsTable).where(eq(dashboardsTable.id, row.id));
+  }
+  return rows.length;
+}
+
 async function sweepScratchAreas(): Promise<number> {
   const db = requirePlanetscaleDb();
   const rows = await db
@@ -485,6 +526,73 @@ async function findBindingFixture(
 }
 
 /** Keys `b` has that `a` does not — the "silent narrowing" check STEP 0's D2 was found by. */
+/**
+ * Every handler of the two deleted legacy trees, as (method, path) — 28 handlers across 15 route files,
+ * measured on `origin/main` before the deletion (config-v4 Phase 14 stage 13).
+ *
+ * 🛑 This is the ONLY proof that the deletion actually reached the server. `tsc` cannot see a URL in a
+ * template literal, so a client left behind on a legacy path compiles clean; and a route file left
+ * behind compiles clean too. A 404 from a REAL SESSION is the discriminator: with a valid Clerk JWT the
+ * middleware does not rewrite, so 404 means "Next has no such route" rather than "the edge ate it".
+ */
+const DELETED_LEGACY_HANDLERS: [string, (areaId: string) => string][] = [
+  ["GET", () => "/api/areas"],
+  ["POST", () => "/api/areas"],
+  ["GET", () => "/api/areas/readable"],
+  ["GET", () => "/api/areas/candidate-devices"],
+  ["GET", () => "/api/areas/by-handle/1"],
+  ["GET", (a) => `/api/areas/${a}`],
+  ["PATCH", (a) => `/api/areas/${a}`],
+  ["DELETE", (a) => `/api/areas/${a}`],
+  ["GET", (a) => `/api/areas/${a}/bindings`],
+  ["PUT", (a) => `/api/areas/${a}/bindings`],
+  ["POST", (a) => `/api/areas/${a}/devices`],
+  ["DELETE", (a) => `/api/areas/${a}/devices`],
+  ["GET", (a) => `/api/areas/${a}/default-section`],
+  ["GET", (a) => `/api/areas/${a}/provenance-daily`],
+  ["GET", (a) => `/api/areas/${a}/provenance-summary`],
+  ["POST", (a) => `/api/areas/${a}/recompute-provenance`],
+  ["GET", () => "/api/dashboards"],
+  ["POST", () => "/api/dashboards"],
+  ["GET", () => `/api/dashboards/${UNKNOWN_DASHBOARD}`],
+  ["PATCH", () => `/api/dashboards/${UNKNOWN_DASHBOARD}`],
+  ["DELETE", () => `/api/dashboards/${UNKNOWN_DASHBOARD}`],
+  ["GET", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/share`],
+  ["POST", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/share`],
+  ["PATCH", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/share`],
+  ["DELETE", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/share`],
+  ["GET", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/grants`],
+  ["POST", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/grants`],
+  ["DELETE", () => `/api/dashboards/${UNKNOWN_DASHBOARD}/grants`],
+];
+
+async function assertLegacyTreesDeleted(realAreaId: string): Promise<void> {
+  section("🛑 the LEGACY /api/areas + /api/dashboards trees are DELETED");
+  // A REAL area id, not a synthetic one: a surviving route would answer 200/403 on it rather than the
+  // 404 an unknown id would produce anyway, so the assertion cannot pass for the wrong reason.
+  const alive: string[] = [];
+  for (const [method, path] of DELETED_LEGACY_HANDLERS) {
+    const res = await call(method, path(realAreaId), {
+      body: method === "GET" || method === "DELETE" ? undefined : {},
+    });
+    if (res.status !== 404)
+      alive.push(`${method} ${path(realAreaId)} → ${res.status}`);
+  }
+  ok(
+    alive.length === 0,
+    `all ${DELETED_LEGACY_HANDLERS.length} deleted legacy handlers answer 404 to an AUTHENTICATED caller`,
+    { stillAlive: alive },
+  );
+  // The control: the v4 replacements are still there, so a blanket "everything 404s" (a broken dev
+  // server, a bad base URL) cannot pass the check above.
+  const control = await call("GET", `/api/v4/areas/${realAreaId}`);
+  ok(
+    control.status === 200,
+    "…while the v4 replacement still answers 200 (so this is deletion, not a dead server)",
+    control.status,
+  );
+}
+
 function missingKeys(a: unknown, b: unknown): string[] {
   const has = Object.keys((a ?? {}) as object);
   return Object.keys((b ?? {}) as object).filter((k) => !has.includes(k));
@@ -495,11 +603,18 @@ async function main(): Promise<void> {
   console.log(`target: ${BASE}`);
 
   const scratch = new Set<string>();
+  /**
+   * Delete the scratch dashboards over HTTP. A 200 is proof; anything else — INCLUDING 404 — is only
+   * "unconfirmed", and is left to `sweepScratchDashboards()` to settle against the database. See that
+   * function for why a 404 cannot be read as "already gone".
+   */
   const trash = async (): Promise<void> => {
     for (const id of scratch) {
       const r = await call("DELETE", `/api/v4/dashboards/${id}`);
-      if (r.status !== 200 && r.status !== 404)
-        console.error(`  ! failed to delete scratch ${id}: ${r.status}`);
+      if (r.status !== 200)
+        console.error(
+          `  ! scratch ${id}: DELETE answered ${r.status}, not 200 — deferring to the DB sweep`,
+        );
       scratch.delete(id);
     }
   };
@@ -513,6 +628,14 @@ async function main(): Promise<void> {
     }
   }
   await trash();
+  // The DB sweep also runs at the START, and it is the one that actually finds a crashed run's debris:
+  // the discovery above goes through `GET /api/v4/dashboards`, which has the same 404-at-the-edge
+  // blind spot as the DELETE — if that GET is refused, the loop finds nothing and reports nothing.
+  const preSweptDash = await sweepScratchDashboards();
+  if (preSweptDash > 0)
+    console.log(
+      `  (swept ${preSweptDash} leftover scratch dashboard(s) the HTTP teardown had missed)`,
+    );
   const preSwept = await sweepScratchAreas();
   if (preSwept > 0)
     console.log(
@@ -550,18 +673,62 @@ async function main(): Promise<void> {
       "every entry carries `legacySystemId` (the handle every card binds its data to)",
       list[0],
     );
-    const legacyTwin = await call("GET", "/api/areas/readable");
-    const twinKeys = Object.keys(legacyTwin.body?.areas?.[0] ?? {});
-    const narrowed = twinKeys.filter((k) => !(k in (list[0] ?? {})));
+    // 🛑 THE `readableAreasQuery` CONTRACT, pinned exactly (config-v4 Phase 14 stage 13). Until now this
+    // was diffed against `GET /api/areas/readable`; that route is deleted, so the contract is stated
+    // directly against `ReadableArea` — the type `lib/queries/areas.ts` casts the body to, unchecked.
     ok(
-      twinKeys.length > 0 && narrowed.length === 0,
-      "carries every field GET /api/areas/readable does (no silent narrowing)",
-      { narrowed, twinKeys },
+      list.length > 0 &&
+        list.every(
+          (a: any) =>
+            typeof a.id === "string" &&
+            typeof a.displayName === "string" &&
+            typeof a.legacySystemId === "number" &&
+            typeof a.chartCapable === "boolean",
+        ),
+      "every entry satisfies `ReadableArea` in full — the shape readableAreasQuery casts to",
+      list[0],
     );
     // Prefer a chart-capable area: it exercises the richest seed strategy.
     const area = list.find((a: any) => a.chartCapable) ?? list[0];
     if (!area) throw new Error("no readable areas — cannot continue");
     console.log(`  using area ${area.id} (${area.displayName})`);
+
+    // ------------------------------------------------------------- 1b. GET /devices
+    // The area builder's member picker (config-v4 Phase 14 stage 13). Never driven over HTTP before —
+    // stage 12 covered it with route tests only, and it had no client until this stage.
+    section("GET /api/v4/devices — the area builder's member picker");
+    const devicesRes = await call("GET", "/api/v4/devices");
+    ok(devicesRes.status === 200, "200", devicesRes.status);
+    const deviceList: any[] = devicesRes.body?.devices ?? [];
+    ok(deviceList.length > 0, "returns the caller's readable devices", {
+      count: deviceList.length,
+    });
+    // The exact `CandidateDevice` key set `components/area-builder/types.ts` casts to. `legacySystemId`
+    // is what MembersTab renders as "ID: n" and what create-mode joins the seed device on; `id` (dv_) is
+    // the currency `POST /api/v4/areas` and `PUT …/members` take.
+    ok(
+      deviceList.every(
+        (d: any) =>
+          (d.id === null || String(d.id).startsWith("dv_")) &&
+          typeof d.legacySystemId === "number" &&
+          typeof d.name === "string" &&
+          "slug" in d &&
+          typeof d.vendor === "string" &&
+          "vendorSiteId" in d &&
+          typeof d.status === "string" &&
+          "ownerUserId" in d,
+      ),
+      "every entry satisfies `CandidateDevice` in full (id: dv_…, legacySystemId, name, slug, vendor, vendorSiteId, status, ownerUserId)",
+      deviceList[0],
+    );
+    ok(
+      deviceList.every(
+        (d: any) =>
+          !("displayName" in d) && !("vendorType" in d) && !("alias" in d),
+      ),
+      "…and speaks v4 vocabulary only (no displayName/vendorType/alias)",
+      Object.keys(deviceList[0] ?? {}),
+    );
 
     // ---------------------------------------------------------------- 2. GET /areas/{id}
     section("GET /api/v4/areas/{id}");
@@ -724,22 +891,6 @@ async function main(): Promise<void> {
       throw new Error("area create failed — cannot continue");
     const areaId: string = createdArea.body.id;
 
-    // The key-by-key diff against the legacy twin, on a real second creation.
-    const legacyCreated = await call("POST", "/api/areas", {
-      body: {
-        displayName: `${AREA_PREFIX} legacy-twin`,
-        memberSystemIds: [handleA, handleB],
-      },
-    });
-    ok(legacyCreated.status === 200, "legacy POST /api/areas still works", {
-      status: legacyCreated.status,
-    });
-    ok(
-      missingKeys(createdArea.body, legacyCreated.body).length === 0,
-      "the v4 create echoes every key the legacy twin does (no silent narrowing)",
-      { missing: missingKeys(createdArea.body, legacyCreated.body) },
-    );
-
     const slugClash = await call("POST", "/api/v4/areas", {
       body: {
         name: `${AREA_PREFIX} clash`,
@@ -829,28 +980,17 @@ async function main(): Promise<void> {
       "the PUT's binding shape is identical to the aggregate GET's (same loader)",
       putBindings.body.bindings[0],
     );
-    // The legacy twin, driven on the same area, for the key diff. It returns the editor projection
-    // (role/metricType/pointId/transform); v4 must carry all of it plus `id` and `priority`.
-    const legacyBindings = await call("PUT", `/api/areas/${areaId}/bindings`, {
-      body: { bindings: wantBindings },
-    });
+    // 🛑 The `AreaBinding` contract BindingsTab casts to (stage 13). Previously diffed against the
+    // legacy editor projection (role/metricType/pointId/transform); that route is deleted, so the four
+    // legacy keys plus the two v4 widenings (`id`, `priority`) are asserted directly.
     ok(
-      legacyBindings.status === 200,
-      "legacy PUT bindings still works",
-      legacyBindings.status,
-    );
-    ok(
-      missingKeys(
-        putBindings.body.bindings[0],
-        legacyBindings.body?.bindings?.[0],
-      ).length === 0,
-      "the v4 bindings PUT echoes every key the legacy twin does",
-      {
-        missing: missingKeys(
-          putBindings.body.bindings[0],
-          legacyBindings.body?.bindings?.[0],
-        ),
-      },
+      ["id", "role", "metricType", "pointId", "priority", "transform"].every(
+        (k) => k in putBindings.body.bindings[0],
+      ) &&
+        putBindings.body.bindings[0].id.startsWith("bn_") &&
+        putBindings.body.bindings[0].pointId.startsWith("pt_"),
+      "a binding is { id: bn_…, role, metricType, pointId: pt_…, priority, transform }",
+      putBindings.body.bindings[0],
     );
     const foreignPoint = await call("PUT", `/api/v4/areas/${areaId}/bindings`, {
       body: {
@@ -953,20 +1093,38 @@ async function main(): Promise<void> {
       "a pure reorder is applied (ordinal = array index)",
       reordered.body?.members?.map((m: any) => m.id),
     );
-    // The legacy twins still work on the same area — PR 13 has not moved them yet.
-    const legacyAddRemove = await call(
-      "DELETE",
-      `/api/areas/${areaId}/devices`,
-      { body: { systemId: handleB } },
-    );
-    ok(
-      legacyAddRemove.status === 200 && legacyAddRemove.body?.ok === true,
-      "legacy DELETE /devices still works and still answers { ok: true }",
-      legacyAddRemove,
-    );
+    // 🛑 THE `AreaMember` CONTRACT, and the one v4 widening stage 13 needed. `members[]` used to carry
+    // only the `dv_`, but the Bindings tab addresses `/api/device/{handle}/points` — the ONLY way to
+    // enumerate a member's bindable points — and re-deriving that handle by joining
+    // `GET /api/v4/devices` silently drops every member that route filters out (it is `activeOnly`, and
+    // two `status='removed'` members exist on liveone-dev today). So the number is carried.
     await call("PUT", `/api/v4/areas/${areaId}/members`, {
       body: { members: [fixture.deviceA, fixture.deviceB] },
     });
+    const memberShape = (await call("GET", `/api/v4/areas/${areaId}`)).body
+      ?.members;
+    ok(
+      Array.isArray(memberShape) &&
+        memberShape.length === 2 &&
+        memberShape.every(
+          (m: any) =>
+            typeof m.id === "string" &&
+            m.id.startsWith("dv_") &&
+            typeof m.legacySystemId === "number" &&
+            typeof m.name === "string" &&
+            typeof m.vendor === "string" &&
+            typeof m.status === "string" &&
+            Array.isArray(m.capabilities),
+        ),
+      "a member is { id: dv_…, legacySystemId, name, vendor, status, capabilities }",
+      memberShape?.[0],
+    );
+    ok(
+      memberShape?.map((m: any) => m.legacySystemId).join(",") ===
+        [handleA, handleB].join(","),
+      "…and each `legacySystemId` is the member's real handle, in membership order",
+      { got: memberShape?.map((m: any) => m.legacySystemId), handleA, handleB },
+    );
 
     // 🛑 A SERVER-MANAGED `vendor:"helper"` member survives being omitted from a full replace. Driven on
     // a throwaway area, never on a real one — but the hazard it guards is real and lives on the real
@@ -1174,15 +1332,12 @@ async function main(): Promise<void> {
       "{ ok, areaId: ar_…, systemId, recomputed, rowsWritten, attrRows, from, to, nextCursor, done }",
       recompute.body,
     );
-    const legacyRecompute = await call(
-      "POST",
-      `/api/areas/${area.id}/recompute-provenance`,
-      { body: { start: day, end: day, cursor: day, limit: 1 } },
-    );
+    // The `recomputeAreaFlow` client loop reads exactly these three off each batch; a missing
+    // `nextCursor`/`done` pair would loop 200 times or stop after one batch, both silently.
     ok(
-      missingKeys(recompute.body, legacyRecompute.body).length === 0,
-      "the v4 recompute echoes every key the legacy twin does (one shared implementation)",
-      { missing: missingKeys(recompute.body, legacyRecompute.body) },
+      ["recomputed", "nextCursor", "done"].every((k) => k in recompute.body),
+      "…carrying the { recomputed, nextCursor, done } lib/areas/recompute-flow.ts loops on",
+      recompute.body,
     );
 
     // ---------------------------------------------------------------- 5h. DELETE
@@ -1236,6 +1391,19 @@ async function main(): Promise<void> {
           !("alias" in d),
       ),
       "list speaks v4 vocabulary (name/slug, never displayName/alias)",
+      dashboards.body.dashboards?.[0],
+    );
+    // 🛑 THE `DashboardSummaryDTO` CONTRACT (config-v4 Phase 14 stage 13). `myDashboardsQuery` casts the
+    // body to this unchecked, and `app/dashboard/[...slug]/page.tsx` SSR-SEEDS THE SAME CACHE KEY from
+    // the DAO — which spells these `displayName`/`alias`. If the seed and the fetch disagree the
+    // switcher paints "Untitled" until the first refetch quietly replaces it.
+    ok(
+      dashboards.body.dashboards.every((d: any) =>
+        ["id", "name", "slug", "cardCount", "updatedAt", "access"].every(
+          (k) => k in d,
+        ),
+      ),
+      "every entry satisfies `DashboardSummaryDTO` in full — the shape the SSR seed must mirror",
       dashboards.body.dashboards?.[0],
     );
 
@@ -1601,23 +1769,29 @@ async function main(): Promise<void> {
     ok(blankLabel.status === 422, "a blank label → 422", blankLabel);
 
     section(
-      "GET /api/v4/dashboards/{id}/shares — key-by-key vs the legacy twin",
+      "GET /api/v4/dashboards/{id}/shares — the ShareLinksPanel contract",
     );
     const listed = await call("GET", `/api/v4/dashboards/${sd}/shares`);
+    // 🛑 THE CONTAINER KEY IS `tokens`, NOT `shares` — §9.2 renames the ROUTE, not the payload.
+    // `DashboardSettingsDialog`'s `shareApi.list` reads `(await res.json()).tokens ?? []`, so a rename
+    // here would render "no share links yet" forever with a 200 and no console error.
     ok(
-      listed.body?.tokens?.length === 2,
-      "both tokens are listed",
-      listed.body,
+      Array.isArray(listed.body?.tokens) && listed.body.tokens.length === 2,
+      "the container key is `tokens` (NOT `shares`) and both tokens are listed",
+      Object.keys(listed.body ?? {}),
     );
-    const legacyShares = await call("GET", `/api/dashboards/${sd}/share`);
-    const legacyKeys = Object.keys(legacyShares.body?.tokens?.[0] ?? {});
-    const missingKeys = legacyKeys.filter(
-      (k) => !(k in (listed.body?.tokens?.[0] ?? {})),
-    );
+    // The exact `ShareTokenRow` key set the panel destructures (components/ShareLinksPanel.tsx).
     ok(
-      legacyKeys.length > 0 && missingKeys.length === 0,
-      "carries every field GET /api/dashboards/{id}/share does (no silent narrowing)",
-      { missingKeys, legacyKeys },
+      [
+        "token",
+        "label",
+        "createdAtMs",
+        "expiresAtMs",
+        "revokedAtMs",
+        "lastUsedAtMs",
+      ].every((k) => k in (listed.body?.tokens?.[0] ?? {})),
+      "each row satisfies `ShareTokenRow` in full — the shape ShareLinksPanel renders",
+      listed.body?.tokens?.[0],
     );
 
     section("PATCH /api/v4/dashboards/{id}/shares — relabel");
@@ -1860,11 +2034,12 @@ async function main(): Promise<void> {
     const CARLA = "user_p14share_carla";
     const ownerId = cachedUserId!;
 
-    const noMembers = await call("GET", `/api/v4/dashboards/${sd}/grants`);
+    const noGrantMembers = await call("GET", `/api/v4/dashboards/${sd}/grants`);
     ok(
-      noMembers.status === 200 && noMembers.body?.members?.length === 0,
+      noGrantMembers.status === 200 &&
+        noGrantMembers.body?.members?.length === 0,
       "a fresh dashboard has no members",
-      noMembers.body,
+      noGrantMembers.body,
     );
 
     const two = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
@@ -1951,18 +2126,16 @@ async function main(): Promise<void> {
       afterSideways.body?.members,
     );
 
-    section(
-      "GET /api/v4/dashboards/{id}/grants — key-by-key vs the legacy twin",
-    );
-    const legacyGrants = await call("GET", `/api/dashboards/${sd}/grants`);
-    const legacyMemberKeys = Object.keys(legacyGrants.body?.members?.[0] ?? {});
-    const missingMemberKeys = legacyMemberKeys.filter(
-      (k) => !(k in (afterSideways.body?.members?.[0] ?? {})),
-    );
+    section("GET /api/v4/dashboards/{id}/grants — the GrantsPanel contract");
+    // The exact `Member` key set `components/GrantsPanel.tsx` destructures. It is also the PUT input
+    // shape: the panel restates the current membership by `clerkUserId` + `role` on every write, so a
+    // missing `clerkUserId` here would make every add silently re-declare an empty membership.
     ok(
-      legacyMemberKeys.length > 0 && missingMemberKeys.length === 0,
-      "carries every field GET /api/dashboards/{id}/grants does — INCLUDING the Clerk decoration",
-      { missingMemberKeys, legacyMemberKeys },
+      ["clerkUserId", "role", "email", "name", "createdAtMs"].every(
+        (k) => k in (afterSideways.body?.members?.[0] ?? {}),
+      ),
+      "each member is { clerkUserId, role, email, name, createdAtMs } — INCLUDING the Clerk decoration",
+      afterSideways.body?.members?.[0],
     );
     ok(
       "email" in (afterSideways.body?.members?.[0] ?? {}) &&
@@ -2068,12 +2241,172 @@ async function main(): Promise<void> {
     const delAgain = await call("DELETE", `/api/v4/dashboards/${created}`);
     ok(delAgain.status === 404, "deleting it again → 404", delAgain);
 
-    // ==================================================================  } finally {
+    // ================================================================= THE ORPHAN READS (stage 12)
+    //
+    // 🛑 RESTORED IN STAGE 13, having been silently LOST. Stage 12 landed four sections here — the
+    // `by-handle`, `provenance-summary` and `provenance-daily` route-matcher proofs, plus the
+    // anonymous share-token leg — and the #317 rebase dropped all of them along with the call site of
+    // `driveSharedProvenanceDaily` (whose *definition* survived, so nothing looked wrong). Nothing
+    // noticed for three merges, because this file is checked by no gate at all: `tsconfig.json`
+    // excludes `scripts/`, and no test imported it. `scripts/__tests__/smoke-driver-parses.test.ts`
+    // is now the floor under that. See its header for the full bisect.
+    //
+    // Their oracle used to be the legacy twin, key-by-key. That twin is deleted, so each check is now
+    // stated directly — and the ONES THAT MATTER MOST are unchanged either way, because they were
+    // never comparisons: they are the `lib/route-matchers.ts` proofs, and they turn on the difference
+    // between a 401 FROM THE HANDLER and a 404 FROM THE EDGE. A logged-in tester sees 200 both ways.
+
+    // --------------------------------------------------------------- 14. by-handle
+    section("GET /api/v4/areas/by-handle/{handle}");
+    const v4ByHandle = await call("GET", `/api/v4/areas/by-handle/${handle}`);
+    ok(v4ByHandle.status === 200, "200", v4ByHandle);
+    ok(
+      v4ByHandle.body?.areaId === area.id,
+      "resolves to the ar_ TypeID we started from",
+      v4ByHandle.body,
+    );
+    ok(
+      (await call("GET", "/api/v4/areas/by-handle/not-a-number")).status ===
+        400,
+      "non-integer handle → 400",
+    );
+    ok(
+      (await call("GET", "/api/v4/areas/by-handle/987654321")).status === 404,
+      "unknown handle → 404",
+    );
+    // 🛑 THE ROUTE-MATCHER PROOF for publicRoutes. Anonymous must reach the HANDLER (401), not the
+    // edge (404). Without the `publicRoutes` entry this is a 404 — and a logged-in tester never sees it.
+    ok(
+      (
+        await request("GET", `/api/v4/areas/by-handle/${handle}`, {
+          as: "anon",
+        })
+      ).status === 401,
+      "anonymous → 401 from the HANDLER, not 404 from the edge (publicRoutes entry present)",
+    );
+
+    // --------------------------------------------------------------- 15. provenance-summary
+    section("GET /api/v4/areas/{id}/provenance-summary");
+    const summary = await call(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-summary?last=30d`,
+    );
+    ok(summary.status === 200, "200", summary);
+    ok(
+      (await call("GET", `/api/v4/areas/${area.id}/provenance-summary?last=0d`))
+        .status === 400,
+      "malformed date params → 400",
+    );
+    ok(
+      (await call("GET", "/api/v4/areas/not-a-typeid/provenance-summary"))
+        .status === 400,
+      "malformed area id → 400",
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/${UNKNOWN_AREA}/provenance-summary`))
+        .status === 404,
+      "unknown area id → 404 (this gate is cron-reachable, so it cannot use the readable-set 403)",
+    );
+    ok(
+      (
+        await request("GET", `/api/v4/areas/${area.id}/provenance-summary`, {
+          as: "anon",
+        })
+      ).status === 401,
+      "anonymous → 401 from the HANDLER, not 404 from the edge (publicRoutes entry present)",
+    );
+    if (process.env.CRON_SECRET) {
+      ok(
+        (
+          await request(
+            "GET",
+            `/api/v4/areas/${area.id}/provenance-summary?last=30d`,
+            { as: "cron" },
+          )
+        ).status === 200,
+        "CRON_SECRET bearer → 200 (headless ops, no Clerk session)",
+      );
+      ok(
+        (
+          await request("GET", `/api/v4/areas/by-handle/${handle}`, {
+            as: "cron",
+          })
+        ).status === 200,
+        "CRON_SECRET bearer reaches by-handle too",
+      );
+    } else {
+      skip("the CRON_SECRET leg", "CRON_SECRET is not set in this environment");
+    }
+
+    // --------------------------------------------------------------- 16. provenance-daily
+    // The read path `lib/queries/provenanceDaily.ts` moved onto in this stage.
+    section("GET /api/v4/areas/{id}/provenance-daily");
+    const daily = await call(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-daily?last=7d`,
+    );
+    ok(daily.status === 200, "200", daily.status);
+    ok(
+      Array.isArray(daily.body?.days) &&
+        Object.values(daily.body?.fields ?? {}).every(
+          (col: any) => col.length === daily.body.days.length,
+        ),
+      "every field column is parallel to `days` (the dense-columnar invariant)",
+      { days: daily.body?.days?.length },
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/${area.id}/provenance-daily?last=x`))
+        .status === 400,
+      "malformed date params → 400",
+    );
+    // 🛑 THE ROUTE-MATCHER PROOF for shareableRoutes. An anonymous request carrying `?access=` must
+    // reach the HANDLER. Without the entry the edge 404s it — invisible to every logged-in tester,
+    // broken for every anonymous shared-dashboard viewer, and now the ONLY entry standing (its legacy
+    // sibling went with the route in this stage).
+    const garbageToken = await request(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-daily?access=not-a-real-token`,
+      { as: "anon" },
+    );
+    ok(
+      garbageToken.status !== 404,
+      "anonymous ?access= reaches the handler (NOT 404 at the edge) — shareableRoutes entry present",
+      garbageToken.status,
+    );
+    ok(
+      garbageToken.status === 401 || garbageToken.status === 403,
+      "…and a garbage token is then rejected by the handler",
+      garbageToken,
+    );
+    ok(
+      (
+        await request("GET", `/api/v4/areas/${area.id}/provenance-daily`, {
+          as: "anon",
+        })
+      ).status === 404,
+      "anonymous WITHOUT ?access= is still 404'd at the edge (the bypass is token-presence-gated)",
+    );
+    // …and the real thing: a live share token, no Clerk session at all.
+    await driveSharedProvenanceDaily(list);
+
+    // ---------------------------------------------------------------- 17. the legacy trees are GONE
+    await assertLegacyTreesDeleted(area.id);
+
+    // ==================================================================
+  } finally {
     await trash();
+    // 🛑 The backstop, and it must run even when `trash()` reported success — that is the whole point.
+    // A non-zero count here means the HTTP teardown believed it had deleted something it had not.
+    const leaked = await sweepScratchDashboards();
     const swept = await sweepScratchAreas();
     console.log(
       `\ncleaned up scratch dashboards, and hard-deleted ${swept} scratch area(s)`,
     );
+    if (leaked > 0)
+      console.error(
+        `  ! ${leaked} scratch dashboard(s) survived the HTTP teardown and were swept from the DB — ` +
+          `the DELETE did not do what its status code claimed`,
+      );
   }
 
   console.log(

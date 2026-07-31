@@ -34,6 +34,7 @@ const source = () => {
       members: [
         {
           id: member,
+          legacySystemId: 42,
           name: "Inverter",
           vendor: "test",
           status: "active",
@@ -75,6 +76,7 @@ describe("final v4 area detail wire shape", () => {
       members: [
         {
           id: ids.member,
+          legacySystemId: 42,
           name: "Inverter",
           vendor: "test",
           status: "active",
@@ -96,6 +98,22 @@ describe("final v4 area detail wire shape", () => {
     expect(JSON.stringify(result)).not.toMatch(
       /"systemId"|pointSystemId|ordinal/,
     );
+  });
+
+  it("carries the integer data ADDRESS per MEMBER too — the Bindings tab's point-fetch key", () => {
+    // A member's handle is what `GET /api/device/{handle}/points` is addressed by. Re-deriving it by
+    // joining `GET /api/v4/devices` drops any member that route filters out (it is `activeOnly`), so a
+    // `status='removed'` member would silently lose its points from the picker.
+    const { ids, input } = source();
+    const [member] = areaDetailResponse(input).members;
+    expect(member).toEqual({
+      id: ids.member,
+      legacySystemId: 42,
+      name: "Inverter",
+      vendor: "test",
+      status: "active",
+      capabilities: ["battery/soc"],
+    });
   });
 
   it("carries the integer data ADDRESS, exactly as GET /api/areas/{areaId} does", () => {

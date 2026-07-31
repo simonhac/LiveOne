@@ -71,7 +71,7 @@ export default function DashboardsMenu({
             onClick={onNavigate}
             className={`${itemClassName} ${isActive ? activeItemClassName : ""} flex items-center gap-2`}
           >
-            <span className="truncate">{d.displayName ?? "Untitled"}</span>
+            <span className="truncate">{d.name ?? "Untitled"}</span>
             {isDefault && (
               <Star className="h-3.5 w-3.5 flex-shrink-0 fill-yellow-400 text-yellow-400" />
             )}

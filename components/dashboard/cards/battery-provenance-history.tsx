@@ -7,7 +7,7 @@
  * `helper:area:<uuid>` vendorSiteId (raw uuid, below the seam — the helper device identity, not a
  * public area id); on a real area dashboard the node's inherited `context.area` is used as-is
  * (already `ar_`, §8.1). Both are normalized to `ar_` before reaching the panel, so no raw uuid
- * reaches the `/api/areas/*` wire.
+ * reaches the `/api/v4/areas/*` wire.
  *
  * 🛑 The `device-` SENTINEL BRANCH IS GONE (config-v4 Phase 14 stage 9). Its only producer was
  * `/device/{id}`, which synthesised `device-{id}` as a stand-in `section.areaId` when a device had no
