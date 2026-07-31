@@ -7,8 +7,7 @@ import {
 } from "../v3-to-v4";
 import { validateDocV4, collectRefs, normalizeDocV4 } from "../v4-validate";
 import { walkNodes } from "../v4";
-import { descriptorAreaIds } from "../composition";
-import type { DashboardV3 } from "../v3";
+import { sectionAreaIdsV3, type DashboardV3 } from "../v3";
 
 /** Deterministic-per-run device resolver: each legacy int maps to one minted dv_ id. */
 function makeResolver(): {
@@ -76,14 +75,17 @@ describe("rewriteV3ToV4", () => {
     expect(missing).toBe(0);
   });
 
-  it("preserves share scope: v4 areas === descriptorAreaIds(v3) (§8.3)", () => {
+  it("preserves share scope: v4 areas === sectionAreaIdsV3(v3) (§8.3)", () => {
     const v3 = sampleV3();
     const { resolver } = makeResolver();
     const v4 = rewriteV3ToV4(v3, resolver);
     const v4AreaUuids = collectRefs(v4)
       .areas.map((a) => Area.toUuid(a))
       .sort();
-    const v3AreaUuids = [...descriptorAreaIds(v3)].sort();
+    // config-v4 Phase 14 stage 15: was `descriptorAreaIds` (composition.ts), which died with the
+    // `descriptor` column. `sectionAreaIdsV3` is its v3-native twin and lives beside the shape it
+    // reads, so both sides of this equivalence now die together at stage 16.
+    const v3AreaUuids = [...sectionAreaIdsV3(v3)].sort();
     expect(v4AreaUuids).toEqual(v3AreaUuids);
   });
 

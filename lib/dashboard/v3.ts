@@ -1,5 +1,11 @@
 /**
- * Nested dashboard model (v3) — the on-disk dashboard definition (dashboards.descriptor JSONB).
+ * Nested dashboard model (v3) — the retired on-disk dashboard definition (dashboards.descriptor JSONB).
+ *
+ * 🪦 **DEAD AS OF config-v4 Phase 14 stage 15, and deleted by stage 16.** Nothing reads or writes
+ * `dashboards.descriptor` any more, so this module, `./cards` and `./v3-to-v4` now form a CLOSED
+ * ISLAND: measured at stage 15, their only importers are each other and their own tests. They are
+ * kept for one more PR only because the column itself is still there. Do not add a caller — anything
+ * that needs a dashboard's shape wants `./v4`.
  *
  * Shape: Dashboard -> AreaSection -> Card -> device-bound Tile. See docs/plans/dashboard-nested-tile-model.md.
  *

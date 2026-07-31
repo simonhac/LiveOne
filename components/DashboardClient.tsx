@@ -37,8 +37,9 @@ interface DashboardClientProps {
     displayName: string | null;
     alias: string | null;
     /**
-     * The v4 node tree — the ONLY shape this shell knows about since Phase 14 stage 14 moved the
-     * last authoring surface (`AddAreaDialog`) and the settings dialog's area list off `descriptor`.
+     * The v4 node tree — the ONLY shape there is. Stage 14 moved the last authoring surface
+     * (`AddAreaDialog`) and the settings dialog's area list off `descriptor`; stage 15 stopped the
+     * server reading or writing that column at all.
      * `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and every write path validates it, so the
      * page always has one; a doc that fails the shape guard arrives as an empty document rather than
      * falling back to a second renderer.

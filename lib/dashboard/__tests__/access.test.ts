@@ -2,7 +2,7 @@ import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import { Area, Device, newUuidV7, type DeviceId } from "@/lib/ids";
 import type { DeviceAddr, DeviceRid } from "@/lib/registry";
 
-// dashboardAreaUuids requires a v3 section.areaId to be an `ar_` area ref (STRICT as of Phase 14)
+// dashboardAreaUuids requires an envelope `area` ref to be an `ar_` TypeID (STRICT as of Phase 14)
 // — short mnemonic labels ("site", "A", "ghost") no longer decode. Mint one real uuid per mnemonic so
 // the fixtures below can keep their readable labels while satisfying the decode.
 const AREA = new Proxy({} as Record<string, string>, {
@@ -30,29 +30,31 @@ import {
 } from "@/lib/dashboard/access";
 import { getLegacySystemIdForArea } from "@/lib/areas/resolve";
 import { PointManager } from "@/lib/point/point-manager";
-import type { DashboardV3 } from "@/lib/dashboard/v3";
 
 const mockGetLegacy = jest.mocked(getLegacySystemIdForArea);
 const mockGetInstance = jest.mocked(PointManager.getInstance);
 
-// Build a v3 descriptor whose SECTION areaIds are the distinct areaIds of the given cards — the only
-// thing the share-scope resolvers read (via descriptorAreaIds). Cards without an areaId contribute none.
-function descriptor(
-  cards: { type: string; id?: string; areaId?: string }[],
-): DashboardV3 {
-  const areaIds = [
-    ...new Set(cards.map((c) => c.areaId).filter((x): x is string => !!x)),
-  ];
+// Build a v4 document holding one area-scoped group per distinct area — the only thing the
+// share-scope resolvers read (the §8.3 envelope refs, via `collectRefs`).
+//
+// config-v4 Phase 14 stage 15: this was a v3 `descriptor` builder until `dashboards.descriptor` went
+// inert. Every assertion below is unchanged, because the scope has always been "the distinct Areas
+// the dashboard references" — only the shape carrying them moved.
+//
+// Decode is STRICT, so a stored `area` must be `ar_`. Encode HERE rather than minting `ar_` in the
+// AREA proxy, because the mocks above (getLegacySystemIdForArea) are keyed on the RAW uuid — the form
+// that travels below the seam. Encoding at exactly this boundary is what the real write path does.
+function doc(areaUuids: string[]): unknown {
   return {
-    version: 3,
-    // config-v4 Phase 14: decode is STRICT, so a stored `section.areaId` must be `ar_`. Encode here
-    // rather than minting `ar_` in the AREA proxy, because the mocks above (getLegacySystemIdForArea)
-    // are keyed on the RAW uuid — the form that travels below the seam. Encoding at exactly this
-    // boundary is what the real write path does, so every assertion below is unchanged.
-    sections: areaIds.map((areaId) => ({
-      areaId: Area.encode(areaId),
-      cards: [],
-    })),
+    version: 4,
+    root: {
+      kind: "group",
+      children: [...new Set(areaUuids)].map((areaId) => ({
+        kind: "group",
+        area: Area.encode(areaId),
+        children: [],
+      })),
+    },
   };
 }
 
@@ -108,9 +110,9 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     } as unknown as ReturnType<typeof PointManager.getInstance>);
   }
 
-  it("is empty for a descriptor with no sections", async () => {
+  it("is empty for a document with no area refs", async () => {
     withPoints({});
-    const out = await allowedSystemIds({ descriptor: descriptor([]) });
+    const out = await allowedSystemIds({ doc: doc([]) });
     expect(out).toEqual([]);
     // No Area uuids → no resolution happens at all.
     expect(mockGetLegacy).not.toHaveBeenCalled();
@@ -120,7 +122,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockGetLegacy.mockResolvedValue(7); // area → real device 7
     withPoints({ 7: [pt(7, 0), pt(7, 1)] });
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: AREA.a7 }]),
+      doc: doc([AREA.a7]),
     });
     expect(out).toEqual([7]);
   });
@@ -129,7 +131,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockGetLegacy.mockResolvedValue(1000002); // area handle
     withPoints({ 1000002: [pt(1, 0), pt(14, 0), pt(1, 5)] }); // members 1 + 14
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: AREA.site }]),
+      doc: doc([AREA.site]),
     });
     expect([...out].sort((a, b) => a - b)).toEqual([1, 14, 1000002]);
   });
@@ -146,10 +148,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
       8: [pt(5, 0), pt(6, 0)], // Kinkora-style child devices
     });
     const out = await allowedSystemIds({
-      descriptor: descriptor([
-        { type: "tiles", areaId: AREA.A },
-        { type: "chart", id: "c1", areaId: AREA.B },
-      ]),
+      doc: doc([AREA.A, AREA.B]),
     });
     expect([...out].sort((a, b) => a - b)).toEqual([1, 5, 6, 8, 14, 1000002]);
   });
@@ -158,7 +157,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     mockGetLegacy.mockResolvedValue(null); // uuid unknown
     withPoints({});
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "chart", id: "c1", areaId: AREA.ghost }]),
+      doc: doc([AREA.ghost]),
     });
     expect(out).toEqual([]);
   });
@@ -172,7 +171,7 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
       getActivePointsForDevice,
     } as unknown as ReturnType<typeof PointManager.getInstance>);
     const out = await allowedSystemIds({
-      descriptor: descriptor([{ type: "tiles", areaId: AREA.site }]),
+      doc: doc([AREA.site]),
     });
     expect(out).toEqual([1000002]);
   });
@@ -194,7 +193,6 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     );
     withPoints({ 14: [pt(14, 0), pt(14, 1)] });
     const out = await allowedSystemIds({
-      descriptor: descriptor([]),
       doc: {
         version: 4,
         root: {
@@ -204,6 +202,17 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
       },
     });
     expect(out).toEqual([14]);
+  });
+
+  // config-v4 Phase 14 stage 15: there is no `descriptor` fallback left, so a doc that fails the v4
+  // shape guard resolves to NOTHING rather than to a second, divergent document. Fail-closed: an
+  // unreadable dashboard authorizes no device at all.
+  it("a doc that is not valid v4 → empty scope, and nothing is resolved", async () => {
+    withPoints({});
+    for (const bad of [null, undefined, {}, { version: 3, sections: [] }]) {
+      expect(await allowedSystemIds({ doc: bad })).toEqual([]);
+    }
+    expect(mockGetLegacy).not.toHaveBeenCalled();
   });
 });
 
@@ -222,7 +231,7 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      descriptor: descriptor([{ type: "tiles", areaId: AREA.composite }]),
+      doc: doc([AREA.composite]),
     });
     expect(out.systemIds).toEqual([5, 6]);
     expect(out.points).toHaveLength(3);
@@ -241,10 +250,7 @@ describe("resolveDashboardReadPoints — union of points across allowed areas", 
     } as unknown as ReturnType<typeof PointManager.getInstance>);
 
     const out = await resolveDashboardReadPoints({
-      descriptor: descriptor([
-        { type: "tiles", areaId: AREA.good },
-        { type: "chart", id: "c1", areaId: AREA.gone },
-      ]),
+      doc: doc([AREA.good, AREA.gone]),
     });
     // sys 999 threw and was skipped; sys 5's points survive.
     expect(out.systemIds).toEqual([5]);

@@ -116,3 +116,20 @@ export function walkNodes(
   };
   recur(doc.root, 1);
 }
+
+/**
+ * How many LEAF CARD nodes a document holds — "how much is on this dashboard", for the dashboard
+ * list and the admin table. Groups are structure, not content, so they are not counted; the walk is
+ * over the whole tree, so a card nested inside a `row` inside a section group still counts once.
+ *
+ * config-v4 Phase 14 stage 15: this replaces `allCardsV3(descriptor).length`. The v3 count went to
+ * zero for every dashboard created after the v4 cutover, because the seed is written to `doc` while
+ * `descriptor` stayed empty (measured at stage 13 on `/admin/dashboards`).
+ */
+export function countCardNodes(doc: DashboardV4): number {
+  let n = 0;
+  walkNodes(doc, (node) => {
+    if (node.kind === "card") n++;
+  });
+  return n;
+}

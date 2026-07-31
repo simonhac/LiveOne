@@ -2,8 +2,12 @@
  * Composition-first dashboard CRUD (Phase 2b-2) — first-class, owner-scoped, id/alias-addressed.
  *
  * Distinct from the legacy per-(user,device) `store.ts` (retired with the old path). A row here has
- * `display_name`, an optional owner-unique `alias`, and a composition `descriptor` (every card
- * area-bound); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
+ * `display_name`, an optional owner-unique `alias`, and a v4 `doc` (the node-tree document, every
+ * scope ref on the envelope); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
+ *
+ * config-v4 Phase 14 stage 15: `dashboards.descriptor` (the retired v3 shape) is no longer READ
+ * anywhere and is WRITTEN exactly once — the literal `'{}'::jsonb` in `createDashboard`, which exists
+ * only to satisfy the column's NOT NULL until stage 16 drops it. See that insert for why it is raw SQL.
  *
  * config-v4 id boundary: the `dashboards` PK is a uuid, but this module's PUBLIC surface speaks the
  * opaque `db_…` TypeID (the `id` field of every returned object; every id PARAM). The raw uuid is decoded
@@ -17,13 +21,11 @@ import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
 import {
-  allCardsV3,
-  normalizeDescriptor,
-  isDashboardV3,
-  type DashboardV3,
-} from "./v3";
-import type { DashboardV4 } from "./v4";
-import { rewriteV3ToV4, pureAreaRef } from "./v3-to-v4";
+  countCardNodes,
+  emptyDashboardV4,
+  isDashboardV4,
+  type DashboardV4,
+} from "./v4";
 import { listGrantsForUser } from "./grants";
 
 export interface CompositionDashboard {
@@ -31,11 +33,10 @@ export interface CompositionDashboard {
   ownerClerkUserId: string;
   displayName: string | null;
   alias: string | null;
-  descriptor: DashboardV3;
-  /** config-v4 dark column: the v4 node-tree document, or null for a v3 dashboard. Drives the
-   *  dual-shape render window (see app/dashboard/[...slug]/page.tsx). */
+  /** The v4 node-tree document — the ONLY shape a dashboard has (config-v4 Phase 14 stage 15).
+   *  `dashboards.doc` is NOT NULL, so this is null only for a jsonb that fails the shape guard. */
   doc: DashboardV4 | null;
-  /** config-v4 dark column: whole-doc revision counter (default 1). */
+  /** Whole-doc revision counter (default 1); the optimistic-concurrency token for the v4 doc PUT. */
   revision: number;
   createdAt: Date;
   updatedAt: Date;
@@ -85,40 +86,61 @@ function isAliasCollision(err: unknown): boolean {
   return isUniqueViolationOn(err, ALIAS_UNIQUE);
 }
 
-/** Create a new composition dashboard for `ownerClerkUserId`. Returns its id. */
+/**
+ * Create a new composition dashboard for `ownerClerkUserId`. Returns its id.
+ *
+ * The row is created EMPTY — an `emptyDashboardV4()` doc. Content arrives immediately afterwards via
+ * `updateDashboardDoc` (`POST /api/v4/dashboards` seeds, then PUTs), which is the document's only author.
+ *
+ * 🛑 **Why this is raw SQL and not `db.insert(dashboards)` — config-v4 Phase 14 stage 15.**
+ * `dashboards.descriptor` is retired but still `NOT NULL` **with no DB default** until stage 16 drops
+ * it, so *something* must put a value in it. The column is deliberately NOT declared in `schema.ts`
+ * (a projection-less `.select()` must never name a column that is about to disappear — that is what
+ * breaks the instant the DROP lands), which also means drizzle cannot write it. Hence one hand-written
+ * INSERT supplying the constant `'{}'::jsonb`.
+ *
+ * The alternative — a DB-level `DEFAULT '{}'::jsonb` — was rejected: it needs its own migration applied
+ * to prod AND dev *before* this code deploys, i.e. an extra ordered DDL step, to buy nothing that
+ * survives stage 16. This way stage 16 is exactly: `ALTER TABLE dashboards DROP COLUMN descriptor`,
+ * plus restoring the drizzle insert below. Values are parameterized (`sql` interpolation binds them),
+ * so this is not a string-concatenation hazard.
+ *
+ * 🧹 STAGE 16: delete the `descriptor` column + value from the statement and put back:
+ *
+ *     const [row] = await requirePlanetscaleDb()
+ *       .insert(dashboards)
+ *       .values({
+ *         ownerUserId: args.ownerClerkUserId,
+ *         name: args.displayName,
+ *         slug: args.alias ?? null,
+ *         doc: emptyDashboardV4(),
+ *       })
+ *       .returning({ id: dashboards.id });
+ *
+ * (No `id` is supplied — the uuid PK carries DEFAULT gen_random_uuid(); defect D-a was it inheriting
+ * no default and 23502-ing on the first POST.)
+ */
 export async function createDashboard(args: {
   ownerClerkUserId: string;
   displayName: string;
   alias?: string | null;
-  descriptor: DashboardV3;
 }): Promise<string> {
   try {
-    // config-v4: `doc` is NOT NULL (cutover shape) — build the v4 node tree from the descriptor. These
-    // create-path descriptors are empty or area-only (device-pinned cards arrive via the /api/v4 doc PUT),
-    // so `deviceRef` is never reached; it throws to catch a device card slipping in through this path.
-    const descriptor = normalizeDescriptor(args.descriptor);
-    const doc = rewriteV3ToV4(descriptor, {
-      areaRef: pureAreaRef,
-      deviceRef: () => {
-        throw new Error(
-          "createDashboard: device-pinned cards must be set via the v4 doc PUT, not the create descriptor",
-        );
-      },
-    });
-    const [row] = await requirePlanetscaleDb()
-      .insert(dashboards)
-      .values({
-        // config-v4: KEYS are the renamed columns; the ARGS shape is unchanged (elective → Phase 9).
-        // No `id` is supplied — 5d sets DEFAULT gen_random_uuid() precisely so this insert keeps
-        // working (defect D-a: the promoted uuid PK inherited no default, 23502 on the first POST).
-        ownerUserId: args.ownerClerkUserId,
-        name: args.displayName,
-        slug: args.alias ?? null,
-        descriptor,
-        doc,
-      })
-      .returning({ id: dashboards.id });
-    return Dashboard.encode(row.id);
+    const doc = emptyDashboardV4();
+    const res = await requirePlanetscaleDb().execute<{ id: string }>(sql`
+      INSERT INTO dashboards (owner_user_id, name, slug, doc, descriptor)
+      VALUES (
+        ${args.ownerClerkUserId},
+        ${args.displayName},
+        ${args.alias ?? null},
+        ${JSON.stringify(doc)}::jsonb,
+        '{}'::jsonb
+      )
+      RETURNING id
+    `);
+    const id = res.rows[0]?.id;
+    if (!id) throw new Error("createDashboard: INSERT returned no id");
+    return Dashboard.encode(id);
   } catch (err) {
     if (isAliasCollision(err)) throw new DashboardAliasTakenError();
     throw err;
@@ -130,7 +152,6 @@ function rowToDashboard(r: {
   clerkUserId: string;
   displayName: string | null;
   alias: string | null;
-  descriptor: unknown;
   doc: unknown;
   revision: number;
   createdAt: Date;
@@ -141,13 +162,6 @@ function rowToDashboard(r: {
     ownerClerkUserId: r.clerkUserId,
     displayName: r.displayName,
     alias: r.alias,
-    // NO read-normalize (config-v4 Phase 14). This used to run `encodeDescriptorAreaRefs` on every
-    // read to decouple the code deploy from a one-off descriptor rewrite. Stored data is now 100%
-    // `ar_` — measured 2026-07-31 on prod `sydney` AND `liveone-dev`, 16/16 section refs each, zero
-    // raw uuids — so the normalize had become a no-op that also MASKED any writer able to re-dirty
-    // the column. The write paths are the guarantee now: POST /api/dashboards encodes,
-    // PATCH /api/dashboards/{id} rejects a non-`ar_` section ref with 400.
-    descriptor: r.descriptor as DashboardV3,
     doc: (r.doc as DashboardV4 | null) ?? null,
     revision: r.revision,
     createdAt: r.createdAt,
@@ -160,7 +174,6 @@ const DASHBOARD_COLUMNS = {
   clerkUserId: dashboards.ownerUserId,
   displayName: dashboards.name,
   alias: dashboards.slug,
-  descriptor: dashboards.descriptor,
   doc: dashboards.doc,
   revision: dashboards.revision,
   createdAt: dashboards.createdAt,
@@ -274,7 +287,7 @@ function rowToSummary(
     id: string;
     displayName: string | null;
     alias: string | null;
-    descriptor: unknown;
+    doc: unknown;
     updatedAt: Date;
   },
   access: "owner" | "shared",
@@ -283,11 +296,11 @@ function rowToSummary(
     id: Dashboard.encode(r.id),
     displayName: r.displayName,
     alias: r.alias,
-    cardCount: isDashboardV3(r.descriptor)
-      ? allCardsV3(r.descriptor).length
-      : Array.isArray((r.descriptor as { cards?: unknown[] })?.cards)
-        ? (r.descriptor as { cards: unknown[] }).cards.length
-        : 0,
+    // config-v4 Phase 14 stage 15: counted off the v4 `doc`, which is where a dashboard's content
+    // actually lives. This used to count v3 `descriptor` cards, and stage 13 measured the resulting
+    // regression: a dashboard created through the UI reported `cardCount: 0`, because the seed was
+    // written to `doc` while `descriptor` stayed empty.
+    cardCount: isDashboardV4(r.doc) ? countCardNodes(r.doc) : 0,
     updatedAt: r.updatedAt,
     access,
   };
@@ -327,12 +340,22 @@ export async function listAccessibleDashboards(
   return [...owned, ...shared];
 }
 
+/**
+ * Rename / re-slug a dashboard. **Metadata only** — there is no structural patch here.
+ *
+ * config-v4 Phase 14 stage 15 deleted this function's `descriptor` branch, and with it the last
+ * clobber hazard in the dashboard write path. That branch regenerated `doc` from `descriptor` on
+ * every PATCH, which was safe only while `doc` had no independent author; `PUT /api/v4/dashboards/{id}`
+ * is that author (and since stage 14 `AddAreaDialog` calls it), so a descriptor PATCH would have
+ * silently overwritten v4-authored structure with a rewrite of a shape nothing maintains any more.
+ * Stage 13 deleted the last route that could reach it and stage 14 the last client; this deletes the
+ * capability. Structure is changed ONLY through `updateDashboardDoc`, under an `If-Match` revision.
+ */
 export async function updateDashboard(
   id: string,
   patch: {
     displayName?: string;
     alias?: string | null;
-    descriptor?: DashboardV3;
   },
 ): Promise<void> {
   // Typed against the table ON PURPOSE — do not "simplify" this back to Record<string, unknown>.
@@ -351,38 +374,6 @@ export async function updateDashboard(
   // unchanged (elective → Phase 9), so map the legacy arg keys onto the renamed columns here.
   if (patch.displayName !== undefined) set.name = patch.displayName;
   if (patch.alias !== undefined) set.slug = patch.alias;
-  if (patch.descriptor !== undefined) {
-    const descriptor = normalizeDescriptor(patch.descriptor);
-    set.descriptor = descriptor;
-    // config-v4: regenerate `doc` from the descriptor, exactly as `createDashboard` does. Writing
-    // `descriptor` alone made this route a NO-OP ON SCREEN: since the Phase 8/10 cutover `dashboards.doc`
-    // is NOT NULL and the render path takes it (app/dashboard/[...slug]/page.tsx), keeping v3 only as a
-    // fallback for a doc that fails the shape guard. So an edit here — e.g. AddAreaDialog adding an area
-    // section — changed nothing visible AND silently diverged the two shapes.
-    //
-    // 🛑 THE HAZARD IS NOW REAL, AND ONLY UNREACHABILITY CONTAINS IT (config-v4 Phase 14 stage 14).
-    // This regenerates `doc` unconditionally, which was safe only while `doc` had no independent
-    // author. `PUT /api/v4/dashboards/{id}` IS that author, and as of stage 14 `AddAreaDialog` calls
-    // it — so a descriptor PATCH arriving now would silently CLOBBER v4-authored structure (and the
-    // clobber is invisible: the row still validates and still renders, just without the user's work).
-    //
-    // What keeps it latent: NO CLIENT SENDS ONE. Measured at stage 14 — `AddAreaDialog` was the only
-    // client that ever wrote `descriptor`; `DashboardSettingsDialog`'s PATCH sends name/slug only.
-    // The last reachable surface was `PATCH /api/dashboards/{id}`, deleted in stage 13, and this
-    // function's `descriptor` branch (deleted by stage 15). Until BOTH are gone, do not re-point any
-    // client at a descriptor PATCH, and do not "fix" this by merging — the fix is deletion.
-    set.doc = rewriteV3ToV4(descriptor, {
-      areaRef: pureAreaRef,
-      deviceRef: () => {
-        throw new Error(
-          "updateDashboard: device-pinned cards must be set via the v4 doc PUT, not the descriptor PATCH",
-        );
-      },
-    });
-    // Keep the whole-doc revision counter honest — `updateDashboardDoc` uses it for optimistic
-    // concurrency, so a doc rewritten here must advance it too or a concurrent v4 PUT sees no change.
-    set.revision = sql`${dashboards.revision} + 1` as unknown as number;
-  }
   const uuid = Dashboard.toUuidOrNull(id);
   if (!uuid) return;
   try {

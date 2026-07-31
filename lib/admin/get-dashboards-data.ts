@@ -1,7 +1,7 @@
 /**
  * Shared function to fetch admin dashboards data (server-side rendering + API).
  *
- * A dashboard is a v3 composition descriptor owned by a user; its cards each carry their own Area.
+ * A dashboard is a v4 node-tree document owned by a user; its scope refs sit on the node envelopes.
  * This powers /admin/dashboards.
  */
 
@@ -13,7 +13,7 @@ import {
   shareTokens,
   dashboardGrants,
 } from "@/lib/db/planetscale/schema";
-import { allCardsV3, isDashboardV3 } from "@/lib/dashboard/v3";
+import { countCardNodes, isDashboardV4 } from "@/lib/dashboard/v4";
 import { Dashboard } from "@/lib/ids";
 
 export interface AdminDashboardRow {
@@ -106,9 +106,10 @@ export async function getAdminDashboardsData(): Promise<AdminDashboardsResult> {
       },
       displayName: d.name,
       alias: d.slug,
-      cardCount: isDashboardV3(d.descriptor)
-        ? allCardsV3(d.descriptor).length
-        : 0,
+      // config-v4 Phase 14 stage 15: counted off the v4 `doc`. The old v3-`descriptor` count read
+      // zero for every dashboard created after the v4 cutover — the seed goes to `doc`, and
+      // `descriptor` (dropped by stage 16) stayed empty. Measured on this very page at stage 13.
+      cardCount: isDashboardV4(d.doc) ? countCardNodes(d.doc) : 0,
       shareTokenCount: shareCounts.get(d.id) ?? 0,
       grantCount: grantCounts.get(d.id) ?? 0,
       createdAt: d.createdAt.toISOString(),

@@ -113,7 +113,6 @@ function dashboardRow(over: Record<string, unknown> = {}) {
     ownerClerkUserId: OWNER,
     displayName: "Home",
     alias: "home",
-    descriptor: { version: 3, sections: [] },
     doc: { version: 4, root: { id: "n_0", kind: "group", children: [] } },
     revision: 7,
     createdAt: new Date(0),
@@ -541,6 +540,18 @@ describe("POST /api/v4/dashboards", () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ displayName: "Seeded Area" }),
     );
+  });
+
+  // config-v4 Phase 14 stage 15: this route used to pass `descriptor: emptyDashboardV3()`, purely
+  // because the column was NOT NULL. It is the last thing that made a *v4* route touch the v3 shape.
+  // Asserted on the exact argument (not `objectContaining`) so a re-added key fails here.
+  it("passes NO descriptor to createDashboard — the v4 route never names the v3 shape", async () => {
+    await post({ name: "Home", doc: docBoundTo() });
+    expect(mockCreate).toHaveBeenCalledWith({
+      ownerClerkUserId: OWNER,
+      displayName: "Home",
+      alias: null,
+    });
   });
 
   it("maps a bad seedArea onto the loader's own status (400 malformed / 403 unreadable)", async () => {

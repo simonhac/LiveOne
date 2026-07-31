@@ -21,23 +21,20 @@
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 
-/** Thrown by the next `insert().values()` / `update().set().where()`, if set. */
+/** Thrown by the next `execute()` / `update().set().where()`, if set. */
 let nextFailure: unknown = null;
 
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb() {
     return {
-      insert() {
-        return {
-          values() {
-            return {
-              async returning() {
-                if (nextFailure) throw nextFailure;
-                return [{ id: "019f0000-0000-7000-8000-0000000000aa" }];
-              },
-            };
-          },
-        };
+      // config-v4 Phase 14 stage 15: `createDashboard` INSERTs via raw `sql` rather than
+      // `db.insert(dashboards)`, because `descriptor` is NOT NULL but deliberately undeclared in
+      // schema.ts (see that function). The error path is unchanged — `isUniqueViolationOn` walks the
+      // `cause` chain and never inspects which drizzle API raised it — but the mock must follow the
+      // call that is actually made, or every assertion below would pass against nothing.
+      async execute() {
+        if (nextFailure) throw nextFailure;
+        return { rows: [{ id: "019f0000-0000-7000-8000-0000000000aa" }] };
       },
       update() {
         const chain = {
@@ -60,7 +57,6 @@ import {
   updateDashboard,
   DashboardAliasTakenError,
 } from "../dashboards";
-import { emptyDashboardV3 } from "../v3";
 import { Dashboard } from "@/lib/ids";
 
 const DASH_ID = Dashboard.encode("019f0000-0000-7000-8000-0000000000aa");
@@ -89,7 +85,6 @@ const create = () =>
     ownerClerkUserId: "user_x",
     displayName: "d",
     alias: "taken",
-    descriptor: emptyDashboardV3(),
   });
 
 describe("dashboards — alias collision vs every other unique violation", () => {

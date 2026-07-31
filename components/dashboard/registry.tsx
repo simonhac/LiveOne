@@ -22,11 +22,11 @@
  * Adding a card = one module in ./cards or ./tiles + one line below (+ its `NODE_CATALOG` entry in
  * lib/capabilities/catalog.ts, forced by that catalog's `Record<KnownCardType, …>` type).
  *
- * ABSENT STRUCTURALLY: `tiles`. It is still a v3 descriptor card type — persisted descriptors hold
- * `tiles` cards and `rewriteV3ToV4` reads them — but it is not a v4 card type: it became a `row`
- * group (§8.1). So it never appears here, the lookup misses, and it takes the §8.4 labelled-
+ * ABSENT STRUCTURALLY: `tiles`. It was a v3 `descriptor` card type, never a v4 one — it became a
+ * `row` group (§8.1). So it never appears here, the lookup misses, and it takes the §8.4 labelled-
  * placeholder branch like any other unknown type. Its plugin (`tiles-card.tsx`) died with the v3
- * renderer that was its only mount (stage 9).
+ * renderer that was its only mount (stage 9), and stage 15 stopped anything reading the descriptors
+ * that hold those cards at all.
  *
  * Client-only: never import this (or any plugin module) from lib/ or server code — the shared,
  * server-safe card vocabulary lives in lib/dashboard/card-types.ts + lib/capabilities/catalog.ts.

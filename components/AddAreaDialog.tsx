@@ -31,9 +31,10 @@ interface DocSnapshot {
  * `If-Match: "<revision>"` (clean-sheet §9.1). Add-only; remove/reorder is a later follow-up. The
  * picker excludes areas the document already references.
  *
- * 🛑 `If-Match` is not decoration. `updateDashboard`'s descriptor path regenerates `doc` from
- * `descriptor` unconditionally, so the whole-doc `PUT` is the document's ONLY independent author and
- * a lost update here silently discards structure. On a **412** we re-read the current document and
+ * 🛑 `If-Match` is not decoration. The whole-doc `PUT` is the document's ONLY author — stage 15
+ * deleted the last alternative (`updateDashboard`'s descriptor path, which regenerated `doc` from
+ * `descriptor` unconditionally) — so a lost update here silently discards structure with nothing
+ * downstream to notice. On a **412** we re-read the current document and
  * re-splice onto THAT — never re-send the stale tree — and a second conflict is reported to the user
  * rather than swallowed.
  */
