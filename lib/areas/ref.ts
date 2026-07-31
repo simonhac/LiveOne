@@ -16,15 +16,18 @@
  * relying on decode to catch it: see `PATCH /api/dashboards/{id}`, which now 400s rather than
  * persisting a descriptor whose refs would later decode to nothing.
  *
- * ⚠️ **`areaRefToArId` REMAINS dual-accept, deliberately.** Three live producers still emit raw area
- * uuids into it, so making it strict would break working paths, not tighten them:
+ * ⚠️ **`areaRefToArId` REMAINS dual-accept, deliberately.** Live producers still emit raw area uuids
+ * into it, so making it strict would break working paths, not tighten them:
  *   1. `buildAreaStrategyForHandle` (lib/capabilities/server.ts) passes `area.id` — a raw uuid —
  *      straight into `section.areaId`; `GET /api/areas/{id}/default-section` launders it here.
  *   2. `lib/dashboard/v3-to-v4.ts`'s `pureAreaRef`, fed by those same descriptors.
- *   3. The helper-device `vendorSiteId` (`helper:area:<raw uuid>`), decoded client-side by the
- *      battery-provenance-history card. That one is the `/api/data` raw-uuid leak; it is NOT fixed
- *      here because the honest fixes are a `devices.vendor_site_id` data migration or a new wire
- *      field, and this PR is code-only.
+ *   3. ~~The helper-device `vendorSiteId`~~ ✅ **RETIRED (Phase 14 stage 17).** That one was the
+ *      `/api/data` raw-uuid leak, and it is fixed at the source: `helperSiteId` now mints
+ *      `helper:area:ar_…` and migration 0053 rewrites the stored rows, so
+ *      `parentAreaIdFromHelperSiteId` hands this function an `ar_` id and its raw-uuid leg is dead
+ *      on that path. It is NOT dead in general — producers 1 and 2 are alive until the v3 descriptor
+ *      goes (stages 13/15) — so this function is deliberately left tolerant. Tightening it is a
+ *      follow-up for after those land, not part of stage 17.
  * Encoding is a widening operation and cannot lose information; decoding is where the guarantee has
  * to hold. Hence strict decode + tolerant encode.
  *
