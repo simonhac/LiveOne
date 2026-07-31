@@ -25,6 +25,8 @@ import {
   getSampleRecordKeys,
 } from "../../lib/vendors/amber/types.js";
 import { toZoned, fromDate } from "@internationalized/date";
+import { uuidv7 } from "uuidv7";
+import type { SessionInfo } from "../../lib/point/point-manager.js";
 
 /**
  * Format timestamp as AEST (UTC+10) time string (HH:MM)
@@ -134,13 +136,27 @@ async function testSync() {
 
   const audits: AmberSyncResult[] = [];
 
+  // Sessions are UUIDv7 TEXT (`SessionInfo`), not integers. This was `-1`, left over from the
+  // integer-id era: `updateUsage`/`updateForecasts` thread it into
+  // `PointManager.insertPointReadingsAgg5m`, which stores `session?.id ?? null` — and `(-1).id` is
+  // `undefined`, so in LIVE mode (`--dry=false`) every row this script wrote landed with a NULL
+  // `session_id`, indistinguishable from an orphan and unreplayable from the payload archive
+  // (`scripts/utils/rebuild-sigenergy-readings.ts` rebuilds readings by joining on exactly that
+  // column). Dry run never reaches the write, which is why it went unnoticed.
+  const session: SessionInfo = {
+    id: uuidv7(),
+    started: new Date(),
+    label: "test-amber-sync",
+  };
+  console.log(`    session: ${session.id}`);
+
   if (actionArg === "usage" || actionArg === "both") {
     const audit = await updateUsage(
       systemId,
       firstDay,
       numberOfDays,
       credentials,
-      -1, // sessionId: -1 for test script
+      session,
       dryRun,
     );
     audits.push(audit);
@@ -152,7 +168,7 @@ async function testSync() {
       firstDay,
       numberOfDays,
       credentials,
-      -1, // sessionId: -1 for test script
+      session,
       dryRun,
     );
     audits.push(audit);
@@ -201,37 +217,30 @@ async function testSync() {
       console.log(`Num Records: ${stage.info.numRecords}`);
       console.log(`Uniformity: '${stage.info.uniformQuality}'`);
 
-      // Display comparison overviews first if present (even when numRecords is 0)
-      if (stage.info.comparisonOverviews) {
-        const compKeys = Object.keys(stage.info.comparisonOverviews);
-        if (compKeys.length > 0) {
-          console.log(`\nComparison Overviews (${compKeys.length} series):`);
-          for (const pointKey of compKeys.sort()) {
-            console.log(
-              `  ${pointKey.padEnd(20)}: ${stage.info.comparisonOverviews[pointKey]}`,
-            );
-          }
+      // Overviews, ALWAYS — including when numRecords is 0.
+      //
+      // There is no `stage.info.comparisonOverviews`: `compareRecords` returns one, but
+      // `createComparisonStage` folds it straight into `info.overviews` ("for comparison stages,
+      // this contains comparison overview notation" — BatchInfo, lib/vendors/amber/types.ts) and
+      // never puts it on the StageResult. So the block that used to be here was reading a property
+      // that is always `undefined`: the "Comparison Overviews" section has never once printed, its
+      // output was appearing under the "Regular Overviews" heading instead, and — because the
+      // overview print sat in the `numRecords > 0` arm — a comparison stage that found nothing
+      // superior showed only "0 superior records", hiding the comparison notation that is the whole
+      // reason to run that stage. That case is the one the dead block was explicitly written for.
+      const overviewKeys = getOverviewKeys(stage.info);
+      if (overviewKeys.length > 0) {
+        console.log(`\nOverviews by point (${overviewKeys.length} series):`);
+        for (const pointKey of overviewKeys.sort()) {
+          console.log(
+            `  ${pointKey.padEnd(20)}: ${stage.info.overviews[pointKey]}`,
+          );
         }
       }
 
       if (stage.info.numRecords === 0) {
-        console.log(
-          "\nNo regular overview or canonical display (0 superior records).",
-        );
+        console.log("\nNo canonical display (0 superior records).");
       } else {
-        // Display regular overviews sorted by point key
-        const overviewKeys = getOverviewKeys(stage.info);
-        if (overviewKeys.length > 0) {
-          console.log(
-            `\nRegular Overviews by point (${overviewKeys.length} series):`,
-          );
-          for (const pointKey of overviewKeys.sort()) {
-            console.log(
-              `  ${pointKey.padEnd(20)}: ${stage.info.overviews[pointKey]}`,
-            );
-          }
-        }
-
         if (stage.info.characterisation) {
           console.log(
             `\nCharacterisation (${stage.info.characterisation.length} ranges):`,

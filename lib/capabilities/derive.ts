@@ -16,13 +16,28 @@
  * grid context), never a point scan — see lib/capabilities (server module, added later).
  */
 
-import type { LatestPointValues } from "@/lib/types/api";
 import {
   ATOMIC_CAPABILITY_RULES,
   type CapabilityId,
 } from "@/lib/capabilities/registry";
 
 export type CapabilitySet = ReadonlySet<CapabilityId>;
+
+/**
+ * The only slice of a latest-values map the `…FromLatest` derivers read: a `stem/metric` key and a
+ * present-or-absent value. Deliberately structural rather than `LatestPointValues` (lib/types/api),
+ * because there are TWO latest-map shapes in the codebase and this module is documented above as
+ * consuming the KV one:
+ *   - `LatestPointValues` (lib/types/api) — the API wire shape: `value: number`, `measurementTime: Date`.
+ *   - `LatestValuesMap`   (lib/latest-values-store) — the KV store shape: `value: number | string | null`,
+ *     `measurementTimeMs: number`.
+ * Naming either one excluded the other, and the fields they disagree on are fields no deriver here
+ * touches. Note a string value is NOT ignorable: it is non-null, so it contributes capabilities.
+ */
+export type LatestPresenceMap = Record<
+  string,
+  { value: number | string | null } | null | undefined
+>;
 
 /** A point's semantic classification, as stored on `point_info`. */
 export interface PointClass {
@@ -74,7 +89,7 @@ export function capabilitiesFromPoints(
  * the `hasVal` guard in the current derivers.
  */
 export function capabilitiesFromLatest(
-  latest: LatestPointValues,
+  latest: LatestPresenceMap,
 ): Set<CapabilityId> {
   const caps = new Set<CapabilityId>();
   let anyNumeric = false;
@@ -122,7 +137,7 @@ function pathsAggregate(paths: Iterable<string>): boolean {
 }
 
 /** Aggregate-layout check from the runtime `latest` map (client / device viewer). */
-export function isAggregateFromLatest(latest: LatestPointValues): boolean {
+export function isAggregateFromLatest(latest: LatestPresenceMap): boolean {
   return pathsAggregate(Object.keys(latest));
 }
 

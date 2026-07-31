@@ -64,7 +64,11 @@ async function main() {
     (await pm.getActivePointsForDevice(id, false, false)).length;
 
   // Membership is uuid-keyed since slice H; this script asserts in integer handles, so convert.
-  const memberHandles = async (id: string) => {
+  // Declared `number[]`, not the inferred `DeviceRid[]`: everything this script feeds the handles to
+  // (`addMember`/`removeMember`/`getActivePointsForDevice`) takes a plain handle, and `--members=`
+  // supplies them as parsed CLI integers. Leaving the brand on made `ids.includes(extra)` a type
+  // error and would have forced a cast on the CLI path — dodging the brand rather than respecting it.
+  const memberHandles = async (id: string): Promise<number[]> => {
     const deviceIds = await getAreaMemberDeviceIds(id);
     const rids = await DeviceRegistry.ridsForDevices(deviceIds);
     return deviceIds.map((d) => rids.get(d)!);
