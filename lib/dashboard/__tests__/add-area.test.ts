@@ -10,8 +10,13 @@ import {
   docHasCards,
   describeDocWriteError,
 } from "../add-area";
-import { emptyDashboardV4, type DashboardV4, type GroupNode } from "../v4";
-import { validateDocV4 } from "../v4-validate";
+import {
+  emptyDashboardV4,
+  walkNodes,
+  type DashboardV4,
+  type GroupNode,
+} from "../v4";
+import { normalizeDocV4, validateDocV4 } from "../v4-validate";
 import { Area } from "@/lib/ids";
 
 const AREA_A = Area.generate();
@@ -26,6 +31,19 @@ function seedGroup(area: string): GroupNode {
     direction: "column",
     children: [{ kind: "card", type: "sankey" }],
   };
+}
+
+/**
+ * What `GET /api/v4/areas/{ar_}/default-group` actually returns: the group after
+ * `buildSeedDoc` normalized it INSIDE a throwaway one-group document — so it already carries `n_…`
+ * ids that mean nothing in the destination doc. Reproduces the shape exactly, not an idealised one.
+ */
+function normalizedSeedGroup(area: string): GroupNode {
+  const doc = normalizeDocV4({
+    version: 4,
+    root: { kind: "group", direction: "column", children: [seedGroup(area)] },
+  });
+  return doc.root.children[0] as GroupNode;
 }
 
 function docWith(...groups: GroupNode[]): DashboardV4 {
@@ -63,6 +81,51 @@ describe("appendGroupToDoc", () => {
     const result = validateDocV4(next);
     expect(result.errors).toEqual([]);
     expect(result.valid).toBe(true);
+  });
+
+  // 🛑 REGRESSION, measured against a live dev server: `default-group` normalizes its group inside a
+  // throwaway one-group document, so it arrives carrying `n_1…n_9`. Appending a SECOND such group
+  // verbatim collides with the first and `PUT /api/v4/dashboards/{id}` 422s `duplicate-node-id`. The
+  // first add is unaffected (the destination holds only the root's `n_0`), so only a two-add test
+  // catches it.
+  it("strips the incoming group's server-minted ids, so a SECOND add does not collide", () => {
+    const first = appendGroupToDoc(
+      emptyDashboardV4(),
+      normalizedSeedGroup(AREA_A),
+    );
+    const persisted = validateDocV4(first).normalized!;
+    const second = appendGroupToDoc(persisted, normalizedSeedGroup(AREA_B));
+
+    const result = validateDocV4(second);
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toBe(true);
+
+    // Every node id in the persisted-then-appended doc is unique…
+    const ids: string[] = [];
+    walkNodes(validateDocV4(second).normalized!, (n) => ids.push(n.id!));
+    expect(new Set(ids).size).toBe(ids.length);
+    // …and the first area's nodes kept their ids (stable React keys across the save).
+    expect((persisted.root.children[0] as GroupNode).id).toBe(
+      (second.root.children[0] as GroupNode).id,
+    );
+  });
+
+  it("is what makes the second add valid — the un-stripped splice really does 422", () => {
+    // Negative control for the test above: splice verbatim (what this code did before the fix).
+    const g = normalizedSeedGroup(AREA_A);
+    const doc = validateDocV4(
+      appendGroupToDoc(emptyDashboardV4(), g),
+    ).normalized!;
+    const naive: DashboardV4 = {
+      ...doc,
+      root: {
+        ...doc.root,
+        children: [...doc.root.children, normalizedSeedGroup(AREA_B)],
+      },
+    };
+    const result = validateDocV4(naive);
+    expect(result.valid).toBe(false);
+    expect(result.errors.map((e) => e.code)).toContain("duplicate-node-id");
   });
 });
 

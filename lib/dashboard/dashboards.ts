@@ -360,10 +360,17 @@ export async function updateDashboard(
     // fallback for a doc that fails the shape guard. So an edit here — e.g. AddAreaDialog adding an area
     // section — changed nothing visible AND silently diverged the two shapes.
     //
-    // ⚠️ REVISIT IN PHASE 14 (v4-native presentation). This regenerates unconditionally, which is safe
-    // only while `doc` has no independent author: today it comes solely from this rewrite and
-    // `createDashboard`'s. Once a v4 editor writes `doc` directly, a descriptor PATCH would CLOBBER
-    // v4-authored structure, and this must become a reject-or-merge decision rather than an overwrite.
+    // 🛑 THE HAZARD IS NOW REAL, AND ONLY UNREACHABILITY CONTAINS IT (config-v4 Phase 14 stage 14).
+    // This regenerates `doc` unconditionally, which was safe only while `doc` had no independent
+    // author. `PUT /api/v4/dashboards/{id}` IS that author, and as of stage 14 `AddAreaDialog` calls
+    // it — so a descriptor PATCH arriving now would silently CLOBBER v4-authored structure (and the
+    // clobber is invisible: the row still validates and still renders, just without the user's work).
+    //
+    // What keeps it latent: NO CLIENT SENDS ONE. Measured at stage 14 — `AddAreaDialog` was the only
+    // client that ever wrote `descriptor`; `DashboardSettingsDialog`'s PATCH sends name/slug only.
+    // The reachable surface is `PATCH /api/dashboards/{id}` (route deleted by stage 13) and this
+    // function's `descriptor` branch (deleted by stage 15). Until BOTH are gone, do not re-point any
+    // client at a descriptor PATCH, and do not "fix" this by merging — the fix is deletion.
     set.doc = rewriteV3ToV4(descriptor, {
       areaRef: pureAreaRef,
       deviceRef: () => {
