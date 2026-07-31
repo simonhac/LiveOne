@@ -19,8 +19,9 @@
  * A never-seen vendor that advertises solar+load power auto-gets tiles + chart with ZERO code — its
  * vendor string never appears here.
  *
- * The remaining v3 consumers (`/device/{id}`, the two legacy dashboard routes) read this through the
- * temporary projection in `strategy-v3.ts`, which stages 9 and 13 delete.
+ * The remaining v3 consumers (the two legacy dashboard routes) read this through the temporary
+ * projection in `strategy-v3.ts`, which stage 13 deletes. `/device/{id}` reads the v4 group directly
+ * (`buildDeviceStrategyDoc`, lib/capabilities/server.ts) since stage 9.
  */
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
@@ -30,9 +31,9 @@ import type { CardNode, DashboardNode, GroupNode } from "@/lib/dashboard/v4";
 
 export interface AreaStrategyContext {
   /**
-   * The area this group binds — the §8.3 envelope ref every child inherits. Omitted only by the
-   * v3 projection's area-less `/device/{id}` case (a bare device with no Area), which re-attaches its
-   * synthetic `device-{id}` render key on the way back to v3.
+   * The area this group binds — the §8.3 envelope ref every child inherits. Omitted by `/device/{id}`,
+   * whose document is DEVICE-bound instead (`buildDeviceStrategyDoc` puts the `dv_` on the root, so
+   * this group inherits it), and by the area-less legacy v3 projection.
    */
   area?: AreaId;
   /** The area's capability set (server: from point_info+config; viewer: from latest). */

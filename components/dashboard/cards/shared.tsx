@@ -2,7 +2,7 @@
 
 /**
  * Shared card plumbing — the per-card boilerplate that used to be repeated across every
- * `AreaXxx` wrapper in Dashboard.tsx.
+ * `AreaXxx` wrapper in the v3 renderer (deleted at config-v4 Phase 14 stage 9).
  */
 import { useQuery } from "@tanstack/react-query";
 import { dashboardDataQuery } from "@/lib/queries";

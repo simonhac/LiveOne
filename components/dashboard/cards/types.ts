@@ -1,7 +1,7 @@
 /**
  * The card plugin contract — one plugin per `DashboardCardType`, registered in ./registry.tsx.
  *
- * A card plugin bundles the render component (ex-`AreaXxx` wrapper from Dashboard.tsx) with the
+ * A card plugin bundles the render component (ex-`AreaXxx` wrapper from the deleted v3 renderer) with the
  * host-facing render policy: how it behaves while the section's Area handle is unresolved
  * (`pending`) and whether it collapses into the section's single SiteChartsGroup (`collapseKey`).
  * The declarative catalog data (label, capability requirements, scope) stays server-safe in
@@ -16,7 +16,8 @@ import type {
 
 export interface CardRenderProps {
   card: CardV3;
-  /** The card's section — battery-provenance-history reads its areaId / `device-` sentinel. */
+  /** The card's section — battery-provenance-history reads its `areaId` (empty on a device page,
+   *  which binds no area). */
   section: AreaSectionV3;
   /** The Area's handle (area.legacySystemId). Defined for `pending: "host-skeleton"` plugins
    *  (the host gates on it); may be undefined for `pending: "self"` plugins. */

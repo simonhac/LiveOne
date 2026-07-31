@@ -72,6 +72,14 @@ export interface DashboardV4 {
   root: GroupNode;
 }
 
+/** An empty document — a bare root group with no children (mirrors `emptyDashboardV3`). */
+export function emptyDashboardV4(): DashboardV4 {
+  return {
+    version: DASHBOARD_DOC_VERSION,
+    root: { kind: "group", direction: "column", children: [] },
+  };
+}
+
 /** Narrowing helpers. */
 export function isGroupNode(n: DashboardNode): n is GroupNode {
   return n.kind === "group";

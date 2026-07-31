@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Settings, Plus, Layers, ChevronDown } from "lucide-react";
-import Dashboard from "@/components/Dashboard";
 import { DashboardV4View } from "@/components/dashboard/v4/node-view";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
@@ -37,11 +36,18 @@ interface DashboardClientProps {
     id: string; // config-v4: the `db_…` TypeID (used verbatim in URLs; routes decode it)
     displayName: string | null;
     alias: string | null;
+    /**
+     * Still read by the two dialogs (`AddAreaDialog` writes it; `DashboardSettingsDialog` derives
+     * its area list from it). NOT a render input any more — the page renders `doc`.
+     */
     descriptor: DashboardV3;
-    /** config-v4 dual-shape window: when present, the v4 node tree renders instead of the v3
-     *  descriptor (DARK — no dashboard has a doc yet). The page shell (header/switcher/editor)
-     *  stays v3-driven; the v4-native editor + temporal nav land with Phase 6. */
-    doc?: DashboardV4;
+    /**
+     * The v4 node tree — the ONLY thing rendered here since Phase 14 stage 9 deleted the v3
+     * renderer. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and every write path validates
+     * it, so the page always has one; a doc that fails the shape guard arrives as an empty document
+     * rather than falling back to a second renderer.
+     */
+    doc: DashboardV4;
   };
   /** Owner or admin → may rename/delete/switch. */
   canEdit: boolean;
@@ -116,8 +122,8 @@ export default function DashboardClient({
   // The single page-header temporal navigator: shown only when this dashboard actually hosts a
   // time-traveling component, formatted in the first section's timezone. It drives every chart on
   // the page via the shared URL window.
-  const showNav = hasTimeTravelingCard(dashboard.descriptor, areaById);
-  const navHandle = primaryHandle(dashboard.descriptor, areaById);
+  const showNav = hasTimeTravelingCard(dashboard.doc, areaById);
+  const navHandle = primaryHandle(dashboard.doc, areaById);
 
   return (
     <ChartFocusProvider>
@@ -228,23 +234,13 @@ export default function DashboardClient({
         </header>
 
         <main className="mx-auto max-w-7xl px-1 py-4">
-          {dashboard.doc ? (
-            <DashboardV4View
-              doc={dashboard.doc}
-              areaById={areaById}
-              dashboardId={dashboard.id}
-              areasResolved={areasResolved}
-              deviceById={deviceById}
-            />
-          ) : (
-            <Dashboard
-              dashboardId={dashboard.id}
-              descriptor={dashboard.descriptor}
-              areaById={areaById}
-              areasResolved={areasResolved}
-              onAddArea={canEdit ? () => setAddAreaOpen(true) : undefined}
-            />
-          )}
+          <DashboardV4View
+            doc={dashboard.doc}
+            areaById={areaById}
+            dashboardId={dashboard.id}
+            areasResolved={areasResolved}
+            deviceById={deviceById}
+          />
         </main>
 
         {canEdit && (

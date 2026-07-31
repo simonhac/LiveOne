@@ -57,7 +57,8 @@ export function descriptorAreaRefsAreStrict(d: DashboardV3): boolean {
 
 /**
  * Rewrite every section's `areaId` in a v3 descriptor to `ar_`, leaving a value neither a raw uuid
- * nor an `ar_` id (e.g. a `/device` `device-<n>` sentinel — never persisted) untouched. Idempotent.
+ * nor an `ar_` id untouched (there is no such producer left since Phase 14 stage 9 retired the
+ * `/device` `device-<n>` sentinel; it was never persisted). Idempotent.
  *
  * Still used on the CREATE path (`POST /api/dashboards`), whose descriptor can come from
  * `buildAreaStrategyForHandle` and therefore still carry raw uuids. It is no longer used on read —

@@ -3,59 +3,98 @@
  * "travel" through time — i.e. reads the shared temporal window (`?period/?start/?end`) — and which
  * area's timezone the single page-header navigator should format its label in.
  *
- * The predicate mirrors the render/collapse logic in `components/Dashboard.tsx` + the card plugins,
- * keyed on the SAME `chartCapable` flag the renderer gates the site charts on, so navigator
- * visibility always matches what actually renders (incl. on `/device`, where `chartCapable` is
- * undefined so the site charts — and the navigator — stay hidden while the lines chart still shows).
+ * The predicate mirrors the render/collapse logic in `components/dashboard/v4/node-view.tsx` + the
+ * card plugins, keyed on the SAME `chartCapable` flag the renderer gates the site charts on, so
+ * navigator visibility always matches what actually renders (incl. on `/device`, where the document
+ * binds a device and no area, so `chartCapable` is unknowable — the site charts don't render there
+ * either, while the standalone lines chart still does).
+ *
+ * config-v4 Phase 14 stage 9: both walk a `DashboardV4`. The v3 `tiles` card became a structural
+ * `row` group, so its two time-travelling views (`hotWater`, `renewables`) are now ordinary sibling
+ * card nodes and need no special case — the walk is uniform over card types.
+ *
+ * The walk is written out rather than delegated to `walkNodes` (v4.ts) because both questions need
+ * two things a bare pre-order visit does not carry: the INHERITED area binding (§8.1), and pruning
+ * of hidden SUBTREES — a hidden group hides its children, which `walkNodes` would still visit.
  */
-import type { DashboardV3, CardV3 } from "@/lib/dashboard/v3";
+import type { DashboardV4, DashboardNode, CardNode } from "@/lib/dashboard/v4";
+import type { AreaId } from "@/lib/ids";
 import type { ReadableArea } from "@/lib/areas/list";
 
 /** Does this card read the shared temporal window (render or consume it)? */
-function cardTravels(card: CardV3, chartCapable: boolean): boolean {
-  switch (card.type) {
+function cardTravels(node: CardNode, chartCapable: boolean): boolean {
+  switch (node.type) {
     case "chart":
       // The lines variant mounts immediately (rendered its own navigator today); the stacked-areas
       // variant folds into SiteChartsGroup, which only renders when the area is chartCapable.
-      return card.chart?.variant === "stacked-areas" ? chartCapable : true;
+      return (node.config as { variant?: string } | undefined)?.variant ===
+        "stacked-areas"
+        ? chartCapable
+        : true;
     case "sankey":
       return chartCapable; // SiteChartsGroup, gated on chartCapable
     case "generator-runs":
       return true; // consumes the shared window
-    case "tiles":
-      // hotWater renders the shared window's sparkline; renewables (the Home Energy card) reduces the
-      // window's attributed flow. Either one means the navigator has to be there.
-      return (card.tiles ?? []).some(
-        (t) => !t.hidden && (t.view === "hotWater" || t.view === "renewables"),
-      );
+    // hotWater renders the shared window's sparkline; renewables (the Home Energy card) reduces the
+    // window's attributed flow. Either one means the navigator has to be there.
+    case "hotWater":
+    case "renewables":
+      return true;
     default:
       return false;
   }
 }
 
-/** True when at least one visible card in a visible section reads the shared temporal window. */
+/**
+ * Visit every VISIBLE node depth-first, with its inherited area binding (§8.1). A hidden node prunes
+ * its whole subtree. `visit` returning true stops the walk (and is returned).
+ */
+function walkVisible(
+  doc: DashboardV4,
+  visit: (node: DashboardNode, area: AreaId | undefined) => boolean,
+): boolean {
+  const recur = (
+    node: DashboardNode,
+    inherited: AreaId | undefined,
+  ): boolean => {
+    if (node.hidden) return false;
+    const area = node.area ?? inherited;
+    if (visit(node, area)) return true;
+    if (node.kind === "group") {
+      for (const child of node.children) if (recur(child, area)) return true;
+    }
+    return false;
+  };
+  return recur(doc.root, undefined);
+}
+
+/** True when at least one visible card reads the shared temporal window. */
 export function hasTimeTravelingCard(
-  descriptor: DashboardV3,
+  doc: DashboardV4,
   areaById: Map<string, ReadableArea>,
 ): boolean {
-  return descriptor.sections
-    .filter((s) => !s.hidden)
-    .some((section) => {
-      const capable = !!areaById.get(section.areaId)?.chartCapable;
-      return section.cards
-        .filter((c) => !c.hidden)
-        .some((c) => cardTravels(c, capable));
-    });
+  return walkVisible(doc, (node, area) => {
+    if (node.kind !== "card") return false;
+    const capable = area ? !!areaById.get(area)?.chartCapable : false;
+    return cardTravels(node, capable);
+  });
 }
 
 /**
- * The handle whose timezone the header navigator formats its label in — the first non-hidden
- * section's Area handle. Undefined while the areas are still resolving (navigator holds until then).
+ * The handle whose timezone the header navigator formats its label in — the first visible node that
+ * binds an area, resolved to that area's handle. Undefined while the areas are still resolving (the
+ * navigator holds until then), or when the document binds no area at all (a `/device` doc, which
+ * supplies its own handle instead).
  */
 export function primaryHandle(
-  descriptor: DashboardV3,
+  doc: DashboardV4,
   areaById: Map<string, ReadableArea>,
 ): number | undefined {
-  const s = descriptor.sections.find((x) => !x.hidden);
-  return s ? areaById.get(s.areaId)?.legacySystemId : undefined;
+  let handle: number | undefined;
+  walkVisible(doc, (_node, area) => {
+    if (!area) return false;
+    handle = areaById.get(area)?.legacySystemId;
+    return true; // first area binding wins, resolvable or not (matches the v3 first-section rule)
+  });
+  return handle;
 }

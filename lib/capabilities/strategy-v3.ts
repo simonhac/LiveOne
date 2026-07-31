@@ -1,11 +1,15 @@
 /**
  * 🛑 TEMPORARY — the v3 projection of the v4 area strategy. DELETE ME.
  *
- * `buildAreaStrategy` emits a v4 `GroupNode` natively (config-v4 Phase 14 stage 8). Three consumers
- * still speak v3 and are removed by the two PRs that follow:
- *   - `app/device/[...slug]/page.tsx` → the v3 renderer (`components/Dashboard.tsx`)  — stage 9
- *   - `GET /api/areas/{areaId}/default-section` and `POST /api/dashboards` (descriptor) — stage 13
- * When the last of them goes, this file and `buildAreaStrategyV3ForHandle` go with it.
+ * `buildAreaStrategy` emits a v4 `GroupNode` natively (config-v4 Phase 14 stage 8). TWO consumers
+ * still speak v3, and stage 13 removes both:
+ *   - `GET /api/areas/{areaId}/default-section`
+ *   - `POST /api/dashboards` (the seed descriptor)
+ * When they go, this file and `buildAreaStrategyForHandle` go with them.
+ *
+ * The third consumer, `app/device/[...slug]/page.tsx`, went at stage 9 — so the `device-{id}`
+ * `areaId` described below NO LONGER HAS A PRODUCER. It is documented here only because this file
+ * still passes `areaId` through verbatim; nothing generates that shape any more.
  *
  * It is the exact inverse of `rewriteV3ToV4`'s mapping over the narrow shape the strategy emits (a
  * heading group whose children are leaf cards plus at most one `row` group of tile cards) — NOT a
