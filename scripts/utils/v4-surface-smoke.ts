@@ -67,6 +67,30 @@ import { bindingShapeMatches } from "@/lib/areas/slots";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 
 const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
+
+/**
+ * 🛑 DELIBERATELY GLOBAL, NOT PER-RUN — and that makes CONCURRENT RUNS UNSAFE, by design.
+ *
+ * Note the asymmetry with `SCRATCH_SLUG` below, which *is* per-run: the slug only has to avoid a
+ * uniqueness collision, whereas this prefix is what the opening sweep matches on. Because it carries
+ * no run id, a second run starting mid-flight will hard-delete the FIRST run's live scratch
+ * dashboards — and `share_tokens.dashboard_id` / `dashboard_grants.dashboard_id` are both ON DELETE
+ * CASCADE, so its live share tokens go with them and it then fails somewhere unrelated, with failure
+ * text that points nowhere near the cause.
+ *
+ * That is accepted, because the alternative is worse. A per-run suffix would make overlapping runs
+ * safe but would DESTROY the property the opening sweep exists for: adopting debris from a run that
+ * died without its `finally` (a crash, a timeout, a hard kill — which has actually happened on this
+ * project). A sweep that only recognises its own suffix can never clean up after a previous run, and
+ * silent accumulation on a SHARED database is the failure this script was written to avoid.
+ *
+ * So the invariant is operational, not structural: **one mutating HTTP driver against `liveone-dev`
+ * at a time.** If concurrent runs are ever actually wanted, the change is a per-run suffix on the
+ * prefix *plus* a sweep that adopts only its own — and it must be paired with some other answer for
+ * crashed-run debris, or it is a straight regression. (`AREA_PREFIX` has always had this property;
+ * extending the sweep to dashboards is what moved the blast radius onto the rows carrying the share
+ * tokens. Raised by the stage-7 agent, config-v4 Phase 14.)
+ */
 const SCRATCH_PREFIX = "v4-smoke ·";
 const SCRATCH_SLUG = `v4-smoke-${Math.random().toString(36).slice(2, 8)}`;
 /** Scratch AREAS carry their own prefix — the ledger's namespace for Phase 14 stage 10. */
