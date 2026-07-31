@@ -1,0 +1,19 @@
+{
+  // Type-checks `scripts/`, which the root tsconfig excludes.
+  //
+  // The root `exclude` is right to keep `scripts/` out of `next build` — these are operational
+  // one-offs, not app code. The cost was that NOTHING checked them: not `tsc --noEmit`, not
+  // `next build`, not jest (ts-jest compiles them but does not report their diagnostics). So this is
+  // a pure include/exclude delta of the root config — same compilerOptions, same `lib`, same
+  // strictness — pointed at the directory the root one skips.
+  //
+  // 🛑 Wired into `npm run type-check` ONLY, deliberately NOT into `prebuild`. `prebuild` gates
+  // production deploys, and a half-finished one-off under `scripts/temp/` must never be able to
+  // block a deploy of the app — that turns the check into something people route around.
+  //
+  // `tests`, `legacy` and `packages` stay excluded: `packages/*` has its own tsconfig, and widening
+  // past `scripts/` is a separate decision.
+  "extends": "./tsconfig.json",
+  "include": ["scripts/**/*.ts", "next-env.d.ts"],
+  "exclude": ["node_modules", "tests", "legacy", "packages"]
+}

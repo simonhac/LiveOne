@@ -104,7 +104,7 @@ async function runDiscover() {
     .select({
       id: areas.id,
       handle: legacyHandles.handle,
-      name: areas.displayName,
+      name: areas.name,
     })
     .from(areas)
     .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id));

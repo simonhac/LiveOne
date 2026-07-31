@@ -19,7 +19,6 @@ import {
   availableAreaCards,
 } from "@/lib/capabilities/catalog";
 import { getLatestValues } from "@/lib/latest-values-store";
-import type { LatestPointValues } from "@/lib/types/api";
 
 const INSTALLS: { name: string; handle: number }[] = [
   { name: "Kew (area 13, sigenergy area-of-one)", handle: 13 },
@@ -34,7 +33,11 @@ async function main() {
     console.log(`\n══ ${name} — handle ${handle} ══`);
 
     const config = await capabilitiesForDevice(handle);
-    const latest = ((await getLatestValues(handle)) ?? {}) as LatestPointValues;
+    // The KV map, unconverted and uncast. It used to be asserted to `LatestPointValues` (the API
+    // wire shape) — a cast that is false in both fields the two shapes disagree on (`value` may be
+    // a string or null here; the timestamp is `measurementTimeMs`, not a `measurementTime` Date).
+    // `capabilitiesFromLatest` now takes the structural `LatestPresenceMap` both shapes satisfy.
+    const latest = (await getLatestValues(handle)) ?? {};
     const presence = capabilitiesFromLatest(latest);
 
     console.log("  config caps  :", show(config));

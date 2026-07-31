@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import { Point } from "@/lib/ids";
 import type { ActivePointLatest } from "@/lib/readings";
-import type { PointAddr } from "@/lib/registry";
+import type { PointAddr, PointRid } from "@/lib/registry";
 import { toAgg5mInsert } from "../openelectricity/bulk-ingest-helpers";
 import { groupLatestByDevice } from "../utils/rebuild-dev-kv-helpers";
 
@@ -65,12 +65,15 @@ describe("readings script adapters", () => {
       sessionId: null,
       sessionLabel: null,
     });
+    // `index` is gone from PointAddr — it existed only to serve the retired
+    // "{systemId}.{pointIndex}" address grammar, and `points` has no column to re-source it from.
+    // The fixture kept setting it, so it claimed to model a shape that no longer exists. `rid` was
+    // `1 as never`, which dodges the PointRid brand instead of using it.
     const address = (point: typeof p1, systemId: number): PointAddr => ({
       pointId: point,
       uuid: Point.toUuid(point),
-      rid: 1 as never,
+      rid: 1 as PointRid,
       systemId,
-      index: 1,
     });
     const rows = [row(p1), row(p2)];
     const grouped = groupLatestByDevice(

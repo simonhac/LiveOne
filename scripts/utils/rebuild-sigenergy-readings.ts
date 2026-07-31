@@ -36,7 +36,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { points, devices, sessions } from "@/lib/db/planetscale/schema";
 import { ReadingsDao } from "@/lib/readings/dao";
-import { RegistryCache } from "@/lib/registry/registry-cache";
+import { Point } from "@/lib/ids";
 import type { PointId } from "@/lib/ids/types";
 import { parseEnergyFlow } from "@/lib/vendors/sigenergy/sigenergy-client";
 import {
@@ -89,6 +89,7 @@ async function main() {
   const pointRows = await db
     .select({
       rid: points.rid,
+      uuid: points.id,
       physicalPath: points.physicalPath,
       logicalPath: points.logicalPath,
       metricType: points.metricType,
@@ -117,10 +118,15 @@ async function main() {
   // Hot-table access goes through the readings seam (config-v4 Phase 3); the boundary gate in
   // scripts/check-readings-boundary.mjs enforces it. `sessions` is not a hot table, so the payload
   // archive is read directly and joined in memory by session id.
+  //
+  // The `PointId` comes straight off the row we already read — `points.id` IS the point uuid, and
+  // `Point.encode` is the same codec `RegistryCache` applies to it. Going back through
+  // `RegistryCache.pointForRid(rid)` needed a `PointRid`, which a bare `points.rid` is not (the
+  // brand is what keeps the uuid↔rid seam honest), and cost one cold DB round trip PER POINT to
+  // re-derive a uuid this query had already returned.
   const pointIdByRid = new Map<number, PointId>();
-  for (const rid of fieldByRid.keys()) {
-    const addr = await RegistryCache.pointForRid(rid);
-    if (addr) pointIdByRid.set(rid, addr);
+  for (const p of pointRows) {
+    if (fieldByRid.has(p.rid)) pointIdByRid.set(p.rid, Point.encode(p.uuid));
   }
 
   // Per-point tallies so the dry run is readable: what actually moves, and by how much.

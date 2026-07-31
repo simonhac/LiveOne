@@ -189,7 +189,10 @@ async function request(
   } = {},
 ): Promise<Res> {
   const as = opts.as ?? "clerk";
-  const auth =
+  // Annotated, not inferred: the `anon` arm is `{}`, so the inferred union's third member is
+  // `{ Authorization?: undefined }`, which is not a `Record<string, string>` and so not a valid
+  // `HeadersInit`. Nothing about the runtime changes — spreading `{}` contributes no header.
+  const auth: Record<string, string> =
     as === "clerk"
       ? { Authorization: `Bearer ${await mintJwt()}` }
       : as === "cron"
