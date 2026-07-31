@@ -149,6 +149,39 @@
       }
     ]
   },
+  "n_daily_stripe": {
+    "plugin": "card:daily-stripe",
+    "renderProps": {
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
+      },
+      "handle": 1,
+      "node": {
+        "config": {
+          "color": {
+            "from": "hsl(210,80%,50%)",
+            "max": 40,
+            "min": 30,
+            "to": "hsl(0,80%,50%)"
+          },
+          "days": 7,
+          "label": "Faucet",
+          "primary": {
+            "logicalPath": "load.hws/temperature"
+          },
+          "state": {
+            "logicalPath": "load.hws/power",
+            "onThreshold": 100
+          },
+          "unit": "°C"
+        },
+        "id": "n_daily_stripe",
+        "kind": "card",
+        "type": "daily-stripe"
+      }
+    },
+    "leaves": []
+  },
   "n_dm_device": {
     "plugin": "card:device-metrics",
     "renderProps": {

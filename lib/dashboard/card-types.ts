@@ -40,7 +40,10 @@ export type TileView = (typeof V4_TILE_TYPES)[number];
  */
 export type TileId = Exclude<TileView, "oe-grid">;
 
-/** The 9 known card types that are NOT tile views (v3 `DashboardCardType` minus `tiles` → group). */
+/**
+ * The 10 known card types that are NOT tile views (v3 `DashboardCardType` minus `tiles` → group,
+ * plus the v4-native cards that never had a v3 form — `daily-stripe`).
+ */
 export const V4_NON_TILE_CARD_TYPES = [
   "chart",
   "sankey",
@@ -51,10 +54,11 @@ export const V4_NON_TILE_CARD_TYPES = [
   "battery-contents",
   "ev-provenance",
   "battery-provenance-history",
+  "daily-stripe",
 ] as const;
 
 /**
- * The 18 known card types = the 9 promoted tile views + the 9 non-tile card types.
+ * The 19 known card types = the 9 promoted tile views + the 10 non-tile card types.
  * Kept as a const tuple so it doubles as the runtime set and the literal union.
  */
 export const V4_CARD_TYPES = [
@@ -108,8 +112,8 @@ export type CardType = KnownCardType | (string & {});
 
 // ---------------------------------------------------------------------------
 // Per-type config schemas (§8.4 "known types: strict per-type config").
-// Only `chart` and `device-metrics` carry structural config today; the promoted tiles may carry an
-// (inert) `features` list, preserved verbatim. Every other known type is BARE (no config).
+// `chart`, `device-metrics` and `daily-stripe` carry structural config; the promoted tiles may carry
+// an (inert) `features` list, preserved verbatim. Every other known type is BARE (no config).
 // ---------------------------------------------------------------------------
 
 /** The `chart` card config — mirrors v3 `ChartCardConfig` (lib/dashboard/v3.ts). */
@@ -145,6 +149,73 @@ export const tileCardConfigSchema = z.strictObject({
 });
 export type TileCardConfig = z.infer<typeof tileCardConfigSchema>;
 
+// --- daily-stripe -----------------------------------------------------------------------------
+
+/**
+ * The default stripe ramp — the blue→red HSL pair the HWS lab timeline passes
+ * (`app/labs/kinkora-hws/page.tsx`).
+ *
+ * 🛑 INLINE LITERALS ON PURPOSE, and they must stay that way: this module is SERVER-SAFE (the doc
+ * validator imports it on the request path), while `lib/heatmap-colors.ts` pulls in the heavy,
+ * ESM-only `d3-scale-chromatic`. Do not import a palette from there to "share" it — keep these two
+ * in sync by hand instead (docs/plans/hws-stripe-and-heatmap-cards.md §"Shared wiring").
+ */
+export const DAILY_STRIPE_DEFAULT_PALETTE: readonly [string, string] = [
+  "hsl(210,80%,50%)",
+  "hsl(0,80%,50%)",
+];
+
+/** The aggregation suffix a stripe series is served with; omitted ⇒ the metric's preferred one. */
+export const STRIPE_AGGS = ["avg", "last", "delta", "min", "max"] as const;
+
+/** One series a `daily-stripe` paints: a logical path, optionally pinned to a given aggregation. */
+const stripeSeriesShape = {
+  /** A `role.stem/metric` logical path, e.g. `load.hws/temperature` — NOT a series id. */
+  logicalPath: z.string().min(1),
+  /** Overrides `PointInfo.getPreferredAggregationForMetricType(metric)`. */
+  agg: z.enum(STRIPE_AGGS).optional(),
+};
+
+/**
+ * The `daily-stripe` card config — RENDER OPTIONS ONLY (§8.3: `area`/`device` live in the node
+ * envelope, never here; there is deliberately no `systemId`/`areaId`/`deviceId` key).
+ *
+ * Reproduces the HWS lab timeline exactly via:
+ *   `{ primary: {logicalPath: "load.hws/temperature"},
+ *      state:   {logicalPath: "load.hws/power", onThreshold: 100},
+ *      days: 7, color: {min: 30, max: 40, from: …, to: …}, unit: "°C", label: "Faucet" }`
+ */
+export const dailyStripeConfigSchema = z
+  .strictObject({
+    /** The coloured row. */
+    primary: z.strictObject(stripeSeriesShape),
+    /** Optional second series painted as a thin on/off strip. Omit ⇒ one gradient row per day. */
+    state: z
+      .strictObject({
+        ...stripeSeriesShape,
+        /** `state` values strictly above this count as "on". */
+        onThreshold: z.number().default(0),
+      })
+      .optional(),
+    /** Local days to draw. Capped at 7 by `/api/history`'s 7.5-day window for `interval=5m`. */
+    days: z.number().int().min(1).max(7).default(7),
+    /** Colour domain + ramp. `min`/`max` omitted ⇒ resolved from the data (fallback `[0, 1]`). */
+    color: z
+      .strictObject({
+        min: z.number().optional(),
+        max: z.number().optional(),
+        from: z.string().min(1),
+        to: z.string().min(1),
+      })
+      .optional(),
+    /** Suffix for tooltip/legend values, e.g. `"°C"`. */
+    unit: z.string().optional(),
+    /** Legend prefix, e.g. `"Faucet"`. */
+    label: z.string().optional(),
+  })
+  .describe("daily-stripe");
+export type DailyStripeConfig = z.infer<typeof dailyStripeConfigSchema>;
+
 /**
  * Known-type → config schema. A known type ABSENT from this map is BARE: it must carry no config
  * (an empty object or omitted). Unknown (non-`KnownCardType`) types bypass this entirely — their
@@ -153,6 +224,7 @@ export type TileCardConfig = z.infer<typeof tileCardConfigSchema>;
 export const CARD_CONFIG_SCHEMAS: Partial<Record<KnownCardType, z.ZodType>> = {
   chart: chartConfigSchema,
   "device-metrics": deviceMetricsConfigSchema,
+  "daily-stripe": dailyStripeConfigSchema,
   // Promoted tiles: inert `features` only.
   solar: tileCardConfigSchema,
   load: tileCardConfigSchema,
