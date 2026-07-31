@@ -313,6 +313,63 @@
       }
     ]
   },
+  "n_heatmap": {
+    "plugin": "card:heatmap",
+    "renderProps": {
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001",
+        "device": "dv_01j4q2m000e00800000000000h"
+      },
+      "deviceSystemId": 11,
+      "handle": 1,
+      "node": {
+        "config": {
+          "palette": "turbo",
+          "series": "load.hws/temperature"
+        },
+        "device": "dv_01j4q2m000e00800000000000h",
+        "id": "n_heatmap",
+        "kind": "card",
+        "type": "heatmap"
+      }
+    },
+    "leaves": [
+      {
+        "component": "HeatmapPanel",
+        "props": {
+          "pinnedPalette": "turbo",
+          "pinnedSeries": "load.hws/temperature",
+          "systemId": 11,
+          "timezone": "Australia/Sydney",
+          "variant": "card"
+        }
+      }
+    ]
+  },
+  "n_heatmap_bare": {
+    "plugin": "card:heatmap",
+    "renderProps": {
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001"
+      },
+      "handle": 1,
+      "node": {
+        "id": "n_heatmap_bare",
+        "kind": "card",
+        "type": "heatmap"
+      }
+    },
+    "leaves": [
+      {
+        "component": "HeatmapPanel",
+        "props": {
+          "systemId": 1,
+          "timezone": "Australia/Sydney",
+          "variant": "card"
+        }
+      }
+    ]
+  },
   "site-charts@1": {
     "plugin": "host:site-charts-collapse",
     "renderProps": null,

@@ -55,6 +55,7 @@ import { batteryContentsPlugin } from "./cards/battery-contents";
 import { evProvenancePlugin } from "./cards/ev-provenance";
 import { batteryProvenanceHistoryPlugin } from "./cards/battery-provenance-history";
 import { dailyStripePlugin } from "./cards/daily-stripe";
+import { heatmapPlugin } from "./cards/heatmap";
 
 /** What a `CARD_RENDERERS` lookup yields. Discriminate on `kind` before mounting. */
 export type NodePlugin = TilePlugin | CardPlugin;
@@ -86,4 +87,5 @@ export const CARD_RENDERERS = {
   "ev-provenance": evProvenancePlugin,
   "battery-provenance-history": batteryProvenanceHistoryPlugin,
   "daily-stripe": dailyStripePlugin,
+  heatmap: heatmapPlugin,
 } satisfies { [T in KnownCardType]: PluginFor<T> };

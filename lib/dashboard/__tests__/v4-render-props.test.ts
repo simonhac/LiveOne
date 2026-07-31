@@ -146,6 +146,18 @@ const LEAF_MODULES: Record<string, string> = {
   "@/components/HwsSmallCard": "HwsSmallCard",
   "@/components/GridSignalsCard": "GridSignalsCard",
   "@/components/HomeEnergyCard": "HomeEnergyCard",
+  // config-v4 Phase 14 stage 20. CAPTURED as a leaf, not stubbed away like `DailyStripes` below —
+  // the two stage-19 reasons for stubbing were checked against it and only one applies:
+  //   1. Date.now()-derived props: NO. `HeatmapPanel`'s props are `systemId`/`timezone`/the two pins
+  //      /`variant` — all doc- and fixture-derived, so the golden is stable across midnight. (The
+  //      30-day window is computed INSIDE `HeatmapChart`, below the captured boundary.)
+  //   2. ESM-only deps: yes — it reaches `lib/heatmap-colors` → `d3-scale-chromatic`, and
+  //      `HeatmapChart` → `chart.js`/`chartjs-chart-matrix`. But a `jest.mock` FACTORY already
+  //      solves that: the real module is never required either way. That is the same thing the 14
+  //      entries above do for their chart.js leaves.
+  // So the strictly stronger option is available here, and taking it puts the card's actual output
+  // — including which series/palette it pins — under the byte-for-byte `leaves` gate.
+  "@/components/heatmap/HeatmapPanel": "HeatmapPanel",
 };
 for (const [modulePath, name] of Object.entries(LEAF_MODULES)) {
   jest.mock(modulePath, () => {
@@ -269,6 +281,20 @@ const FIXTURE_DOC: DashboardV4 = {
               label: "Faucet",
             },
           },
+          // ---- the v4-native `heatmap` (stage 20), in BOTH of its configurations ---------------
+          // Fully pinned + device-bound: proves `deviceSystemId` (11) beats the area handle (1) and
+          // that both pins reach the panel, which is what hides its two selectors.
+          {
+            id: "n_heatmap",
+            kind: "card",
+            type: "heatmap",
+            device: DEV_METRICS,
+            config: { series: "load.hws/temperature", palette: "turbo" },
+          },
+          // Bare + area-scoped: the default selector-driven card. Two heatmaps on one document is
+          // also the structural half of the "cards must not collide" edge case — they resolve to
+          // different subjects and neither writes to the URL (the state is inside the panel).
+          { id: "n_heatmap_bare", kind: "card", type: "heatmap" },
           // ---- `card.deviceSystemId`: device-bound AND inheriting-from-section -----------------
           {
             id: "n_dm_device",
@@ -348,6 +374,8 @@ const EXPECTED_KEYS = [
   "n_ev_prov",
   "n_gen_device",
   "n_gen_inherit",
+  "n_heatmap",
+  "n_heatmap_bare",
   // the collapse target (rendered by the host, not by a plugin)
   "site-charts@1",
 ].sort();
@@ -436,7 +464,7 @@ beforeAll(() => {
 });
 
 describe("v4 renderer — coverage and arity", () => {
-  it("exercises every one of the 19 known v4 card types", () => {
+  it("exercises every one of the 20 known v4 card types", () => {
     const covered = new Set<string>();
     for (const c of pluginCaptures)
       covered.add(c.plugin.replace(/^(card|tile):/, ""));

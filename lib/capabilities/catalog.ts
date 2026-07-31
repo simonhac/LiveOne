@@ -215,6 +215,19 @@ export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
     scope: "area",
     requires: { any: ["instrumentation"] },
   },
+  // MINIMAL, like `daily-stripe` above and for the same reason: a heatmap paints whichever of the
+  // device's points is selected (or pinned), so it maps to no single capability —
+  // `instrumentation` ("any numeric signal") is the honest floor and what keeps the entry
+  // satisfiable. `scope: "device"` is the difference: unlike `daily-stripe`, the surface enumerates
+  // ONE device's point list (`/api/device/{id}/points`), so the gallery must offer it against a
+  // member's capability set, not the area union. Contract #2 above still applies — the panel keeps
+  // its own data gate (no points ⇒ a "No points" card).
+  heatmap: {
+    id: "heatmap",
+    label: "Heatmap",
+    scope: "device",
+    requires: { any: ["instrumentation"] },
+  },
 };
 
 /**

@@ -41,8 +41,8 @@ export type TileView = (typeof V4_TILE_TYPES)[number];
 export type TileId = Exclude<TileView, "oe-grid">;
 
 /**
- * The 10 known card types that are NOT tile views (v3 `DashboardCardType` minus `tiles` → group,
- * plus the v4-native cards that never had a v3 form — `daily-stripe`).
+ * The 11 known card types that are NOT tile views (v3 `DashboardCardType` minus `tiles` → group,
+ * plus the v4-native cards that never had a v3 form — `daily-stripe`, `heatmap`).
  */
 export const V4_NON_TILE_CARD_TYPES = [
   "chart",
@@ -55,10 +55,11 @@ export const V4_NON_TILE_CARD_TYPES = [
   "ev-provenance",
   "battery-provenance-history",
   "daily-stripe",
+  "heatmap",
 ] as const;
 
 /**
- * The 19 known card types = the 9 promoted tile views + the 10 non-tile card types.
+ * The 20 known card types = the 9 promoted tile views + the 11 non-tile card types.
  * Kept as a const tuple so it doubles as the runtime set and the literal union.
  */
 export const V4_CARD_TYPES = [
@@ -112,8 +113,8 @@ export type CardType = KnownCardType | (string & {});
 
 // ---------------------------------------------------------------------------
 // Per-type config schemas (§8.4 "known types: strict per-type config").
-// `chart`, `device-metrics` and `daily-stripe` carry structural config; the promoted tiles may carry
-// an (inert) `features` list, preserved verbatim. Every other known type is BARE (no config).
+// `chart`, `device-metrics`, `daily-stripe` and `heatmap` carry structural config; the promoted tiles
+// may carry an (inert) `features` list, preserved verbatim. Every other known type is BARE.
 // ---------------------------------------------------------------------------
 
 /** The `chart` card config — mirrors v3 `ChartCardConfig` (lib/dashboard/v3.ts). */
@@ -216,6 +217,51 @@ export const dailyStripeConfigSchema = z
   .describe("daily-stripe");
 export type DailyStripeConfig = z.infer<typeof dailyStripeConfigSchema>;
 
+// --- heatmap ------------------------------------------------------------------------------------
+
+/**
+ * The palette vocabulary — the keys of `HEATMAP_PALETTES` (lib/heatmap-colors.ts).
+ *
+ * 🛑 DUPLICATED ON PURPOSE, for the same reason `DAILY_STRIPE_DEFAULT_PALETTE` above is inlined:
+ * this module is SERVER-SAFE (the doc validator imports it on the request path) while
+ * `lib/heatmap-colors.ts` pulls in the heavy, ESM-only `d3-scale-chromatic`. Deriving these keys
+ * from `keyof typeof HEATMAP_PALETTES` would make a zod *value* out of a `d3` import and drag it
+ * into every validator call site (and into jest, which does not transform `node_modules`).
+ *
+ * It is not a trust-me duplication: the CLIENT-side plugin
+ * (components/dashboard/cards/heatmap.tsx) carries a compile-time assertion that this tuple and
+ * `HeatmapPaletteKey` are mutually assignable, so adding or renaming a palette without updating
+ * this list is a build error there. Keep the two in sync.
+ */
+export const HEATMAP_PALETTE_KEYS = [
+  "viridis",
+  "plasma",
+  "turbo",
+  "rdylbu",
+  "greens",
+] as const;
+export type HeatmapPaletteName = (typeof HEATMAP_PALETTE_KEYS)[number];
+
+/**
+ * The `heatmap` card config — RENDER OPTIONS ONLY (§8.3: the device this heatmap is *of* comes from
+ * the node envelope's `device`/`area`, never from here; there is deliberately no
+ * `systemId`/`deviceId` key).
+ *
+ * BOTH KEYS ARE OPTIONAL, and that is the card's default behaviour rather than an omission: with
+ * neither set the card renders the same selector-driven surface as `/device/{id}/heatmap`, so a
+ * bare `{ kind: "card", type: "heatmap", device: … }` node is already useful. Setting a key PINS the
+ * control (the matching `<Select>` disappears); set both for a chart-only card.
+ */
+export const heatmapConfigSchema = z
+  .strictObject({
+    /** A `role.stem/metric` logical path to pin, e.g. `load.hws/temperature`. Omit ⇒ selector. */
+    series: z.string().min(1).optional(),
+    /** A `HEATMAP_PALETTES` key to pin. Omit ⇒ palette selector (defaulting to `viridis`). */
+    palette: z.enum(HEATMAP_PALETTE_KEYS).optional(),
+  })
+  .describe("heatmap");
+export type HeatmapCardConfig = z.infer<typeof heatmapConfigSchema>;
+
 /**
  * Known-type → config schema. A known type ABSENT from this map is BARE: it must carry no config
  * (an empty object or omitted). Unknown (non-`KnownCardType`) types bypass this entirely — their
@@ -225,6 +271,7 @@ export const CARD_CONFIG_SCHEMAS: Partial<Record<KnownCardType, z.ZodType>> = {
   chart: chartConfigSchema,
   "device-metrics": deviceMetricsConfigSchema,
   "daily-stripe": dailyStripeConfigSchema,
+  heatmap: heatmapConfigSchema,
   // Promoted tiles: inert `features` only.
   solar: tileCardConfigSchema,
   load: tileCardConfigSchema,

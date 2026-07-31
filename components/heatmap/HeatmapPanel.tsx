@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
 import HeatmapChart from "@/components/HeatmapChart";
@@ -15,6 +16,7 @@ import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
 import { getUnitDisplay } from "@/lib/point/unit-display";
+import { resolveHeatmapPin } from "@/lib/dashboard/heatmap-card";
 
 /**
  * The heatmap surface — point selector + palette selector + `HeatmapChart` — with NO URL coupling
@@ -25,13 +27,17 @@ import { getUnitDisplay } from "@/lib/point/unit-display";
  * with either control pinned:
  *
  *  - `pinnedSeries` / `pinnedPalette` override the local selection AND hide the matching `<Select>`;
- *    pin both for a chart-only view. A pinned series that the device doesn't have simply leaves the
- *    chart unmounted (the "select a point" placeholder) rather than feeding an unknown path to the
- *    chart.
+ *    pin both for a chart-only view. A pinned series the device does NOT have is treated as stale
+ *    rather than authoritative: the selector comes back, a note says so, and the unknown path is
+ *    never fed to the chart (`resolveHeatmapPin`, config-v4 Phase 14 stage 20).
  *  - `initialSeries` / `initialPalette` seed the local selection ONCE on mount (matching the
  *    standalone page's read-the-URL-on-mount-only behaviour); `onSelectionChange` fires on USER
  *    changes only — never on the auto-select-first-point — so the page can persist to the URL
  *    without writing one on load.
+ *  - `variant` sizes the loading / error / empty states ONLY. `"page"` (the default) keeps the
+ *    standalone page's full-viewport blocks byte-for-byte; `"card"` swaps in a block the size of the
+ *    chart it is standing in for, because a `min-h-screen` placeholder inside a dashboard card would
+ *    push every card below it off the screen while the points fetch is in flight.
  */
 
 interface PointListItem {
@@ -64,7 +70,38 @@ export interface HeatmapPanelProps {
   initialPalette?: HeatmapPaletteKey;
   /** Fired when the USER changes either control; carries the full resulting selection. */
   onSelectionChange?: (selection: HeatmapSelection) => void;
+  /** How to size the loading/error/empty states. See the module note. */
+  variant?: "page" | "card";
   className?: string;
+}
+
+/**
+ * The loading / error / empty placeholder, sized for its host. `"page"` reproduces the standalone
+ * page's original markup exactly; `"card"` matches the geometry of the chart placeholder below
+ * (`h-96` + the card's border) so a dashboard row does not reflow as the panel resolves.
+ */
+function StatusBlock({
+  variant,
+  tone,
+  children,
+}: {
+  variant: "page" | "card";
+  tone: "muted" | "error";
+  children: ReactNode;
+}) {
+  const text = tone === "error" ? "text-red-400" : "text-gray-400";
+  if (variant === "page") {
+    return (
+      <div className="min-h-screen bg-gray-800 flex items-center justify-center">
+        <div className={text}>{children}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-center h-96 bg-gray-900 rounded-lg border border-gray-700">
+      <div className={text}>{children}</div>
+    </div>
+  );
 }
 
 export default function HeatmapPanel({
@@ -77,6 +114,7 @@ export default function HeatmapPanel({
   initialSeries,
   initialPalette,
   onSelectionChange,
+  variant = "page",
   className,
 }: HeatmapPanelProps) {
   const [selectedPoint, setSelectedPoint] = useState<string | undefined>(
@@ -115,6 +153,9 @@ export default function HeatmapPanel({
   //  - fetch failure       → derived from the query error
   //  - empty points        → "No points found for this device"
   const loading = !!systemId && isPending;
+  /** Resolved, and the device has nothing to draw. Split out so `variant: "card"` can treat it as
+   *  an empty state without disturbing the page's (unchanged) error wording. */
+  const noPoints = !!pointsData && points.length === 0;
   let error: string | null = null;
   if (!systemId) {
     error = "Invalid system ID";
@@ -123,7 +164,7 @@ export default function HeatmapPanel({
       queryError instanceof Error
         ? `Failed to fetch points: ${queryError.message}`
         : "Unknown error";
-  } else if (pointsData && points.length === 0) {
+  } else if (noPoints) {
     error = "No points found for this system";
   }
 
@@ -228,36 +269,62 @@ export default function HeatmapPanel({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-800 flex items-center justify-center">
-        <div className="text-gray-400">Loading...</div>
-      </div>
+      <StatusBlock variant={variant} tone="muted">
+        Loading...
+      </StatusBlock>
+    );
+  }
+
+  // A device with no points is an EMPTY state, not a failure — it just has nothing to draw yet. The
+  // standalone page has always reported it through the red error block, so that stays exactly as it
+  // was; a card says "No points" in the muted tone instead (the doc's card-level edge case).
+  if (noPoints && variant === "card") {
+    return (
+      <StatusBlock variant={variant} tone="muted">
+        No points
+      </StatusBlock>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-800 flex items-center justify-center">
-        <div className="text-red-400">Error: {error}</div>
-      </div>
+      <StatusBlock variant={variant} tone="error">
+        Error: {error}
+      </StatusBlock>
     );
   }
 
   if (points.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-800 flex items-center justify-center">
-        <div className="text-gray-400">No data available</div>
-      </div>
+      <StatusBlock variant={variant} tone="muted">
+        No data available
+      </StatusBlock>
     );
   }
 
-  const activePoint = pinnedSeries ?? selectedPoint;
+  // A pin is only honoured if the device actually has it; a stale pin degrades to the selector plus
+  // a note rather than handing `HeatmapChart` a path that cannot resolve.
+  const pin = resolveHeatmapPin(
+    sortedPoints.map((p) => p.logicalPath),
+    pinnedSeries,
+    selectedPoint,
+  );
+  const activePoint = pin.series;
   const activePalette = pinnedPalette ?? selectedPalette;
   const selectedPointInfo = points.find((p) => p.logicalPath === activePoint);
-  const showPointSelect = !pinnedSeries;
+  const showPointSelect = pin.showPointSelect;
   const showPaletteSelect = !pinnedPalette;
 
   return (
     <div className={className}>
+      {pin.pinUnavailable && (
+        <div className="mb-4 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
+          Pinned series{" "}
+          <code className="text-amber-200">{pinnedSeries}</code> is unavailable
+          on this device — showing the point selector instead.
+        </div>
+      )}
+
       {/* Controls */}
       {(showPointSelect || showPaletteSelect) && (
         <div className="mb-6 flex flex-wrap gap-4">
