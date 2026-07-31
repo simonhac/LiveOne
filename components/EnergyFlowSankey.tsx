@@ -10,7 +10,7 @@ import {
 } from "d3-sankey";
 import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import { formatFlowMagnitude } from "@/lib/energy-formatting";
-import NodeTooltip from "@/components/NodeTooltip";
+import NodeTooltip, { PANEL_WIDTH } from "@/components/NodeTooltip";
 import LinkTooltip from "@/components/LinkTooltip";
 
 /** How the Sankey lays out storage. "columns" = classic sources→loads bipartite; "battery-middle" =
@@ -119,17 +119,16 @@ interface EnergyFlowSankeyProps {
   linkTooltip?: SankeyLinkTooltipResolver;
 }
 
-/** Screen-space placement for one side-panel (or the overlay, which ignores left/top/beakTop). */
+/** Screen-space placement for one tooltip panel. */
 interface PanelPlacement {
   side: "left" | "right";
   left: number;
   top: number;
   beakTop: number;
-  variant: "side" | "overlay";
-  /** Beak shape: the "diamond" centred on the node (tall nodes), or a "half beak" hugging the node's
-   *  top/bottom edge (short nodes, where the diamond would overshoot). `beakTop` is interpreted per
-   *  variant — see NodeTooltip. */
-  beakVariant: "diamond" | "half-top" | "half-bottom";
+  /** Beak shape: the "diamond" (tall nodes), a "half beak" hugging the node's top/bottom edge (short
+   *  nodes, where the diamond would overshoot), or "none" when the panel overlaps its own node.
+   *  `beakTop` is interpreted per variant — see NodeTooltip. */
+  beakVariant: "diamond" | "half-top" | "half-bottom" | "none";
   /** False during the measure pass (panel mounted off-position, hidden) — see the positioning effect. */
   visible: boolean;
 }
@@ -219,8 +218,31 @@ const MIN_HEIGHT_FOR_LABEL = 28;
 /** The diamond beak's px size. Nodes shorter than this get the "half beak" (see NodeTooltip) so the
  *  diamond doesn't overshoot the node. */
 const BEAK_SIZE = 12;
+/** Half the diamond beak's VERTICAL span — it's a BEAK_SIZE square rotated 45°, so it stands
+ *  BEAK_SIZE·√2 ≈ 17px tall. Used to keep the whole diamond (not just its centre) on the node. */
+const BEAK_HALF_SPAN = Math.round((BEAK_SIZE * Math.SQRT2) / 2);
 /** The half beak's px size (width & height) — keep in sync with NodeTooltip's half-beak dimensions. */
 const HALF_BEAK_SIZE = 7;
+/** Minimum stroke width (px) of a ribbon's transparent touch hit target — a thin spline is otherwise
+ *  untappable. Roughly a fingertip's worth of slop either side of the ribbon. */
+const HIT_STROKE_MIN = 22;
+
+/** Diagram margins (px). The top/bottom pair also bounds the band tooltips are clamped into, so it's
+ *  shared between the draw effect's `extent` and the placement effects rather than re-typed. */
+const MARGIN_TOP = 35;
+const MARGIN_BOTTOM = 20;
+
+/** Laid-out diagram geometry the tooltip placement needs, captured by the draw effect. */
+interface SankeyGeom {
+  /** SVG-space top of the TOPMOST node and bottom of the BOTTOMMOST node — the vertical band every
+   *  tooltip is clamped into. Read off the laid-out nodes rather than the margins so a single-node
+   *  column (which the reflow centres instead of stretching) is honoured. */
+  bandTop: number;
+  bandBottom: number;
+  /** Each column's SVG x-range, left→right — a panel with no room beside its node is centred in the
+   *  gap between its column and the neighbouring one. */
+  columns: { x0: number; x1: number }[];
+}
 
 /** Classic two-column graph: every source above threshold → a left node, every load → a right node. */
 function buildColumnsGraph(
@@ -392,6 +414,20 @@ export default function EnergyFlowSankey({
   const [placementR, setPlacementR] = useState<PanelPlacement | null>(null);
   const panelRefL = useRef<HTMLDivElement>(null);
   const panelRefR = useRef<HTMLDivElement>(null);
+  const linkPanelRef = useRef<HTMLDivElement>(null);
+  /** The hovered link card's band-clamped viewport y (its CENTRE — the card translates ‑50%). `null`
+   *  while the measure pass runs, during which the card is mounted-but-hidden. */
+  const [linkTop, setLinkTop] = useState<number | null>(null);
+  /** Laid-out geometry from the most recent draw — a ref, not state: it's written by the draw effect and
+   *  read by the placement effects, which always run after it on any layout change. */
+  const geomRef = useRef<SankeyGeom | null>(null);
+  // Mirrors of the two open tooltips, written during render so the draw effect (which does NOT depend on
+  // them — depending on them would rebuild the diagram on every hover) can see what was open when it
+  // re-runs and carry it across the rebuild. See the restore at the end of that effect.
+  const hoveredRef = useRef<HoveredNode | null>(null);
+  const hoveredLinkRef = useRef<HoveredLink | null>(null);
+  hoveredRef.current = hovered;
+  hoveredLinkRef.current = hoveredLink;
   // The resolver is read through a ref inside the (expensive, `svg.innerHTML = ""`-rebuilding) draw
   // effect below, so a resolver identity change alone (the parent re-creating its closure — e.g. a
   // sankeyOptions toggle that doesn't change `matrix`/`unit`/`layout`) never forces a full diagram
@@ -435,10 +471,23 @@ export default function EnergyFlowSankey({
     const svg = svgRef.current;
     svg.innerHTML = "";
 
-    // The rebuilt SVG GCs its old node listeners (`svg.innerHTML = ""` above); any hovered/tapped
-    // tooltip's geometry belongs to the PREVIOUS render and must not linger across a data/layout change.
-    setHovered(null);
-    setHoveredLink(null);
+    geomRef.current = null;
+
+    // An open tooltip belongs to the PREVIOUS render — its geometry is stale and its listeners were just
+    // GC'd with the old SVG. Rather than dismiss it (a live window refetches every minute or so, and a
+    // panel vanishing mid-read is maddening), remember which node/link it was on and re-resolve it
+    // against the NEW layout once that's built: `restoreNode`/`restoreLink` are set by the draw loops
+    // below when they meet the matching key, and applied at the very end of this effect. A node or link
+    // that's no longer in the diagram simply doesn't match, and the tooltip closes as before.
+    const prevNodeKey = hoveredRef.current?.key ?? null;
+    const prevLinkKey = hoveredLinkRef.current?.key ?? null;
+    // One holder rather than three `let`s: the draw loops assign inside callbacks, which TS's flow
+    // analysis doesn't track for a plain `let` (it would still read as `null` at the restore below).
+    const restore: {
+      node: (() => HoveredNode | null) | null;
+      link: (() => HoveredLink | null) | null;
+      emphasis: (() => void) | null;
+    } = { node: null, link: null, emphasis: null };
 
     // Filter out sources and loads with < 0.1 kWh
     const MIN_ENERGY = 0.1;
@@ -450,6 +499,8 @@ export default function EnergyFlowSankey({
 
     // If there are no nodes or links, show a message instead of rendering
     if (nodes.length === 0 || links.length === 0) {
+      setHovered(null);
+      setHoveredLink(null);
       const noDataText = document.createElementNS(
         "http://www.w3.org/2000/svg",
         "text",
@@ -469,8 +520,8 @@ export default function EnergyFlowSankey({
     const nodeWidth =
       layout === "battery-middle" && isMobile ? 72 : isMobile ? 86 : 96;
     const margin = isMobile
-      ? { left: 0, right: 0, top: 35, bottom: 20 } // No margins on mobile
-      : { left: 60, right: 60, top: 35, bottom: 20 };
+      ? { left: 0, right: 0, top: MARGIN_TOP, bottom: MARGIN_BOTTOM } // No side margins on mobile
+      : { left: 60, right: 60, top: MARGIN_TOP, bottom: MARGIN_BOTTOM };
 
     // Custom node sorting to control vertical order.
     // SOURCES column (top→bottom): Solar, Other, House, Battery, Grid.
@@ -575,6 +626,18 @@ export default function EnergyFlowSankey({
     const columnXs = [...columnsByX.keys()].sort((a, b) => a - b);
     const minColumnX = columnXs[0];
     const maxColumnX = columnXs[columnXs.length - 1];
+
+    // Publish the laid-out geometry for the tooltip placement effects below (the node band + the column
+    // x-ranges). Every node's y is final by now — the bidirectional restack below moves link endpoints,
+    // never node boxes.
+    geomRef.current = {
+      bandTop: Math.min(...(graph.nodes as any[]).map((n) => n.y0)),
+      bandBottom: Math.max(...(graph.nodes as any[]).map((n) => n.y1)),
+      columns: columnXs.map((x) => {
+        const n = (columnsByX.get(x) ?? [])[0];
+        return { x0: n.x0, x1: n.x1 };
+      }),
+    };
 
     // Update link coordinates to match the shifted nodes. Each node moves
     // rigidly, so a link's within-node offset is preserved by shifting its
@@ -682,6 +745,8 @@ export default function EnergyFlowSankey({
     // Every ribbon's <path> + its link datum, collected so hovering a node OR a spline can emphasise the
     // relevant ribbon(s) and fade the rest (`link.source`/`link.target` are node refs after layout).
     const linkEls: { path: SVGPathElement; link: any }[] = [];
+    // Touch-only transparent hit twins of the ribbons, appended after all of them (see below).
+    const hitEls: SVGPathElement[] = [];
 
     // Hover emphasis (shared by node + link hover): strengthen the relevant ribbon(s), fade the rest,
     // then restore the base — opacity-only, imperative (mirrors the imperative draw). `emphasizeForNode`
@@ -753,12 +818,12 @@ export default function EnergyFlowSankey({
         path.addEventListener("mouseleave", resetEmphasis);
       }
 
-      // Link (spline) tooltip. When a resolver is supplied (desktop), the ugly native SVG <title> is
-      // replaced by the pretty centred LinkTooltip (positioned at the spline midpoint). Absent, or on
-      // mobile (where the spline is an awkward hit target) → keep the native <title> fallback.
-      if (linkTooltipRef.current && !isMobile) {
+      // Link (spline) tooltip. With a resolver, the ugly native SVG <title> is replaced by the pretty
+      // LinkTooltip centred on the spline midpoint — desktop on hover, touch on tap (the same tap-toggle
+      // the nodes use). Without a resolver, keep the native <title> fallback.
+      if (linkTooltipRef.current) {
         const linkKey = `${link.source.name}→${link.target.name}`;
-        path.addEventListener("mouseenter", () => {
+        const resolve = (): HoveredLink | null => {
           const content = linkTooltipRef.current?.({
             source: {
               id: link.source.id,
@@ -773,7 +838,7 @@ export default function EnergyFlowSankey({
             value: link.value,
           });
           const svgEl = svgRef.current;
-          if (!content || !svgEl) return;
+          if (!content || !svgEl) return null;
           const r = svgEl.getBoundingClientRect();
           const sx = r.width / actualWidth;
           const sy = r.height / height;
@@ -781,17 +846,54 @@ export default function EnergyFlowSankey({
           // through the endpoint-average y at its horizontal centre (t=0.5).
           const xMid = (link.source.x1 + link.target.x0) / 2;
           const yMid = (link.y0 + link.y1) / 2;
-          setHoveredLink({
+          return {
             key: linkKey,
             content,
             color: link.source.color,
             left: r.left + xMid * sx,
             top: r.top + yMid * sy,
+          };
+        };
+        if (isMobile) {
+          // A 1px-wide ribbon is an impossible tap target, so the listener goes on a transparent
+          // stroke-only twin (appended above every ribbon, below the nodes — see `hitEls`) that widens
+          // the hit area to HIT_STROKE_MIN. Tapping a spline dismisses any open node panel, so the two
+          // tooltips can't stack up on a small screen.
+          const hit = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+          );
+          hit.setAttribute("d", path.getAttribute("d")!);
+          hit.setAttribute("fill", "none");
+          hit.setAttribute("stroke", "transparent");
+          hit.setAttribute(
+            "stroke-width",
+            String(Math.max(HIT_STROKE_MIN, link.width)),
+          );
+          hit.setAttribute("pointer-events", "stroke");
+          hit.setAttribute("class", "sankey-link-hit");
+          hit.style.cursor = "pointer";
+          hit.addEventListener("click", (e) => {
+            e.stopPropagation();
+            setHovered(null);
+            setHoveredLink((h) => (h?.key === linkKey ? null : resolve()));
           });
-        });
-        path.addEventListener("mouseleave", () => {
-          setHoveredLink((h) => (h?.key === linkKey ? null : h));
-        });
+          hitEls.push(hit);
+        } else {
+          path.addEventListener("mouseenter", () => {
+            const next = resolve();
+            if (next) setHoveredLink(next);
+          });
+          path.addEventListener("mouseleave", () => {
+            setHoveredLink((h) => (h?.key === linkKey ? null : h));
+          });
+        }
+        // The ribbon whose tooltip was open before the rebuild — carry it over (see the top of this
+        // effect); `resolve` recomputes the midpoint from this render's geometry.
+        if (linkKey === prevLinkKey) {
+          restore.link = resolve;
+          if (!isMobile) restore.emphasis = () => emphasizeForLink(link);
+        }
       } else {
         const title = document.createElementNS(
           "http://www.w3.org/2000/svg",
@@ -804,6 +906,10 @@ export default function EnergyFlowSankey({
       linkEls.push({ path, link });
       svgElement.appendChild(path);
     });
+
+    // Touch hit targets go on top of every ribbon (so a thin spline isn't shadowed by a fat one drawn
+    // later) but before the nodes, which are appended below and stay the topmost hit target.
+    for (const hit of hitEls) svgElement.appendChild(hit);
 
     // Percentage denominator: total energy entering the leftmost column. In two-column mode this is the
     // sum of source totals (unchanged from before); in battery-middle it is external generation (the
@@ -836,22 +942,54 @@ export default function EnergyFlowSankey({
       rect.setAttribute("stroke", "none");
       rect.setAttribute("rx", "4");
       rect.setAttribute("class", "sankey-node");
+      svgElement.appendChild(rect);
+
+      // The node's HIT box: its own rectangle grown vertically to the MIDPOINT of the gap to the node
+      // above and below (the band edge for the outermost, which the reflow already pins there). A
+      // ribbon-thin node — a 2px sliver of grid export — is otherwise impossible to hover or tap. Every
+      // node gets the same rule, so the target grows with the gap instead of snapping at some arbitrary
+      // thinness threshold, and hovering "just off" a node still reads as that node. It keeps exactly
+      // the node's x-range, where no ribbon runs (ribbons live strictly BETWEEN columns), so a fat hit
+      // box can never steal a spline's hover. All interaction hangs off this rect; the visible one is
+      // painted underneath and never receives a pointer event.
+      const colNodes: any[] = [
+        ...(columnsByX.get(Math.round(node.x0)) ?? []),
+      ].sort((a, b) => a.y0 - b.y0);
+      const idx = colNodes.indexOf(node);
+      const gapAbove = idx > 0 ? node.y0 - colNodes[idx - 1].y1 : 0;
+      const gapBelow =
+        idx >= 0 && idx < colNodes.length - 1
+          ? colNodes[idx + 1].y0 - node.y1
+          : 0;
+      const hitY0 = node.y0 - gapAbove / 2;
+      const hitY1 = node.y1 + gapBelow / 2;
+      const hit = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "rect",
+      );
+      hit.setAttribute("x", String(node.x0));
+      hit.setAttribute("y", String(hitY0));
+      hit.setAttribute("width", String(node.x1 - node.x0));
+      hit.setAttribute("height", String(hitY1 - hitY0));
+      hit.setAttribute("fill", "transparent");
+      hit.setAttribute("pointer-events", "all");
+      hit.setAttribute("class", "sankey-node-hit");
+      svgElement.appendChild(hit);
 
       // Node-hover spline emphasis (desktop). Independent of the tooltip resolver so it works on any
       // diagram (incl. the /test-sankey page). Hover the node → its ribbons strengthen, the rest fade.
       if (!isMobile) {
-        rect.addEventListener("mouseenter", () => emphasizeForNode(node));
-        rect.addEventListener("mouseleave", resetEmphasis);
+        hit.addEventListener("mouseenter", () => emphasizeForNode(node));
+        hit.addEventListener("mouseleave", resetEmphasis);
       }
 
-      // Node hover/tap tooltip. Attached to the RECT only — the label/value text drawn on top of it
-      // (below) is `pointer-events="none"` so the rect stays the sole hit target. `nodeTooltip` absent
-      // ⇒ no listeners (feature degrades to the plain diagram). Desktop: hover; mobile: tap-toggle
-      // (no hover — touch doesn't reliably fire mouseenter/mouseleave). Reads `nodeTooltipRef` (not the
-      // `nodeTooltip` closure variable) so a resolver-identity-only parent re-render never needs to
-      // rebuild the whole diagram to keep the tooltip content fresh (see the ref's own comment above).
+      // Node hover/tap tooltip. `nodeTooltip` absent ⇒ no listeners (feature degrades to the plain
+      // diagram). Desktop: hover; mobile: tap-toggle (no hover — touch doesn't reliably fire
+      // mouseenter/mouseleave). Reads `nodeTooltipRef` (not the `nodeTooltip` closure variable) so a
+      // resolver-identity-only parent re-render never needs to rebuild the whole diagram to keep the
+      // tooltip content fresh (see the ref's own comment above).
       if (nodeTooltipRef.current) {
-        rect.style.cursor = "pointer";
+        hit.style.cursor = "pointer";
         const nodeKey = `${node.side ?? "storage"}:${node.name}`;
         const columnPos: "left" | "right" | "interior" =
           Math.round(node.x0) === minColumnX
@@ -862,13 +1000,12 @@ export default function EnergyFlowSankey({
         // Topmost/bottommost within the node's column (reflow fills each column edge-to-edge, so the
         // top node's y0 is the column min and the bottom node's y1 the column max). A lone node stays
         // "middle" — there's no other node to be above/below, so it just centres.
-        const colNodes: any[] = columnsByX.get(Math.round(node.x0)) ?? [];
         const vertPos: "top" | "bottom" | "middle" =
           colNodes.length < 2
             ? "middle"
-            : node.y0 === Math.min(...colNodes.map((n) => n.y0))
+            : idx === 0
               ? "top"
-              : node.y1 === Math.max(...colNodes.map((n) => n.y1))
+              : idx === colNodes.length - 1
                 ? "bottom"
                 : "middle";
         const resolve = (): HoveredNode | null => {
@@ -890,19 +1027,24 @@ export default function EnergyFlowSankey({
           };
         };
         if (isMobile) {
-          rect.addEventListener("click", (e) => {
+          hit.addEventListener("click", (e) => {
             e.stopPropagation();
+            setHoveredLink(null); // never both at once on a small screen
             setHovered((h) => (h?.key === nodeKey ? null : resolve()));
           });
         } else {
-          rect.addEventListener("mouseenter", () => setHovered(resolve()));
-          rect.addEventListener("mouseleave", () =>
+          hit.addEventListener("mouseenter", () => setHovered(resolve()));
+          hit.addEventListener("mouseleave", () =>
             setHovered((h) => (h?.key === nodeKey ? null : h)),
           );
         }
+        // This is the node whose tooltip was open before the rebuild — carry it over (see the top of
+        // this effect). The node loop runs after the link loop, so a node's emphasis wins over a link's.
+        if (nodeKey === prevNodeKey) {
+          restore.node = resolve;
+          if (!isMobile) restore.emphasis = () => emphasizeForNode(node);
+        }
       }
-
-      svgElement.appendChild(rect);
 
       const centerX = (node.x0 + node.x1) / 2;
       const boxHeight = node.y1 - node.y0;
@@ -1045,18 +1187,37 @@ export default function EnergyFlowSankey({
         x === minColumnX ? "SOURCES" : x === maxColumnX ? "LOADS" : "STORAGE";
       drawColumnHeader(text, columnsByX.get(x) ?? []);
     }
+
+    // Carry the open tooltip across the rebuild, re-resolved against the layout just built (fresh
+    // content AND fresh geometry — a refreshed window can move the node it points at). Both setters run
+    // unconditionally: with nothing to restore they pass `null`, which is a no-op when nothing was open.
+    setHovered(restore.node ? restore.node() : null);
+    setHoveredLink(restore.link ? restore.link() : null);
+    restore.emphasis?.();
+
+    // Safety net for the restored hover: the pointer is sitting over an element that no longer exists,
+    // so the `mouseleave` that would normally close the panel may never fire for the node/ribbon it was
+    // on. Leaving the diagram entirely always closes both.
+    if (!isMobile) {
+      svgElement.addEventListener("mouseleave", () => {
+        setHovered(null);
+        setHoveredLink(null);
+        resetEmphasis();
+      });
+    }
     // `nodeTooltip` deliberately excluded — see `nodeTooltipRef`'s comment above; a resolver-identity-only
-    // change must not force a full `svg.innerHTML = ""` rebuild (which would also dismiss an open tooltip).
+    // change must not force a full `svg.innerHTML = ""` rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matrix, unit, layout, actualWidth, height, isMobile]);
 
   // Position the hovered/tapped node's tooltip panel(s) in SCREEN space (the SVG has no viewBox/CSS
-  // sizing, so SVG user px == CSS px — `sx`/`sy` below are 1 today, kept as scale guards). Desktop: a
-  // beaked panel beside the node, clamped to the shared column band (`bandTopVp`/`bandBottomVp`), on the
-  // LEFT of a left-column node, the RIGHT of a right-column node, or BOTH for the interior battery-middle
-  // node. Mobile: always the centered overlay (no per-node geometry needed). Measure-then-reveal: an
-  // immediate hidden pass (estimated height, avoids a flash at the wrong spot) then a real-height pass
-  // once the panel is mounted and measurable.
+  // sizing, so SVG user px == CSS px — `sx`/`sy` below are 1 today, kept as scale guards). A beaked panel
+  // sits on the LEFT of a left-column node, the RIGHT of a right-column node, or BOTH for the interior
+  // battery-middle node, clamped to the node band (`bandTopVp`/`bandBottomVp`). Where there's no room
+  // beside the node — always on mobile (no margins there), or a desktop window too narrow — the SAME
+  // panel is centred in the gap between the columns instead, still facing (and beaked toward) its node.
+  // Measure-then-reveal: an immediate hidden pass (estimated height, avoids a flash at the wrong spot)
+  // then a real-height pass once the panel is mounted and measurable.
   useLayoutEffect(() => {
     if (!hovered || !svgRef.current) {
       setPlacementL(null);
@@ -1064,21 +1225,6 @@ export default function EnergyFlowSankey({
       return;
     }
 
-    if (isMobile) {
-      setPlacementL({
-        side: "left",
-        left: 0,
-        top: 0,
-        beakTop: 0,
-        variant: "overlay",
-        beakVariant: "diamond",
-        visible: true,
-      });
-      setPlacementR(null);
-      return;
-    }
-
-    const PANEL_WIDTH = 160; // keep in sync with NodeTooltip's `width` default
     const GAP = 12;
     const PAD = 8;
     // Captured into a local `const` so `isDualTooltip`'s narrowing survives into the nested `compute`
@@ -1095,8 +1241,10 @@ export default function EnergyFlowSankey({
       const r = svg.getBoundingClientRect();
       const sx = r.width / actualWidth;
       const sy = r.height / height;
-      const bandTopVp = r.top + 35 * sy;
-      const bandBottomVp = r.top + (height - 20) * sy;
+      const geom = geomRef.current;
+      const bandTopVp = r.top + (geom?.bandTop ?? MARGIN_TOP) * sy;
+      const bandBottomVp =
+        r.top + (geom?.bandBottom ?? height - MARGIN_BOTTOM) * sy;
 
       const { x0, x1, y0, y1 } = hovered.geomSvg;
       const nodeLeftVp = r.left + x0 * sx;
@@ -1107,24 +1255,39 @@ export default function EnergyFlowSankey({
       const nodeHeightVp = nodeBottomVp - nodeTopVp;
 
       const H = ref.current?.offsetHeight || estimatedHeight;
-      let left =
-        side === "left" ? nodeLeftVp - GAP - PANEL_WIDTH : nodeRightVp + GAP;
-      left = Math.max(
-        PAD,
-        Math.min(left, window.innerWidth - PANEL_WIDTH - PAD),
+      const clampX = (l: number) =>
+        Math.max(PAD, Math.min(l, window.innerWidth - PANEL_WIDTH - PAD));
+
+      // Horizontal: beside the node when it fits (desktop's outer margins), otherwise centred in the
+      // gap between the node's column and the next one over — which is where mobile always lands, since
+      // the diagram spans the full viewport there and the columns hug its edges.
+      let panelSide = side;
+      let left = clampX(
+        side === "left" ? nodeLeftVp - GAP - PANEL_WIDTH : nodeRightVp + GAP,
       );
-      const collides =
-        side === "left" ? left + PANEL_WIDTH > nodeLeftVp : left < nodeRightVp;
-      if (collides) {
-        return {
-          side,
-          left: 0,
-          top: 0,
-          beakTop: 0,
-          variant: "overlay",
-          beakVariant: "diamond",
-          visible: true,
-        };
+      const fitsBeside =
+        side === "left"
+          ? left + PANEL_WIDTH <= nodeLeftVp
+          : left >= nodeRightVp;
+      if (!fitsBeside) {
+        const cols = geom?.columns ?? [];
+        const i = cols.findIndex((c) => Math.round(c.x0) === Math.round(x0));
+        // Prefer the neighbouring column on `side`; an outermost node (the usual case) has none there,
+        // so fall to the other side and FLIP the panel with it — the beak has to face the node.
+        let neighbour =
+          i < 0 ? undefined : cols[side === "left" ? i - 1 : i + 1];
+        if (i >= 0 && !neighbour) {
+          neighbour = cols[side === "left" ? i + 1 : i - 1];
+          if (neighbour) panelSide = side === "left" ? "right" : "left";
+        }
+        // Two columns → the SOURCES↔LOADS channel; three (battery-middle) → the dual battery panels get
+        // their own left and right channels instead of stacking on top of each other.
+        const gapCentreSvg = !neighbour
+          ? actualWidth / 2
+          : panelSide === "left"
+            ? (neighbour.x1 + x0) / 2
+            : (x1 + neighbour.x0) / 2;
+        left = clampX(r.left + gapCentreSvg * sx - PANEL_WIDTH / 2);
       }
 
       // Vertical anchoring: the topmost node in a column top-aligns the panel (its top edge = the
@@ -1138,14 +1301,22 @@ export default function EnergyFlowSankey({
             : nodeCenterYVp - H / 2;
       const top = Math.max(bandTopVp, Math.min(desiredTop, bandBottomVp - H));
 
-      // Beak placement. Tall node: a diamond centred on the node's vertical centre (clamped so it can't
-      // run off the panel). Short node (shorter than the diamond): a half beak whose flat edge sits on
-      // the node's near edge — its BOTTOM edge for a bottom/middle node, its TOP edge for a top node —
-      // so the beak hugs the thin node instead of the diamond floating past it. `beakTop` is the y (in
-      // panel coords) of that flat edge (half beak) or the diamond's centre (diamond); see NodeTooltip.
+      // Beak placement. The beak joins two boxes of different heights, and the SHORTER of the two decides
+      // where it sits: centre it on the short box, which the tall one then has room to spare around.
+      // So a panel beside a much taller node sits at the PANEL's centre, and a panel beside a short node
+      // (or a tall panel clamped to the band) sits at the NODE's centre — either way the beak looks
+      // centred on the thing that constrains it, never stranded at a corner. Short node (shorter than the
+      // diamond): a half beak whose flat edge sits on the node's near edge — its BOTTOM edge for a
+      // bottom/middle node, its TOP edge for a top node — so the beak hugs the thin node instead of the
+      // diamond floating past it. A panel sitting ON its node (a phone too narrow for the gap, or the
+      // interior battery node) gets no beak at all — one pointing at the node underneath just reads as a
+      // rendering glitch. `beakTop` is the y (in panel coords) of that flat edge (half beak) or the
+      // diamond's centre (diamond); see NodeTooltip.
       let beakVariant: PanelPlacement["beakVariant"] = "diamond";
-      let beakTop: number;
-      if (nodeHeightVp < BEAK_SIZE) {
+      let beakTop = 0;
+      if (left < nodeRightVp && left + PANEL_WIDTH > nodeLeftVp) {
+        beakVariant = "none";
+      } else if (nodeHeightVp < BEAK_SIZE) {
         if (hovered.vertPos === "top") {
           beakVariant = "half-top";
           beakTop = Math.max(0, Math.min(nodeTopVp - top, H - HALF_BEAK_SIZE));
@@ -1153,18 +1324,24 @@ export default function EnergyFlowSankey({
           beakVariant = "half-bottom";
           beakTop = Math.max(HALF_BEAK_SIZE, Math.min(nodeBottomVp - top, H));
         }
+      } else if (nodeHeightVp <= H) {
+        // Node is the shorter box — centre on it (then keep the diamond on the panel).
+        beakTop = nodeCenterYVp - top;
       } else {
-        beakTop = Math.max(
-          12,
-          Math.min(nodeCenterYVp - top, Math.max(H - 12, 12)),
-        );
+        // Panel is the shorter box — centre on it, clamped into the node's span (inset by the diamond's
+        // half-height, so the WHOLE beak lands on the node, not just its centre).
+        const lo = nodeTopVp - top + BEAK_HALF_SPAN;
+        const hi = nodeBottomVp - top - BEAK_HALF_SPAN;
+        beakTop = Math.max(lo, Math.min(H / 2, hi));
+      }
+      if (beakVariant === "diamond") {
+        beakTop = Math.max(12, Math.min(beakTop, Math.max(H - 12, 12)));
       }
       return {
-        side,
+        side: panelSide,
         left,
         top,
         beakTop,
-        variant: "side",
         beakVariant,
         visible: true,
       };
@@ -1178,13 +1355,18 @@ export default function EnergyFlowSankey({
     const sideFor = (): "left" | "right" =>
       hovered.columnPos === "right" ? "right" : "left";
 
-    // Pass 1 (this tick): provisional placement using an estimated height, HIDDEN — nothing paints at a
-    // wrong position. Pass 2 (next frame): the panel is now mounted, so its real `offsetHeight` is known.
+    // Pass 1 (this tick): provisional placement, then pass 2 next frame once the panel is mounted and its
+    // real `offsetHeight` is measurable. Pass 1 only has to HIDE the panel when it isn't mounted yet and
+    // the height is a guess — moving between nodes (or a refresh that restores the tooltip) re-runs this
+    // with the panel already in the DOM, where `compute` measures it for real and can show it right away.
+    const mounted = (ref: React.RefObject<HTMLDivElement | null>) =>
+      ref.current != null;
+
     if (isDualTooltip(content)) {
       const l = compute("left", panelRefL, estimateFor(content.left));
       const rr = compute("right", panelRefR, estimateFor(content.right));
-      setPlacementL({ ...l, visible: false });
-      setPlacementR({ ...rr, visible: false });
+      setPlacementL({ ...l, visible: mounted(panelRefL) });
+      setPlacementR({ ...rr, visible: mounted(panelRefR) });
 
       const raf = requestAnimationFrame(() => {
         setPlacementL(compute("left", panelRefL, ESTIMATE_FULL));
@@ -1194,16 +1376,13 @@ export default function EnergyFlowSankey({
     }
 
     const s = sideFor();
-    const p = compute(
-      s,
-      s === "left" ? panelRefL : panelRefR,
-      estimateFor(content),
-    );
+    const ref = s === "left" ? panelRefL : panelRefR;
+    const p = compute(s, ref, estimateFor(content));
     if (s === "left") {
-      setPlacementL({ ...p, visible: false });
+      setPlacementL({ ...p, visible: mounted(ref) });
       setPlacementR(null);
     } else {
-      setPlacementR({ ...p, visible: false });
+      setPlacementR({ ...p, visible: mounted(ref) });
       setPlacementL(null);
     }
 
@@ -1219,6 +1398,41 @@ export default function EnergyFlowSankey({
     return () => cancelAnimationFrame(raf);
   }, [hovered, isMobile, actualWidth, height]);
 
+  // Clamp the hovered spline's tooltip into the same node band the node panels use. The card centres on
+  // the spline midpoint, so a ribbon meeting a node near the top or bottom of the diagram would otherwise
+  // hang past the end of it. The clamp needs the card's real height (one line or two, depending on
+  // whether the attributed detail line is present), so it's measured rather than estimated.
+  useLayoutEffect(() => {
+    if (!hoveredLink || !svgRef.current) {
+      setLinkTop(null);
+      return;
+    }
+    const place = () => {
+      const svg = svgRef.current;
+      const H = linkPanelRef.current?.offsetHeight ?? 0;
+      if (!svg || !H) return; // not mounted yet — the rAF pass below picks it up
+      const r = svg.getBoundingClientRect();
+      const sy = r.height / height;
+      const geom = geomRef.current;
+      const bandTopVp = r.top + (geom?.bandTop ?? MARGIN_TOP) * sy;
+      const bandBottomVp =
+        r.top + (geom?.bandBottom ?? height - MARGIN_BOTTOM) * sy;
+      const lo = bandTopVp + H / 2;
+      const hi = bandBottomVp - H / 2;
+      setLinkTop(
+        lo <= hi
+          ? Math.max(lo, Math.min(hoveredLink.top, hi))
+          : (bandTopVp + bandBottomVp) / 2,
+      );
+    };
+    // Sweeping from one spline to the next, the card is still mounted — its height is known HERE, before
+    // paint, so the clamped position lands without a hidden frame. Only the first spline of a hover run
+    // (nothing mounted, `linkTop` null ⇒ rendered hidden at the raw midpoint) needs the measure pass.
+    place();
+    const raf = requestAnimationFrame(place);
+    return () => cancelAnimationFrame(raf);
+  }, [hoveredLink, height]);
+
   // Dismissal: outside tap (touch devices), scroll (capture-phase — a `position:fixed` panel would
   // otherwise detach from its node), and resize all close the tooltip.
   useEffect(() => {
@@ -1231,8 +1445,14 @@ export default function EnergyFlowSankey({
     window.addEventListener("resize", close);
     const handleTouchOutside = (e: TouchEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest(".sankey-node") && !target.closest(".node-tooltip")) {
+      if (
+        !target.closest(".sankey-node-hit") &&
+        !target.closest(".sankey-link-hit") &&
+        !target.closest(".node-tooltip") &&
+        !target.closest(".link-tooltip")
+      ) {
         setHovered(null);
+        setHoveredLink(null);
       }
     };
     const isTouch = "ontouchstart" in window;
@@ -1315,7 +1535,6 @@ export default function EnergyFlowSankey({
                 key={p.key}
                 data={p.data}
                 nodeColor={p.color}
-                variant={p.placement.variant}
                 side={p.placement.side}
                 left={p.placement.left}
                 top={p.placement.top}
@@ -1324,7 +1543,6 @@ export default function EnergyFlowSankey({
                 showHeading={p.showHeading}
                 hidden={!p.placement.visible}
                 panelRef={p.ref}
-                onClose={() => setHovered(null)}
               />,
               document.body,
             ),
@@ -1336,7 +1554,9 @@ export default function EnergyFlowSankey({
             data={hoveredLink.content}
             color={hoveredLink.color}
             left={hoveredLink.left}
-            top={hoveredLink.top}
+            top={linkTop ?? hoveredLink.top}
+            hidden={linkTop === null}
+            panelRef={linkPanelRef}
           />,
           document.body,
         )}
