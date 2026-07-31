@@ -3,6 +3,59 @@
 import { useMemo, useRef } from "react";
 import { SeriesData } from "@/lib/charts/types";
 import { calculateSeriesEnergy } from "@/lib/energy-calculator";
+import {
+  reduceLoadProvenance,
+  reduceSourceProvenance,
+  type DailyFlowMatrices,
+} from "@/lib/energy-flow-matrix";
+import {
+  formatCentsPerKwh,
+  formatDollars,
+  formatGramsPerKwh,
+  formatKgCo2,
+} from "@/lib/provenance-format";
+
+/**
+ * What the table's last column shows. `pct` is each row's share of the total (the original, and the
+ * only one derivable from the chart alone); the rest are reductions of the ATTRIBUTED flow matrix —
+ * the same numbers the Sankey node tooltips show, via the same reducers and formatters.
+ *
+ * The user cycles them by clicking anywhere in that column. `ENERGY_TABLE_METRICS` is the cycle order.
+ */
+export type EnergyTableMetric = "pct" | "cost" | "rate" | "emissions" | "ei";
+
+export const ENERGY_TABLE_METRICS: readonly EnergyTableMetric[] = [
+  "pct",
+  "cost",
+  "rate",
+  "emissions",
+  "ei",
+];
+
+/** Column heading per metric — also the width driver, so keep them short. */
+const METRIC_HEADER: Record<EnergyTableMetric, string> = {
+  pct: "%",
+  cost: "$",
+  rate: "c/kWh",
+  emissions: "kg",
+  ei: "g/kWh",
+};
+
+/** The subset both `LoadProvenanceSummary` and `SourceProvenanceSummary` carry, which is all this
+ *  table reads — so one code path serves the load and generation halves. */
+type ProvenanceRow = {
+  costC: number; // signed cents
+  avgCentsPerKwh: number | null;
+  kgCo2: number;
+  avgGramsPerKwh: number | null;
+  costKnownKwh: number;
+  emissionsKnownKwh: number;
+};
+
+export function nextEnergyTableMetric(m: EnergyTableMetric): EnergyTableMetric {
+  const i = ENERGY_TABLE_METRICS.indexOf(m);
+  return ENERGY_TABLE_METRICS[(i + 1) % ENERGY_TABLE_METRICS.length];
+}
 
 interface EnergyTableProps {
   chartData: {
@@ -15,6 +68,15 @@ interface EnergyTableProps {
   className?: string;
   visibleSeries?: Set<string>; // Which series are visible
   onSeriesToggle?: (seriesId: string, shiftKey: boolean) => void; // Handle series visibility toggle
+  /** The attributed flow matrix for the SAME window the chart covers — the source for the cost /
+   *  rate / emissions / intensity metrics. Absent (legacy payload, no provenance inputs) → those
+   *  metrics render "—"; the column still cycles. */
+  attributedFlow?: DailyFlowMatrices | null;
+  /** Which metric the last column currently shows. Owned by the parent so the load and generation
+   *  tables cycle together. */
+  metric?: EnergyTableMetric;
+  /** Advance to the next metric — bound to a click anywhere in the last column. */
+  onCycleMetric?: () => void;
 }
 
 export default function EnergyTable({
@@ -24,6 +86,9 @@ export default function EnergyTable({
   className = "",
   visibleSeries,
   onSeriesToggle,
+  attributedFlow,
+  metric = "pct",
+  onCycleMetric,
 }: EnergyTableProps) {
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isPressedRef = useRef(false);
@@ -38,6 +103,27 @@ export default function EnergyTable({
     );
     return calculateSeriesEnergy(powerSeries, chartData.timestamps);
   }, [chartData]);
+
+  /**
+   * Per-row provenance reduction over the attributed matrix, keyed by series id. Reducers return null
+   * on a legacy/absent payload or an unmapped node, which is exactly the "—" case downstream. The
+   * generation table deliberately does NOT combine solar: the chart already has one row per solar
+   * source, so each row must reduce its own node.
+   */
+  const provenance = useMemo(() => {
+    const out = new Map<string, ProvenanceRow | null>();
+    if (!chartData || !attributedFlow) return out;
+    for (const s of chartData.series) {
+      if (s.seriesType === "soc" || !s.flowPath) continue;
+      out.set(
+        s.id,
+        mode === "load"
+          ? reduceLoadProvenance(attributedFlow, s.flowPath)
+          : reduceSourceProvenance(attributedFlow, s.flowPath),
+      );
+    }
+    return out;
+  }, [chartData, attributedFlow, mode]);
 
   if (!chartData || chartData.series.length === 0) {
     return (
@@ -66,6 +152,7 @@ export default function EnergyTable({
       energyValue: energyValues.get(series.id) ?? null, // Total energy (kWh)
       color: series.color,
       isVisible,
+      provenance: provenance.get(series.id) ?? null, // Window cost/emissions, or null when unknown
     };
   });
   // Keep the original order from the chart configuration - no sorting
@@ -129,6 +216,71 @@ export default function EnergyTable({
   const columnHeader = isHovering ? "Power (kW)" : "Energy (kWh)";
   const total = isHovering ? powerTotal : energyTotal;
 
+  // Cost/emissions are WINDOW aggregates — there is no per-instant equivalent — so while the middle
+  // column is showing an instantaneous power the last column falls back to "% of that instant".
+  // The user's chosen metric is remembered, not reset.
+  const effectiveMetric: EnergyTableMetric = isHovering ? "pct" : metric;
+
+  // Totals for the metric column, over VISIBLE rows only (matching the energy/power totals above).
+  // The averages re-divide by the filtered known-intensity kWh rather than by total energy, so the
+  // Total agrees with the rows even when some rows are only partially attributed.
+  let costCTotal = 0;
+  let kgCo2Total = 0;
+  let costKnownKwhTotal = 0;
+  let emissionsKnownKwhTotal = 0;
+  let hasProvenance = false;
+  tableData.forEach((item) => {
+    if (!item.isVisible || !item.provenance) return;
+    hasProvenance = true;
+    costCTotal += item.provenance.costC;
+    kgCo2Total += item.provenance.kgCo2;
+    costKnownKwhTotal += item.provenance.costKnownKwh;
+    emissionsKnownKwhTotal += item.provenance.emissionsKnownKwh;
+  });
+
+  /** The last column's cell text for one row (or for the Total row, via `totalsRow`). */
+  const formatMetric = (
+    m: EnergyTableMetric,
+    p: ProvenanceRow | null,
+  ): string => {
+    if (m === "pct") return ""; // percentage has its own signature (value + total)
+    if (!p) return "—";
+    switch (m) {
+      case "cost":
+        return formatDollars(p.costC);
+      case "rate":
+        return formatCentsPerKwh(p.avgCentsPerKwh);
+      case "emissions":
+        return formatKgCo2(p.kgCo2);
+      case "ei":
+        return formatGramsPerKwh(p.avgGramsPerKwh);
+    }
+  };
+
+  const totalsRow: ProvenanceRow | null = hasProvenance
+    ? {
+        costC: costCTotal,
+        kgCo2: kgCo2Total,
+        costKnownKwh: costKnownKwhTotal,
+        emissionsKnownKwh: emissionsKnownKwhTotal,
+        avgCentsPerKwh:
+          costKnownKwhTotal > 0 ? costCTotal / costKnownKwhTotal : null,
+        avgGramsPerKwh:
+          emissionsKnownKwhTotal > 0
+            ? (kgCo2Total * 1000) / emissionsKnownKwhTotal
+            : null,
+      }
+    : null;
+
+  // Click anywhere in the last column — header, any row, the Total, the SoC row — to cycle.
+  const metricCellProps = {
+    onClick: onCycleMetric,
+    title: "Click to cycle: % · cost · rate · emissions · intensity",
+  };
+  const metricCellClass = `font-mono w-16 text-right ${
+    onCycleMetric ? "cursor-pointer select-none" : ""
+  }`;
+
   // Handle touch and click events for series toggle
   const handlePointerDown = (seriesId: string) => {
     isPressedRef.current = true;
@@ -184,7 +336,21 @@ export default function EnergyTable({
             {mode === "load" ? "Load" : "Source"}
           </div>
           <div className="w-20 text-right text-gray-400">{columnHeader}</div>
-          <div className="w-12 text-right text-gray-400">%</div>
+          <div
+            className={`text-gray-400 ${metricCellClass}`}
+            {...metricCellProps}
+            role={onCycleMetric ? "button" : undefined}
+            tabIndex={onCycleMetric ? 0 : undefined}
+            onKeyDown={(e) => {
+              if (!onCycleMetric) return;
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onCycleMetric();
+              }
+            }}
+          >
+            {METRIC_HEADER[effectiveMetric]}
+          </div>
         </div>
 
         {/* Items */}
@@ -218,15 +384,20 @@ export default function EnergyTable({
                       : formatValue(item.energyValue, 1)
                     : ""}
                 </span>
-                <span className="text-gray-400 font-mono w-12 text-right">
-                  {item.isVisible
-                    ? formatPercentage(
-                        displayValue === "power"
-                          ? item.powerValue
-                          : item.energyValue,
-                        total,
-                      )
-                    : ""}
+                <span
+                  className={`text-gray-400 ${metricCellClass}`}
+                  {...metricCellProps}
+                >
+                  {!item.isVisible
+                    ? ""
+                    : effectiveMetric === "pct"
+                      ? formatPercentage(
+                          displayValue === "power"
+                            ? item.powerValue
+                            : item.energyValue,
+                          total,
+                        )
+                      : formatMetric(effectiveMetric, item.provenance)}
                 </span>
               </div>
             );
@@ -242,8 +413,15 @@ export default function EnergyTable({
                 ? formatValue(total)
                 : formatValue(total, 1)}
             </span>
-            <span className="text-gray-400 font-mono font-medium w-12 text-right">
-              {total !== null ? "100%" : "—"}
+            <span
+              className={`text-gray-400 font-medium ${metricCellClass}`}
+              {...metricCellProps}
+            >
+              {effectiveMetric === "pct"
+                ? total !== null
+                  ? "100%"
+                  : "—"
+                : formatMetric(effectiveMetric, totalsRow)}
             </span>
           </div>
         </div>
@@ -264,8 +442,12 @@ export default function EnergyTable({
                   ? `${socValue.toFixed(1)}%`
                   : "—"}
               </span>
-              <span className="text-gray-400 font-mono w-12 text-right">
-                {/* Always empty - SoC is not a percentage of total */}
+              <span
+                className={`text-gray-400 ${metricCellClass}`}
+                {...metricCellProps}
+              >
+                {/* Always empty - SoC has no share/cost/emissions of its own. Still part of the
+                    column, so clicking it cycles like anywhere else. */}
               </span>
             </div>
           </div>

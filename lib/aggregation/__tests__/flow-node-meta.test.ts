@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   flowPathToDeviceStem,
+  flowPathForSeries,
   colorForFlowPath,
   labelForFlowPath,
   compareSourcePaths,
@@ -28,6 +29,52 @@ describe("flowPathToDeviceStem", () => {
     expect(flowPathToDeviceStem("load.rest-of-house")).toBe(
       "load.rest-of-house",
     );
+  });
+});
+
+describe("flowPathForSeries", () => {
+  it("uses the chart half to disambiguate grid direction", () => {
+    // The export (load) and import (generation) chart series are built from the SAME
+    // `bidi.grid/power` series with the SAME id — only which chart they sit in tells them apart.
+    expect(flowPathForSeries("bidi.grid/power.avg", "load")).toBe("load.grid");
+    expect(flowPathForSeries("bidi.grid/power.avg", "generation")).toBe(
+      "source.grid",
+    );
+  });
+
+  it("maps the split battery series by direction, regardless of mode", () => {
+    expect(flowPathForSeries("bidi.battery.charge/power", "load")).toBe(
+      "load.battery",
+    );
+    expect(
+      flowPathForSeries("bidi.battery.discharge/power", "generation"),
+    ).toBe("source.battery");
+    // Direction lives in the path, so a mismatched mode can't flip it.
+    expect(flowPathForSeries("bidi.battery.charge/power", "generation")).toBe(
+      "load.battery",
+    );
+  });
+
+  it("passes already-canonical load and source paths through", () => {
+    expect(flowPathForSeries("load.hvac/power.avg", "load")).toBe("load.hvac");
+    expect(flowPathForSeries("load/power.avg", "load")).toBe("load");
+    expect(
+      flowPathForSeries("source.solar.local/power.avg", "generation"),
+    ).toBe("source.solar.local");
+    // The synthetic remainder never reaches here (site-data-processor sets its flowPath directly),
+    // but a measured complement point does, and it is already canonical.
+    expect(flowPathForSeries("load.rest-of-house/power.avg", "load")).toBe(
+      "load.rest-of-house",
+    );
+  });
+
+  it("returns undefined for paths with no flow node", () => {
+    expect(
+      flowPathForSeries("bidi.battery/soc.last", "generation"),
+    ).toBeUndefined();
+    expect(flowPathForSeries("invalid", "load")).toBeUndefined();
+    expect(flowPathForSeries(null, "load")).toBeUndefined();
+    expect(flowPathForSeries(undefined, "load")).toBeUndefined();
   });
 });
 

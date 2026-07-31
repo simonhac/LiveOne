@@ -42,19 +42,38 @@ async function withChartCapabilityIfRequested<
 }
 
 /**
- * The Areas a user may read = Areas they own plus any Area whose handle is one of their visible systems.
+ * The Areas a user may read = Areas they own, plus any Area whose handle is one of their visible
+ * systems, plus any Area a dashboard they've been GRANTED puts in scope.
  * The dashboard owner can compose a card from any of these, and the authoring check
  * (PUT /api/dashboard/[systemId]) rejects a card binding any Area outside this set.
+ *
+ * The granted leg is not redundant with `devicesVisibleByUser`'s own grant handling. That function
+ * unions the granted scope too, but then narrows it to rows in `devices` — so it can only ever
+ * surface a handle that IS a device rid. An Area minted in its own right (a composite/"Unified" area,
+ * or anything from the ≥1,000,000 area-handle allocator) has NO device row behind its handle, so it
+ * was dropped there and ownership became its only read path. `grantedDeviceScopeForUser` already
+ * carries those Area handles verbatim — `resolveScope` pushes each dashboard Area's handle — so
+ * unioning the RAW set here is what lets a grant reach them. No escalation: a grant already implies
+ * read access to that dashboard's points (`resolveDashboardReadPoints`); this only makes the Area row
+ * as readable as the data it fronts.
  */
 export async function listReadableAreas(
   userId: string,
   opts: { withChartCapability?: boolean } = {},
 ): Promise<ReadableArea[]> {
   const devices = await DeviceConfigRegistry.devicesVisibleByUser(userId, true);
-  const systemIds = devices.map((s) => s.id);
+  // Dynamic import of `lib/dashboard/grants` breaks a module cycle (grants → access → point-manager
+  // → device-config → here), the same reason `devicesVisibleByUser` does it.
+  const { grantedDeviceScopeForUser } = await import("@/lib/dashboard/grants");
+  const systemIds = [
+    ...new Set([
+      ...devices.map((s) => s.id),
+      ...(await grantedDeviceScopeForUser(userId)),
+    ]),
+  ];
 
   // Areas a user can read: explicit Areas they own, plus legacy explicit Areas still addressed by a
-  // visible device id.
+  // visible device id or put in scope by a granted dashboard.
   const accessCond =
     systemIds.length > 0
       ? or(

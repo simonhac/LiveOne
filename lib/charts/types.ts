@@ -13,6 +13,11 @@ export interface SeriesData {
   color: string;
   /** Type of series: power/energy (stacked) or soc (overlay). */
   seriesType?: "power" | "soc";
+  /** Canonical `source.*`/`load.*` node id this series maps to in the attributed flow matrix
+   *  (`DailyFlowMatrices`), when it maps to one. Resolved upstream by `flowPathForSeries` because the
+   *  series id alone is ambiguous — grid export (load) and grid import (generation) share one id —
+   *  so the legend table can look up per-row cost/emissions without re-deriving the mapping. */
+  flowPath?: string;
 }
 
 export interface ChartData {
