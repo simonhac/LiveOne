@@ -2,7 +2,7 @@
  * Write side of the Areas tables for the self-serve **area builder** — creating a multi-device "site"
  * area, editing its metadata, adding/removing member devices, and authoring role→point bindings.
  *
- * These are the persistence helpers the `/api/areas` mutation routes call (the routes own auth); they
+ * These are the persistence helpers the `/api/v4/areas` mutation routes call (the routes own auth); they
  * keep the routes thin, mirroring `lib/dashboard/dashboards.ts`. Areas are EXPLICIT: a device gets no
  * auto-minted Area — everything here mints a SYNTHETIC-handle area (no `systems` row) so a site
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
@@ -69,7 +69,7 @@ export class AreaValidationError extends Error {
  *     not have helped: PlanetScale's proxy strips `constraint` from every error it forwards. The index
  *     name arrives in the `message` text only.
  *
- * So an alias collision — the one thing `/api/areas` documents a 409 for — 500'd. `isUniqueViolationOn`
+ * So an alias collision — the one thing `/api/v4/areas` documents a 409 for — 500'd. `isUniqueViolationOn`
  * (lib/db/pg-error.ts) closes both halves; that module's docstring carries the measurement, including why
  * a migration restating the `uniqueIndex` as a named constraint would NOT have fixed (2).
  */
@@ -413,30 +413,6 @@ export interface BindingInput {
   pointId: PointId;
   priority?: number;
   transform?: string | null;
-}
-
-/**
- * An area's current bindings, ordered by ordinal (the editor's GET). Stated in `pt_` TypeIDs — the
- * same grammar the editor PUTs back, so the round trip is symmetric. `point_uid` is NOT NULL
- * (migration 0047), so the encode needs no non-null assertion.
- */
-export async function getAreaBindingsForEditor(
-  areaId: string,
-): Promise<BindingInput[]> {
-  const rows = await requirePlanetscaleDb()
-    .select({
-      role: areaBindings.role,
-      metricType: areaBindings.metricType,
-      pointUid: areaBindings.pointUid,
-      transform: areaBindings.transform,
-    })
-    .from(areaBindings)
-    .where(eq(areaBindings.areaId, areaId))
-    .orderBy(asc(areaBindings.ordinal));
-  return rows.map(({ pointUid, ...r }) => ({
-    ...r,
-    pointId: Point.encode(pointUid),
-  }));
 }
 
 /**

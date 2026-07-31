@@ -15,7 +15,7 @@ export interface ProvenanceDailyQueryParams {
 }
 
 /**
- * Battery-provenance daily history from `/api/areas/[areaId]/provenance-daily` — the dense columnar
+ * Battery-provenance daily history from `GET /api/v4/areas/{ar_…}/provenance-daily` — the dense columnar
  * {@link ProvenanceDailyResponse} the history panel charts/tables. An explicit start+end window is
  * settled history (immutable, no polling); the LIVE/newest window (`isLive`) only goes stale on the
  * daily tier — the underlying rows change at most once a day (nightly learn) — even though the M/Y
@@ -29,7 +29,11 @@ export function provenanceDailyQuery(p: ProvenanceDailyQueryParams) {
   if (p.startDay) search.set("start", p.startDay);
   if (p.endDay) search.set("end", p.endDay);
   const qs = search.toString();
-  const url = `/api/areas/${p.areaId}/provenance-daily${qs ? `?${qs}` : ""}`;
+  // The v4 twin's body is byte-for-byte the legacy one's (same `ProvenanceDailyResponse`, handle still
+  // spelled `systemId`), so this is a URL change and nothing downstream moves. It is the ONE shareable
+  // route on the /api/v4 tree — `lib/route-matchers.ts` carries its `shareableRoutes` entry so an
+  // anonymous `?access=` viewer's history panel is not 404'd at the Clerk edge.
+  const url = `/api/v4/areas/${p.areaId}/provenance-daily${qs ? `?${qs}` : ""}`;
 
   return queryOptions<ProvenanceDailyResponse>({
     queryKey: queryKeys.provenanceDaily(p.areaId, rangeKey),

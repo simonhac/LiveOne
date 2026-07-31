@@ -316,7 +316,7 @@ async function createHelperDevice(params: {
  *
  * ⚠️ `areas.name` is deliberately NOT updated when `displayName` changes. The pre-1a mirror copied
  * `systems.display_name` into `devices.name` only; the area's name was set at mint and never re-copied,
- * and `/api/areas/*` can rename an area independently. Following `displayName` through to `areas.name`
+ * and `/api/v4/areas/*` can rename an area independently. Following `displayName` through to `areas.name`
  * would be a NEW behaviour that silently overwrites a user-set area name — out of scope for a
  * conversion, and the kind of blanket copy-down `ensureAreaOfOne` explicitly refused.
  */

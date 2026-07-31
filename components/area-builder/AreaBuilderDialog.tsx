@@ -18,7 +18,9 @@ import type {
   AreaEditPayload,
   CandidateDevice,
   CandidateDevicesResponse,
+  MemberChip,
 } from "./types";
+import type { DeviceId } from "@/lib/ids";
 
 const AU_STATES = [
   "NSW",
@@ -36,10 +38,22 @@ type EditTab = "general" | "location" | "members" | "bindings";
 /**
  * The owner-facing **Area builder** — one dialog for both creating a multi-device "site" area and
  * editing an existing one. Create collects a name + member devices (a seed device may be pre-selected
- * via `initialMemberSystemId`) and POSTs `/api/areas`; on success it transitions in-place to edit mode
- * so the owner can add location / more members / role→point bindings. Edit exposes General / Location /
- * Members / Bindings tabs backed by the `/api/areas/[id]*` routes. Mirrors NewDashboardDialog's portal
- * modal conventions (ModalContext, sonner, gray-800/700, z-[10000]/[10001]).
+ * via `initialMemberSystemId`) and POSTs `/api/v4/areas`; on success it transitions in-place to edit
+ * mode so the owner can add location / more members / role→point bindings. Edit exposes General /
+ * Location / Members / Bindings tabs backed by the `/api/v4/areas/{ar_…}` routes. Mirrors
+ * NewDashboardDialog's portal modal conventions (ModalContext, sonner, gray-800/700, z-[10000]/[10001]).
+ *
+ * Four things about the v4 surface this dialog had to absorb (config-v4 Phase 14 stage 13):
+ *  - **members is a `PUT` full replace**, not the `POST`/`DELETE /devices` pair. Add and remove are both
+ *    expressed as the whole list. The list sent is always the CURRENT member list with one edit applied
+ *    — including the server-managed `helper` members, which the route would not evict by omission
+ *    anyway, so the client never leans on that carve-out.
+ *  - **the aggregate `GET` folds in members + bindings**; there is no separate v4 `bindings` GET, so the
+ *    editor fetches once.
+ *  - **the currency is the `dv_` TypeID**, with the integer handle carried alongside for the still
+ *    handle-addressed `/api/device/{id}/points`.
+ *  - **body-validation failures answer 422, not 400**, and `DELETE` answers `{success:true}` rather than
+ *    `{ok:true}` — neither of which this dialog reads (it checks `res.ok` and `body.error`/`body.id`).
  */
 export default function AreaBuilderDialog({
   isOpen,
@@ -63,12 +77,11 @@ export default function AreaBuilderDialog({
   const [activeAreaId, setActiveAreaId] = useState<string | null>(areaId);
   const isEdit = activeAreaId != null;
 
-  // Create-mode form state.
+  // Create-mode form state. Members are `dv_` ids — the currency `POST /api/v4/areas` takes — so the
+  // seed device (given as an integer handle by the caller) is resolved once the candidate list loads.
   const [name, setName] = useState("");
   const [alias, setAlias] = useState("");
-  const [members, setMembers] = useState<number[]>(
-    initialMemberSystemId != null ? [initialMemberSystemId] : [],
-  );
+  const [members, setMembers] = useState<DeviceId[]>([]);
 
   // Edit-mode tab + form state (seeded from the detail query).
   const [tab, setTab] = useState<EditTab>("general");
@@ -87,7 +100,7 @@ export default function AreaBuilderDialog({
     setActiveAreaId(areaId);
     setName("");
     setAlias("");
-    setMembers(initialMemberSystemId != null ? [initialMemberSystemId] : []);
+    setMembers([]);
     setTab("general");
     setError(null);
     setConfirmDelete(false);
@@ -99,25 +112,52 @@ export default function AreaBuilderDialog({
   const { data: candidatesResp } = useQuery({
     queryKey: ["area-builder", "candidates"],
     enabled: isOpen,
-    queryFn: () =>
-      fetchJson<CandidateDevicesResponse>("/api/areas/candidate-devices"),
+    queryFn: () => fetchJson<CandidateDevicesResponse>("/api/v4/devices"),
   });
   const candidates: CandidateDevice[] = candidatesResp?.devices ?? [];
 
+  // ONE fetch for the whole aggregate — meta + members + bindings (§9.2). There is no v4 `bindings` GET.
   const { data: detail, refetch: refetchDetail } = useQuery({
     queryKey: ["area-builder", "detail", activeAreaId],
     enabled: isOpen && isEdit,
-    queryFn: () => fetchJson<AreaEditPayload>(`/api/areas/${activeAreaId}`),
+    queryFn: () => fetchJson<AreaEditPayload>(`/api/v4/areas/${activeAreaId}`),
   });
 
   // Seed the edit-form fields whenever the detail loads/changes.
   useEffect(() => {
     if (!detail) return;
-    setEditName(detail.area.displayName);
-    setEditAlias(detail.area.alias ?? "");
+    setEditName(detail.area.name);
+    setEditAlias(detail.area.slug ?? "");
     setLocState(detail.area.location?.state ?? "");
     setLocPostcode(detail.area.location?.postcode ?? "");
   }, [detail]);
+
+  // The seed device arrives as an integer handle; the write surface takes `dv_`. Resolve it once the
+  // candidate list is in, and lock it as member #1.
+  const lockedDeviceId =
+    initialMemberSystemId == null
+      ? null
+      : (candidates.find((c) => c.legacySystemId === initialMemberSystemId)
+          ?.id ?? null);
+  useEffect(() => {
+    if (!isOpen || isEdit || !lockedDeviceId) return;
+    setMembers((m) => (m.includes(lockedDeviceId) ? m : [lockedDeviceId, ...m]));
+  }, [isOpen, isEdit, lockedDeviceId]);
+
+  /** Create-mode member chips, joined from the candidate list (its only possible source there). */
+  const createChips: MemberChip[] = members.flatMap((id) => {
+    const c = candidates.find((x) => x.id === id);
+    return c
+      ? [
+          {
+            id,
+            legacySystemId: c.legacySystemId,
+            name: c.name,
+            vendor: c.vendor,
+          },
+        ]
+      : [];
+  });
 
   const afterMutation = () => {
     onSaved?.();
@@ -149,13 +189,15 @@ export default function AreaBuilderDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/areas", {
+      // v4 vocabulary: `name`/`slug`/`members:[dv_…]`. Answers 201 (not 200) with the SAME
+      // `{id, legacySystemId}` body the legacy twin returned, so the transition below is unchanged.
+      const res = await fetch("/api/v4/areas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          displayName,
-          alias: normalizeAlias(alias) || undefined,
-          memberSystemIds: members,
+          name: displayName,
+          slug: normalizeAlias(alias) || undefined,
+          members,
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -182,7 +224,7 @@ export default function AreaBuilderDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/areas/${activeAreaId}`, {
+      const res = await fetch(`/api/v4/areas/${activeAreaId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -205,7 +247,7 @@ export default function AreaBuilderDialog({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/areas/${activeAreaId}`, {
+      const res = await fetch(`/api/v4/areas/${activeAreaId}`, {
         method: "DELETE",
       });
       const body = await res.json().catch(() => ({}));
@@ -222,15 +264,24 @@ export default function AreaBuilderDialog({
   };
 
   // ---- edit: member add/remove ------------------------------------------------
-  const memberOp = async (method: "POST" | "DELETE", systemId: number) => {
+  /**
+   * State the WHOLE membership (§9.2: `PUT` = declarative full replace). Add and remove are the same
+   * call with a different list, computed from the members the aggregate last reported — including the
+   * server-managed `helper` ones, so the replace declares the truth rather than relying on the route's
+   * "a helper is never evicted by omission" carve-out.
+   *
+   * Order is significant (array index becomes `area_members.ordinal`), which is why the edit applies to
+   * the loaded order rather than rebuilding a set.
+   */
+  const replaceMembers = async (next: DeviceId[]) => {
     if (!activeAreaId) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/areas/${activeAreaId}/devices`, {
-        method,
+      const res = await fetch(`/api/v4/areas/${activeAreaId}/members`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ systemId }),
+        body: JSON.stringify({ members: next }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -243,6 +294,9 @@ export default function AreaBuilderDialog({
       setBusy(false);
     }
   };
+
+  const currentMemberIds = (): DeviceId[] =>
+    (detail?.members ?? []).map((m) => m.id);
 
   const inputCls =
     "w-full rounded-md border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder:text-gray-600";
@@ -323,8 +377,8 @@ export default function AreaBuilderDialog({
                 </label>
                 <MembersTab
                   candidates={candidates}
-                  memberIds={members}
-                  lockedId={initialMemberSystemId}
+                  members={createChips}
+                  lockedId={lockedDeviceId}
                   onAdd={(id) => setMembers((m) => [...new Set([...m, id])])}
                   onRemove={(id) =>
                     setMembers((m) => m.filter((x) => x !== id))
@@ -390,8 +444,8 @@ export default function AreaBuilderDialog({
                     onClick={() =>
                       patchArea(
                         {
-                          displayName: editName.trim(),
-                          alias: normalizeAlias(editAlias) || null,
+                          name: editName.trim(),
+                          slug: normalizeAlias(editAlias) || null,
                         },
                         "Saved",
                       )
@@ -473,10 +527,12 @@ export default function AreaBuilderDialog({
             {isEdit && tab === "members" && detail && (
               <MembersTab
                 candidates={candidates}
-                memberIds={detail.memberSystemIds}
+                members={detail.members}
                 busy={busy}
-                onAdd={(id) => memberOp("POST", id)}
-                onRemove={(id) => memberOp("DELETE", id)}
+                onAdd={(id) => replaceMembers([...currentMemberIds(), id])}
+                onRemove={(id) =>
+                  replaceMembers(currentMemberIds().filter((x) => x !== id))
+                }
               />
             )}
 
@@ -484,8 +540,7 @@ export default function AreaBuilderDialog({
             {isEdit && tab === "bindings" && detail && (
               <BindingsTab
                 areaId={detail.area.id}
-                memberIds={detail.memberSystemIds}
-                candidates={candidates}
+                members={detail.members}
                 initialBindings={detail.bindings}
                 onSaved={() => {
                   afterMutation();

@@ -8,9 +8,9 @@ import { fetchJson } from "@/lib/queries";
 import { ROLE_IDS, ROLES, stemMatchesRole } from "@/lib/roles/registry";
 import type {
   AreaBinding,
-  CandidateDevice,
   DevicePoint,
   DevicePointsResponse,
+  MemberChip,
 } from "./types";
 import { stemOfLogicalPath } from "./types";
 import type { PointId } from "@/lib/ids";
@@ -26,19 +26,29 @@ interface Row {
 /**
  * The typed role→point bindings editor (edit mode only). Fetches each member device's points, lets the
  * owner compose an ordered list of role→point edges, and saves the whole list via
- * `PUT /api/areas/[areaId]/bindings` (ordinal = position). No bindings = union-default (every member's
+ * `PUT /api/v4/areas/{ar_…}/bindings` (a full replace). No bindings = union-default (every member's
  * own points), which is a valid, common state.
+ *
+ * Two things about the v4 twin that the row list makes visible:
+ *  - the rows arrive ordered by (role, metricType, priority) rather than raw insertion `ordinal`, so
+ *    the editor now groups by slot. Within a slot the order IS the priority order, which is what the
+ *    up/down arrows have always really been editing.
+ *  - `priority` is deliberately NOT sent back. The server derives it per (role, metric) slot from array
+ *    position, exactly as it did before; re-asserting the loaded values would collide with that counter
+ *    the moment a new row joined an existing slot.
+ *
+ * The member list is passed as `MemberChip`s rather than integers because the points endpoint is still
+ * handle-addressed: `legacySystemId` is the fetch key, `name` is the optgroup label, and both come off
+ * the area aggregate so an inactive member still appears.
  */
 export default function BindingsTab({
   areaId,
-  memberIds,
-  candidates,
+  members,
   initialBindings,
   onSaved,
 }: {
   areaId: string;
-  memberIds: number[];
-  candidates: CandidateDevice[];
+  members: MemberChip[];
   initialBindings: AreaBinding[];
   onSaved: () => void;
 }) {
@@ -52,24 +62,22 @@ export default function BindingsTab({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const memberKey = memberIds.join(",");
+  const memberKey = members.map((m) => m.legacySystemId).join(",");
   const { data: pointsByMember, isPending } = useQuery({
     queryKey: ["area-builder", "points", memberKey],
-    enabled: memberIds.length > 0,
+    enabled: members.length > 0,
     queryFn: async () => {
       const entries = await Promise.all(
-        memberIds.map(async (id) => {
+        members.map(async (m) => {
           const resp = await fetchJson<DevicePointsResponse>(
-            `/api/device/${id}/points?showActive=true`,
+            `/api/device/${m.legacySystemId}/points?showActive=true`,
           );
-          return [id, resp.points] as const;
+          return [m.legacySystemId, resp.points] as const;
         }),
       );
       return new Map<number, DevicePoint[]>(entries);
     },
   });
-
-  const nameById = new Map(candidates.map((c) => [c.id, c.displayName]));
 
   // Fast lookup: `pt_` id → the point (for metricType + validity). Keyed by the point's own opaque
   // identity, so it no longer depends on the owning device's integer handle.
@@ -115,7 +123,7 @@ export default function BindingsTab({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/areas/${areaId}/bindings`, {
+      const res = await fetch(`/api/v4/areas/${areaId}/bindings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -138,7 +146,7 @@ export default function BindingsTab({
     }
   };
 
-  if (isPending && memberIds.length > 0) {
+  if (isPending && members.length > 0) {
     return <p className="text-sm text-gray-500">Loading points…</p>;
   }
 
@@ -176,14 +184,11 @@ export default function BindingsTab({
                   className="min-w-0 flex-1 rounded-md border border-gray-600 bg-gray-800 px-2 py-1.5 text-sm text-gray-100"
                 >
                   <option value="">Select a point…</option>
-                  {memberIds.map((sysId) => {
-                    const points = pointsByMember?.get(sysId) ?? [];
+                  {members.map((m) => {
+                    const points = pointsByMember?.get(m.legacySystemId) ?? [];
                     if (points.length === 0) return null;
                     return (
-                      <optgroup
-                        key={sysId}
-                        label={nameById.get(sysId) ?? `ID: ${sysId}`}
-                      >
+                      <optgroup key={m.id} label={m.name}>
                         {points.map((p) => {
                           const compatible = stemMatchesRole(
                             stemOfLogicalPath(p.logicalPath),

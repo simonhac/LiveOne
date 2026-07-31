@@ -32,17 +32,12 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/auth/tesla/disconnect",
     "/api/enphase-proxy",
     // Battery-provenance ops endpoints — self-authenticate in-handler (owner/admin or CRON_SECRET).
-    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-provenance",
-    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-summary",
-    "/api/areas/by-handle/1000002",
-    // …and the config-v4 twins (Phase 14 stage 12). These need their OWN entries: middleware runs
-    // before next.config's rewrites and matches the ORIGINAL path, so `/api/v4/...` inherits nothing
-    // from the `/api/areas/...` lines above. Without them a headless CRON_SECRET call is 404'd at the
-    // edge having never reached the in-handler gate — invisible to a logged-in tester.
+    // These need their OWN entries: middleware runs before next.config's rewrites and matches the
+    // ORIGINAL path, so `/api/v4/...` inherited nothing from the `/api/areas/...` entries that used to
+    // sit beside them. Without them a headless CRON_SECRET call is 404'd at the edge having never
+    // reached the in-handler gate — invisible to a logged-in tester.
     "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-summary",
     "/api/v4/areas/by-handle/1000002",
-    // The config-v4 twin — a SEPARATE entry, because middleware matches the original path and
-    // `/api/v4/...` inherits nothing from the legacy patterns above (Phase 14 stage 10).
     "/api/v4/areas/ar_01k1abcd2efghjkmnpqrstvwxy/recompute-provenance",
   ];
   it.each(publicPaths)("treats %s as public", (p) => {
@@ -61,10 +56,19 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/share-tokens",
     "/api/devices",
     "/api/device/1/point/0",
-    // The battery-provenance ops allow-list is surgical — sibling area routes stay Clerk-gated.
+    // 🛑 config-v4 Phase 14 stage 13 — the LEGACY `/api/areas` TREE IS DELETED, and so are the three
+    // `publicRoutes` entries that used to name its provenance/by-handle suffixes. These paths are now
+    // unrouted strings, and they must NOT be public: a leftover allow-list entry is an edge bypass
+    // pointing at a 404 today and at whatever occupies the path tomorrow. Nothing else in the suite
+    // would notice its reintroduction, which is why the negative assertion is spelled out.
     "/api/areas",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/bindings",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-provenance",
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-summary",
+    "/api/areas/by-handle/1000002",
+    "/api/dashboards",
+    "/api/dashboards/5",
     // The v4 allow-list is surgical in exactly the same way: the two public suffixes above must not
     // open the rest of the (owner-facing, Clerk-gated) `/api/v4` tree.
     "/api/v4/areas",
@@ -116,10 +120,10 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/history",
     "/api/device/1/latest",
     "/api/device/1/run-periods",
-    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",
-    // 🛑 Its config-v4 twin (Phase 14 stage 12). THIS is the entry a logged-in tester can never miss
-    // the absence of: without it the v4 route 404s at the Clerk edge for every ANONYMOUS `?access=`
-    // shared-dashboard viewer and works perfectly for everyone else.
+    // 🛑 THIS is the entry a logged-in tester can never miss the absence of: without it the route 404s
+    // at the Clerk edge for every ANONYMOUS `?access=` shared-dashboard viewer and works perfectly for
+    // everyone else. `lib/queries/provenanceDaily.ts` moved onto this path in Phase 14 stage 13, in the
+    // same commit that deleted the legacy `/api/areas/(.*)/provenance-daily` route AND its entry.
     "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-daily",
   ];
   it.each(shareable)("allows %s via a share token", (p) => {
@@ -127,8 +131,8 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
   });
 
   // A stray ?access= must NOT reach these — they stay Clerk-gated. Note the plural `/api/devices`
-  // (admin) must NOT be caught by the singular `/api/device/(.*)` rule; likewise the plural
-  // `/api/dashboards` CRUD (there is no `/api/dashboard(.*)` shareable entry).
+  // (admin) must NOT be caught by the singular `/api/device/(.*)` rule; likewise the `/api/v4/dashboards`
+  // CRUD (there is no `/api/dashboard(.*)` shareable entry).
   const notShareable = [
     "/api/test/cache",
     "/api/admin/storage",
@@ -145,7 +149,10 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/dashboards/5",
     "/api/share-tokens",
     "/api/user/preferences",
-    // The surgical provenance-daily suffix must not open its CRUD siblings.
+    // 🛑 config-v4 Phase 14 stage 13 — the deleted legacy tree, on the shareable side. The
+    // `/api/areas/(.*)/provenance-daily` entry that used to make the FIRST of these shareable went with
+    // the route; an anonymous `?access=` viewer now reaches only the v4 path.
+    "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/bindings",
     // Same, on the v4 tree: a stray ?access= must not reach the owner-facing management surface, and
     // in particular must not reach a MUTATION (the whole point of the shareable/public split).

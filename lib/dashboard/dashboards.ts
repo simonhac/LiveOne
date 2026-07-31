@@ -368,7 +368,7 @@ export async function updateDashboard(
     //
     // What keeps it latent: NO CLIENT SENDS ONE. Measured at stage 14 — `AddAreaDialog` was the only
     // client that ever wrote `descriptor`; `DashboardSettingsDialog`'s PATCH sends name/slug only.
-    // The reachable surface is `PATCH /api/dashboards/{id}` (route deleted by stage 13) and this
+    // The last reachable surface was `PATCH /api/dashboards/{id}`, deleted in stage 13, and this
     // function's `descriptor` branch (deleted by stage 15). Until BOTH are gone, do not re-point any
     // client at a descriptor PATCH, and do not "fix" this by merging — the fix is deletion.
     set.doc = rewriteV3ToV4(descriptor, {

@@ -56,7 +56,7 @@ interface DashboardClientProps {
   sharedAreas?: ReadableArea[];
   /**
    * Owner/admin authed view: the caller's full readable Areas resolved server-side (SSR seed), so the
-   * client skips the `/api/areas/readable` round-trip on load (SP1.1) while keeping the switcher +
+   * client skips the `/api/v4/areas` round-trip on load (SP1.1) while keeping the switcher +
    * editor. Distinct from `sharedAreas`, which also flags the read-only shared view.
    */
   initialReadableAreas?: ReadableArea[];

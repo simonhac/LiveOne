@@ -1,5 +1,5 @@
 /**
- * Small shared HTTP-layer helpers for the `/api/areas` mutation routes: coercing an untyped JSON body
+ * Small shared HTTP-layer helpers for the `/api/v4/areas` mutation routes: coercing an untyped JSON body
  * into a typed location patch (same shape as the location route's `toPatch`), and loading the
  * ownership/handle facts a route needs to authorize an area edit.
  *
@@ -8,7 +8,7 @@
  * routes are TypeID-native, so the `ar_`→uuid decode lives here in one place.
  *
  * `loadAreaForOwner` is the equivalent decode+auth seam for the legacy **area-builder** routes
- * (`/api/areas/[areaId]*`), which check OWNERSHIP (not merely readability): parse an `ar_` id, then
+ * (`/api/v4/areas/{id}*`), which check OWNERSHIP (not merely readability): parse an `ar_` id, then
  * 404/403 the same way those routes always have. Consolidates what used to be three near-identical
  * `requireAreaOwner` copies (one per route file).
  */
@@ -212,7 +212,7 @@ export async function resolveMemberDeviceRefs(
 
 /**
  * Authenticate + parse an `ar_` TypeID + authorize OWNER/ADMIN write access — the loader every
- * `/api/areas/[areaId]*` mutation route uses. Malformed id → 400; unknown → 404; well-formed but not
+ * `/api/v4/areas/{id}*` mutation route uses. Malformed id → 400; unknown → 404; well-formed but not
  * owned (and not admin) → 403. `area.id` (below the seam) is the raw uuid every DAO call in `create.ts`
  * expects.
  */

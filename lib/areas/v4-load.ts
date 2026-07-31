@@ -52,6 +52,10 @@ export async function loadAreaMembers(
       const capabilities = await capabilitiesForDevice(rid);
       return {
         id: deviceId,
+        // The integer ADDRESS, carried not re-derived — `devices.rid` is exactly what the legacy twin's
+        // `memberSystemIds` held. See the note in `v4-shapes.ts`: joining it back through
+        // `GET /api/v4/devices` drops every inactive member.
+        legacySystemId: rid,
         name: member.name,
         vendor: member.vendor,
         status: member.status,

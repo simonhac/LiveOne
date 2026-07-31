@@ -64,13 +64,15 @@ export default function NewDashboardDialog({
     setError(null);
     try {
       const cleanAlias = normalizeAlias(alias);
-      const res = await fetch("/api/dashboards", {
+      // v4 vocabulary: `name`/`slug`/`seedArea` (an `ar_` id, which the picker already holds). The
+      // response is `201 {id, revision}` — `res.ok` covers 201, and only `id` is read.
+      const res = await fetch("/api/v4/dashboards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          displayName: name,
-          alias: cleanAlias || undefined,
-          seedAreaId: seedAreaId || undefined,
+          name,
+          slug: cleanAlias || undefined,
+          seedArea: seedAreaId || undefined,
         }),
       });
       if (!res.ok) {

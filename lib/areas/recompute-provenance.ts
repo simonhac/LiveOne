@@ -1,6 +1,6 @@
 /**
  * The whole implementation of `POST …/areas/{id}/recompute-provenance`, shared verbatim by the legacy
- * route (`app/api/areas/[areaId]/recompute-provenance`) and its config-v4 twin
+ * route (deleted in stage 13) and its config-v4 twin
  * (`app/api/v4/areas/[id]/recompute-provenance`).
  *
  * 🛑 EXTRACTED, NOT COPIED (config-v4 Phase 14 stage 10). This handler is ~150 lines of batch/date/learn

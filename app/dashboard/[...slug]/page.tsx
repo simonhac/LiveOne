@@ -21,7 +21,11 @@ import { getOrCreateUserPreferences } from "@/lib/user-preferences";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { getQueryClient } from "@/app/get-query-client";
 import { queryKeys } from "@/lib/queries/keys";
-import { MY_DASHBOARDS_KEY, USER_PREFERENCES_KEY } from "@/lib/queries";
+import {
+  MY_DASHBOARDS_KEY,
+  USER_PREFERENCES_KEY,
+  type MyDashboardsResponse,
+} from "@/lib/queries";
 import { getDeviceDataForCache } from "@/lib/dashboard/serve-data";
 import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 import {
@@ -64,7 +68,7 @@ async function renderCompositionDashboard(
   canEdit: boolean,
   sharedAreas?: Awaited<ReturnType<typeof resolveAreasByIds>>,
   // Owner/admin authed view: the caller's full readable Areas, resolved server-side, so the client
-  // skips the /api/areas/readable round-trip on load (SP1.1) while keeping the switcher + editor.
+  // skips the /api/v4/areas round-trip on load (SP1.1) while keeping the switcher + editor.
   initialReadableAreas?: Awaited<ReturnType<typeof listReadableAreas>>,
   // Optional SSR-render timer (server-timing instrumentation): times the `data` prefetch and, on
   // return, its `header()` (resolve + data + total) is surfaced inline as `#__ssr_timing` so the
@@ -199,7 +203,7 @@ async function renderCompositionDashboard(
 
   // SP1.4: on the authed owner/admin path (the read-only shared view disables the switcher via
   // `enabled = !sharedAreas`), SSR-seed the header switcher's two queries — the user's dashboards
-  // list + preferences — so DashboardsMenu paints without a client /api/dashboards +
+  // list + preferences — so DashboardsMenu paints without a client /api/v4/dashboards +
   // /api/user/preferences round-trip on load. Date fields → ISO strings to match the wire shape.
   if (!sharedAreas && userId) {
     const seedSwitcher = async () => {
@@ -207,10 +211,18 @@ async function renderCompositionDashboard(
         listAccessibleDashboards(userId),
         getOrCreateUserPreferences(userId),
       ]);
-      queryClient.setQueryData(MY_DASHBOARDS_KEY, {
+      // 🛑 This must emit `GET /api/v4/dashboards`' EXACT shape, not the DAO's. The seed and the fetch
+      // write the same cache key, and `fetchJson<T>` is an unchecked cast — spreading the DAO row
+      // (`displayName`/`alias`) under a DTO that says `name`/`slug` type-checks and paints every
+      // switcher entry "Untitled" until the first refetch quietly replaces it.
+      queryClient.setQueryData<MyDashboardsResponse>(MY_DASHBOARDS_KEY, {
         dashboards: dashboardList.map((d) => ({
-          ...d,
+          id: d.id,
+          name: d.displayName,
+          slug: d.alias,
+          cardCount: d.cardCount,
           updatedAt: d.updatedAt.toISOString(),
+          access: d.access,
         })),
       });
       queryClient.setQueryData(USER_PREFERENCES_KEY, {
@@ -250,7 +262,7 @@ async function renderCompositionDashboard(
           canEdit={canEdit}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
           // (below the seam) up to this point; the client's areaById must match the read-normalized
-          // (ar_) descriptor and the `ar_`-returning /api/areas/readable fetch fallback.
+          // (ar_) descriptor and the `ar_`-returning /api/v4/areas fetch fallback.
           sharedAreas={sharedAreas?.map((a) => ({
             ...a,
             id: Area.encode(a.id),
@@ -294,7 +306,7 @@ export default async function DashboardPage({
     if (valid) {
       // The token is authoritative; render the v3 descriptor read-only with the referenced Areas
       // resolved server-side, so each card's data fetch (token-authorized by the live union scope)
-      // runs without an authed /api/areas/readable call.
+      // runs without an authed /api/v4/areas call.
       const composition = await timer.time("dashboard", () =>
         getDashboard(valid.dashboardId),
       );
@@ -346,7 +358,7 @@ export default async function DashboardPage({
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
     // A signed-in non-owner with a grant views read-only; a true stranger is bounced (a public,
     // sign-in-free share still arrives via ?access=). Grantees get the descriptor's Areas resolved
-    // server-side (like the token path) so the client never calls the device-scoped /api/areas/readable.
+    // server-side (like the token path) so the client never calls the device-scoped /api/v4/areas.
     const grant = canEdit ? null : await getGrant(dashboard.id, userId);
     if (!canEdit && !grant) redirect("/dashboard");
     const sharedAreas = grant
@@ -355,7 +367,7 @@ export default async function DashboardPage({
         })
       : undefined;
     // Owner/admin: SSR the caller's full readable-areas list so the client doesn't fire the
-    // /api/areas/readable "chrome" request (SP1.1). Grantees already skip it via sharedAreas.
+    // /api/v4/areas "chrome" request (SP1.1). Grantees already skip it via sharedAreas.
     const initialReadableAreas = canEdit
       ? await timer.time("areas", () =>
           listReadableAreas(userId, { withChartCapability: true }),

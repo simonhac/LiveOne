@@ -2,7 +2,7 @@
  * The two battery-provenance READ computations, lifted out of the route layer so the config-v4
  * `/api/v4/areas/{ar_…}/provenance-{daily,summary}` handlers are auth + wiring only.
  *
- * 🛑 **The legacy twins (`app/api/areas/[areaId]/provenance-{daily,summary}/route.ts`) deliberately
+ * 🛑 **The routes (`app/api/v4/areas/[id]/provenance-{daily,summary}/route.ts`) deliberately
  * still carry their own inline copies.** config-v4 Phase 14 stage 12 ports these reads to `/api/v4`
  * WITHOUT touching the legacy tree, which stage 13 deletes wholesale in one reviewable step. Keeping
  * the copies for that one stage buys something real: `scripts/utils/v4-surface-smoke.ts` drives the v4

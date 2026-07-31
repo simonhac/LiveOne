@@ -18,6 +18,8 @@ export interface AreaDetailSource {
   };
   members: {
     id: DeviceId;
+    /** The member device's integer data-addressing handle (`devices.rid`) — see the note below. */
+    legacySystemId: number;
     name: string;
     vendor: string;
     status: string;
@@ -41,6 +43,14 @@ export interface AreaDetailSource {
  * (`GET /api/areas/{areaId}`) returns and which `components/areas/AreaTable.tsx` renders. Omitting it
  * made this payload silently non-substitutable for the legacy one; see the same note (and the much
  * sharper failure mode) on `app/api/v4/areas/route.ts`. It dies with the handle, not before.
+ *
+ * 🛑 The SAME exception applies per MEMBER, and for the same reason (config-v4 Phase 14 stage 13). The
+ * legacy twin's `memberSystemIds: number[]` is what the area builder's Bindings tab turns into
+ * `GET /api/device/{handle}/points` — the only way to enumerate a member's bindable points. Emitting a
+ * `dv_` alone forced the client to re-derive the handle by joining against `GET /api/v4/devices`, which
+ * silently loses any member that route filters out: `devicesVisibleByUser` is `activeOnly`, and a
+ * `status='removed'` member IS still a member (two of them are on `liveone-dev` today). Those members'
+ * points would have vanished from the picker with no error — so the number is carried, not re-derived.
  *
  * NOT a narrowing, by contrast: `timezoneOffsetMin` is deliberately absent because clean-sheet §7 /
  * locked decision 9 make the FIXED DAY OFFSET canonical — `dayOffsetMin` carries the same number

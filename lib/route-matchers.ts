@@ -22,24 +22,16 @@ const publicRoutes = [
   // Battery-provenance ops endpoints: authorize owner/admin OR a CRON_SECRET bearer IN-HANDLER
   // (getAuthContext → early 401 for anon). Public-listed so a headless CRON_SECRET call reaches the
   // handler instead of being 404'd at the edge by auth.protect() (same rationale as /api/cron). These
-  // are SURGICAL (specific suffixes) so the sibling mutation/CRUD routes — /api/areas,
-  // /api/areas/[id], /api/areas/[id]/bindings — stay Clerk-gated.
-  "/api/areas/(.*)/recompute-provenance",
-  "/api/areas/(.*)/provenance-summary",
-  "/api/areas/by-handle/(.*)",
-  // …and their config-v4 `/api/v4` twins (Phase 14 stage 12). SEPARATE entries, not a widened pattern:
-  // middleware runs BEFORE next.config's rewrites and matches the ORIGINAL path, so `/api/v4/...` is
-  // simply a different path and inherits nothing from the lines above. Same surgical suffixes, same
-  // in-handler owner/admin/CRON_SECRET gate; the sibling v4 area routes stay Clerk-gated. (There is no
-  // v4 `recompute-provenance` yet — it is a mutation and belongs to the area-writes PR.)
+  // are SURGICAL (specific suffixes) so the sibling v4 area mutation/CRUD routes — POST /api/v4/areas,
+  // PATCH/DELETE /api/v4/areas/{id}, PUT …/members, PUT …/bindings — stay Clerk-gated.
+  //
+  // The three legacy `/api/areas/...` twins that used to sit here went with the legacy tree (Phase 14
+  // stage 13). They were never redundant with these: the middleware runs BEFORE next.config's rewrites
+  // and matches the ORIGINAL path, so `/api/v4/...` is simply a different path and inherited nothing
+  // from them — which is also why removing them cannot affect these.
+  "/api/v4/areas/(.*)/recompute-provenance",
   "/api/v4/areas/(.*)/provenance-summary",
   "/api/v4/areas/by-handle/(.*)",
-  // …and their config-v4 `/api/v4` twins. A SEPARATE entry, not a widened pattern: the middleware runs
-  // BEFORE next.config's rewrites and matches the ORIGINAL path, so `/api/v4/...` is simply a different
-  // path and inherits nothing from the lines above. Same surgical suffix, same in-handler
-  // owner/admin/CRON_SECRET gate; the sibling v4 area routes (POST /api/v4/areas, PATCH/DELETE
-  // /api/v4/areas/{id}, PUT …/members, PUT …/bindings) stay Clerk-gated.
-  "/api/v4/areas/(.*)/recompute-provenance",
   // All other routes (pages + APIs) require Clerk auth, except share links (?access=, below)
 ];
 
@@ -62,21 +54,22 @@ export const isPublicRoute = createRouteMatcher(publicRoutes);
 // after confirming its handler validates the token and exposes nothing beyond the dashboard's scope.
 //
 // Note the trailing slash: `/api/device/(.*)` matches `/api/device/1/...` but NOT the plural
-// `/api/devices` (admin). The composition dashboard descriptor is resolved server-side in page.tsx
-// (never client-fetched in the shared view), so no `/api/dashboard(.*)` entry is needed — and keeping
-// it out also stops it over-matching the plural `/api/dashboards` CRUD (which stays Clerk-gated).
+// `/api/devices` (admin). The composition dashboard doc is resolved server-side in page.tsx (never
+// client-fetched in the shared view), so no `/api/dashboard(.*)` entry is needed — and keeping it out
+// also stops it over-matching the `/api/v4/dashboards` CRUD (which stays Clerk-gated; a share token
+// that could mint or relabel tokens would be a self-extending credential).
 const shareableRoutes = [
   "/dashboard(.*)", // the shared dashboard page (validates the token server-side)
   "/api/data", // live values + readings — requireDashboardAccess
   "/api/history", // time series + sankey (?include=sankey) — requireDashboardAccess
   "/api/device/(.*)", // per-device read endpoints the cards use (latest, run-periods)
-  "/api/areas/(.*)/provenance-daily", // battery-provenance history panel — requireDashboardAccess
-  // Its config-v4 twin (Phase 14 stage 12). Same handler-side gate (`requireDashboardAccess`), same
-  // scope. It needs its OWN entry — middleware sees the original path — and it belongs HERE rather
-  // than in publicRoutes because its caller is an anonymous `?access=` viewer, not a CRON_SECRET
-  // bearer: a publicRoutes entry would hand every unauthenticated request past the edge, where the
-  // handler's own share-token check is the only thing left. Deliberately the ONLY shareable route on
-  // the /api/v4 tree; everything else there is owner-facing management.
+  // The battery-provenance history panel — `requireDashboardAccess`. It belongs HERE rather than in
+  // publicRoutes because its caller is an anonymous `?access=` viewer, not a CRON_SECRET bearer: a
+  // publicRoutes entry would hand every unauthenticated request past the edge, where the handler's own
+  // share-token check is the only thing left. Deliberately the ONLY shareable route on the /api/v4
+  // tree; everything else there is owner-facing management. (The legacy `/api/areas/(.*)`
+  // twin of this line went with its route in Phase 14 stage 13 — the panel's client moved in the same
+  // commit, so nothing anonymous is left addressing the old path.)
   "/api/v4/areas/(.*)/provenance-daily",
 ];
 

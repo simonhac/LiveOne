@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
-/** A dashboard member as serialized by `GET /api/dashboards/[id]/grants`. */
+/** A dashboard member as serialized by `GET /api/v4/dashboards/{id}/grants`. */
 interface Member {
   clerkUserId: string;
   role: string;
@@ -13,10 +13,63 @@ interface Member {
   createdAtMs: number;
 }
 
+/** One entry of the `PUT` body — an existing member restated, or a new invitee to resolve. */
+type MemberInput =
+  | { clerkUserId: string; role: string }
+  | { email: string; role: string }
+  | { username: string; role: string };
+
+/** `PUT`'s per-grantee diff (§9.2) — returned so an under- or over-applied replace is visible. */
+interface GrantsChanged {
+  added: string[];
+  updated: string[];
+  unchanged: string[];
+  removed: string[];
+}
+
+/** The 422 body: `{ errors: [{ index?, code, detail? }] }`, all-or-nothing (nothing was applied). */
+interface MemberError {
+  index?: number;
+  code?: string;
+  detail?: string;
+}
+
+/** Turn one 422 entry into something a human can act on. `code` is machine vocabulary, not a message. */
+function messageForError(e: MemberError): string {
+  switch (e.code) {
+    case "user-not-found":
+      return "No user found with that email/username";
+    case "owner-already-has-full-access":
+      return "That person owns this dashboard already";
+    case "duplicate-member":
+      return "That person is already a member";
+    case "malformed-clerk-user-id":
+      return "That user id is malformed";
+    case "unknown-role":
+      return `Unknown role${e.detail ? `: ${e.detail}` : ""}`;
+    default:
+      return e.code ?? "Could not save members";
+  }
+}
+
 /**
  * Manage who a dashboard is shared WITH (per-user grants). Distinct from the public `?access=` links
  * in ShareLinksPanel: a member signs in and reaches the dashboard read-only at `/dashboard/id/{id}`.
- * Self-contained — talks to `/api/dashboards/{id}/grants` directly.
+ * Self-contained — talks to `/api/v4/dashboards/{id}/grants` directly.
+ *
+ * 🛑 **The membership write is a declarative full replace (`PUT`), not the legacy add-one/remove-one
+ * pair.** So "add" and "remove" are both expressed as *the whole list we want*, computed from the list
+ * the panel is currently showing. Two consequences worth stating rather than rediscovering:
+ *
+ *  - the local `members` state is the INPUT to every write, so a stale panel would silently re-assert
+ *    a stale membership. Every write reloads from the server afterwards, and a failed write reloads
+ *    too — the panel never keeps optimistic state it did not have confirmed.
+ *  - a member whose Clerk user was deleted comes back from the GET with `email`/`name` null and its raw
+ *    `clerkUserId` intact, and is restated by `clerkUserId` here. The route accepts a raw id as-is for
+ *    exactly this reason, so a GET → PUT round trip cannot quietly evict a tombstoned grantee.
+ *
+ * Validation is all-or-nothing and answers **422** with `{errors:[{index, code}]}` — not the legacy
+ * 404/`{error:"user_not_found"}` — so one unresolvable invitee leaves the membership untouched.
  */
 export default function GrantsPanel({
   dashboardId,
@@ -34,7 +87,7 @@ export default function GrantsPanel({
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/dashboards/${dashboardId}/grants`);
+      const res = await fetch(`/api/v4/dashboards/${dashboardId}/grants`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setMembers(((await res.json()).members ?? []) as Member[]);
     } catch {
@@ -48,33 +101,51 @@ export default function GrantsPanel({
     if (enabled) void refresh();
   }, [enabled, refresh]);
 
+  /** The current membership, restated as PUT input (identity by `clerkUserId`, role preserved). */
+  const asInput = (rows: Member[]): MemberInput[] =>
+    rows.map((m) => ({ clerkUserId: m.clerkUserId, role: m.role }));
+
+  /**
+   * Declare the whole membership. Returns the server's diff on success, or null on failure (the error
+   * is already surfaced). Always re-reads: the response's `members` IS the new state, so trusting it
+   * costs nothing and drifting from it costs a wrong list.
+   */
+  const replaceMembers = async (
+    next: MemberInput[],
+    failureMsg: string,
+  ): Promise<GrantsChanged | null> => {
+    const res = await fetch(`/api/v4/dashboards/${dashboardId}/grants`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ members: next }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const errs = (body?.errors ?? []) as MemberError[];
+      setError(errs.length > 0 ? messageForError(errs[0]) : failureMsg);
+      return null;
+    }
+    setMembers((body?.members ?? []) as Member[]);
+    return (body?.changed ?? null) as GrantsChanged | null;
+  };
+
   const add = async () => {
     const value = invitee.trim();
     if (!value) return;
-    // An "@" means an email; otherwise treat it as a username.
-    const payload = value.includes("@")
-      ? { email: value }
-      : { username: value };
+    // An "@" means an email; otherwise treat it as a username. The server resolves either to a Clerk id.
+    const invited: MemberInput = value.includes("@")
+      ? { email: value, role: "viewer" }
+      : { username: value, role: "viewer" };
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/dashboards/${dashboardId}/grants`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, role: "viewer" }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(
-          body?.error === "user_not_found"
-            ? "No user found with that email/username"
-            : (body?.error ?? "Could not add member"),
-        );
-        return;
-      }
+      const changed = await replaceMembers(
+        [...asInput(members), invited],
+        "Could not add member",
+      );
+      if (!changed) return;
       setInvitee("");
       toast.success("Member added");
-      await refresh();
     } finally {
       setBusy(false);
     }
@@ -84,15 +155,13 @@ export default function GrantsPanel({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/dashboards/${dashboardId}/grants?clerkUserId=${encodeURIComponent(clerkUserId)}`,
-        { method: "DELETE" },
+      // Removal is stated as OMISSION from the declared list — there is no per-member DELETE.
+      const changed = await replaceMembers(
+        asInput(members.filter((m) => m.clerkUserId !== clerkUserId)),
+        "Could not remove member",
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!changed) return;
       toast.success("Member removed");
-      await refresh();
-    } catch {
-      setError("Could not remove member");
     } finally {
       setBusy(false);
     }
