@@ -30,7 +30,11 @@
  * handler sees the header. Needs an active browser session for the test user on the DEV Clerk instance;
  * if there is none, sign in first — there is no workaround.
  */
+import { isDeepStrictEqual } from "node:util";
+import { isNull } from "drizzle-orm";
 import { createClerkClient } from "@clerk/nextjs/server";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import { shareTokens } from "@/lib/db/planetscale/schema";
 
 const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
 const SCRATCH_PREFIX = "v4-smoke ·";
@@ -52,6 +56,43 @@ function ok(condition: unknown, label: string, detail?: unknown): void {
 }
 function section(name: string): void {
   console.log(`\n── ${name}`);
+}
+function skip(label: string, why: string): void {
+  console.log(`  ⚠ SKIPPED ${label} — ${why}`);
+}
+
+/**
+ * The assertion this file exists for. Compare a v4 payload against its legacy twin KEY BY KEY and
+ * VALUE BY VALUE, with every rename spelled out. A dropped field is a defect (STEP 0's D2: the
+ * dashboard renders permanent skeletons, no error anywhere); a rename must be declared, so a field
+ * that quietly changes name shows up as "dropped" here rather than passing unnoticed.
+ */
+function compareKeyByKey(
+  label: string,
+  legacy: Record<string, unknown>,
+  v4: Record<string, unknown>,
+  opts: { rename?: Record<string, string>; valueMayDiffer?: string[] } = {},
+): void {
+  const rename = opts.rename ?? {};
+  const mayDiffer = new Set(opts.valueMayDiffer ?? []);
+  const dropped: string[] = [];
+  const changed: { key: string; legacy: unknown; v4: unknown }[] = [];
+  for (const k of Object.keys(legacy)) {
+    const target = rename[k] ?? k;
+    if (!(target in v4)) {
+      dropped.push(`${k}${target === k ? "" : ` (→ ${target})`}`);
+      continue;
+    }
+    if (!mayDiffer.has(k) && !isDeepStrictEqual(legacy[k], v4[target]))
+      changed.push({ key: k, legacy: legacy[k], v4: v4[target] });
+  }
+  ok(
+    Object.keys(legacy).length > 0 &&
+      dropped.length === 0 &&
+      changed.length === 0,
+    `${label}: carries every legacy key, same values (no silent narrowing)`,
+    { dropped, changed, legacyKeys: Object.keys(legacy) },
+  );
 }
 
 // --- auth -------------------------------------------------------------------
@@ -100,16 +141,27 @@ interface Res {
   body: any;
 }
 
-async function call(
+async function request(
   method: string,
   path: string,
-  opts: { body?: unknown; headers?: Record<string, string> } = {},
+  opts: {
+    body?: unknown;
+    headers?: Record<string, string>;
+    /** "clerk" = a freshly-minted session JWT; "cron" = CRON_SECRET; "anon" = no credentials at all. */
+    as?: "clerk" | "cron" | "anon";
+  } = {},
 ): Promise<Res> {
-  const jwt = await mintJwt();
+  const as = opts.as ?? "clerk";
+  const auth =
+    as === "clerk"
+      ? { Authorization: `Bearer ${await mintJwt()}` }
+      : as === "cron"
+        ? { Authorization: `Bearer ${process.env.CRON_SECRET ?? ""}` }
+        : {};
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
-      Authorization: `Bearer ${jwt}`,
+      ...auth,
       ...(opts.body !== undefined
         ? { "Content-Type": "application/json" }
         : {}),
@@ -125,6 +177,14 @@ async function call(
     /* keep the raw text — an empty body on a 500 is itself the signal */
   }
   return { status: res.status, etag: res.headers.get("etag"), body };
+}
+
+async function call(
+  method: string,
+  path: string,
+  opts: { body?: unknown; headers?: Record<string, string> } = {},
+): Promise<Res> {
+  return request(method, path, opts);
 }
 
 // --- guards -----------------------------------------------------------------
@@ -167,6 +227,87 @@ function docWithArea(areaId: string) {
       ],
     },
   };
+}
+
+/**
+ * Drive `provenance-daily` ANONYMOUSLY with a real `?access=` share token — the one check that
+ * distinguishes a correct `shareableRoutes` entry from a missing one end-to-end.
+ *
+ * READ-ONLY: it never creates a share token (the dev database is shared with other agents and with
+ * Simon). It reads the existing non-revoked tokens, and uses the LEGACY route as the oracle for which
+ * (token, area) pair is actually authorized — a token only grants the areas its own dashboard shows.
+ * Whatever the legacy route answers 200 to, the v4 twin must answer identically.
+ */
+async function driveSharedProvenanceDaily(areas: any[]): Promise<void> {
+  section(
+    "GET /api/v4/areas/{id}/provenance-daily — ANONYMOUS, real share token",
+  );
+  if (!planetscaleDb) {
+    skip("the share-token leg", "no database configured in this environment");
+    return;
+  }
+  const tokens = await planetscaleDb
+    .select({ token: shareTokens.token })
+    .from(shareTokens)
+    .where(isNull(shareTokens.revokedAt));
+  if (tokens.length === 0) {
+    skip("the share-token leg", "no non-revoked share tokens on this database");
+    return;
+  }
+
+  for (const { token } of tokens) {
+    for (const a of areas) {
+      const path = `/api/areas/${a.id}/provenance-daily?last=3d&access=${token}`;
+      const legacy = await request("GET", path, { as: "anon" });
+      if (legacy.status !== 200) continue;
+      console.log(`  using token …${token.slice(-6)} on ${a.displayName}`);
+      const v4 = await request(
+        "GET",
+        `/api/v4/areas/${a.id}/provenance-daily?last=3d&access=${token}`,
+        { as: "anon" },
+      );
+      // 404 here is EXACTLY the missing-`shareableRoutes`-entry failure, and it is why this check is
+      // worth the DB read: it is invisible to every other assertion in this file.
+      ok(
+        v4.status !== 404,
+        "an anonymous share-token viewer reaches the v4 route (not 404'd at the Clerk edge)",
+        v4.status,
+      );
+      ok(v4.status === 200, "…and is authorized by the handler", v4.status);
+      ok(
+        isDeepStrictEqual(v4.body, legacy.body),
+        "…and gets a payload identical to the legacy twin's",
+        {
+          v4: Object.keys(v4.body ?? {}),
+          legacy: Object.keys(legacy.body ?? {}),
+        },
+      );
+      // The token must not become a skeleton key: another area outside the dashboard's scope stays shut.
+      const other = areas.find((o) => o.id !== a.id);
+      if (other) {
+        const escalate = await request(
+          "GET",
+          `/api/v4/areas/${other.id}/provenance-daily?last=3d&access=${token}`,
+          { as: "anon" },
+        );
+        const legacyEscalate = await request(
+          "GET",
+          `/api/areas/${other.id}/provenance-daily?last=3d&access=${token}`,
+          { as: "anon" },
+        );
+        ok(
+          escalate.status === legacyEscalate.status,
+          "an out-of-scope area answers the token exactly as the legacy twin does (no widened scope)",
+          { v4: escalate.status, legacy: legacyEscalate.status },
+        );
+      }
+      return;
+    }
+  }
+  skip(
+    "the share-token leg",
+    "no (token, area) pair is authorized even on the LEGACY route — nothing to compare against",
+  );
 }
 
 async function main(): Promise<void> {
@@ -644,6 +785,245 @@ async function main(): Promise<void> {
     scratch.delete(created);
     const delAgain = await call("DELETE", `/api/v4/dashboards/${created}`);
     ok(delAgain.status === 404, "deleting it again → 404", delAgain);
+
+    // =========================================================================
+    // config-v4 Phase 14 stage 12 — the four orphan legacy reads and their v4 twins.
+    // Every one of these is compared against the legacy route it replaces, on the SAME database, in
+    // the SAME run. That is the only check that can see a narrowed payload.
+    // =========================================================================
+
+    // --------------------------------------------------------------- 14. GET /v4/devices
+    section("GET /api/v4/devices — the candidate-devices twin");
+    const v4Devices = await call("GET", "/api/v4/devices");
+    const legacyCandidates = await call("GET", "/api/areas/candidate-devices");
+    ok(v4Devices.status === 200, "200", v4Devices.status);
+    ok(
+      legacyCandidates.status === 200,
+      "legacy twin also 200 (the oracle is live)",
+      legacyCandidates.status,
+    );
+    const v4Devs: any[] = v4Devices.body?.devices ?? [];
+    const legacyDevs: any[] = legacyCandidates.body?.devices ?? [];
+    ok(
+      v4Devs.length > 0 && v4Devs.length === legacyDevs.length,
+      "same device COUNT as the legacy twin (same visible set)",
+      { v4: v4Devs.length, legacy: legacyDevs.length },
+    );
+    ok(
+      v4Devs.every((d) => typeof d.id === "string" && d.id.startsWith("dv_")),
+      "every device id is a dv_ TypeID",
+      v4Devs[0],
+    );
+    // Key-by-key, every device, with the rename map written out. `id` is the ONE key whose value
+    // legitimately differs (int → TypeID) — and it is not dropped: it is carried as `legacySystemId`.
+    const DEVICE_RENAMES = {
+      id: "legacySystemId",
+      displayName: "name",
+      vendorType: "vendor",
+      alias: "slug",
+      ownerClerkUserId: "ownerUserId",
+    };
+    for (const legacyDev of legacyDevs) {
+      const twin = v4Devs.find((d) => d.legacySystemId === legacyDev.id);
+      if (!twin) {
+        ok(false, `v4 has no device for legacy id ${legacyDev.id}`, legacyDev);
+        continue;
+      }
+      compareKeyByKey(
+        `device ${legacyDev.id} (${legacyDev.displayName})`,
+        legacyDev,
+        twin,
+        { rename: DEVICE_RENAMES },
+      );
+    }
+    // A Clerk-gated route with NO route-matcher entry: anonymous is 404'd at the edge. This is the
+    // control for the two 401 assertions below — it shows what a MISSING matcher entry looks like.
+    const anonDevices = await request("GET", "/api/v4/devices", { as: "anon" });
+    ok(
+      anonDevices.status === 404,
+      "anonymous → 404 at the Clerk edge (no matcher entry, and none wanted)",
+      anonDevices.status,
+    );
+
+    // --------------------------------------------------------------- 15. by-handle
+    section("GET /api/v4/areas/by-handle/{handle}");
+    const handle = area.legacySystemId;
+    const v4ByHandle = await call("GET", `/api/v4/areas/by-handle/${handle}`);
+    const legacyByHandle = await call("GET", `/api/areas/by-handle/${handle}`);
+    ok(v4ByHandle.status === 200, "200", v4ByHandle);
+    compareKeyByKey(
+      `by-handle/${handle}`,
+      legacyByHandle.body ?? {},
+      v4ByHandle.body ?? {},
+    );
+    ok(
+      v4ByHandle.body?.areaId === area.id,
+      "resolves to the ar_ TypeID we started from",
+      v4ByHandle.body,
+    );
+    ok(
+      (await call("GET", "/api/v4/areas/by-handle/not-a-number")).status ===
+        400,
+      "non-integer handle → 400",
+    );
+    ok(
+      (await call("GET", "/api/v4/areas/by-handle/987654321")).status === 404,
+      "unknown handle → 404",
+    );
+    // 🛑 THE ROUTE-MATCHER PROOF for publicRoutes. Anonymous must reach the HANDLER (401), not the
+    // edge (404). Without the `publicRoutes` entry this is a 404 — and a logged-in tester never sees it.
+    const anonByHandle = await request(
+      "GET",
+      `/api/v4/areas/by-handle/${handle}`,
+      { as: "anon" },
+    );
+    ok(
+      anonByHandle.status === 401,
+      "anonymous → 401 from the HANDLER, not 404 from the edge (publicRoutes entry present)",
+      anonByHandle,
+    );
+
+    // --------------------------------------------------------------- 16. provenance-summary
+    section("GET /api/v4/areas/{id}/provenance-summary");
+    const SUMMARY_Q = "?last=30d";
+    const v4Summary = await call(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-summary${SUMMARY_Q}`,
+    );
+    const legacySummary = await call(
+      "GET",
+      `/api/areas/${area.id}/provenance-summary${SUMMARY_Q}`,
+    );
+    ok(v4Summary.status === 200, "200", v4Summary);
+    compareKeyByKey(
+      "provenance-summary",
+      legacySummary.body ?? {},
+      v4Summary.body ?? {},
+    );
+    ok(
+      isDeepStrictEqual(v4Summary.body, legacySummary.body),
+      "payload is IDENTICAL to the legacy twin's (two independent implementations agree)",
+      { v4: v4Summary.body, legacy: legacySummary.body },
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/${area.id}/provenance-summary?last=0d`))
+        .status === 400,
+      "malformed date params → 400",
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/not-a-typeid/provenance-summary`))
+        .status === 400,
+      "malformed area id → 400",
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/${UNKNOWN_AREA}/provenance-summary`))
+        .status === 404,
+      "unknown area id → 404 (this gate is cron-reachable, so it cannot use the readable-set 403)",
+    );
+    const anonSummary = await request(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-summary`,
+      { as: "anon" },
+    );
+    ok(
+      anonSummary.status === 401,
+      "anonymous → 401 from the HANDLER, not 404 from the edge (publicRoutes entry present)",
+      anonSummary,
+    );
+    if (process.env.CRON_SECRET) {
+      const cronSummary = await request(
+        "GET",
+        `/api/v4/areas/${area.id}/provenance-summary${SUMMARY_Q}`,
+        { as: "cron" },
+      );
+      ok(
+        cronSummary.status === 200,
+        "CRON_SECRET bearer → 200 (headless ops, no Clerk session)",
+        cronSummary.status,
+      );
+      const cronByHandle = await request(
+        "GET",
+        `/api/v4/areas/by-handle/${handle}`,
+        { as: "cron" },
+      );
+      ok(
+        cronByHandle.status === 200,
+        "CRON_SECRET bearer reaches by-handle too",
+        cronByHandle.status,
+      );
+    } else {
+      skip("the CRON_SECRET leg", "CRON_SECRET is not set in this environment");
+    }
+
+    // --------------------------------------------------------------- 17. provenance-daily
+    section("GET /api/v4/areas/{id}/provenance-daily");
+    const DAILY_Q = "?last=7d";
+    const v4Daily = await call(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-daily${DAILY_Q}`,
+    );
+    const legacyDaily = await call(
+      "GET",
+      `/api/areas/${area.id}/provenance-daily${DAILY_Q}`,
+    );
+    ok(v4Daily.status === 200, "200", v4Daily.status);
+    compareKeyByKey(
+      "provenance-daily",
+      legacyDaily.body ?? {},
+      v4Daily.body ?? {},
+    );
+    ok(
+      isDeepStrictEqual(v4Daily.body, legacyDaily.body),
+      "payload is IDENTICAL to the legacy twin's — the same ProvenanceDailyResponse its client imports",
+      { v4Keys: Object.keys(v4Daily.body ?? {}) },
+    );
+    ok(
+      Array.isArray(v4Daily.body?.days) &&
+        Object.values(v4Daily.body?.fields ?? {}).every(
+          (col: any) => col.length === v4Daily.body.days.length,
+        ),
+      "every field column is parallel to `days` (the dense-columnar invariant)",
+      { days: v4Daily.body?.days?.length },
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/${area.id}/provenance-daily?last=x`))
+        .status === 400,
+      "malformed date params → 400",
+    );
+
+    // 🛑 THE ROUTE-MATCHER PROOF for shareableRoutes — the trap this whole PR was warned about.
+    // An anonymous request carrying a ?access= token must reach the HANDLER. Without the
+    // `shareableRoutes` entry the edge 404s it — invisible to every logged-in tester, and broken for
+    // every anonymous shared-dashboard viewer.
+    const garbageToken = await request(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-daily?access=not-a-real-token`,
+      { as: "anon" },
+    );
+    ok(
+      garbageToken.status !== 404,
+      "anonymous ?access= reaches the handler (NOT 404 at the edge) — shareableRoutes entry present",
+      garbageToken.status,
+    );
+    ok(
+      garbageToken.status === 401 || garbageToken.status === 403,
+      "…and a garbage token is then rejected by the handler",
+      garbageToken,
+    );
+    const noToken = await request(
+      "GET",
+      `/api/v4/areas/${area.id}/provenance-daily`,
+      { as: "anon" },
+    );
+    ok(
+      noToken.status === 404,
+      "anonymous WITHOUT ?access= is still 404'd at the edge (the bypass is token-presence-gated)",
+      noToken.status,
+    );
+
+    // …and now the real thing: a live share token, no Clerk session at all. The LEGACY route is the
+    // oracle for which (token, area) pair is authorized; the v4 twin must then match it exactly.
+    await driveSharedProvenanceDaily(list);
   } finally {
     await trash();
     console.log("\ncleaned up scratch dashboards");

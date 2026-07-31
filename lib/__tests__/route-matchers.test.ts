@@ -35,6 +35,12 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/recompute-provenance",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-summary",
     "/api/areas/by-handle/1000002",
+    // …and the config-v4 twins (Phase 14 stage 12). These need their OWN entries: middleware runs
+    // before next.config's rewrites and matches the ORIGINAL path, so `/api/v4/...` inherits nothing
+    // from the `/api/areas/...` lines above. Without them a headless CRON_SECRET call is 404'd at the
+    // edge having never reached the in-handler gate — invisible to a logged-in tester.
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-summary",
+    "/api/v4/areas/by-handle/1000002",
   ];
   it.each(publicPaths)("treats %s as public", (p) => {
     expect(isPublicRoute(req(p))).toBe(true);
@@ -56,6 +62,18 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/areas",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/bindings",
+    // The v4 allow-list is surgical in exactly the same way: the two public suffixes above must not
+    // open the rest of the (owner-facing, Clerk-gated) `/api/v4` tree.
+    "/api/v4/areas",
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf",
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/default-group",
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/eligibility",
+    // provenance-DAILY is shareable, never public — a ?access= viewer reaches it, an anonymous
+    // request with no token must still be stopped at the edge.
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-daily",
+    "/api/v4/devices",
+    "/api/v4/dashboards",
+    "/api/v4/dashboards/db_01k9fahd43fkbb2ge7dwsjhzqf",
   ];
   it.each(protectedPaths)("treats %s as protected", (p) => {
     expect(isPublicRoute(req(p))).toBe(false);
@@ -89,6 +107,10 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/device/1/latest",
     "/api/device/1/run-periods",
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",
+    // 🛑 Its config-v4 twin (Phase 14 stage 12). THIS is the entry a logged-in tester can never miss
+    // the absence of: without it the v4 route 404s at the Clerk edge for every ANONYMOUS `?access=`
+    // shared-dashboard viewer and works perfectly for everyone else.
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-daily",
     // Phase-13 compat shim: the PRE-rename spelling must stay shareable, because middleware
     // sees the ORIGINAL path and the next.config rewrite to `/api/device/*` runs after it.
     // Delete this entry with the shim.
@@ -114,6 +136,18 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/user/preferences",
     // The surgical provenance-daily suffix must not open its CRUD siblings.
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/bindings",
+    // Same, on the v4 tree: a stray ?access= must not reach the owner-facing management surface, and
+    // in particular must not reach a MUTATION (the whole point of the shareable/public split).
+    "/api/v4/areas",
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf",
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/members",
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/bindings",
+    // The CRON_SECRET pair is public, NOT shareable — a share token grants a dashboard's read scope,
+    // which is not the same authority as ops.
+    "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-summary",
+    "/api/v4/areas/by-handle/1000002",
+    "/api/v4/devices",
+    "/api/v4/dashboards/db_01k9fahd43fkbb2ge7dwsjhzqf",
   ];
   it.each(notShareable)("does NOT make %s shareable", (p) => {
     expect(isShareableRoute(req(p))).toBe(false);
