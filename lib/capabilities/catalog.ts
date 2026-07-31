@@ -204,6 +204,17 @@ export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
     scope: "area",
     requires: { all: ["battery/provenance"] },
   },
+  // Deliberately PERMISSIVE. `daily-stripe` paints whatever logical path its config names, so it
+  // maps to no single capability — `instrumentation` ("any numeric signal") is the honest floor, and
+  // is what keeps the entry satisfiable. Contract #2 above is what makes that safe: the gallery may
+  // offer it wherever there is a numeric series, and the plugin still gates on its OWN data (an
+  // unresolvable path simply yields an empty map and the card draws background).
+  "daily-stripe": {
+    id: "daily-stripe",
+    label: "Daily Stripes",
+    scope: "area",
+    requires: { any: ["instrumentation"] },
+  },
 };
 
 /**
