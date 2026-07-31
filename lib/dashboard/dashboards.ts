@@ -13,7 +13,7 @@
  */
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { isPgUniqueViolation } from "@/lib/db/pg-error";
+import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import { dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
 import {
@@ -59,13 +59,31 @@ export class DashboardAliasTakenError extends Error {
   }
 }
 
+/** The `uniqueIndex(...)` over `(owner_user_id, slug)` — see `dashboards` in schema.ts. */
+const ALIAS_UNIQUE = "dashboards_owner_alias_unique";
+
 /**
- * config-v4 Phase 14 STEP 0: this used to read `(err as {code?: string})?.code`, which drizzle ≥0.44
- * never populates — the SQLSTATE lives on the wrapping `DrizzleQueryError`'s `cause`. The alias 409 on
- * BOTH write paths below was therefore an unhandled 500 with an empty body (measured on the previously
- * dark `/api/v4/dashboards` POST + PATCH). See `lib/db/pg-error.ts`.
+ * Is this the SLUG collision, as opposed to any other unique violation on `dashboards`?
+ *
+ * Two corrections, in order:
+ *
+ *  - config-v4 Phase 14 STEP 0: this used to read `(err as {code?: string})?.code`, which drizzle ≥0.44
+ *    never populates — the SQLSTATE lives on the wrapping `DrizzleQueryError`'s `cause`. The alias 409 on
+ *    BOTH write paths below was therefore an unhandled 500 with an empty body (measured on the previously
+ *    dark `/api/v4/dashboards` POST + PATCH).
+ *  - config-v4 Phase 14 stage 11: STEP 0's replacement was `isPgUniqueViolation`, i.e. "ANY 23505 on this
+ *    statement is an alias collision". `dashboards` carries a SECOND unique — `dashboards_legacy_id_unique`
+ *    over the frozen pre-cutover int — so a clash there would have been reported to the user as
+ *    "That shortname is already in use", with a 409 and a plausible message hiding a real defect. Now the
+ *    name is matched, and `lib/db/pg-error.ts` is deliberately strict: a 23505 whose name cannot be
+ *    determined does NOT match, and the error propagates as a 500 rather than being mislabelled.
+ *
+ * On this database the name arrives only in the pg `message` (PlanetScale's proxy strips `constraint`);
+ * `violatedUniqueName` handles that. Read `lib/db/pg-error.ts` before touching this.
  */
-const isUniqueViolation = isPgUniqueViolation;
+function isAliasCollision(err: unknown): boolean {
+  return isUniqueViolationOn(err, ALIAS_UNIQUE);
+}
 
 /** Create a new composition dashboard for `ownerClerkUserId`. Returns its id. */
 export async function createDashboard(args: {
@@ -102,7 +120,7 @@ export async function createDashboard(args: {
       .returning({ id: dashboards.id });
     return Dashboard.encode(row.id);
   } catch (err) {
-    if (isUniqueViolation(err)) throw new DashboardAliasTakenError();
+    if (isAliasCollision(err)) throw new DashboardAliasTakenError();
     throw err;
   }
 }
@@ -366,7 +384,7 @@ export async function updateDashboard(
       .set(set)
       .where(eq(dashboards.id, uuid));
   } catch (err) {
-    if (isUniqueViolation(err)) throw new DashboardAliasTakenError();
+    if (isAliasCollision(err)) throw new DashboardAliasTakenError();
     throw err;
   }
 }

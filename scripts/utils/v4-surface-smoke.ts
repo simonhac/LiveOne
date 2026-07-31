@@ -20,6 +20,12 @@
  * in a `finally`, AND sweeps any left behind by a previous crashed run before it starts. It never
  * mutates an area, a device or a pre-existing dashboard. Modelled on `verify-areas-drift-key.ts`.
  *
+ * 🛑 It also MINTS SHARE TOKENS (Phase 14 stage 11). Those live on a scratch dashboard and
+ * `share_tokens.dashboard_id`/`dashboard_grants.dashboard_id` are both ON DELETE CASCADE, so deleting
+ * the dashboard is what removes them — the run asserts that anonymously rather than assuming it. A
+ * leftover token is a live anonymous credential, not untidiness, which is why the sweep at the top
+ * matters more here than it did for a plain dashboard row.
+ *
  * DEV-ONLY, two independent guards: the base URL must be loopback, and the server's database (read from
  * this process's own env, which is the same `.env.local` the dev server booted from) must not carry
  * `PLANETSCALE_PROD_BRANCH_ID`.
@@ -185,6 +191,25 @@ async function call(
   opts: { body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<Res> {
   return request(method, path, opts);
+}
+
+/**
+ * The same request WITHOUT a Clerk session — how an anonymous share-token holder reaches the app.
+ *
+ * config-v4 Phase 14 stage 11. `call()` cannot answer the questions that matter most about sharing:
+ * whether a token actually reaches the data, whether a revoked one is actually refused, and whether
+ * the owner-side management routes are actually unreachable. All three need NO Authorization header,
+ * because `middleware.ts` decides at the edge and a session would mask the answer entirely.
+ *
+ * A thin alias over `request({ as: "anon" })` — stage 12 landed the `as` parameter first, so the
+ * anonymous leg has one implementation rather than two.
+ */
+async function raw(
+  method: string,
+  path: string,
+  opts: { body?: unknown; headers?: Record<string, string> } = {},
+): Promise<Res> {
+  return request(method, path, { ...opts, as: "anon" });
 }
 
 // --- guards -----------------------------------------------------------------
@@ -774,6 +799,545 @@ async function main(): Promise<void> {
       clashOnCreate,
     );
 
+    // ================================================================ SHARING (stage 11)
+    //
+    // 🛑 Sharing is the ONE genuinely multi-party surface in this system — everything else is
+    // effectively single-user. A share token authorizes an ANONYMOUS reader, so the checks below are
+    // deliberately end-to-end and anonymous: a status code from an authenticated request proves
+    // nothing about what a token holder can actually reach.
+    const otherArea = list.find(
+      (a: any) => a.id !== area.id && a.legacySystemId !== area.legacySystemId,
+    );
+    const handle: number = area.legacySystemId;
+
+    section("POST /api/v4/dashboards/{id}/shares — mint");
+    const shareDash = await call("POST", "/api/v4/dashboards", {
+      body: { name: `${SCRATCH_PREFIX} shares`, doc: docWithArea(area.id) },
+    });
+    ok(
+      shareDash.status === 201,
+      "scratch dashboard for sharing created",
+      shareDash,
+    );
+    const sd = shareDash.body?.id as string;
+    if (!sd) throw new Error("could not create the sharing scratch dashboard");
+    scratch.add(sd);
+
+    const empty = await call("GET", `/api/v4/dashboards/${sd}/shares`);
+    ok(
+      empty.status === 200 &&
+        Array.isArray(empty.body?.tokens) &&
+        empty.body.tokens.length === 0,
+      "a fresh dashboard has no tokens",
+      empty.body,
+    );
+
+    const mintKeep = await call("POST", `/api/v4/dashboards/${sd}/shares`, {
+      body: { label: "p14 keep" },
+    });
+    ok(mintKeep.status === 201, "201", mintKeep);
+    const tokenKeep = mintKeep.body?.token as string;
+    ok(
+      typeof tokenKeep === "string" && tokenKeep.split("-").length === 3,
+      "returns a 3-word phrase token",
+      mintKeep.body,
+    );
+    ok(
+      mintKeep.body?.label === "p14 keep" &&
+        typeof mintKeep.body?.createdAtMs === "number" &&
+        mintKeep.body?.expiresAtMs === null &&
+        mintKeep.body?.revokedAtMs === null,
+      "the 201 body is the PERSISTED row (label/createdAtMs/expiresAtMs/revokedAtMs)",
+      mintKeep.body,
+    );
+
+    const mintRevoke = await call("POST", `/api/v4/dashboards/${sd}/shares`, {
+      body: { label: "p14 revoke", expiresInDays: 30 },
+    });
+    const tokenRevoke = mintRevoke.body?.token as string;
+    ok(
+      mintRevoke.status === 201 && !!tokenRevoke,
+      "a second token mints",
+      mintRevoke,
+    );
+    ok(
+      typeof mintRevoke.body?.expiresAtMs === "number" &&
+        Math.abs(mintRevoke.body.expiresAtMs - (Date.now() + 30 * 86_400_000)) <
+          60_000,
+      "expiresInDays: 30 lands ~30 days out",
+      mintRevoke.body,
+    );
+    // ⚠️ The legacy twin coerced a non-number to `null` — i.e. handed back a link the caller believes
+    // expires and which never does. Widening a credential silently is the wrong way to fail.
+    const badExpiry = await call("POST", `/api/v4/dashboards/${sd}/shares`, {
+      body: { expiresInDays: "7" },
+    });
+    ok(
+      badExpiry.status === 422,
+      'expiresInDays: "7" → 422, not a never-expiring link',
+      badExpiry,
+    );
+    const blankLabel = await call("POST", `/api/v4/dashboards/${sd}/shares`, {
+      body: { label: "   " },
+    });
+    ok(blankLabel.status === 422, "a blank label → 422", blankLabel);
+
+    section(
+      "GET /api/v4/dashboards/{id}/shares — key-by-key vs the legacy twin",
+    );
+    const listed = await call("GET", `/api/v4/dashboards/${sd}/shares`);
+    ok(
+      listed.body?.tokens?.length === 2,
+      "both tokens are listed",
+      listed.body,
+    );
+    const legacyShares = await call("GET", `/api/dashboards/${sd}/share`);
+    const legacyKeys = Object.keys(legacyShares.body?.tokens?.[0] ?? {});
+    const missingKeys = legacyKeys.filter(
+      (k) => !(k in (listed.body?.tokens?.[0] ?? {})),
+    );
+    ok(
+      legacyKeys.length > 0 && missingKeys.length === 0,
+      "carries every field GET /api/dashboards/{id}/share does (no silent narrowing)",
+      { missingKeys, legacyKeys },
+    );
+
+    section("PATCH /api/v4/dashboards/{id}/shares — relabel");
+    const relabel = await call("PATCH", `/api/v4/dashboards/${sd}/shares`, {
+      body: { token: tokenKeep, label: "p14 keep (renamed)" },
+    });
+    ok(
+      relabel.status === 200 && relabel.body?.label === "p14 keep (renamed)",
+      "200 with the updated row",
+      relabel,
+    );
+    const afterRelabel = await call("GET", `/api/v4/dashboards/${sd}/shares`);
+    ok(
+      afterRelabel.body?.tokens?.some(
+        (t: any) => t.token === tokenKeep && t.label === "p14 keep (renamed)",
+      ),
+      "the relabel actually persisted",
+      afterRelabel.body,
+    );
+    const relabelUnknown = await call(
+      "PATCH",
+      `/api/v4/dashboards/${sd}/shares`,
+      {
+        body: { token: "no-such-token-here", label: "x" },
+      },
+    );
+    ok(
+      relabelUnknown.status === 404,
+      "relabelling an unknown token → 404 (the legacy twin answered 200 {ok:false})",
+      relabelUnknown,
+    );
+    const relabelNoToken = await call(
+      "PATCH",
+      `/api/v4/dashboards/${sd}/shares`,
+      {
+        body: { label: "x" },
+      },
+    );
+    ok(
+      relabelNoToken.status === 422,
+      "PATCH with no token → 422",
+      relabelNoToken,
+    );
+
+    section("ANONYMOUS: a live token reaches the dashboard's data");
+    const anonNoToken = await raw("GET", `/api/data?systemId=${handle}`);
+    ok(
+      anonNoToken.status !== 200,
+      "no token, no session → not 200 (the control)",
+      anonNoToken.status,
+    );
+    const anonKeep = await raw(
+      "GET",
+      `/api/data?systemId=${handle}&access=${tokenKeep}`,
+    );
+    ok(
+      anonKeep.status === 200,
+      "token A reaches /api/data anonymously",
+      anonKeep.status,
+    );
+    const anonRevokeBefore = await raw(
+      "GET",
+      `/api/data?systemId=${handle}&access=${tokenRevoke}`,
+    );
+    ok(
+      anonRevokeBefore.status === 200,
+      "token B reaches it too (both live before the revoke)",
+      anonRevokeBefore.status,
+    );
+
+    section("DELETE /api/v4/dashboards/{id}/shares — revoke exactly one");
+    const revoked = await call(
+      "DELETE",
+      `/api/v4/dashboards/${sd}/shares?token=${encodeURIComponent(tokenRevoke)}`,
+    );
+    ok(
+      revoked.status === 200 && typeof revoked.body?.revokedAtMs === "number",
+      "200 with revokedAtMs READ BACK from the row (not asserted by the handler)",
+      revoked.body,
+    );
+    // 🛑 The pair that matters. An over-delete and an under-delete are indistinguishable from the
+    // caller's side — only these two together separate them, and only anonymously.
+    const anonRevokeAfter = await raw(
+      "GET",
+      `/api/data?systemId=${handle}&access=${tokenRevoke}`,
+    );
+    ok(
+      anonRevokeAfter.status !== 200,
+      "the REVOKED token is refused end-to-end (no under-delete)",
+      anonRevokeAfter.status,
+    );
+    const anonKeepAfter = await raw(
+      "GET",
+      `/api/data?systemId=${handle}&access=${tokenKeep}`,
+    );
+    ok(
+      anonKeepAfter.status === 200,
+      "the OTHER token still resolves (no over-delete)",
+      anonKeepAfter.status,
+    );
+    const revokeAgain = await call(
+      "DELETE",
+      `/api/v4/dashboards/${sd}/shares?token=${encodeURIComponent(tokenRevoke)}`,
+    );
+    ok(
+      revokeAgain.status === 200 &&
+        revokeAgain.body?.revokedAtMs === revoked.body?.revokedAtMs,
+      "re-revoking is idempotent and does NOT move revokedAtMs",
+      revokeAgain.body,
+    );
+    const relabelRevoked = await call(
+      "PATCH",
+      `/api/v4/dashboards/${sd}/shares`,
+      {
+        body: { token: tokenRevoke, label: "x" },
+      },
+    );
+    ok(
+      relabelRevoked.status === 409,
+      "relabelling a revoked token → 409 (it exists, but it is not live)",
+      relabelRevoked,
+    );
+    const revokeUnknown = await call(
+      "DELETE",
+      `/api/v4/dashboards/${sd}/shares?token=no-such-token-here`,
+    );
+    ok(
+      revokeUnknown.status === 404,
+      "revoking an unknown token → 404",
+      revokeUnknown,
+    );
+    const revokeNoToken = await call(
+      "DELETE",
+      `/api/v4/dashboards/${sd}/shares`,
+    );
+    ok(
+      revokeNoToken.status === 422,
+      "DELETE with no ?token → 422",
+      revokeNoToken,
+    );
+
+    section("🛑 SCOPE IS DERIVED LIVE from the doc's envelope refs (§6, §8.3)");
+    if (!otherArea) {
+      ok(
+        false,
+        "need a second readable area with a distinct handle to prove this",
+        list,
+      );
+    } else {
+      const otherHandle: number = otherArea.legacySystemId;
+      const beforeMove = await raw(
+        "GET",
+        `/api/data?systemId=${otherHandle}&access=${tokenKeep}`,
+      );
+      ok(
+        beforeMove.status !== 200,
+        `token A does NOT reach area ${otherArea.id} while the doc does not reference it`,
+        beforeMove.status,
+      );
+      // Re-aim the DOC — the token is untouched, and was minted before this edit.
+      const repoint = await call("PUT", `/api/v4/dashboards/${sd}`, {
+        body: { doc: docWithArea(otherArea.id) },
+      });
+      ok(
+        repoint.status === 200,
+        "the doc is re-pointed at the other area",
+        repoint.status,
+      );
+      const afterMove = await raw(
+        "GET",
+        `/api/data?systemId=${otherHandle}&access=${tokenKeep}`,
+      );
+      ok(
+        afterMove.status === 200,
+        "the SAME token now reaches the new area — scope follows the doc, not the mint",
+        afterMove.status,
+      );
+      const oldAreaAfterMove = await raw(
+        "GET",
+        `/api/data?systemId=${handle}&access=${tokenKeep}`,
+      );
+      ok(
+        oldAreaAfterMove.status !== 200,
+        "…and it no longer reaches the area the doc dropped",
+        oldAreaAfterMove.status,
+      );
+      // Restore, so the grants leg below runs against the original binding.
+      await call("PUT", `/api/v4/dashboards/${sd}`, {
+        body: { doc: docWithArea(area.id) },
+      });
+    }
+
+    section(
+      "🛑 ANONYMOUS: the management routes are UNREACHABLE (never shareable)",
+    );
+    for (const [method, path] of [
+      ["GET", `/api/v4/dashboards/${sd}/shares`],
+      ["POST", `/api/v4/dashboards/${sd}/shares`],
+      ["PATCH", `/api/v4/dashboards/${sd}/shares`],
+      ["DELETE", `/api/v4/dashboards/${sd}/shares?token=${tokenKeep}`],
+      ["GET", `/api/v4/dashboards/${sd}/grants`],
+      ["PUT", `/api/v4/dashboards/${sd}/grants`],
+    ] as const) {
+      const withBody = method === "GET" ? {} : { body: {} };
+      const anon = await raw(method, path, withBody);
+      ok(
+        anon.status === 404 || anon.status === 401,
+        `${method} ${path.split("?")[0]} without a session → ${anon.status} (Clerk edge)`,
+        anon.status,
+      );
+      // …and a VALID share token must not buy the way in either. If this ever answers 200, a token
+      // has become a self-extending credential: it could mint more tokens or grant a stranger access.
+      const withToken = await raw(
+        method,
+        `${path}${path.includes("?") ? "&" : "?"}access=${tokenKeep}`,
+        withBody,
+      );
+      ok(
+        withToken.status === 404 || withToken.status === 401,
+        `${method} … with a VALID ?access= token → ${withToken.status} (still refused)`,
+        withToken.status,
+      );
+    }
+    const stillLive = await raw(
+      "GET",
+      `/api/data?systemId=${handle}&access=${tokenKeep}`,
+    );
+    ok(
+      stillLive.status === 200,
+      "…and that token is genuinely live — the refusals above are the ROUTE, not a dead token",
+      stillLive.status,
+    );
+
+    // ================================================================ GRANTS (full replace)
+    section(
+      "PUT /api/v4/dashboards/{id}/grants — full replace, driven POSITIVELY",
+    );
+    const ALICE = "user_p14share_alice";
+    const BOB = "user_p14share_bob";
+    const CARLA = "user_p14share_carla";
+    const ownerId = cachedUserId!;
+
+    const noMembers = await call("GET", `/api/v4/dashboards/${sd}/grants`);
+    ok(
+      noMembers.status === 200 && noMembers.body?.members?.length === 0,
+      "a fresh dashboard has no members",
+      noMembers.body,
+    );
+
+    const two = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: {
+        members: [{ clerkUserId: ALICE }, { clerkUserId: BOB, role: "admin" }],
+      },
+    });
+    ok(two.status === 200, "200", two);
+    ok(
+      two.body?.changed?.added?.length === 2 &&
+        two.body.changed.removed.length === 0,
+      "two grantees added",
+      two.body?.changed,
+    );
+    const twoListed = await call("GET", `/api/v4/dashboards/${sd}/grants`);
+    ok(
+      twoListed.body?.members?.length === 2,
+      "…and both are listed",
+      twoListed.body,
+    );
+    const aliceCreatedAt = twoListed.body.members.find(
+      (m: any) => m.clerkUserId === ALICE,
+    )?.createdAtMs;
+
+    // 🛑 THE CASE THAT PROVES THE DELETE PREDICATE. A replace run against an already-empty table only
+    // ever proves the SQL parses. Two grantees; remove ONE; the other must survive untouched.
+    const keepOne = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: { members: [{ clerkUserId: ALICE }] },
+    });
+    ok(
+      JSON.stringify(keepOne.body?.changed?.removed) === JSON.stringify([BOB]),
+      "removed names EXACTLY the dropped grantee",
+      keepOne.body?.changed,
+    );
+    const afterKeep = await call("GET", `/api/v4/dashboards/${sd}/grants`);
+    ok(
+      afterKeep.body?.members?.length === 1 &&
+        afterKeep.body.members[0].clerkUserId === ALICE,
+      "the KEPT grantee survives and the dropped one is gone (no over/under-delete)",
+      afterKeep.body?.members,
+    );
+    ok(
+      afterKeep.body.members[0].createdAtMs === aliceCreatedAt,
+      "the kept grantee's createdAtMs is unchanged — updated in place, not deleted + reinserted",
+      { was: aliceCreatedAt, now: afterKeep.body.members[0]?.createdAtMs },
+    );
+
+    // …and the sideways move: add a third while removing another, plus a role change on the survivor.
+    await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: { members: [{ clerkUserId: ALICE }, { clerkUserId: BOB }] },
+    });
+    const sideways = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: {
+        members: [
+          { clerkUserId: ALICE, role: "admin" },
+          { clerkUserId: CARLA },
+        ],
+      },
+    });
+    ok(
+      JSON.stringify(sideways.body?.changed) ===
+        JSON.stringify({
+          added: [CARLA],
+          updated: [ALICE],
+          unchanged: [],
+          removed: [BOB],
+        }),
+      "adds a third, removes another, re-roles the survivor — in one PUT",
+      sideways.body?.changed,
+    );
+    const afterSideways = await call("GET", `/api/v4/dashboards/${sd}/grants`);
+    ok(
+      afterSideways.body?.members
+        ?.map((m: any) => m.clerkUserId)
+        .sort()
+        .join(",") === [ALICE, CARLA].sort().join(","),
+      "the listed state matches the declaration exactly",
+      afterSideways.body?.members,
+    );
+    ok(
+      afterSideways.body.members.find((m: any) => m.clerkUserId === ALICE)
+        ?.role === "admin",
+      "the role change landed",
+      afterSideways.body?.members,
+    );
+
+    section(
+      "GET /api/v4/dashboards/{id}/grants — key-by-key vs the legacy twin",
+    );
+    const legacyGrants = await call("GET", `/api/dashboards/${sd}/grants`);
+    const legacyMemberKeys = Object.keys(legacyGrants.body?.members?.[0] ?? {});
+    const missingMemberKeys = legacyMemberKeys.filter(
+      (k) => !(k in (afterSideways.body?.members?.[0] ?? {})),
+    );
+    ok(
+      legacyMemberKeys.length > 0 && missingMemberKeys.length === 0,
+      "carries every field GET /api/dashboards/{id}/grants does — INCLUDING the Clerk decoration",
+      { missingMemberKeys, legacyMemberKeys },
+    );
+    ok(
+      "email" in (afterSideways.body?.members?.[0] ?? {}) &&
+        "name" in (afterSideways.body?.members?.[0] ?? {}),
+      "email/name are present (null here — these scratch ids are not real Clerk users, and the row is KEPT)",
+      afterSideways.body?.members?.[0],
+    );
+
+    section("PUT …/grants — the rejection paths (all-or-nothing)");
+    const noKey = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: {},
+    });
+    ok(
+      noKey.status === 422 &&
+        noKey.body?.errors?.[0]?.code === "members-required",
+      "a MISSING members key → 422, never an accidental remove-everyone",
+      noKey,
+    );
+    const ghost = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: {
+        members: [
+          { clerkUserId: ALICE },
+          { email: "p14-share-ghost@example.invalid" },
+        ],
+      },
+    });
+    ok(
+      ghost.status === 422 &&
+        ghost.body?.errors?.[0]?.code === "user-not-found",
+      "one unresolvable invitee rejects the WHOLE replace",
+      ghost,
+    );
+    const ownerGrant = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: { members: [{ clerkUserId: ownerId }] },
+    });
+    ok(
+      ownerGrant.status === 422 &&
+        ownerGrant.body?.errors?.[0]?.code === "owner-already-has-full-access",
+      "the owner cannot be granted their own dashboard",
+      ownerGrant,
+    );
+    const dupGrant = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: { members: [{ clerkUserId: ALICE }, { clerkUserId: ALICE }] },
+    });
+    ok(
+      dupGrant.status === 422 &&
+        dupGrant.body?.errors?.[0]?.code === "duplicate-member",
+      "a duplicate grantee → 422, not a silent collapse",
+      dupGrant,
+    );
+    const survived = await call("GET", `/api/v4/dashboards/${sd}/grants`);
+    ok(
+      survived.body?.members?.length === 2,
+      "none of the four rejections changed the membership",
+      survived.body?.members,
+    );
+
+    const wipe = await call("PUT", `/api/v4/dashboards/${sd}/grants`, {
+      body: { members: [] },
+    });
+    ok(
+      wipe.status === 200 && wipe.body?.changed?.removed?.length === 2,
+      "[] removes everyone — the declarative contract",
+      wipe.body?.changed,
+    );
+    ok(
+      (await call("GET", `/api/v4/dashboards/${sd}/grants`)).body?.members
+        ?.length === 0,
+      "…and the membership is empty",
+    );
+
+    section("shares/grants — unknown dashboard, and not-yours");
+    for (const path of ["shares", "grants"]) {
+      const unknown = await call(
+        "GET",
+        `/api/v4/dashboards/${UNKNOWN_DASHBOARD}/${path}`,
+      );
+      ok(
+        unknown.status === 404,
+        `GET …/${UNKNOWN_DASHBOARD}/${path} → 404`,
+        unknown,
+      );
+      const malformed = await call(
+        "GET",
+        `/api/v4/dashboards/not-a-typeid/${path}`,
+      );
+      ok(
+        malformed.status === 404,
+        `GET …/not-a-typeid/${path} → 404 (a malformed id reads as not-found)`,
+        malformed,
+      );
+    }
+
     // ---------------------------------------------------------------- 13. DELETE
     section("DELETE /api/v4/dashboards/{id}");
     const del = await call("DELETE", `/api/v4/dashboards/${created}`);
@@ -786,245 +1350,7 @@ async function main(): Promise<void> {
     const delAgain = await call("DELETE", `/api/v4/dashboards/${created}`);
     ok(delAgain.status === 404, "deleting it again → 404", delAgain);
 
-    // =========================================================================
-    // config-v4 Phase 14 stage 12 — the four orphan legacy reads and their v4 twins.
-    // Every one of these is compared against the legacy route it replaces, on the SAME database, in
-    // the SAME run. That is the only check that can see a narrowed payload.
-    // =========================================================================
-
-    // --------------------------------------------------------------- 14. GET /v4/devices
-    section("GET /api/v4/devices — the candidate-devices twin");
-    const v4Devices = await call("GET", "/api/v4/devices");
-    const legacyCandidates = await call("GET", "/api/areas/candidate-devices");
-    ok(v4Devices.status === 200, "200", v4Devices.status);
-    ok(
-      legacyCandidates.status === 200,
-      "legacy twin also 200 (the oracle is live)",
-      legacyCandidates.status,
-    );
-    const v4Devs: any[] = v4Devices.body?.devices ?? [];
-    const legacyDevs: any[] = legacyCandidates.body?.devices ?? [];
-    ok(
-      v4Devs.length > 0 && v4Devs.length === legacyDevs.length,
-      "same device COUNT as the legacy twin (same visible set)",
-      { v4: v4Devs.length, legacy: legacyDevs.length },
-    );
-    ok(
-      v4Devs.every((d) => typeof d.id === "string" && d.id.startsWith("dv_")),
-      "every device id is a dv_ TypeID",
-      v4Devs[0],
-    );
-    // Key-by-key, every device, with the rename map written out. `id` is the ONE key whose value
-    // legitimately differs (int → TypeID) — and it is not dropped: it is carried as `legacySystemId`.
-    const DEVICE_RENAMES = {
-      id: "legacySystemId",
-      displayName: "name",
-      vendorType: "vendor",
-      alias: "slug",
-      ownerClerkUserId: "ownerUserId",
-    };
-    for (const legacyDev of legacyDevs) {
-      const twin = v4Devs.find((d) => d.legacySystemId === legacyDev.id);
-      if (!twin) {
-        ok(false, `v4 has no device for legacy id ${legacyDev.id}`, legacyDev);
-        continue;
-      }
-      compareKeyByKey(
-        `device ${legacyDev.id} (${legacyDev.displayName})`,
-        legacyDev,
-        twin,
-        { rename: DEVICE_RENAMES },
-      );
-    }
-    // A Clerk-gated route with NO route-matcher entry: anonymous is 404'd at the edge. This is the
-    // control for the two 401 assertions below — it shows what a MISSING matcher entry looks like.
-    const anonDevices = await request("GET", "/api/v4/devices", { as: "anon" });
-    ok(
-      anonDevices.status === 404,
-      "anonymous → 404 at the Clerk edge (no matcher entry, and none wanted)",
-      anonDevices.status,
-    );
-
-    // --------------------------------------------------------------- 15. by-handle
-    section("GET /api/v4/areas/by-handle/{handle}");
-    const handle = area.legacySystemId;
-    const v4ByHandle = await call("GET", `/api/v4/areas/by-handle/${handle}`);
-    const legacyByHandle = await call("GET", `/api/areas/by-handle/${handle}`);
-    ok(v4ByHandle.status === 200, "200", v4ByHandle);
-    compareKeyByKey(
-      `by-handle/${handle}`,
-      legacyByHandle.body ?? {},
-      v4ByHandle.body ?? {},
-    );
-    ok(
-      v4ByHandle.body?.areaId === area.id,
-      "resolves to the ar_ TypeID we started from",
-      v4ByHandle.body,
-    );
-    ok(
-      (await call("GET", "/api/v4/areas/by-handle/not-a-number")).status ===
-        400,
-      "non-integer handle → 400",
-    );
-    ok(
-      (await call("GET", "/api/v4/areas/by-handle/987654321")).status === 404,
-      "unknown handle → 404",
-    );
-    // 🛑 THE ROUTE-MATCHER PROOF for publicRoutes. Anonymous must reach the HANDLER (401), not the
-    // edge (404). Without the `publicRoutes` entry this is a 404 — and a logged-in tester never sees it.
-    const anonByHandle = await request(
-      "GET",
-      `/api/v4/areas/by-handle/${handle}`,
-      { as: "anon" },
-    );
-    ok(
-      anonByHandle.status === 401,
-      "anonymous → 401 from the HANDLER, not 404 from the edge (publicRoutes entry present)",
-      anonByHandle,
-    );
-
-    // --------------------------------------------------------------- 16. provenance-summary
-    section("GET /api/v4/areas/{id}/provenance-summary");
-    const SUMMARY_Q = "?last=30d";
-    const v4Summary = await call(
-      "GET",
-      `/api/v4/areas/${area.id}/provenance-summary${SUMMARY_Q}`,
-    );
-    const legacySummary = await call(
-      "GET",
-      `/api/areas/${area.id}/provenance-summary${SUMMARY_Q}`,
-    );
-    ok(v4Summary.status === 200, "200", v4Summary);
-    compareKeyByKey(
-      "provenance-summary",
-      legacySummary.body ?? {},
-      v4Summary.body ?? {},
-    );
-    ok(
-      isDeepStrictEqual(v4Summary.body, legacySummary.body),
-      "payload is IDENTICAL to the legacy twin's (two independent implementations agree)",
-      { v4: v4Summary.body, legacy: legacySummary.body },
-    );
-    ok(
-      (await call("GET", `/api/v4/areas/${area.id}/provenance-summary?last=0d`))
-        .status === 400,
-      "malformed date params → 400",
-    );
-    ok(
-      (await call("GET", `/api/v4/areas/not-a-typeid/provenance-summary`))
-        .status === 400,
-      "malformed area id → 400",
-    );
-    ok(
-      (await call("GET", `/api/v4/areas/${UNKNOWN_AREA}/provenance-summary`))
-        .status === 404,
-      "unknown area id → 404 (this gate is cron-reachable, so it cannot use the readable-set 403)",
-    );
-    const anonSummary = await request(
-      "GET",
-      `/api/v4/areas/${area.id}/provenance-summary`,
-      { as: "anon" },
-    );
-    ok(
-      anonSummary.status === 401,
-      "anonymous → 401 from the HANDLER, not 404 from the edge (publicRoutes entry present)",
-      anonSummary,
-    );
-    if (process.env.CRON_SECRET) {
-      const cronSummary = await request(
-        "GET",
-        `/api/v4/areas/${area.id}/provenance-summary${SUMMARY_Q}`,
-        { as: "cron" },
-      );
-      ok(
-        cronSummary.status === 200,
-        "CRON_SECRET bearer → 200 (headless ops, no Clerk session)",
-        cronSummary.status,
-      );
-      const cronByHandle = await request(
-        "GET",
-        `/api/v4/areas/by-handle/${handle}`,
-        { as: "cron" },
-      );
-      ok(
-        cronByHandle.status === 200,
-        "CRON_SECRET bearer reaches by-handle too",
-        cronByHandle.status,
-      );
-    } else {
-      skip("the CRON_SECRET leg", "CRON_SECRET is not set in this environment");
-    }
-
-    // --------------------------------------------------------------- 17. provenance-daily
-    section("GET /api/v4/areas/{id}/provenance-daily");
-    const DAILY_Q = "?last=7d";
-    const v4Daily = await call(
-      "GET",
-      `/api/v4/areas/${area.id}/provenance-daily${DAILY_Q}`,
-    );
-    const legacyDaily = await call(
-      "GET",
-      `/api/areas/${area.id}/provenance-daily${DAILY_Q}`,
-    );
-    ok(v4Daily.status === 200, "200", v4Daily.status);
-    compareKeyByKey(
-      "provenance-daily",
-      legacyDaily.body ?? {},
-      v4Daily.body ?? {},
-    );
-    ok(
-      isDeepStrictEqual(v4Daily.body, legacyDaily.body),
-      "payload is IDENTICAL to the legacy twin's — the same ProvenanceDailyResponse its client imports",
-      { v4Keys: Object.keys(v4Daily.body ?? {}) },
-    );
-    ok(
-      Array.isArray(v4Daily.body?.days) &&
-        Object.values(v4Daily.body?.fields ?? {}).every(
-          (col: any) => col.length === v4Daily.body.days.length,
-        ),
-      "every field column is parallel to `days` (the dense-columnar invariant)",
-      { days: v4Daily.body?.days?.length },
-    );
-    ok(
-      (await call("GET", `/api/v4/areas/${area.id}/provenance-daily?last=x`))
-        .status === 400,
-      "malformed date params → 400",
-    );
-
-    // 🛑 THE ROUTE-MATCHER PROOF for shareableRoutes — the trap this whole PR was warned about.
-    // An anonymous request carrying a ?access= token must reach the HANDLER. Without the
-    // `shareableRoutes` entry the edge 404s it — invisible to every logged-in tester, and broken for
-    // every anonymous shared-dashboard viewer.
-    const garbageToken = await request(
-      "GET",
-      `/api/v4/areas/${area.id}/provenance-daily?access=not-a-real-token`,
-      { as: "anon" },
-    );
-    ok(
-      garbageToken.status !== 404,
-      "anonymous ?access= reaches the handler (NOT 404 at the edge) — shareableRoutes entry present",
-      garbageToken.status,
-    );
-    ok(
-      garbageToken.status === 401 || garbageToken.status === 403,
-      "…and a garbage token is then rejected by the handler",
-      garbageToken,
-    );
-    const noToken = await request(
-      "GET",
-      `/api/v4/areas/${area.id}/provenance-daily`,
-      { as: "anon" },
-    );
-    ok(
-      noToken.status === 404,
-      "anonymous WITHOUT ?access= is still 404'd at the edge (the bypass is token-presence-gated)",
-      noToken.status,
-    );
-
-    // …and now the real thing: a live share token, no Clerk session at all. The LEGACY route is the
-    // oracle for which (token, area) pair is authorized; the v4 twin must then match it exactly.
-    await driveSharedProvenanceDaily(list);
-  } finally {
+    // ==================================================================  } finally {
     await trash();
     console.log("\ncleaned up scratch dashboards");
   }

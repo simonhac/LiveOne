@@ -144,6 +144,44 @@ export async function listDashboardShareTokens(
   }));
 }
 
+/**
+ * One token, scoped to its dashboard — including a REVOKED one.
+ *
+ * config-v4 Phase 14 stage 11. `revoke`/`rename` return a bare boolean, which conflates three
+ * outcomes the `/api/v4/…/shares` surface must tell apart: no such token (404), the token exists but
+ * is revoked (409 on a relabel, idempotent 200 on a re-revoke), and a real update. Sharing is the one
+ * genuinely multi-party surface here, so "nothing changed" must never be reported as success without
+ * the caller being able to see WHY. Deliberately NOT filtered on `revoked_at`.
+ */
+export async function getDashboardShareToken(
+  token: string,
+  dashboardId: string,
+): Promise<ShareTokenListRow | null> {
+  const uuid = Dashboard.toUuidOrNull(dashboardId);
+  if (!uuid) return null;
+  const [row] = await requirePlanetscaleDb()
+    .select({
+      token: shareTokens.token,
+      label: shareTokens.label,
+      createdAt: shareTokens.createdAt,
+      expiresAt: shareTokens.expiresAt,
+      revokedAt: shareTokens.revokedAt,
+      lastUsedAt: shareTokens.lastUsedAt,
+    })
+    .from(shareTokens)
+    .where(and(eq(shareTokens.token, token), eq(shareTokens.dashboardId, uuid)))
+    .limit(1);
+  if (!row) return null;
+  return {
+    token: row.token,
+    label: row.label,
+    createdAtMs: row.createdAt?.getTime() ?? null,
+    expiresAtMs: row.expiresAt?.getTime() ?? null,
+    revokedAtMs: row.revokedAt?.getTime() ?? null,
+    lastUsedAtMs: row.lastUsedAt?.getTime() ?? null,
+  };
+}
+
 /** Revoke a token, scoped to its dashboard (the route verifies the caller owns that dashboard). */
 export async function revokeDashboardShareToken(
   token: string,

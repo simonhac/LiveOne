@@ -148,6 +148,15 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/v4/areas/by-handle/1000002",
     "/api/v4/devices",
     "/api/v4/dashboards/db_01k9fahd43fkbb2ge7dwsjhzqf",
+    // 🛑 config-v4 Phase 14 stage 11 — the SHARING-MANAGEMENT routes themselves. A share token that
+    // could reach these would be a self-extending credential: it could mint further tokens, relabel
+    // its own, or hand a stranger a grant. `middleware.ts` also refuses any non-GET on the bypass,
+    // so this is belt AND braces — but the belt is the one an accidental `/api/v4/dashboards/(.*)`
+    // entry would cut, and the GET legs (listing every live token for a dashboard) are exactly what
+    // an anonymous holder must not see.
+    "/api/v4/dashboards/db_01k9abcdefghijkmnpqrstuvwx/shares",
+    "/api/v4/dashboards/db_01k9abcdefghijkmnpqrstuvwx/grants",
+    "/api/v4/dashboards/db_01k9abcdefghijkmnpqrstuvwx",
   ];
   it.each(notShareable)("does NOT make %s shareable", (p) => {
     expect(isShareableRoute(req(p))).toBe(false);
