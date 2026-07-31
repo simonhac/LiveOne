@@ -52,21 +52,27 @@
 --
 -- Both windows break exactly ONE operation — `POST /api/v4/dashboards`, i.e. creating a new dashboard.
 -- Every read, every doc `PUT`, every area/sharing mutation and the whole ingest path are untouched,
--- because nothing else names this column. Recommended: **deploy first, then apply promptly**, and
--- accept a few minutes in which creating a dashboard fails. On a single-user system that is the
--- cheaper trade than the machinery that removes it (`docs/` on this project has the standing
--- preference for "simple + a short outage" over downtime-minimising apparatus).
+-- because nothing else names this column.
 --
--- ⚠️ **If the window is NOT acceptable, the fix is one line and it is the textbook expand step** —
--- give the column a default so the new code can stop supplying a value while the column still exists:
+-- ✅ **RULED 2026-07-31: DEPLOY FIRST, THEN APPLY PROMPTLY, AND ACCEPT THE WINDOW.** The alternative
+-- was the textbook expand step — give the column a default in its OWN migration, applied to prod AND
+-- dev BEFORE this PR merges, after which the new code's insert is valid both before and after the DROP
+-- and every order is safe:
 --
---      ALTER TABLE dashboards ALTER COLUMN descriptor SET DEFAULT '{}'::jsonb;   -- its own migration
+--      ALTER TABLE dashboards ALTER COLUMN descriptor SET DEFAULT '{}'::jsonb;   -- NOT DONE, see below
 --
--- applied to prod AND dev BEFORE this PR merges. Old builds are unaffected (they still pass an explicit
--- value); the new build's insert is then valid both before and after the DROP, and every order is safe.
--- It needs its own migration number, which would push this file to the next one. Stage 15 considered
--- and rejected a DB default on the grounds that it "buys nothing that survives stage 16" — true of the
--- default itself, but it buys the ORDERING, which is what was actually missing.
+-- **Rejected deliberately, and the reason is a standing project decision rather than a judgement about
+-- this migration.** LiveOne has ONE user (share tokens are the only genuine multi-party surface), and
+-- the recorded preference is *"a simple change with a short outage over machinery that minimises
+-- downtime"*. Weighed concretely: the expand step protects one owner-only, low-frequency operation for
+-- a few minutes, and costs an extra migration that must itself be written, numbered, reviewed and
+-- applied to two environments in a fixed order BEFORE this one can land — more moving parts and more
+-- chances to get an ordering wrong, which is precisely the machinery the preference exists to refuse.
+--
+-- (Stage 15 rejected a DB default on the different, and wrong, ground that it "buys nothing that
+-- survives stage 16": true of the default itself, but it buys the ORDERING. The ordering is what was
+-- missing; it is simply not worth the extra step here. Worth remembering on a system with more than
+-- one user, where the same shape would need the expand.)
 --
 -- Order:
 --
@@ -86,7 +92,8 @@
 --       — which also reddens `scripts/utils/v4-surface-smoke.ts`, since it creates scratch dashboards
 --       on every run and aborts when create fails. Rebase or pause the other agents before applying to
 --       dev. (Symmetrically, a branch that HAS been rebased past this PR cannot create a dashboard on
---       dev until the dev apply happens — measured, on this very branch.)
+--       dev until the dev apply happens — measured, on this very branch.) At the time of writing that
+--       is **stage 20**, which the orchestrator is warning directly; stage 19 has already merged.
 --   (b) **The 2-hourly prod→dev sync ASSERTS SCHEMA PARITY and will fail loudly in the window between
 --       the two applies.** `assertManifestSchemaParity` (lib/readings/prod-dev-sync.ts) compares the
 --       prod and dev column sets for every manifest table and throws
@@ -118,14 +125,22 @@
 --
 --                                   | rows | descriptor = '{}' | descriptor = v3 object | doc v4-shaped
 --      `liveone-dev`  (2026-07-31)  |    4 |                 0 |                      4 |             4
---      prod `sydney`  (2026-07-31)  |    ? |                 ? |                      ? |             ?   <- Simon
+--      prod `sydney`  (2026-07-31)  |    4 |                 0 |                      4 |             4
+--
+-- Plus, on BOTH: raw uuids inside a descriptor = **0** (so G3b passes and G5 is exhaustive), and rows
+-- whose `descriptor` names an area their `doc` does not = **0** (so G5 passes). The two environments
+-- are the same shape, which is the useful part: unlike 0053 — where a prod run reporting dev's count
+-- would itself have been the red flag — there is no per-environment expected number to get wrong here.
+-- Prod was measured by the orchestrator through a short-TTL `pg_read_all_data` role, confirmed prod by
+-- a 24-second ingest lag, role deleted afterwards.
 --
 -- 🛑 **THE OBVIOUS GATE WOULD HAVE ABORTED ON EVERY ROW.** The brief for this stage proposed asserting
 -- that every row's `descriptor` is the inert `{}` stage 15 writes. It is not, and could not be: stage
 -- 15 stopped *writing* the column, it did not blank it. All four dev rows still carry their full,
 -- unmodified v3 descriptor (`version: 3`, 1–13 sections, 386–782 bytes) — indeed stage 15's own proof
 -- was that their md5s never change. `{}` is only what a dashboard CREATED after stage 15 deployed would
--- carry, and none exist. Measure, do not assume.
+-- carry, and none exist. **It would have aborted on all EIGHT rows across BOTH environments** (prod is
+-- 0 inert / 4 version-3 too). Measure, do not assume.
 --
 -- ## What the gates below actually prove, and the one that is the 0053 trick in weaker form
 --
