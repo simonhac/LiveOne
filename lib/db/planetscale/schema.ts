@@ -529,9 +529,14 @@ export const dashboards = pgTable(
     // a dashboard is a composition whose sections each carry their own Area uuid.
     name: text("name"),
     slug: text("slug"), // owner-unique shortname for /dashboard/{user}/{slug}; null = unnamed
-    descriptor: jsonb("descriptor").notNull(),
+    // ⚠️ `descriptor` (jsonb, NOT NULL, no DB default) IS DELIBERATELY NOT DECLARED HERE — config-v4
+    // Phase 14 stage 15. The column still EXISTS in the database and is dropped by stage 16; it is
+    // declared nowhere so that a projection-less `.select()` can never name it (the running build's
+    // column list is what breaks the moment the DROP lands). The one remaining write is the literal
+    // `'{}'::jsonb` in `createDashboard` (lib/dashboard/dashboards.ts), which exists solely to satisfy
+    // NOT NULL and dies with the column. Nothing reads it.
     // The v4 node-tree document (clean-sheet §8). ⚠️ config-v4 CUTOVER SHAPE — NOT NULL (transform stage 5d
-    // `ALTER COLUMN doc SET NOT NULL`); `createDashboard` builds it from the descriptor via rewriteV3ToV4.
+    // `ALTER COLUMN doc SET NOT NULL`); it is now the ONLY document on the row.
     doc: jsonb("doc").notNull(),
     // Whole-doc revision counter; bumped by the Phase-6 /api/v4 PUT. DEFAULT 1 so the untouched v3
     // insert path keeps working.

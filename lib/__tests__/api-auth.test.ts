@@ -74,7 +74,6 @@ beforeEach(() => {
     ownerClerkUserId: "owner",
     displayName: "Test",
     alias: null,
-    descriptor: { version: 3, sections: [] },
     doc: null,
     revision: 1,
     createdAt: new Date(),

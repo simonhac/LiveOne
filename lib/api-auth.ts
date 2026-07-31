@@ -241,14 +241,11 @@ export async function requireDashboardAccess(
     const valid = await validateDashboardShareToken(token);
     if (valid) {
       const dash = await getDashboard(valid.dashboardId);
-      // Authorize when `systemId` is within the dashboard's read scope — the UNION of its section
-      // Areas (areas-and-dashboards.md §2), derived purely from the descriptor. An escalation attempt
+      // Authorize when `systemId` is within the dashboard's read scope — the UNION of the Areas its
+      // v4 document references (areas-and-dashboards.md §2). An escalation attempt
       // (?systemId=<other>&access=<token>) is excluded and falls through to normal auth.
       if (dash) {
-        const allowed = await allowedSystemIds({
-          descriptor: dash.descriptor,
-          doc: dash.doc,
-        });
+        const allowed = await allowedSystemIds({ doc: dash.doc });
         if (allowed.includes(systemId)) {
           // The handle must still name something under the requested preference. `allowedSystemIds` is
           // deliberately leg-agnostic: its scope is computed through

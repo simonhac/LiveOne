@@ -11,10 +11,8 @@ import {
 } from "@/lib/dashboard/dashboards";
 import DashboardClient from "@/components/DashboardClient";
 import { getGrant } from "@/lib/dashboard/grants";
-import { isDashboardV3, type DashboardV3 } from "@/lib/dashboard/v3";
 import { emptyDashboardV4, isDashboardV4 } from "@/lib/dashboard/v4";
 import { listReadableAreas, resolveAreasByIds } from "@/lib/areas/list";
-import { areaRefToUuid } from "@/lib/areas/ref";
 import { Area } from "@/lib/ids";
 import { dashboardAreaUuids } from "@/lib/dashboard/composition";
 import { getOrCreateUserPreferences } from "@/lib/user-preferences";
@@ -59,7 +57,7 @@ async function resolveClerkUserIdByUsername(
 }
 
 /**
- * Render a nested (v3) dashboard. The descriptor is opaque JSONB; every card/tile self-resolves
+ * Render a composition dashboard. The v4 document is opaque JSONB; every card/tile self-resolves
  * client-side against its Area's handle or a named member device (the `oe-grid` tile reads the OE
  * region member directly — no server-side region derivation).
  */
@@ -79,17 +77,12 @@ async function renderCompositionDashboard(
   // switcher's two queries are SSR-seeded (SP1.4). Omitted on the read-only shared (`?access=`) path.
   userId?: string | null,
 ) {
-  const raw: unknown = dashboard.descriptor;
-  const descriptor: DashboardV3 = isDashboardV3(raw)
-    ? raw
-    : { version: 3, sections: [] };
-  // The v4 node tree is what renders (DashboardV4View, inside DashboardClient); area resolution +
-  // data seeding below stay shape-aware via `dashboardAreaUuids`. `dashboards.doc` is NOT NULL
-  // (Phase 8/10 cutover) and both write paths validate it, so this guard is a defence against a
-  // corrupt jsonb only. Phase 14 stage 9 deleted the v3 renderer, so a failed guard can no longer
-  // silently fall back to rendering `descriptor` — it renders an EMPTY document instead. That is
-  // deliberate: `descriptor` is being retired (stages 15/16), and quietly serving a second,
-  // divergent shape from a shape-guard failure is exactly the drift the cutover set out to end.
+  // The v4 node tree is what renders (DashboardV4View, inside DashboardClient), and as of config-v4
+  // Phase 14 stage 15 it is the ONLY shape: `descriptor` is neither read nor written and stage 16
+  // drops it. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and its one write path validates it,
+  // so this guard is a defence against a corrupt jsonb only — and a failed guard renders an EMPTY
+  // document. That is deliberate: quietly serving a second, divergent shape from a shape-guard
+  // failure is exactly the drift the cutover set out to end.
   const v4doc = isDashboardV4(dashboard.doc)
     ? dashboard.doc
     : emptyDashboardV4();
@@ -130,19 +123,11 @@ async function renderCompositionDashboard(
   // A tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a public NEM
   // region device; a member device for `device-metrics`). Those pins are NOT section handles, so
   // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
+  // config-v4 Phase 14 stage 15: the v3 walk that also collected `deviceSystemId` off descriptor
+  // cards/tiles is gone. It was a duplicate, not a second source — `rewriteV3ToV4` carried every one
+  // of those pins into the doc as a `dv_` device ref, which is exactly what `v4DeviceIds` below
+  // resolves. Worst case it would only cost an SSR seed, since an unseeded pin self-fetches.
   const pins = new Set<number>();
-  for (const s of descriptor.sections) {
-    // s.areaId is `ar_` (the read-normalized descriptor); areaById is raw-uuid-keyed (sharedAreas /
-    // initialReadableAreas, below the seam) — decode before the lookup.
-    const sectionUuid = areaRefToUuid(s.areaId);
-    if (!sectionUuid || !areaById.has(sectionUuid)) continue; // only authorized sections
-    for (const c of s.cards) {
-      if (typeof c.deviceSystemId === "number") pins.add(c.deviceSystemId);
-      for (const t of c.tiles ?? []) {
-        if (typeof t.deviceSystemId === "number") pins.add(t.deviceSystemId);
-      }
-    }
-  }
   for (const id of v4DeviceIds) {
     const device = deviceById.get(id);
     if (device) pins.add(device.systemId);
@@ -157,7 +142,7 @@ async function renderCompositionDashboard(
     // viewer. `getDeviceDataForCache` does no per-viewer auth, so this owner check off the fetched
     // device is the guard. Anything else (a private pin we can't cheaply vouch for) falls through to
     // a client self-fetch, where /api/data enforces access — exactly as before. No re-derivation of
-    // the pin from the opaque descriptor, so no extra DB round-trips on the render's critical path.
+    // the pin from the opaque document, so no extra DB round-trips on the render's critical path.
     const pinIds = [...pins].filter((p) => !handles.includes(p));
     await Promise.all(
       [
@@ -262,7 +247,7 @@ async function renderCompositionDashboard(
           canEdit={canEdit}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
           // (below the seam) up to this point; the client's areaById must match the read-normalized
-          // (ar_) descriptor and the `ar_`-returning /api/v4/areas fetch fallback.
+          // (ar_) document refs and the `ar_`-returning /api/v4/areas fetch fallback.
           sharedAreas={sharedAreas?.map((a) => ({
             ...a,
             id: Area.encode(a.id),
@@ -304,7 +289,7 @@ export default async function DashboardPage({
       validateDashboardShareToken(accessToken),
     );
     if (valid) {
-      // The token is authoritative; render the v3 descriptor read-only with the referenced Areas
+      // The token is authoritative; render the document read-only with the referenced Areas
       // resolved server-side, so each card's data fetch (token-authorized by the live union scope)
       // runs without an authed /api/v4/areas call.
       const composition = await timer.time("dashboard", () =>
@@ -357,7 +342,7 @@ export default async function DashboardPage({
     if (!dashboard) redirect("/dashboard");
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
     // A signed-in non-owner with a grant views read-only; a true stranger is bounced (a public,
-    // sign-in-free share still arrives via ?access=). Grantees get the descriptor's Areas resolved
+    // sign-in-free share still arrives via ?access=). Grantees get the document's Areas resolved
     // server-side (like the token path) so the client never calls the device-scoped /api/v4/areas.
     const grant = canEdit ? null : await getGrant(dashboard.id, userId);
     if (!canEdit && !grant) redirect("/dashboard");

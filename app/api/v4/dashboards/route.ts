@@ -6,7 +6,6 @@ import {
   listAccessibleDashboards,
   DashboardAliasTakenError,
 } from "@/lib/dashboard/dashboards";
-import { emptyDashboardV3 } from "@/lib/dashboard/v3";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { validateDocV4 } from "@/lib/dashboard/v4-validate";
 import { checkDocRefsReadable } from "@/lib/dashboard/v4-routes";
@@ -131,7 +130,6 @@ export async function POST(request: NextRequest) {
       ownerClerkUserId: auth.userId,
       displayName: name,
       alias: slug,
-      descriptor: emptyDashboardV3(),
     });
   } catch (err) {
     if (err instanceof DashboardAliasTakenError) {
