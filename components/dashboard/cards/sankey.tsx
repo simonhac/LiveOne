@@ -8,6 +8,7 @@
 import type { CardPlugin } from "./types";
 
 export const sankeyPlugin: CardPlugin = {
+  kind: "card",
   type: "sankey",
   collapseKey: () => "sankey",
   Render: () => null,

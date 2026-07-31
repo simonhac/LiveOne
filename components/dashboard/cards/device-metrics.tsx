@@ -29,6 +29,7 @@ function AreaDeviceMetrics({ node, handle, deviceSystemId }: CardRenderProps) {
 }
 
 export const deviceMetricsPlugin: CardPlugin = {
+  kind: "card",
   type: "device-metrics",
   Render: AreaDeviceMetrics,
 };

@@ -201,10 +201,31 @@ describe("GET /api/v4/areas/{id}/eligibility", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body.areaCards)).toBe(true);
-    expect(Array.isArray(body.tiles)).toBe(true);
     expect(body.deviceCards).toHaveLength(1);
     expect(body.deviceCards[0].deviceId).toBe(DEVICE_A);
     expect(body.deviceCards[0]).not.toHaveProperty("systemId");
+  });
+
+  /**
+   * config-v4 Phase 14 stage 7 — the two catalogs became one `NODE_CATALOG`, so the separate `tiles`
+   * list is gone and the tile views are area-scoped cards like any other. The mocked area advertises
+   * `solar/power` only, which is exactly the `solar` tile, the `load` tile (`any:` disjunct) and
+   * `chart`/`sankey` — and NOT the v3 `tiles` container, which is no longer a card at all.
+   */
+  it("folds the tile views into `areaCards` and no longer emits `tiles`", async () => {
+    const res = await eligibilityGET(req(), params);
+    const body = await res.json();
+    expect(body).not.toHaveProperty("tiles");
+    expect(body.areaCards.map((c: { id: string }) => c.id)).toEqual([
+      "solar",
+      "load",
+      "renewables",
+      "chart",
+      "sankey",
+    ]);
+    expect(body.areaCards.map((c: { id: string }) => c.id)).not.toContain(
+      "tiles",
+    );
   });
 
   it("degrades one failing member to `cards: []` without failing the route", async () => {

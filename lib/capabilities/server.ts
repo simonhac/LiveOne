@@ -24,7 +24,7 @@ import {
   capabilitiesFromPoints,
   isAggregateFromPoints,
 } from "@/lib/capabilities/derive";
-import { satisfies, CARD_CATALOG } from "@/lib/capabilities/catalog";
+import { satisfies, NODE_CATALOG } from "@/lib/capabilities/catalog";
 import {
   applyCapabilityConfig,
   type DeviceConfig,
@@ -118,7 +118,7 @@ export async function hasChartCapability(handle: number): Promise<boolean> {
     false,
     false,
   );
-  return satisfies(capabilitiesFromPoints(points), CARD_CATALOG.chart.requires);
+  return satisfies(capabilitiesFromPoints(points), NODE_CATALOG.chart.requires);
 }
 
 /**

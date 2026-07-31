@@ -20,6 +20,7 @@ function AreaAmberNow({ handle }: CardRenderProps) {
 }
 
 export const amberNowPlugin: CardPlugin = {
+  kind: "card",
   type: "amber-now",
   Render: AreaAmberNow,
 };

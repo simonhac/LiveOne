@@ -5,7 +5,7 @@
  * capabilities from `latest` and filtering the catalog reproduces the ORIGINAL hardcoded string-path
  * derivers BYTE-IDENTICALLY:
  *   availableTilesFromCaps(capabilitiesFromLatest(latest)) === (old availableTiles)
- *   satisfies(caps, CARD_CATALOG.chart.requires)          === (old chartHasData)
+ *   satisfies(caps, NODE_CATALOG.chart.requires)          === (old chartHasData)
  *
  * The old `availableTiles`/`chartHasData` (formerly in lib/dashboard/cards.ts) were deleted at the P5
  * cleanup once the capability model replaced them; their exact logic is INLINED here as the reference
@@ -16,7 +16,7 @@ import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
 import { capabilitiesFromLatest } from "@/lib/capabilities/derive";
 import {
   availableTilesFromCaps,
-  CARD_CATALOG,
+  NODE_CATALOG,
   satisfies,
   TILE_ORDER,
   type TileId,
@@ -141,7 +141,7 @@ describe("capability model reproduces the original derivers", () => {
     for (let mask = 0; mask < total; mask++) {
       const latest = latestForMask(mask);
       const caps = capabilitiesFromLatest(latest);
-      expect(satisfies(caps, CARD_CATALOG.chart.requires)).toBe(
+      expect(satisfies(caps, NODE_CATALOG.chart.requires)).toBe(
         legacyChartHasData(latest),
       );
     }
@@ -174,7 +174,7 @@ describe("representative live-install shapes", () => {
     ]);
     const caps = capabilitiesFromLatest(latest);
     expect(availableTilesFromCaps(caps)).toEqual(legacyAvailableTiles(latest));
-    expect(satisfies(caps, CARD_CATALOG.chart.requires)).toBe(
+    expect(satisfies(caps, NODE_CATALOG.chart.requires)).toBe(
       legacyChartHasData(latest),
     );
   });
@@ -204,7 +204,7 @@ describe("representative live-install shapes", () => {
     ]);
     const caps = capabilitiesFromLatest(latest);
     expect(availableTilesFromCaps(caps)).toEqual(legacyAvailableTiles(latest));
-    expect(satisfies(caps, CARD_CATALOG.chart.requires)).toBe(
+    expect(satisfies(caps, NODE_CATALOG.chart.requires)).toBe(
       legacyChartHasData(latest),
     );
   });

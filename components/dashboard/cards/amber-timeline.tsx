@@ -19,6 +19,7 @@ function AreaAmberTimeline({ handle }: CardRenderProps) {
 }
 
 export const amberTimelinePlugin: CardPlugin = {
+  kind: "card",
   type: "amber-timeline",
   Render: AreaAmberTimeline,
 };

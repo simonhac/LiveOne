@@ -74,7 +74,8 @@ function HouseToGridTile({ latest, staleThresholdSeconds }: TileRenderProps) {
 }
 
 export const houseToGridTile: TilePlugin = {
-  view: "house-to-grid",
+  kind: "tile",
+  type: "house-to-grid",
   isAvailable: ({ latest, showGrid }) =>
     showGrid && getPointValue(latest, "bidi.grid/power") !== null,
   Render: HouseToGridTile,

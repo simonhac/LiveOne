@@ -97,7 +97,8 @@ function LoadTile({ latest, staleThresholdSeconds }: TileRenderProps) {
 }
 
 export const loadTile: TilePlugin = {
-  view: "load",
+  kind: "tile",
+  type: "load",
   isAvailable: ({ latest }) =>
     calculateAllLoads(enrichLatest(latest)).length > 0,
   Render: LoadTile,

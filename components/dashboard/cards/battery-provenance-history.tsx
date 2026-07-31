@@ -43,6 +43,7 @@ function AreaBatteryProvenanceHistory({ context, handle }: CardRenderProps) {
 }
 
 export const batteryProvenanceHistoryPlugin: CardPlugin = {
+  kind: "card",
   type: "battery-provenance-history",
   Render: AreaBatteryProvenanceHistory,
 };

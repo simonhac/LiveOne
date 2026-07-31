@@ -14,7 +14,7 @@ import AmberNow from "@/components/AmberNow";
 import GridSignalsCard from "@/components/GridSignalsCard";
 import BatteryContentsCard from "@/components/BatteryContentsCard";
 import HomeEnergyCard from "@/components/HomeEnergyCard";
-import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
+import { CARD_RENDERERS } from "@/components/dashboard/registry";
 import type { TileId } from "@/lib/dashboard/card-types";
 import type { LatestPointValues } from "@/lib/types/api";
 import {
@@ -36,7 +36,7 @@ import {
 
 /** Renders a single tile faithfully via the real tile plugin (no systemId → no live fetches). */
 function TileCell({ latest, id }: { latest: LatestPointValues; id: TileId }) {
-  const { Render } = TILE_RENDERERS[id];
+  const { Render } = CARD_RENDERERS[id];
   return (
     <Render
       latest={latest}

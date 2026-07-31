@@ -39,6 +39,7 @@ function AreaLinesChart({ handle }: CardRenderProps) {
 }
 
 export const chartPlugin: CardPlugin = {
+  kind: "card",
   type: "chart",
   collapseKey: (node) => {
     const config = node.config as ChartConfig | undefined;

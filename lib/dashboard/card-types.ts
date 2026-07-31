@@ -14,9 +14,10 @@
 import { z } from "zod";
 
 /**
- * The 9 tile views — the SINGLE source of the tile vocabulary. The tile plugin registry
- * (components/dashboard/tiles/registry.tsx) is `satisfies Record<TileView, TilePlugin>`, so adding a
- * view here is a compile error until a plugin exists; the capability catalog keys off `TileId`.
+ * The 9 tile views — the SINGLE source of the tile vocabulary. The node render registry
+ * (components/dashboard/registry.tsx) is total over `KnownCardType` and maps every tile view to a
+ * TILE plugin, so adding a view here is a compile error until a plugin exists; the capability
+ * catalog (`NODE_CATALOG`) is likewise total, and keys its tile-order helper off `TileId`.
  */
 export const V4_TILE_TYPES = [
   "solar",
@@ -79,8 +80,8 @@ export function isKnownCardType(t: string): t is KnownCardType {
 }
 
 /**
- * A known card type that renders through a CARD plugin (components/dashboard/cards/registry.tsx)
- * rather than a tile plugin — i.e. the 9 non-tile types. The v3 `tiles` container is absent from
+ * A known card type that renders through a CARD plugin (components/dashboard/cards/) rather than a
+ * tile plugin — i.e. the 9 non-tile types. The v3 `tiles` container is absent from
  * `V4_CARD_TYPES` STRUCTURALLY (it became a `row` group, §8.1), so it is not one of these either.
  */
 export type NonTileCardType = (typeof V4_NON_TILE_CARD_TYPES)[number];
@@ -92,16 +93,12 @@ export function isNonTileCardType(t: string): t is NonTileCardType {
   return NON_TILE_CARD_TYPES.has(t);
 }
 
-/**
- * Closed renderer dispatch for `node-view.tsx`: a promoted tile view renders a self-fetching tile
- * cell, a non-tile known type renders its card plugin, and anything else takes the labelled
- * §8.4 placeholder branch — never a plugin lookup.
- */
-export function v4CardRenderKind(type: string): "tile" | "card" | "unknown" {
-  if (isTileViewType(type)) return "tile";
-  if (isNonTileCardType(type)) return "card";
-  return "unknown";
-}
+// `v4CardRenderKind(type) -> "tile" | "card" | "unknown"` lived here between config-v4 Phase 14
+// stages 6 and 7. It is gone: with ONE registry (components/dashboard/registry.tsx) the renderer no
+// longer has to know which map to consult before looking a type up, so it dispatches on the plugin
+// it gets back (`kind`), and "unknown" is simply a lookup miss. Keeping a second, parallel statement
+// of the same classification here would be exactly the drift stage 7 removed. The vocabulary
+// predicates above stay — they are facts about the type lists, not about rendering.
 
 /**
  * `type` is an open string (§8.4): a newer client/agent may persist a card type this build doesn't

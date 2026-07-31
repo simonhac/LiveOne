@@ -75,7 +75,8 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
 }
 
 export const batteryTile: TilePlugin = {
-  view: "battery",
+  kind: "tile",
+  type: "battery",
   isAvailable: ({ latest }) =>
     getPointValue(latest, "bidi.battery/soc") !== null,
   Render: BatteryTile,

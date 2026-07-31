@@ -21,6 +21,7 @@ function AreaGeneratorRuns({ handle, deviceSystemId }: CardRenderProps) {
 }
 
 export const generatorRunsPlugin: CardPlugin = {
+  kind: "card",
   type: "generator-runs",
   Render: AreaGeneratorRuns,
 };
