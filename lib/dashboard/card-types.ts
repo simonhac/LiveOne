@@ -79,6 +79,31 @@ export function isKnownCardType(t: string): t is KnownCardType {
 }
 
 /**
+ * A known card type that renders through a CARD plugin (components/dashboard/cards/registry.tsx)
+ * rather than a tile plugin — i.e. the 9 non-tile types. The v3 `tiles` container is absent from
+ * `V4_CARD_TYPES` STRUCTURALLY (it became a `row` group, §8.1), so it is not one of these either.
+ */
+export type NonTileCardType = (typeof V4_NON_TILE_CARD_TYPES)[number];
+
+export const NON_TILE_CARD_TYPES: ReadonlySet<string> =
+  new Set<NonTileCardType>(V4_NON_TILE_CARD_TYPES);
+
+export function isNonTileCardType(t: string): t is NonTileCardType {
+  return NON_TILE_CARD_TYPES.has(t);
+}
+
+/**
+ * Closed renderer dispatch for `node-view.tsx`: a promoted tile view renders a self-fetching tile
+ * cell, a non-tile known type renders its card plugin, and anything else takes the labelled
+ * §8.4 placeholder branch — never a plugin lookup.
+ */
+export function v4CardRenderKind(type: string): "tile" | "card" | "unknown" {
+  if (isTileViewType(type)) return "tile";
+  if (isNonTileCardType(type)) return "card";
+  return "unknown";
+}
+
+/**
  * `type` is an open string (§8.4): a newer client/agent may persist a card type this build doesn't
  * know. The `string & {}` keeps editor autocomplete for the known set without closing the union.
  */

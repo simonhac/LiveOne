@@ -1,45 +1,58 @@
 /**
- * The card plugin contract — one plugin per `DashboardCardType`, registered in ./registry.tsx.
+ * The card plugin contract — one plugin per non-tile `KnownCardType`, registered in ./registry.tsx.
  *
  * A card plugin bundles the render component (ex-`AreaXxx` wrapper from the deleted v3 renderer) with the
  * host-facing render policy: how it behaves while the section's Area handle is unresolved
  * (`pending`) and whether it collapses into the section's single SiteChartsGroup (`collapseKey`).
  * The declarative catalog data (label, capability requirements, scope) stays server-safe in
  * `lib/capabilities/catalog.ts` — this layer is client-only render binding.
+ *
+ * v4-NATIVE (config-v4 Phase 14 stage 6): a plugin is handed the `CardNode` and its inherited §8.1
+ * `NodeContext` directly. The v4→v3 adapter (`lib/dashboard/v4-adapt.ts`'s `synthCardV3` /
+ * `synthSectionV3`), which used to fabricate a `CardV3`/`AreaSectionV3` per render, is GONE — the
+ * per-type config that used to be spread onto named `CardV3` fields (`chart`, `variant`) is read
+ * from `node.config` (schemas in lib/dashboard/card-types.ts), and the section's area ref is read
+ * from `context.area` (an `ar_` TypeID, where the adapter downgraded it to a raw uuid).
  */
 import type React from "react";
-import type {
-  AreaSectionV3,
-  CardV3,
-  DashboardCardType,
-} from "@/lib/dashboard/v3";
+import type { CardNode } from "@/lib/dashboard/v4";
+import type { NodeContext } from "@/lib/dashboard/resolve-shell";
+import type { NonTileCardType } from "@/lib/dashboard/card-types";
 
 export interface CardRenderProps {
-  card: CardV3;
-  /** The card's section — battery-provenance-history reads its `areaId` (empty on a device page,
+  /** The v4 card node. Plugins read its per-type `config` (§8.4) — never its scope refs, which
+   *  arrive resolved below. */
+  node: CardNode;
+  /** The node's INHERITED §8.1 scope binding — its own `area`/`device` if set, else the nearest
+   *  ancestor's. battery-provenance-history reads `context.area` (undefined on a device page,
    *  which binds no area). */
-  section: AreaSectionV3;
-  /** The Area's handle (area.legacySystemId). Defined for `pending: "host-skeleton"` plugins
-   *  (the host gates on it); may be undefined for `pending: "self"` plugins. */
+  context: NodeContext;
+  /** The addressing handle: the bound Area's handle (`areas.legacy_system_id`), else the bound
+   *  device's `system_id`. Defined for `pending: "host-skeleton"` plugins (the host gates on it);
+   *  may be undefined for `pending: "self"` plugins. */
   handle?: number;
+  /** `context.device` resolved to its legacy `system_id`. Device-bound cards (`device-metrics`,
+   *  `generator-runs`) read `deviceSystemId ?? handle`: their data is keyed by a member device,
+   *  not the synthetic area handle. Undefined ⇒ no device in scope. */
+  deviceSystemId?: number;
 }
 
 export interface CardPlugin {
-  type: DashboardCardType;
+  type: NonTileCardType;
   /**
    * Unresolved-handle behavior:
    *  - "host-skeleton" (default): the host renders <ChartSkeleton/> until the handle resolves,
    *    then mounts Render with a defined handle. (All chart-ish cards.)
-   *  - "self": Render always mounts and handles handle === undefined itself (the tiles card
-   *    draws its own per-cell skeletons).
+   *  - "self": Render always mounts and handles handle === undefined itself.
    */
   pending?: "host-skeleton" | "self";
   /**
    * Site-charts collapse membership. Non-null ⇒ this card does NOT render standalone; it
    * contributes the returned key ("sankey" | "chart:load" | "chart:generation") to the section's
    * single SiteChartsGroup (see ./site-charts.tsx). sankey: () => "sankey"; chart: stacked-areas
-   * variant only, null for lines.
+   * variant only, null for lines. Called on the NODE alone — it runs in the host's collapse pass,
+   * before any context/handle resolution, so it may read `node.config` and nothing else.
    */
-  collapseKey?: (card: CardV3) => string | null;
+  collapseKey?: (node: CardNode) => string | null;
   Render: React.FC<CardRenderProps>;
 }

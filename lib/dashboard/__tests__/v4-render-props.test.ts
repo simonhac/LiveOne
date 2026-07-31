@@ -4,11 +4,16 @@
  * ============================================================================================
  *
  * WHAT THIS IS FOR
- * The next PR changes `CardRenderProps` (components/dashboard/cards/types.ts) from the v3 shape
+ * Stage 6 changed `CardRenderProps` (components/dashboard/cards/types.ts) from the v3 shape
  * `{card: CardV3, section: AreaSectionV3, handle?}` to the v4-native `{node: CardNode, context:
- * NodeContext, handle?}`, ports all nine v3 card plugins onto it, and deletes the adapter
- * `lib/dashboard/v4-adapt.ts` (`synthCardV3` / `synthSectionV3`). That is a pure refactor: it must
- * change NOTHING a user can see.
+ * NodeContext, handle?, deviceSystemId?}`, ported all nine card plugins onto it, and deleted the
+ * adapter `lib/dashboard/v4-adapt.ts` (`synthCardV3` / `synthSectionV3`). That was a pure refactor:
+ * it must change NOTHING a user can see. It is kept as the standing gate on this seam — stage 7
+ * merges the two registries over the same plugins.
+ *
+ * The stage-6 result: all 11 `card:*` `renderProps` entries changed shape (that IS the port); all
+ * 22 `leaves` entries, all 10 `tile:*` `renderProps` entries and the whole key set were
+ * byte-identical.
  *
  * Pixel equivalence is not provable here at any sane cost — four card plugins bottom out in chart.js
  * on a `<canvas>` (zero DOM to assert on) and the repo has no React-rendering test infrastructure.
@@ -27,8 +32,8 @@
  *                      behaviour change, full stop.
  *
  *   `renderProps` — the `CardRenderProps` / `TileRenderProps` object each plugin RECEIVED.
- *                   The card entries here are EXPECTED to change wholesale in the port (that is the
- *                   point of the port): `{card, section, handle}` becomes `{node, context, handle}`.
+ *                   The card entries changed wholesale in the port (that was the point of it):
+ *                   `{card, section, handle}` became `{node, context, handle, deviceSystemId}`.
  *                   They are recorded so the reviewer can read the before/after side by side and
  *                   check that every field that was being consumed is still reachable. The TILE
  *                   entries must NOT change — `V4TileCell` never went through the adapter.

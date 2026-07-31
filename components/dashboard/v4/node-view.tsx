@@ -10,11 +10,11 @@
  *     columns (lib/dashboard/tile-grid.ts). Its direct card children that are chart/sankey collapse
  *     into ONE <SiteChartsGroup> (the v3 two-pass collapse, ported here and keyed on the GROUP's
  *     area handle).
- *   - `card` → dispatched by type: a promoted tile view renders a self-fetching tile cell; a v3 card
- *     type renders the UNCHANGED v3 `CardPlugin` via the v4→v3 adapter (lib/dashboard/v4-adapt.ts);
- *     an unknown type renders a labelled placeholder (§8.4).
+ *   - `card` → dispatched by type: a promoted tile view renders a self-fetching tile cell; a
+ *     non-tile known type renders its `CardPlugin` (components/dashboard/cards/registry.tsx) with
+ *     the node + its inherited context; an unknown type renders a labelled placeholder (§8.4).
  *
- * Context (`area`/`device`) inherits down the tree (§8.1); the two v3 registries are reused untouched.
+ * Context (`area`/`device`) inherits down the tree (§8.1) and is handed to the plugins verbatim.
  * `GroupNode.size` (the 12-column hint) is still unread here — layout is child order + group flow.
  */
 import type React from "react";
@@ -36,7 +36,6 @@ import type {
 } from "@/lib/dashboard/resolve-shell";
 import type { ReadableArea } from "@/lib/areas/list";
 import { CARD_RENDERERS } from "@/components/dashboard/cards/registry";
-import type { DashboardCardType } from "@/lib/dashboard/v3";
 import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
 import {
   useAreaDatum,
@@ -46,12 +45,11 @@ import {
 } from "@/components/dashboard/cards/shared";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import {
-  isV3CardType,
-  synthCardV3,
-  synthSectionV3,
+  isNonTileCardType,
   v4CardRenderKind,
-  type V3CardType,
-} from "@/lib/dashboard/v4-adapt";
+  type CardType,
+  type NonTileCardType,
+} from "@/lib/dashboard/card-types";
 import {
   TILE_GRID_CONTAINER,
   tileGridClass,
@@ -105,13 +103,7 @@ function nodeKey(node: DashboardNode, i: number): string {
 }
 
 /** One tile-view card — mirrors the v3 TilesCard cell (self-fetch, availability gate, plugin mount). */
-function V4TileCell({
-  view,
-  systemId,
-}: {
-  view: DashboardCardType | string;
-  systemId: number;
-}) {
+function V4TileCell({ view, systemId }: { view: CardType; systemId: number }) {
   const { data, datum, isLoading } = useAreaDatum(systemId);
   const latest = datum?.latest ?? {};
   if (isLoading) return <TileSkeleton />;
@@ -152,13 +144,13 @@ function CardNodeView({
     ? resolver.device(context.device)
     : null;
   if (context.device && device == null) return <DeviceUnavailable />;
-  // The addressing handle a v3 card plugin fetches with: the inherited AREA's handle, or — when the
+  // The addressing handle a card plugin fetches with: the inherited AREA's handle, or — when the
   // node inherits no area at all — the inherited DEVICE's. The device fallback is what makes a
   // device-scoped subtree work: `/device/{id}` binds only `device` on its root (there is no area
   // envelope for a device page), and without this every `pending: "host-skeleton"` plugin would be
   // gated off by `handle == null` and render nothing. Area wins where both are bound, which is the
-  // v3 rule (`deviceSystemId` was a per-card pin, never the section handle) — see `systemId` below,
-  // which is the tile/`synthCardV3` pin and does prefer the device.
+  // v3 rule (the per-card device pin was never the section handle) — see `systemId` below and the
+  // plugins' `deviceSystemId`, both of which DO prefer the device.
   const handle = area?.handle ?? device?.systemId ?? null;
   const systemId = context.device ? (device?.systemId ?? null) : handle;
   const renderKind = v4CardRenderKind(node.type);
@@ -169,22 +161,19 @@ function CardNodeView({
     return <V4TileCell view={node.type} systemId={systemId} />;
   }
 
-  // Known v3 card type → the unchanged v3 CardPlugin, via the v4→v3 adapter.
-  if (renderKind === "v3") {
-    const plugin = CARD_RENDERERS[node.type as V3CardType];
+  // Known non-tile card type → its CardPlugin, handed the node + its inherited context.
+  if (renderKind === "card") {
+    const plugin = CARD_RENDERERS[node.type as NonTileCardType];
     if (!plugin) return null;
     if (plugin.pending !== "self" && handle == null) {
       return areasResolved ? null : <ChartSkeleton />;
     }
-    const card = synthCardV3(node, device?.systemId ?? undefined);
-    const section = synthSectionV3(
-      context.area ? (areaUuidOf(context.area) ?? undefined) : undefined,
-    );
     return (
       <plugin.Render
-        card={card}
-        section={section}
+        node={node}
+        context={context}
         handle={handle ?? undefined}
+        deviceSystemId={device?.systemId ?? undefined}
       />
     );
   }
@@ -243,12 +232,12 @@ function GroupNodeView({
   }
 
   // Collapse pass 1: gather the site-charts keys of every direct chart/sankey child (v3 collapse,
-  // keyed on this group's area handle). Reuses each v3 plugin's own collapseKey.
+  // keyed on this group's area handle). Reuses each plugin's own collapseKey, called on the NODE.
   const chartKeys = new Set<string>();
   for (const child of node.children) {
-    if (child.kind === "card" && isV3CardType(child.type)) {
-      const plugin = CARD_RENDERERS[child.type as V3CardType];
-      const k = plugin?.collapseKey?.(synthCardV3(child)) ?? null;
+    if (child.kind === "card" && isNonTileCardType(child.type)) {
+      const plugin = CARD_RENDERERS[child.type as NonTileCardType];
+      const k = plugin?.collapseKey?.(child) ?? null;
       if (k != null) chartKeys.add(k);
     }
   }
@@ -266,9 +255,9 @@ function GroupNodeView({
   const body: ReactNode[] = node.children
     .filter((c) => !c.hidden)
     .map((child, i) => {
-      if (child.kind === "card" && isV3CardType(child.type)) {
-        const plugin = CARD_RENDERERS[child.type as V3CardType];
-        if (plugin?.collapseKey?.(synthCardV3(child)) != null) {
+      if (child.kind === "card" && isNonTileCardType(child.type)) {
+        const plugin = CARD_RENDERERS[child.type as NonTileCardType];
+        if (plugin?.collapseKey?.(child) != null) {
           if (chartsEmitted) return null;
           chartsEmitted = true;
           return handle != null ? (

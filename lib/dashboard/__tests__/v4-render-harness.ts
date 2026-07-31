@@ -57,17 +57,18 @@ export function resetCaptures(): void {
 export const NodeKeyContext = React.createContext<string | null>(null);
 
 /**
- * The ONE place that knows how a node identifies itself in a plugin's props. Today (v3 shape) that
- * is `card.id`; after the `CardRenderProps` port it is `node.id`. Both are read so the harness key
- * space — and therefore the snapshot's top-level keys — survives the port unchanged.
+ * The ONE place that knows how a node identifies itself in a plugin's props. Since the
+ * `CardRenderProps` port (config-v4 Phase 14 stage 6) that is `node.id`; before it, the synthesised
+ * `card.id`. Both carried the SAME value (the adapter copied `node.id` straight across), which is
+ * why the harness key space — and therefore the snapshot's top-level keys — survived the port
+ * unchanged, and why every `leaves` entry stayed byte-identical.
  */
 export function nodeKeyOf(
   props: Record<string, unknown>,
   fallback: string,
 ): string {
-  const card = props.card as { id?: string } | undefined;
   const node = props.node as { id?: string } | undefined;
-  return card?.id ?? node?.id ?? fallback;
+  return node?.id ?? fallback;
 }
 
 // ---------------------------------------------------------------------------
