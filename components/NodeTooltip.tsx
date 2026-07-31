@@ -16,6 +16,54 @@ import type {
  */
 export const PANEL_WIDTH = 140;
 
+/**
+ * Beak geometry — declared HERE, beside the markup that renders it, and (where the maths needs them)
+ * exported to `EnergyFlowSankey`, which decides where — and whether — a beak fits. One home, so the
+ * two can't drift.
+ */
+/** Diamond beak: an unrotated square this many px on a side, rendered `rotate-45`. */
+const BEAK_SIZE = 12;
+/** …which means it stands BEAK_SIZE·√2 ≈ 17px TALL. The SPAN, not the side, is what has to fit on a
+ *  node — a node shorter than this has no room for the whole diamond. */
+export const BEAK_SPAN = Math.round(BEAK_SIZE * Math.SQRT2);
+/** Half the span — keeps the WHOLE diamond inside a range, not just its centre. */
+export const BEAK_HALF_SPAN = Math.round(BEAK_SPAN / 2);
+/** Half beak: a right triangle this many px on each leg. */
+export const HALF_BEAK_SIZE = 7;
+/** Keep the diamond's CENTRE this far in from the panel's top/bottom edge, so it never collides with
+ *  a rounded corner. This is the panel's own `p-3` padding — equal to BEAK_SIZE only by coincidence,
+ *  don't merge them. */
+export const BEAK_CORNER_INSET = 12;
+
+/**
+ * A half beak always sits in one panel CORNER: the beak's side (opposite the node) × the node's near
+ * edge. Both the squared corner — a rounded one leaves a dark notch between the beak's hypotenuse and
+ * the panel edge — and the triangle's clip-path follow from that single fact, so both are read from
+ * this one table rather than re-derived from `side`/`beakVariant` separately.
+ *
+ * The clip-path is the triangle's flat edge (running toward the node) plus the 45° hypotenuse back to
+ * the panel: e.g. "bottom-right" keeps the bottom edge and the box's top-LEFT corner, so it tapers up
+ * and away from the node.
+ */
+const HALF_BEAK_CORNER = {
+  "top-right": {
+    radius: "borderTopRightRadius",
+    clip: "polygon(0 0, 100% 0, 0 100%)",
+  },
+  "top-left": {
+    radius: "borderTopLeftRadius",
+    clip: "polygon(100% 0, 0 0, 100% 100%)",
+  },
+  "bottom-right": {
+    radius: "borderBottomRightRadius",
+    clip: "polygon(0 100%, 100% 100%, 0 0)",
+  },
+  "bottom-left": {
+    radius: "borderBottomLeftRadius",
+    clip: "polygon(100% 100%, 0 100%, 100% 0)",
+  },
+} as const;
+
 interface NodeTooltipProps {
   data: SankeyNodeTooltip;
   /** The hovered node's fill colour. The tooltip renders as a coloured "card" of the node it
@@ -35,11 +83,13 @@ interface NodeTooltipProps {
   /** Show the node-type heading chip at the top. Omitted (false) when the node box itself is tall
    *  enough to already render its own title — no point repeating it. */
   showHeading?: boolean;
-  /** Beak shape. "diamond" = the square-on-point centred at `beakTop` (tall nodes). For a node too
-   *  short for the diamond, a "half beak" — a triangle with a flat horizontal edge (running toward the
-   *  node) and a 45° return to the panel — sitting on the node's near edge: "half-bottom" flat edge at
-   *  the node's BOTTOM (bottom/middle nodes, tapers up), "half-top" flat edge at its TOP (top nodes,
-   *  tapers down). For a half beak, `beakTop` is the y of that flat edge (not the diamond's centre).
+  /** Beak shape. "diamond" = the square-on-point centred at `beakTop` — the default, including for a
+   *  thin node mid-column (the panel extends past it both ways, so the whole diamond still lands on
+   *  the panel). The "half beak" — a triangle with a flat horizontal edge (running toward the node)
+   *  and a 45° return to the panel — is for a thin node at a column EXTREME, where the panel is edge-
+   *  aligned to the node and a diamond would hang off its end: "half-top" flat edge at the node's TOP
+   *  (topmost node, tapers down), "half-bottom" flat edge at its BOTTOM (bottommost node, tapers up).
+   *  For a half beak, `beakTop` is the y of that flat edge (not the diamond's centre).
    *  "none" = no beak at all, for a panel that overlaps its own node (a narrow phone, or the interior
    *  battery node) — a beak pointing at a node the card sits on top of reads as a glitch. */
   beakVariant?: "diamond" | "half-top" | "half-bottom" | "none";
@@ -135,20 +185,18 @@ export default function NodeTooltip({
 }: NodeTooltipProps) {
   const isFull = data.variant === "full";
 
-  // With a half beak, the panel corner nearest the beak must be square — a rounded corner there leaves
-  // a dark notch between the beak's hypotenuse and the panel edge. The beak sits on the side opposite
-  // the node (right edge for a left-anchored panel, left edge for a right-anchored one) and at the
-  // node's near edge (bottom for "half-bottom", top for "half-top").
-  const squaredCorner: string | null =
-    beakVariant === "half-bottom"
-      ? side === "left"
-        ? "borderBottomRightRadius"
-        : "borderBottomLeftRadius"
-      : beakVariant === "half-top"
-        ? side === "left"
-          ? "borderTopRightRadius"
-          : "borderTopLeftRadius"
-        : null;
+  // Which panel corner a half beak sits in: the beak's side (opposite the node — the right edge for a
+  // left-anchored panel, the left edge for a right-anchored one) × the node's near edge ("half-top" at
+  // the node's TOP, "half-bottom" at its BOTTOM). Null for "diamond"/"none", which need neither the
+  // squared corner nor a clip-path.
+  const halfBeak =
+    beakVariant === "half-top" || beakVariant === "half-bottom"
+      ? HALF_BEAK_CORNER[
+          `${beakVariant === "half-top" ? "top" : "bottom"}-${
+            side === "left" ? "right" : "left"
+          }`
+        ]
+      : null;
 
   return (
     <div
@@ -160,47 +208,50 @@ export default function NodeTooltip({
         width,
         backgroundColor: nodeColor,
         visibility: hidden ? "hidden" : "visible",
-        ...(squaredCorner ? { [squaredCorner]: 0 } : {}),
+        // A rounded corner under a half beak leaves a dark notch between the hypotenuse and the panel
+        // edge, so that one corner goes square.
+        ...(halfBeak ? { [halfBeak.radius]: 0 } : {}),
       }}
     >
       {beakVariant !== "none" &&
-        (beakVariant === "diamond" ? (
+        // `halfBeak` non-null ⇒ a half beak; with "none" already excluded, the alternative is the
+        // diamond.
+        (halfBeak ? (
+          // Thin node at a column extreme: a "half beak" — a HALF_BEAK_SIZE triangle with a flat
+          // horizontal edge running toward the node, then a 45° hypotenuse back to the panel (half a
+          // beak, vertically). It hugs the node's near edge: "half-bottom" flat edge sits on `beakTop`
+          // (the node's bottom) and tapers up; "half-top" flat edge sits on `beakTop` (the node's top)
+          // and tapers down.
           <div
-            className="absolute h-3 w-3 rotate-45"
+            className="absolute"
             style={{
-              ...(side === "left" ? { right: -6 } : { left: -6 }),
-              top: beakTop - 6,
+              width: HALF_BEAK_SIZE,
+              height: HALF_BEAK_SIZE,
+              // half-bottom: flat edge is the container's BOTTOM (→ sits at beakTop); half-top: flat
+              // edge is the container's TOP (→ sits at beakTop).
+              top:
+                beakVariant === "half-bottom"
+                  ? beakTop - HALF_BEAK_SIZE
+                  : beakTop,
+              ...(side === "left"
+                ? { right: -HALF_BEAK_SIZE }
+                : { left: -HALF_BEAK_SIZE }),
+              clipPath: halfBeak.clip,
               backgroundColor: nodeColor,
             }}
           />
         ) : (
-          // Short node: a "half beak" — a 7px triangle with a flat horizontal edge running toward the
-          // node, then a 45° hypotenuse back to the panel (half a beak, vertically). It hugs the node's
-          // near edge: "half-bottom" flat edge sits on `beakTop` (the node's bottom) and tapers up;
-          // "half-top" flat edge sits on `beakTop` (the node's top) and tapers down.
+          // The diamond: a BEAK_SIZE square on point, centred on `beakTop`, half of it poking out past
+          // the panel edge.
           <div
-            className="absolute"
+            className="absolute rotate-45"
             style={{
-              width: 7,
-              height: 7,
-              // half-bottom: flat edge is the container's BOTTOM (→ sits at beakTop); half-top: flat
-              // edge is the container's TOP (→ sits at beakTop).
-              top: beakVariant === "half-bottom" ? beakTop - 7 : beakTop,
+              width: BEAK_SIZE,
+              height: BEAK_SIZE,
               ...(side === "left"
-                ? {
-                    right: -7,
-                    clipPath:
-                      beakVariant === "half-bottom"
-                        ? "polygon(0 100%, 100% 100%, 0 0)"
-                        : "polygon(0 0, 100% 0, 0 100%)",
-                  }
-                : {
-                    left: -7,
-                    clipPath:
-                      beakVariant === "half-bottom"
-                        ? "polygon(100% 100%, 0 100%, 100% 0)"
-                        : "polygon(100% 0, 0 0, 100% 100%)",
-                  }),
+                ? { right: -BEAK_SIZE / 2 }
+                : { left: -BEAK_SIZE / 2 }),
+              top: beakTop - BEAK_SIZE / 2,
               backgroundColor: nodeColor,
             }}
           />

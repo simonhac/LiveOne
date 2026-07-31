@@ -10,7 +10,13 @@ import {
 } from "d3-sankey";
 import { EnergyFlowMatrix } from "@/lib/energy-flow-matrix";
 import { formatFlowMagnitude } from "@/lib/energy-formatting";
-import NodeTooltip, { PANEL_WIDTH } from "@/components/NodeTooltip";
+import NodeTooltip, {
+  BEAK_CORNER_INSET,
+  BEAK_HALF_SPAN,
+  BEAK_SPAN,
+  HALF_BEAK_SIZE,
+  PANEL_WIDTH,
+} from "@/components/NodeTooltip";
 import LinkTooltip from "@/components/LinkTooltip";
 
 /** How the Sankey lays out storage. "columns" = classic sources→loads bipartite; "battery-middle" =
@@ -125,9 +131,10 @@ interface PanelPlacement {
   left: number;
   top: number;
   beakTop: number;
-  /** Beak shape: the "diamond" (tall nodes), a "half beak" hugging the node's top/bottom edge (short
-   *  nodes, where the diamond would overshoot), or "none" when the panel overlaps its own node.
-   *  `beakTop` is interpreted per variant — see NodeTooltip. */
+  /** Beak shape: the "diamond" (the default), a "half beak" hugging the node's top/bottom edge (a thin
+   *  node at the TOP/BOTTOM of its column, where the panel is edge-aligned to the node and the diamond
+   *  would overshoot the PANEL), or "none" when the panel overlaps its own node. `beakTop` is
+   *  interpreted per variant — see NodeTooltip. */
   beakVariant: "diamond" | "half-top" | "half-bottom" | "none";
   /** False during the measure pass (panel mounted off-position, hidden) — see the positioning effect. */
   visible: boolean;
@@ -215,14 +222,6 @@ const LINK_EMPHASIS_OFF = 0.15;
 /** Min node box height (px) for the node to render its own title chip (see the draw loop). Below this
  *  the node has no title, so the hover tooltip carries the heading instead. */
 const MIN_HEIGHT_FOR_LABEL = 28;
-/** The diamond beak's px size. Nodes shorter than this get the "half beak" (see NodeTooltip) so the
- *  diamond doesn't overshoot the node. */
-const BEAK_SIZE = 12;
-/** Half the diamond beak's VERTICAL span — it's a BEAK_SIZE square rotated 45°, so it stands
- *  BEAK_SIZE·√2 ≈ 17px tall. Used to keep the whole diamond (not just its centre) on the node. */
-const BEAK_HALF_SPAN = Math.round((BEAK_SIZE * Math.SQRT2) / 2);
-/** The half beak's px size (width & height) — keep in sync with NodeTooltip's half-beak dimensions. */
-const HALF_BEAK_SIZE = 7;
 /** Minimum stroke width (px) of a ribbon's transparent touch hit target — a thin spline is otherwise
  *  untappable. Roughly a fingertip's worth of slop either side of the ribbon. */
 const HIT_STROKE_MIN = 22;
@@ -1305,18 +1304,30 @@ export default function EnergyFlowSankey({
       // where it sits: centre it on the short box, which the tall one then has room to spare around.
       // So a panel beside a much taller node sits at the PANEL's centre, and a panel beside a short node
       // (or a tall panel clamped to the band) sits at the NODE's centre — either way the beak looks
-      // centred on the thing that constrains it, never stranded at a corner. Short node (shorter than the
-      // diamond): a half beak whose flat edge sits on the node's near edge — its BOTTOM edge for a
-      // bottom/middle node, its TOP edge for a top node — so the beak hugs the thin node instead of the
-      // diamond floating past it. A panel sitting ON its node (a phone too narrow for the gap, or the
-      // interior battery node) gets no beak at all — one pointing at the node underneath just reads as a
-      // rendering glitch. `beakTop` is the y (in panel coords) of that flat edge (half beak) or the
-      // diamond's centre (diamond); see NodeTooltip.
+      // centred on the thing that constrains it, never stranded at a corner. `beakTop` is the y (in panel
+      // coords) of the diamond's centre, or of the half beak's flat edge; see NodeTooltip.
+      //
+      // A panel sitting ON its node (a phone too narrow for the gap, or the interior battery node) gets no
+      // beak at all — one pointing at the node underneath just reads as a rendering glitch.
+      const panelOverlapsNode =
+        left < nodeRightVp && left + PANEL_WIDTH > nodeLeftVp;
+      // The half beak is for a thin node at a column EXTREME. There the panel is edge-ALIGNED to the node
+      // (see `desiredTop` above), so there's no panel past the node's near edge for a diamond to occupy:
+      // centred on a sliver it would hang off the panel's end. A MID-column node has panel on both sides
+      // of it, so the whole diamond lands however thin the node is — and a symmetric beak on the node's
+      // centre reads better than a stub in the panel's corner.
+      const atColumnExtreme = hovered.vertPos !== "middle";
+      // The diamond is a square on point, so it's BEAK_SPAN tall — the span is what has to fit on the
+      // node, not the square's side.
+      const nodeTooThinForDiamond = nodeHeightVp < BEAK_SPAN;
+
       let beakVariant: PanelPlacement["beakVariant"] = "diamond";
       let beakTop = 0;
-      if (left < nodeRightVp && left + PANEL_WIDTH > nodeLeftVp) {
+      if (panelOverlapsNode) {
         beakVariant = "none";
-      } else if (nodeHeightVp < BEAK_SIZE) {
+      } else if (atColumnExtreme && nodeTooThinForDiamond) {
+        // Flat edge on the node's near edge, tapering away from it: the node's TOP for the topmost node,
+        // its BOTTOM for the bottommost.
         if (hovered.vertPos === "top") {
           beakVariant = "half-top";
           beakTop = Math.max(0, Math.min(nodeTopVp - top, H - HALF_BEAK_SIZE));
@@ -1325,7 +1336,8 @@ export default function EnergyFlowSankey({
           beakTop = Math.max(HALF_BEAK_SIZE, Math.min(nodeBottomVp - top, H));
         }
       } else if (nodeHeightVp <= H) {
-        // Node is the shorter box — centre on it (then keep the diamond on the panel).
+        // Node is the shorter box — centre on it (then keep the diamond on the panel). This is also the
+        // thin mid-column node.
         beakTop = nodeCenterYVp - top;
       } else {
         // Panel is the shorter box — centre on it, clamped into the node's span (inset by the diamond's
@@ -1335,7 +1347,11 @@ export default function EnergyFlowSankey({
         beakTop = Math.max(lo, Math.min(H / 2, hi));
       }
       if (beakVariant === "diamond") {
-        beakTop = Math.max(12, Math.min(beakTop, Math.max(H - 12, 12)));
+        // Keep the diamond's centre clear of the panel's rounded corners.
+        beakTop = Math.max(
+          BEAK_CORNER_INSET,
+          Math.min(beakTop, Math.max(H - BEAK_CORNER_INSET, BEAK_CORNER_INSET)),
+        );
       }
       return {
         side: panelSide,
