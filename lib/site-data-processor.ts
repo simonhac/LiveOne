@@ -2,6 +2,7 @@ import { ChartData, SeriesData } from "@/lib/charts/types";
 import type { ChartTimeRange } from "@/lib/charts/scaffold";
 import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
+import { flowPathForSeries } from "@/lib/aggregation/flow-node-meta";
 import type { DailyFlowMatrices, EnergyFlowMatrix } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";
 import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
@@ -472,6 +473,9 @@ function calculateRestOfHouse(
       description: REST_OF_HOUSE_LABEL,
       data: restOfHouse,
       color: getColorForPath("rest-of-house"),
+      // The synthetic remainder is `load.rest-of-house` in the flow matrix (note the differing
+      // spelling — the chart id has no `load.` prefix).
+      flowPath: "load.rest-of-house",
     };
   }
 
@@ -506,6 +510,9 @@ function calculateRestOfHouse(
       description: REST_OF_HOUSE_LABEL,
       data: restOfHouse,
       color: getColorForPath("rest-of-house"),
+      // The synthetic remainder is `load.rest-of-house` in the flow matrix (note the differing
+      // spelling — the chart id has no `load.` prefix).
+      flowPath: "load.rest-of-house",
     };
   }
 
@@ -569,6 +576,9 @@ function processMode(
       description: config.label,
       data: seriesValues,
       color: config.color,
+      // Resolved here (not in the legend table) because `mode` is what disambiguates the grid
+      // direction — export and import are the same source series with the same id.
+      flowPath: flowPathForSeries(dataSeries.path, mode),
     });
 
     console.log(`[Site Processor] ${mode} - Added ${config.label}`);
@@ -588,7 +598,17 @@ function processMode(
       loadTracker.gridExportValues,
       totalGenerationValues,
     );
-    if (restOfHouse) seriesData.push(restOfHouse);
+    if (restOfHouse) {
+      // Where the vendor MEASURES the complement, that point is already charted as its own row and
+      // has claimed `load.rest-of-house`. The synthetic remainder is then a second, different row
+      // (the leftover the measured point doesn't account for) with no flow node of its own — leaving
+      // its flowPath set would make it a duplicate of the measured row in the legend table's
+      // cost/emissions column, and double-count it in the Total.
+      if (seriesData.some((s) => s.flowPath === restOfHouse.flowPath)) {
+        restOfHouse.flowPath = undefined;
+      }
+      seriesData.push(restOfHouse);
+    }
   }
 
   // Calculate total generation for generation mode

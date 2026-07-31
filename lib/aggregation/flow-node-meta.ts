@@ -16,6 +16,7 @@
  */
 
 import { getColorForPath } from "@/lib/chart-colors";
+import { stemSplit } from "@/lib/identifiers/logical-path";
 import type {
   DailyFlowMatrices,
   EnergyFlowMatrix,
@@ -31,6 +32,36 @@ export function flowPathToDeviceStem(path: string): string {
     return "bidi.battery";
   if (path === "source.grid" || path === "load.grid") return "bidi.grid";
   return path;
+}
+
+/**
+ * The inverse of {@link flowPathToDeviceStem} for a CHART series: given the series' logical path
+ * (`"bidi.battery.charge/power"`, `"load.hvac/power.avg"`, …) and which half of the site chart it
+ * belongs to, the canonical flow-node id it corresponds to in the attributed matrix.
+ *
+ * `mode` is load-bearing, not a convenience: the grid export (load) and grid import (generation)
+ * chart series are built from the SAME underlying `bidi.grid/power` series and carry the SAME id,
+ * differing only by their `dataTransform` (see `lib/charts/series-config.ts`). Direction is therefore
+ * only recoverable from which chart the series was placed in. Battery is unambiguous — the charge /
+ * discharge split rewrites the path — but is handled here too so all the direction rules live in one
+ * place.
+ *
+ * Returns `undefined` for a path that doesn't map to a flow node (or an unparseable one).
+ */
+export function flowPathForSeries(
+  path: string | null | undefined,
+  mode: "load" | "generation",
+): string | undefined {
+  const segments = stemSplit(path);
+  if (segments.length === 0) return undefined;
+  const stem = segments.join(".");
+  if (stem === "bidi.battery.charge") return "load.battery";
+  if (stem === "bidi.battery.discharge") return "source.battery";
+  if (stem === "bidi.grid")
+    return mode === "load" ? "load.grid" : "source.grid";
+  // Everything else is already canonical: "load", "load.hvac", "source.solar.local", …
+  if (segments[0] === "load" || segments[0] === "source") return stem;
+  return undefined;
 }
 
 /**

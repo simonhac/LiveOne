@@ -133,6 +133,12 @@ export interface LoadProvenanceSummary {
   avgGramsPerKwh: number | null;
   kgCo2: number;
   pctEstimated: number; // 0..100
+  /** The FILTERED denominators behind `avgCentsPerKwh` / `avgGramsPerKwh` — the kWh whose edge
+   *  carried a known cost (resp. emissions) intensity. Exposed so a caller aggregating several
+   *  summaries (the legend table's Total row) can re-average exactly instead of approximating with
+   *  `energyKwh`, which would disagree whenever a row is only partially attributed. */
+  costKnownKwh: number;
+  emissionsKnownKwh: number;
   sources: LoadSourceSplit[]; // descending by energy, zero-energy sources dropped
 }
 
@@ -206,6 +212,8 @@ export function reduceLoadProvenance(
       emissionsKnownKwh > 0 ? emissionsG / emissionsKnownKwh : null,
     kgCo2: emissionsG / 1000,
     pctEstimated: energyKwh > 0 ? (100 * estimatedKwh) / energyKwh : 0,
+    costKnownKwh,
+    emissionsKnownKwh,
     sources,
   };
 }
@@ -230,6 +238,9 @@ export interface SourceProvenanceSummary {
   avgGramsPerKwh: number | null;
   kgCo2: number;
   pctEstimated: number; // 0..100
+  /** Filtered averaging denominators — see {@link LoadProvenanceSummary.costKnownKwh}. */
+  costKnownKwh: number;
+  emissionsKnownKwh: number;
   loads: LoadSourceSplit[]; // descending by energy, zero-energy loads dropped
 }
 
@@ -322,6 +333,8 @@ export function reduceSourceProvenance(
       emissionsKnownKwh > 0 ? emissionsG / emissionsKnownKwh : null,
     kgCo2: emissionsG / 1000,
     pctEstimated: energyKwh > 0 ? (100 * estimatedKwh) / energyKwh : 0,
+    costKnownKwh,
+    emissionsKnownKwh,
     loads,
   };
 }

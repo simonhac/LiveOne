@@ -6,7 +6,10 @@ import { useModalContext } from "@/contexts/ModalContext";
 import { siteDataQuery } from "@/lib/queries";
 import { type ChartData } from "@/lib/charts/types";
 import DashboardChart from "@/components/DashboardChart";
-import EnergyTable from "@/components/EnergyTable";
+import EnergyTable, {
+  nextEnergyTableMetric,
+  type EnergyTableMetric,
+} from "@/components/EnergyTable";
 import type { ProcessedSiteData } from "@/lib/site-data-processor";
 import EnergyFlowSankey, {
   type SankeyOptions,
@@ -344,6 +347,19 @@ export default function SiteChartsCard({
   const [loadChartData, setLoadChartData] = useState<ChartData | null>(null);
   const [generationChartData, setGenerationChartData] =
     useState<ChartData | null>(null);
+  // The attributed payload the EnergyTables reduce for their cost/emissions column. Mirrored
+  // alongside the chart data (not read from `processedHistoryData`) so a row's energy and its
+  // cost/emissions always come from the SAME fetch — the mirror effect below lands one render after
+  // the query, and pairing the two across that boundary would briefly mix windows.
+  const [tableAttributedFlow, setTableAttributedFlow] =
+    useState<DailyFlowMatrices | null>(null);
+  // Which metric the legend tables' last column shows. Shared by both tables so they cycle together;
+  // session-only by design (no localStorage) — it resets to "%" on reload.
+  const [energyMetric, setEnergyMetric] = useState<EnergyTableMetric>("pct");
+  const cycleEnergyMetric = useCallback(
+    () => setEnergyMetric(nextEnergyTableMetric),
+    [],
+  );
   const [activeChart, setActiveChart] = useState<"load" | "generation" | null>(
     null,
   ); // Track which chart was last touched
@@ -440,6 +456,7 @@ export default function SiteChartsCard({
     if (siteData) {
       setLoadChartData(siteData.load);
       setGenerationChartData(siteData.generation);
+      setTableAttributedFlow(siteData.attributedFlow ?? null);
     }
   }, [siteData]);
 
@@ -643,6 +660,9 @@ export default function SiteChartsCard({
                       loadVisibleSeries.size > 0 ? loadVisibleSeries : undefined
                     }
                     onSeriesToggle={handleLoadSeriesToggle}
+                    attributedFlow={tableAttributedFlow}
+                    metric={energyMetric}
+                    onCycleMetric={cycleEnergyMetric}
                   />
                 </div>
               </div>
@@ -681,6 +701,9 @@ export default function SiteChartsCard({
                         : undefined
                     }
                     onSeriesToggle={handleGenerationSeriesToggle}
+                    attributedFlow={tableAttributedFlow}
+                    metric={energyMetric}
+                    onCycleMetric={cycleEnergyMetric}
                   />
                 </div>
               </div>

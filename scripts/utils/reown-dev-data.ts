@@ -59,30 +59,39 @@ const OWNERSHIP: ReadonlyArray<{ table: string; col: string; where?: string }> =
     // (migration 0022) — every remaining row is a composition/v3 dashboard, so no filter is needed.
     // config-v4 cutover renamed clerk_user_id -> owner_user_id.
     { table: "dashboards", col: "owner_user_id" },
-    // Only reown areas whose handle IS a real device row. An orphan/composite handle (a multi-device
-    // area with no device row, e.g. a "Unified" area) was readable ONLY via ownership when this
-    // filter was written: `getDevicesVisibleByUser` excludes area views, and the then-current
-    // `user_systems` grant-back inner-joined `systems`, so no grant could reach it. Reowning it to the
-    // dev id stripped the prod-Clerk preview session's only read path (→ a blank dashboard on preview).
-    // Since slice F re-pointed the granted leg at `dashboard_grants`, a grant CAN now reach an
-    // orphan-handle area (the dashboard's own grant authorizes its areas), so this filter is probably
-    // no longer load-bearing — but it is harmless and unproven either way, so it stays until someone
-    // tests removing it against a real preview deploy. Tradeoff as before: dev-local won't own them.
+    // EVERY area, orphan-handle ones included. This entry used to carry
+    //   where: id IN (SELECT area_id FROM legacy_handles
+    //                 WHERE area_id IS NOT NULL AND handle IN (SELECT rid FROM devices))
+    // i.e. "only reown areas whose handle IS a real device row", because an orphan/composite handle
+    // (an area with no device behind it — a "Unified" area, or anything from the >=1,000,000
+    // area-handle allocator) was readable ONLY via ownership, so reowning it to the dev id stripped
+    // the prod-Clerk preview session's only read path (→ a blank dashboard on preview).
+    //
+    // That is fixed at the source instead, 2026-07-31: `listReadableAreas` now unions the RAW
+    // `grantedDeviceScopeForUser` set, which carries Area handles verbatim. Previously the granted
+    // leg reached areas only through `devicesVisibleByUser`, which narrows the granted scope to rows
+    // in `devices` — so an orphan handle was discarded one layer before the area query ever saw it,
+    // and the older comment here ("a grant CAN now reach an orphan-handle area") was simply wrong.
+    // The prod id keeps its viewer grants via the additive grant-back below, so it retains read
+    // access to exactly these areas after they change hands — which is what makes dropping the
+    // filter safe, and dev-local now genuinely owns them.
+    //
+    // NB the filter was ALSO the thing keeping dev-local from opening its own default dashboard: the
+    // three areas it skipped (Daylesford, Kinkora Unified, Kuti House) are precisely the sections
+    // that rendered "Area unavailable" on localhost. `DEV_OWNER_REMAP` has been set (and this leg
+    // green) since 2026-06-17 — "ownership rows updated: 24" every 2h — so the filter, not a missing
+    // secret, is why those three never stuck.
+    //
+    // 🛑 SHIPPING ORDER: this entry and the `listReadableAreas` granted-scope union are ONE change and
+    // must land together. The first sync after this deploys hands the composites to the dev id, and
+    // from that moment the prod id (the Vercel-preview session authenticates against the LIVE prod
+    // Clerk instance) can only reach them through the granted leg. Ship this half alone and preview
+    // silently loses them — measured 2026-07-31 on liveone-dev: prod id 14 readable areas with the
+    // union, 12 without, missing exactly Daylesford + Kinkora Unified.
     {
       table: "areas",
       // config-v4 cutover renamed owner_clerk_user_id -> owner_user_id.
       col: "owner_user_id",
-      // `devices.rid`, not `systems.id` — 0051 dropped `systems`, and `devices.rid == systems.id`
-      // verbatim, so the row set is unchanged. Hand-written `sql` is invisible to tsc: this predicate had
-      // to be found by grep and has to be DRIVEN to be verified.
-      //
-      // config-v4 Phase 13 PR 5: the area's handle now comes from `legacy_handles`, not the dropped
-      // `areas.legacy_system_id`. This site is NOT in the phase plan's inventory — it was found only by
-      // the raw-string grep, which is exactly what the comment above predicted. The `area_id IS NOT NULL`
-      // guard matters: `legacy_handles` rows can name a device and no area, and without it the subquery
-      // would yield a NULL that makes `id IN (…)` match nothing.
-      where:
-        "id IN (SELECT area_id FROM legacy_handles WHERE area_id IS NOT NULL AND handle IN (SELECT rid FROM devices))",
     },
   ];
 
