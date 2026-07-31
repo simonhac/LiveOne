@@ -17,6 +17,7 @@ function AreaBatteryContents({ handle }: CardRenderProps) {
 }
 
 export const batteryContentsPlugin: CardPlugin = {
+  kind: "card",
   type: "battery-contents",
   Render: AreaBatteryContents,
 };

@@ -10,9 +10,10 @@
  *     columns (lib/dashboard/tile-grid.ts). Its direct card children that are chart/sankey collapse
  *     into ONE <SiteChartsGroup> (the v3 two-pass collapse, ported here and keyed on the GROUP's
  *     area handle).
- *   - `card` → dispatched by type: a promoted tile view renders a self-fetching tile cell; a
- *     non-tile known type renders its `CardPlugin` (components/dashboard/cards/registry.tsx) with
- *     the node + its inherited context; an unknown type renders a labelled placeholder (§8.4).
+ *   - `card` → ONE registry lookup (components/dashboard/registry.tsx), then dispatch on the
+ *     plugin's own `kind`: a tile plugin renders a self-fetching tile cell, a card plugin is handed
+ *     the node + its inherited context. A type with NO plugin — an unknown/future type, or the v3
+ *     `tiles` container that became a group — renders a labelled placeholder (§8.4).
  *
  * Context (`area`/`device`) inherits down the tree (§8.1) and is handed to the plugins verbatim.
  * `GroupNode.size` (the 12-column hint) is still unread here — layout is child order + group flow.
@@ -35,8 +36,11 @@ import type {
   ResolvedDevice,
 } from "@/lib/dashboard/resolve-shell";
 import type { ReadableArea } from "@/lib/areas/list";
-import { CARD_RENDERERS } from "@/components/dashboard/cards/registry";
-import { TILE_RENDERERS } from "@/components/dashboard/tiles/registry";
+import {
+  CARD_RENDERERS,
+  type NodePlugin,
+} from "@/components/dashboard/registry";
+import type { TilePlugin } from "@/components/dashboard/tiles/types";
 import {
   useAreaDatum,
   staleThreshold,
@@ -45,16 +49,18 @@ import {
 } from "@/components/dashboard/cards/shared";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import {
-  isNonTileCardType,
-  v4CardRenderKind,
-  type CardType,
-  type NonTileCardType,
-} from "@/lib/dashboard/card-types";
-import {
   TILE_GRID_CONTAINER,
   tileGridClass,
   tileRowClass,
 } from "@/lib/dashboard/tile-grid";
+
+/**
+ * The registry, indexed by the document's OPEN `type` string (§8.4). `CARD_RENDERERS` is exhaustive
+ * over `KnownCardType`, so a miss here is exactly "this build does not know this type" — the one
+ * condition that takes the labelled-placeholder branch. This widening is the whole reason the lookup
+ * is safe to do FIRST, before any tile-vs-card question.
+ */
+const RENDERERS: Record<string, NodePlugin | undefined> = CARD_RENDERERS;
 
 function areaUuidOf(id: AreaId): string | null {
   try {
@@ -102,13 +108,20 @@ function nodeKey(node: DashboardNode, i: number): string {
   return node.id ?? `${node.kind}-${i}`;
 }
 
-/** One tile-view card — mirrors the v3 TilesCard cell (self-fetch, availability gate, plugin mount). */
-function V4TileCell({ view, systemId }: { view: CardType; systemId: number }) {
+/**
+ * One tile-view card — mirrors the v3 TilesCard cell (self-fetch, availability gate, plugin mount).
+ * The plugin arrives already resolved: the single registry lookup happens once, in `CardNodeView`.
+ */
+function V4TileCell({
+  plugin,
+  systemId,
+}: {
+  plugin: TilePlugin;
+  systemId: number;
+}) {
   const { data, datum, isLoading } = useAreaDatum(systemId);
   const latest = datum?.latest ?? {};
   if (isLoading) return <TileSkeleton />;
-  const plugin = TILE_RENDERERS[view as keyof typeof TILE_RENDERERS];
-  if (!plugin) return null;
   const showGrid = !!latest["bidi.grid/power"];
   if (!plugin.isAvailable({ latest, data, showGrid })) return null;
   return (
@@ -153,37 +166,44 @@ function CardNodeView({
   // plugins' `deviceSystemId`, both of which DO prefer the device.
   const handle = area?.handle ?? device?.systemId ?? null;
   const systemId = context.device ? (device?.systemId ?? null) : handle;
-  const renderKind = v4CardRenderKind(node.type);
 
-  // Promoted tile view → a self-fetching tile cell.
-  if (renderKind === "tile") {
-    if (systemId == null) return <TileSkeleton />;
-    return <V4TileCell view={node.type} systemId={systemId} />;
-  }
-
-  // Known non-tile card type → its CardPlugin, handed the node + its inherited context.
-  if (renderKind === "card") {
-    const plugin = CARD_RENDERERS[node.type as NonTileCardType];
-    if (!plugin) return null;
-    if (plugin.pending !== "self" && handle == null) {
-      return areasResolved ? null : <ChartSkeleton />;
-    }
+  // ONE lookup for every card node. A miss is an unknown/future type (§8.4): a labelled placeholder
+  // — never destroy its opaque config.
+  const plugin = RENDERERS[node.type];
+  if (!plugin) {
     return (
-      <plugin.Render
-        node={node}
-        context={context}
-        handle={handle ?? undefined}
-        deviceSystemId={device?.systemId ?? undefined}
-      />
+      <div className="rounded-lg border border-gray-700/70 bg-gray-900/30 px-4 py-3 text-sm text-gray-400">
+        Unknown card type <code className="text-gray-300">{node.type}</code>
+      </div>
     );
   }
 
-  // Unknown/future card type (§8.4): a labelled placeholder — never destroy its opaque config.
+  // Tile plugin → a self-fetching tile cell.
+  if (plugin.kind === "tile") {
+    if (systemId == null) return <TileSkeleton />;
+    return <V4TileCell plugin={plugin} systemId={systemId} />;
+  }
+
+  // Card plugin → handed the node + its inherited context.
+  if (plugin.pending !== "self" && handle == null) {
+    return areasResolved ? null : <ChartSkeleton />;
+  }
   return (
-    <div className="rounded-lg border border-gray-700/70 bg-gray-900/30 px-4 py-3 text-sm text-gray-400">
-      Unknown card type <code className="text-gray-300">{node.type}</code>
-    </div>
+    <plugin.Render
+      node={node}
+      context={context}
+      handle={handle ?? undefined}
+      deviceSystemId={device?.systemId ?? undefined}
+    />
   );
+}
+
+/** A card node's site-charts collapse contribution, or null. Tile plugins never collapse. */
+function collapseKeyOf(node: DashboardNode): string | null {
+  if (node.kind !== "card") return null;
+  const plugin = RENDERERS[node.type];
+  if (plugin?.kind !== "card") return null;
+  return plugin.collapseKey?.(node) ?? null;
 }
 
 function GroupNodeView({
@@ -235,11 +255,8 @@ function GroupNodeView({
   // keyed on this group's area handle). Reuses each plugin's own collapseKey, called on the NODE.
   const chartKeys = new Set<string>();
   for (const child of node.children) {
-    if (child.kind === "card" && isNonTileCardType(child.type)) {
-      const plugin = CARD_RENDERERS[child.type as NonTileCardType];
-      const k = plugin?.collapseKey?.(child) ?? null;
-      if (k != null) chartKeys.add(k);
-    }
+    const k = collapseKeyOf(child);
+    if (k != null) chartKeys.add(k);
   }
   const sankeyChild = node.children.find(
     (c) => c.kind === "card" && c.type === "sankey",
@@ -255,23 +272,20 @@ function GroupNodeView({
   const body: ReactNode[] = node.children
     .filter((c) => !c.hidden)
     .map((child, i) => {
-      if (child.kind === "card" && isNonTileCardType(child.type)) {
-        const plugin = CARD_RENDERERS[child.type as NonTileCardType];
-        if (plugin?.collapseKey?.(child) != null) {
-          if (chartsEmitted) return null;
-          chartsEmitted = true;
-          return handle != null ? (
-            <SiteChartsGroup
-              key="site-charts"
-              systemId={handle}
-              keys={chartKeys}
-              sankeyOptionsKey={sankeyOptionsKey}
-              chartCapable={area?.chartCapable}
-            />
-          ) : areasResolved ? null : (
-            <ChartSkeleton key="site-charts" />
-          );
-        }
+      if (collapseKeyOf(child) != null) {
+        if (chartsEmitted) return null;
+        chartsEmitted = true;
+        return handle != null ? (
+          <SiteChartsGroup
+            key="site-charts"
+            systemId={handle}
+            keys={chartKeys}
+            sankeyOptionsKey={sankeyOptionsKey}
+            chartCapable={area?.chartCapable}
+          />
+        ) : areasResolved ? null : (
+          <ChartSkeleton key="site-charts" />
+        );
       }
       return (
         <NodeView

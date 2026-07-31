@@ -14,7 +14,7 @@
  *      area/device resolver inputs. All values are fixed constants — no clocks, no randomness.
  *
  * Instrumentation policy: the card/tile PLUGINS are the code under test, so they are wrapped, never
- * replaced — `instrumentCardRenderers` records the props and then renders the REAL plugin. Only the
+ * replaced — `instrumentRenderers` records the props and then renders the REAL plugin. Only the
  * leaf components each plugin renders into are mocked away.
  */
 import * as React from "react";
@@ -217,57 +217,46 @@ export function makeSiteChartsLeaf(): React.FC<LeafProps> {
 // 4. Plugin instrumentation (wrap-and-call-through — the plugins stay under test)
 // ---------------------------------------------------------------------------
 
-interface CardPluginLike {
+interface NodePluginLike {
+  /** The registry's discriminant (config-v4 Phase 14 stage 7): "tile" | "card". */
+  kind: string;
   type: string;
   Render: React.FC<Record<string, unknown>>;
   [k: string]: unknown;
 }
-interface TilePluginLike {
-  view: string;
-  Render: React.FC<Record<string, unknown>>;
-  [k: string]: unknown;
-}
 
-export function instrumentCardRenderers(
-  actual: Record<string, CardPluginLike>,
-): Record<string, CardPluginLike> {
-  const out: Record<string, CardPluginLike> = {};
+/**
+ * Wrap every plugin in the single `CARD_RENDERERS` (components/dashboard/registry.tsx). Replaces the
+ * pair `instrumentCardRenderers`/`instrumentTileRenderers`, which existed only because the registry
+ * was two maps — the same merge the stage under test performs, applied to the instrumentation.
+ *
+ * 🛑 The capture KEYS and the `plugin` labels are load-bearing: they are the snapshot's top-level
+ * keys and a field of BOTH compared layers, so they are derived from `kind` in a way that reproduces
+ * the two old functions EXACTLY (`card:<type>` keyed by node id; `tile:<view>@<systemId>`).
+ */
+export function instrumentRenderers(
+  actual: Record<string, NodePluginLike>,
+): Record<string, NodePluginLike> {
+  const out: Record<string, NodePluginLike> = {};
   for (const [type, plugin] of Object.entries(actual)) {
+    const isTile = plugin.kind === "tile";
+    const label = `${isTile ? "tile" : "card"}:${type}`;
     const Real = plugin.Render;
     const Wrapped: React.FC<Record<string, unknown>> = (props) => {
-      const key = nodeKeyOf(props, `card:${type}:<no-id>`);
-      pluginCaptures.push({ key, plugin: `card:${type}`, props });
+      // A tile's props carry no node id (`V4TileCell` passes only the plugin + systemId), so a tile
+      // is keyed by the pair that identifies its cell in the fixture document.
+      const key = isTile
+        ? `tile:${type}@${String(props.systemId)}`
+        : nodeKeyOf(props, `card:${type}:<no-id>`);
+      pluginCaptures.push({ key, plugin: label, props });
       return React.createElement(
         NodeKeyContext.Provider,
         { value: key },
         React.createElement(Real, props),
       );
     };
-    Wrapped.displayName = `Capture(card:${type})`;
+    Wrapped.displayName = `Capture(${label})`;
     out[type] = { ...plugin, Render: Wrapped };
-  }
-  return out;
-}
-
-export function instrumentTileRenderers(
-  actual: Record<string, TilePluginLike>,
-): Record<string, TilePluginLike> {
-  const out: Record<string, TilePluginLike> = {};
-  for (const [view, plugin] of Object.entries(actual)) {
-    const Real = plugin.Render;
-    const Wrapped: React.FC<Record<string, unknown>> = (props) => {
-      // A tile's props carry no node id (`V4TileCell` passes only view + systemId), so a tile is
-      // keyed by the pair that identifies its cell in the fixture document.
-      const key = `tile:${view}@${String(props.systemId)}`;
-      pluginCaptures.push({ key, plugin: `tile:${view}`, props });
-      return React.createElement(
-        NodeKeyContext.Provider,
-        { value: key },
-        React.createElement(Real, props),
-      );
-    };
-    Wrapped.displayName = `Capture(tile:${view})`;
-    out[view] = { ...plugin, Render: Wrapped };
   }
   return out;
 }

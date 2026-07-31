@@ -78,7 +78,8 @@ function SolarTile({ latest, staleThresholdSeconds }: TileRenderProps) {
 }
 
 export const solarTile: TilePlugin = {
-  view: "solar",
+  kind: "tile",
+  type: "solar",
   isAvailable: ({ latest }) => solarValueFrom(latest).solarValue !== null,
   Render: SolarTile,
 };

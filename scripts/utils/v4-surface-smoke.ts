@@ -796,10 +796,20 @@ async function main(): Promise<void> {
     ok(elig.status === 200, "200", elig.status);
     ok(
       Array.isArray(elig.body?.areaCards) &&
-        Array.isArray(elig.body?.tiles) &&
         Array.isArray(elig.body?.deviceCards),
-      "{ areaCards, tiles, deviceCards }",
+      "{ areaCards, deviceCards }",
       elig.body,
+    );
+    // Stage 7: ONE catalog ⇒ no separate `tiles` list, and the v3 `tiles` container is not a card.
+    ok(
+      elig.body?.tiles === undefined,
+      "no `tiles` key (the tile views are area-scoped cards now)",
+      elig.body,
+    );
+    ok(
+      elig.body.areaCards.every((c: any) => c.id !== "tiles" && !!c.label),
+      "every areaCard is a v4 card type with a label (never the v3 `tiles` container)",
+      elig.body.areaCards,
     );
     ok(
       elig.body.deviceCards.every((d: any) => d.deviceId?.startsWith?.("dv_")),

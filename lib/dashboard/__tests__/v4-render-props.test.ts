@@ -8,12 +8,17 @@
  * `{card: CardV3, section: AreaSectionV3, handle?}` to the v4-native `{node: CardNode, context:
  * NodeContext, handle?, deviceSystemId?}`, ported all nine card plugins onto it, and deleted the
  * adapter `lib/dashboard/v4-adapt.ts` (`synthCardV3` / `synthSectionV3`). That was a pure refactor:
- * it must change NOTHING a user can see. It is kept as the standing gate on this seam — stage 7
- * merges the two registries over the same plugins.
+ * it must change NOTHING a user can see. It is kept as the standing gate on this seam.
  *
  * The stage-6 result: all 11 `card:*` `renderProps` entries changed shape (that IS the port); all
  * 22 `leaves` entries, all 10 `tile:*` `renderProps` entries and the whole key set were
  * byte-identical.
+ *
+ * STAGE 7 then merged the two plugin registries into one `CARD_RENDERERS` keyed on `CardType`
+ * (components/dashboard/registry.tsx) and moved the renderer's tile-vs-card dispatch onto the
+ * plugin's own `kind`. The plugins and their props were NOT touched, so `v4-render-props.expected.json`
+ * is absent from that diff entirely: 0 of 22 changed in BOTH layers. The only harness change is that
+ * one module is mocked where two were.
  *
  * Pixel equivalence is not provable here at any sane cost — four card plugins bottom out in chart.js
  * on a `<canvas>` (zero DOM to assert on) and the repo has no React-rendering test infrastructure.
@@ -117,17 +122,11 @@ jest.mock("@/components/dashboard/cards/shared", () => {
 });
 
 // --- the plugins: wrapped to record, then rendered for real ----------------------------------
-jest.mock("@/components/dashboard/cards/registry", () => {
+jest.mock("@/components/dashboard/registry", () => {
   const h =
     require("./v4-render-harness") as typeof import("./v4-render-harness");
-  const actual = jest.requireActual("@/components/dashboard/cards/registry");
-  return { CARD_RENDERERS: h.instrumentCardRenderers(actual.CARD_RENDERERS) };
-});
-jest.mock("@/components/dashboard/tiles/registry", () => {
-  const h =
-    require("./v4-render-harness") as typeof import("./v4-render-harness");
-  const actual = jest.requireActual("@/components/dashboard/tiles/registry");
-  return { TILE_RENDERERS: h.instrumentTileRenderers(actual.TILE_RENDERERS) };
+  const actual = jest.requireActual("@/components/dashboard/registry");
+  return { CARD_RENDERERS: h.instrumentRenderers(actual.CARD_RENDERERS) };
 });
 
 // --- the leaves: every component a plugin renders into ---------------------------------------

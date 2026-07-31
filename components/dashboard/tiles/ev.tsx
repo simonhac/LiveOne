@@ -5,7 +5,8 @@ import type { TilePlugin } from "./types";
 import { getPointValue } from "./shared";
 
 export const evTile: TilePlugin = {
-  view: "ev",
+  kind: "tile",
+  type: "ev",
   isAvailable: ({ latest }) => getPointValue(latest, "ev.battery/soc") !== null,
   Render: ({ latest, systemId, canControl }) => (
     <TeslaSmallCard

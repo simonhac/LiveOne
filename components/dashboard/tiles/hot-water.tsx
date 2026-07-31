@@ -80,7 +80,8 @@ function HotWaterTile({
 }
 
 export const hotWaterTile: TilePlugin = {
-  view: "hotWater",
+  kind: "tile",
+  type: "hotWater",
   isAvailable: ({ latest }) =>
     getPointValue(latest, "load.hws/temperature") !== null,
   Render: HotWaterTile,

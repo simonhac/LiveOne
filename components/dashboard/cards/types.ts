@@ -1,5 +1,7 @@
 /**
- * The card plugin contract — one plugin per non-tile `KnownCardType`, registered in ./registry.tsx.
+ * The CARD half of the node plugin contract — one plugin per non-tile `KnownCardType`, registered
+ * alongside the tile plugins in the single `CARD_RENDERERS` (components/dashboard/registry.tsx).
+ * See ../tiles/types.ts for why the two contracts stayed distinct when the registries merged.
  *
  * A card plugin bundles the render component (ex-`AreaXxx` wrapper from the deleted v3 renderer) with the
  * host-facing render policy: how it behaves while the section's Area handle is unresolved
@@ -38,6 +40,8 @@ export interface CardRenderProps {
 }
 
 export interface CardPlugin {
+  /** The registry's discriminant: `node-view.tsx` dispatches on this after ONE lookup. */
+  kind: "card";
   type: NonTileCardType;
   /**
    * Unresolved-handle behavior:

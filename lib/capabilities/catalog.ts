@@ -1,35 +1,42 @@
 /**
- * The card / tile CATALOG — the declarative, capability-keyed card/tile ELIGIBILITY data (label +
- * required capabilities + scope). Server-safe and React-free: the render side is the client plugin
- * registries (components/dashboard/cards/ + /tiles/), which replaced the old `card.type` switch in
- * the (since deleted) v3 renderer; the live renderer is components/dashboard/v4/node-view.tsx.
+ * The NODE CATALOG — the declarative, capability-keyed card ELIGIBILITY data (label + required
+ * capabilities + scope), one entry per `KnownCardType`. Server-safe and React-free: the render side
+ * is the client plugin registry (components/dashboard/registry.tsx), which replaced the old
+ * `card.type` switch in the (since deleted) v3 renderer; the live renderer is
+ * components/dashboard/v4/node-view.tsx.
  *
- * Each entry declares the capabilities it REQUIRES. "Which cards/tiles can an area show" =
- * `CATALOG.filter(e => satisfies(scopeCaps(e), e.requires))`. No vendor/device names appear here — a
- * device the presentation layer has never seen lights up the right cards purely via its advertised
- * capabilities.
+ * ONE CATALOG, ONE VOCABULARY (config-v4 Phase 14 stage 7). `TILE_CATALOG` (8 tiles) and
+ * `CARD_CATALOG` (10 cards + the v3 `tiles` container) were separate maps over two id spaces. §8.1
+ * unified the primitive — a tile IS a card — so they are now one `Record<KnownCardType, …>` keyed on
+ * the same 18-type vocabulary as the render registry and the config schemas
+ * (lib/dashboard/card-types.ts). The `tiles` entry is GONE with them: in v4 that container is a `row`
+ * group, not a card, so it has no eligibility of its own — its members answer for themselves.
+ *
+ * Each entry declares the capabilities it REQUIRES. "Which cards can an area show" =
+ * `NODE_CATALOG.filter(e => satisfies(scopeCaps(e), e.requires))`. No vendor/device names appear here
+ * — a device the presentation layer has never seen lights up the right cards purely via its
+ * advertised capabilities.
  *
  * TWO NON-NEGOTIABLE CONTRACTS:
  *  1. **`scope`** — `requires` is checked against the AREA UNION for `scope: "area"` entries, and
  *     against a SPECIFIC MEMBER's capability set for `scope: "device"` entries (`generator-runs`,
- *     `oe-grid`, `device-metrics` already carry a `deviceSystemId` in the v3 descriptor).
+ *     `oe-grid`, `device-metrics` bind a member device).
  *  2. **Eligibility ≠ render authority** — this filter is for the Add-Card GALLERY (grey-out) and the
  *     default-dashboard strategy ONLY. It is NEVER the final say on whether a card renders. Renderers
  *     keep their own gate: the sankey still checks `selectFlowMatrix` for *directional* flow (presence
- *     of solar+load is not enough); `oe-grid`/`grid-signals` still resolves a NEM region. Do NOT
- *     "simplify" a renderer to trust this filter — it will ship blank/incorrect cards.
+ *     of solar+load is not enough); `oe-grid`/`grid-signals` still resolves a NEM region; every tile
+ *     still answers its own `isAvailable`. Do NOT "simplify" a renderer to trust this filter — it will
+ *     ship blank/incorrect cards.
  *
-
  * The gallery filters (`availableAreaCards`/`availableDeviceCards`) remain INERT until an Add-Card
- * UI exists; the renderer reads only `CARD_CATALOG.chart.requires` (the site-charts data gate). The
- * equivalence test pins that `availableTilesFromCaps ∘ capabilitiesFromLatest` reproduces the legacy
- * `availableTiles` semantics.
+ * UI exists; the renderer reads only `NODE_CATALOG.chart.requires` (the site-charts data gate) and
+ * the seed reads `availableTilesFromCaps`. The equivalence test pins that
+ * `availableTilesFromCaps ∘ capabilitiesFromLatest` reproduces the legacy `availableTiles` semantics.
  */
 
 import type { CapabilityId } from "@/lib/capabilities/registry";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
-import type { DashboardCardType } from "@/lib/dashboard/cards";
-import type { TileId } from "@/lib/dashboard/card-types";
+import type { KnownCardType, TileId } from "@/lib/dashboard/card-types";
 
 export type { TileId };
 
@@ -46,28 +53,49 @@ export function isSatisfiable(req: CapReq): boolean {
   return ("all" in req ? req.all : req.any).length > 0;
 }
 
-// ============================================================================
-// Tiles — the individually-toggleable cards inside the `tiles` container.
-// `TileId` is single-sourced from lib/dashboard/card-types.ts (re-exported above).
-// ============================================================================
-
-export interface TileCatalogEntry {
-  id: TileId;
+export interface NodeCatalogEntry {
+  id: KnownCardType;
   label: string;
   requires: CapReq;
+  /** Which capability set `requires` is checked against — the area union, or one member device's. */
+  scope: "area" | "device";
+  /** For `scope: "device"` entries: the capability the bound member must provide. */
+  bindsCapability?: CapabilityId;
 }
 
 /**
- * Requirements chosen to reproduce `availableTiles(latest)` EXACTLY on the realistic path universe:
+ * The catalog, in `V4_CARD_TYPES` order (the 9 tile views, then the 9 non-tile card types) — that
+ * order is what `availableAreaCards`/`availableDeviceCards` return, so a gallery gets tiles first.
+ *
+ * `Record<KnownCardType, …>` is the compile gate, the mirror of the render registry's: adding a card
+ * type to lib/dashboard/card-types.ts is a build error until it is catalogued here AND has a plugin.
+ *
+ * Tile requirements are chosen to reproduce `availableTiles(latest)` EXACTLY on the realistic path
+ * universe:
  *  - `load` is satisfied by ANY source (the load card synthesises a master load from any source when
  *    no dedicated load point exists) — hence `{ any: [load/power, solar/power, battery/power,
- *    grid/power] }`, mirroring the current `anyLoad || solar || battery || grid` disjunction.
+ *    grid/power] }`, mirroring the old `anyLoad || solar || battery || grid` disjunction.
+ *
+ * `chart`/`sankey` eligibility is `{ all: ["solar/power"] }` — this is EXACTLY `chartHasData(latest)`,
+ * which reduces to "has solar" (its `load` disjunct always includes `solar`, so `solar && load ≡
+ * solar`). The renderer keeps the real "is there directional flow" gate (`selectFlowMatrix`) — see
+ * contract #2 above.
  */
-export const TILE_CATALOG: Record<TileId, TileCatalogEntry> = {
-  solar: { id: "solar", label: "Solar", requires: { all: ["solar/power"] } },
+export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
+  // --- tile views ------------------------------------------------------------------------------
+  // Area-scoped: a tile's eligibility is judged against the area UNION, exactly as the v3
+  // `availableTiles(latest)` was. `oe-grid` is the one device-scoped tile — it is bound to an
+  // OpenElectricity region device, not derived from an area's capabilities.
+  solar: {
+    id: "solar",
+    label: "Solar",
+    scope: "area",
+    requires: { all: ["solar/power"] },
+  },
   load: {
     id: "load",
     label: "Load",
+    scope: "area",
     requires: {
       any: ["load/power", "solar/power", "battery/power", "grid/power"],
     },
@@ -75,96 +103,50 @@ export const TILE_CATALOG: Record<TileId, TileCatalogEntry> = {
   hotWater: {
     id: "hotWater",
     label: "Hot Water",
+    scope: "area",
     requires: { all: ["load.hws/temperature"] },
   },
   battery: {
     id: "battery",
     label: "Battery",
+    scope: "area",
     requires: { all: ["battery/soc"] },
   },
   "house-to-grid": {
     id: "house-to-grid",
     label: "Grid",
+    scope: "area",
     requires: { all: ["grid/power"] },
   },
   amber: {
     id: "amber",
     label: "Amber Price",
+    scope: "area",
     requires: { all: ["grid/rate"] },
   },
-  ev: { id: "ev", label: "EV", requires: { all: ["ev/soc"] } },
+  ev: {
+    id: "ev",
+    label: "EV",
+    scope: "area",
+    requires: { all: ["ev/soc"] },
+  },
   // Solar OR grid: a solar site gets all three renewables metrics; a grid-only site still gets the
   // renewable-share metric (metrics 1 & 2 then correctly read 0 / — rather than being hidden).
   // The `renewables` id is historical — the view renders as the "Home Energy" card.
   renewables: {
     id: "renewables",
     label: "Home Energy",
+    scope: "area",
     requires: { any: ["solar/power", "grid/power"] },
   },
-};
-
-/** Canonical tile order (mirrors TILE_IDS). */
-export const TILE_ORDER: readonly TileId[] = [
-  "solar",
-  "load",
-  "hotWater",
-  "battery",
-  "house-to-grid",
-  "amber",
-  "ev",
-  "renewables",
-];
-
-/** Which tiles an area/device with `caps` can show, in canonical order — replaces `availableTiles`. */
-export function availableTilesFromCaps(caps: CapabilitySet): TileId[] {
-  return TILE_ORDER.filter((id) => satisfies(caps, TILE_CATALOG[id].requires));
-}
-
-// ============================================================================
-// Cards — the descriptor-level modules. `scope: "device"` cards read a bound member (deviceSystemId).
-// ============================================================================
-
-/**
- * The catalog's card vocabulary — the descriptor card types plus `oe-grid`, which is a TILE VIEW in
- * the v3 descriptor (it rides inside a `tiles` card bound to a member device) but needs its own
- * catalog entry for device-scoped eligibility. Derived from `DashboardCardType` so the two can
- * never drift.
- */
-export type CardId = DashboardCardType | "oe-grid";
-
-export interface CardCatalogEntry {
-  id: CardId;
-  label: string;
-  requires: CapReq;
-  scope: "area" | "device";
-  /** For `scope: "device"` cards: the capability the bound member must provide. */
-  bindsCapability?: CapabilityId;
-}
-
-/**
- * The card catalog. `chart`/`sankey` eligibility is `{ all: ["solar/power"] }` — this is EXACTLY
- * `chartHasData(latest)`, which reduces to "has solar" (its `load` disjunct always includes `solar`,
- * so `solar && load ≡ solar`). The renderer keeps the real "is there directional flow" gate
- * (`selectFlowMatrix`) — see contract #2 above.
- */
-export const CARD_CATALOG: Record<CardId, CardCatalogEntry> = {
-  tiles: {
-    id: "tiles",
-    label: "Tiles",
-    scope: "area",
-    // Any tile-eligible capability (i.e. not a pricing-only area).
-    requires: {
-      any: [
-        "solar/power",
-        "load/power",
-        "battery/soc",
-        "battery/power",
-        "grid/power",
-        "ev/soc",
-        "load.hws/temperature",
-      ],
-    },
+  "oe-grid": {
+    id: "oe-grid",
+    label: "Local Grid (NEM)",
+    scope: "device",
+    requires: { all: ["grid-signals"] },
+    bindsCapability: "grid-signals",
   },
+  // --- non-tile card types ---------------------------------------------------------------------
   chart: {
     id: "chart",
     label: "Power Chart",
@@ -202,13 +184,6 @@ export const CARD_CATALOG: Record<CardId, CardCatalogEntry> = {
     scope: "device",
     requires: { all: ["instrumentation"] },
   },
-  "oe-grid": {
-    id: "oe-grid",
-    label: "Local Grid (NEM)",
-    scope: "device",
-    requires: { all: ["grid-signals"] },
-    bindsCapability: "grid-signals",
-  },
   // Area-derived provenance cards — gated on a battery being present. Both read engine OUTPUTS (the
   // KV-latest battery points / the ?source=modern flow matrix), not engine internals.
   "battery-contents": {
@@ -231,20 +206,43 @@ export const CARD_CATALOG: Record<CardId, CardCatalogEntry> = {
   },
 };
 
-/** Area-scoped cards an area with `caps` can show (tiles/chart/sankey/amber). Excludes device-scoped. */
-export function availableAreaCards(caps: CapabilitySet): CardId[] {
-  return (Object.keys(CARD_CATALOG) as CardId[]).filter(
+/**
+ * Canonical tile order — the order the seed lays small cards out in its `row` group. A strict
+ * subset of `NODE_CATALOG` (the 8 capability-derived tiles; `oe-grid` is appended by the seed from
+ * its grid-context member, not derived from the area's capabilities).
+ */
+export const TILE_ORDER: readonly TileId[] = [
+  "solar",
+  "load",
+  "hotWater",
+  "battery",
+  "house-to-grid",
+  "amber",
+  "ev",
+  "renewables",
+];
+
+/** Which tiles an area/device with `caps` can show, in canonical order — replaces `availableTiles`. */
+export function availableTilesFromCaps(caps: CapabilitySet): TileId[] {
+  return TILE_ORDER.filter((id) => satisfies(caps, NODE_CATALOG[id].requires));
+}
+
+const CATALOG_IDS = Object.keys(NODE_CATALOG) as KnownCardType[];
+
+/** Area-scoped cards an area with `caps` can show (the tiles, chart/sankey/amber, provenance). */
+export function availableAreaCards(caps: CapabilitySet): KnownCardType[] {
+  return CATALOG_IDS.filter(
     (id) =>
-      CARD_CATALOG[id].scope === "area" &&
-      satisfies(caps, CARD_CATALOG[id].requires),
+      NODE_CATALOG[id].scope === "area" &&
+      satisfies(caps, NODE_CATALOG[id].requires),
   );
 }
 
 /** Device-scoped cards a member device with `caps` can provide (generator-runs/device-metrics/oe-grid). */
-export function availableDeviceCards(caps: CapabilitySet): CardId[] {
-  return (Object.keys(CARD_CATALOG) as CardId[]).filter(
+export function availableDeviceCards(caps: CapabilitySet): KnownCardType[] {
+  return CATALOG_IDS.filter(
     (id) =>
-      CARD_CATALOG[id].scope === "device" &&
-      satisfies(caps, CARD_CATALOG[id].requires),
+      NODE_CATALOG[id].scope === "device" &&
+      satisfies(caps, NODE_CATALOG[id].requires),
   );
 }

@@ -1,11 +1,12 @@
 /**
- * The v4 card-type vocabulary + the renderer's closed dispatch (`node-view.tsx`).
+ * The v4 card-type vocabulary — the closed set this build knows how to render and validate.
  *
  * The classification half of the deleted `v4-adapt.test.ts` (config-v4 Phase 14 stage 6) lives here:
- * `isV3CardType` → `isNonTileCardType` and `v4CardRenderKind` moved out of the adapter into the
- * module that owns the vocabulary. The `synthCardV3`/`synthSectionV3` half died with the adapter —
- * plugins now read `node.config` / `context.area` directly, which the render-props gate
- * (`v4-render-props.test.ts`) covers end to end.
+ * `isV3CardType` → `isNonTileCardType`, moved out of the adapter into the module that owns the
+ * vocabulary. The `synthCardV3`/`synthSectionV3` half died with the adapter — plugins now read
+ * `node.config` / `context.area` directly, which the render-props gate (`v4-render-props.test.ts`)
+ * covers end to end. Stage 7 then deleted `v4CardRenderKind`: RENDER dispatch belongs to the one
+ * plugin registry, so what is left here is vocabulary only.
  */
 import { describe, it, expect } from "@jest/globals";
 import {
@@ -15,7 +16,6 @@ import {
   isKnownCardType,
   isNonTileCardType,
   isTileViewType,
-  v4CardRenderKind,
 } from "../card-types";
 
 describe("v4 card-type classification", () => {
@@ -54,11 +54,18 @@ describe("v4 card-type classification", () => {
     }
   });
 
-  it("routes an unknown string to the labelled-placeholder branch", () => {
-    expect(v4CardRenderKind("solar")).toBe("tile");
-    expect(v4CardRenderKind("chart")).toBe("card");
-    expect(v4CardRenderKind("future-card")).toBe("unknown");
-    expect(v4CardRenderKind("tiles")).toBe("unknown");
+  /**
+   * §8.4: an unknown type — and the v3 `tiles` container, which became a `row` group — must be
+   * unknown to this BUILD, so the renderer's one registry lookup misses and it takes the labelled-
+   * placeholder branch. (Stage 7 deleted `v4CardRenderKind`, which used to state the same thing a
+   * second time; the render side of it is asserted end-to-end in `v4-render-props.test.ts`.)
+   */
+  it("`tiles` and future types are NOT known card types (the §8.4 placeholder path)", () => {
+    expect(isKnownCardType("tiles")).toBe(false);
+    expect(isKnownCardType("future-card")).toBe(false);
+    expect(isKnownCardType("")).toBe(false);
+    expect(isKnownCardType("solar")).toBe(true);
+    expect(isKnownCardType("chart")).toBe(true);
   });
 
   it("the three predicates partition the known card types exactly", () => {

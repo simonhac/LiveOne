@@ -29,7 +29,8 @@ function OeGridTile({ data }: TileRenderProps) {
 }
 
 export const oeGridTile: TilePlugin = {
-  view: "oe-grid",
+  kind: "tile",
+  type: "oe-grid",
   isAvailable: ({ data }) => gridLatestFromData(data) !== null,
   Render: OeGridTile,
 };

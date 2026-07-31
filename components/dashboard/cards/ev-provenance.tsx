@@ -49,6 +49,7 @@ function AreaLoadProvenance({ handle }: CardRenderProps) {
 }
 
 export const evProvenancePlugin: CardPlugin = {
+  kind: "card",
   type: "ev-provenance",
   Render: AreaLoadProvenance,
 };

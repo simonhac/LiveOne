@@ -86,7 +86,8 @@ function renewablesAvailable(latest: LatestPointValues, showGrid: boolean) {
 }
 
 export const renewablesTile: TilePlugin = {
-  view: "renewables",
+  kind: "tile",
+  type: "renewables",
   isAvailable: ({ latest, showGrid }) => renewablesAvailable(latest, showGrid),
   Render: RenewablesTile,
 };
