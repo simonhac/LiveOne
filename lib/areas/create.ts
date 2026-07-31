@@ -8,7 +8,7 @@
  * can grow from one member to many WITHOUT ever re-keying (see `lib/areas/handles.ts` and
  * docs/architecture/areas-and-dashboards.md).
  */
-import { and, asc, eq, inArray, max } from "drizzle-orm";
+import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
@@ -20,7 +20,7 @@ import {
   points,
 } from "@/lib/db/planetscale/schema";
 import type { AreaConfig, AreaLocation } from "@/lib/areas/types";
-import { Device, Point, type PointId } from "@/lib/ids";
+import { Device, Point, type DeviceId, type PointId } from "@/lib/ids";
 import { ROLES, type RoleId } from "@/lib/roles/registry";
 import { allocateAreaHandle } from "@/lib/areas/handles";
 import { PointManager } from "@/lib/point/point-manager";
@@ -290,6 +290,119 @@ export async function removeMember(
           eq(areaMembers.deviceId, deviceUuid),
         ),
       );
+  });
+}
+
+/**
+ * Declarative FULL REPLACE of an area's membership (clean-sheet §9.2: `PUT` on a collection diffs
+ * server-side, applies transactionally, and the caller then returns the new state). Backs
+ * `PUT /api/v4/areas/{id}/members`, which replaces the legacy `POST`+`DELETE /devices` pair.
+ *
+ * `desired` is ORDERED — the array index becomes `area_members.ordinal`, so a pure reorder is a real
+ * (and applied) edit, not a no-op. Members that leave take their now-orphaned bindings with them, by
+ * exactly the predicate `removeMember` uses, so the resolver never dereferences a point on a device
+ * that is no longer a member.
+ *
+ * 🛑 The removal leg is the half that fails SILENTLY when it is wrong, in BOTH directions: an
+ * under-delete leaves a ghost member, an over-delete quietly drops bindings that should have survived,
+ * and neither raises. `scripts/utils/area-builder-smoke.ts` historically cleared every binding BEFORE
+ * removing a member, so its remove ran against zero rows and proved only that the SQL parses. The case
+ * that actually proves it — and which `v4-surface-smoke.ts` now drives — is a TWO-member area with a
+ * binding on EACH member, removing one: the departing member's binding must go and the survivor's must
+ * remain.
+ *
+ * Refuses an empty membership (an area of zero members has no point set at all), matching
+ * `removeMember`'s "cannot remove the last member" rule stated declaratively.
+ *
+ * 🛑 **HELPER members are SERVER-MANAGED and are never evicted by an omission.** An area's `helper`
+ * device (`vendor='helper'`, ordinal 99 — `lib/areas/helper.ts`) is minted by the battery-provenance
+ * writer, not chosen by a human: `writeBlendOutputs` creates it, registers the blend points on it and
+ * binds them into the area. It is therefore not part of the membership a client AUTHORS, and a full
+ * replace that omitted it — which is exactly what a client that read `members`, filtered to the real
+ * devices it shows in a picker, and PUT the result back would do — would silently delete the area's
+ * blend bindings and blank its provenance card until the next daily recompute re-created them. So a
+ * helper is dropped from the departing set: naming it keeps it (and re-ordinals it), omitting it keeps
+ * it too. This is the same "store choices, not derived state" line §8.2 draws for the doc.
+ */
+export async function replaceMembers(
+  areaId: string,
+  desired: DeviceId[],
+): Promise<void> {
+  const wanted = [...new Set(desired)];
+  if (wanted.length !== desired.length)
+    throw new AreaValidationError("Duplicate member in the members list");
+  if (wanted.length === 0)
+    throw new AreaValidationError("An area must have at least one member");
+
+  const db = requirePlanetscaleDb();
+  const current = await getAreaMemberDeviceIds(areaId);
+  const wantedSet = new Set(wanted);
+  const candidates = current.filter((id) => !wantedSet.has(id));
+  // Read the vendor from `devices`, never from the wire — the caller does not get to declare which of
+  // its omissions were "really" server-managed.
+  const serverManaged = new Set(
+    candidates.length === 0
+      ? []
+      : (
+          await db
+            .select({ id: devices.id })
+            .from(devices)
+            .where(
+              and(
+                inArray(
+                  devices.id,
+                  candidates.map((id) => Device.toUuid(id)),
+                ),
+                eq(devices.vendor, "helper"),
+              ),
+            )
+        ).map((r) => Device.encode(r.id)),
+  );
+  const departing = candidates.filter((id) => !serverManaged.has(id));
+
+  await db.transaction(async (tx) => {
+    for (const leaving of departing) {
+      const deviceUuid = Device.toUuid(leaving);
+      // Same predicate as `removeMember`: "every binding of this area whose point lives on the
+      // departing device", addressed through `points.device_id` (no `devices.rid` hop).
+      await tx
+        .delete(areaBindings)
+        .where(
+          and(
+            eq(areaBindings.areaId, areaId),
+            inArray(
+              areaBindings.pointUid,
+              tx
+                .select({ id: points.id })
+                .from(points)
+                .where(eq(points.deviceId, deviceUuid)),
+            ),
+          ),
+        );
+      await tx
+        .delete(areaMembers)
+        .where(
+          and(
+            eq(areaMembers.areaId, areaId),
+            eq(areaMembers.deviceId, deviceUuid),
+          ),
+        );
+    }
+    // Upsert, not insert: a member that STAYS may still be moving to a new ordinal, and the PK
+    // (area_id, device_id) makes that a conflict rather than a second row.
+    await tx
+      .insert(areaMembers)
+      .values(
+        wanted.map((deviceId, ordinal) => ({
+          areaId,
+          deviceId: Device.toUuid(deviceId),
+          ordinal,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [areaMembers.areaId, areaMembers.deviceId],
+        set: { ordinal: sql`excluded.ordinal` },
+      });
   });
 }
 

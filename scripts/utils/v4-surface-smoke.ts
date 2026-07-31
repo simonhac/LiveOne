@@ -16,9 +16,22 @@
  * (`app/api/v4/__tests__/`) pin the decidable parts; this pins the parts that only a real request,
  * a real Clerk session and a real Postgres can answer. Run it after ANY change under `app/api/v4/`.
  *
- * SAFE TO RE-RUN. It creates only its own scratch dashboards (name prefixed `v4-smoke ·`), deletes them
- * in a `finally`, AND sweeps any left behind by a previous crashed run before it starts. It never
- * mutates an area, a device or a pre-existing dashboard. Modelled on `verify-areas-drift-key.ts`.
+ * SAFE TO RE-RUN. It creates only its own scratch dashboards (name prefixed `v4-smoke ·`) and its own
+ * scratch AREAS (name prefixed `p14-areaw ·`), deletes both in a `finally`, AND sweeps anything left
+ * behind by a previous crashed run before it starts. It never mutates a device, a point, or a
+ * pre-existing dashboard. Modelled on `verify-areas-drift-key.ts`.
+ *
+ * ⚠️ The scratch AREAS are swept over a direct DB connection, not over HTTP, and that is deliberate:
+ * `DELETE /api/v4/areas/{id}` is a SOFT delete (`status='archived'`), so an HTTP-only teardown would
+ * leave a growing pile of archived rows and a consumed integer handle on the SHARED `liveone-dev`
+ * database after every run. The sweep is by name prefix and drops the area's `legacy_handles` row first
+ * (that FK has no ON DELETE, so the row order is load-bearing).
+ *
+ * ⚠️ It does mutate two things it did not create, both idempotently and both reverted: it drives the
+ * LEGACY area twins against its own scratch areas (to diff their payloads key-by-key against the v4
+ * ones), and it recomputes ONE already-materialised day of provenance for a real area — with an explicit
+ * `cursor`, so the first-batch η re-learn and `updateLatest` are both skipped and the write is a
+ * recomputation of values that already exist.
  *
  * 🛑 It also MINTS SHARE TOKENS (Phase 14 stage 11). Those live on a scratch dashboard and
  * `share_tokens.dashboard_id`/`dashboard_grants.dashboard_id` are both ON DELETE CASCADE, so deleting
@@ -41,10 +54,20 @@ import { isNull } from "drizzle-orm";
 import { createClerkClient } from "@clerk/nextjs/server";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { shareTokens } from "@/lib/db/planetscale/schema";
+import { eq, like } from "drizzle-orm";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { areas, legacyHandles } from "@/lib/db/planetscale/schema";
+// The server's OWN binding predicate, so the fixture this script builds cannot drift from the rules
+// `replaceBindings` validates against.
+import { bindingShapeMatches } from "@/lib/areas/slots";
+import { ROLES, type RoleId } from "@/lib/roles/registry";
 
 const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
 const SCRATCH_PREFIX = "v4-smoke ·";
 const SCRATCH_SLUG = `v4-smoke-${Math.random().toString(36).slice(2, 8)}`;
+/** Scratch AREAS carry their own prefix — the ledger's namespace for Phase 14 stage 10. */
+const AREA_PREFIX = "p14-areaw ·";
+const AREA_SLUG = `p14-areaw-${Math.random().toString(36).slice(2, 8)}`;
 
 // --- tiny assertion harness -------------------------------------------------
 let failures = 0;
@@ -335,6 +358,138 @@ async function driveSharedProvenanceDaily(areas: any[]): Promise<void> {
   );
 }
 
+/**
+ * A request with NO Authorization header — the only way to tell a `lib/route-matchers.ts` entry that is
+ * load-bearing from one that is decorative. A Clerk-gated route answers 404 (the middleware's
+ * `protect-rewrite`); a `publicRoutes` route reaches its handler and answers that handler's own 401.
+ *
+ * Stage 12 landed `request()`'s `as` parameter first, so this is now a thin alias over it rather than
+ * a second fetch/parse. The signature stays POSITIONAL (`body`, not an options object) — the `{}` at
+ * the recompute-provenance call site is a request BODY, and absorbing it as options would leave the
+ * handler with no JSON and silently take a different date-param branch while still returning a
+ * plausible status.
+ */
+async function callAnon(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<Res> {
+  return request(method, path, {
+    as: "anon",
+    ...(body !== undefined ? { body } : {}),
+  });
+}
+
+/**
+ * HARD-delete every scratch area this script has ever created, over a direct DB connection.
+ *
+ * `DELETE /api/v4/areas/{id}` archives rather than deletes (an area's uuid keys its provenance history),
+ * so there is no HTTP teardown that restores `liveone-dev` to its baseline row counts — and this
+ * database is shared with three other worktrees, Vercel previews and Simon's local dev. Returns how many
+ * rows it removed so the caller can report a clean run. `legacy_handles.area_id` has no ON DELETE, so
+ * that row must go first or the area delete is refused by the FK.
+ */
+async function sweepScratchAreas(): Promise<number> {
+  const db = requirePlanetscaleDb();
+  const rows = await db
+    .select({ id: areas.id })
+    .from(areas)
+    .where(like(areas.name, `${AREA_PREFIX}%`));
+  for (const row of rows) {
+    await db.delete(legacyHandles).where(eq(legacyHandles.areaId, row.id));
+    await db.delete(areas).where(eq(areas.id, row.id)); // area_members/area_bindings cascade
+  }
+  return rows.length;
+}
+
+interface BindingFixture {
+  /** `dv_` → integer handle, learned from the areas-of-one (an area of one member IS that device). */
+  handleOf: Map<string, number>;
+  /** Two readable devices, each with a point this script can legally bind. */
+  deviceA: string;
+  deviceB: string;
+  bindingA: { role: string; metricType: string; pointId: string };
+  bindingB: { role: string; metricType: string; pointId: string };
+  /** One `vendor:"helper"` device — the SERVER-MANAGED member a full replace must never evict. */
+  helperDevice: string | null;
+}
+
+/**
+ * BUILD (do not borrow) a two-devices-with-a-bindable-point-each fixture, using only the public API.
+ *
+ * Nothing is hardcoded, and nothing is cloned from an existing multi-member area — an earlier version
+ * did exactly that and went un-runnable the moment the 2-hourly prod→dev sync rewrote
+ * `areas.owner_user_id` to a PROD user id, dropping every multi-member area out of the test user's
+ * readable set. What survives that: an area whose `members` is a single device IS that device (its
+ * handle addresses the device), so the readable areas-of-one give both a `dv_` → integer-handle map and
+ * a set of devices this user can definitely pull into an area of their own.
+ *
+ * The candidate bindings are then checked with the SERVER'S OWN predicate (`bindingShapeMatches`, which
+ * `replaceBindings` validates against), so a fixture that this function returns is one the API must
+ * accept — the fixture cannot drift away from the binding rules.
+ */
+async function findBindingFixture(
+  areaList: any[],
+): Promise<BindingFixture | null> {
+  const handleOf = new Map<string, number>();
+  // EVERY helper, not merely the first: there are several on `liveone-dev`, and skipping only one of
+  // them let a helper become `deviceB` — at which point the members PUT correctly refused to evict it
+  // and three assertions failed on a bad fixture rather than on a real defect.
+  const helpers = new Set<string>();
+  for (const a of areaList) {
+    const agg = (await call("GET", `/api/v4/areas/${a.id}`)).body;
+    const members: any[] = agg?.members ?? [];
+    for (const m of members) if (m.vendor === "helper") helpers.add(m.id);
+    if (members.length === 1) handleOf.set(members[0].id, a.legacySystemId);
+  }
+
+  /** The first (role, metric, point) triple on this device that `replaceBindings` would accept. */
+  const bindableOn = async (handle: number) => {
+    const pts =
+      (await call("GET", `/api/device/${handle}/points`)).body?.points ?? [];
+    for (const p of pts) {
+      const stem =
+        typeof p.logicalPath === "string"
+          ? p.logicalPath.slice(0, p.logicalPath.lastIndexOf("/"))
+          : null;
+      if (!stem || !p.pointId) continue;
+      for (const role of Object.keys(ROLES) as RoleId[]) {
+        if (
+          bindingShapeMatches(role, p.metricType, {
+            logicalPathStem: stem,
+            metricType: p.metricType,
+          })
+        )
+          return { role, metricType: p.metricType, pointId: p.pointId };
+      }
+    }
+    return null;
+  };
+
+  const found: { device: string; binding: any }[] = [];
+  for (const [device, handle] of handleOf) {
+    if (helpers.has(device)) continue; // server-managed — never evicted, so useless as the removal case
+    const binding = await bindableOn(handle);
+    if (binding) found.push({ device, binding });
+    if (found.length === 2) break;
+  }
+  if (found.length < 2) return null;
+  return {
+    handleOf,
+    deviceA: found[0].device,
+    deviceB: found[1].device,
+    bindingA: found[0].binding,
+    bindingB: found[1].binding,
+    helperDevice: [...helpers][0] ?? null,
+  };
+}
+
+/** Keys `b` has that `a` does not — the "silent narrowing" check STEP 0's D2 was found by. */
+function missingKeys(a: unknown, b: unknown): string[] {
+  const has = Object.keys((a ?? {}) as object);
+  return Object.keys((b ?? {}) as object).filter((k) => !has.includes(k));
+}
+
 async function main(): Promise<void> {
   assertNotProd();
   console.log(`target: ${BASE}`);
@@ -358,6 +513,11 @@ async function main(): Promise<void> {
     }
   }
   await trash();
+  const preSwept = await sweepScratchAreas();
+  if (preSwept > 0)
+    console.log(
+      `  (swept ${preSwept} leftover scratch area(s) from a crashed run)`,
+    );
 
   try {
     // ---------------------------------------------------------------- 1. GET /areas
@@ -497,6 +657,564 @@ async function main(): Promise<void> {
       ),
       "every slot reports a known resolution mode",
       resolution.body.slots?.[0],
+    );
+
+    // ======================================================= the SEVEN area mutations (stage 10)
+    // 🛑 Every one of these is driven by CREATING FROM SCRATCH, never by re-running against something
+    // that already exists. This repo has twice shipped a write that worked on the second call and 500'd
+    // on the first (an `ON CONFLICT … coalesce` path, and an FK that only breaks first creation).
+    const fixture = await findBindingFixture(list);
+    if (!fixture)
+      throw new Error(
+        "fewer than 2 readable devices carry a bindable point — cannot prove the members PUT removal leg",
+      );
+    console.log(
+      `  fixture: ${fixture.deviceA} (${fixture.bindingA.role}/${fixture.bindingA.metricType}) + ${fixture.deviceB} (${fixture.bindingB.role}/${fixture.bindingB.metricType})`,
+    );
+    const handleA = fixture.handleOf.get(fixture.deviceA)!;
+    const handleB = fixture.handleOf.get(fixture.deviceB)!;
+
+    // ---------------------------------------------------------------- 5b. POST /areas
+    section("POST /api/v4/areas");
+    const noName = await call("POST", "/api/v4/areas", {
+      body: { members: [fixture.deviceA] },
+    });
+    ok(noName.status === 422, "no name → 422", noName);
+    const noMembers = await call("POST", "/api/v4/areas", {
+      body: { name: `${AREA_PREFIX} nomembers` },
+    });
+    ok(noMembers.status === 422, "no members → 422", noMembers);
+    const badMember = await call("POST", "/api/v4/areas", {
+      body: { name: `${AREA_PREFIX} badmember`, members: ["not-a-typeid"] },
+    });
+    ok(badMember.status === 422, "malformed member id → 422", badMember);
+    const dupMember = await call("POST", "/api/v4/areas", {
+      body: {
+        name: `${AREA_PREFIX} dup`,
+        members: [fixture.deviceA, fixture.deviceA],
+      },
+    });
+    ok(dupMember.status === 422, "duplicate member → 422", dupMember);
+    const unknownMember = await call("POST", "/api/v4/areas", {
+      body: { name: `${AREA_PREFIX} unknown`, members: [UNKNOWN_DEVICE] },
+    });
+    ok(
+      unknownMember.status === 403,
+      "unknown/unreadable member → 403 (§8.4 collapses unknown into not-readable)",
+      unknownMember,
+    );
+
+    const createdArea = await call("POST", "/api/v4/areas", {
+      body: {
+        name: `${AREA_PREFIX} site`,
+        slug: AREA_SLUG,
+        members: [fixture.deviceA, fixture.deviceB],
+        location: { country: "AU", state: "VIC" },
+      },
+    });
+    ok(createdArea.status === 201, "201", createdArea);
+    ok(
+      typeof createdArea.body?.id === "string" &&
+        createdArea.body.id.startsWith("ar_") &&
+        typeof createdArea.body?.legacySystemId === "number",
+      "returns { id: ar_…, legacySystemId }",
+      createdArea.body,
+    );
+    if (!createdArea.body?.id)
+      throw new Error("area create failed — cannot continue");
+    const areaId: string = createdArea.body.id;
+
+    // The key-by-key diff against the legacy twin, on a real second creation.
+    const legacyCreated = await call("POST", "/api/areas", {
+      body: {
+        displayName: `${AREA_PREFIX} legacy-twin`,
+        memberSystemIds: [handleA, handleB],
+      },
+    });
+    ok(legacyCreated.status === 200, "legacy POST /api/areas still works", {
+      status: legacyCreated.status,
+    });
+    ok(
+      missingKeys(createdArea.body, legacyCreated.body).length === 0,
+      "the v4 create echoes every key the legacy twin does (no silent narrowing)",
+      { missing: missingKeys(createdArea.body, legacyCreated.body) },
+    );
+
+    const slugClash = await call("POST", "/api/v4/areas", {
+      body: {
+        name: `${AREA_PREFIX} clash`,
+        slug: AREA_SLUG,
+        members: [fixture.deviceA],
+      },
+    });
+    ok(
+      slugClash.status === 409,
+      "POST with a taken slug → 409 (never a bare 500 — lib/db/pg-error.ts)",
+      slugClash,
+    );
+
+    // ---------------------------------------------------------------- 5c. the new area reads back
+    section("GET /api/v4/areas/{id} — the freshly created area");
+    const fresh = await call("GET", `/api/v4/areas/${areaId}`);
+    ok(fresh.status === 200, "200", fresh);
+    ok(
+      fresh.body?.area?.slug === AREA_SLUG &&
+        fresh.body?.area?.legacySystemId === createdArea.body.legacySystemId,
+      "slug + legacySystemId persisted as created",
+      fresh.body?.area,
+    );
+    ok(
+      fresh.body?.members?.length === 2 &&
+        fresh.body.members[0].id === fixture.deviceA &&
+        fresh.body.members[1].id === fixture.deviceB,
+      "members are the two requested devices, in the requested ORDER",
+      fresh.body?.members,
+    );
+    ok(
+      fresh.body?.area?.location?.state === "VIC",
+      "location round-tripped",
+      fresh.body?.area?.location,
+    );
+
+    // ---------------------------------------------------------------- 5d. PUT bindings
+    section("PUT /api/v4/areas/{id}/bindings");
+    const wantBindings = [
+      {
+        role: fixture.bindingA.role,
+        metricType: fixture.bindingA.metricType,
+        pointId: fixture.bindingA.pointId,
+      },
+      {
+        role: fixture.bindingB.role,
+        metricType: fixture.bindingB.metricType,
+        pointId: fixture.bindingB.pointId,
+      },
+    ];
+    const badBindings = await call("PUT", `/api/v4/areas/${areaId}/bindings`, {
+      body: { bindings: "nope" },
+    });
+    ok(badBindings.status === 422, "bindings not an array → 422", badBindings);
+    const badPointId = await call("PUT", `/api/v4/areas/${areaId}/bindings`, {
+      body: {
+        bindings: [{ role: "solar", metricType: "power", pointId: "ar_x" }],
+      },
+    });
+    ok(
+      badPointId.status === 422,
+      "a non-`pt_` pointId → 422 (parsed at the seam, not surfaced as 'not found')",
+      badPointId,
+    );
+    const putBindings = await call("PUT", `/api/v4/areas/${areaId}/bindings`, {
+      body: { bindings: wantBindings },
+    });
+    ok(putBindings.status === 200, "200", putBindings);
+    ok(
+      putBindings.body?.bindings?.length === 2 &&
+        putBindings.body.bindings.every(
+          (b: any) =>
+            b.id?.startsWith?.("bn_") &&
+            b.pointId?.startsWith?.("pt_") &&
+            typeof b.priority === "number",
+        ),
+      "returns the new state: bn_ ids, pt_ points, priority",
+      putBindings.body?.bindings,
+    );
+    ok(
+      missingKeys(putBindings.body.bindings[0], fresh.body.bindings[0] ?? {})
+        .length === 0 &&
+        missingKeys(
+          putBindings.body.bindings[0],
+          (await call("GET", `/api/v4/areas/${areaId}`)).body?.bindings?.[0],
+        ).length === 0,
+      "the PUT's binding shape is identical to the aggregate GET's (same loader)",
+      putBindings.body.bindings[0],
+    );
+    // The legacy twin, driven on the same area, for the key diff. It returns the editor projection
+    // (role/metricType/pointId/transform); v4 must carry all of it plus `id` and `priority`.
+    const legacyBindings = await call("PUT", `/api/areas/${areaId}/bindings`, {
+      body: { bindings: wantBindings },
+    });
+    ok(
+      legacyBindings.status === 200,
+      "legacy PUT bindings still works",
+      legacyBindings.status,
+    );
+    ok(
+      missingKeys(
+        putBindings.body.bindings[0],
+        legacyBindings.body?.bindings?.[0],
+      ).length === 0,
+      "the v4 bindings PUT echoes every key the legacy twin does",
+      {
+        missing: missingKeys(
+          putBindings.body.bindings[0],
+          legacyBindings.body?.bindings?.[0],
+        ),
+      },
+    );
+    const foreignPoint = await call("PUT", `/api/v4/areas/${areaId}/bindings`, {
+      body: {
+        bindings: [
+          {
+            role: fixture.bindingA.role,
+            metricType: fixture.bindingA.metricType,
+            pointId: fixture.bindingA.pointId,
+          },
+          {
+            role: fixture.bindingA.role,
+            metricType: fixture.bindingA.metricType,
+            pointId: fixture.bindingA.pointId,
+          },
+        ],
+      },
+    });
+    ok(
+      foreignPoint.status === 422,
+      "a duplicate (role, metric, point) → 422",
+      foreignPoint,
+    );
+
+    // ---------------------------------------------------------------- 5e. PUT members
+    section("PUT /api/v4/areas/{id}/members — the declarative full replace");
+    const emptyMembers = await call("PUT", `/api/v4/areas/${areaId}/members`, {
+      body: { members: [] },
+    });
+    ok(
+      emptyMembers.status === 422,
+      "an empty membership → 422 (an area of zero members has no point set)",
+      emptyMembers,
+    );
+    const unreadableMember = await call(
+      "PUT",
+      `/api/v4/areas/${areaId}/members`,
+      { body: { members: [UNKNOWN_DEVICE] } },
+    );
+    ok(
+      unreadableMember.status === 403,
+      "an unreadable member → 403",
+      unreadableMember,
+    );
+
+    // 🛑 THE CASE THAT PROVES THE REMOVAL LEG. Two members, a binding on EACH, remove one. An
+    // under-delete (the departing member's binding survives) and an over-delete (the survivor's binding
+    // goes too) are both SILENT — only asserting on the exact surviving set can tell them apart.
+    const before = await call("GET", `/api/v4/areas/${areaId}`);
+    ok(
+      before.body?.members?.length === 2 && before.body?.bindings?.length === 2,
+      "PRE-STATE: two members, one binding on each",
+      {
+        members: before.body?.members?.map((m: any) => m.id),
+        bindings: before.body?.bindings?.map((b: any) => b.pointId),
+      },
+    );
+    const removed = await call("PUT", `/api/v4/areas/${areaId}/members`, {
+      body: { members: [fixture.deviceA] },
+    });
+    ok(removed.status === 200, "200", removed);
+    ok(
+      removed.body?.members?.length === 1 &&
+        removed.body.members[0].id === fixture.deviceA,
+      "returns the new state: exactly the surviving member",
+      removed.body?.members,
+    );
+    const after = await call("GET", `/api/v4/areas/${areaId}`);
+    ok(
+      after.body?.bindings?.length === 1 &&
+        after.body.bindings[0].pointId === fixture.bindingA.pointId,
+      "the DEPARTING member's binding is gone and the SURVIVOR's remains (not zero, not two)",
+      after.body?.bindings?.map((b: any) => b.pointId),
+    );
+    ok(
+      missingKeys(removed.body.members[0], after.body.members[0]).length === 0,
+      "the PUT's member shape is identical to the aggregate GET's (same loader)",
+      removed.body?.members?.[0],
+    );
+    // …and the add leg, restoring the member. Its binding does NOT come back — bindings are authored,
+    // not implied — which is exactly what the legacy add/remove pair did too.
+    const restored = await call("PUT", `/api/v4/areas/${areaId}/members`, {
+      body: { members: [fixture.deviceA, fixture.deviceB] },
+    });
+    ok(
+      restored.status === 200 && restored.body?.members?.length === 2,
+      "adding a member back → 200 with both members",
+      restored.body?.members,
+    );
+    ok(
+      (await call("GET", `/api/v4/areas/${areaId}`)).body?.bindings?.length ===
+        1,
+      "re-adding the member does NOT resurrect its deleted binding",
+    );
+    // A pure REORDER is a real edit, not a no-op: the array index is `area_members.ordinal`.
+    const reordered = await call("PUT", `/api/v4/areas/${areaId}/members`, {
+      body: { members: [fixture.deviceB, fixture.deviceA] },
+    });
+    ok(
+      reordered.body?.members?.[0]?.id === fixture.deviceB,
+      "a pure reorder is applied (ordinal = array index)",
+      reordered.body?.members?.map((m: any) => m.id),
+    );
+    // The legacy twins still work on the same area — PR 13 has not moved them yet.
+    const legacyAddRemove = await call(
+      "DELETE",
+      `/api/areas/${areaId}/devices`,
+      { body: { systemId: handleB } },
+    );
+    ok(
+      legacyAddRemove.status === 200 && legacyAddRemove.body?.ok === true,
+      "legacy DELETE /devices still works and still answers { ok: true }",
+      legacyAddRemove,
+    );
+    await call("PUT", `/api/v4/areas/${areaId}/members`, {
+      body: { members: [fixture.deviceA, fixture.deviceB] },
+    });
+
+    // 🛑 A SERVER-MANAGED `vendor:"helper"` member survives being omitted from a full replace. Driven on
+    // a throwaway area, never on a real one — but the hazard it guards is real and lives on the real
+    // ones: a client that read `members`, filtered to the devices its picker shows, and PUT the result
+    // back would otherwise delete the area's blend bindings and blank its provenance card until the
+    // next daily recompute rebuilt them.
+    if (fixture.helperDevice) {
+      const withHelper = await call("POST", "/api/v4/areas", {
+        body: {
+          name: `${AREA_PREFIX} helper-keep`,
+          members: [fixture.deviceA, fixture.helperDevice],
+        },
+      });
+      ok(
+        withHelper.status === 201,
+        "an area with a helper member creates",
+        withHelper,
+      );
+      const dropped = await call(
+        "PUT",
+        `/api/v4/areas/${withHelper.body?.id}/members`,
+        { body: { members: [fixture.deviceA] } },
+      );
+      ok(
+        dropped.body?.members?.length === 2 &&
+          dropped.body.members.some(
+            (m: any) => m.id === fixture.helperDevice,
+          ) &&
+          dropped.body.members.some((m: any) => m.id === fixture.deviceA),
+        "omitting a `vendor:helper` member does NOT evict it (server-managed membership)",
+        dropped.body?.members,
+      );
+      const droppedReal = await call(
+        "PUT",
+        `/api/v4/areas/${withHelper.body?.id}/members`,
+        { body: { members: [fixture.helperDevice] } },
+      );
+      ok(
+        droppedReal.body?.members?.length === 1 &&
+          droppedReal.body.members[0].id === fixture.helperDevice,
+        "…while a REAL member named-out is still removed (the exception is narrow)",
+        droppedReal.body?.members,
+      );
+    }
+
+    // The area-of-one guard: a device's OWN area cannot be given a second member.
+    const areaOfOne = list.find(
+      (a: any) => fixture.handleOf.get(fixture.deviceA) === a.legacySystemId,
+    );
+    if (areaOfOne) {
+      const cannotAdd = await call(
+        "PUT",
+        `/api/v4/areas/${areaOfOne.id}/members`,
+        { body: { members: [fixture.deviceA, fixture.deviceB] } },
+      );
+      ok(
+        cannotAdd.status === 409 &&
+          cannotAdd.body?.code === "AREA_OF_ONE_CANNOT_ADD",
+        "a device's own area refuses a second member → 409 AREA_OF_ONE_CANNOT_ADD",
+        cannotAdd,
+      );
+      const idempotent = await call(
+        "PUT",
+        `/api/v4/areas/${areaOfOne.id}/members`,
+        { body: { members: [fixture.deviceA] } },
+      );
+      ok(
+        idempotent.status === 200,
+        "…but restating its existing single member is a legal no-op (idempotent PUT)",
+        idempotent,
+      );
+    }
+
+    // ---------------------------------------------------------------- 5f. PATCH
+    section("PATCH /api/v4/areas/{id}");
+    const patchedArea = await call("PATCH", `/api/v4/areas/${areaId}`, {
+      body: {
+        name: `${AREA_PREFIX} renamed`,
+        slug: `${AREA_SLUG}-2`,
+        dayOffsetMin: 570,
+        displayTimezone: "Australia/Adelaide",
+        location: { postcode: "5000" },
+      },
+    });
+    ok(patchedArea.status === 200, "200", patchedArea);
+    ok(
+      patchedArea.body?.area?.name === `${AREA_PREFIX} renamed` &&
+        patchedArea.body?.area?.slug === `${AREA_SLUG}-2` &&
+        patchedArea.body?.area?.dayOffsetMin === 570 &&
+        patchedArea.body?.area?.displayTimezone === "Australia/Adelaide",
+      "echoes the new state, and GET/PATCH speak the same keys (name/slug/dayOffsetMin)",
+      patchedArea.body?.area,
+    );
+    ok(
+      patchedArea.body?.area?.location?.postcode === "5000" &&
+        patchedArea.body?.area?.location?.state === "VIC",
+      "location MERGES rather than replacing (state survived a postcode-only patch)",
+      patchedArea.body?.area?.location,
+    );
+    ok(
+      missingKeys(
+        patchedArea.body,
+        (await call("GET", `/api/v4/areas/${areaId}`)).body,
+      ).length === 0,
+      "the PATCH echo is the same aggregate the GET returns",
+      patchedArea.body?.area,
+    );
+    const emptyAreaName = await call("PATCH", `/api/v4/areas/${areaId}`, {
+      body: { name: "  " },
+    });
+    ok(emptyAreaName.status === 422, "empty name → 422", emptyAreaName);
+    const badOffset = await call("PATCH", `/api/v4/areas/${areaId}`, {
+      body: { dayOffsetMin: "600" },
+    });
+    ok(badOffset.status === 422, "non-numeric dayOffsetMin → 422", badOffset);
+    const unknownForPatch = await call(
+      "PATCH",
+      `/api/v4/areas/${UNKNOWN_AREA}`,
+      { body: { name: "x" } },
+    );
+    ok(
+      unknownForPatch.status === 404,
+      "unknown area → 404 (the write side keeps the legacy 404/403 split)",
+      unknownForPatch,
+    );
+    const malformedForPatch = await call(
+      "PATCH",
+      "/api/v4/areas/not-a-typeid",
+      {
+        body: { name: "x" },
+      },
+    );
+    ok(
+      malformedForPatch.status === 400,
+      "malformed area id → 400",
+      malformedForPatch,
+    );
+    // A second scratch area, then patch its slug onto the first's → 409 (the pg-error path again).
+    const secondArea = await call("POST", "/api/v4/areas", {
+      body: { name: `${AREA_PREFIX} second`, members: [fixture.deviceA] },
+    });
+    ok(secondArea.status === 201, "a second area creates from scratch", {
+      status: secondArea.status,
+    });
+    const patchClash = await call(
+      "PATCH",
+      `/api/v4/areas/${secondArea.body?.id}`,
+      { body: { slug: `${AREA_SLUG}-2` } },
+    );
+    ok(
+      patchClash.status === 409,
+      "PATCH onto a taken slug → 409 (never 500)",
+      patchClash,
+    );
+
+    // ---------------------------------------------------------------- 5g. recompute-provenance
+    section("POST /api/v4/areas/{id}/recompute-provenance");
+    // 🛑 THE ROUTE-MATCHER PROOF, and the only assertion that can see the entry at all. Anonymous:
+    // 401 means the request REACHED the handler (which then rejected it); 404 means the Clerk edge
+    // rewrote it away, i.e. the `publicRoutes` entry is missing. A logged-in tester sees 200 either way.
+    const anonRecompute = await callAnon(
+      "POST",
+      `/api/v4/areas/${areaId}/recompute-provenance`,
+      {},
+    );
+    ok(
+      anonRecompute.status === 401,
+      "anonymous → 401 FROM THE HANDLER, not 404 from the Clerk edge (the publicRoutes entry works)",
+      anonRecompute,
+    );
+    // The negative control: a v4 area route that is NOT in publicRoutes must still be 404'd at the edge.
+    const anonControl = await callAnon("GET", `/api/v4/areas/${areaId}`);
+    ok(
+      anonControl.status === 404,
+      "CONTROL: a v4 area route with no entry is still 404'd at the edge (the allow-list is surgical)",
+      anonControl,
+    );
+    const recomputeBadDate = await call(
+      "POST",
+      `/api/v4/areas/${areaId}/recompute-provenance`,
+      { body: { last: "banana" } },
+    );
+    ok(
+      recomputeBadDate.status === 400,
+      "malformed date params → 400",
+      recomputeBadDate,
+    );
+    // A real one-day run against a real, already-materialised area. `cursor` == `end` makes this NOT
+    // the first batch, so the η re-learn and `updateLatest` are both skipped: it recomputes one day of
+    // `flow_attr_1d` to the same values it already holds, and mints nothing.
+    const day = new Date(Date.now() - 2 * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const recompute = await call(
+      "POST",
+      `/api/v4/areas/${area.id}/recompute-provenance`,
+      { body: { start: day, end: day, cursor: day, limit: 1 } },
+    );
+    ok(recompute.status === 200, "200 on a real area", recompute);
+    ok(
+      recompute.body?.ok === true &&
+        recompute.body?.areaId === area.id &&
+        typeof recompute.body?.systemId === "number" &&
+        recompute.body?.done === true,
+      "{ ok, areaId: ar_…, systemId, recomputed, rowsWritten, attrRows, from, to, nextCursor, done }",
+      recompute.body,
+    );
+    const legacyRecompute = await call(
+      "POST",
+      `/api/areas/${area.id}/recompute-provenance`,
+      { body: { start: day, end: day, cursor: day, limit: 1 } },
+    );
+    ok(
+      missingKeys(recompute.body, legacyRecompute.body).length === 0,
+      "the v4 recompute echoes every key the legacy twin does (one shared implementation)",
+      { missing: missingKeys(recompute.body, legacyRecompute.body) },
+    );
+
+    // ---------------------------------------------------------------- 5h. DELETE
+    section("DELETE /api/v4/areas/{id}");
+    const ownArea = list.find(
+      (a: any) => fixture.handleOf.get(fixture.deviceA) === a.legacySystemId,
+    );
+    if (ownArea) {
+      const refused = await call("DELETE", `/api/v4/areas/${ownArea.id}`);
+      ok(
+        refused.status === 409,
+        "a device's own area refuses deletion → 409",
+        refused,
+      );
+    }
+    const deletedArea = await call("DELETE", `/api/v4/areas/${areaId}`);
+    ok(
+      deletedArea.status === 200 && deletedArea.body?.success === true,
+      "200 { success }",
+      deletedArea,
+    );
+    const afterDelete = await call("GET", `/api/v4/areas/${areaId}`);
+    ok(
+      afterDelete.status === 403,
+      "the archived area drops out of the readable set (soft delete = gone, to every consumer)",
+      afterDelete,
+    );
+    ok(
+      !((await call("GET", "/api/v4/areas")).body?.areas ?? []).some(
+        (a: any) => a.id === areaId,
+      ),
+      "…and out of GET /api/v4/areas",
     );
 
     // ---------------------------------------------------------------- 6. GET /dashboards
@@ -1352,7 +2070,10 @@ async function main(): Promise<void> {
 
     // ==================================================================  } finally {
     await trash();
-    console.log("\ncleaned up scratch dashboards");
+    const swept = await sweepScratchAreas();
+    console.log(
+      `\ncleaned up scratch dashboards, and hard-deleted ${swept} scratch area(s)`,
+    );
   }
 
   console.log(
