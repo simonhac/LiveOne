@@ -15,7 +15,7 @@ import NewDashboardDialog from "@/components/NewDashboardDialog";
 import AddAreaDialog from "@/components/AddAreaDialog";
 import AreaBuilderDialog from "@/components/area-builder/AreaBuilderDialog";
 import { readableAreasQuery } from "@/lib/queries";
-import { sectionAreaIdsV3, type DashboardV3 } from "@/lib/dashboard/v3";
+import { docAreaRefs, docHasCards } from "@/lib/dashboard/add-area";
 import {
   hasTimeTravelingCard,
   primaryHandle,
@@ -37,17 +37,18 @@ interface DashboardClientProps {
     displayName: string | null;
     alias: string | null;
     /**
-     * Still read by the two dialogs (`AddAreaDialog` writes it; `DashboardSettingsDialog` derives
-     * its area list from it). NOT a render input any more — the page renders `doc`.
-     */
-    descriptor: DashboardV3;
-    /**
-     * The v4 node tree — the ONLY thing rendered here since Phase 14 stage 9 deleted the v3
-     * renderer. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and every write path validates
-     * it, so the page always has one; a doc that fails the shape guard arrives as an empty document
-     * rather than falling back to a second renderer.
+     * The v4 node tree — the ONLY shape this shell knows about since Phase 14 stage 14 moved the
+     * last authoring surface (`AddAreaDialog`) and the settings dialog's area list off `descriptor`.
+     * `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and every write path validates it, so the
+     * page always has one; a doc that fails the shape guard arrives as an empty document rather than
+     * falling back to a second renderer.
      */
     doc: DashboardV4;
+    /**
+     * `dashboards.revision` as of this render — the `If-Match` precondition `AddAreaDialog` sends
+     * with its whole-document `PUT` (clean-sheet §9.1). Without it two tabs silently clobber.
+     */
+    revision: number;
   };
   /** Owner or admin → may rename/delete/switch. */
   canEdit: boolean;
@@ -234,13 +235,36 @@ export default function DashboardClient({
         </header>
 
         <main className="mx-auto max-w-7xl px-1 py-4">
-          <DashboardV4View
-            doc={dashboard.doc}
-            areaById={areaById}
-            dashboardId={dashboard.id}
-            areasResolved={areasResolved}
-            deviceById={deviceById}
-          />
+          {docHasCards(dashboard.doc) ? (
+            <DashboardV4View
+              doc={dashboard.doc}
+              areaById={areaById}
+              dashboardId={dashboard.id}
+              areasResolved={areasResolved}
+              deviceById={deviceById}
+            />
+          ) : (
+            // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally
+            // nothing for it. The v3 renderer used to own this state; Phase 8/10 made it unreachable
+            // and stage 9's deletion of that renderer made it permanent, so it lives here now — the
+            // shell owns the empty case because the shell owns the dialog it opens.
+            <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
+              <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
+              <p className="text-sm">
+                This dashboard has no cards yet.
+                {canEdit ? " Add an area to get started." : ""}
+              </p>
+              {canEdit && (
+                <button
+                  onClick={() => setAddAreaOpen(true)}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:bg-gray-800 hover:text-white"
+                >
+                  <Layers className="h-4 w-4" />
+                  Add area
+                </button>
+              )}
+            </div>
+          )}
         </main>
 
         {canEdit && (
@@ -251,7 +275,7 @@ export default function DashboardClient({
               id={dashboard.id}
               initialName={dashboard.displayName ?? ""}
               initialAlias={dashboard.alias ?? ""}
-              areaIds={sectionAreaIdsV3(dashboard.descriptor)}
+              areaIds={docAreaRefs(dashboard.doc)}
               onDeleted={() => router.push("/dashboard")}
               onSaved={() => router.refresh()}
             />
@@ -259,7 +283,8 @@ export default function DashboardClient({
               isOpen={addAreaOpen}
               onClose={() => setAddAreaOpen(false)}
               dashboardId={dashboard.id}
-              descriptor={dashboard.descriptor}
+              doc={dashboard.doc}
+              revision={dashboard.revision}
               readableAreas={readableAreas}
               onSaved={() => router.refresh()}
             />

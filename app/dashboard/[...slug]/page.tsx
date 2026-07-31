@@ -241,8 +241,11 @@ async function renderCompositionDashboard(
             id: dashboard.id,
             displayName: dashboard.displayName,
             alias: dashboard.alias,
-            descriptor,
             doc: v4doc,
+            // The `If-Match` precondition for AddAreaDialog's whole-document PUT (§9.1). Sending the
+            // revision the page actually rendered is what turns a concurrent edit into a 412 instead
+            // of a lost update — so it must come from the same read as `doc`, not a second fetch.
+            revision: dashboard.revision,
           }}
           canEdit={canEdit}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
