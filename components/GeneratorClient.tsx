@@ -6,6 +6,7 @@ import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { applyExcelFormat } from "@/lib/point/display/excel-format";
 import {
   avgPowerWFromEnergy,
+  formatRunSignal,
   formatRunWhen,
 } from "@/lib/run-tracking/run-period-view";
 import {
@@ -89,6 +90,10 @@ export default function GeneratorClient({
   const signalCol = generatorData?.columns?.signal
     ? (generatorData.signal ?? null)
     : null;
+  // 🛑 The whole reason this flag exists: the rows in view are NOT all in the current signal's unit,
+  // so naming that unit in the header would print Daylesford's 74 pre-re-point Watt runs as rpm.
+  // Header goes neutral; each cell carries its own unit instead.
+  const signalUnitPerRow = generatorData?.columns?.signalUnitPerRow ?? false;
   const showAvgPower = generatorData?.columns?.avgPower ?? false;
   const showCost = generatorData?.columns?.cost ?? false;
   const showEmissions = generatorData?.columns?.emissions ?? false;
@@ -151,8 +156,14 @@ export default function GeneratorClient({
                     <th className={TH_RIGHT}>Duration</th>
                     {signalCol && (
                       <th className={`${TH_RIGHT} hidden sm:table-cell`}>
-                        Avg {signalCol.label}
-                        {signalCol.unit ? ` (${signalCol.unit})` : ""}
+                        {signalUnitPerRow ? (
+                          "Avg Signal"
+                        ) : (
+                          <>
+                            Avg {signalCol.label}
+                            {signalCol.unit ? ` (${signalCol.unit})` : ""}
+                          </>
+                        )}
                       </th>
                     )}
                     {showAvgPower && (
@@ -199,12 +210,13 @@ export default function GeneratorClient({
                         </td>
                         {signalCol && (
                           <td className={`${TD_NUM} hidden sm:table-cell`}>
-                            {event.avgSignal != null
-                              ? applyExcelFormat(
-                                  event.avgSignal,
-                                  signalCol.format,
-                                )
-                              : "—"}
+                            {formatRunSignal(
+                              event.avgSignal,
+                              event.signalUnit,
+                              signalCol,
+                              signalUnitPerRow,
+                              applyExcelFormat,
+                            )}
                           </td>
                         )}
                         {showAvgPower && (
@@ -300,7 +312,9 @@ export default function GeneratorClient({
                   ? "Avg Power is each run’s energy divided by its duration."
                   : "Avg Power is the average of the signal samples over the run."}
                 {signalCol
-                  ? ` Avg ${signalCol.label} is the mean of the raw ${signalCol.unit || signalCol.metricUnit} samples the detector follows; it is blank for runs recorded by an earlier detector version, whose units cannot be confirmed.`
+                  ? signalUnitPerRow
+                    ? " Avg Signal is the mean of the raw samples the detector followed for that run. The detector has been re-pointed during this period, so each run shows the unit it was actually measured in."
+                    : ` Avg ${signalCol.label} is the mean of the raw ${signalCol.unit || signalCol.metricUnit} samples the detector follows.`
                   : ""}
               </p>
               {(showCost || showEmissions || showRenewable) && (

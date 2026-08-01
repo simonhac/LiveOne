@@ -816,13 +816,29 @@ export const derivedIntervals = pgTable(
     endTime: timestamp("end_time"), // UTC; NULL = OPEN (running now)
     durationSeconds: integer("duration_seconds"), // null while open
     energyKwh: doublePrecision("energy_kwh"),
-    maxPowerW: doublePrecision("max_power_w"),
-    minPowerW: doublePrecision("min_power_w"),
-    avgPowerW: doublePrecision("avg_power_w"),
+    // Statistics of the SIGNAL SERIES the detector follows — whatever that series measures — in
+    // `signal_unit`. Renamed from `max/min/avg_power_w` by migration 0055, which is the whole point
+    // of it: they never were Watts by construction, only by the accident of the first detector's
+    // signal being Selectronic grid power. Daylesford's re-point to DSE Engine Speed made the same
+    // three columns hold rpm, and prod's history is mixed-unit PERMANENTLY.
+    maxSignal: doublePrecision("max_signal"),
+    minSignal: doublePrecision("min_signal"),
+    avgSignal: doublePrecision("avg_signal"),
+    // The RAW `points.unit` spelling of the signal point AS AT THE MOMENT THIS ROW WAS WRITTEN —
+    // 'W', 'rpm', … The unit is a property of THE ROW, not of the derivation: one derivation
+    // (947afbcc-…) owns Daylesford's whole history and its CURRENT version is 2, yet 74 of its 77
+    // rows were written by version 1 against a different signal point in a different unit. That is
+    // exactly why the reader used to gate on `detector_version` and suppress the statistic — with
+    // the unit stored per row there is nothing left to infer, and the gate is gone.
+    //
+    // A statistic is never unitless: `derived_intervals_signal_unit_check` (0055) forbids a non-null
+    // max/min/avg alongside a NULL unit. The writer honours it by REFUSING TO STORE a number it
+    // cannot label (see derived-intervals-pg.ts) rather than by labelling one it guessed.
+    signalUnit: text("signal_unit"),
     // Per-run provenance, ACCUMULATED by the recompute exactly like energy_kwh — never derived at
     // render time. NULL = UNKNOWN, never zero: when the device's intensity is unknowable the
     // columns are omitted from the UI entirely (lib/run-tracking/intensity.ts). Named for their
-    // units, deliberately not repeating the *_power_w mislabelling they sit beside.
+    // units — the convention the columns above have now joined.
     costC: doublePrecision("cost_c"), // cents (signed) — Σ sliceKwh × price(t)
     emissionsG: doublePrecision("emissions_g"), // grams CO₂ — Σ sliceKwh × intensity(t)
     renewableKwh: doublePrecision("renewable_kwh"), // kWh — Σ sliceKwh × renewableFraction(t)
@@ -837,6 +853,17 @@ export const derivedIntervals = pgTable(
     openUnique: uniqueIndex("derived_intervals_open_unique")
       .on(table.derivationId)
       .where(sql`end_time IS NULL`),
+    // A STATISTIC IS NEVER UNITLESS (migration 0055). This is the invariant that REPLACES the
+    // route's retired `detector_version` equality gate: that gate existed only because a stored
+    // number could not say what it measured, so the reader had to refuse to show it. Enforcing the
+    // pairing in the database means no future writer can reintroduce an unlabelled statistic, which
+    // is the only way the mislabelling could come back.
+    // prettier-ignore — kept on one line so the serialized constraint text (and therefore the
+    // drizzle snapshot) is stable; a wrapped template would embed the newline in the SQL.
+    signalUnitCheck: check(
+      "derived_intervals_signal_unit_check",
+      sql`${table.signalUnit} IS NOT NULL OR (${table.maxSignal} IS NULL AND ${table.minSignal} IS NULL AND ${table.avgSignal} IS NULL)`,
+    ),
   }),
 );
 

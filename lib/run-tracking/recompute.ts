@@ -25,6 +25,19 @@ const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
 export interface RecomputeSummary {
   trackersProcessed: number;
+  /**
+   * How many detectors FAILED this pass (their error was caught and logged, not thrown).
+   *
+   * 🛑 This exists because the swallow below made a broken pass indistinguishable from an idle one:
+   * the minutely cron returned `success: true` with `rowsInserted: 0` — green while deriving
+   * nothing — so the only evidence was a `console.error` nobody is watching. Any non-zero value here
+   * means intervals are NOT being maintained right now, and the number is surfaced in the cron's
+   * JSON response so the failure is visible without reading logs.
+   *
+   * The swallow itself is deliberate and stays: one broken detector must not cost every other
+   * detector its reconcile. What was wrong was doing it silently.
+   */
+  trackersFailed: number;
   rowsDeleted: number;
   rowsInserted: number;
   openPeriods: number;
@@ -48,6 +61,7 @@ async function recomputeWindowAllTrackers(
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
+  let trackersFailed = 0;
 
   for (const tracker of trackers) {
     try {
@@ -58,6 +72,7 @@ async function recomputeWindowAllTrackers(
       rowsInserted += res.inserted;
       if (res.open) openPeriods += 1;
     } catch (err) {
+      trackersFailed += 1;
       console.error(
         `[RunTracking] recompute failed for derivation ${tracker.id} (handle=${tracker.legacyHandle} role=${tracker.role}):`,
         err,
@@ -67,6 +82,7 @@ async function recomputeWindowAllTrackers(
 
   return {
     trackersProcessed: trackers.length,
+    trackersFailed,
     rowsDeleted,
     rowsInserted,
     openPeriods,
@@ -86,10 +102,15 @@ export async function reconcileTrailingWindow(
     nowMs,
     nowMs,
   );
-  console.log(
+  const line =
     `[RunTracking] reconcile trailing ${Math.round(trailingMs / 3600000)}h: ` +
-      `${summary.trackersProcessed} trackers, ${summary.rowsInserted} periods, ${summary.openPeriods} open`,
-  );
+    `${summary.trackersProcessed} trackers, ${summary.rowsInserted} periods, ${summary.openPeriods} open`;
+  if (summary.trackersFailed > 0) {
+    // Loud, and at error level: this pass derived nothing for those detectors.
+    console.error(`${line}, ${summary.trackersFailed} FAILED`);
+  } else {
+    console.log(line);
+  }
   return summary;
 }
 
@@ -158,6 +179,10 @@ export async function recomputeRange(
 
   const summary: RecomputeSummary = {
     trackersProcessed: trackers.length,
+    // Chunked, so this counts FAILED CHUNKS rather than whole detectors — `failures` is per chunk.
+    // Still the right signal (non-zero ⇒ some window was not rebuilt); `failOnError` below keeps its
+    // existing throw-after-processing semantics on this explicit-range path, unchanged.
+    trackersFailed: failures.length,
     rowsDeleted,
     rowsInserted,
     openPeriods,

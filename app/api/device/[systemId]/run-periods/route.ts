@@ -110,8 +110,8 @@ async function readSignalMeta(
 interface EventShape {
   tz: string;
   columns: RunPeriodColumns;
-  /** The detector's CURRENT version — rows written by an older one may be in a different unit. */
-  detectorVersion: number | null;
+  /** The current signal's RAW unit, to decide whether a row's stored unit is still the live one. */
+  signalMetricUnit: string | null;
 }
 
 /**
@@ -127,13 +127,16 @@ function endDateIfDifferentDay(r: DerivedInterval, tz: string): string | null {
 
 /** Shape one derived interval into the (legacy-compatible + enriched) event the UI consumes. */
 function toEvent(r: DerivedInterval, s: EventShape) {
-  // `avg_power_w` holds a statistic of the RAW SIGNAL, whose unit is whatever the detector's signal
-  // point measures. A row written by an EARLIER detector version predates a signal/config change, so
-  // its unit is not provably the one `signal` describes (Daylesford's pre-2026-07-11 rows are
-  // Selectronic Watts; its current rows are DSE rpm). Suppress rather than mislabel.
-  const unitProven =
-    s.detectorVersion != null && r.detectorVersion === s.detectorVersion;
-  const avgSignal = unitProven ? r.avgPowerW : null;
+  // The `detector_version === detector.detectorVersion` gate that used to stand here is GONE
+  // (migration 0055). It existed for one reason: `avg_power_w` was a number with no recorded unit,
+  // so the only evidence that it meant what the header said was "the same detector version wrote
+  // it", and anything older had to be suppressed. `signal_unit` is now stored per row, so the value
+  // is self-describing and every row can be served — labelled, rather than blank.
+  //
+  // Note this is strictly MORE data than the gate allowed: it un-suppresses all 74 of Daylesford's
+  // version-1 runs. What keeps that honest is `columns.signalUnitPerRow` + the per-event unit below,
+  // not a version comparison.
+  const avgSignal = r.avgSignal;
   return {
     // Legacy generator-events contract:
     date: formatInTimezone(r.startTime, s.tz, "EEE d MMM"),
@@ -155,16 +158,26 @@ function toEvent(r: DerivedInterval, s: EventShape) {
     endTimeISO: r.endTime ? r.endTime.toISOString() : null,
     durationSeconds: r.durationSeconds,
     sampleCount: r.sampleCount,
-    /** Mean of the raw on-samples, in `signal.unit`. Null when the unit isn't provable. */
+    /** Mean of the raw on-samples, in `signalUnit`. Null only when the row stored no statistic. */
     avgSignal,
+    /**
+     * The unit THIS row's statistics are in, display-spelled. Carried per event, not per response,
+     * because one window can contain both (Daylesford's 74 W runs and 3 rpm runs). Null for a row
+     * predating migration 0055's backfill — impossible on prod/dev, where the backfill is total.
+     */
+    signalUnit: r.signalUnit ? getUnitDisplay(r.signalUnit) : null,
     /**
      * True average power (W). From energy ÷ duration wherever an energy point is bound; only when
      * the signal ITSELF is power (and no energy point exists) does it fall back to the signal mean,
      * where `Math.abs` is right because the figure is being presented as a magnitude.
+     *
+     * The fallback is now gated on THE ROW's unit, not just the detector's current config: in a
+     * mixed window some rows are not power at all, and passing an rpm through as Watts is exactly
+     * the mislabelling being retired. Such a row reports no average power rather than a wrong one.
      */
     avgPowerW:
       s.columns.avgPowerBasis === "signal"
-        ? avgSignal == null
+        ? avgSignal == null || r.signalUnit !== s.signalMetricUnit
           ? null
           : Math.abs(avgSignal)
         : avgPowerWFromEnergy(r.energyKwh, r.durationSeconds),
@@ -192,6 +205,9 @@ async function resolveShape(
   const columns = planRunPeriodColumns({
     signalMetricType: signal?.metricType ?? null,
     signalMetricUnit: signal?.metricUnit ?? null,
+    // Same principle as the provenance gate below, applied to units: read what the ROWS carry, not
+    // what the config says they should. A window straddling the re-point holds both.
+    rowSignalUnits: rows.map((r) => r.signalUnit),
     hasEnergyPoint: detector?.energyPoint != null,
     provenance: {
       cost: rows.some((r) => r.costC != null),
@@ -201,7 +217,7 @@ async function resolveShape(
   });
   return {
     signal,
-    shape: { tz, columns, detectorVersion: detector?.detectorVersion ?? null },
+    shape: { tz, columns, signalMetricUnit: signal?.metricUnit ?? null },
   };
 }
 

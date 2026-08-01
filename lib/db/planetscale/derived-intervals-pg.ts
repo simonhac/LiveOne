@@ -17,6 +17,12 @@
  * Was `run-periods-pg.ts`, keyed by `(system_id, role)`. The key is now the single
  * `derivation_id` — 1:1 with the old pair via `derivations_area_role_unique` — so the source
  * points arrive pre-resolved as `PointId`s and no `RegistryCache.pointForAddr` hop is needed.
+ *
+ * Signal statistics carry their unit (migration 0055). `detectRunPeriods` returns max/min/avg of
+ * the SIGNAL SERIES — whatever it measures — so each row is stamped with `det.signalUnit`, the raw
+ * unit of the point those samples came from. The fields are still spelled `maxW/minW/avgW` in
+ * `DetectedPeriod` because the detector's own vocabulary is thresholds-in-W by history; the
+ * `W` there means "the threshold-comparable magnitude", not Watts.
  */
 import { and, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { planetscaleDb } from "./index";
@@ -176,6 +182,17 @@ export async function recomputeIntervalsForWindow(
 
     let inserted = 0;
     if (periods.length > 0) {
+      // A statistic is stored WITH ITS UNIT or not at all. `det.signalUnit` is the signal point's
+      // raw `points.unit` as of right now, which is precisely what makes the stored number readable
+      // later: a re-point (Selectronic grid W → DSE engine rpm) changes the unit of every subsequent
+      // row and leaves the earlier ones correctly labelled, instead of silently changing what the
+      // same three columns mean. See `derived_intervals_signal_unit_check`.
+      //
+      // Unlabellable ⇒ omitted, never guessed. A missing `points` row is a broken binding; dropping
+      // three statistics degrades the runs table, whereas writing a number whose unit is unknown is
+      // the exact defect this stage exists to remove (and would violate the CHECK, failing the whole
+      // recompute over a config gap).
+      const labelled = det.signalUnit !== null;
       const rows = periods.map((p, i) => ({
         derivationId: det.id,
         startTime: new Date(p.startMs),
@@ -186,9 +203,10 @@ export async function recomputeIntervalsForWindow(
         costC: provenance[i].costC,
         emissionsG: provenance[i].emissionsG,
         renewableKwh: provenance[i].renewableKwh,
-        maxPowerW: p.maxW,
-        minPowerW: p.minW,
-        avgPowerW: p.avgW,
+        maxSignal: labelled ? p.maxW : null,
+        minSignal: labelled ? p.minW : null,
+        avgSignal: labelled ? p.avgW : null,
+        signalUnit: det.signalUnit,
         sampleCount: p.sampleCount,
         detectorVersion: det.detectorVersion,
       }));

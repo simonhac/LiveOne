@@ -27,11 +27,17 @@ export interface RunPeriodEvent {
   startTimeISO?: string;
   endTimeISO?: string | null;
   /**
-   * Mean of the raw on-samples of the SIGNAL the detector follows, in `RunSignalMeta.unit` — rpm for
-   * an engine-speed detector, W for a power one. Null when the row was written by an older detector
-   * version, whose unit isn't provably the one `signal` describes.
+   * Mean of the raw on-samples of the SIGNAL the detector follows, in `signalUnit` — rpm for an
+   * engine-speed detector, W for a power one. Served for EVERY row since migration 0055: the unit
+   * is stored per row, so there is no longer anything to infer and nothing to suppress.
    */
   avgSignal?: number | null;
+  /**
+   * The unit `avgSignal` is in, display-spelled ("rpm", "W"). Per EVENT rather than per response
+   * because a single window can straddle a detector re-point and contain both — which is precisely
+   * why the column header cannot be trusted to name the unit (see `columns.signalUnitPerRow`).
+   */
+  signalUnit?: string | null;
   /** True average power over the run (W) — energy ÷ duration; null while still running. */
   avgPowerW?: number | null;
   sampleCount?: number;
