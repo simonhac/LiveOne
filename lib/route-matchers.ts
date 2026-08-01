@@ -35,12 +35,14 @@ const publicRoutes = [
   // All other routes (pages + APIs) require Clerk auth, except share links (?access=, below)
 ];
 
-// Internal card gallery (app/labs/card-gallery): a no-login visual harness for inspecting
-// dashboard cards at many sizes. Public on dev + Vercel preview only — NEVER in production
-// (VERCEL_ENV is "production" there; unset locally, "preview" on preview deploys). The page
-// itself also notFound()s in prod as defense-in-depth.
+// Internal galleries (app/labs/card-gallery, app/labs/chart-gallery): no-login visual harnesses —
+// dashboard cards at many sizes, and the time-series charts rendered from deterministic fixtures for
+// the Playwright screenshot baselines. Public on dev + Vercel preview only — NEVER in production
+// (VERCEL_ENV is "production" there; unset locally, "preview" on preview deploys). Both pages also
+// notFound() in prod as defense-in-depth.
 if (process.env.VERCEL_ENV !== "production") {
   publicRoutes.push("/labs/card-gallery(.*)");
+  publicRoutes.push("/labs/chart-gallery(.*)");
 }
 
 export const isPublicRoute = createRouteMatcher(publicRoutes);

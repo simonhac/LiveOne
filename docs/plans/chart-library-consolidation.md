@@ -1,6 +1,6 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — assessment complete, execution approved. Stage 0 done; Stage 1 next.**
+> **Status: PLAN — assessment complete, execution approved. Stages 0 and 1 done; Stage 2 next.**
 > Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
@@ -157,7 +157,39 @@ value slot just blanks), which is why only two of the five entries jump around.
 | 3 | `batteryW` is built as an **all-nulls array**, never `undefined` (`lines-data.ts:150-154`); `[null,…]` is truthy, so a phantom "Battery" dataset is added for battery-less devices and in energy mode, where `batteryWData` is deliberately nulled (`lines-data.ts:61`). `grid` correctly uses `undefined` (`:167`) — **the two fields are inconsistent**. In energy mode this is likely *visible*: Chart.js allocates a grouped-bar slot per dataset, so a phantom fourth dataset narrows and offsets the real bars. **Confirm empirically in the harness.** | `lines-data.ts`, `types.ts:38` |
 | 4 | Two rows both labelled **"Battery"** — battery power (orange) and battery SOC (green) — distinguishable only by swatch colour. The dataset labels correctly say "Battery" vs "Battery SOC". | `ChartTooltip.tsx:69,108` |
 | 5 | Dead `visible` prop — hardcoded `true` at `LinesChartCard.tsx:310`, never read in the component | `ChartTooltip.tsx:11,21` |
-| 6 | **Three independent sources of truth for series colour**: Tailwind classes in `ChartTooltip` (`bg-yellow-400`…), hardcoded RGB literals in `datasets.ts` (`rgb(250, 204, 21)`…), and `CHART_COLORS` in `lib/chart-colors.ts` (used only for the SoC range fill and dynamic series). They agree today purely by coincidence of two hand-copied palettes. | 3 files |
+| 6 | **The two charts use different colour schemes for the same physical quantity** — see below. | 3 files |
+
+#### Defect 6, in full: the lines chart and the stacked chart disagree on colour
+
+The stacked chart and the Sankey resolve colour through `getColorForPath` → `CHART_COLORS`
+(`lib/site-data-processor.ts:709`, `lib/energy-flow-matrix.ts:462`). The lines chart does not — it
+hardcodes RGB literals inline in `lib/charts/datasets.ts`, and `ChartTooltip` hardcodes matching
+Tailwind classes a third time.
+
+| Quantity | Lines chart (`datasets.ts`) | Stacked / Sankey (`CHART_COLORS`) | |
+|---|---|---|---|
+| Solar | `rgb(250,204,21)` yellow-400 | `rgb(254,240,138)` yellow-200 | different shade |
+| **Battery power** | `rgb(251,146,60)` **orange-400** | `rgb(74,222,128)` **green-400** | **different hue** |
+| **Grid** | `rgb(239,68,68)` **red-500** | `rgb(236,72,153)` **pink-500** | **different hue** |
+| Battery SoC | `rgb(74,222,128)` green-400 | `rgb(74,222,128)` green-400 | agree |
+| Load | `rgb(96,165,250)` blue-400 | no single "load" (`restOfHouse` gray-400) | n/a |
+
+The collisions are the actual harm, not the drift:
+
+- The lines chart's **Battery** orange-400 is *byte-identical* to `CHART_COLORS.hotWater`.
+- The lines chart's **Grid** red-500 sits next to `CHART_COLORS.ev` (red-600).
+
+These two charts render **side by side in the same section with synced hover**
+(`ChartFocusContext`). So as the user sweeps across them, orange means Battery on one chart and Hot
+Water on the other, and red means Grid on one and EV on the other. That is actively misleading, and
+it is the kind of thing a faithful port would carry forward forever.
+
+**Fix:** make `CHART_COLORS` the sole source. `datasets.ts` stops hardcoding and resolves through
+`getColorForPath`/`CHART_COLORS`; `ChartTooltip` takes its swatch colour as a prop from the same
+resolution rather than naming a Tailwind class. Decide deliberately *which* palette wins per
+quantity — this is a visible product change, not a refactor, so it gets its own Stage 3 PR and its
+own reviewed baseline diff. Gallery cases `colours-lines-vs-stacked-*` exist to make the before/after
+obvious.
 
 **Defects 1–3 share one fix:** make `batteryW` optional and `undefined`-when-absent in
 `LineChartData`, matching `grid`. Both the dataset gate and the legend gate then become the same
@@ -235,13 +267,65 @@ causes; only the ESM one is fixed. The other — its props embed a `Date.now()`-
 date into the checked-in golden and turn it red at the next local midnight — is load-bearing on its
 own. The comment there has been corrected so ESM is no longer cited as a blocker.
 
-### Stage 1 — Playwright screenshot harness
+### Stage 1 — Playwright screenshot harness — ✅ DONE 2026-08-01 (heatmap + provenance outstanding)
 
-- Add Playwright, driving the dev server against `liveone-dev`.
-- **Fixture data, not live data** — a live-data baseline is not reproducible. Extend the
-  `app/labs/card-gallery` fixture approach to the chart cards, or add a `?fixture=` route param.
-- Cover 4 charts × D/W/M/Y × power/energy × mobile + desktop.
-- This is the first automated coverage `components/` has ever had.
+**34 baselines** (17 cases × desktop/mobile), green and stable across repeated runs. This is the
+first automated coverage `components/` has ever had.
+
+- `app/labs/chart-gallery` — the screenshot target, modelled on `card-gallery`: dev/preview-only,
+  `notFound()` in prod, allow-listed in `lib/route-matchers.ts`. `?case=<id>` renders one case.
+- `app/labs/chart-gallery/cases.ts` — the case list, imported by **both** the page and the spec, so
+  they cannot drift.
+- `e2e/charts.spec.ts` + `playwright.config.ts`; `npm run test:e2e` / `test:e2e:update` / `test:e2e:ui`.
+
+**No live data, no clocks.** Fixtures are a pure function of the case name against a frozen instant
+(2026-06-15 14:30 AEST). Note `card-gallery`'s fixtures stamp ages at *import* — fine for eyeballing,
+fatal for a checked-in baseline, so this harness does not reuse them.
+
+Determinism settings that are load-bearing rather than boilerplate, each of which produced a real
+failure before being pinned:
+
+- `timezoneId: "Australia/Melbourne"` — the charts format ticks with date-fns `format`, which renders
+  in the **browser's** local zone; unpinned, CI-on-UTC and a Melbourne laptop disagree on every axis.
+- `deviceScaleFactor: 1` — a retina Mac otherwise writes 2× baselines CI can't match.
+- Runs against a **production build** (`next start`, `BUILD_DIR=.next-e2e`), not `next dev` — dev
+  injects an indicator and recompiles on first hit.
+- `webServer.url` probes `/labs/chart-gallery`, **not** `/`. The root route is Clerk-gated and answers
+  the readiness probe with a redirect, so Playwright concludes the server is down, ignores
+  `reuseExistingServer`, and then fails to bind a port the running server holds.
+- The spec waits on `document.fonts.ready` + a non-zero canvas box + two rAFs. Chart.js paints on a
+  rAF after mount; screenshotting earlier yields a blank or fallback-font baseline.
+- `@vercel/analytics` requests `/_vercel/insights/script.js`, which 404s off-Vercel on every page.
+  Allow-listed narrowly in the spec rather than by relaxing the console-error assertion.
+
+#### Measured sensitivity — know what this does and does not catch
+
+The thresholds were calibrated with a deliberate negative control, not guessed:
+
+| Change | Detected? |
+|---|---|
+| Solar `rgb(250,204,21)` → `rgb(250,204,26)` (5/255 on one channel) | **No** |
+| Solar yellow-400 → yellow-200 (the real Stage 3 change) | **Yes** — 1345 px, 20× over the limit |
+
+The first setting tried (`maxDiffPixelRatio: 0.002`, default `threshold`) **passed the realistic
+change by a hair and missed the tiny one entirely** — on a 932×372 frame it permitted ~700 differing
+pixels, more than a thin chart line contains. Now split explicitly: `threshold: 0.15` carries the
+per-pixel antialiasing tolerance, `maxDiffPixelRatio: 0.0002` (~70 px) carries the count. Sub-
+perceptual colour shifts are still missed — an accepted limit, recorded so nobody assumes otherwise.
+
+Also fixed in passing: `/labs/card-gallery` was **never covered** by `route-matchers.test.ts`, and
+the `VERCEL_ENV !== "production"` guard means the existing assertions only ever exercised the
+non-prod branch. Both galleries are now asserted public in dev **and** gated under a re-imported
+`VERCEL_ENV=production`, with a control assertion so the re-import can't pass vacuously.
+
+**Still to cover** (deferred, not forgotten — both self-fetch rather than taking props, so they need
+Playwright route stubbing rather than a fixture prop):
+
+- `HeatmapChart` — issues its own `/api/history` query (30 days × 48 half-hour slots).
+- `ProvenanceChart` — props-driven itself, but its panel owns the fetch; needs a fixture route.
+- `observations-viewer` — admin page, self-fetching. Lowest value; cover last or accept manual.
+
+These must be added **before** their Stage 5 slice, not before Stage 3.
 
 ### Stage 2 — Catalogue defects
 

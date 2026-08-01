@@ -25,6 +25,9 @@
     "test:integration": "jest --config jest.config.integration.js",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "test:e2e:ui": "playwright test --ui",
     "db:psql": "scripts/utils/psql.sh",
     "db:pg:generate": "drizzle-kit generate --config=drizzle-planetscale.config.ts",
     "db:pg:migrate": "drizzle-kit migrate --config=drizzle-planetscale.config.ts",
@@ -115,6 +118,7 @@
   },
   "devDependencies": {
     "@next/bundle-analyzer": "^15.5.22",
+    "@playwright/test": "^1.62.1",
     "@tanstack/react-query-devtools": "^5.101.0",
     "@types/d3-array": "^3.2.2",
     "@types/d3-sankey": "^0.12.4",

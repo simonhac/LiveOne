@@ -12,7 +12,12 @@ module.exports = {
     "<rootDir>/scripts",
     "<rootDir>/packages",
   ],
-  modulePathIgnorePatterns: ["/\\.next/", "/\\.next-build/"],
+  modulePathIgnorePatterns: [
+    "/\\.next/",
+    "/\\.next-build/",
+    "/\\.next-analyze/",
+    "/\\.next-e2e/",
+  ],
   testMatch: [
     "**/__tests__/**/*.test.ts",
     "**/__tests__/**/*.integration.test.ts", // Include all tests
