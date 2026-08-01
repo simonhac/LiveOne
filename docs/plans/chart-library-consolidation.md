@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — assessment complete, execution approved. Stages 0–2 done; Stage 3 next, pending
-> sign-off on the defect register's fix/carry decisions.** Written 2026-08-01.
+> **Status: PLAN — assessment complete, execution approved. Stages 0–2 done, defect decisions signed
+> off 2026-08-01; Stage 3 ready to start.** Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -335,8 +335,12 @@ These must be added **before** their Stage 5 slice, not before Stage 3.
 ### Stage 2 — Catalogue defects — ✅ DONE 2026-08-01
 
 Swept `HeatmapChart`, `ProvenanceChart` and `observations-viewer`. Register below (#7–#17), joining
-#1–#6 from the lines chart. **No code changed.** Decisions are proposed; the "fix / carry / won't"
-column is what needs sign-off before Stage 3 starts.
+#1–#6 from the lines chart. **No code changed here.**
+
+✅ **All decisions signed off 2026-08-01** — the four that needed a judgement call rather than an
+obvious fix were: #6 (which palette wins → `CHART_COLORS`, with SoC dashed), #9 (DST → bucket by the
+fixed offset, with an asterisked-row convention), #10/#11 (→ true min–max), and #17 (the admin viewer
+→ simplify rather than reproduce). Each is written up under **Stage 3**.
 
 #### 🔴 #7 — the heatmap's y-axis plugin corrupts every other chart in the app
 
@@ -378,9 +382,9 @@ migration.
 | # | Chart | Defect | Proposed |
 |---|---|---|---|
 | 8 | Heatmap | **`console.log` spam in production** — `:221,222,242,243,371` log the URL, the *entire* API response (30 days × 48 slots), and `:280` logs **once per series** inside the `find` predicate. | **Fix** |
-| 9 | Heatmap | **DST silently loses an hour, twice a year.** Time slots are a hardcoded 48 × half-hour grid (`:306-310`), but a local day has 46 or 50 slots across a DST boundary. On fall-back, two distinct UTC intervals produce the same `timeKey` and `:337` overwrites — one hour of data vanishes. On spring-forward, 02:00/02:30 never exist and render as a fake no-data hole. | **Fix** (needs a decision on how to *show* a 46/50-slot day) |
-| 10 | Heatmap | **Narrow-range series render washed out.** `getNormalizedValue` divides by `Math.max(max - min, 1)` (`:473`). A divide-by-zero guard, but it silently distorts every series whose range is < 1 — a temperature sitting 40.1–40.5 only ever reaches 0.4 of the palette. Common for SoC, temperature, price. | **Fix** |
-| 11 | Heatmap | **The colour legend lies for those same series.** The gradient always spans `getColor(0)`→`getColor(1)` and is labelled `min`→`max` (`:858-912`), but per #10 the cells never reach 1. Same root cause, separate visible symptom — worth listing so the fix is verified against both. | **Fix with #10** |
+| 9 | Heatmap | ✅ **decided** — bucket by fixed offset. **DST silently loses an hour, twice a year.** Time slots are a hardcoded 48 × half-hour grid (`:306-310`), but a local day has 46 or 50 slots across a DST boundary. On fall-back, two distinct UTC intervals produce the same `timeKey` and `:337` overwrites — one hour of data vanishes. On spring-forward, 02:00/02:30 never exist and render as a fake no-data hole. | **Fix** — see 3d |
+| 10 | Heatmap | ✅ **decided** — true min–max. **Narrow-range series render washed out.** `getNormalizedValue` divides by `Math.max(max - min, 1)` (`:473`). A divide-by-zero guard, but it silently distorts every series whose range is < 1 — a temperature sitting 40.1–40.5 only ever reaches 0.4 of the palette. Common for SoC, temperature, price. | **Fix** |
+| 11 | Heatmap | ✅ **decided** — fixed with #10. **The colour legend lies for those same series.** The gradient always spans `getColor(0)`→`getColor(1)` and is labelled `min`→`max` (`:858-912`), but per #10 the cells never reach 1. Same root cause, separate visible symptom — worth listing so the fix is verified against both. | **Fix with #10** |
 | 12 | Heatmap | `parseInterval` returns **0** for an unrecognised interval (`:435,450`). `intervalMs = 0` collapses every reading onto one timestamp and the heatmap silently becomes a single column. Should surface, not guess. | **Fix** |
 | 13 | Heatmap | `heatmapData?.min \|\| 0` / `?.max \|\| 1` (`:599,600,773,774`) — `\|\|` where `??` is meant. Harmless for today's values but a latent trap when a legitimate `0` appears. | **Fix** (trivial) |
 | 14 | Heatmap | Tooltip hiding is implemented **twice**: a container `mousemove` listener (`:486-524`) and the `external` tooltip's own `isInChartArea` check (`:566-577`) test the same condition. Both vanish in the port. | **Won't fix** — deleted by Stage 5 |
@@ -418,8 +422,66 @@ like.
 
 ### Stage 3 — Fix agreed defects, still on Chart.js
 
-One PR per cluster; baseline churn is expected and reviewed deliberately. Start with the `batteryW`
-optionality fix (defects 1–3). **Freeze the baseline at the end of this stage.**
+**Decisions taken 2026-08-01.** Everything below is signed off; baseline churn is expected and
+reviewed deliberately. **Freeze the baseline at the end of this stage.**
+
+#### 3a — #7, the global plugin (ships first, alone)
+Scope `customYAxisPlugin` to the heatmap instance (`plugins` array on its `<Chart>`) instead of
+`ChartJS.register`. One line. Ships ahead of everything else because it is a live production defect
+**and** because until it lands the Stage 1 baselines describe a rendering the dashboard never
+produces. Expect `lines-*` and `stacked-*` baselines to change — that change *is* the fix.
+
+#### 3b — #1/#2/#3, the legend presence bug
+Make `batteryW` optional and `undefined`-when-absent in `LineChartData`, matching `grid`. The dataset
+gate and the legend gate then become the same structural `!= null` test, and the legend derives from
+*which series exist* rather than from the hovered sample. Kills the missing entries, the mid-hover
+flicker, and the phantom dataset together. Also drop the dead `visible` prop (#5).
+
+#### 3c — #6/#16, one palette
+**`CHART_COLORS` wins.** The lines chart stops hardcoding RGB and resolves through it, so Solar
+becomes yellow-200, Battery power green-400, Grid pink-500 — matching the stacked chart and Sankey,
+and ending the collision where lines-Battery *was* the Hot Water colour.
+
+Because battery power and battery SoC are drawn together on the lines chart and `CHART_COLORS`
+gives both the same green, **SoC becomes a dashed line** (`borderDash`) and keeps green-400. Texture
+carries the distinction, "battery is green" stays true, and it matches the existing `ProvenanceChart`
+idiom for probe-like series. `ChartTooltip` takes its swatch colour as a prop from the same
+resolution instead of naming a Tailwind class, and the crosshair red is centralised (#16).
+
+Also fixes #4 — the two rows both labelled "Battery" become "Battery" and "Battery SoC", matching
+the dataset labels.
+
+#### 3d — #9, DST and day bucketing
+**Bucket by the fixed offset (`areas.day_offset_min`), not the DST-aware IANA zone.** Every day is
+then exactly 48 slots, so the silent fall-back overwrite and the fabricated spring-forward gap both
+*dissolve* rather than being special-cased — and the heatmap's day rows finally agree with the daily
+aggregates, the Sankey and the daily stripe, which have always used the fixed offset
+(`docs/architecture/data-model.md` → "Time: fixed-offset days").
+
+The visible cost is that a daily routine shifts one hour on the chart across a DST boundary, because
+relative to standard time it genuinely does. Handled in the labelling:
+
+- **Time-of-day (x) labels are drawn in one frame: the most recent day's offset.**
+- **Any day row whose actual local offset differs from that frame gets an asterisk** on its date
+  label, with a short footnote under the chart explaining that those days were on a different offset
+  and the times shown are in the current frame.
+
+#### 3e — #10/#11, honest colour scaling
+Normalise `(value - min) / (max - min)`, with an explicit `max === min` guard painting a single flat
+colour rather than dividing by zero. Drops the `Math.max(…, 1)` floor that washed out every
+narrow-range series, and makes the colour legend truthful for the first time. Verify against **both**
+symptoms — washed-out cells and the over-claiming gradient.
+
+Deliberately **not** doing per-metric fixed ranges (SoC always 0–100 etc.) here; noted as possible
+follow-on.
+
+#### 3f — housekeeping
+#8 (strip the `console.log`s, including the full-response dump and the per-series log inside a `find`
+predicate), #12 (`parseInterval` must surface an unrecognised interval instead of returning 0 and
+silently collapsing the grid), #13 (`||` → `??`).
+
+**Not fixed:** #14 (duplicate tooltip-hiding logic) — deleted wholesale by Stage 5, so fixing it
+first is wasted work. #15 (the `now` → `windowEnd` rename) rides along with Stage 4.
 
 ### Stage 4 — Shared d3 primitives
 
