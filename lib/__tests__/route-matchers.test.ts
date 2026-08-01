@@ -39,6 +39,13 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-summary",
     "/api/v4/areas/by-handle/1000002",
     "/api/v4/areas/ar_01k1abcd2efghjkmnpqrstvwxy/recompute-provenance",
+    // The two internal galleries: no-login visual harnesses, pushed onto the allow-list ONLY when
+    // VERCEL_ENV !== "production" (unset under jest, so they are public here). `chart-gallery` is the
+    // screenshot target for e2e/charts.spec.ts and must stay reachable without a Clerk session, or the
+    // whole baseline suite 404s at the edge. The prod case is asserted separately below.
+    "/labs/card-gallery",
+    "/labs/chart-gallery",
+    "/labs/chart-gallery?case=lines-d-power",
   ];
   it.each(publicPaths)("treats %s as public", (p) => {
     expect(isPublicRoute(req(p))).toBe(true);
@@ -91,6 +98,40 @@ describe("isPublicRoute — middleware allow-list", () => {
   ];
   it.each(protectedPaths)("treats %s as protected", (p) => {
     expect(isPublicRoute(req(p))).toBe(false);
+  });
+
+  // 🛑 The galleries are allow-listed by a `process.env.VERCEL_ENV !== "production"` guard evaluated
+  // at MODULE LOAD, so the assertions above only ever exercise the non-prod branch. This re-imports
+  // the module under VERCEL_ENV=production to prove the other branch: in prod they must be gated, or
+  // an internal harness (and, for chart-gallery, a page that renders fabricated data) is world-
+  // readable. The page-level notFound() is defense-in-depth for exactly this, not a substitute.
+  describe("under VERCEL_ENV=production", () => {
+    const prodIsPublic = (p: string): boolean => {
+      const prev = process.env.VERCEL_ENV;
+      process.env.VERCEL_ENV = "production";
+      try {
+        let result = true;
+        jest.isolateModules(() => {
+          const mod =
+            require("../route-matchers") as typeof import("../route-matchers");
+          result = mod.isPublicRoute(req(p));
+        });
+        return result;
+      } finally {
+        if (prev === undefined) delete process.env.VERCEL_ENV;
+        else process.env.VERCEL_ENV = prev;
+      }
+    };
+
+    it.each(["/labs/card-gallery", "/labs/chart-gallery"])("gates %s", (p) => {
+      expect(prodIsPublic(p)).toBe(false);
+    });
+
+    it("still treats a genuinely public route as public", () => {
+      // Guards the guard: if the isolateModules re-import silently failed, everything would read as
+      // "not public" and the assertions above would pass for the wrong reason.
+      expect(prodIsPublic("/api/health")).toBe(true);
+    });
   });
 });
 

@@ -60,7 +60,6 @@ export default function LinesChartCard({
   // Shared focus instant for this chart cluster — publish our hover here, and read it back so the
   // red focus line + the values tooltip follow whatever point is focused on ANY chart in the section.
   const { focusedTime, setFocusedTime } = useChartFocus();
-  const chartRef = useRef<any>(null);
 
   // History data via React Query. The raw OpenNEM payload is cached; the windowing +
   // unit-conversion transform runs in a useMemo so the derived ChartData stays referentially
@@ -193,25 +192,14 @@ export default function LinesChartCard({
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleHover = useCallback(
-    (event: any, activeElements: any[], chart: any) => {
-      // Don't process if no chart data
+    (index: number | null) => {
       if (!chartData) return;
-
-      // Clear any pending timeout
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
-
-      // Debounce the hover update. Publish the hovered instant to the shared focus; the displayed
-      // values + red line derive from it below (so they also follow focus set by a sibling chart).
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      // Debounce. Publish the hovered instant to the shared focus; the displayed values + focus line
+      // derive from it below, so they also follow focus set by a sibling chart.
       hoverTimeoutRef.current = setTimeout(() => {
-        if (activeElements && activeElements.length > 0) {
-          const dataIndex = activeElements[0].index;
-          setFocusedTime(chartData.timestamps[dataIndex] ?? null);
-        } else {
-          setFocusedTime(null);
-        }
-      }, 10); // Small debounce delay
+        setFocusedTime(index == null ? null : (chartData.timestamps[index] ?? null));
+      }, 10);
     },
     [chartData, setFocusedTime],
   );
@@ -238,20 +226,18 @@ export default function LinesChartCard({
           timestamp: null,
         };
 
-  const handleMouseLeave = useCallback(() => {
-    if (!("ontouchstart" in window)) setFocusedTime(null);
-  }, [setFocusedTime]);
 
   // X-axis window: prefer the rendered data's actual extent (keeps the axis + daytime/weekday
   // shading aligned with historical data); else the requested window; else the live trailing window.
-  const { now, windowStart } = useMemo(() => {
+  const { windowEnd, windowStart } = useMemo(() => {
     if (chartData && chartData.timestamps.length > 0) {
       const ts = chartData.timestamps;
-      return { windowStart: ts[0], now: ts[ts.length - 1] };
+      return { windowStart: ts[0], windowEnd: ts[ts.length - 1] };
     }
     if (start && end) {
-      return { windowStart: new Date(start), now: new Date(end) };
+      return { windowStart: new Date(start), windowEnd: new Date(end) };
     }
+    // Only in this no-data fallback is the window end actually the wall clock.
     const now = new Date();
     const windowHours =
       period === "D"
@@ -262,7 +248,7 @@ export default function LinesChartCard({
             ? 24 * 30
             : 24 * 365;
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-    return { now, windowStart };
+    return { windowEnd: now, windowStart };
   }, [chartData, start, end, period]);
 
   // Cleanup hover timeout on unmount
@@ -289,15 +275,15 @@ export default function LinesChartCard({
           const lastTime = timestamps[timestamps.length - 1];
 
           // Pad the band ±12h so its fill reaches the bar edges — but CLAMP to the x-axis window
-          // [windowStart, now]. A pad point placed BEYOND the axis makes Chart.js's `fill: "+1"`
+          // [windowStart, windowEnd]. A pad point placed BEYOND the axis makes Chart.js's `fill: "+1"`
           // filler drop that end's lower boundary to the axis baseline (0%) — the trailing band
           // "collapse to 0" bug. Clamped, the band still reaches the edges without the artifact.
           const clampMs = (ms: number) =>
-            Math.min(Math.max(ms, windowStart.getTime()), now.getTime());
+            Math.min(Math.max(ms, windowStart.getTime()), windowEnd.getTime());
           const paddedTimestamps = [
             new Date(clampMs(firstTime.getTime() - 12 * 60 * 60 * 1000)), // ≥ windowStart
             ...timestamps,
-            new Date(clampMs(lastTime.getTime() + 12 * 60 * 60 * 1000)), // ≤ now
+            new Date(clampMs(lastTime.getTime() + 12 * 60 * 60 * 1000)), // ≤ windowEnd
           ];
 
           // Extend the SOC values (use the same values at edges)
@@ -356,23 +342,25 @@ export default function LinesChartCard({
           paddedSOCData={paddedSOCData}
           maxPowerHint={maxPowerHint}
           timeRange={period}
-          now={now}
+          windowEnd={windowEnd}
           windowStart={windowStart}
-          onHover={handleHover}
+          onHoverIndex={handleHover}
           hoveredTimestamp={hoveredData.timestamp}
-          chartRef={chartRef}
           className="flex-1 min-h-0"
-          onMouseLeave={handleMouseLeave}
         />
         <div className="flex justify-center mt-2 px-2 sm:px-0">
           <ChartTooltip
+            // Presence comes from the DATA and mirrors the dataset gates in `buildLineDatasets`, so
+            // the legend lists exactly the series the chart draws. Values come from the hover, and
+            // are null whenever nothing is focused or the focused sample is a gap.
+            hasBattery={chartData?.batteryW != null}
+            hasGrid={chartData?.grid != null}
             solar={hoveredData.solar}
             load={hoveredData.load}
             battery={hoveredData.battery}
             grid={hoveredData.grid}
             batterySOC={hoveredData.batterySOC}
             unit={chartData?.mode === "energy" ? "kWh" : "kW"}
-            visible={true}
           />
         </div>
       </>

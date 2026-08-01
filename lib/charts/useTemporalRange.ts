@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import {
   decodeRangeFromParams,
   computeOlder,

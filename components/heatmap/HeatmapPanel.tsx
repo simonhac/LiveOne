@@ -58,6 +58,8 @@ export interface HeatmapSelection {
 export interface HeatmapPanelProps {
   systemId: number;
   timezone: string;
+  /** Fixed day-bucketing offset — see HeatmapChart. */
+  dayOffsetMin: number;
   /** Force the series and hide the point selector. */
   pinnedSeries?: string;
   /** Force the palette and hide the palette selector. */
@@ -114,6 +116,7 @@ function StatusBlock({
 export default function HeatmapPanel({
   systemId,
   timezone,
+  dayOffsetMin,
   pinnedSeries,
   pinnedPalette,
   showDebug = false,
@@ -505,6 +508,7 @@ export default function HeatmapPanel({
           pointUnit={getUnitDisplay(selectedPointInfo.metricUnit)}
           metricType={selectedPointInfo.metricType}
           timezone={timezone}
+          dayOffsetMin={dayOffsetMin}
           palette={activePalette}
           className="w-full"
           onFetchInfo={setFetchInfo}

@@ -1,30 +1,92 @@
 import React from "react";
 import Value from "@/components/ui/value";
+import { CHART_COLORS } from "@/lib/chart-colors";
+import { SOC_DASH } from "@/lib/charts/line-series";
 
+/**
+ * A legend swatch. Solid series get a filled square; a dashed series gets a dashed rule, so the
+ * legend states the same thing the chart does.
+ *
+ * These colours come from `CHART_COLORS` rather than Tailwind classes on purpose. This component
+ * used to name `bg-yellow-400`/`bg-orange-400`/`bg-red-500` by hand while `datasets.ts` hardcoded a
+ * matching RGB literal — two copies of one palette, and a third (`CHART_COLORS`) that the stacked
+ * chart and Sankey actually used. They did not agree: the lines chart painted Battery orange-400,
+ * which IS `CHART_COLORS.hotWater`, and Grid red-500, next to `CHART_COLORS.ev`. One registry now.
+ */
+function Swatch({ color, dash }: { color: string; dash?: number[] }) {
+  if (dash) {
+    // An SVG rule using the ACTUAL dash array the dataset draws with, so the legend cannot drift
+    // from the chart if that pattern is ever tuned.
+    return (
+      <svg className="h-3 w-3" viewBox="0 0 12 12" aria-hidden>
+        <line
+          x1="0"
+          y1="6"
+          x2="12"
+          y2="6"
+          stroke={color}
+          strokeWidth="2"
+          strokeDasharray={dash.join(" ")}
+        />
+      </svg>
+    );
+  }
+  return (
+    <span
+      className="inline-block h-3 w-3"
+      style={{ backgroundColor: color }}
+      aria-hidden
+    />
+  );
+}
+
+/**
+ * The lines chart's legend + focused-value readout.
+ *
+ * 🛑 **Presence and value are separate props, and must stay separate.** Which entries exist is a
+ * property of the DATA (does this device have a battery / a grid meter?); what they read is a
+ * property of the HOVER. Conflating them was the original defect: the Battery and Grid rows were
+ * gated on `battery !== null` / `grid !== null` — the hovered *value* — so with nothing hovered they
+ * vanished from the legend entirely, and while hovering they flickered out whenever the focused
+ * index landed on a null sample (a data gap).
+ *
+ * `hasBattery`/`hasGrid` mirror the `!= null` tests `lineSeries` uses to decide which series exist,
+ * so the legend and the chart list exactly the same series by construction. Solar, Load and Battery
+ * SoC have no flag because they are unconditional.
+ *
+ * The row **wraps**. It used to be a single non-wrapping flex line, so on a phone-width chart the
+ * last entries were pushed clean off the edge — Solar and Battery SoC simply vanished, which reads
+ * as "this device has no solar" rather than "the legend does not fit". Found once an explicitly
+ * narrow gallery case existed; the mobile Playwright project renders the same 900 px chart, so
+ * viewport alone never surfaced it.
+ */
 interface ChartTooltipProps {
+  /** Whether the series EXISTS (mirrors the dataset gate) — not whether it has a value right now. */
+  hasBattery: boolean;
+  hasGrid: boolean;
   solar: number | null;
   load: number | null;
   battery?: number | null;
   grid?: number | null;
   batterySOC: number | null;
   unit: "kW" | "kWh";
-  visible: boolean;
 }
 
 export default function ChartTooltip({
+  hasBattery,
+  hasGrid,
   solar,
   load,
   battery,
   grid,
   batterySOC,
   unit,
-  visible,
 }: ChartTooltipProps) {
   return (
-    <div className="flex items-center gap-3 sm:gap-6 md:gap-10 text-xs">
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs sm:gap-x-6 md:gap-x-10">
       {/* Solar */}
       <div className="flex items-center gap-1">
-        <span className="w-3 h-3 bg-yellow-400"></span>
+        <Swatch color={CHART_COLORS.solar.primary} />
         <span className="text-gray-400">Solar</span>
         <span
           style={{
@@ -46,7 +108,7 @@ export default function ChartTooltip({
 
       {/* Load */}
       <div className="flex items-center gap-1">
-        <span className="w-3 h-3 bg-blue-400"></span>
+        <Swatch color={CHART_COLORS.load} />
         <span className="text-gray-400">Load</span>
         <span
           style={{
@@ -62,10 +124,10 @@ export default function ChartTooltip({
         </span>
       </div>
 
-      {/* Battery Power - only show if battery data is available */}
-      {battery !== null && battery !== undefined && (
+      {/* Battery power — shown whenever the SERIES exists, blank when this instant has no sample. */}
+      {hasBattery && (
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 bg-orange-400"></span>
+          <Swatch color={CHART_COLORS.battery.main} />
           <span className="text-gray-400">Battery</span>
           <span
             style={{
@@ -75,19 +137,21 @@ export default function ChartTooltip({
               justifyContent: "flex-end",
             }}
           >
-            <Value
-              className="text-white"
-              value={battery.toFixed(1)}
-              unit={unit}
-            />
+            {battery !== null && battery !== undefined ? (
+              <Value
+                className="text-white"
+                value={battery.toFixed(1)}
+                unit={unit}
+              />
+            ) : null}
           </span>
         </div>
       )}
 
-      {/* Grid - only show if grid data is available */}
-      {grid !== null && grid !== undefined && (
+      {/* Grid — shown whenever the SERIES exists, blank when this instant has no sample. */}
+      {hasGrid && (
         <div className="flex items-center gap-1">
-          <span className="w-3 h-3 bg-red-500"></span>
+          <Swatch color={CHART_COLORS.grid.main} />
           <span className="text-gray-400">Grid</span>
           <span
             style={{
@@ -97,15 +161,21 @@ export default function ChartTooltip({
               justifyContent: "flex-end",
             }}
           >
-            <Value className="text-white" value={grid.toFixed(1)} unit={unit} />
+            {grid !== null && grid !== undefined ? (
+              <Value
+                className="text-white"
+                value={grid.toFixed(1)}
+                unit={unit}
+              />
+            ) : null}
           </span>
         </div>
       )}
 
-      {/* Battery SOC */}
+      {/* Battery SoC */}
       <div className="flex items-center gap-1">
-        <span className="w-3 h-3 bg-green-400"></span>
-        <span className="text-gray-400">Battery</span>
+        <Swatch color={CHART_COLORS.battery.soc} dash={SOC_DASH} />
+        <span className="text-gray-400">Battery SoC</span>
         <span
           style={{
             minWidth: "48px",

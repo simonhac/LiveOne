@@ -1,6 +1,6 @@
 import micromatch from "micromatch";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 // Series patterns to request for a given period (energy mode = M/Y/1d, else power mode).
 export function buildSeriesParam(isEnergyMode: boolean): string {
@@ -147,11 +147,14 @@ export function buildChartData(
           convertToKw(loadData.history.data[i], loadData.units),
         )
       : selectedIndices.map(() => null),
+    // `undefined` when absent, matching `grid` below — NOT an all-nulls array. An array (even of
+    // nulls) is truthy, so the old form made the dataset builder add a phantom Battery series for
+    // every battery-less device and in energy mode. See LineChartData.batteryW.
     batteryW: batteryWData
       ? selectedIndices.map((i) =>
           convertToKw(batteryWData.history.data[i], batteryWData.units),
         )
-      : selectedIndices.map(() => null),
+      : undefined,
     batterySOC: batterySOCData
       ? selectedIndices.map((i) => batterySOCData.history.data[i])
       : selectedIndices.map(() => null),
@@ -167,5 +170,5 @@ export function buildChartData(
         )
       : undefined,
     mode: isEnergyMode ? "energy" : "power",
-  } as ChartData;
+  };
 }

@@ -36,7 +36,12 @@ import type {
 } from "@/lib/dashboard/card-types";
 import type { HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
+import {
+  CardSkeleton,
+  dayOffsetOf,
+  subjectOf,
+  useAreaDatum,
+} from "./shared";
 import { CARD_FOOTPRINTS } from "./footprints";
 
 /** One number for every placeholder this card can show; tracks `HEATMAP_CHART_H` (HeatmapChart). */
@@ -95,15 +100,19 @@ function ResolvedHeatmap({
   config: HeatmapCardConfig;
 }) {
   const { datum } = useAreaDatum(systemId);
-  // The IANA zone, not the offset: `HeatmapChart` buckets into local half-hours across a 30-day
-  // window, which straddles DST wherever the subject observes it.
+  // The IANA zone is used ONLY to work out which days were on a different real offset; the grid
+  // itself is bucketed in one fixed frame. See lib/heatmap-buckets.ts.
   const timezone = subjectOf(datum)?.displayTimezone;
-  if (!timezone) return <CardSkeleton height={FOOTPRINT} />;
+  // The fixed day bucket, NOT the tz offset — see lib/heatmap-buckets.ts.
+  const dayOffsetMin = dayOffsetOf(datum);
+  if (!timezone || dayOffsetMin == null)
+    return <CardSkeleton height={FOOTPRINT} />;
 
   return (
     <HeatmapPanel
       systemId={systemId}
       timezone={timezone}
+      dayOffsetMin={dayOffsetMin}
       pinnedSeries={config.series}
       pinnedPalette={config.palette}
       variant="card"

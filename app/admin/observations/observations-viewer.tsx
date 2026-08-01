@@ -10,27 +10,13 @@ import {
   Trash2,
   Ticket,
   Radio,
-  Database,
   Activity,
   AlertTriangle,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/fe-date-format";
 import SessionInfoModal from "@/components/SessionInfoModal";
+import IngestionChart, { type IngestionSeries } from "./IngestionChart";
 import { QueueMessage } from "@/lib/observations/types";
-import {
-  Chart as ChartJS,
-  BarElement,
-  LinearScale,
-  TimeScale,
-  Tooltip,
-  Legend,
-  Title,
-  ChartOptions,
-} from "chart.js";
-import { Bar } from "react-chartjs-2";
-import "chartjs-adapter-date-fns";
-
-ChartJS.register(BarElement, LinearScale, TimeScale, Tooltip, Legend, Title);
 
 interface MinuteBucket {
   minute: string;
@@ -77,23 +63,6 @@ interface DLQMessage {
   responseStatus: number;
   responseBody: string;
 }
-
-const RAW_COLOR = "rgba(56, 189, 248, 0.75)"; // sky-400
-const AGG_COLOR = "rgba(167, 139, 250, 0.75)"; // violet-400
-const GRID_COLOR = "rgba(255, 255, 255, 0.06)";
-const AXIS_COLOR = "#9ca3af";
-
-type ObsChartData = {
-  datasets: {
-    label: string;
-    data: { x: number; y: number }[];
-    backgroundColor: string;
-    stack: string;
-    barPercentage: number;
-    categoryPercentage: number;
-    borderWidth: number;
-  }[];
-};
 
 function relativeAgo(iso: string | null): string {
   if (!iso) return "never";
@@ -266,7 +235,7 @@ export default function ObservationsViewer() {
 
   // Build a continuous 24h x 1-minute timeline, filling gaps with 0 so downtime
   // shows as a flat-zero stretch rather than a hidden gap.
-  const chart = useMemo(() => {
+  const ingestion = useMemo<IngestionSeries | null>(() => {
     if (!stats?.configured || !stats.perMinute) return null;
     const nowMs = stats.now ? new Date(stats.now).getTime() : Date.now();
     const endMs = Math.floor(nowMs / 60000) * 60000;
@@ -279,77 +248,16 @@ export default function ObservationsViewer() {
     const aggMap = new Map(
       stats.perMinute.agg5m.map((b) => [floorMin(b.minute), b.count]),
     );
-    const rawData: { x: number; y: number }[] = [];
-    const aggData: { x: number; y: number }[] = [];
+    const timestamps: Date[] = [];
+    const raw: number[] = [];
+    const agg: number[] = [];
     for (let t = startMs; t <= endMs; t += 60000) {
-      rawData.push({ x: t, y: rawMap.get(t) ?? 0 });
-      aggData.push({ x: t, y: aggMap.get(t) ?? 0 });
+      timestamps.push(new Date(t));
+      raw.push(rawMap.get(t) ?? 0);
+      agg.push(aggMap.get(t) ?? 0);
     }
-    return { rawData, aggData };
+    return { timestamps, raw, agg };
   }, [stats]);
-
-  const chartData = useMemo<ObsChartData | null>(
-    () =>
-      chart
-        ? {
-            datasets: [
-              {
-                label: "Raw",
-                data: chart.rawData,
-                backgroundColor: RAW_COLOR,
-                stack: "obs",
-                barPercentage: 1,
-                categoryPercentage: 1,
-                borderWidth: 0,
-              },
-              {
-                label: "5-min agg",
-                data: chart.aggData,
-                backgroundColor: AGG_COLOR,
-                stack: "obs",
-                barPercentage: 1,
-                categoryPercentage: 1,
-                borderWidth: 0,
-              },
-            ],
-          }
-        : null,
-    [chart],
-  );
-
-  const chartOptions: ChartOptions<"bar"> = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        x: {
-          type: "time",
-          stacked: true,
-          time: { unit: "hour", tooltipFormat: "MMM d, HH:mm" },
-          ticks: { color: AXIS_COLOR, maxRotation: 0, autoSkip: true },
-          grid: { color: GRID_COLOR },
-        },
-        y: {
-          stacked: true,
-          beginAtZero: true,
-          ticks: { color: AXIS_COLOR, precision: 0 },
-          grid: { color: GRID_COLOR },
-          title: {
-            display: true,
-            text: "observations / min",
-            color: AXIS_COLOR,
-          },
-        },
-      },
-      plugins: {
-        legend: { labels: { color: "#d1d5db", boxWidth: 12 } },
-        tooltip: { mode: "index", intersect: false },
-      },
-    }),
-    [],
-  );
 
   // Observations waiting in the queue. QStash only reports a message count (lag);
   // each message batches many observations, so we estimate from the sampled bodies
@@ -482,8 +390,7 @@ export default function ObservationsViewer() {
       />
 
       <IngestionChart
-        chartData={chartData}
-        chartOptions={chartOptions}
+        series={ingestion}
         loading={loading}
         configured={stats?.configured}
       />
@@ -674,46 +581,6 @@ function StatCards({
         }
         loading={!stats}
       />
-    </div>
-  );
-}
-
-function IngestionChart({
-  chartData,
-  chartOptions,
-  loading,
-  configured,
-}: {
-  chartData: ObsChartData | null;
-  chartOptions: ChartOptions<"bar">;
-  loading: boolean;
-  configured?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <Database className="w-4 h-4 text-gray-400" />
-        <h2 className="text-sm font-medium text-gray-200">
-          Observations ingested per minute · last 24h
-        </h2>
-      </div>
-      <div className="h-[360px]">
-        {chartData ? (
-          <Bar data={chartData} options={chartOptions} />
-        ) : (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">
-            {loading
-              ? "Loading…"
-              : configured === false
-                ? "Postgres not connected yet."
-                : "No observations ingested in the last 24 hours."}
-          </div>
-        )}
-      </div>
-      <p className="text-xs text-gray-500 mt-2">
-        Bucketed by Postgres insert time (point_readings.created_at) — the true
-        ingestion rate. Raw readings and 5-minute aggregates stacked.
-      </p>
     </div>
   );
 }

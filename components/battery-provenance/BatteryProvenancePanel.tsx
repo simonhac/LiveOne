@@ -11,7 +11,7 @@ import {
   nearestIndex,
   useChartFocus,
 } from "@/lib/charts/ChartFocusContext";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { provenanceDailyQuery } from "@/lib/queries";
 import {
@@ -105,15 +105,9 @@ function PanelInner({
     const recalBands = days.flatMap((day, i) => {
       if (fields.recal[i] !== 1) return [];
       const dayStart = ymdToLocalDate(day).getTime();
-      return [
-        {
-          type: "box",
-          xMin: dayStart,
-          xMax: dayStart + DAY_MS,
-          backgroundColor: RECAL_BAND_COLOR,
-          borderWidth: 0,
-        },
-      ];
+      // Plain interval — the chart owns the fill (RECAL_BAND_COLOR by default). The chartjs-plugin-
+      // annotation box spec this used to be went with Chart.js.
+      return [{ xMin: dayStart, xMax: dayStart + DAY_MS }];
     });
 
     const windowStart = days.length > 0 ? ymdToLocalDate(days[0]) : new Date();

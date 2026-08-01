@@ -27,6 +27,11 @@ interface HeatmapClientProps {
     id: number;
     displayName: string;
     displayTimezone: string;
+    /**
+     * A device has no `day_offset_min` of its own — that column lives on `areas` — so its fixed
+     * offset IS its tz offset. Same fallback `dayOffsetOf` makes for the device leg on a dashboard.
+     */
+    timezoneOffsetMin: number;
   };
   userId: string;
   isAdmin: boolean;
@@ -65,6 +70,7 @@ export default function HeatmapClient({ device }: HeatmapClientProps) {
     <HeatmapPanel
       systemId={device.id}
       timezone={device.displayTimezone}
+      dayOffsetMin={device.timezoneOffsetMin}
       showDebug
       enableKeyboardNav
       initialSeries={initial.point}

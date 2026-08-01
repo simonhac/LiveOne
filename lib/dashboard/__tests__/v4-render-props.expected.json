@@ -396,6 +396,7 @@
       {
         "component": "HeatmapPanel",
         "props": {
+          "dayOffsetMin": 600,
           "pinnedPalette": "turbo",
           "pinnedSeries": "load.hws/temperature",
           "systemId": 11,
@@ -423,6 +424,7 @@
       {
         "component": "HeatmapPanel",
         "props": {
+          "dayOffsetMin": 600,
           "systemId": 1,
           "timezone": "Australia/Sydney",
           "variant": "card"

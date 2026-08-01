@@ -11,6 +11,7 @@
 # next.js
 /.next/
 /.next-build/
+/.next-analyze/
 /out/
 
 # production
@@ -102,3 +103,9 @@ daylesford_grid_readings_*.csv
 # collector hub build artifact (esbuild bundle; produced by `npm run build:collector`)
 scripts/collector/fly/collector.cjs
 .usher-data/
+
+# Playwright (e2e screenshot baselines live in e2e/__screenshots__ and ARE committed)
+/.next-e2e/
+/.playwright/
+/playwright-report/
+/test-results/

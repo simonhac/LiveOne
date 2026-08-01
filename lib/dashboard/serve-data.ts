@@ -90,6 +90,17 @@ export interface DeviceBlock extends SubjectBlockCommon {
  */
 export interface AreaBlock extends SubjectBlockCommon {
   areaId: AreaId;
+  /**
+   * `areas.day_offset_min` — the CANONICAL day-bucketing key, and not interchangeable with
+   * `timezoneOffsetMin`. It is backfilled equal to it and immutable thereafter except via an explicit
+   * re-bucket, so the two agree for most areas and then permanently disagree for a re-bucketed one.
+   * Anything that draws or aggregates *days* must use this, or it silently disagrees with
+   * `point_readings_agg_1d`. See docs/architecture/data-model.md → "Time: fixed-offset days".
+   *
+   * Area-only: a device has no day bucket of its own, so `subjectOf` falls back to the tz offset for
+   * the device leg (the same fallback `lib/areas/v4-shapes.ts` makes).
+   */
+  dayOffsetMin: number;
 }
 
 /**
@@ -198,6 +209,7 @@ export async function buildDevicePayload(
         displayTimezone: area.displayTimezone,
         ownerClerkUserId: area.ownerUserId,
         timezoneOffsetMin: area.timezoneOffsetMin,
+        dayOffsetMin: area.dayOffsetMin,
         status: area.status,
         location: area.location,
         createdAt: area.createdAt,

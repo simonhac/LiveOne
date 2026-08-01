@@ -26,6 +26,16 @@ export const CHART_COLORS = {
     main: "rgb(236, 72, 153)", // pink-500 - Grid import/export
   },
 
+  // Total site load — the lines chart's aggregate load trace. Distinct from `restOfHouse` below,
+  // which is the *remainder* after sub-metered loads in the stacked chart. Added when the lines
+  // chart stopped hardcoding its palette; blue is otherwise unused here, so nothing collides.
+  load: "rgb(96, 165, 250)", // blue-400
+
+  // The shared focus/crosshair line drawn at ChartFocusContext's focusedTime. Not a series colour —
+  // it must stay legible against every one of them, which is why it is not in the series palette.
+  // (It was safe to leave as red-500 only once the lines chart's Grid moved off red onto grid.main.)
+  focusLine: "rgb(239, 68, 68)", // red-500
+
   // Special load types
   hotWater: "rgb(251, 146, 60)", // orange-400 - Hot Water/HWS/Heat Pump
   pool: "rgb(34, 211, 238)", // cyan-400 - Pool (aqua)

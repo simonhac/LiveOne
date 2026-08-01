@@ -7,7 +7,7 @@ import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration, isDateOnlyPeriod } from "@/lib/charts/temporal";
-import { formatHoverTimestamp } from "@/lib/charts/scaffold";
+import { formatHoverTimestamp } from "@/lib/charts/temporal";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
 
 interface TemporalNavigatorProps {

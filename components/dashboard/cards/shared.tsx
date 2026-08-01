@@ -33,6 +33,8 @@ export interface AreaDatum {
     id: number;
     areaId: string;
     timezoneOffsetMin: number;
+    /** `areas.day_offset_min` — the canonical day bucket. See AreaBlock in lib/dashboard/serve-data.ts. */
+    dayOffsetMin: number;
     displayTimezone: string | null;
   };
   latest?: LatestPointValues;
@@ -59,6 +61,26 @@ export function subjectOf(
   datum: AreaDatum | null | undefined,
 ): AreaDatumSubject | undefined {
   return datum?.device ?? datum?.area;
+}
+
+/**
+ * The canonical DAY-bucketing offset for this subject, in minutes.
+ *
+ * Deliberately a separate helper rather than a field on {@link AreaDatumSubject}: the device leg has
+ * no `dayOffsetMin` of its own, so supplying one would mean `subjectOf` returning a *copy* of
+ * `datum.device` instead of the object itself — new identity every render, and enough to change what
+ * the `v4-render-props` golden records. The fallback mirrors `lib/areas/v4-shapes.ts`.
+ *
+ * Use this — never `timezoneOffsetMin` — for anything that draws or aggregates DAYS. The two are
+ * backfilled equal and then permanently diverge for any area that has been re-bucketed, and a day
+ * drawn on the wrong one silently disagrees with `point_readings_agg_1d`. See
+ * docs/architecture/data-model.md → "Time: fixed-offset days".
+ */
+export function dayOffsetOf(
+  datum: AreaDatum | null | undefined,
+): number | undefined {
+  if (datum?.area) return datum.area.dayOffsetMin;
+  return datum?.device?.timezoneOffsetMin;
 }
 
 /**

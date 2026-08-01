@@ -45,8 +45,8 @@ import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
-import { formatHoverTimestamp } from "@/lib/charts/scaffold";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import { formatHoverTimestamp } from "@/lib/charts/temporal";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import { isDateOnlyPeriod } from "@/lib/charts/temporal";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { CalendarX2 } from "lucide-react";
@@ -157,7 +157,6 @@ function StackedChart({
   const [loading, setLoading] = useState(true);
   const [showSpinner, setShowSpinner] = useState(false);
   const [hoveredTimestamp, setHoveredTimestamp] = useState<Date | null>(null);
-  const chartRef = useRef<any>(null);
 
   // Compute effective visibility - if empty/undefined, show all series
   const effectiveVisibleSeries = useMemo(() => {
@@ -184,46 +183,32 @@ function StackedChart({
   const lastHoverIndexRef = useRef<number | null>(null);
 
   const handleHover = useCallback(
-    (_event: any, activeElements: any[], _chart: any) => {
+    (index: number | null) => {
       if (!data) return;
-
-      if (activeElements && activeElements.length > 0) {
-        const dataIndex = activeElements[0].index;
-
-        // Only update if index actually changed (reduces jitter)
-        if (lastHoverIndexRef.current !== dataIndex) {
-          lastHoverIndexRef.current = dataIndex;
-          const timestamp = data.timestamps[dataIndex];
-          setHoveredTimestamp(timestamp);
-          if (onHoverIndexChange) {
-            onHoverIndexChange(dataIndex);
-          }
-        }
-      } else {
-        if (lastHoverIndexRef.current !== null) {
-          lastHoverIndexRef.current = null;
-          setHoveredTimestamp(null);
-          if (onHoverIndexChange) {
-            onHoverIndexChange(null);
-          }
-        }
-      }
+      // The local dedup stays even though usePointerIndex also dedups: this callback is invoked from
+      // more than the pointer (a sibling chart's focus arrives the same way), and re-setting the same
+      // index still costs a render.
+      if (lastHoverIndexRef.current === index) return;
+      lastHoverIndexRef.current = index;
+      setHoveredTimestamp(index == null ? null : (data.timestamps[index] ?? null));
+      onHoverIndexChange?.(index);
     },
     [data, onHoverIndexChange],
   );
 
-  const { now, windowStart } = useMemo(() => {
+  const { windowEnd, windowStart } = useMemo(() => {
     // When data is available, use its actual timestamp range
     // This ensures historical data is displayed correctly
     if (data && data.timestamps && data.timestamps.length > 0) {
       const timestamps = data.timestamps;
       return {
         windowStart: timestamps[0],
-        now: timestamps[timestamps.length - 1],
+        windowEnd: timestamps[timestamps.length - 1],
       };
     }
 
-    // Otherwise, use current time window (for initial render or live mode)
+    // Otherwise, use current time window (for initial render or live mode). Only in this fallback is
+    // the window end actually the wall clock.
     const now = new Date();
     let windowHours: number;
     if (period === "D") {
@@ -236,7 +221,7 @@ function StackedChart({
       windowHours = 24 * 365;
     }
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-    return { now, windowStart };
+    return { windowEnd: now, windowStart };
   }, [period, data]);
 
   // Track loading state from the parent-provided data/isLoading props
@@ -321,12 +306,10 @@ function StackedChart({
         mode={mode}
         hoveredTimestamp={hoveredTimestamp}
         timeRange={period}
-        now={now}
+        windowEnd={windowEnd}
         windowStart={windowStart}
-        onHover={handleHover}
-        chartRef={chartRef}
+        onHoverIndex={handleHover}
         className="flex-1 min-h-0 w-full overflow-hidden"
-        onMouseLeave={handleMouseLeave}
       />
     );
   };

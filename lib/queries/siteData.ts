@@ -4,7 +4,7 @@ import {
   type ProcessedSiteData,
 } from "@/lib/site-data-processor";
 import { queryKeys, rangeKeyFor, type SystemIdLike } from "./keys";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import {
   boundaryRefetchInterval,
   CHART_STALE,

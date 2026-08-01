@@ -4,115 +4,71 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { classifyUnit } from "@/lib/point/unit-typography";
 import { useQuery } from "@tanstack/react-query";
 import { HttpError } from "@/lib/queries";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  Tooltip,
-  Legend,
-  ChartOptions,
-} from "chart.js";
-import { Chart } from "react-chartjs-2";
-import { MatrixController, MatrixElement } from "chartjs-chart-matrix";
 import { format } from "date-fns";
 import {
-  fromDate,
   now,
   toCalendarDate,
   type ZonedDateTime,
 } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
+import { useContainerSize } from "@/lib/charts/svg";
+import {
+  bucketHeatmap,
+  daysOffFrame,
+  formatUtcOffset,
+  resolveFrameOffsetMin,
+} from "@/lib/heatmap-buckets";
+import {
+  BLACK_SENTINEL,
+  POWER_BASELINE_W,
+  heatmapDomain,
+  isBaselinePower,
+  normalizeHeatmapValue,
+} from "@/lib/heatmap-scale";
 import ServerErrorModal from "./ServerErrorModal";
-import { formatTimeAEST } from "@/lib/date-utils";
 import { formatTime, formatDate } from "@/lib/fe-date-format";
 import { PointInfo } from "@/lib/point/point-info";
 
-// Custom plugin to render y-axis labels with mixed colors
-const customYAxisPlugin = {
-  id: "customYAxisLabels",
-  afterDraw: (chart: any) => {
-    const ctx = chart.ctx;
-    const yAxis = chart.scales.y;
+/**
+ * Layout for the day × time-of-day grid.
+ *
+ * `left` fits the widest day label ("Jun Wed 10*"); `bottom` fits the rotated time labels. Fixed
+ * rather than measured, because a grid that reflowed as the month prefix appeared and disappeared
+ * would shift every cell.
+ */
+const MARGIN = { top: 6, right: 12, bottom: 46, left: 96 };
 
-    if (!yAxis) return;
+/**
+ * The chart's fixed overall height. Exported because it is the ONE number every heatmap placeholder
+ * has to agree with: the panel's status blocks (`HeatmapPanel`), the card plugin's declared footprint
+ * (`dashboard/cards/footprints.ts`), and the spinner below. They used to be 384 / 360 / 600
+ * respectively, so a heatmap card resized twice on its way in.
+ */
+export const HEATMAP_CHART_H = 600;
 
-    ctx.save();
-    ctx.textBaseline = "middle";
-
-    yAxis.ticks.forEach((tick: any, index: number) => {
-      const y = yAxis.getPixelForTick(index);
-      const label = tick.label;
-
-      if (!label) return;
-
-      // Convert label to string (it might be a number or array)
-      const labelStr = String(label);
-
-      // Check if this label has a month prefix (word word ...)
-      const monthMatch = labelStr.match(/^([A-Za-z]+)\s+([A-Za-z]+\s+.+)$/);
-
-      if (monthMatch) {
-        // Label has month prefix - render month in white/bold, rest in gray/normal
-        const monthPart = monthMatch[1];
-        const dayPart = monthMatch[2];
-
-        // Measure text widths for proper positioning
-        ctx.font = "10px DM Sans, system-ui, sans-serif";
-        const normalDayWidth = ctx.measureText(dayPart).width;
-        const spaceWidth = ctx.measureText(" ").width;
-
-        ctx.font = "bold 10px DM Sans, system-ui, sans-serif";
-        const boldMonthWidth = ctx.measureText(monthPart).width;
-
-        // Calculate starting x position (right-aligned, using chart area left edge)
-        const totalWidth = boldMonthWidth + spaceWidth + normalDayWidth;
-        const chartAreaLeft = chart.chartArea.left;
-        const startX = chartAreaLeft - totalWidth - 10;
-
-        // Draw month in white/bold
-        ctx.font = "bold 10px DM Sans, system-ui, sans-serif";
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText(monthPart, startX, y);
-
-        // Draw space and day in gray/normal (same as regular labels)
-        ctx.font = "10px DM Sans, system-ui, sans-serif";
-        ctx.fillStyle = "#9ca3af";
-        ctx.fillText(" " + dayPart, startX + boldMonthWidth, y);
-      } else {
-        // Regular label - render in gray, right-aligned
-        ctx.font = "10px DM Sans, system-ui, sans-serif";
-        ctx.fillStyle = "#9ca3af";
-        ctx.textAlign = "right";
-        const chartAreaLeft = chart.chartArea.left;
-        ctx.fillText(labelStr, chartAreaLeft - 10, y);
-        ctx.textAlign = "left"; // Reset
-      }
-    });
-
-    ctx.restore();
-  },
-};
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  Tooltip,
-  Legend,
-  MatrixController,
-  MatrixElement,
-);
-
-// Register custom plugin
-ChartJS.register(customYAxisPlugin as any);
+/** The cell grid, derived so the svg totals exactly {@link HEATMAP_CHART_H} — never a second literal. */
+const GRID_HEIGHT = HEATMAP_CHART_H - MARGIN.top - MARGIN.bottom;
+const TICK_TEXT = "rgb(156, 163, 175)"; // gray-400
+const FONT_FAMILY = "DM Sans, system-ui, sans-serif";
+/** Missing readings — distinct from the black baseline, which means "on but idle". */
+const NO_DATA_FILL = "rgba(55, 65, 81, 0.3)";
+/** gray-900, the page background: a load/source power cell at or below standby reads as nothing. */
+const BASELINE_FILL = "#111827";
 
 interface HeatmapChartProps {
   systemId: number;
   pointPath: string;
   pointUnit: string;
   metricType: string;
+  /** IANA display zone — used ONLY to work out which days were on a different real offset. */
   timezone: string;
+  /**
+   * `areas.day_offset_min` — the FALLBACK frame, used only when `timezone` is unusable. The grid is
+   * normally bucketed in the newest day's real offset; see `resolveFrameOffsetMin` and the rationale
+   * in lib/heatmap-buckets.ts for why the frame rolls rather than sitting on standard time.
+   */
+  dayOffsetMin: number;
   palette: HeatmapPaletteKey;
   className?: string;
   onFetchInfo?: (info: {
@@ -135,6 +91,10 @@ interface HeatmapData {
   max: number;
   xLabels: string[]; // Time labels
   yLabels: string[]; // Date labels
+  /** The offset the whole grid is bucketed and labelled in. */
+  frameOffsetMin: number;
+  /** Date keys whose real UTC offset differed from the frame (DST). Asterisked in the axis. */
+  offFrameDays: Set<string>;
 }
 
 /** Raw fetch result carried in the React Query cache; transformed into `HeatmapData`
@@ -144,14 +104,6 @@ interface HeatmapFetchResult {
   fetchStartTime: ZonedDateTime;
   fetchEndTime: ZonedDateTime;
 }
-
-/**
- * The chart's fixed plot height. Exported because it is the ONE number every heatmap placeholder
- * has to agree with: the panel's status blocks (HeatmapPanel), the card plugin's declared footprint
- * (dashboard/cards/footprints.ts), and the spinner below. They used to be 384 / 360 / 600
- * respectively, so a heatmap card resized twice on its way in.
- */
-export const HEATMAP_CHART_H = 600;
 
 /** Thrown when the API replies with an HTML page (e.g. an expired session), so the
  *  caller can surface the "connection" modal instead of a generic server error. */
@@ -168,6 +120,7 @@ export default function HeatmapChart({
   pointUnit,
   metricType,
   timezone,
+  dayOffsetMin,
   palette,
   className = "",
   onFetchInfo,
@@ -179,7 +132,10 @@ export default function HeatmapChart({
   const [errorDetails, setErrorDetails] = useState<string | undefined>(
     undefined,
   );
-  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [containerRef, size] = useContainerSize<HTMLDivElement>();
+  const width = size.width;
+  const [hover, setHover] = useState<{ row: number; col: number } | null>(null);
+  const isBaselinePowerSeries = isBaselinePower(pointPath);
 
   // Fetch 30 days of half-hourly data for the selected point. The query carries the raw
   // payload + the computed range; the heatmap grid is derived in a useMemo below so the
@@ -192,12 +148,6 @@ export default function HeatmapChart({
   } = useQuery<HeatmapFetchResult>({
     queryKey: ["system", systemId, "heatmap", pointPath, timezone],
     queryFn: async () => {
-      // Hide tooltip when starting to load new data
-      const tooltipEl = document.getElementById("chartjs-tooltip");
-      if (tooltipEl) {
-        tooltipEl.style.opacity = "0";
-      }
-
       // Calculate date range using @internationalized/date
       // End: midnight tomorrow (00:00 tomorrow in AEST)
       const nowAEST = now(timezone);
@@ -226,14 +176,6 @@ export default function HeatmapChart({
       const seriesSuffix =
         PointInfo.getPreferredAggregationForMetricType(metricType);
       const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.${seriesSuffix}`;
-      console.log("[HeatmapChart] Fetching:", url);
-      console.log(
-        "[HeatmapChart] Calculated range - Start:",
-        formatTimeAEST(fetchStartTime),
-        "End:",
-        formatTimeAEST(fetchEndTime),
-      );
-
       const response = await fetch(url, {
         credentials: "same-origin",
       });
@@ -247,9 +189,6 @@ export default function HeatmapChart({
       }
 
       const result = await response.json();
-      console.log("[HeatmapChart] Response:", result);
-      console.log("[HeatmapChart] result.data:", result.data);
-
       return { result, fetchStartTime, fetchEndTime };
     },
     staleTime: 60_000,
@@ -278,114 +217,63 @@ export default function HeatmapChart({
     if (!fetchResult) return null;
     const { result } = fetchResult;
 
-    // Find the series for the requested point
-    // Use .delta for energy metrics, .avg for others (same as request)
+    // Find the series for the requested point.
+    // Use .delta for energy metrics, .avg for others (same as request).
     const seriesSuffix =
       PointInfo.getPreferredAggregationForMetricType(metricType);
     const expectedSeriesPath = `${pointPath}.${seriesSuffix}`;
     const series = result.data?.find((s: any) => {
       const seriesPath = s.path || s.id?.split(".").slice(2).join(".");
-      console.log(
-        "[HeatmapChart] Checking series:",
-        s.id,
-        "path:",
-        seriesPath,
-        "looking for:",
-        expectedSeriesPath,
-      );
       return seriesPath === expectedSeriesPath;
     });
-    console.log("[HeatmapChart] Found series:", series);
 
     if (!series || !series.history) {
-      console.error(
-        "[HeatmapChart] No series or history found. series:",
-        series,
-      );
+      console.error("[HeatmapChart] No series/history for", expectedSeriesPath);
       return null;
     }
 
-    // Process the data
     const { firstInterval, interval, data } = series.history;
-    const startTime = new Date(firstInterval).getTime();
     const intervalMs = parseInterval(interval);
-
-    // Generate time labels (48 half-hour slots: 00:00, 00:30, ..., 23:30)
-    const timeLabels: string[] = [];
-    for (let h = 0; h < 24; h++) {
-      timeLabels.push(`${String(h).padStart(2, "0")}:00`);
-      timeLabels.push(`${String(h).padStart(2, "0")}:30`);
+    if (intervalMs === null || intervalMs <= 0) {
+      console.error(
+        "[HeatmapChart] Unrecognised interval from /api/history:",
+        interval,
+      );
+      return null; // surfaces as the "No data found for this point" error path
     }
 
-    // Group data by date and time
-    const dataByDate = new Map<string, Map<string, number | null>>();
-    const dates = new Set<string>();
+    // ONE offset for the whole grid, so every day is exactly 48 slots and the DST hour-loss /
+    // phantom-gap defects cannot occur. The frame follows the NEWEST day's real offset rather than
+    // standard time — with standard time every row of a midsummer window is off-frame, which makes
+    // the asterisk meaningless. Measured and unit-tested in lib/heatmap-buckets.ts.
+    const firstIntervalEndMs = new Date(firstInterval).getTime();
+    const values = data as (number | null)[];
+    const lastReadingMs =
+      firstIntervalEndMs + Math.max(0, values.length - 1) * intervalMs;
+    const frameOffsetMin = resolveFrameOffsetMin(
+      lastReadingMs,
+      timezone,
+      dayOffsetMin, // fallback if display_timezone is unusable
+    );
 
-    data.forEach((value: number | null, index: number) => {
-      // startTime is the end of the first interval
-      const intervalEndTimestamp = startTime + index * intervalMs;
-      const intervalStartTimestamp = intervalEndTimestamp - intervalMs;
-
-      // Use interval START time for the time slot (e.g., 00:00 for the 00:00-00:30 interval)
-      const jsDateForTime = new Date(intervalStartTimestamp);
-      const zonedDateForTime = fromDate(jsDateForTime, timezone);
-      const timeKey = `${String(zonedDateForTime.hour).padStart(2, "0")}:${String(zonedDateForTime.minute).padStart(2, "0")}`;
-
-      // Use interval START time for the date (consistent with time key)
-      const jsDateForDate = new Date(intervalStartTimestamp);
-      const zonedDateForDate = fromDate(jsDateForDate, timezone);
-      const dateKey = `${zonedDateForDate.year}-${String(zonedDateForDate.month).padStart(2, "0")}-${String(zonedDateForDate.day).padStart(2, "0")}`;
-
-      dates.add(dateKey);
-
-      if (!dataByDate.has(dateKey)) {
-        dataByDate.set(dateKey, new Map());
-      }
-      // Store null values as well
-      dataByDate.get(dateKey)!.set(timeKey, value);
+    const bucketed = bucketHeatmap(values, {
+      firstIntervalEndMs,
+      intervalMs,
+      frameOffsetMin,
     });
 
-    // Sort dates (most recent first)
-    const sortedDates = Array.from(dates).sort().reverse();
-
-    // Build heatmap data points
-    const heatmapPoints: HeatmapDataPoint[] = [];
-    let min = Infinity;
-    let max = -Infinity;
-
-    sortedDates.forEach((dateKey) => {
-      const timeData = dataByDate.get(dateKey)!;
-      timeLabels.forEach((timeKey) => {
-        const value = timeData.get(timeKey) ?? null;
-        heatmapPoints.push({
-          x: timeKey,
-          y: dateKey,
-          v: value,
-        });
-
-        if (value !== null) {
-          min = Math.min(min, value);
-          max = Math.max(max, value);
-        }
-      });
-    });
-
-    // Handle case where all values are null
-    if (min === Infinity || max === -Infinity) {
-      min = 0;
-      max = 1;
-    }
-
-    console.log("[HeatmapChart] Data processed");
     return {
-      data: heatmapPoints,
-      min,
-      max,
-      xLabels: timeLabels,
-      yLabels: sortedDates,
+      data: bucketed.cells,
+      min: bucketed.min,
+      max: bucketed.max,
+      xLabels: bucketed.timeLabels,
+      yLabels: bucketed.dayKeys,
+      frameOffsetMin,
+      // Rows the frame does not describe: the site was on a different real offset that day, so its
+      // columns read an hour out. Marked with an asterisk + footnote rather than silently shown.
+      offFrameDays: daysOffFrame(bucketed.dayKeys, timezone, frameOffsetMin),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchResult, pointPath, metricType, timezone]);
+  }, [fetchResult, pointPath, metricType, timezone, dayOffsetMin]);
 
   // Initial-load spinner vs. refetch overlay (preserves the original `loading` gate).
   // A successful fetch whose series is missing is an error state, not still-loading.
@@ -426,21 +314,17 @@ export default function HeatmapChart({
       setErrorDetails(msg);
     }
   }, [isError, queryError, fetchResult, heatmapData]);
-
-  // Cleanup tooltip on unmount
-  useEffect(() => {
-    return () => {
-      const tooltipEl = document.getElementById("chartjs-tooltip");
-      if (tooltipEl) {
-        tooltipEl.remove();
-      }
-    };
-  }, []);
-
-  // Parse interval string to milliseconds
-  function parseInterval(interval: string): number {
+  /**
+   * Parse an interval string ("30m") to milliseconds, or `null` if it is not one.
+   *
+   * Returning `null` rather than `0` matters: with `intervalMs = 0` every reading mapped to the same
+   * instant, so the entire heatmap silently collapsed into a single column and looked like a data
+   * problem rather than a parsing one. The caller turns `null` into the ordinary "no data" error
+   * path, which is visible.
+   */
+  function parseInterval(interval: string): number | null {
     const match = interval.match(/^(\d+)([smhd])$/);
-    if (!match) return 0;
+    if (!match) return null;
 
     const value = parseInt(match[1]);
     const unit = match[2];
@@ -455,378 +339,101 @@ export default function HeatmapChart({
       case "d":
         return value * 24 * 60 * 60 * 1000;
       default:
-        return 0;
+        return null;
     }
   }
 
-  // Get normalized value with special handling for load and source power metrics
-  const getNormalizedValue = (
-    value: number,
-    min: number,
-    max: number,
-  ): number => {
-    // Special case: load and source power metrics use black for 0-50W
-    if (
-      (pointPath.startsWith("load") || pointPath.startsWith("source")) &&
-      pointPath.endsWith("/power")
-    ) {
-      if (value <= 50) {
-        return -1; // Special value to indicate "use black"
-      }
-      // Map 50W+ to 0-1 range
-      return (value - 50) / Math.max(max - 50, 1);
+  // ---------------------------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------------------------
+
+  /**
+   * The colour domain — fixed for metrics that have one by definition (SoC is 0–100 %), observed
+   * otherwise. Computed ONCE and used by both the cells and the legend, so the legend cannot claim a
+   * range the grid does not use. That divergence was defect #11.
+   */
+  const domain = heatmapData
+    ? heatmapDomain(metricType, heatmapData.min, heatmapData.max)
+    : null;
+
+  const cellColour = (v: number | null | undefined): string => {
+    if (v == null || !Number.isFinite(v)) return NO_DATA_FILL;
+    const n = normalizeHeatmapValue(v, domain!.min, domain!.max, {
+      baselinePower: isBaselinePowerSeries,
+    });
+    if (n === BLACK_SENTINEL) return BASELINE_FILL;
+    return HEATMAP_PALETTES[palette].fn(n);
+  };
+
+  /**
+   * The legend ramp.
+   *
+   * Truthful since Stage 3e: normalisation spans the real `min..max`, so `getColor(0)`→`getColor(1)`
+   * genuinely is what the cells use. For a load/source power series the ramp additionally carries the
+   * black standby floor at its left, in proportion to where 50 W falls in the range — otherwise the
+   * legend would claim colour for values the grid paints black.
+   */
+  const legendGradient = useMemo(() => {
+    if (!heatmapData) return "none";
+    const ramp = (from: number) =>
+      [0, 0.25, 0.5, 0.75, 1]
+        .map(
+          (t) =>
+            `${HEATMAP_PALETTES[palette].fn(t)} ${from + (100 - from) * t}%`,
+        )
+        .join(", ");
+
+    if (!isBaselinePowerSeries) {
+      return `linear-gradient(to right, ${ramp(0)})`;
     }
+    const d = heatmapDomain(metricType, heatmapData.min, heatmapData.max);
+    const span = d.max - d.min;
+    const pct =
+      span > 0
+        ? Math.min(100, Math.max(0, ((POWER_BASELINE_W - d.min) / span) * 100))
+        : 100;
+    if (pct >= 100) return BASELINE_FILL; // the whole series sits at or below standby
+    if (pct <= 0) return `linear-gradient(to right, ${ramp(0)})`;
+    return `linear-gradient(to right, ${BASELINE_FILL} 0%, ${BASELINE_FILL} ${pct}%, ${ramp(pct)})`;
+  }, [heatmapData, palette, isBaselinePowerSeries, metricType]);
 
-    // Default linear normalization
-    return (value - min) / Math.max(max - min, 1);
-  };
-
-  // Get color for a normalized value (0-1)
-  const getColor = (normalizedValue: number): string => {
-    if (normalizedValue === -1) {
-      return "#111827"; // gray-900 (dashboard background) for load power 0-50W
+  /** Value + unit for the tooltip, applying the same conversions the legend uses. */
+  const formatValue = (v: number | null): { value: string; unit: string } => {
+    if (v == null) return { value: "No data", unit: "" };
+    if (metricType === "energy") {
+      return { value: (v / 1000).toFixed(1), unit: pointUnit.replace("Wh", "kWh") };
     }
-    const paletteConfig = HEATMAP_PALETTES[palette];
-    return paletteConfig.fn(normalizedValue);
+    if (metricType === "power") return { value: (v / 1000).toFixed(1), unit: "kW" };
+    return { value: v.toFixed(2), unit: pointUnit };
   };
 
-  // Add mousemove listener to hide tooltip when mouse leaves chart area
-  useEffect(() => {
-    const container = chartContainerRef.current;
-    if (!container) return;
+  const axisUnit =
+    metricType === "energy"
+      ? pointUnit.replace("Wh", "kWh")
+      : metricType === "power"
+        ? "kW"
+        : pointUnit;
+  const axisScale = metricType === "energy" || metricType === "power" ? 1000 : 1;
+  // A FIXED domain's bounds are exact by definition — "0%"/"100%", not "0.00%"/"100.00%". Only an
+  // observed range needs decimals, because there the number is a measurement.
+  const axisDecimals = domain?.fixed
+    ? 0
+    : metricType === "energy" || metricType === "power"
+      ? 1
+      : 2;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const canvas = container.querySelector("canvas");
-      if (!canvas) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      // Get the chart instance to access chartArea
-      const chartInstance = ChartJS.getChart(canvas);
-      if (!chartInstance?.chartArea) return;
-
-      const chartArea = chartInstance.chartArea;
-
-      // Check if mouse is outside the chart data area
-      const isOutside =
-        x < chartArea.left ||
-        x > chartArea.right ||
-        y < chartArea.top ||
-        y > chartArea.bottom;
-
-      if (isOutside) {
-        // Hide tooltip
-        const tooltipEl = document.getElementById("chartjs-tooltip");
-        if (tooltipEl) {
-          tooltipEl.style.opacity = "0";
-        }
-      }
-    };
-
-    container.addEventListener("mousemove", handleMouseMove);
-    return () => {
-      container.removeEventListener("mousemove", handleMouseMove);
-    };
-  }, [heatmapData]); // Re-run when chart data changes
-
-  // Chart configuration
-  const chartOptions: ChartOptions<"matrix"> = {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: {
-      mode: "point",
-      intersect: true,
-    },
-    layout: {
-      padding: {
-        left: 10, // Minimal space for y-axis labels
-      },
-    },
-    plugins: {
-      legend: {
-        display: false,
-      },
-      tooltip: {
-        enabled: false, // Disable default tooltip, we'll use external
-        external: (context) => {
-          // Get or create tooltip element
-          let tooltipEl = document.getElementById("chartjs-tooltip");
-
-          if (!tooltipEl) {
-            tooltipEl = document.createElement("div");
-            tooltipEl.id = "chartjs-tooltip";
-            tooltipEl.style.position = "absolute";
-            tooltipEl.style.zIndex = "9999";
-            tooltipEl.style.pointerEvents = "none";
-            tooltipEl.style.transition = "all 0.1s ease";
-            document.body.appendChild(tooltipEl);
-          }
-
-          // Hide if no tooltip
-          const tooltipModel = context.tooltip;
-          if (tooltipModel.opacity === 0) {
-            tooltipEl.style.opacity = "0";
-            return;
-          }
-
-          // Check if pointer is within the chart data area (not over labels/axes)
-          const chartArea = context.chart.chartArea;
-          const isInChartArea =
-            tooltipModel.caretX >= chartArea.left &&
-            tooltipModel.caretX <= chartArea.right &&
-            tooltipModel.caretY >= chartArea.top &&
-            tooltipModel.caretY <= chartArea.bottom;
-
-          if (!isInChartArea) {
-            tooltipEl.style.opacity = "0";
-            return;
-          }
-
-          // Set tooltip content
-          if (tooltipModel.body) {
-            const dataPoint = tooltipModel.dataPoints[0]
-              .raw as HeatmapDataPoint;
-
-            // Parse date and time from dataPoint (y is YYYY-MM-DD, x is HH:mm)
-            const dateTimeStr = `${dataPoint.y}T${dataPoint.x}:00`;
-            const dateTime = new Date(dateTimeStr);
-
-            // Format using standardized formatting functions
-            const timeStr = formatTime(dateTime, false); // e.g., "6:30 am"
-            const dateStr = formatDate(dateTime); // e.g., "24 Oct 2025"
-
-            // Calculate cell color (same logic as chart backgroundColor)
-            let cellColor: string;
-            if (dataPoint.v === null || dataPoint.v === undefined) {
-              cellColor = "rgba(55, 65, 81, 0.3)"; // gray-700 for null values
-            } else {
-              const normalized = getNormalizedValue(
-                dataPoint.v,
-                heatmapData?.min || 0,
-                heatmapData?.max || 1,
-              );
-              cellColor = getColor(normalized);
-            }
-
-            // Format value and unit based on metric type
-            let displayValue: string;
-            let displayUnit: string;
-            if (dataPoint.v === null) {
-              displayValue = "No data";
-              displayUnit = "";
-            } else if (metricType === "energy") {
-              // Energy: convert Wh to kWh
-              displayValue = (dataPoint.v / 1000).toFixed(1);
-              displayUnit = pointUnit.replace("Wh", "kWh");
-            } else if (metricType === "power") {
-              // Power: convert W to kW
-              displayValue = (dataPoint.v / 1000).toFixed(1);
-              displayUnit = "kW";
-            } else {
-              // Other metrics (rate, time, etc.): use value and unit as-is
-              displayValue = dataPoint.v.toFixed(2);
-              displayUnit = pointUnit;
-            }
-            // Tight for %/°C/¢, hair-spaced for kW/kWh/… — same rule as <Value>, so the tooltip
-            // agrees with the tiles instead of reading "3.4kW". See number-typography.md.
-            const bodyText =
-              displayValue === "No data"
-                ? displayValue
-                : `${displayValue}${
-                    classifyUnit(displayUnit).headGap === "hair" ? " " : ""
-                  }${displayUnit}`;
-
-            tooltipEl.innerHTML = `
-              <div style="
-                background: rgb(17, 24, 39);
-                border: 1px solid rgb(75, 85, 99);
-                border-radius: 6px;
-                padding: 12px;
-                color: white;
-                font-size: 12px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-              ">
-                <div style="font-weight: bold; margin-bottom: 4px;">${timeStr}, ${dateStr}</div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div style="
-                    width: 12px;
-                    height: 12px;
-                    background: ${cellColor};
-                    border: 1px solid rgba(255, 255, 255, 0.2);
-                    border-radius: 2px;
-                    flex-shrink: 0;
-                  "></div>
-                  <div>${bodyText}</div>
-                </div>
-              </div>
-            `;
-          }
-
-          // Position tooltip
-          const canvas = context.chart.canvas;
-          const rect = canvas.getBoundingClientRect();
-
-          // Calculate base position
-          const baseX = rect.left + window.scrollX + tooltipModel.caretX;
-          const baseY = rect.top + window.scrollY + tooltipModel.caretY;
-
-          // Get tooltip dimensions (need to make visible first to measure)
-          tooltipEl.style.opacity = "1";
-          const tooltipRect = tooltipEl.getBoundingClientRect();
-          const tooltipWidth = tooltipRect.width;
-          const tooltipHeight = tooltipRect.height;
-
-          // Check if tooltip would overflow chart boundaries
-          const offset = 10; // Offset from pointer
-          const chartRight = rect.right + window.scrollX;
-          const chartBottom = rect.bottom + window.scrollY;
-
-          const wouldOverflowRight = baseX + tooltipWidth + offset > chartRight;
-          const wouldOverflowBottom =
-            baseY + tooltipHeight + offset > chartBottom;
-
-          // Position horizontally
-          if (wouldOverflowRight) {
-            // Position to the left of pointer
-            tooltipEl.style.left = baseX - tooltipWidth - offset + "px";
-          } else {
-            // Position to the right of pointer
-            tooltipEl.style.left = baseX + offset + "px";
-          }
-
-          // Position vertically
-          if (wouldOverflowBottom) {
-            // Position above pointer
-            tooltipEl.style.top = baseY - tooltipHeight - offset + "px";
-          } else {
-            // Position below pointer
-            tooltipEl.style.top = baseY + offset + "px";
-          }
-        },
-      },
-    },
-    scales: {
-      x: {
-        type: "category",
-        labels: heatmapData?.xLabels || [],
-        offset: true,
-        ticks: {
-          color: "#9ca3af", // gray-400
-          font: {
-            size: 10,
-            family: "DM Sans, system-ui, sans-serif",
-          },
-          maxRotation: 90,
-          minRotation: 90,
-          callback: function (_value: any, index: any) {
-            // Show every 4th label (every 2 hours)
-            if (index % 4 === 0) {
-              return heatmapData?.xLabels[index];
-            }
-            return "";
-          },
-        },
-        grid: {
-          display: false,
-        },
-      },
-      y: {
-        type: "category",
-        labels: heatmapData?.yLabels || [],
-        offset: true,
-        ticks: {
-          display: true, // Keep visible but use custom rendering
-          color: "transparent", // Make default labels invisible
-          padding: 5,
-          callback: function (_value: any, index: any) {
-            const date = heatmapData?.yLabels[index];
-            if (!date) return "";
-
-            const localDate = new Date(date + "T00:00:00");
-            // Dates are sorted most recent first, so last index is the oldest (first chronologically)
-            const isFirstChronologically =
-              index === (heatmapData?.yLabels.length ?? 0) - 1;
-            const isFirstOfMonth = localDate.getDate() === 1;
-
-            // Show month for first chronological date or first of month
-            if (isFirstChronologically || isFirstOfMonth) {
-              return format(localDate, "MMM EEE d");
-            }
-
-            // Regular format
-            return format(localDate, "EEE d");
-          },
-        },
-        grid: {
-          display: false,
-        },
-      },
-    },
-  };
-
-  const chartData = {
-    datasets: [
-      {
-        data: heatmapData?.data || [],
-        backgroundColor: (context: any) => {
-          const value = context.dataset.data[context.dataIndex]?.v;
-          if (value === null || value === undefined) {
-            return "rgba(55, 65, 81, 0.3)"; // gray-700 for null values
-          }
-
-          const normalized = getNormalizedValue(
-            value,
-            heatmapData?.min || 0,
-            heatmapData?.max || 1,
-          );
-          return getColor(normalized);
-        },
-        borderColor: "rgba(0, 0, 0, 0.1)",
-        borderWidth: 1,
-        width: ({ chart }: any) => {
-          const area = chart.chartArea;
-          if (!area || !heatmapData) return 10;
-          return (area.width / heatmapData.xLabels.length) * 0.95;
-        },
-        height: ({ chart }: any) => {
-          const area = chart.chartArea;
-          if (!area || !heatmapData) return 10;
-          return (area.height / heatmapData.yLabels.length) * 0.95;
-        },
-      },
-    ],
-  };
-
-  // Only show spinner for initial load (no data yet)
   if (loading && !heatmapData) {
     return (
       <div className={className}>
-        <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
           <div
             className="flex items-center justify-center"
             style={{ height: HEATMAP_CHART_H }}
           >
-            <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <div className="h-16 w-16 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
           </div>
         </div>
       </div>
-    );
-  }
-
-  if (isErrorModalOpen && errorType) {
-    return (
-      <ServerErrorModal
-        isOpen={isErrorModalOpen}
-        errorType={errorType}
-        errorDetails={errorDetails}
-        onClose={() => {
-          setIsErrorModalOpen(false);
-          setErrorType(null);
-          setErrorDetails(undefined);
-        }}
-      />
     );
   }
 
@@ -834,6 +441,12 @@ export default function HeatmapChart({
     return (
       <div className={`flex items-center justify-center ${className}`}>
         <div className="text-red-400">Error: {error}</div>
+        <ServerErrorModal
+          isOpen={isErrorModalOpen}
+          onClose={() => setIsErrorModalOpen(false)}
+          errorType={errorType}
+          errorDetails={errorDetails}
+        />
       </div>
     );
   }
@@ -846,80 +459,199 @@ export default function HeatmapChart({
     );
   }
 
+  const rows = heatmapData.yLabels.length;
+  const cols = heatmapData.xLabels.length;
+  const plotW = Math.max(0, width - MARGIN.left - MARGIN.right);
+  const plotH = GRID_HEIGHT;
+  const cellW = plotW / cols;
+  const cellH = plotH / rows;
+  /**
+   * `yLabels` is newest-first, but the grid reads OLDEST at the top — Chart.js's category y-axis put
+   * index 0 at the bottom, and reading a month downward is what the chart is for. Flip the row index
+   * rather than the data, so tooltip and `offFrameDays` lookups stay index-aligned.
+   */
+  const rowY = (r: number) => (rows - 1 - r) * cellH;
+  const ready = width > 0 && plotW > 0;
+
+  const hovered =
+    hover && heatmapData
+      ? heatmapData.data[hover.row * cols + hover.col]
+      : null;
+
   return (
     <div className={className}>
-      <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
-        <div className="relative">
-          <div ref={chartContainerRef} style={{ height: HEATMAP_CHART_H }}>
-            <Chart type="matrix" data={chartData} options={chartOptions} />
-          </div>
+      <div className="relative rounded-lg border border-gray-700 bg-gray-900 p-4">
+        <div ref={containerRef}>
+          {ready && (
+            <svg
+              width={width}
+              height={plotH + MARGIN.top + MARGIN.bottom}
+              data-testid="heatmap-chart"
+              onPointerLeave={() => setHover(null)}
+            >
+              <g transform={`translate(${MARGIN.left}, ${MARGIN.top})`}>
+                {/* Cells. One <rect> per half hour — 30 x 48 = 1,440, which SVG handles fine. */}
+                {heatmapData.yLabels.map((day, r) =>
+                  heatmapData.xLabels.map((slot, c) => {
+                    const cell = heatmapData.data[r * cols + c];
+                    return (
+                      <rect
+                        key={`${r}-${c}`}
+                        x={c * cellW}
+                        y={rowY(r)}
+                        width={cellW}
+                        height={cellH}
+                        fill={cellColour(cell?.v)}
+                        shapeRendering="crispEdges"
+                        onPointerEnter={() => setHover({ row: r, col: c })}
+                      />
+                    );
+                  }),
+                )}
 
-          {/* Loading overlay - dims chart and shows spinner while loading new data */}
-          {loading && (
-            <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center rounded">
-              <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                {/* Day labels. The month prefix is bold white so the eye can find where a month
+                    starts; the rest is the usual muted grey. An asterisk marks a row whose real
+                    UTC offset differed from the frame — see the footnote. */}
+                {heatmapData.yLabels.map((day, r) => {
+                  const local = new Date(`${day}T00:00:00`);
+                  const isFirstChronologically = r === rows - 1;
+                  const showMonth = isFirstChronologically || local.getDate() === 1;
+                  const mark = heatmapData.offFrameDays.has(day) ? "*" : "";
+                  return (
+                    <text
+                      key={day}
+                      x={-8}
+                      y={rowY(r) + cellH / 2}
+                      dy="0.32em"
+                      textAnchor="end"
+                      fontSize={10}
+                      fontFamily={FONT_FAMILY}
+                      data-tick-label
+                    >
+                      {showMonth && (
+                        <tspan fill="#ffffff" fontWeight="bold">
+                          {format(local, "MMM")}{" "}
+                        </tspan>
+                      )}
+                      <tspan fill={TICK_TEXT}>
+                        {format(local, "EEE d")}
+                        {mark}
+                      </tspan>
+                    </text>
+                  );
+                })}
+
+                {/* Time-of-day labels, every 2 hours, rotated to read bottom-to-top as before. */}
+                {heatmapData.xLabels.map((slot, c) =>
+                  c % 4 === 0 ? (
+                    <text
+                      key={slot}
+                      transform={`rotate(-90, ${c * cellW + cellW / 2}, ${plotH + 6})`}
+                      x={c * cellW + cellW / 2}
+                      y={plotH + 6}
+                      textAnchor="end"
+                      dy="0.32em"
+                      fontSize={10}
+                      fontFamily={FONT_FAMILY}
+                      fill={TICK_TEXT}
+                      data-tick-label
+                    >
+                      {slot}
+                    </text>
+                  ) : null,
+                )}
+
+                {hover && (
+                  <rect
+                    x={hover.col * cellW}
+                    y={rowY(hover.row)}
+                    width={cellW}
+                    height={cellH}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth={1}
+                    pointerEvents="none"
+                  />
+                )}
+              </g>
+            </svg>
+          )}
+
+          {/* Tooltip. A positioned sibling rather than a body-appended div: the old external
+              Chart.js tooltip had to create, measure, place and clean up a raw #chartjs-tooltip
+              node by hand, and hide it again on refetch and unmount. */}
+          {hovered && hover && (
+            <div
+              className="pointer-events-none absolute z-20 rounded-md border border-gray-600 bg-gray-900 p-3 text-xs shadow-lg"
+              style={{
+                left: Math.min(
+                  MARGIN.left + hover.col * cellW + cellW + 10,
+                  Math.max(0, width - 190),
+                ),
+                top: MARGIN.top + rowY(hover.row) + cellH + 10,
+              }}
+            >
+              <div className="mb-1 font-bold text-white">
+                {formatTime(new Date(`${hovered.y}T${hovered.x}:00`), false)},{" "}
+                {formatDate(new Date(`${hovered.y}T${hovered.x}:00`))}
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-block h-3 w-3 flex-shrink-0 rounded-sm border border-white/20"
+                  style={{ backgroundColor: cellColour(hovered.v) }}
+                />
+                <span className="text-white">
+                  {(() => {
+                    const { value, unit } = formatValue(hovered.v);
+                    if (!unit) return value;
+                    const gap = classifyUnit(unit).headGap === "hair" ? "\u200a" : "";
+                    return `${value}${gap}${unit}`;
+                  })()}
+                </span>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Color legend */}
+        {/* Colour legend. Truthful since Stage 3e: the ramp spans the real min..max. */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <span className="text-xs text-gray-400">
-            {metricType === "energy" || metricType === "power"
-              ? (heatmapData.min / 1000).toFixed(1)
-              : heatmapData.min.toFixed(2)}
-            {metricType === "energy"
-              ? pointUnit.replace("Wh", "kWh")
-              : metricType === "power"
-                ? "kW"
-                : pointUnit}
+            {(domain!.min / axisScale).toFixed(axisDecimals)}
+            {axisUnit}
           </span>
           <div
             className="h-4 rounded"
-            style={{
-              width: "200px",
-              background: (() => {
-                // Special gradient for load and source power: gray-900 baseline (0-50W) then color gradient
-                if (
-                  (pointPath.startsWith("load") ||
-                    pointPath.startsWith("source")) &&
-                  pointPath.endsWith("/power")
-                ) {
-                  const baselineThreshold = 50; // watts
-                  const range = heatmapData.max - heatmapData.min;
-                  const baselinePercentage = Math.min(
-                    ((baselineThreshold - heatmapData.min) / range) * 100,
-                    100,
-                  );
-
-                  if (baselinePercentage >= 100) {
-                    // All values are below threshold
-                    return "#111827";
-                  } else if (baselinePercentage <= 0) {
-                    // All values are above threshold, use normal gradient
-                    return `linear-gradient(to right, ${getColor(0)}, ${getColor(0.25)}, ${getColor(0.5)}, ${getColor(0.75)}, ${getColor(1)})`;
-                  } else {
-                    // Mixed: gray-900 for 0-50W portion, then color gradient
-                    return `linear-gradient(to right, #111827 0%, #111827 ${baselinePercentage}%, ${getColor(0)} ${baselinePercentage}%, ${getColor(0.25)} ${baselinePercentage + (100 - baselinePercentage) * 0.25}%, ${getColor(0.5)} ${baselinePercentage + (100 - baselinePercentage) * 0.5}%, ${getColor(0.75)} ${baselinePercentage + (100 - baselinePercentage) * 0.75}%, ${getColor(1)} 100%)`;
-                  }
-                }
-                // Standard gradient for other metrics
-                return `linear-gradient(to right, ${getColor(0)}, ${getColor(0.25)}, ${getColor(0.5)}, ${getColor(0.75)}, ${getColor(1)})`;
-              })(),
-            }}
+            style={{ width: 200, background: legendGradient }}
           />
           <span className="text-xs text-gray-400">
-            {metricType === "energy" || metricType === "power"
-              ? (heatmapData.max / 1000).toFixed(1)
-              : heatmapData.max.toFixed(2)}
-            {metricType === "energy"
-              ? pointUnit.replace("Wh", "kWh")
-              : metricType === "power"
-                ? "kW"
-                : pointUnit}
+            {(domain!.max / axisScale).toFixed(axisDecimals)}
+            {axisUnit}
           </span>
         </div>
+
+        {heatmapData.offFrameDays.size > 0 && (
+          <p className="mt-2 text-center text-[11px] text-gray-500">
+            Times are {formatUtcOffset(heatmapData.frameOffsetMin)} for every day,
+            so a routine lines up across the whole chart.{" "}
+            <span className="text-gray-400">*</span> marks days the site was on a
+            different offset (daylight saving) — the local clock read an hour later
+            than the column says.
+          </p>
+        )}
+
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center rounded bg-gray-900/80">
+            <div className="h-16 w-16 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          </div>
+        )}
       </div>
+
+      <ServerErrorModal
+        isOpen={isErrorModalOpen}
+        onClose={() => setIsErrorModalOpen(false)}
+        errorType={errorType}
+        errorDetails={errorDetails}
+      />
     </div>
   );
 }
