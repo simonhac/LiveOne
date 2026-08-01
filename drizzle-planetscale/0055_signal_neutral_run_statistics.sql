@@ -106,6 +106,18 @@
 --      prod  2          |    3 | 2026-07-22 | 2026-07-27 |  1475.8 …  1499.9 ⇒ rpm
 --      dev   2          |    3 | 2026-07-22 | 2026-07-27 |  1475.8 …  1499.9 ⇒ rpm
 --
+-- And the full per-column shape, which is what G3c actually asserts (prod, 2026-08-01, read-only
+-- role, 34 s ingest lag). **No NULLs in any of the three columns, either version.**
+--
+--      ver | rows | min(min) | max(min) | min(max) | max(max) | min(avg) | max(avg)
+--      ----+------+----------+----------+----------+----------+----------+---------
+--        1 |   74 |  −4057.0 |    −93.0 |  −3783.0 |    −57.0 |  −3807.5 |   −93.0
+--        2 |    3 |   1419.0 |   1470.0 |   1551.0 |   1563.0 |   1475.8 |  1499.9
+--
+-- 🛑 Read `max(max) = −57.0` on the version-1 row: **not one of those 74 runs has a MAXIMUM that
+-- reaches zero.** That is the signature of a signed grid-import series and it is flatly impossible
+-- for engine rpm, which is why G3c asserts all three columns rather than `avg` alone.
+--
 -- 🛑 **`liveone-dev` HAS NO VERSION-1 ROWS AT ALL.** Prod is the only place they exist, so a green
 -- dev apply demonstrates leg A and NOTHING about leg B — G3b/G3c and the leg-B UPDATE all pass
 -- VACUOUSLY there. They were proven instead against synthetic version-1 rows in a ROLLED-BACK
@@ -137,8 +149,12 @@
 --      rpm is non-negative by construction. **G3c asserts exactly this on the target database**, so
 --      the `W` assignment verifies itself at apply time instead of resting on this comment.
 --
--- G3c gates `avg` only, because `avg` is the range that was measured. `min`/`max` are reported as a
--- NOTICE rather than gated — gate what you measured.
+-- G3c gates all three columns, because all three were measured (see the table above). The first
+-- draft gated `avg` alone and reported min/max as a NOTICE, on the "gate what you measured" rule —
+-- correct at the time, since only the `avg` range had been measured. Measuring the other two removed
+-- the reason, and the argument for extending it is that G3c is the ONLY thing standing between the
+-- `W` literal and a reconstruction: the more of the series it checks, the harder that reconstruction
+-- is to satisfy by accident. Version 1 is closed history, so the stricter assertion cannot go stale.
 --
 -- ## The backfill is two legs, and the first one is the retired gate turned inside out
 --
@@ -248,6 +264,8 @@ DECLARE
   avg_lo          double precision;
   avg_hi          double precision;
   min_lo          double precision;
+  min_hi          double precision;
+  max_lo          double precision;
   max_hi          double precision;
   cur_units       text;
   -- The ONE recorded historical binding: Daylesford's generator detector before the DSE re-point.
@@ -300,20 +318,39 @@ BEGIN
       n_legacy_other, legacy_desc;
   END IF;
 
-  -- G3c. THE SELF-VERIFYING PART. The `W` literal leg B is about to write is justified by the data
-  -- itself: the version-1 detector fired on grid IMPORT (lowerW = -50), so every run it recorded is
-  -- a negative-Watt excursion. rpm — the only other unit in this table's history — cannot be
-  -- negative. A non-negative value here means these rows are NOT what leg B thinks they are.
-  SELECT count(*) FILTER (WHERE di.avg_power_w >= 0),
+  -- G3c. THE SELF-VERIFYING PART, and the load-bearing gate of this migration. The `W` literal leg B
+  -- is about to write cannot be read back from anywhere — the v1 binding was overwritten by the
+  -- re-point — so it rests on a reconstruction. This is what makes the reconstruction check ITSELF
+  -- against the data: the version-1 detector fired on grid IMPORT (lowerW = -50), so every run it
+  -- recorded is a negative-Watt excursion, and rpm (the only other unit in this table's history)
+  -- cannot be negative.
+  --
+  -- Asserted on ALL THREE columns, not `avg` alone. Prod measures every v1 value in min, max AND avg
+  -- strictly negative — `max(max_power_w)` is −57.0, so not one row's MAXIMUM reaches zero. A
+  -- strictly-negative *maximum* is the signature of a signed import series, so asserting it makes
+  -- the self-verification far harder to satisfy by accident than a single-column check, at the cost
+  -- of one predicate. There is no false-positive risk to weigh: **version 1 is CLOSED HISTORY** — the
+  -- re-point happened, nothing will ever write another v1 row, so this assertion cannot go stale.
+  --
+  -- `IS NOT TRUE` rather than `>= 0`, and that is not a stylistic choice: a NULL statistic would make
+  -- `>= 0` evaluate to NULL and slip through un-counted, so "0 rows are non-negative" could be true
+  -- merely because they were all NULL — the vacuity trap this file is otherwise careful about.
+  -- `IS NOT TRUE` counts NULL and FALSE alike, which makes the negativity claim EXHAUSTIVE over the
+  -- rows leg B is about to label. Prod measures 0 NULLs across all three columns, so this costs
+  -- nothing there and refuses to run on a database where it would have been vacuous.
+  SELECT count(*) FILTER (
+           WHERE (di.min_power_w < 0 AND di.max_power_w < 0 AND di.avg_power_w < 0) IS NOT TRUE
+         ),
          min(di.avg_power_w), max(di.avg_power_w),
-         min(di.min_power_w), max(di.max_power_w)
-  INTO n_nonneg, avg_lo, avg_hi, min_lo, max_hi
+         min(di.min_power_w), max(di.min_power_w),
+         min(di.max_power_w), max(di.max_power_w)
+  INTO n_nonneg, avg_lo, avg_hi, min_lo, min_hi, max_lo, max_hi
   FROM derived_intervals di
   WHERE di.derivation_id = legacy_deriv AND di.detector_version = legacy_ver;
 
   IF n_nonneg <> 0 THEN
-    RAISE EXCEPTION '0055: % of the % version-1 row(s) have avg_power_w >= 0 (range % .. %) — they cannot be the negative-Watt grid-import series leg B assigns ''W'' to. The historical unit mapping is WRONG for this database; stop and re-establish it',
-      n_nonneg, n_legacy, avg_lo, avg_hi;
+    RAISE EXCEPTION '0055: % of the % version-1 row(s) are not strictly negative across min/max/avg, or carry a NULL there (min % .. %, max % .. %, avg % .. %) — they cannot be the negative-Watt grid-import series leg B assigns ''W'' to. The historical unit mapping is WRONG for this database; stop and re-establish it',
+      n_nonneg, n_legacy, min_lo, min_hi, max_lo, max_hi, avg_lo, avg_hi;
   END IF;
 
   IF n_legacy = 0 THEN
@@ -322,8 +359,8 @@ BEGIN
     RAISE NOTICE '0055 ⚠️  NO superseded-version rows on this database — leg B and its gates are VACUOUS here. Expected on liveone-dev (3 rows, all v2); on prod sydney this should be 74 and a 0 means something is very wrong.';
   END IF;
 
-  RAISE NOTICE '0055 oracle: % row(s) at current version -> live unit(s) [%]; % row(s) at version 1 -> ''W'' (avg % .. %, min %, max %, all strictly negative)',
-    n_current, cur_units, n_legacy, avg_lo, avg_hi, min_lo, max_hi;
+  RAISE NOTICE '0055 oracle: % row(s) at current version -> live unit(s) [%]; % row(s) at version 1 -> ''W'' (min % .. %, max % .. %, avg % .. % — all three strictly negative, no NULLs)',
+    n_current, cur_units, n_legacy, min_lo, min_hi, max_lo, max_hi, avg_lo, avg_hi;
 END $$;
 --> statement-breakpoint
 
