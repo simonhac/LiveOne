@@ -839,6 +839,191 @@ async function main(): Promise<void> {
       resolution.body.slots?.[0],
     );
 
+    // ------------------------------------------------ 4d. GET/POST/PATCH /areas/{id}/derivations
+    //
+    // Driven against a REAL area that already carries a run detector, not a scratch one: a detector
+    // needs a real signal point on a device that really belongs to the area, and the placement rule
+    // this section exists to pin (below) is only expressible between two real areas.
+    //
+    // Every write here is idempotent BY VALUE — the create re-sends the detector's own body (→
+    // `exists`, no write) and the patch re-sends its own name. `enabled` is deliberately never
+    // toggled: a crash between the two halves of a toggle would leave a live detector switched off,
+    // which is a silent outage of the thing this whole surface exists to configure.
+    section("GET /api/v4/areas/{id}/derivations");
+    let detectorArea: any = null;
+    let detector: any = null;
+    for (const a of list) {
+      const r = await call("GET", `/api/v4/areas/${a.id}/derivations`);
+      ok(r.status === 200, `200 for ${a.displayName}`, r.status);
+      const rows = r.body?.derivations ?? [];
+      ok(Array.isArray(rows), "{ derivations: [...] }", r.body);
+      ok(
+        rows.every(
+          (d: any) =>
+            typeof d.id === "string" &&
+            d.id.startsWith("dx_") &&
+            typeof d.kind === "string" &&
+            typeof d.enabled === "boolean" &&
+            ["point", "intervals"].includes(d.output),
+        ),
+        `every row is { id: dx_…, kind, enabled, output } (${a.displayName})`,
+        rows[0],
+      );
+      const run = rows.find((d: any) => d.kind === "run-detector");
+      if (run && !detector) {
+        detector = run;
+        detectorArea = a;
+      }
+    }
+
+    if (!detector) {
+      skip(
+        "POST/PATCH /api/v4/areas/{id}/derivations",
+        "no readable area carries a run detector to drive idempotently",
+      );
+    } else {
+      console.log(
+        `  detector: ${detector.id} (${detectorArea.displayName} · ${detector.role})`,
+      );
+      // Source points must cross as `pt_` TypeIDs — the wire is TypeID-native, and a raw uuid here
+      // would be a "point not found" 422 rather than a decode error, a long way from its cause.
+      ok(
+        typeof detector.sourcePoints?.signal === "string" &&
+          detector.sourcePoints.signal.startsWith("pt_"),
+        "sourcePoints.signal crosses as a pt_ TypeID",
+        detector.sourcePoints,
+      );
+
+      section("POST /api/v4/areas/{id}/derivations");
+      const body = {
+        kind: "run-detector",
+        role: detector.role,
+        name: detector.name,
+        params: detector.params,
+        sourcePoints: detector.sourcePoints,
+      };
+      const again = await call(
+        "POST",
+        `/api/v4/areas/${detectorArea.id}/derivations`,
+        { body },
+      );
+      ok(again.status === 200, "re-posting an existing detector → 200", again);
+      ok(
+        again.body?.status === "exists",
+        "…reports `exists` rather than creating a second row",
+        again.body,
+      );
+
+      // 🛑 THE PLACEMENT RULE, and the reason it is enforced server-side rather than documented.
+      // A detector must hang off a device's AREA-OF-ONE, never a composite, because
+      // `capabilitiesForDevice` probes each MEMBER handle and never the composite's own — so a
+      // detector on a composite is invisible to the capability that lights its card up.
+      //
+      // ⚠️ Assert it against a COMPOSITE specifically, not merely "some other area". An earlier
+      // version of this guard demanded that the SIGNAL POINT's device own the area, which reads as
+      // the same rule and is not: Daylesford's generator lives on handle 1 while watching the
+      // DeepSea genset's Engine Speed on handle 14, so that version refused to recreate a detector
+      // that exists in production. Driving the real row here is what caught it.
+      const composite = list.find(
+        (a: any) => a.id !== detectorArea.id && a.chartCapable,
+      );
+      const wrongArea =
+        list.find((a: any) => a.displayName?.includes("Unified")) ?? composite;
+      if (!wrongArea) {
+        skip(
+          "wrong-area placement",
+          "no second readable area to misplace onto",
+        );
+      } else {
+        const misplaced = await call(
+          "POST",
+          `/api/v4/areas/${wrongArea.id}/derivations`,
+          { body },
+        );
+        // A composite refuses; an area-of-one would legitimately CREATE a second detector, so only
+        // assert the refusal when the target really is one (its handle names no member device).
+        const targetMembers = await call(
+          "GET",
+          `/api/v4/areas/${wrongArea.id}`,
+        );
+        const isComposite =
+          (targetMembers.body?.members?.length ?? 0) > 1 ||
+          !targetMembers.body?.members?.some(
+            (m: any) => m.legacySystemId === wrongArea.legacySystemId,
+          );
+        if (!isComposite) {
+          skip(
+            "composite placement refusal",
+            `${wrongArea.displayName} is an area-of-one`,
+          );
+        } else {
+          ok(
+            misplaced.status === 422,
+            `the same detector on the composite ${wrongArea.displayName} → 422`,
+            misplaced,
+          );
+          ok(
+            misplaced.body?.status === "area-not-probed" &&
+              typeof misplaced.body?.detail === "string" &&
+              misplaced.body.detail.includes("area-of-one"),
+            "…explains that the capability probe would never see it",
+            misplaced.body,
+          );
+        }
+      }
+
+      const badKind = await call(
+        "POST",
+        `/api/v4/areas/${detectorArea.id}/derivations`,
+        { body: { ...body, kind: "vibes" } },
+      );
+      ok(badKind.status === 422, "unknown kind → 422", badKind);
+      const badParams = await call(
+        "POST",
+        `/api/v4/areas/${detectorArea.id}/derivations`,
+        { body: { ...body, params: { upperW: "loads" } } },
+      );
+      ok(badParams.status === 422, "non-numeric params → 422", badParams);
+
+      section("PATCH /api/v4/areas/{id}/derivations/{dxid}");
+      const base = `/api/v4/areas/${detectorArea.id}/derivations/${detector.id}`;
+      // Identity is not patchable: `deriveDerivationId` is a uuidv5 over (area, kind, role), so
+      // "changing" one of those names a DIFFERENT derivation while leaving this row's id — and every
+      // `derived_intervals` row hanging off it — attached to the old meaning.
+      for (const forbidden of ["kind", "role", "sourcePoints", "output"]) {
+        const r = await call("PATCH", base, { body: { [forbidden]: "x" } });
+        ok(r.status === 422, `patching ${forbidden} → 422`, r);
+      }
+      const empty = await call("PATCH", base, { body: {} });
+      ok(empty.status === 422, "an empty patch → 422", empty);
+      const rename = await call("PATCH", base, {
+        body: { name: detector.name },
+      });
+      ok(rename.status === 200, "patching name to its own value → 200", rename);
+      ok(
+        rename.body?.derivation?.name === detector.name &&
+          rename.body?.derivation?.enabled === detector.enabled,
+        "…round-trips unchanged",
+        rename.body,
+      );
+      // The area is in the UPDATE's WHERE, not merely authorized: without it, anyone who owns any
+      // area could patch any derivation by id.
+      if (wrongArea) {
+        const crossed = await call(
+          "PATCH",
+          `/api/v4/areas/${wrongArea.id}/derivations/${detector.id}`,
+          { body: { name: detector.name } },
+        );
+        ok(crossed.status === 404, "…on the wrong area → 404", crossed);
+      }
+      const badId = await call(
+        "PATCH",
+        `/api/v4/areas/${detectorArea.id}/derivations/dx_notanid`,
+        { body: { name: "x" } },
+      );
+      ok(badId.status === 400, "a malformed dx_ id → 400", badId);
+    }
+
     // ======================================================= the SEVEN area mutations (stage 10)
     // 🛑 Every one of these is driven by CREATING FROM SCRATCH, never by re-running against something
     // that already exists. This repo has twice shipped a write that worked on the second call and 500'd

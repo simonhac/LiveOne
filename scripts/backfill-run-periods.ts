@@ -26,6 +26,10 @@
  *   npx tsx --env-file=.env.local scripts/backfill-run-periods.ts --start=2025-08-16 # dry run from a date
  *   npx tsx --env-file=.env.local scripts/backfill-run-periods.ts --apply            # write, full history
  *
+ *   # Scoped to ONE detector — what a historical backfill almost always wants (see backfillFilter):
+ *   npx tsx --env-file=.env.local scripts/backfill-run-periods.ts --handle=6 --role=ev --apply
+ *   npx tsx --env-file=.env.local scripts/backfill-run-periods.ts --derivation=<uuid> --apply
+ *
  *   # Seed the Kinkora EV charge detector (Mondo EV circuit; signal + energy on the same meter):
  *   npx tsx --env-file=.env.local scripts/backfill-run-periods.ts --seed \
  *     --handle=6 --role=ev --name="EV charging" \
@@ -37,11 +41,12 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 import {
-  ensureRunDetector,
+  ensureRunDetectorForHandle,
   listEnabledRunDetectors,
+  type RunDetectorFilter,
   type RunDetectorParams,
 } from "../lib/derivations/resolve";
-import { recomputeRange } from "../lib/run-tracking/recompute";
+import { describeFilter, recomputeRange } from "../lib/run-tracking/recompute";
 import { TRACKABLE_ROLE_IDS, type RoleId } from "../lib/roles/registry";
 
 const APPLY = process.argv.includes("--apply");
@@ -107,7 +112,7 @@ async function seed() {
   if (delayOn !== undefined) params.delayOnSeconds = delayOn;
   if (delayOff !== undefined) params.delayOffSeconds = delayOff;
 
-  const result = await ensureRunDetector({
+  const result = await ensureRunDetectorForHandle({
     handle,
     role,
     name: arg("name") ?? `${role} runs`,
@@ -140,21 +145,44 @@ async function seed() {
   }
 }
 
+/**
+ * The backfill's scope, from `--derivation=<uuid>` or `--handle=<int> --role=<id>`.
+ *
+ * 🛑 Unscoped is the historical behaviour and stays the default, but it is rarely what you want for a
+ * historical range: the recompute is delete-and-reinsert per detector, so a detector whose signal has
+ * been re-pointed loses every row its current signal cannot reproduce (Daylesford's generator moved
+ * to the DeepSea engine-speed point, whose history starts 2026-07-11). Scope, or know why not.
+ */
+function backfillFilter(): RunDetectorFilter | undefined {
+  const derivation = arg("derivation");
+  if (derivation) return { derivationId: derivation };
+  const handle = num("handle");
+  const role = arg("role");
+  if (handle === undefined && !role) return undefined;
+  if (handle === undefined || !role)
+    throw new Error("--handle and --role must be given together");
+  return { handle, role };
+}
+
 async function main() {
   if (SEED) return seed();
   const startMs = Date.parse(`${startStr}T00:00:00Z`);
   if (isNaN(startMs)) throw new Error(`Invalid --start: ${startStr}`);
   const nowMs = Date.now();
+  const filter = backfillFilter();
 
-  const trackers = await listEnabledRunDetectors();
+  const trackers = await listEnabledRunDetectors(filter);
   console.log(
     `${tag} backfill ${new Date(startMs).toISOString()} .. ${new Date(nowMs).toISOString()} ` +
+      `${filter ? `[scoped: ${describeFilter(filter)}] ` : "[ALL detectors — see --derivation/--handle+--role] "}` +
       `for ${trackers.length} enabled run detector(s): ${trackers.map((t) => `${t.legacyHandle}/${t.role}`).join(", ") || "(none)"}`,
   );
 
   if (trackers.length === 0) {
     console.log(
-      "No enabled run detectors — create a run-detector derivation for the area first.",
+      filter
+        ? "No enabled run detector matched that scope."
+        : "No enabled run detectors — create a run-detector derivation for the area first.",
     );
     return;
   }
@@ -166,11 +194,14 @@ async function main() {
   }
 
   const started = nowMs;
-  const summary = await recomputeRange(startMs, nowMs, nowMs, (info) => {
-    console.log(
-      `  ${info.tracker} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}` +
-        `..${new Date(info.chunkEndMs).toISOString().slice(0, 10)} → +${info.inserted}`,
-    );
+  const summary = await recomputeRange(startMs, nowMs, nowMs, {
+    filter,
+    onProgress: (info) => {
+      console.log(
+        `  ${info.tracker} ${new Date(info.chunkStartMs).toISOString().slice(0, 10)}` +
+          `..${new Date(info.chunkEndMs).toISOString().slice(0, 10)} → +${info.inserted}`,
+      );
+    },
   });
   console.log(
     `${tag} done in ${Math.round((Date.now() - started) / 1000)}s: ` +

@@ -5,8 +5,10 @@
  * then `hws-model` (→ the derived temperature point's agg_5m + KV). HWS used to be hard-wired into
  * the minutely cron; both are now discovered through the same `derivations` table.
  *
- * The explicit range actions (delete | regenerate | aggregate) operate on run-detector intervals.
- * HWS ranges heal through the daily pass and scripts/backfill-hws-temperature.ts.
+ * The explicit range actions (delete | regenerate | aggregate) operate on run-detector intervals,
+ * optionally SCOPED to one detector via `derivation=<uuid>` or `handle=<int>&role=<id>` — see
+ * `parseFilter`, and scope anything historical. HWS ranges heal through the daily pass and
+ * scripts/backfill-hws-temperature.ts.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
@@ -17,7 +19,12 @@ import {
   reconcileTrailingWindow,
   recomputeRange,
   deleteRange,
+  describeFilter,
 } from "@/lib/run-tracking/recompute";
+import {
+  listEnabledRunDetectors,
+  type RunDetectorFilter,
+} from "@/lib/derivations/resolve";
 import { publishRunningLatest } from "@/lib/run-tracking/running-latest";
 import { reconcileTrailingWindow as reconcileHwsTemperature } from "@/lib/hws/recompute";
 
@@ -86,6 +93,33 @@ function parseRange(
   return { startMs, endMs };
 }
 
+/**
+ * Resolve the optional detector SCOPE from the request: `derivation=<uuid>` or
+ * `handle=<int>&role=<id>`. Absent → every enabled detector (the historical behaviour, and the only
+ * right one for the no-param trailing reconcile).
+ *
+ * 🛑 An explicit-range action without a scope rebuilds EVERY detector over that range, and the
+ * rebuild is delete-and-reinsert — so a detector whose signal has since been re-pointed loses the
+ * rows its current signal cannot reproduce. Scope any historical call.
+ */
+function parseFilter(
+  derivation: string | null,
+  handleParam: string | null,
+  role: string | null,
+): RunDetectorFilter | undefined {
+  if (derivation) {
+    if (handleParam || role)
+      throw new Error("Use either 'derivation' or 'handle'+'role', not both");
+    return { derivationId: derivation };
+  }
+  if (!handleParam && !role) return undefined;
+  if (!handleParam || !role)
+    throw new Error("Both 'handle' and 'role' must be provided together");
+  const h = parseInt(handleParam, 10);
+  if (isNaN(h)) throw new Error("'handle' must be an integer");
+  return { handle: h, role };
+}
+
 async function handle(request: NextRequest) {
   try {
     const authResult = await requireCronOrAdmin(request);
@@ -106,18 +140,38 @@ async function handle(request: NextRequest) {
     const date = searchParams.get("date") || body.date || null;
     const start = searchParams.get("start") || body.start || null;
     const end = searchParams.get("end") || body.end || null;
+    const derivation =
+      searchParams.get("derivation") || body.derivation || null;
+    const handleParam =
+      searchParams.get("handle") || body.handle?.toString() || null;
+    const role = searchParams.get("role") || body.role || null;
 
     const nowMs = Date.now();
     const startTime = nowMs;
 
     let range: { startMs: number; endMs: number } | null;
+    let filter: RunDetectorFilter | undefined;
     try {
       range = parseRange(action, last, date, start, end, nowMs);
+      filter = parseFilter(derivation, handleParam, role);
     } catch (error) {
       return NextResponse.json(
         {
           error:
             error instanceof Error ? error.message : "Invalid date parameters",
+        },
+        { status: 400 },
+      );
+    }
+
+    // The trailing reconcile also publishes the KV "running" points and runs the HWS model, neither
+    // of which a detector scope means anything for. Refuse rather than silently ignoring the scope —
+    // a typo'd scoped call must not read as a successful narrow pass.
+    if (filter && !action && !range) {
+      return NextResponse.json(
+        {
+          error:
+            "'derivation'/'handle'+'role' only apply to an explicit action (delete | aggregate | regenerate)",
         },
         { status: 400 },
       );
@@ -164,11 +218,27 @@ async function handle(request: NextRequest) {
       );
     }
 
+    // What the scope actually resolved to, echoed on every ranged response. An unscoped call says
+    // so explicitly ("all") rather than omitting the key, because "which detectors did this touch?"
+    // is the question a delete-and-reinsert over history has to answer out loud.
+    const scope = filter
+      ? {
+          requested: describeFilter(filter),
+          detectors: (await listEnabledRunDetectors(filter)).map((d) => ({
+            id: d.id,
+            handle: d.legacyHandle,
+            role: d.role,
+            name: d.name,
+          })),
+        }
+      : { requested: "all" as const };
+
     if (action === "delete") {
-      const res = await deleteRange(range.startMs, range.endMs);
+      const res = await deleteRange(range.startMs, range.endMs, filter);
       return NextResponse.json({
         success: true,
         action: "delete",
+        scope,
         ...res,
         durationMs: Date.now() - startTime,
         executedAt: getNowFormattedAEST(),
@@ -176,11 +246,14 @@ async function handle(request: NextRequest) {
     }
 
     if (action === "regenerate") {
-      const del = await deleteRange(range.startMs, range.endMs);
-      const summary = await recomputeRange(range.startMs, range.endMs, nowMs);
+      const del = await deleteRange(range.startMs, range.endMs, filter);
+      const summary = await recomputeRange(range.startMs, range.endMs, nowMs, {
+        filter,
+      });
       return NextResponse.json({
         success: true,
         action: "regenerate",
+        scope,
         rowsPurged: del.rowsDeleted,
         ...summary,
         durationMs: Date.now() - startTime,
@@ -189,10 +262,13 @@ async function handle(request: NextRequest) {
     }
 
     if (action === "aggregate") {
-      const summary = await recomputeRange(range.startMs, range.endMs, nowMs);
+      const summary = await recomputeRange(range.startMs, range.endMs, nowMs, {
+        filter,
+      });
       return NextResponse.json({
         success: true,
         action: "aggregate",
+        scope,
         ...summary,
         durationMs: Date.now() - startTime,
         executedAt: getNowFormattedAEST(),
