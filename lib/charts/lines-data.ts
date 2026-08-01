@@ -170,5 +170,5 @@ export function buildChartData(
         )
       : undefined,
     mode: isEnergyMode ? "energy" : "power",
-  } as ChartData;
+  };
 }

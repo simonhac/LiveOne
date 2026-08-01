@@ -52,12 +52,18 @@ export function registerChartScaffold(): void {
 /**
  * The background shading boxes shared by both charts: weekday (Mon–Fri) columns for the M view,
  * daytime (07:00–22:00) columns for D/W, none for Y (weekday columns are noise at year scale).
- * Returns chartjs-plugin-annotation `box` specs, clipped to the [windowStart, now] window. Callers
+ * Returns chartjs-plugin-annotation `box` specs, clipped to the [windowStart, windowEnd] window. Callers
  * may append their own annotations (e.g. a hover line).
  */
 export function buildShadingAnnotations(
   timeRange: ChartTimeRange,
-  now: Date,
+  /**
+   * The END OF THE WINDOW — not the current time, despite what this argument used to be called.
+   * Callers pass the last rendered timestamp (or an explicit historical `end`), and it is only
+   * incidentally "now" for a live window with no data. Shading a historical window against the real
+   * clock would put the bands in the wrong place entirely.
+   */
+  windowEnd: Date,
   windowStart: Date,
 ): any[] {
   const annotations: any[] = [];
@@ -71,7 +77,7 @@ export function buildShadingAnnotations(
     // For M view: shade weekdays (Mon-Fri)
     const daysToShow = 31;
     for (let i = 0; i < daysToShow; i++) {
-      const day = new Date(now);
+      const day = new Date(windowEnd);
       day.setDate(day.getDate() - i);
       day.setHours(0, 0, 0, 0);
 
@@ -83,11 +89,11 @@ export function buildShadingAnnotations(
         dayEnd.setHours(23, 59, 59, 999);
 
         // Only add if this day overlaps with our window
-        if (dayEnd > windowStart && day < now) {
+        if (dayEnd > windowStart && day < windowEnd) {
           annotations.push({
             type: "box",
             xMin: Math.max(day.getTime(), windowStart.getTime()),
-            xMax: Math.min(dayEnd.getTime(), now.getTime()),
+            xMax: Math.min(dayEnd.getTime(), windowEnd.getTime()),
             backgroundColor: "rgba(255, 255, 255, 0.07)", // 7% opacity white overlay
             borderWidth: 0,
           });
@@ -98,20 +104,20 @@ export function buildShadingAnnotations(
     // For D and W views: shade daytime hours (7am-10pm)
     const daysToShow = timeRange === "D" ? 2 : 8;
     for (let i = 0; i < daysToShow; i++) {
-      const dayStart = new Date(now);
+      const dayStart = new Date(windowEnd);
       dayStart.setDate(dayStart.getDate() - i);
       dayStart.setHours(7, 0, 0, 0);
 
-      const dayEnd = new Date(now);
+      const dayEnd = new Date(windowEnd);
       dayEnd.setDate(dayEnd.getDate() - i);
       dayEnd.setHours(22, 0, 0, 0);
 
       // Only add if this day overlaps with our window
-      if (dayEnd > windowStart && dayStart < now) {
+      if (dayEnd > windowStart && dayStart < windowEnd) {
         annotations.push({
           type: "box",
           xMin: Math.max(dayStart.getTime(), windowStart.getTime()),
-          xMax: Math.min(dayEnd.getTime(), now.getTime()),
+          xMax: Math.min(dayEnd.getTime(), windowEnd.getTime()),
           backgroundColor: "rgba(255, 255, 255, 0.07)", // 7% opacity white overlay
           borderWidth: 0,
         });
@@ -123,20 +129,20 @@ export function buildShadingAnnotations(
 }
 
 /**
- * The shared time x-axis scale config: a `time` axis spanning [windowStart, now] with the period-
+ * The shared time x-axis scale config: a `time` axis spanning [windowStart, windowEnd] with the period-
  * dependent tick formatting both charts use (multi-line weekday labels for W/M, HH:mm for D,
  * month labels for Y, with the same auto-skip/collision rules). Returned as a plain Chart.js scale
  * object so each component can drop it straight into `scales.x`.
  */
 export function buildTimeScale(
   timeRange: ChartTimeRange,
-  now: Date,
+  windowEnd: Date,
   windowStart: Date,
 ): any {
   return {
     type: "time",
-    min: windowStart.getTime(), // Show from selected time range
-    max: now.getTime(), // To current time
+    min: windowStart.getTime(),
+    max: windowEnd.getTime(),
     time: {
       unit: timeRange === "D" ? "hour" : timeRange === "Y" ? "month" : "day",
       displayFormats: {

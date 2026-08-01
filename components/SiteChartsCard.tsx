@@ -179,18 +179,19 @@ function StackedChart({
     [data, onHoverIndexChange],
   );
 
-  const { now, windowStart } = useMemo(() => {
+  const { windowEnd, windowStart } = useMemo(() => {
     // When data is available, use its actual timestamp range
     // This ensures historical data is displayed correctly
     if (data && data.timestamps && data.timestamps.length > 0) {
       const timestamps = data.timestamps;
       return {
         windowStart: timestamps[0],
-        now: timestamps[timestamps.length - 1],
+        windowEnd: timestamps[timestamps.length - 1],
       };
     }
 
-    // Otherwise, use current time window (for initial render or live mode)
+    // Otherwise, use current time window (for initial render or live mode). Only in this fallback is
+    // the window end actually the wall clock.
     const now = new Date();
     let windowHours: number;
     if (period === "D") {
@@ -203,7 +204,7 @@ function StackedChart({
       windowHours = 24 * 365;
     }
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
-    return { now, windowStart };
+    return { windowEnd: now, windowStart };
   }, [period, data]);
 
   // Track loading state from the parent-provided data/isLoading props
@@ -288,7 +289,7 @@ function StackedChart({
         mode={mode}
         hoveredTimestamp={hoveredTimestamp}
         timeRange={period}
-        now={now}
+        windowEnd={windowEnd}
         windowStart={windowStart}
         onHover={handleHover}
         chartRef={chartRef}

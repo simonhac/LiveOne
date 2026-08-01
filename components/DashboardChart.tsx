@@ -33,7 +33,8 @@ registerChartScaffold();
 
 type CommonProps = {
   timeRange: ChartTimeRange;
-  now: Date;
+  /** End of the rendered window (the last data timestamp), NOT the wall clock. See buildTimeScale. */
+  windowEnd: Date;
   windowStart: Date;
   onHover: (event: any, activeElements: any[], chart: any) => void;
   chartRef: React.MutableRefObject<any>;
@@ -67,7 +68,7 @@ const FONT = { size: 10, family: "DM Sans, system-ui, sans-serif" };
 function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
   const {
     timeRange,
-    now,
+    windowEnd,
     windowStart,
     onHover,
     chartData,
@@ -88,7 +89,7 @@ function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
       annotation: {
         animation: false, // Immediate updates so the focus line tracks the pointer crisply
         annotations: [
-          ...buildShadingAnnotations(timeRange, now, windowStart),
+          ...buildShadingAnnotations(timeRange, windowEnd, windowStart),
           // Red vertical line at the shared focus instant (synced with the stacked charts).
           ...(hoveredTimestamp
             ? [
@@ -106,7 +107,7 @@ function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
       },
     },
     scales: {
-      x: buildTimeScale(timeRange, now, windowStart),
+      x: buildTimeScale(timeRange, windowEnd, windowStart),
       y: {
         type: "linear" as const,
         display: true,
@@ -162,7 +163,7 @@ function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
 function buildStackedChartOptions(p: StackedProps): ChartOptions<any> {
   const {
     timeRange,
-    now,
+    windowEnd,
     windowStart,
     onHover,
     chartData,
@@ -194,7 +195,7 @@ function buildStackedChartOptions(p: StackedProps): ChartOptions<any> {
       annotation: {
         animation: false, // Disable animation for immediate updates
         annotations: [
-          ...buildShadingAnnotations(timeRange, now, windowStart),
+          ...buildShadingAnnotations(timeRange, windowEnd, windowStart),
           // Add vertical line for hover position
           ...(hoveredTimestamp
             ? [
@@ -212,7 +213,7 @@ function buildStackedChartOptions(p: StackedProps): ChartOptions<any> {
       },
     },
     scales: {
-      x: buildTimeScale(timeRange, now, windowStart),
+      x: buildTimeScale(timeRange, windowEnd, windowStart),
       y: {
         type: "linear" as const,
         display: true,

@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — Stages 0–3 COMPLETE (all six slices shipped 2026-08-01). Baseline is frozen;
-> next is Stage 4 (shared d3 primitives + #18/#15).** Written 2026-08-01.
+> **Status: PLAN — Stages 0–3 COMPLETE; Stage 4's type/naming cleanups (#18, #15) also done.
+> Remaining: the d3 primitives, then Stage 5 porting.** Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -388,9 +388,9 @@ migration.
 | 12 | Heatmap | `parseInterval` returns **0** for an unrecognised interval (`:435,450`). `intervalMs = 0` collapses every reading onto one timestamp and the heatmap silently becomes a single column. Should surface, not guess. | **Fix** |
 | 13 | Heatmap | `heatmapData?.min \|\| 0` / `?.max \|\| 1` (`:599,600,773,774`) — `\|\|` where `??` is meant. Harmless for today's values but a latent trap when a legitimate `0` appears. | **Fix** (trivial) |
 | 14 | Heatmap | Tooltip hiding is implemented **twice**: a container `mousemove` listener (`:486-524`) and the `external` tooltip's own `isInChartArea` check (`:566-577`) test the same condition. Both vanish in the port. | **Won't fix** — deleted by Stage 5 |
-| 15 | Provenance | `buildTimeScale(timeRange, windowEnd, windowStart)` — the shared helper names that parameter `now`, and in `buildShadingAnnotations` it genuinely is "now". Correct here (no shading), but the name is wrong and invites a real bug. | **Fix** — rename to `windowEnd` in Stage 4 |
+| 15 | Provenance | ✅ **fixed in Stage 4** — `buildTimeScale(timeRange, windowEnd, windowStart)` — the shared helper names that parameter `now`, and in `buildShadingAnnotations` it genuinely is "now". Correct here (no shading), but the name is wrong and invites a real bug. | **Fix** — rename to `windowEnd` in Stage 4 |
 | 16 | Provenance | The crosshair red `rgb(239, 68, 68)` is hardcoded a **third** time (`:135`), alongside two copies in `DashboardChart`. Belongs with #6. | **Fix with #6** |
-| 18 | Lines chart | ✅ **found in 3b** — `LineChartData`'s `number[]` element types are false; every field carries nulls, laundered by an `as ChartData` cast. The root enabler of #1–#3. See below. | **Fix in Stage 4** |
+| 18 | Lines chart | ✅ **fixed in Stage 4** — `LineChartData`'s `number[]` element types are false; every field carries nulls, laundered by an `as ChartData` cast. The root enabler of #1–#3. See below. | **Fix in Stage 4** |
 | 17 | Admin viewer | Uses Chart.js's **built-in legend and tooltip** — the only site that does (`:344-347`). Not a defect; a scope correction. See the Verdict note and the sizing decision below. | **Simplify**, don't reproduce |
 
 #### #18 — `LineChartData`'s element types are a lie (found during Stage 3b)
@@ -600,9 +600,22 @@ first is wasted work. #15 (the `now` → `windowEnd` rename) rides along with St
 
 ### Stage 4 — Shared d3 primitives
 
-Also lands the type/naming cleanups the port would otherwise inherit: **#18** (`LineChartData`'s
-false `number[]` element types + the `as ChartData` cast) and **#15** (`buildTimeScale`'s `now`
-parameter renamed to `windowEnd`).
+**✅ #18 and #15 DONE 2026-08-01** — both landed ahead of the primitives, since the port would
+otherwise inherit them.
+
+- **#18** — `LineChartData` and `PaddedSOCData` now declare `(number | null)[]`, and the blanket
+  `as ChartData` cast at the end of `buildChartData` is gone. I had deferred this fearing an
+  unpredictable cascade; measured, it was **one** type error (`PaddedSOCData` carrying the same lie).
+  Types only, zero behaviour change, all 34 baselines unchanged. The gallery's
+  `as unknown as LineChartData` cast is deleted with it.
+- **#15** — `buildTimeScale`/`buildShadingAnnotations`' `now` parameter, and `DashboardChart`'s `now`
+  prop, are renamed `windowEnd` throughout. The name was actively misleading: `LinesChartCard` passes
+  `ts[ts.length - 1]` — the last rendered timestamp — and `SiteChartsCard` the same. It is only the
+  wall clock in the no-data fallback, which is now the one place still called `now`, with a comment
+  saying why. Shading a historical window against the real clock would put the bands in the wrong
+  place entirely.
+
+Still to do in Stage 4: the primitives themselves.
 
 `lib/charts/svg/`, extracted from the `DailyStripes` idiom rather than invented: `useContainerSize`
 (lift the existing `useContainerWidth`), `<TimeAxis>`, `<ValueAxis>`, `<ShadingBands>` (replacing

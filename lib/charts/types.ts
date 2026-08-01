@@ -33,8 +33,8 @@ export interface ChartData {
  */
 export interface LineChartData {
   timestamps: Date[];
-  solar: number[];
-  load: number[];
+  solar: (number | null)[];
+  load: (number | null)[];
   /**
    * Battery power, or `undefined` when the device has no battery-power series — and in energy mode,
    * where there is no battery *energy* series to fetch (`lines-data.ts` nulls it deliberately).
@@ -45,17 +45,22 @@ export interface LineChartData {
    * visible — Chart.js allocates a grouped-bar slot per dataset, so the real bars were narrowed and
    * offset by an empty one. Absent means absent.
    */
-  batteryW?: number[];
-  batterySOC: number[];
-  batterySOCMin?: number[]; // Min SOC for daily data
-  batterySOCMax?: number[]; // Max SOC for daily data
-  grid?: number[]; // Grid power/energy (optional - not all devices have grid data)
+  batteryW?: (number | null)[];
+  batterySOC: (number | null)[];
+  batterySOCMin?: (number | null)[]; // Min SOC for daily data
+  batterySOCMax?: (number | null)[]; // Max SOC for daily data
+  grid?: (number | null)[]; // Grid power/energy (optional - not all devices have grid data)
   mode: "power" | "energy"; // Mode based on interval: power (≤30m) or energy (≥1d)
 }
 
-/** Edge-padded SoC min/max band for the line chart's energy (daily) mode. */
+/**
+ * Edge-padded SoC min/max band for the line chart's energy (daily) mode.
+ *
+ * Nullable elements for the same reason as {@link LineChartData}: it is derived from
+ * `batterySOCMin`/`batterySOCMax`, which carry nulls wherever a day has no reading.
+ */
 export interface PaddedSOCData {
   timestamps: Date[];
-  min: number[];
-  max: number[];
+  min: (number | null)[];
+  max: (number | null)[];
 }

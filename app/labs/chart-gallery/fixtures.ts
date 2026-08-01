@@ -48,7 +48,7 @@ function round(n: number, dp = 2): number {
 function buildTimestamps(range: ChartTimeRange): {
   timestamps: Date[];
   windowStart: Date;
-  now: Date;
+  windowEnd: Date;
 } {
   const now = FIXED_NOW;
   const windowStart = new Date(now.getTime() - getPeriodDuration(range));
@@ -57,7 +57,7 @@ function buildTimestamps(range: ChartTimeRange): {
   for (let t = windowStart.getTime(); t <= now.getTime(); t += stepMs) {
     timestamps.push(new Date(t));
   }
-  return { timestamps, windowStart, now };
+  return { timestamps, windowStart, windowEnd: now };
 }
 
 /** Fraction of a solar day at `d`, 0 outside ~07:00–17:00 local (a winter arc). */
@@ -91,7 +91,7 @@ export type LinesFixture = {
   chartData: LineChartData;
   paddedSOCData: PaddedSOCData | null;
   windowStart: Date;
-  now: Date;
+  windowEnd: Date;
 };
 
 /**
@@ -104,7 +104,7 @@ export type LinesFixture = {
  */
 export function linesFixture(opts: LinesCaseOpts): LinesFixture {
   const { range, noBattery, noGrid, withGap } = opts;
-  const { timestamps, windowStart, now } = buildTimestamps(range);
+  const { timestamps, windowStart, windowEnd } = buildTimestamps(range);
   const isEnergy = range === "M" || range === "Y";
   const rand = rng(0xc0ffee);
 
@@ -115,11 +115,11 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
   /**
    * A gapped sample is a REAL `null`, not `NaN`.
    *
-   * This previously read `holed(...) ?? NaN` — written only to satisfy `LineChartData`'s `number[]`
-   * — and that silently defeated the whole point of the gap cases: `NaN !== null`, so the old
-   * value-gated legend still rendered its Battery/Grid entries and defect #2 never reproduced in the
-   * harness. Real nulls are also what `buildChartData` actually emits (`convertToKw` returns
-   * `number | null`), so this is the faithful shape as well as the useful one.
+   * This previously read `holed(...) ?? NaN`, written only to satisfy what `LineChartData` then
+   * claimed (`number[]`) — and that silently defeated the whole point of the gap cases: `NaN !== null`,
+   * so the old value-gated legend still rendered its Battery/Grid entries and defect #2 never
+   * reproduced in the harness. The type has since been corrected to `(number | null)[]` (#18), which
+   * is what `buildChartData` always actually emitted.
    */
   const holed = (v: number, i: number): number | null =>
     withGap && i >= gapFrom && i < gapTo ? null : round(v);
@@ -148,12 +148,7 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
     return round(soc, 1);
   });
 
-  // 🛑 The cast mirrors a type lie in the real builder, and is not laziness. `LineChartData` declares
-  // `solar`/`load`/`batteryW`/`batterySOC` as `number[]`, but `buildChartData` fills them from
-  // `convertToKw` (which returns `number | null`) and launders the mismatch through a blanket
-  // `as ChartData` at its own return. Nulls are the production reality; the declared type is wrong.
-  // Tracked as defect #18 — when that is fixed to `(number | null)[]`, delete this cast.
-  const chartData = {
+  const chartData: LineChartData = {
     timestamps,
     solar,
     load,
@@ -162,7 +157,7 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
     batterySOC,
     ...(noGrid ? {} : { grid }),
     mode: isEnergy ? "energy" : "power",
-  } as unknown as LineChartData;
+  };
 
   // The SoC min/max band only exists in energy (daily) mode.
   const paddedSOCData: PaddedSOCData | null = isEnergy
@@ -173,7 +168,7 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
       }
     : null;
 
-  return { chartData, paddedSOCData, windowStart, now };
+  return { chartData, paddedSOCData, windowStart, windowEnd };
 }
 
 export type StackedCaseOpts = {
@@ -186,13 +181,13 @@ export type StackedFixture = {
   chartData: ChartData;
   visibleSeries: Set<string>;
   windowStart: Date;
-  now: Date;
+  windowEnd: Date;
 };
 
 /** The `stacked-areas` variant's data: N stacked power series + a SoC overlay. */
 export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
   const { range, mode, withGap } = opts;
-  const { timestamps, windowStart, now } = buildTimestamps(range);
+  const { timestamps, windowStart, windowEnd } = buildTimestamps(range);
   const isEnergy = range === "M" || range === "Y";
   const scale = isEnergy ? 24 * 0.6 : 1;
   const rand = rng(mode === "load" ? 0x5eed01 : 0x5eed02);
@@ -276,6 +271,6 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
     chartData: { timestamps, series, mode: isEnergy ? "energy" : "power" },
     visibleSeries: new Set(series.map((s) => s.id)),
     windowStart,
-    now,
+    windowEnd,
   };
 }

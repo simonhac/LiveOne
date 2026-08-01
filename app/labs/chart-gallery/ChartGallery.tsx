@@ -61,7 +61,7 @@ function indexOf(timestamps: Date[], t: Date | null): number | null {
 
 function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
   const chartRef = useRef<unknown>(null);
-  const { chartData, paddedSOCData, windowStart, now } = linesFixture(c);
+  const { chartData, paddedSOCData, windowStart, windowEnd } = linesFixture(c);
   const focus = focusInstant(chartData.timestamps, c.focusAt);
   const fi = indexOf(chartData.timestamps, focus);
 
@@ -95,7 +95,7 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
           chartData={chartData}
           paddedSOCData={paddedSOCData}
           timeRange={c.range}
-          now={now}
+          windowEnd={windowEnd}
           windowStart={windowStart}
           hoveredTimestamp={focus}
           onHover={noop}
@@ -117,7 +117,8 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
 
 function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
   const chartRef = useRef<unknown>(null);
-  const { chartData, visibleSeries, windowStart, now } = stackedFixture(c);
+  const { chartData, visibleSeries, windowStart, windowEnd } =
+    stackedFixture(c);
   const focus = focusInstant(chartData.timestamps, c.focusAt);
 
   return (
@@ -128,7 +129,7 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         effectiveVisibleSeries={visibleSeries}
         mode={c.mode}
         timeRange={c.range}
-        now={now}
+        windowEnd={windowEnd}
         windowStart={windowStart}
         hoveredTimestamp={focus}
         onHover={noop}
