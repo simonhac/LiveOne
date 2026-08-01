@@ -11,7 +11,7 @@ import {
   nearestIndex,
   useChartFocus,
 } from "@/lib/charts/ChartFocusContext";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { provenanceDailyQuery } from "@/lib/queries";
 import {

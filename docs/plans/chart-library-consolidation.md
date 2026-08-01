@@ -811,10 +811,60 @@ contradicted the assumption behind it, not by preference. Say if you would rathe
    now calls **`.nice()`**, which snaps the domain out to tick boundaries — what Chart.js did
    implicitly, and what puts the unit label at the top of the plot instead of adrift.
 
-### Stage 6 — Remove Chart.js
+### Stage 6 — Remove Chart.js — ✅ DONE 2026-08-01
 
-Drop the five packages from `package.json` and from `packages/usher/package.json` (declared there
-but never imported). Delete `registerChartScaffold()`. Re-measure against the Stage 0 baseline.
+All five packages dropped from `package.json` **and** from `packages/usher/package.json` (declared
+there, never imported). `lib/charts/scaffold.ts` is deleted: `registerChartScaffold`,
+`buildTimeScale` and `buildShadingAnnotations` were Chart.js config with nothing left to configure.
+Its two survivors moved to `lib/charts/temporal.ts` — `ChartTimeRange`, which is the *period*
+vocabulary the navigator and query layer speak rather than anything to do with drawing, and
+`formatHoverTimestamp`. `d3-array` and `d3-shape`, declared-but-unimported since before this work,
+are now genuinely used by `paths.ts`.
+
+#### Bundle: measured, and better than estimated
+
+| | Stage 0 | Now | Δ |
+|---|---|---|---|
+| Chart.js family (gzip) | **87.0 kB** | **0** | −87.0 kB |
+| d3 family (gzip) | 22.6 kB | 30.7 kB | +8.1 kB (`d3-shape` now used) |
+| **Net dependency weight** | | | **−78.9 kB gzip** |
+| `/dashboard/[...slug]` First Load JS | 446 kB | **363 kB** | **−83 kB** |
+| `/device/[...slug]` First Load JS | 534 kB | **451 kB** | **−83 kB** |
+
+Ahead of the 60–75 kB estimate. Chart.js was the largest non-framework dependency in the client
+bundle and no longer appears in the top eight at all; that slot is now `lucide-react` at 29.6 kB.
+
+Two things that were not the stated goal and turned out to matter as much:
+
+- **The screenshot suite runs about twice as fast** (~1.8 min → ~42 s). SVG renders quicker than
+  canvas, and every future run of the harness pays less.
+- **`HeatmapChart` lost 224 lines** (899 → 675) while gaining the DST fix, honest colour scaling and
+  a real tooltip — the library was costing more than it provided there.
+
+---
+
+## Where this leaves things
+
+**Done.** Every chart in the app renders SVG via `lib/charts/svg`. 18 defects found, 16 fixed, one
+deliberately deferred (#14, deleted by the port anyway) and one carried by design (#17, the admin
+chart was simplified rather than reproduced).
+
+**Not done, deliberately:**
+
+- **`EnergyFlowSankey`'s imperative idiom** (1,581 lines). It is already d3, so converting removes no
+  library — but the harness that makes it verifiable now exists, which was the blocker. This is the
+  natural next project.
+- **`DailyStripes` still has its own `useContainerWidth`.** `useContainerSize` generalises it; fold
+  it in when that file is next touched. Note it would have been immune to the callback-ref bug either
+  way, since it has no loading state.
+- **Measure-to-fit tick density.** The 2→3→4 skip ladder is carried over as a heuristic; computing
+  how many labels actually fit from measured text width would be better.
+- **Per-metric fixed heatmap ranges** (SoC always 0–100 rather than min-observed–max-observed).
+
+**The standing rule for anyone touching these charts:** the pixel gate is tight, and it is tight
+*because* every port re-baselined deliberately. If a baseline moves, that is a finding — explain it
+before updating it. Three of this project's real bugs were caught exactly that way, and one of them
+(a fixture emitting `NaN` instead of `null`) was a case of the suite passing for the wrong reason.
 
 ## Verification
 

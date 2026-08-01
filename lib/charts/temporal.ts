@@ -14,7 +14,7 @@
  *  - M/Y — trailing CALENDAR month / year ending end-of-yesterday (daily data), so they NEVER include
  *    today's partial day. They are date-only and ALWAYS carry an explicit window (see below).
  */
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import { format } from "date-fns";
 import { parseDate } from "@internationalized/date";
 import {
   getTodayInTimezone,
@@ -30,6 +30,41 @@ import {
   encodeUrlOffset,
   decodeUrlOffset,
 } from "@/lib/url-date";
+
+/**
+ * The four dashboard periods. Lives here rather than in a chart module because it is the *period*
+ * vocabulary — the navigator, the query layer and the data processors all speak it, and only some of
+ * them draw anything. (It used to live in `lib/charts/scaffold.ts`, which was Chart.js registration
+ * and axis config; that file went with Chart.js in Stage 6.)
+ */
+export type ChartTimeRange = "D" | "W" | "M" | "Y";
+
+/**
+ * Format a hovered timestamp for the chart header, shared by both charts: date-only for M/Y,
+ * date+time for W, time-only for D; `isMobile` drops the year. Returns "" for a null date.
+ */
+export function formatHoverTimestamp(
+  date: Date | null,
+  timeRange: ChartTimeRange,
+  isMobile: boolean = false,
+): string {
+  if (!date) return "";
+
+  if (timeRange === "M" || timeRange === "Y") {
+    // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
+    return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
+  } else if (timeRange === "W") {
+    // Mobile: "Fri, 22 Aug 11:58PM" / Desktop: "Fri, 22 Aug 2024 11:58PM"
+    return format(
+      date,
+      isMobile ? "EEE, d MMM h:mma" : "EEE, d MMM yyyy h:mma",
+    );
+  } else {
+    // For D view, show time only (e.g., "11:58PM")
+    return format(date, "h:mma");
+  }
+}
+
 
 /** The navigator's period set. Identical to {@link ChartTimeRange} — every period is URL-shared now. */
 export type NavigatorPeriod = "D" | "W" | "M" | "Y";

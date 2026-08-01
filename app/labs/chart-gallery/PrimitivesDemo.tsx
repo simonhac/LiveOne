@@ -23,7 +23,7 @@ import {
   stackedBands,
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 export interface PrimitivesDemoProps {
   range: ChartTimeRange;

@@ -16,7 +16,7 @@ import type {
   PaddedSOCData,
   SeriesData,
 } from "@/lib/charts/types";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import {
   getPeriodDuration,
   getPeriodIntervalMinutes,

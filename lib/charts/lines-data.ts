@@ -1,6 +1,6 @@
 import micromatch from "micromatch";
 import type { LineChartData as ChartData } from "@/lib/charts/types";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 // Series patterns to request for a given period (energy mode = M/Y/1d, else power mode).
 export function buildSeriesParam(isEnergyMode: boolean): string {

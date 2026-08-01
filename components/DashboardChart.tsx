@@ -18,7 +18,7 @@ import {
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { SOC_DASH } from "@/lib/charts/datasets";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import type {
   ChartData,
   LineChartData,

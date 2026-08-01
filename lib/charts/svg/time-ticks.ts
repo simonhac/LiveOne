@@ -27,7 +27,7 @@ import {
   type CountableTimeInterval,
 } from "d3-time";
 import { format } from "date-fns";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 export interface TimeTick {
   /** Instant the gridline sits at. */

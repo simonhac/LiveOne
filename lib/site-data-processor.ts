@@ -1,5 +1,5 @@
 import { ChartData, SeriesData } from "@/lib/charts/types";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
 import { flowPathForSeries } from "@/lib/aggregation/flow-node-meta";

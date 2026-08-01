@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 const DEFAULT_PERIODS: readonly ChartTimeRange[] = ["D", "W", "M", "Y"];
 

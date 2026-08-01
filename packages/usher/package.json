@@ -14,13 +14,11 @@
   "dependencies": {
     "@liveone/protocol": "1.0.0",
     "axios": "^1.11.0",
-    "chart.js": "^4.5.0",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.539.0",
     "modbus-serial": "^8.0.25",
     "next": "^15.4.11",
     "react": "^19.1.1",
-    "react-chartjs-2": "^5.3.0",
     "react-dom": "^19.1.1",
     "yaml": "^2.5.0",
     "zod": "^3.23.8"

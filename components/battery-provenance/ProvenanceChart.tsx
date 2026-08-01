@@ -11,7 +11,7 @@ import {
   useContainerSize,
   usePointerIndex,
 } from "@/lib/charts/svg";
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 import {
   RECAL_BAND_COLOR,
   type ProvenanceChartDef,

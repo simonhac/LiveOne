@@ -8,7 +8,7 @@
  * Case ids are used verbatim as snapshot filenames, so keep them kebab-case and stable — renaming one
  * orphans its baseline.
  */
-import type { ChartTimeRange } from "@/lib/charts/scaffold";
+import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 export type ChartCase = {
   id: string;
