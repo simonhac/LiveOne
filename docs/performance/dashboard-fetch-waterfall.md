@@ -793,7 +793,7 @@ fan-out, not serialization:
 | ------------------------------------------- | ---------------- | --------------------------------------- |
 | `/api/history?systemId=1000002&interval=5m`  | `chart` (lines)  | `historyQuery` → `["history",…]`        |
 | `/api/history?…&interval=5m&include=sankey`  | `sankey`         | `siteDataQuery` → `["siteData",…]`      |
-| `/api/device/1/run-periods`                  | `generator-runs` | `["runPeriods",…]`                      |
+| `/api/device/1/run-periods`                  | `runs`           | `["runPeriods",…]`                      |
 | `/api/data?systemId=14&include=readings`     | `device-metrics` | `latestReadingsQuery` → `["latest",…]`  |
 
 **The double `/api/history` is a `chart`-card *variant* split, not a config quirk.** Two distinct
@@ -822,7 +822,7 @@ so the second request is redundant on the wire. That is the concrete next fetch-
 the same class of fix as the 7→6 hot-water merge in the 2026-07-21 section — where `hot-water.tsx`
 already demonstrates the pattern (read `siteDataQuery`'s cache instead of firing its own call).
 
-The other two are prefetch gaps. `generator-runs` has no SSR seed at all. `device-metrics` is
+The other two are prefetch gaps. `runs` has no SSR seed at all. `device-metrics` is
 subtler: the SSR pin seed **does** cover system 14 — but it writes `queryKeys.data(14)`, while the
 card's metrics table is a *separate* query, `latestReadingsQuery` → `queryKeys.latest(14)` →
 `/api/data?systemId=14&include=readings` (a superset payload the seed doesn't carry, because
@@ -880,7 +880,7 @@ re-run against Daylesford is still owed.
 Both are cheap, concurrent, and far from the tail (219 ms and 100 ms against 1226 ms). Per the #207
 lesson they are worth removing only if it costs **no** blocking SSR work. Neither qualifies.
 
-**`generator-runs`** — pinned to system **1** (the Selectronic; the detector follows its grid power
+**`runs`** (role `generator`) — pinned to system **1** (the Selectronic; the detector follows its grid power
 as a run proxy), not the DeepSea. Its key, `queryKeys.runPeriods(systemId, role, modeKey)` with
 `modeKey` ∈ `period:1d` / `period:7d` / `range:<start>_<end>`, is derived client-side from
 `useTemporalRange` — URL-driven, tz-dependent, with an `isHistoricalMode` branch. Reproducing that

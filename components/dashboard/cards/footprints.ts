@@ -17,7 +17,7 @@
  * component's own box model. Re-measure the first time one is placed on a dashboard.
  *
  * A footprint is an ESTIMATE for the cards whose height follows their row count (device-metrics,
- * amber-timeline, generator-runs) — the value here is the typical case, and those cards will still
+ * amber-timeline, runs) — the value here is the typical case, and those cards will still
  * resize a little when their data lands. Everything else is exact.
  */
 
@@ -34,7 +34,7 @@ export const CARD_FOOTPRINTS = {
    *  populated table grows to `max-h-[420px]`, but the empty/short case is the honest default:
    *  over-reserving leaves visible dead space on EVERY load, where under-reserving costs one load's
    *  shift on a device that does have runs. */
-  "generator-runs": 115,
+  runs: 115,
   /** measured — Daylesford's DeepSea grid, one row of gauge tiles (`Tile` is content-sized from
    *  `md:` up, so this sits below the 110px mobile floor). */
   "device-metrics-grid": 92,

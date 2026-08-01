@@ -260,7 +260,7 @@ export async function GET(
     const detector = await getRunDetectorForHandleRole(systemId, role);
 
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
-    // dashboard generator-runs card. Bounded by limit (no time window).
+    // dashboard `runs` card. Bounded by limit (no time window).
     const limitParam = searchParams.get("limit");
     if (limitParam !== null) {
       const limit = Math.min(

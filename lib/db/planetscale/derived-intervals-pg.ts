@@ -78,16 +78,6 @@ export async function recomputeIntervalsForWindow(
   winEndMs: number,
   nowMs: number,
 ): Promise<RecomputeResult> {
-  // What this device's energy costs/emits. Resolved once per call, OUTSIDE the transaction — a
-  // small config read, constant across every run in the window. Null (an unpriced device) leaves
-  // all three provenance columns NULL, which the reader takes as "omit the columns".
-  //
-  // Skipped entirely without an energy point: provenance is integrated over that point's counter,
-  // so there is nothing the series could be applied to.
-  const intensity = det.energyPoint
-    ? await resolveIntensitySeries(db, det)
-    : null;
-
   return db.transaction(async (tx) => {
     // Serialize recomputes for THIS derivation so a concurrent run can't interleave delete/insert.
     // `hashtext` folds the uuid into the int4 the advisory-lock API takes; a collision would only
@@ -155,6 +145,31 @@ export async function recomputeIntervalsForWindow(
         endMs: p.endMs,
       }));
       energies = assignEnergyToPeriods(windows, readings, nowMs);
+
+      // What this device's energy costs/emits, resolved ONCE for the whole batch — never per run.
+      //
+      // 🛑 LAZY AND RUN-WINDOWED, both deliberately. The generator leg is one small config read, but
+      // the load leg (`ev`) reassembles the battery-provenance fold, which is materially more
+      // expensive. Resolving it HERE rather than at the top of the function means:
+      //  - a pass that detected no runs does no work at all (the common case for the minutely cron,
+      //    whose 6h trailing window is mostly idle), and
+      //  - the fold spans only the runs being priced, not the whole recompute window.
+      // `winStartMs`/`winEndMs` would fold hours nobody is pricing; the runs' own span is the
+      // smallest window that can answer the question.
+      //
+      // Skipped entirely without an energy point (see the enclosing `if`): provenance is integrated
+      // over that counter's slices, so there would be nothing to apply a series to.
+      // Read on the POOL, not `tx`: this is a read-only side query over tables this transaction
+      // neither reads for correctness nor writes (bindings, agg_5m, learned params), and the load
+      // leg's fold uses the pool internally regardless. It cannot deadlock against us — we hold an
+      // advisory lock and, at this point, no row locks at all.
+      const spanStartMs = Math.min(...windows.map((w) => w.startMs));
+      const spanEndMs = Math.max(...windows.map((w) => w.endMs ?? nowMs));
+      const intensity = await resolveIntensitySeries(db, det, {
+        startMs: spanStartMs,
+        endMs: spanEndMs,
+      });
+
       // Cost/emissions/renewable ride the SAME readings — the energy-weighted integral over the
       // counter's own slices, so a run's provenance and its energy can never disagree.
       if (intensity) {

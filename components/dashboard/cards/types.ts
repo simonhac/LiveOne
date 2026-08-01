@@ -34,7 +34,7 @@ export interface CardRenderProps {
    *  may be undefined for `pending: "self"` plugins. */
   handle?: number;
   /** `context.device` resolved to its legacy `system_id`. Device-bound cards (`device-metrics`,
-   *  `generator-runs`) read `deviceSystemId ?? handle`: their data is keyed by a member device,
+   *  `runs`) read `deviceSystemId ?? handle`: their data is keyed by a member device,
    *  not the synthetic area handle. Undefined ⇒ no device in scope. */
   deviceSystemId?: number;
   /**

@@ -68,7 +68,7 @@ still resize a little when their query lands:
 
 - `device-metrics` — as tall as the device has points. Worst case measured: `/device/1` reserves
   192 and settles at 463.
-- `generator-runs` — as tall as the period has runs; the footprint is the empty case.
+- `runs` — as tall as the period has runs; the footprint is the empty case.
 - `amber-timeline` — as tall as its forecast strip.
 
 None of the three is placed on a dashboard that shows the effect above the fold today.
@@ -84,7 +84,7 @@ Measured off the settled cards at a 1960px viewport (1247px section container).
 | site-charts, sankey block              | 764   | prod Daylesford (sankey alone)    |
 | `battery-contents`                     | 143   | prod Daylesford + Kinkora         |
 | `renewables` (Home Energy)             | 185.5 | prod Daylesford + Kinkora + Kutis |
-| `generator-runs` (empty)               | 115   | dev Daylesford                    |
+| `runs` (empty)                         | 115   | dev Daylesford                    |
 | `device-metrics` (grid, one row)       | 92    | dev Daylesford (DeepSea)          |
 | `device-metrics` (table)               | 192   | matched the existing `h-48` stub  |
 

@@ -73,11 +73,14 @@ export interface RoleDef {
    */
   summary?: { metric: string; aggregable: boolean };
   /**
-   * Run-tracking: marks this role as a first-class binary "running" device (see
-   * lib/run-tracking). `haDeviceClass` is the HA `binary_sensor` device_class for the export
-   * bridge ("running" — on means running). The role's own `ha` block still describes the
-   * underlying numeric signal (e.g. power/W); the binary entity is a derived view over the
-   * persisted run periods.
+   * Run-tracking: marks this role as a first-class binary "is it on" device (see lib/run-tracking).
+   * `haDeviceClass` is the HA `binary_sensor` device_class for the export bridge, and it is per-role
+   * because the question differs — `running` for a generator, `battery_charging` for an EV. The
+   * role's own `ha` block still describes the underlying numeric signal; the binary entity is a
+   * derived view over the persisted run periods.
+   *
+   * A trackable role is NOT necessarily outside `ROLE_IDS`: `generator` exists only to be tracked,
+   * but `ev` is an energy-flow role that is also trackable.
    */
   device?: { trackable: true; haDeviceClass: string };
 }
@@ -128,6 +131,15 @@ export const ROLES: Record<RoleId, RoleDef> = {
     validatesCompositePath: true,
     summary: { metric: "power", aggregable: false },
   },
+  // Trackable (see lib/run-tracking): a charge session is a run period, detected off whichever
+  // point the detector's `source_points.signal` names — at Kinkora that is the Mondo EV circuit's
+  // `load.ev/power`, not a vehicle-reported series. `ha` still describes the role's numeric signal
+  // (SoC/%, which is what the `ev` tile reads); `device.haDeviceClass` is the binary entity's class,
+  // and HA spells "is it charging" `battery_charging` rather than `running`.
+  //
+  // Unlike `generator`, this role IS in ROLE_IDS — it is a real energy-flow role that also happens to
+  // be trackable. `lib/roles/__tests__/registry.test.ts` only constrains the converse (every role
+  // OUTSIDE ROLE_IDS must be trackable), so the two facts coexist.
   ev: {
     id: "ev",
     category: "load",
@@ -135,6 +147,7 @@ export const ROLES: Record<RoleId, RoleDef> = {
     label: "EV",
     ha: { deviceClass: "battery", stateClass: "measurement", unit: "%" },
     validatesCompositePath: false,
+    device: { trackable: true, haDeviceClass: "battery_charging" },
   },
   // Run-tracking device role (see lib/run-tracking). Deliberately NOT in ROLE_IDS below, so it
   // does not appear in the composite editor's energy-flow panels or get composite-path-validated;
@@ -166,6 +179,18 @@ export function stemMatchesRole(stem: string, roleId: RoleId): boolean {
 export const COMPOSITE_VALIDATED_ROLE_IDS: readonly RoleId[] = ROLE_IDS.filter(
   (id) => ROLES[id].validatesCompositePath,
 );
+
+/**
+ * The roles a run detector can be configured for — derived from `device.trackable`, so adding a
+ * trackable role is a one-line change here and nowhere else. Iterated over `ROLES` (not `ROLE_IDS`),
+ * because `generator` is deliberately absent from the latter.
+ *
+ * Read by the capability resolver (lib/capabilities/server.ts) to decide which `derivations` roles to
+ * probe for, and by the seed writer to validate `--role`.
+ */
+export const TRACKABLE_ROLE_IDS: readonly RoleId[] = (
+  Object.keys(ROLES) as RoleId[]
+).filter((id) => ROLES[id].device?.trackable);
 
 /**
  * How an ENERGY-accumulator point (metric_type "energy", per-interval Wh in `agg_5m.delta`)

@@ -49,7 +49,7 @@ function ConfigNotice() {
 
 function AreaDailyStripes({ node, handle, deviceSystemId }: CardRenderProps) {
   // A bound member device wins over the area handle — the same rule `device-metrics` and
-  // `generator-runs` use. A logical path is a property of a device's point set, so when the node (or
+  // the `runs` card's use. A logical path is a property of a device's point set, so when the node (or
   // an ancestor) pins a device, that device is what the path must resolve against.
   const systemId = deviceSystemId ?? handle!;
   const { datum, paused } = useAreaDatum(systemId);

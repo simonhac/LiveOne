@@ -1551,7 +1551,8 @@ async function main(): Promise<void> {
     if (memberDevice) {
       doc.root.children[0].children.push({
         kind: "card",
-        type: "generator-runs",
+        type: "runs",
+        config: { role: "generator" },
         device: memberDevice,
       });
     }
