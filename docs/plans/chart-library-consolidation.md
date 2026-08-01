@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — assessment complete, execution approved. Stages 0 and 1 done; Stage 2 next.**
-> Written 2026-08-01.
+> **Status: PLAN — assessment complete, execution approved. Stages 0–2 done; Stage 3 next, pending
+> sign-off on the defect register's fix/carry decisions.** Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -25,9 +25,14 @@ There is also a third *idiom* that is not a library: hand-rolled inline SVG and 
 
 **Feasible, and worth doing.** Chart.js is barely used *as a charting library*:
 
-- `legend: { display: false }` at **every** site — series identity lives in `EnergyTable` and
-  `ChartTooltip` instead.
-- `tooltip: { enabled: false }` at **every** site — all four tooltips are hand-built.
+- `legend: { display: false }` at every **dashboard** site — series identity lives in `EnergyTable`
+  and `ChartTooltip` instead.
+- `tooltip: { enabled: false }` at every **dashboard** site — those tooltips are all hand-built.
+- ⚠️ **Corrected 2026-08-01 (Stage 2):** an earlier revision of this doc said "every site". That is
+  wrong. `app/admin/observations/observations-viewer.tsx` (the `/admin/observations` ops page) uses
+  Chart.js's **built-in legend and built-in tooltip** — the only place in the repo that does. It is
+  a two-series, admin-only page, so the plan is to **simplify** it during the port rather than
+  rebuild Chart.js's legend; see Stage 2's sizing note.
 - `animation: false` everywhere, deliberately, so focus tracking stays crisp.
 - No `chartjs-plugin-zoom`, no brush, no pan. Windowing is URL-state paging
   (`lib/charts/useTemporalRange.ts`).
@@ -327,11 +332,89 @@ Playwright route stubbing rather than a fixture prop):
 
 These must be added **before** their Stage 5 slice, not before Stage 3.
 
-### Stage 2 — Catalogue defects
+### Stage 2 — Catalogue defects — ✅ DONE 2026-08-01
 
-Sweep all four charts the way the lines legend was swept. Land the result in this doc with an
-explicit **fix / carry-forward / won't-fix** decision per item. No code — this is the artefact to
-review before any porting starts.
+Swept `HeatmapChart`, `ProvenanceChart` and `observations-viewer`. Register below (#7–#17), joining
+#1–#6 from the lines chart. **No code changed.** Decisions are proposed; the "fix / carry / won't"
+column is what needs sign-off before Stage 3 starts.
+
+#### 🔴 #7 — the heatmap's y-axis plugin corrupts every other chart in the app
+
+The worst thing found, and it is not a heatmap bug — it is a bug the heatmap inflicts on the
+dashboard.
+
+`HeatmapChart.tsx:108` registers `customYAxisPlugin` **globally**:
+
+```ts
+ChartJS.register(customYAxisPlugin as any);
+```
+
+Chart.js plugins registered this way run on **every chart instance in the process**. The plugin's
+`afterDraw` has no chart-type guard — only `if (!yAxis) return` — so on the lines and stacked charts
+it takes the `else` branch (`:82-90`) and re-draws every `scales.y` tick label, right-aligned at
+`chartAreaLeft - 10`, on top of the labels Chart.js already drew at its own padding. Result:
+**doubled / ghosted left-axis labels**.
+
+This is live in production. `components/dashboard/registry.tsx` statically imports all 20 card
+plugins, `heatmap.tsx` → `HeatmapPanel` → `HeatmapChart`, so the registration happens on **every
+dashboard page load** whether or not a heatmap card is present.
+
+Confirmed empirically, not by reading: adding a bare `import "@/components/HeatmapChart"` to the
+gallery flipped `lines-d-power`, `stacked-load-d` and `stacked-load-d-focused` to failing, and the
+diff was confined to the left axis labels. It only touches `y`, never `y1` — which is exactly why the
+right-hand SoC axis is unaffected in the diff. Probe reverted.
+
+> **Harness fidelity gap this exposes:** the gallery imports only `DashboardChart`, so the Stage 1
+> baselines capture the charts *uncontaminated* — i.e. **not** what the real dashboard renders. Fix
+> #7 before Stage 5 and the gap closes on its own. Do not "fix" it by importing the heatmap into the
+> gallery.
+
+**Fix** — scope the plugin to the heatmap instance (pass it in the `plugins` array of that `<Chart>`,
+not `ChartJS.register`). This is a one-line change that can ship immediately, independent of the
+migration.
+
+#### The rest
+
+| # | Chart | Defect | Proposed |
+|---|---|---|---|
+| 8 | Heatmap | **`console.log` spam in production** — `:221,222,242,243,371` log the URL, the *entire* API response (30 days × 48 slots), and `:280` logs **once per series** inside the `find` predicate. | **Fix** |
+| 9 | Heatmap | **DST silently loses an hour, twice a year.** Time slots are a hardcoded 48 × half-hour grid (`:306-310`), but a local day has 46 or 50 slots across a DST boundary. On fall-back, two distinct UTC intervals produce the same `timeKey` and `:337` overwrites — one hour of data vanishes. On spring-forward, 02:00/02:30 never exist and render as a fake no-data hole. | **Fix** (needs a decision on how to *show* a 46/50-slot day) |
+| 10 | Heatmap | **Narrow-range series render washed out.** `getNormalizedValue` divides by `Math.max(max - min, 1)` (`:473`). A divide-by-zero guard, but it silently distorts every series whose range is < 1 — a temperature sitting 40.1–40.5 only ever reaches 0.4 of the palette. Common for SoC, temperature, price. | **Fix** |
+| 11 | Heatmap | **The colour legend lies for those same series.** The gradient always spans `getColor(0)`→`getColor(1)` and is labelled `min`→`max` (`:858-912`), but per #10 the cells never reach 1. Same root cause, separate visible symptom — worth listing so the fix is verified against both. | **Fix with #10** |
+| 12 | Heatmap | `parseInterval` returns **0** for an unrecognised interval (`:435,450`). `intervalMs = 0` collapses every reading onto one timestamp and the heatmap silently becomes a single column. Should surface, not guess. | **Fix** |
+| 13 | Heatmap | `heatmapData?.min \|\| 0` / `?.max \|\| 1` (`:599,600,773,774`) — `\|\|` where `??` is meant. Harmless for today's values but a latent trap when a legitimate `0` appears. | **Fix** (trivial) |
+| 14 | Heatmap | Tooltip hiding is implemented **twice**: a container `mousemove` listener (`:486-524`) and the `external` tooltip's own `isInChartArea` check (`:566-577`) test the same condition. Both vanish in the port. | **Won't fix** — deleted by Stage 5 |
+| 15 | Provenance | `buildTimeScale(timeRange, windowEnd, windowStart)` — the shared helper names that parameter `now`, and in `buildShadingAnnotations` it genuinely is "now". Correct here (no shading), but the name is wrong and invites a real bug. | **Fix** — rename to `windowEnd` in Stage 4 |
+| 16 | Provenance | The crosshair red `rgb(239, 68, 68)` is hardcoded a **third** time (`:135`), alongside two copies in `DashboardChart`. Belongs with #6. | **Fix with #6** |
+| 17 | Admin viewer | Uses Chart.js's **built-in legend and tooltip** — the only site that does (`:344-347`). Not a defect; a scope correction. See the Verdict note and the sizing decision below. | **Simplify**, don't reproduce |
+
+`ProvenanceChart` is otherwise the healthiest of the four: honest gaps (`spanGaps: false`), a
+documented re-entrancy guard on `onHover`, no console noise, per-series styling driven off the field
+registry rather than inline literals. It is the best model for what the ported charts should read
+like.
+
+#### What this changes about the plan
+
+- **#7 should ship now**, ahead of Stage 3 — it is one line, it is live in production, and leaving it
+  in place means the Stage 5 baselines are being compared against a rendering the dashboard never
+  actually produces.
+- **#9 is not a mechanical fix.** "What does a 46- or 50-slot day look like?" is a product question.
+  It should not be bundled into a refactor PR.
+- **The admin viewer should be simplified, not reproduced (#17).** It lives at `/admin/observations`
+  (admin sidebar → "Observations"; `page.tsx` redirects non-admins to `/dashboard`), so it is an
+  internal ops view of the QStash queue seen by one person — see [[simon-is-sole-user]] reasoning.
+  Building general legend + tooltip primitives into Stage 4 *solely* so this page keeps a
+  pixel-identical Chart.js legend would be tail-wagging-dog: nothing else in the repo wants them, so
+  they would be a generalisation with exactly one consumer.
+
+  Instead: port it with a deliberately minimal legend (two static swatches — it has exactly two
+  series, "observations" and "5-min agg") and either a simple hover readout or none. Its screenshot
+  baseline is therefore **expected to change**, and that is fine — it is the one chart where "looks
+  different" is an acceptable outcome rather than a regression.
+
+  Knock-on: it is still the right **first** slice on low-stakes grounds, but it no longer "proves the
+  primitives" — it exercises surface nothing else uses. `ProvenanceChart` is the better proof of the
+  shared primitives, so treat *that* as the real first test of Stage 4's design.
 
 ### Stage 3 — Fix agreed defects, still on Chart.js
 
@@ -349,8 +432,10 @@ optionality fix (defects 1–3). **Freeze the baseline at the end of this stage.
 Acceptance rule from here on: **the screenshots must not change.** Any diff is a bug or a
 regression and must be explained.
 
-1. `observations-viewer` bar chart — admin-only, lowest stakes, proves the primitives.
-2. `ProvenanceChart` — exercises crosshair, annotation bands, `stepped`, `spanGaps`.
+1. `observations-viewer` bar chart — admin-only, lowest stakes. **Simplify its legend/tooltip rather
+   than reproduce them** (#17); its baseline is expected to change.
+2. `ProvenanceChart` — the real proof of Stage 4's primitives: crosshair, annotation bands,
+   `stepped`, `spanGaps`, dual axes, all shared with the dashboard charts.
 3. `HeatmapChart` — biggest win. Deletes `chartjs-chart-matrix`, the `#chartjs-tooltip` body-append
    hack, and the custom `afterDraw` y-axis-label plugin. Expect the file to get *shorter*.
 4. `DashboardChart` `lines`.
