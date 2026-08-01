@@ -455,6 +455,8 @@ export function heatmapHistoryFixture(opts: {
   endDayIso: string;
   days?: number;
   offsetMin?: number;
+  /** Emit a narrow band around this value instead of a daily arc — the SoC-domain case. */
+  narrowBandAround?: number;
 }): unknown {
   const {
     pointPath,
@@ -481,6 +483,16 @@ export function heatmapHistoryFixture(opts: {
     const arc = Math.max(0, Math.sin(((hour - 6) / 12) * Math.PI)) ** 1.3;
     const drift = 1 + 0.25 * Math.sin(i / (48 * 6));
     const missing = i % 811 === 0 || (i > count - 20 && i % 3 === 0);
+    if (opts.narrowBandAround != null) {
+      // A battery that barely cycled: 60–65 %. Against an observed-range domain this used to fill
+      // the whole palette and read as a dramatic day.
+      data.push(
+        missing
+          ? null
+          : round(opts.narrowBandAround + Math.sin(i / 30) * 2.5 + rand(), 1),
+      );
+      continue;
+    }
     data.push(missing ? null : round(arc * 4200 * drift + rand() * 180, 1));
   }
 

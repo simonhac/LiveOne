@@ -50,8 +50,15 @@ function Swatch({ color, dash }: { color: string; dash?: number[] }) {
  * vanished from the legend entirely, and while hovering they flickered out whenever the focused
  * index landed on a null sample (a data gap).
  *
- * `hasBattery`/`hasGrid` mirror the `!= null` tests `lineSeries` uses to decide which series exist, so the legend and the chart now list exactly the same series by construction. Solar, Load
- * and Battery SoC have no flag because their datasets are unconditional.
+ * `hasBattery`/`hasGrid` mirror the `!= null` tests `lineSeries` uses to decide which series exist,
+ * so the legend and the chart list exactly the same series by construction. Solar, Load and Battery
+ * SoC have no flag because they are unconditional.
+ *
+ * The row **wraps**. It used to be a single non-wrapping flex line, so on a phone-width chart the
+ * last entries were pushed clean off the edge — Solar and Battery SoC simply vanished, which reads
+ * as "this device has no solar" rather than "the legend does not fit". Found once an explicitly
+ * narrow gallery case existed; the mobile Playwright project renders the same 900 px chart, so
+ * viewport alone never surfaced it.
  */
 interface ChartTooltipProps {
   /** Whether the series EXISTS (mirrors the dataset gate) — not whether it has a value right now. */
@@ -76,7 +83,7 @@ export default function ChartTooltip({
   unit,
 }: ChartTooltipProps) {
   return (
-    <div className="flex items-center gap-3 sm:gap-6 md:gap-10 text-xs">
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs sm:gap-x-6 md:gap-x-10">
       {/* Solar */}
       <div className="flex items-center gap-1">
         <Swatch color={CHART_COLORS.solar.primary} />

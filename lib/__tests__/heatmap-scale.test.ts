@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import {
+  heatmapDomain,
   BLACK_SENTINEL,
   FLAT_POSITION,
   POWER_BASELINE_W,
@@ -89,5 +90,33 @@ describe("normalizeHeatmapValue — load/source power baseline", () => {
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThanOrEqual(0);
     expect(v).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("heatmapDomain", () => {
+  it("pins SoC to 0–100 regardless of what was observed", () => {
+    expect(heatmapDomain("soc", 60, 65)).toEqual({
+      min: 0,
+      max: 100,
+      fixed: true,
+    });
+  });
+
+  it("keeps a narrow SoC day narrow", () => {
+    // The point of the fix. Observed-range scaling turned an idle 60–65 % day into a full-palette
+    // sweep that read as dramatic; against 0–100 it is a band in the middle, which is the truth.
+    const { min, max } = heatmapDomain("soc", 60, 65);
+    const lo = normalizeHeatmapValue(60, min, max, ordinary);
+    const hi = normalizeHeatmapValue(65, min, max, ordinary);
+    expect(hi - lo).toBeCloseTo(0.05, 6);
+    expect(lo).toBeCloseTo(0.6, 6);
+  });
+
+  it("leaves every other metric on its observed range", () => {
+    // Power and energy are site-dependent; temperature has no universal band (a hot-water tank and
+    // an ambient probe share the metric and nothing else).
+    for (const m of ["power", "energy", "temperature", "time", "code"]) {
+      expect(heatmapDomain(m, 3, 9)).toEqual({ min: 3, max: 9, fixed: false });
+    }
   });
 });

@@ -876,9 +876,36 @@ chart was simplified rather than reproduced).
 - **`DailyStripes` still has its own `useContainerWidth`.** `useContainerSize` generalises it; fold
   it in when that file is next touched. Note it would have been immune to the callback-ref bug either
   way, since it has no loading state.
-- **Measure-to-fit tick density.** The 2→3→4 skip ladder is carried over as a heuristic; computing
-  how many labels actually fit from measured text width would be better.
-- **Per-metric fixed heatmap ranges** (SoC always 0–100 rather than min-observed–max-observed).
+- ~~Measure-to-fit tick density~~ — ✅ **done 2026-08-01.** `buildTimeTicks` now takes the plot width
+  and fits density to it. The old ladder ignored width entirely, so a 30-day axis thinned identically
+  on a 900 px desktop and a 360 px phone, where two-line `[weekday, date]` labels overlap.
+
+  Breathing room is **per line of label**, not a flat gap: a two-line label is visually heavier than a
+  one-line `HH:mm` of similar width. A single constant could match D's density or M's, never both —
+  measured, `GAP=48` gave M 8 labels (right) but D 9 (canvas: 12); `GAP=30` gave D 13 (right) but M 11.
+  Scaling per line reproduces D≈13, W 8, M 8, Y 13 at 812 px, all within one of the canvas. Pinned by
+  a calibration test so tuning the estimate cannot silently re-space every axis in the app.
+
+- ~~Per-metric fixed heatmap ranges~~ — ✅ **done 2026-08-01**, scoped to what is actually defensible.
+  **Only `soc` qualifies**: 0–100 % by definition, and observed-range scaling actively misled — a
+  battery idling between 60 % and 65 % rendered as a full-palette sweep, reading like a dramatic day.
+  It is now a narrow mid-palette band, and SoC heatmaps are comparable across days, points and
+  devices. Everything else keeps observed min/max deliberately: power and energy are site-dependent,
+  and temperature has no universal band (a hot-water tank and an ambient probe share the metric and
+  nothing else). Fixing those needs a per-**point** range, which is a different feature.
+
+  `heatmapDomain()` is computed once and used by both the cells and the legend, so they cannot
+  disagree — that divergence was defect #11. A fixed domain also prints its bounds without decimals,
+  since they are exact by definition (`0%`/`100%`, not `0.00%`).
+
+- 🆕 **The legend did not wrap.** Found only once an explicitly narrow gallery case existed: at
+  phone width `ChartTooltip` was a single non-wrapping flex row, so Solar and Battery SoC were pushed
+  clean off the edge — which reads as "this device has no solar", not "the legend does not fit".
+  Pre-existing, unrelated to the port. Now wraps.
+
+  > Worth noting for the harness: the **mobile Playwright project renders the same 900 px chart** —
+  > the gallery cases carry their own width. Viewport alone would never have surfaced this. Narrow
+  > cases (`lines-d-narrow`, `lines-m-narrow`) now cover it.
 
 ### 🛑 What has NOT been verified — read before merging
 

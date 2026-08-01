@@ -146,6 +146,7 @@ export default function IngestionChart({
                   "D",
                   series.timestamps[0],
                   series.timestamps[series.timestamps.length - 1],
+                  geo.plot.width,
                 )}
                 x={geo.x}
                 plotHeight={geo.plot.height}

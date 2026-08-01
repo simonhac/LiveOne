@@ -150,7 +150,12 @@ export default function ProvenanceChart({
               })}
 
               <TimeAxis
-                ticks={buildTimeTicks(timeRange, windowStart, windowEnd)}
+                ticks={buildTimeTicks(
+                  timeRange,
+                  windowStart,
+                  windowEnd,
+                  geo.plot.width,
+                )}
                 x={geo.x}
                 plotHeight={geo.plot.height}
                 align={timeRange === "D" ? "center" : "start"}

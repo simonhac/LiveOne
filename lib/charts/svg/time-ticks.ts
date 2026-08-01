@@ -37,17 +37,48 @@ export interface TimeTick {
 }
 
 /**
- * How many ticks to skip a label for at M scale.
+ * Approximate rendered width of a tick label, in px.
  *
- * Carried over verbatim from `buildTimeScale`, quirk included: with ~31 daily ticks across a
- * 30-day window this lands on 4, which is the "every 4th day" spacing the current axis shows. It
- * is a density heuristic, not a fitting algorithm — replacing it with measure-to-fit is noted as
- * follow-on work rather than done here.
+ * Estimated from character count rather than measured with `canvas.measureText`, deliberately: this
+ * module is pure so it can be unit-tested, and a DOM dependency here would put the tick algorithm
+ * back out of reach of tests. 6 px/char is conservative for DM Sans at 10 px (digits ≈5.6, letters
+ * ≈5.5), and erring wide only ever thins labels — it can never cause a collision.
  */
-function monthSkipInterval(tickCount: number): number {
-  if (tickCount > 25) return 4;
-  if (tickCount > 20) return 3;
-  return 2;
+const CHAR_PX = 6;
+
+/**
+ * Breathing room **per line of label**, not a flat gap.
+ *
+ * A two-line `[weekday, date]` label is visually heavier than a one-line `HH:mm` of similar width and
+ * needs more horizontal separation to stay readable. Calibrated against the densities the canvas
+ * charts actually shipped — at an 812 px plot this reproduces D≈13 labels (canvas: 12), W 8 (8),
+ * M 8 (8) and Y 13 (13) — while thinning properly on a phone, which the old count-based ladder never
+ * did.
+ */
+const GAP_PER_LINE_PX = 30;
+
+/** Space one labelled tick needs, text plus breathing room. */
+function slotPx(lines: string[]): number {
+  return Math.max(...lines.map((l) => l.length)) * CHAR_PX +
+    GAP_PER_LINE_PX * lines.length;
+}
+
+/**
+ * Smallest `n` such that labelling every nth candidate fits in `plotWidth`.
+ *
+ * This replaces the old count-based ladder (`>25 → 4, >20 → 3, else 2`), which was carried over from
+ * `buildTimeScale` and ignored width entirely — so a 30-day axis thinned identically on a 900 px
+ * desktop and a 360 px phone, where those two-line `[weekday, date]` labels overlap. Density is a
+ * property of the space available, not of how many days happen to be in the window.
+ */
+function fitSkip(
+  candidates: number,
+  slot: number,
+  plotWidth: number,
+): number {
+  if (candidates <= 1 || plotWidth <= 0) return 1;
+  const maxLabels = Math.max(1, Math.floor(plotWidth / slot));
+  return Math.max(1, Math.ceil(candidates / maxLabels));
 }
 
 /** The gridline interval for a period — every tick in the returned list sits on one of these. */
@@ -72,6 +103,8 @@ export function buildTimeTicks(
   range: ChartTimeRange,
   windowStart: Date,
   windowEnd: Date,
+  /** Plot-area width in px. Density is fitted to it — see {@link fitSkip}. */
+  plotWidth: number,
 ): TimeTick[] {
   if (windowEnd <= windowStart) return [];
 
@@ -82,27 +115,32 @@ export function buildTimeTicks(
   if (values.length === 0) return [];
 
   if (range === "D") {
+    // D is the one period that keeps its UNLABELLED gridlines: the canvas genuinely drew them
+    // (24 gridlines to 12 labels), so thinning here removes labels, never lines.
+    const skip = Math.max(2, fitSkip(values.length, slotPx(["00:00"]), plotWidth));
     return values.map((value, i) => ({
       value,
-      label: i % 2 === 0 ? [format(value, "HH:mm")] : null,
+      label: i % skip === 0 ? [format(value, "HH:mm")] : null,
     }));
   }
 
   if (range === "Y") {
-    return values.map((value, i) => ({
-      value,
+    const label = (value: Date, i: number) => [
       // Year on January, and on the first tick so a window that never crosses January still says which.
-      label: [
-        format(value, value.getMonth() === 0 || i === 0 ? "MMM yy" : "MMM"),
-      ],
-    }));
+      format(value, value.getMonth() === 0 || i === 0 ? "MMM yy" : "MMM"),
+    ];
+    // Sized on the COMMON "MMM", not the widest "MMM yy": only January and the first tick carry a
+    // year, so estimating on those would thin the whole axis for two labels' sake.
+    const skip = fitSkip(values.length, slotPx(["MMM"]), plotWidth);
+    return values
+      .filter((_, i) => i % skip === 0)
+      .map((value, i) => ({ value, label: label(value, i) }));
   }
 
-  // W labels every daily tick. M thins by count and DROPS the unlabelled ticks entirely rather than
-  // keeping bare gridlines: measured against the Chart.js baselines, a 30-day window drew ~15
-  // gridlines, and keeping all 31 daily ones renders visibly noisier than what it replaces. D keeps
-  // its unlabelled gridlines because there the canvas genuinely draws them (24 gridlines, 12 labels).
-  const skip = range === "M" ? monthSkipInterval(values.length) : 1;
+  // W and M DROP their unlabelled ticks rather than keeping bare gridlines: measured against the
+  // Chart.js baselines, a 30-day window drew ~15 gridlines, and keeping all 31 daily ones renders
+  // visibly noisier than what it replaces. (D is the exception, above.)
+  const skip = fitSkip(values.length, slotPx(["Wed", "30 Jun"]), plotWidth);
   return values
     .filter((_, i) => i % skip === 0)
     .map((value) => ({

@@ -60,6 +60,7 @@ test.describe("chart gallery baselines", () => {
           units: c.pointUnit,
           endDayIso: c.endDay,
           offsetMin: c.dayOffsetMin,
+          narrowBandAround: c.narrowBandAround,
         });
         await page.route("**/api/history**", (route) =>
           route.fulfill({

@@ -80,7 +80,7 @@ export default function PrimitivesDemo({
   });
   if (geo.empty) return null;
 
-  const ticks = buildTimeTicks(range, windowStart, windowEnd);
+  const ticks = buildTimeTicks(range, windowStart, windowEnd, geo.plot.width);
   const bands = buildShadingBands(range, windowStart, windowEnd);
   const stacked = stack
     ? stackedBands(

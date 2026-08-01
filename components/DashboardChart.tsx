@@ -228,7 +228,12 @@ export default function DashboardChart(props: DashboardChartProps) {
             plotHeight={geo.plot.height}
           />
           <TimeAxis
-            ticks={buildTimeTicks(timeRange, windowStart, windowEnd)}
+            ticks={buildTimeTicks(
+              timeRange,
+              windowStart,
+              windowEnd,
+              geo.plot.width,
+            )}
             x={geo.x}
             plotHeight={geo.plot.height}
             align={timeRange === "D" ? "center" : "start"}

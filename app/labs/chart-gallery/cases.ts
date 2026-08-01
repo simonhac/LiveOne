@@ -49,6 +49,8 @@ export type ChartCase = {
       endDay: string;
       timezone: string;
       dayOffsetMin: number;
+      /** Narrow-band data around this value — for the fixed-domain SoC case. */
+      narrowBandAround?: number;
     }
   | {
       kind: "ingestion";
@@ -178,6 +180,22 @@ export const CHART_CASES: ChartCase[] = [
     focusAt: 0.46,
     note: "focus inside the hole: every legend entry REMAINS, values simply blank (was defect #2 — Battery/Grid vanished mid-hover)",
     width: W,
+    height: H,
+  },
+  {
+    id: "lines-d-narrow",
+    kind: "lines",
+    range: "D",
+    note: "phone-width plot: labels thin to fit. The mobile PROJECT renders the same 900px chart, so only an explicitly narrow case covers this",
+    width: 340,
+    height: H,
+  },
+  {
+    id: "lines-m-narrow",
+    kind: "lines",
+    range: "M",
+    note: "phone-width M: two-line [weekday, date] labels are the ones that collide, so this is the case measure-to-fit exists for",
+    width: 340,
     height: H,
   },
 
@@ -363,6 +381,21 @@ export const CHART_CASES: ChartCase[] = [
     timezone: "Australia/Melbourne",
     dayOffsetMin: 600,
     note: "window spans the 5 Apr fall-back: rows before it are asterisked and the footnote appears",
+    width: 900,
+    height: 600,
+  },
+  {
+    id: "heatmap-soc-fixed-domain",
+    kind: "heatmap",
+    pointPath: "bidi.battery/soc",
+    pointUnit: "%",
+    metricType: "soc",
+    palette: "viridis",
+    endDay: "2026-06-15",
+    timezone: "Australia/Melbourne",
+    dayOffsetMin: 600,
+    narrowBandAround: 62,
+    note: "SoC is pinned to 0-100 by definition: a battery idling at 60-65% reads as a narrow mid-palette band, not a full-palette sweep",
     width: 900,
     height: 600,
   },

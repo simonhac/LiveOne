@@ -22,6 +22,7 @@ import {
 import {
   BLACK_SENTINEL,
   POWER_BASELINE_W,
+  heatmapDomain,
   isBaselinePower,
   normalizeHeatmapValue,
 } from "@/lib/heatmap-scale";
@@ -346,9 +347,18 @@ export default function HeatmapChart({
   // Render
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * The colour domain — fixed for metrics that have one by definition (SoC is 0–100 %), observed
+   * otherwise. Computed ONCE and used by both the cells and the legend, so the legend cannot claim a
+   * range the grid does not use. That divergence was defect #11.
+   */
+  const domain = heatmapData
+    ? heatmapDomain(metricType, heatmapData.min, heatmapData.max)
+    : null;
+
   const cellColour = (v: number | null | undefined): string => {
     if (v == null || !Number.isFinite(v)) return NO_DATA_FILL;
-    const n = normalizeHeatmapValue(v, heatmapData!.min, heatmapData!.max, {
+    const n = normalizeHeatmapValue(v, domain!.min, domain!.max, {
       baselinePower: isBaselinePowerSeries,
     });
     if (n === BLACK_SENTINEL) return BASELINE_FILL;
@@ -376,18 +386,16 @@ export default function HeatmapChart({
     if (!isBaselinePowerSeries) {
       return `linear-gradient(to right, ${ramp(0)})`;
     }
-    const span = heatmapData.max - heatmapData.min;
+    const d = heatmapDomain(metricType, heatmapData.min, heatmapData.max);
+    const span = d.max - d.min;
     const pct =
       span > 0
-        ? Math.min(
-            100,
-            Math.max(0, ((POWER_BASELINE_W - heatmapData.min) / span) * 100),
-          )
+        ? Math.min(100, Math.max(0, ((POWER_BASELINE_W - d.min) / span) * 100))
         : 100;
     if (pct >= 100) return BASELINE_FILL; // the whole series sits at or below standby
     if (pct <= 0) return `linear-gradient(to right, ${ramp(0)})`;
     return `linear-gradient(to right, ${BASELINE_FILL} 0%, ${BASELINE_FILL} ${pct}%, ${ramp(pct)})`;
-  }, [heatmapData, palette, isBaselinePowerSeries]);
+  }, [heatmapData, palette, isBaselinePowerSeries, metricType]);
 
   /** Value + unit for the tooltip, applying the same conversions the legend uses. */
   const formatValue = (v: number | null): { value: string; unit: string } => {
@@ -406,7 +414,13 @@ export default function HeatmapChart({
         ? "kW"
         : pointUnit;
   const axisScale = metricType === "energy" || metricType === "power" ? 1000 : 1;
-  const axisDecimals = metricType === "energy" || metricType === "power" ? 1 : 2;
+  // A FIXED domain's bounds are exact by definition — "0%"/"100%", not "0.00%"/"100.00%". Only an
+  // observed range needs decimals, because there the number is a measurement.
+  const axisDecimals = domain?.fixed
+    ? 0
+    : metricType === "energy" || metricType === "power"
+      ? 1
+      : 2;
 
   if (loading && !heatmapData) {
     return (
@@ -602,7 +616,7 @@ export default function HeatmapChart({
         {/* Colour legend. Truthful since Stage 3e: the ramp spans the real min..max. */}
         <div className="mt-4 flex items-center justify-center gap-2">
           <span className="text-xs text-gray-400">
-            {(heatmapData.min / axisScale).toFixed(axisDecimals)}
+            {(domain!.min / axisScale).toFixed(axisDecimals)}
             {axisUnit}
           </span>
           <div
@@ -610,7 +624,7 @@ export default function HeatmapChart({
             style={{ width: 200, background: legendGradient }}
           />
           <span className="text-xs text-gray-400">
-            {(heatmapData.max / axisScale).toFixed(axisDecimals)}
+            {(domain!.max / axisScale).toFixed(axisDecimals)}
             {axisUnit}
           </span>
         </div>

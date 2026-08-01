@@ -55,3 +55,26 @@ export function normalizeHeatmapValue(
 
   return Math.min(1, Math.max(0, (value - lo) / span));
 }
+
+/**
+ * The colour domain for a metric: a FIXED range where the metric has one by definition, otherwise
+ * the observed min/max.
+ *
+ * Only `soc` qualifies. State of charge is 0–100 % by definition, and scaling it to the observed
+ * range actively misleads: a battery that idled between 60 % and 65 % renders as a full-palette
+ * sweep, reading like a dramatic day. Fixing the domain makes that a narrow band in the middle of
+ * the ramp, which is the truth, and makes SoC heatmaps comparable across days, points and devices.
+ *
+ * Everything else keeps observed min/max deliberately. Power and energy are site-dependent, and
+ * temperature has no universal band — a hot-water tank and an ambient probe share the metric and
+ * nothing else. Fixing those needs a per-POINT range, which is a different feature; see the
+ * follow-on note in docs/plans/completed/chart-library-consolidation.md.
+ */
+export function heatmapDomain(
+  metricType: string,
+  observedMin: number,
+  observedMax: number,
+): { min: number; max: number; fixed: boolean } {
+  if (metricType === "soc") return { min: 0, max: 100, fixed: true };
+  return { min: observedMin, max: observedMax, fixed: false };
+}
