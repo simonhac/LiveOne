@@ -25,7 +25,7 @@ Italy and from an AWS Lambda **in Sydney (`ap-southeast-2`)**. What we learned:
 
 Two distinct concerns fall out, and they should be built as two lanes:
 
-1. **Initial load** — get *structure* on screen and *values* filled as fast as possible. Fixed by
+1. **Initial load** — get _structure_ on screen and _values_ filled as fast as possible. Fixed by
    **server-side rendering** (Superphase 1). No new infrastructure.
 2. **Steady-state liveness** — keep an open page up to date. Fixed by an **SSE push lane** feeding the
    React Query cache. Plus a parallel goal: **move device polling off Vercel onto Fly** for robustness,
@@ -41,7 +41,7 @@ Two distinct concerns fall out, and they should be built as two lanes:
   (`point_readings.pr_point_time_unique`, `agg_5m` PK, `observations_outbox (system_id, session_id, seq)`),
   never on exactly-once transport.
 - **Durable-before-ack, and retries converge — never corrupt.** A message is only acked once it is in a
-  durable store that will *redeliver it*; redelivery/out-of-order must be safe (raw = first-write-wins;
+  durable store that will _redeliver it_; redelivery/out-of-order must be safe (raw = first-write-wins;
   5m-native & the live stream = last-writer-wins by real `measurementTime`).
 - **Reversible.** Every phase is flag-gated and dual-runnable against today's path.
 
@@ -67,7 +67,7 @@ path** and render card skeletons server-side.
 
 The RQ migration left SSR prefetch deferred (client-only today). Prefetch `/api/data` (both systems) +
 `/api/history` **during render** — the server is in `syd1`, ~0 ms from the data — and hand them down via
-a React Query `HydrationBoundary`. The SSR seed *is* the values.
+a React Query `HydrationBoundary`. The SSR seed _is_ the values.
 
 - **Effect:** cards render populated from the initial payload; the client data stage leaves the critical
   path. Don't wait on any network round-trip (or, later, the SSE connection) for first fill.
@@ -100,7 +100,7 @@ precomputed `flow_attr_1d` rollup, **nothing here is materialized yet.** Three l
   existing table — so the request serves a stored result in tens of ms. Biggest lift; do it last, only if
   1.3a/1.3b don't bring the tail down enough.
 
-- **Effect:** cuts the dominant remaining server cost — for an AU user this *is* the tail.
+- **Effect:** cuts the dominant remaining server cost — for an AU user this _is_ the tail.
 
 ### Verification
 
@@ -184,10 +184,10 @@ These close latent bugs and are prerequisites for Phases 3–4. See the [bug reg
 for the full detail; summary:
 
 - **2a — 5m-native upsert guard (BLOCKING).** `receive/route.ts`'s `onConflictDoUpdate` is unconditional
-  today, so *any* redelivery wins — a stale QStash retry or relay redelivery can clobber a refined
+  today, so _any_ redelivery wins — a stale QStash retry or relay redelivery can clobber a refined
   Amber/Enphase interval. Add a `measurementTime`/`updatedAt` guard (last-writer-wins by real refinement
   time). **Latent corruption bug now**, and a hard gate before adding spool/relay/SSE redelivery.
-- **2b — Total-publish-failure signalling.** Ensure the publish seam surfaces a *retryable* failure when
+- **2b — Total-publish-failure signalling.** Ensure the publish seam surfaces a _retryable_ failure when
   both the PG-outbox insert and the direct QStash enqueue fail, so the durable-capture path can escalate
   (needed for the spool in Phase 4; also hardens the musher/fusher push path today). Must not violate
   "a queue failure must not fail the poll" — the poll still completes + writes KV latest.
@@ -220,7 +220,7 @@ Query cache — replacing interval polling.
   `EventSource(https://sse.liveone.energy/stream?token=…)`; the hub streams **only** claimed handles,
   re-minting on reconnect. **Top security invariant: a scoping bug leaks another system's live values to
   a share-token viewer.**
-- **FE = one isolated `useLatestStream()` hook** (its own module, *not* threaded through the
+- **FE = one isolated `useLatestStream()` hook** (its own module, _not_ threaded through the
   `lib/queries/*` factories). Page-Visibility active-only (open on visible, close on hidden); frames carry
   `id:<systemId>:<measurementTimeMs>` with a small per-handle ring buffer for `Last-Event-ID` replay, plus
   a `/api/data` reconcile-read on reconnect. Per delta it calls
@@ -239,7 +239,7 @@ Query cache — replacing interval polling.
 
 ### Phase 4 — Move polling to Fly (all pull vendors together)
 
-Move the *trigger* off Vercel Cron and add a *disk*; freeze the transport contract
+Move the _trigger_ off Vercel Cron and add a _disk_; freeze the transport contract
 (`buildPollMessages` → outbox → relay → receiver + the DB unique keys are unchanged).
 
 - **`liveone-poll`** — new thin app over a shared `packages/poller` core that wraps the **unchanged**
@@ -257,8 +257,8 @@ Move the *trigger* off Vercel Cron and add a *disk*; freeze the transport contra
      store. BUG-3.)
   2. `persistOutbox` → PG `observations_outbox` (primary on-ramp + relay backstop).
   3. Direct QStash enqueue (kept during soak; dropped at relay-primary in Phase 5).
-  4. **Spool is retained until ack from *any* path; spool on outbox-insert failure alone** — not only
-     when PG *and* QStash both fail. (BUG-2.)
+  4. **Spool is retained until ack from _any_ path; spool on outbox-insert failure alone** — not only
+     when PG _and_ QStash both fail. (BUG-2.)
   5. **Journal at the collector boundary (pre-build) or assert `built-count == collected-count`** so a
      `buildPollMessages` bug can't silently drop. (BUG-10.)
 - **Exclusive ownership (no double-write, no gap):** per-vendor "handled off-Vercel" skip flag (reuse the
@@ -298,22 +298,22 @@ Move the *trigger* off Vercel Cron and add a *disk*; freeze the transport contra
 
 ## Known bugs & required hardening
 
-**Do not lose these.** Surfaced by the adversarial "never drop a poll" pass. Several are latent *today*
+**Do not lose these.** Surfaced by the adversarial "never drop a poll" pass. Several are latent _today_
 (independent of any migration); the redelivery/liveness work makes them load-bearing.
 
-| ID | Defect | Where | Severity | Phase / fix |
-|---|---|---|---|---|
-| **BUG-1** | 5m-native `onConflictDoUpdate` is **unconditional** → a stale redelivery (QStash retry/relay/spool) overwrites a refined Amber/Enphase interval. **Corruption, latent now.** | `app/api/observations/receive/route.ts` | **BLOCKING** | 2a — guard on `measurementTime`/`updatedAt`; vendors without a refinement timestamp must not use last-writer-wins. |
-| **BUG-2** | Spool triggers only when PG **and** QStash both fail — so a PG-down-alone message has no outbox row and no spool copy; if it later DLQs it's permanently lost. Contradicts durable-before-ack. | Phase-4 poller | **BLOCKING (P4)** | Spool whenever the **outbox insert** fails, regardless of QStash. |
-| **BUG-3** | Blackbox is an **audit log, not a redelivery log** (only the spool auto-drains). A crash/OOM after journalling but before outbox/spool commit = silently recorded, never delivered. | Phase-4 poller | **BLOCKING (P4)** | **Spool-first** (write spool before network, delete on ack); blackbox stays pure audit. |
-| **BUG-4** | A mis-scoped Fly poller writes to the **pinned prod receiver URL**, bypassing the dev-DB guard → dev poller corrupts prod. | `lib/qstash.ts` receiver URL | **BLOCKING (P4)** | Env-derive the receiver URL (never hard-pin prod) + `POLLER_ENABLED` boot check. |
-| **BUG-5** | SSE `redis.publish` at the receiver is **not isolated** → a Redis outage 500s the receiver → QStash retries everything. | `receive/route.ts` post-commit | **BLOCKING (P3)** | try/catch-swallow the publish (and the invalidate control messages); never affect the response. |
-| **BUG-6** | Total-publish-failure is swallowed → the spool never triggers when both durable writes fail. | publish seam (`publishPoll`/`/api/gush`) | High | 2b — surface a retryable 503 on total-publish failure (without failing the poll itself). |
-| **BUG-7** | Persistent receiver failure → DLQ with **no `failureCallback`**; the `published` outbox row is GC'd after 7 days → manual-only recovery / permanent loss. | outbox GC + QStash DLQ | High | 2c/P4 — `failureCallback` re-inserts to outbox; GC only after presence in `point_readings` confirmed. |
-| **BUG-8** | Disk-full / spool-file corruption **silently disables durability** (blackbox no-ops on full disk; a poison file can infinite-retry or block the drain). | Phase-4 poller volume | High | P4 — full/non-writable `dataDir` = health-critical (page); quarantine unparseable files. |
-| **BUG-9** | Dedupe-key collisions: sub-second reads / NTP backward step / `pointId` mis-derivation (`obs.debug.reference` drift) silently drop or overwrite **real** readings via the unique key. | key `(system_id, point_id, measurement_time)`; source manifest ↔ `point_info` | High | 2e — device read-instant at ≥ finest granularity + reject non-monotonic; shared point-metadata module/codegen (not hand-mirrored). |
-| **BUG-10** | `buildPollMessages` returning `[]` on a bug is an **invisible drop** — the blackbox journals post-build, so there's no trace. | `lib/observations/poll-collector.ts` | Medium | P4 — journal pre-build (collector boundary) or assert built-count == collected-count. |
-| **SEC-1** | SSE stream token scoping must mirror `requireDashboardAccess` **exactly**; a bug leaks another system's live values to a share-token viewer. | `/api/sse-token` + `liveone-sse` | **BLOCKING (P3)** | Short TTL + handle-scoping + TLS; audit that a share-token JWT can never claim an out-of-dashboard handle. |
+| ID         | Defect                                                                                                                                                                                         | Where                                                                          | Severity          | Phase / fix                                                                                                                        |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **BUG-1**  | 5m-native `onConflictDoUpdate` is **unconditional** → a stale redelivery (QStash retry/relay/spool) overwrites a refined Amber/Enphase interval. **Corruption, latent now.**                   | `app/api/observations/receive/route.ts`                                        | **BLOCKING**      | 2a — guard on `measurementTime`/`updatedAt`; vendors without a refinement timestamp must not use last-writer-wins.                 |
+| **BUG-2**  | Spool triggers only when PG **and** QStash both fail — so a PG-down-alone message has no outbox row and no spool copy; if it later DLQs it's permanently lost. Contradicts durable-before-ack. | Phase-4 poller                                                                 | **BLOCKING (P4)** | Spool whenever the **outbox insert** fails, regardless of QStash.                                                                  |
+| **BUG-3**  | Blackbox is an **audit log, not a redelivery log** (only the spool auto-drains). A crash/OOM after journalling but before outbox/spool commit = silently recorded, never delivered.            | Phase-4 poller                                                                 | **BLOCKING (P4)** | **Spool-first** (write spool before network, delete on ack); blackbox stays pure audit.                                            |
+| **BUG-4**  | A mis-scoped Fly poller writes to the **pinned prod receiver URL**, bypassing the dev-DB guard → dev poller corrupts prod.                                                                     | `lib/qstash.ts` receiver URL                                                   | **BLOCKING (P4)** | Env-derive the receiver URL (never hard-pin prod) + `POLLER_ENABLED` boot check.                                                   |
+| **BUG-5**  | SSE `redis.publish` at the receiver is **not isolated** → a Redis outage 500s the receiver → QStash retries everything.                                                                        | `receive/route.ts` post-commit                                                 | **BLOCKING (P3)** | try/catch-swallow the publish (and the invalidate control messages); never affect the response.                                    |
+| **BUG-6**  | Total-publish-failure is swallowed → the spool never triggers when both durable writes fail.                                                                                                   | publish seam (`publishPoll`/`/api/gush`)                                       | High              | 2b — surface a retryable 503 on total-publish failure (without failing the poll itself).                                           |
+| **BUG-7**  | Persistent receiver failure → DLQ with **no `failureCallback`**; the `published` outbox row is GC'd after 7 days → manual-only recovery / permanent loss.                                      | outbox GC + QStash DLQ                                                         | High              | 2c/P4 — `failureCallback` re-inserts to outbox; GC only after presence in `point_readings` confirmed.                              |
+| **BUG-8**  | Disk-full / spool-file corruption **silently disables durability** (blackbox no-ops on full disk; a poison file can infinite-retry or block the drain).                                        | Phase-4 poller volume                                                          | High              | P4 — full/non-writable `dataDir` = health-critical (page); quarantine unparseable files.                                           |
+| **BUG-9**  | Dedupe-key collisions: sub-second reads / NTP backward step / `pointId` mis-derivation (`obs.debug.reference` drift) silently drop or overwrite **real** readings via the unique key.          | key `(system_id, point_id, measurement_time)`; source manifest ↔ `point_info` | High              | 2e — device read-instant at ≥ finest granularity + reject non-monotonic; shared point-metadata module/codegen (not hand-mirrored). |
+| **BUG-10** | `buildPollMessages` returning `[]` on a bug is an **invisible drop** — the blackbox journals post-build, so there's no trace.                                                                  | `lib/observations/poll-collector.ts`                                           | Medium            | P4 — journal pre-build (collector boundary) or assert built-count == collected-count.                                              |
+| **SEC-1**  | SSE stream token scoping must mirror `requireDashboardAccess` **exactly**; a bug leaks another system's live values to a share-token viewer.                                                   | `/api/sse-token` + `liveone-sse`                                               | **BLOCKING (P3)** | Short TTL + handle-scoping + TLS; audit that a share-token JWT can never claim an out-of-dashboard handle.                         |
 
 ---
 
@@ -324,7 +324,7 @@ A separate clean-sheet config-model redesign is in flight — `config-v4-clean-s
 `systems → devices`, moves to TypeID public IDs (`dev_`/`area_`/`dash_`), makes the dashboard document a
 recursive **node tree** (card/tile unified), unifies sharing onto dashboards only, and generalizes
 trackers/HWS into `derivations`. Its **§10 explicitly names this SSR work as the target contract**, so
-Superphase 1 builds *toward* it. Guardrails so the SSR work doesn't cement v3 shapes:
+Superphase 1 builds _toward_ it. Guardrails so the SSR work doesn't cement v3 shapes:
 
 - **The resolve step is one pure, shape-agnostic server function** (doc + referenced areas/devices →
   names / capabilities / context), reused by the shared, grantee, and owner paths — exactly v4 §10's

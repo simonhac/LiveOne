@@ -27,7 +27,7 @@ schema change plus a full-history recompute is a known, exercised operation.
 | 3   | Labels                                    | Parity          | S–M    | Cross-cutting selection; #7 and #10 lean on it      |
 | 4   | Time-weighted means + reset detection     | Parity→Leapfrog | M      | Correctness, retroactively                          |
 | 5   | Point topology (sub-metering containment) | Parity→Leapfrog | M      | Kills `rest-of-house` guessing; nested attribution  |
-| 6   | Unit classes & display precision          | Parity          | M      | W↔kW without baking; fewer unit bugs                |
+| 6   | Unit classes & display precision          | Parity          | M      | W↔kW without baking; fewer unit bugs               |
 | 7   | Generated ("strategy") groups             | Parity          | M      | New devices appear without a document edit          |
 | 8   | Reauth & credential-health onboarding     | Parity→Leapfrog | M      | Predicted token expiry instead of silent failure    |
 | 9   | Attribution as a product surface          | Leapfrog        | M–L    | "What did the EV cost, and how green was it?"       |

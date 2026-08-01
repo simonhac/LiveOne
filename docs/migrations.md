@@ -112,11 +112,11 @@ it so that path stays a single `SELECT 1` and its `db` Server-Timing stays a cle
   "status": "ok",
   "database": "postgres",
   "migrations": {
-    "applied": 32,                 // rows in drizzle.__drizzle_migrations (DB truth)
-    "expected": 32,                // migrations this build ships (meta/_journal.json — code truth)
+    "applied": 32, // rows in drizzle.__drizzle_migrations (DB truth)
+    "expected": 32, // migrations this build ships (meta/_journal.json — code truth)
     "latestTag": "0031_bright_ben_parker",
-    "latestHash": "ac081f16…",     // sha256 of the newest APPLIED migration
-    "inSync": true                 // applied >= expected
+    "latestHash": "ac081f16…", // sha256 of the newest APPLIED migration
+    "inSync": true // applied >= expected
   }
 }
 ```
@@ -126,7 +126,7 @@ it so that path stays a single `SELECT 1` and its `db` Server-Timing stays a cle
   that in `drizzle.__drizzle_migrations`, so it is content-addressed and identical across envs when the
   same migration is the newest applied.
 - **Is one env's DB behind its deployed code?** check **`inSync`** (`applied >= expected`).
-  `expected`/`latestTag` come from the bundled `meta/_journal.json` — the *code* that env is running
+  `expected`/`latestTag` come from the bundled `meta/_journal.json` — the _code_ that env is running
   (prod runs `main`; dev/preview run the branch), so this catches "deployed a migration-dependent build
   but forgot to apply the migration".
 - **Why `count(*)`, not `max(id)`:** the `drizzle.__drizzle_migrations` PK is a serial that gaps on any
