@@ -2,7 +2,7 @@
  * Presentation rules for run periods — pure, so both the API route and the two client tables can
  * share one definition (and so it can be tested; the components can't be).
  *
- * THE PROBLEM THIS SOLVES. `derived_intervals.{min,max,avg}_power_w` are misnamed: they hold
+ * THE PROBLEM THIS SOLVES. `derived_intervals.{min,max,avg}_power_w` were misnamed: they hold
  * statistics of the RAW SIGNAL the detector follows, in that signal's own unit (see
  * `lib/db/planetscale/derived-intervals-pg.ts` — they come straight from `detectRunPeriods` over the
  * signal series). While Daylesford's detector watched Selectronic grid power they were Watts; since
@@ -12,6 +12,19 @@
  * So: show the signal as ITSELF (its own unit and label), and derive true average power separately
  * from energy ÷ duration, which is correct for any signal kind because the energy comes from a
  * dedicated energy point rather than the signal.
+ *
+ * WHAT MIGRATION 0055 CHANGED, AND WHY THIS FILE GREW A CASE. The columns are now
+ * `max/min/avg_signal` + a per-row `signal_unit`, so the unit is a fact about each row rather than
+ * an inference from the detector's current config. That retired the reader's `detector_version`
+ * equality gate, which used to SUPPRESS the statistic on any row an older detector wrote.
+ *
+ * But it does not make a single column header correct, and that is the trap this file now has to
+ * handle explicitly: **prod's history is mixed-unit and permanently so.** 74 of Daylesford's 77 runs
+ * are Watts and 3 are rpm, and a header that simply read the CURRENT signal point — "Avg Engine
+ * Speed (rpm)" — would print every pre-re-point Watt value as rpm. That is a WORSE failure than the
+ * old suppression, because it is confidently wrong instead of blank. Hence {@link RunPeriodColumns}
+ * `signalUnitPerRow`: when the rows do not all share the current signal's unit, the header drops the
+ * point's name entirely and each CELL carries its own unit.
  */
 
 /**
@@ -35,6 +48,15 @@ export interface RunSignalMeta {
 export interface RunPeriodColumns {
   /** Show the raw-signal average in its own unit. */
   signal: boolean;
+  /**
+   * True when the returned rows do NOT all share the CURRENT signal point's unit — i.e. the window
+   * straddles a detector re-point, or is entirely in a superseded unit.
+   *
+   * The client then renders each cell with its OWN unit and gives the column a neutral header,
+   * because there is no single label that is true of every row. False (the ordinary case) means one
+   * unit throughout, so the header carries it and the cells stay bare numbers.
+   */
+  signalUnitPerRow: boolean;
   /** Show an average-power column. */
   avgPower: boolean;
   /** Show the accumulated cost column ($). */
@@ -77,6 +99,13 @@ export function planRunPeriodColumns(input: {
   signalMetricType: string | null;
   /** `point_info.metric_unit` of the signal point; null when unknown. */
   signalMetricUnit: string | null;
+  /**
+   * The RAW `signal_unit` of every row being returned (nulls included, duplicates fine) — NOT the
+   * detector's config. Rows are the only thing that can say what units a window actually contains,
+   * which is the whole lesson of the mixed-unit history: config describes what the NEXT run will be
+   * measured in, and says nothing about the 74 already stored in something else.
+   */
+  rowSignalUnits?: (string | null)[];
   /** Whether the detector binds a dedicated energy point (`source_points.energy`). */
   hasEnergyPoint: boolean;
   /**
@@ -87,18 +116,43 @@ export function planRunPeriodColumns(input: {
    */
   provenance?: { cost: boolean; emissions: boolean; renewable: boolean };
 }): RunPeriodColumns {
-  const numeric =
+  const currentNumeric =
     input.signalMetricType != null &&
     input.signalMetricUnit != null &&
     !NON_NUMERIC_SIGNAL_UNITS.has(input.signalMetricUnit);
   const isPower = input.signalMetricType === "power";
 
+  // The distinct units actually present in the rows, minus the ones whose mean is meaningless.
+  const rowUnits = new Set(
+    (input.rowSignalUnits ?? []).filter(
+      (u): u is string => u != null && !NON_NUMERIC_SIGNAL_UNITS.has(u),
+    ),
+  );
+  // Homogeneous means "one unit, and it is the one the header would name". Zero units (an empty
+  // window, or rows written before 0055 stamped one) is vacuously homogeneous: there is nothing to
+  // contradict the header, and per-row units would print nothing useful.
+  const homogeneous =
+    rowUnits.size === 0 ||
+    (rowUnits.size === 1 &&
+      currentNumeric &&
+      rowUnits.has(input.signalMetricUnit!));
+  const signalUnitPerRow = !homogeneous;
+
+  // Rows can carry a usable unit even when the CURRENT signal point can't be resolved (a deleted or
+  // re-pointed binding), and a stored, labelled number is still worth showing — that is the point of
+  // storing the unit. So the column is numeric if either end can name a unit.
+  const numeric = currentNumeric || rowUnits.size > 0;
+
   const avgPowerBasis = input.hasEnergyPoint ? "energy" : "signal";
   // Without an energy point the only possible power figure is the signal itself — so an avg-power
-  // column is honest only when the signal genuinely is power.
-  const avgPower = input.hasEnergyPoint || (isPower && numeric);
+  // column is honest only when the signal genuinely is power AND every row is in that same unit.
+  // A mixed window has rows that are not power at all, so the fallback cannot cover the column.
+  const avgPower =
+    input.hasEnergyPoint || (isPower && currentNumeric && !signalUnitPerRow);
   // A power signal is already represented by the avg-power column; showing it twice would be noise.
-  const signal = numeric && !(isPower && avgPower);
+  // Mixed units break that equivalence — the avg-power column can only speak for the rows that ARE
+  // power — so the signal column stays and carries the rest.
+  const signal = numeric && !(isPower && avgPower && !signalUnitPerRow);
 
   // Each provenance factor is gated INDEPENDENTLY: the config gates price separately from
   // emissions, so a site with emissions but no configured price shows CO₂ and omits cost rather
@@ -107,7 +161,47 @@ export function planRunPeriodColumns(input: {
   const emissions = input.provenance?.emissions ?? false;
   const renewable = input.provenance?.renewable ?? false;
 
-  return { signal, avgPower, avgPowerBasis, cost, emissions, renewable };
+  return {
+    signal,
+    signalUnitPerRow,
+    avgPower,
+    avgPowerBasis,
+    cost,
+    emissions,
+    renewable,
+  };
+}
+
+/** Number format for a signal value the display registry doesn't cover (or can't be asked about). */
+const FALLBACK_SIGNAL_FORMAT = "0.0";
+
+/**
+ * Render one signal statistic — the single place that decides whether a value prints its own unit.
+ *
+ * Pure and shared so the rule lives beside the plan that produced it rather than in a component:
+ * a cell must carry its unit exactly when {@link RunPeriodColumns.signalUnitPerRow} says the column
+ * header cannot. The registry `format` belongs to the CURRENT signal point, so it is only applied to
+ * rows actually in that unit; a superseded unit gets a neutral one decimal place rather than, say,
+ * an rpm-shaped "0" imposed on Watts.
+ */
+export function formatRunSignal(
+  value: number | null | undefined,
+  /** The ROW's own display unit (`RunPeriodEvent.signalUnit`). */
+  rowUnit: string | null | undefined,
+  /** The current signal's display meta, or null when it couldn't be resolved. */
+  signal: Pick<RunSignalMeta, "unit" | "format"> | null,
+  /** {@link RunPeriodColumns.signalUnitPerRow}. */
+  signalUnitPerRow: boolean,
+  applyFormat: (v: number, format: string) => string,
+): string {
+  if (value == null) return "—";
+  const inCurrentUnit =
+    signal != null && (!signalUnitPerRow || rowUnit === signal.unit);
+  const text = applyFormat(
+    value,
+    inCurrentUnit ? signal.format : FALLBACK_SIGNAL_FORMAT,
+  );
+  return signalUnitPerRow && rowUnit ? `${text} ${rowUnit}` : text;
 }
 
 /** An en dash with no surrounding spaces reads as a range; a hyphen reads as a subtraction. */

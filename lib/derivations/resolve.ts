@@ -20,7 +20,7 @@
  * int-addressed until Phase 13; it is the area's `legacy_handles.handle`, i.e. exactly the `systemId`
  * these engines used before.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areas,
@@ -82,6 +82,15 @@ export interface ResolvedRunDetector {
   role: string;
   name: string;
   signalPoint: PointId;
+  /**
+   * The RAW `points.unit` of `signalPoint` ('W', 'rpm', …), or null when the point has no `points`
+   * row. This is what `derived_intervals.signal_unit` is stamped with, so a stored statistic says
+   * what it measures instead of being assumed to be Watts (migration 0055).
+   *
+   * Null is a broken binding, not a normal state — `source_points.signal` should always name a live
+   * point. The writer treats it as "refuse to store an unlabelled number" rather than guessing.
+   */
+  signalUnit: string | null;
   energyPoint: PointId | null;
   detect: DetectConfig;
   detectorVersion: number;
@@ -180,12 +189,43 @@ function resolveRunDetector(
     role: row.role,
     name: row.name,
     signalPoint: Point.encode(src.signal),
+    signalUnit: null, // filled by attachSignalUnits — one batched read for the whole result set
     energyPoint: src.energy ? Point.encode(src.energy) : null,
     detect: mergeDetectConfig(params, row.role),
     detectorVersion: row.detectorVersion,
     timezoneOffsetMin: area.tzOffset,
     displayTimezone: area.tz,
   };
+}
+
+/**
+ * Fill `signalUnit` on every detector, in ONE `points` read for the whole set.
+ *
+ * Deliberately a second query rather than a join: `source_points.signal` is a jsonb key, so joining
+ * it needs a hand-written `(source_points ->> 'signal')::uuid` fragment — and raw SQL is invisible
+ * to tsc, which the execution plan names as the single most reliable failure mode of this whole
+ * migration. `inArray` over the already-decoded uuids is typed end to end and costs one round trip.
+ */
+async function attachSignalUnits(
+  detectors: ResolvedRunDetector[],
+): Promise<ResolvedRunDetector[]> {
+  if (detectors.length === 0) return detectors;
+  const uuids = [...new Set(detectors.map((d) => Point.toUuid(d.signalPoint)))];
+  const rows = await requirePlanetscaleDb()
+    .select({ id: points.id, unit: points.unit })
+    .from(points)
+    .where(inArray(points.id, uuids));
+  const unitById = new Map(rows.map((r) => [r.id, r.unit]));
+  for (const d of detectors) {
+    const unit = unitById.get(Point.toUuid(d.signalPoint));
+    if (unit === undefined) {
+      console.warn(
+        `[Derivations] run-detector ${d.id}: signal point ${Point.toUuid(d.signalPoint)} has no points row — its interval statistics will be stored WITHOUT values, since they cannot be labelled`,
+      );
+    }
+    d.signalUnit = unit ?? null;
+  }
+  return detectors;
 }
 
 /** All enabled run-detector derivations, resolved. Unresolvable rows are dropped with a warning. */
@@ -203,9 +243,11 @@ export async function listEnabledRunDetectors(): Promise<
         eq(derivations.enabled, true),
       ),
     );
-  return rows
-    .map(({ d, a }) => resolveRunDetector(d, a))
-    .filter((t): t is ResolvedRunDetector => t !== null);
+  return attachSignalUnits(
+    rows
+      .map(({ d, a }) => resolveRunDetector(d, a))
+      .filter((t): t is ResolvedRunDetector => t !== null),
+  );
 }
 
 /** The enabled run detector for a legacy (handle, role), or null. */
@@ -229,7 +271,9 @@ export async function getRunDetectorForHandleRole(
       ),
     )
     .limit(1);
-  return row ? resolveRunDetector(row.d, row.a) : null;
+  if (!row) return null;
+  const det = resolveRunDetector(row.d, row.a);
+  return det ? (await attachSignalUnits([det]))[0] : null;
 }
 
 /** Cheap existence check: does this legacy (handle, role) have an enabled run detector? */
