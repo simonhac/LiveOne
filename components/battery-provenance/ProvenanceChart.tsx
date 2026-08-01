@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { CHART_COLORS } from "@/lib/chart-colors";
 import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import {
@@ -132,7 +133,7 @@ export default function ProvenanceChart({
                   type: "line",
                   scaleID: "x",
                   value: hoveredTimestamp.getTime(),
-                  borderColor: "rgb(239, 68, 68)",
+                  borderColor: CHART_COLORS.focusLine,
                   borderWidth: 1,
                   borderDash: [],
                 },

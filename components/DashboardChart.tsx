@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChartOptions } from "chart.js";
+import { CHART_COLORS } from "@/lib/chart-colors";
 import { Line, Bar } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import {
@@ -95,7 +96,7 @@ function buildLineChartOptions(p: LinesProps): ChartOptions<any> {
                   type: "line",
                   scaleID: "x",
                   value: hoveredTimestamp.getTime(),
-                  borderColor: "rgb(239, 68, 68)", // Red color
+                  borderColor: CHART_COLORS.focusLine,
                   borderWidth: 1,
                   borderDash: [],
                 },
@@ -201,7 +202,7 @@ function buildStackedChartOptions(p: StackedProps): ChartOptions<any> {
                   type: "line",
                   scaleID: "x",
                   value: hoveredTimestamp.getTime(),
-                  borderColor: "rgb(239, 68, 68)", // Red color
+                  borderColor: CHART_COLORS.focusLine,
                   borderWidth: 1,
                   borderDash: [], // Solid line
                 },

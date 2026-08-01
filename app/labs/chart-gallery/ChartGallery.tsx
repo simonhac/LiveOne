@@ -6,9 +6,11 @@
  *
  * This is the screenshot target for `e2e/charts.spec.ts`. Two rules keep the baselines honest:
  *
- *  1. **Render today's behaviour, warts included.** Several cases exist specifically to pin a known
- *     defect (see `../../../docs/plans/chart-library-consolidation.md`). Do not "helpfully" fix one
- *     here — the point is that the Stage 3 fix shows up as a reviewed baseline diff.
+ *  1. **Render the real components' behaviour, warts included.** Several cases exist to pin a
+ *     specific defect (see `../../../docs/plans/chart-library-consolidation.md`); their notes say
+ *     which, and whether it is fixed yet. Never work around a defect *here* — a fix belongs in the
+ *     component, so it lands as a reviewed baseline diff. Equally, when a fix lands, update the
+ *     fixture to match the real builder rather than freezing the old shape.
  *  2. **Nothing may vary between runs.** No `Date.now()`, no `Math.random()`, no fetching. The
  *     fixture module owns the frozen instant; the harness pins the browser timezone to match.
  *
@@ -63,7 +65,8 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
   const focus = focusInstant(chartData.timestamps, c.focusAt);
   const fi = indexOf(chartData.timestamps, focus);
 
-  // Mirrors LinesChartCard: all-nulls when nothing is focused. That is what makes DEFECT #1 visible.
+  // Mirrors LinesChartCard exactly: all-nulls when nothing is focused. Presence is passed separately
+  // (hasBattery/hasGrid below) — conflating the two was defect #1/#2.
   const hovered =
     fi != null
       ? {
@@ -142,8 +145,8 @@ function ColoursCase({ c }: { c: Extract<ChartCase, { kind: "colours" }> }) {
     <div className="flex flex-col gap-4" style={{ width: c.width }}>
       <div>
         <div className="mb-1 text-xs text-gray-500">
-          lines — Solar yellow-400 · Load blue-400 · Battery orange-400 · Grid
-          red-500 · SoC green-400
+          lines — resolved through CHART_COLORS (Solar yellow-200 · Load
+          blue-400 · Battery green-400 · Grid pink-500 · SoC green-400 DASHED)
         </div>
         <LinesCase
           c={{
@@ -159,8 +162,10 @@ function ColoursCase({ c }: { c: Extract<ChartCase, { kind: "colours" }> }) {
       </div>
       <div>
         <div className="mb-1 text-xs text-gray-500">
-          stacked — resolved through CHART_COLORS (Solar yellow-200 · Battery
-          green-400 · Grid pink-500 · HWS orange-400 · EV red-600)
+          stacked — the same CHART_COLORS registry (Solar yellow-200 · Battery
+          green-400 · Grid pink-500 · HWS orange-400 · EV red-600). Both panels
+          agree since Stage 3c; pink means Grid in both, and orange/red no
+          longer mean two different things across the pair.
         </div>
         <StackedCase
           c={{

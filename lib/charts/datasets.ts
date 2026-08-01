@@ -9,6 +9,16 @@ import { CHART_COLORS } from "@/lib/chart-colors";
 import type { ChartData, LineChartData, PaddedSOCData } from "./types";
 
 /**
+ * Dash pattern for the Battery SoC trace, exported so the legend swatch can mirror it exactly.
+ *
+ * SoC needs it because `CHART_COLORS.battery.soc` and `.main` are the same green — deliberately, so
+ * that "battery is green" holds everywhere — and the lines chart is the one place that draws battery
+ * power and battery SoC at the same time. They sit on different axes (kW left, % right), so hue
+ * would be a poor discriminator anyway; texture is the honest one.
+ */
+export const SOC_DASH = [4, 3];
+
+/**
  * Overlaid-line (sidebar) datasets: solar/load/battery/grid as lines on the left axis (bars when
  * daily/energy mode), SoC as a line on the right axis, plus a padded min/max SoC band in energy
  * mode. Used by the lines chart. The caller computes `paddedSOCData` (energy mode only).
@@ -23,7 +33,7 @@ export function buildLineDatasets(
       {
         label: "Solar",
         data: chartData.solar, // Already in kWh for energy mode
-        backgroundColor: "rgb(250, 204, 21)", // yellow-400 solid
+        backgroundColor: CHART_COLORS.solar.primary,
         borderWidth: 0, // No border
         yAxisID: "y",
         barPercentage: 0.9,
@@ -32,7 +42,7 @@ export function buildLineDatasets(
       {
         label: "Load",
         data: chartData.load, // Already in kWh for energy mode
-        backgroundColor: "rgb(96, 165, 250)", // blue-400 solid
+        backgroundColor: CHART_COLORS.load,
         borderWidth: 0, // No border
         yAxisID: "y",
         barPercentage: 0.9,
@@ -44,7 +54,7 @@ export function buildLineDatasets(
             {
               label: "Battery",
               data: chartData.batteryW, // Already in kWh for energy mode
-              backgroundColor: "rgb(251, 146, 60)", // orange-400 solid
+              backgroundColor: CHART_COLORS.battery.main,
               borderWidth: 0, // No border
               yAxisID: "y",
               barPercentage: 0.9,
@@ -58,7 +68,7 @@ export function buildLineDatasets(
             {
               label: "Grid",
               data: chartData.grid, // Already in kWh for energy mode
-              backgroundColor: "rgb(239, 68, 68)", // red-500 solid
+              backgroundColor: CHART_COLORS.grid.main,
               borderWidth: 0, // No border
               yAxisID: "y",
               barPercentage: 0.9,
@@ -114,11 +124,15 @@ export function buildLineDatasets(
           ]
         : []),
       {
-        label: "Battery SOC",
-        type: "line" as const, // Keep SOC as line even in bar chart
+        label: "Battery SoC",
+        type: "line" as const, // Keep SoC as line even in bar chart
         data: chartData.batterySOC, // Already in percentage
-        borderColor: "rgb(74, 222, 128)", // green-400
-        backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
+        borderColor: CHART_COLORS.battery.soc,
+        backgroundColor: CHART_COLORS.battery.soc,
+        // Dashed, because `battery.soc` and `battery.main` are the SAME green and this chart draws
+        // battery power and SoC together. Texture carries the distinction so "battery is green"
+        // stays true. Keep in sync with the legend swatch in ChartTooltip.
+        borderDash: SOC_DASH,
         yAxisID: "y1",
         tension: 0.1,
         borderWidth: 2,
@@ -134,8 +148,8 @@ export function buildLineDatasets(
     {
       label: "Solar",
       data: chartData.solar, // Already converted to kW by convertToKw()
-      borderColor: "rgb(250, 204, 21)", // yellow-400
-      backgroundColor: "rgb(250, 204, 21)", // Solid color for legend
+      borderColor: CHART_COLORS.solar.primary,
+      backgroundColor: CHART_COLORS.solar.primary,
       yAxisID: "y",
       tension: 0.1,
       borderWidth: 2,
@@ -145,8 +159,8 @@ export function buildLineDatasets(
     {
       label: "Load",
       data: chartData.load, // Already converted to kW by convertToKw()
-      borderColor: "rgb(96, 165, 250)", // blue-400
-      backgroundColor: "rgb(96, 165, 250)", // Solid color for legend
+      borderColor: CHART_COLORS.load,
+      backgroundColor: CHART_COLORS.load,
       yAxisID: "y",
       tension: 0.1,
       borderWidth: 2,
@@ -159,8 +173,8 @@ export function buildLineDatasets(
           {
             label: "Battery",
             data: chartData.batteryW, // Already converted to kW by convertToKw()
-            borderColor: "rgb(251, 146, 60)", // orange-400
-            backgroundColor: "rgb(251, 146, 60)", // Solid color for legend
+            borderColor: CHART_COLORS.battery.main,
+            backgroundColor: CHART_COLORS.battery.main,
             yAxisID: "y",
             tension: 0.1,
             borderWidth: 2,
@@ -175,8 +189,8 @@ export function buildLineDatasets(
           {
             label: "Grid",
             data: chartData.grid, // Already converted to kW by convertToKw()
-            borderColor: "rgb(239, 68, 68)", // red-500
-            backgroundColor: "rgb(239, 68, 68)", // Solid color for legend
+            borderColor: CHART_COLORS.grid.main,
+            backgroundColor: CHART_COLORS.grid.main,
             yAxisID: "y",
             tension: 0.1,
             borderWidth: 2,
@@ -186,10 +200,12 @@ export function buildLineDatasets(
         ]
       : []),
     {
-      label: "Battery SOC",
+      label: "Battery SoC",
       data: chartData.batterySOC, // Already in percentage
-      borderColor: "rgb(74, 222, 128)", // green-400
-      backgroundColor: "rgb(74, 222, 128)", // Solid color for legend
+      borderColor: CHART_COLORS.battery.soc,
+      backgroundColor: CHART_COLORS.battery.soc,
+      // Dashed — see the energy-mode SoC dataset above for why.
+      borderDash: SOC_DASH,
       yAxisID: "y1",
       tension: 0.1,
       borderWidth: 2,

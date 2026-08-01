@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — Stages 0–2 done, defect decisions signed off, Stage 3a+3b shipped 2026-08-01.
-> Next: 3c (one palette).** Written 2026-08-01.
+> **Status: PLAN — Stages 0–2 done; Stage 3a/3b/3c shipped 2026-08-01. Next: 3d (DST bucketing).**
+> Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -489,8 +489,25 @@ unchanged after the fix, which is what exposed it. Fixed to emit real nulls, whi
 `buildChartData` genuinely produces. A screenshot suite can be green because the fixture is wrong;
 this one nearly was.
 
-#### 3c — #6/#16, one palette
-**`CHART_COLORS` wins.** The lines chart stops hardcoding RGB and resolves through it, so Solar
+#### 3c — #6/#16/#4, one palette — ✅ DONE 2026-08-01
+Shipped as decided. `datasets.ts` has **no colour literals left**; the lines chart resolves Solar to
+`solar.primary` (yellow-200), Battery to `battery.main` (green-400), Grid to `grid.main` (pink-500)
+and SoC to `battery.soc`. `ChartTooltip` renders swatches from the same registry instead of naming
+Tailwind classes, SoC is dashed via an exported `SOC_DASH` that the legend swatch draws with
+literally (an SVG `strokeDasharray`, so the two cannot drift), and the second "Battery" row is now
+"Battery SoC" (#4). The crosshair red moved to `CHART_COLORS.focusLine`, killing its third hardcoded
+copy (#16).
+
+Two registry entries were added, because two real quantities had no home in it:
+- **`CHART_COLORS.load`** (blue-400) — total site load. Distinct from `restOfHouse`, which is the
+  *remainder* after sub-metered loads. Blue was unused, so nothing collides.
+- **`CHART_COLORS.focusLine`** (red-500) — not a series colour; it must stay legible against all of
+  them. Note it was only *safe* to leave as red once the lines chart's Grid moved off red onto pink.
+
+Verified on `colours-lines-vs-stacked-load`: pink now means Grid in **both** panels, and orange and
+red no longer carry two different meanings across a synced-hover pair.
+
+*(Original decision text follows.)* **`CHART_COLORS` wins.** The lines chart stops hardcoding RGB and resolves through it, so Solar
 becomes yellow-200, Battery power green-400, Grid pink-500 — matching the stacked chart and Sankey,
 and ending the collision where lines-Battery *was* the Hot Water colour.
 
