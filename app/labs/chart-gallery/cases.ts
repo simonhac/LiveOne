@@ -33,6 +33,10 @@ export type ChartCase = {
       mode: "load" | "generation";
       withGap?: boolean;
       focusAt?: number;
+      /** Outline a run period (a charge session) on the EV band — `runBandsFixture`. */
+      withRuns?: boolean;
+      /** …and render it in its hovered state (deeper fill, brighter outline). */
+      hoveredRun?: boolean;
     }
   | {
       /**
@@ -206,6 +210,27 @@ export const CHART_CASES: ChartCase[] = [
     range: "D",
     mode: "load",
     note: "stacked load areas (rest-of-house / HWS / EV / export) + SoC overlay on y1",
+    width: W,
+    height: H,
+  },
+  {
+    id: "stacked-load-d-runs",
+    kind: "stacked",
+    range: "D",
+    mode: "load",
+    withRuns: true,
+    note: "a run period outlined on the EV band at rest — the outline must trace the band's own silhouette, which is why the overlay snaps to the sample grid (snapToSamples)",
+    width: W,
+    height: H,
+  },
+  {
+    id: "stacked-load-d-runs-hovered",
+    kind: "stacked",
+    range: "D",
+    mode: "load",
+    withRuns: true,
+    hoveredRun: true,
+    note: "the same run hovered: deeper fill and a brighter outline. The at-rest and hovered pair is the only way a screenshot can show that hovering changes anything",
     width: W,
     height: H,
   },

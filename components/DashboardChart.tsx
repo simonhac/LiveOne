@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import {
   FocusLine,
   ShadingBands,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
+import { snapToSamples, type RunBand } from "@/lib/charts/run-bands";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
 import type {
   ChartData,
@@ -42,6 +43,38 @@ import type {
  */
 
 const SOC_DOMAIN: [number, number] = [0, 100];
+
+/**
+ * Where a hovered run is, and what to place its panel against — all in viewport coordinates.
+ *
+ * `plot` is the PLOT BOX, not the SVG's: centring on the svg would pull the panel down by half the
+ * time-axis gutter, so it would sit visibly low against the data it describes.
+ *
+ * No pointer position: the panel sits beside the run and centred on the plot, so where in the run
+ * the pointer happens to be is not part of the answer.
+ */
+export interface RunTooltipAnchor {
+  x0: number;
+  x1: number;
+  plot: { left: number; top: number; width: number; height: number };
+}
+
+/**
+ * Run-period overlay ink.
+ *
+ * A run is an EVENT worth noticing, not background texture — the distinction `ProvenanceBand` draws
+ * for the BMS-recalibration bands, and the reason these are not another pass of `ShadingBands`' 7 %
+ * white wash. Two differences follow from it: the overlay is clipped to the band's OWN area rather
+ * than running full height (a charge session is a fact about the EV, not about the whole site), and
+ * it carries a visible outline at rest so the run can be found without hunting for it with a mouse.
+ *
+ * The darkening is black rather than a tint of the series colour: it has to read the same way over
+ * every band the stack might give it, and it must not become a colour a legend could be looked up by.
+ */
+const RUN_FILL = "rgba(0, 0, 0, 0.14)";
+const RUN_FILL_HOVER = "rgba(0, 0, 0, 0.26)";
+const RUN_EDGE = "rgba(255, 255, 255, 0.45)";
+const RUN_EDGE_HOVER = "rgba(255, 255, 255, 0.95)";
 
 /**
  * Stroke width for a stacked band's upper edge — a hairline.
@@ -77,6 +110,20 @@ type StackedProps = CommonProps & {
   chartData: ChartData;
   effectiveVisibleSeries: Set<string>;
   mode: "load" | "generation";
+  /**
+   * Persisted run periods to bracket on their own series' band (EV charge sessions, generator runs).
+   * Window-clamped by `runBandsForSeries`; the card owns the fetch and the hover state.
+   */
+  runBands?: readonly RunBand[];
+  hoveredRunId?: string | null;
+  /**
+   * `at` is the anchor for the card's tooltip, in VIEWPORT coordinates: the run's own left and right
+   * edges (so the panel can sit beside the region rather than covering the thing it describes) plus
+   * this chart's box to place and clamp against. Viewport rather than chart-relative because
+   * `NodeTooltip` — the panel both this and the Sankey render — is `position: fixed`. Absent when
+   * the hover ends.
+   */
+  onHoverRun?: (band: RunBand | null, at?: RunTooltipAnchor) => void;
 };
 
 export type DashboardChartProps = LinesProps | StackedProps;
@@ -120,6 +167,9 @@ export default function DashboardChart(props: DashboardChartProps) {
     className,
   } = props;
   const [ref, size] = useContainerSize<HTMLDivElement>();
+  // `clipPath` references are document-global, so two charts on one page would otherwise clip each
+  // other's run overlays with whichever definition mounted last.
+  const clipPrefix = useId().replace(/:/g, "");
   const isEnergy = props.chartData.mode === "energy";
   const timestamps = props.chartData.timestamps;
 
@@ -223,6 +273,14 @@ export default function DashboardChart(props: DashboardChartProps) {
       ? bandPath(socTimestamps, socMin, socMax, geo.x, geo.y1!)
       : null;
 
+  // Hoisted out of the JSX so the run overlay can re-use each band's own area path — the overlay IS
+  // a slice of the band, so re-deriving it would be a second source of truth for the same geometry.
+  // Areas only: in energy mode the stack is daily bars, and a sub-daily run has nothing to bracket.
+  const stacked =
+    props.variant === "stacked-areas" && !isEnergy
+      ? stackedBands(timestamps, series, geo.x, geo.y)
+      : null;
+
   return (
     <div ref={ref} className={className}>
       <svg
@@ -304,30 +362,24 @@ export default function DashboardChart(props: DashboardChartProps) {
                   );
                 }),
               )
-            : props.variant === "stacked-areas"
-              ? stackedBands(timestamps, series, geo.x, geo.y).map(
-                  (band, i) => (
-                    // Fill and stroke are SEPARATE paths. Stroking the filled area would stroke its
-                    // closed outline — baseline included — which is not what Chart.js drew.
-                    <g key={band.key} data-series={band.key}>
-                      {band.d && (
-                        <path
-                          d={band.d}
-                          fill={series[i].colour}
-                          stroke="none"
-                        />
-                      )}
-                      {band.topD && (
-                        <path
-                          d={band.topD}
-                          fill="none"
-                          stroke={series[i].colour}
-                          strokeWidth={BAND_EDGE_WIDTH}
-                        />
-                      )}
-                    </g>
-                  ),
-                )
+            : stacked
+              ? stacked.map((band, i) => (
+                  // Fill and stroke are SEPARATE paths. Stroking the filled area would stroke its
+                  // closed outline — baseline included — which is not what Chart.js drew.
+                  <g key={band.key} data-series={band.key}>
+                    {band.d && (
+                      <path d={band.d} fill={series[i].colour} stroke="none" />
+                    )}
+                    {band.topD && (
+                      <path
+                        d={band.topD}
+                        fill="none"
+                        stroke={series[i].colour}
+                        strokeWidth={BAND_EDGE_WIDTH}
+                      />
+                    )}
+                  </g>
+                ))
               : series.map((s) => {
                   const d = linePath(timestamps, s.values, geo.x, geo.y);
                   return d ? (
@@ -341,6 +393,115 @@ export default function DashboardChart(props: DashboardChartProps) {
                     />
                   ) : null;
                 })}
+
+          {/* Run periods, bracketed on their own band. Above the series (it darkens them) and below
+              the focus line (a crosshair the overlay could hide would be worse than one it crosses).
+
+              THE OUTLINE IS TWO CLIPS, MUTUALLY. The slice's top and bottom edges come from stroking
+              the band's own closed area path clipped to the run's x-range; its LEFT and RIGHT edges
+              come from stroking a full-height rect clipped to the band. Neither alone is a closed
+              shape — a clip cuts a stroke, it does not add one where the cut fell — so a single
+              clipped path would draw a run with no ends, and a single rect would draw a box around
+              the band rather than a slice of it.
+
+              This is the one place the "🛑 never stroke `d`" rule in lib/charts/svg/paths.ts does not
+              apply, and for the reason that rule gives: stroking `d` draws the baseline too. Here the
+              baseline IS the slice's bottom edge, which is exactly what is wanted. */}
+          {stacked &&
+          props.variant === "stacked-areas" &&
+          props.runBands?.length
+            ? (() => {
+                const byKey = new Map(stacked.map((b) => [b.key, b]));
+                return (
+                  <g data-testid="run-bands">
+                    {props.runBands.map((run, i) => {
+                      const band = byKey.get(run.seriesId);
+                      if (!band?.d) return null;
+                      // Snap to the drawn sample grid so the outline lands on the band's own
+                      // vertices — see `snapToSamples`.
+                      const span = snapToSamples(
+                        run.startMs,
+                        run.endMs,
+                        timestamps,
+                      );
+                      const x0 = geo.x(new Date(span.startMs));
+                      const x1 = geo.x(new Date(span.endMs));
+                      // Sub-pixel runs are dropped rather than drawn: an invisible band that still
+                      // answers the pointer reads as a phantom tooltip.
+                      if (!(x1 - x0 >= 1)) return null;
+                      const hovered = props.hoveredRunId === run.id;
+                      // A run id is `<series>:<ISO start>`, so it carries `/`, `:` and `.` — all of
+                      // which are legal in an XML id but ambiguous inside a `url(#…)` fragment.
+                      // Index rather than sanitise: the ids are internal and need only be unique.
+                      const rectId = `${clipPrefix}-rect-${i}`;
+                      const bandId = `${clipPrefix}-band-${i}`;
+                      return (
+                        <g
+                          key={run.id}
+                          data-run={run.id}
+                          style={{ cursor: "pointer" }}
+                          onPointerEnter={(e) => {
+                            const box =
+                              e.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                            if (!box) return;
+                            props.onHoverRun?.(run, {
+                              x0: box.left + geo.plot.left + x0,
+                              x1: box.left + geo.plot.left + x1,
+                              plot: {
+                                left: box.left + geo.plot.left,
+                                top: box.top + geo.plot.top,
+                                width: geo.plot.width,
+                                height: geo.plot.height,
+                              },
+                            });
+                          }}
+                          onPointerLeave={() => props.onHoverRun?.(null)}
+                        >
+                          <defs>
+                            <clipPath id={rectId}>
+                              <rect
+                                x={x0}
+                                y={0}
+                                width={x1 - x0}
+                                height={geo.plot.height}
+                              />
+                            </clipPath>
+                            <clipPath id={bandId}>
+                              <path d={band.d} />
+                            </clipPath>
+                          </defs>
+                          <path
+                            d={band.d}
+                            clipPath={`url(#${rectId})`}
+                            fill={hovered ? RUN_FILL_HOVER : RUN_FILL}
+                            stroke="none"
+                          />
+                          <path
+                            d={band.d}
+                            clipPath={`url(#${rectId})`}
+                            fill="none"
+                            stroke={hovered ? RUN_EDGE_HOVER : RUN_EDGE}
+                            strokeWidth={hovered ? 1.5 : 1}
+                            pointerEvents="none"
+                          />
+                          <rect
+                            x={x0}
+                            y={0}
+                            width={x1 - x0}
+                            height={geo.plot.height}
+                            clipPath={`url(#${bandId})`}
+                            fill="none"
+                            stroke={hovered ? RUN_EDGE_HOVER : RUN_EDGE}
+                            strokeWidth={hovered ? 1.5 : 1}
+                            pointerEvents="none"
+                          />
+                        </g>
+                      );
+                    })}
+                  </g>
+                );
+              })()
+            : null}
 
           {/* SoC on the right axis, dashed so it stays distinct from battery power, which shares its
               colour by design (Stage 3c). */}

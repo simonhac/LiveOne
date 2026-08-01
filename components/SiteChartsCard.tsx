@@ -1,11 +1,26 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useModalContext } from "@/contexts/ModalContext";
 import { siteDataQuery } from "@/lib/queries";
-import { type ChartData } from "@/lib/charts/types";
-import DashboardChart from "@/components/DashboardChart";
+import { runPeriodsQuery } from "@/lib/queries/runPeriods";
+import type { SystemIdLike } from "@/lib/queries/keys";
+import { type ChartData, type SeriesData } from "@/lib/charts/types";
+import {
+  renewablePct,
+  runBandsForSeries,
+  seriesForRole,
+  type RunBand,
+} from "@/lib/charts/run-bands";
+import { runProvenancePanels } from "@/lib/charts/tooltip-metrics";
+import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
+import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
+import NodeTooltip, { PANEL_WIDTH } from "@/components/NodeTooltip";
+import { CHART_COLORS } from "@/lib/chart-colors";
+import DashboardChart, {
+  type RunTooltipAnchor,
+} from "@/components/DashboardChart";
 import EnergyTable, {
   nextEnergyTableMetric,
   type EnergyTableMetric,
@@ -40,7 +55,8 @@ import {
   formatCentsPerKwh,
   formatRenewablePct,
 } from "@/lib/provenance-format";
-import { formatValue, formatFlowMagnitude } from "@/lib/energy-formatting";
+import { formatFlowMagnitude } from "@/lib/energy-formatting";
+import { avgPowerMetric, provenancePanels } from "@/lib/charts/tooltip-metrics";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
@@ -126,6 +142,8 @@ function coerceSankeyOptions(raw: unknown): SankeyOptions {
 interface StackedChartProps {
   mode: "load" | "generation";
   period: ChartTimeRange;
+  /** The section handle — the address run periods are fetched against. */
+  systemId: SystemIdLike;
   /** Pre-processed data from the parent (null = no data / still loading). */
   data: ChartData | null;
   /** External loading state from the parent. */
@@ -147,6 +165,7 @@ interface StackedChartProps {
 function StackedChart({
   mode,
   period,
+  systemId,
   data,
   isLoading,
   hoveredIndex: externalHoveredIndex,
@@ -190,7 +209,9 @@ function StackedChart({
       // index still costs a render.
       if (lastHoverIndexRef.current === index) return;
       lastHoverIndexRef.current = index;
-      setHoveredTimestamp(index == null ? null : (data.timestamps[index] ?? null));
+      setHoveredTimestamp(
+        index == null ? null : (data.timestamps[index] ?? null),
+      );
       onHoverIndexChange?.(index);
     },
     [data, onHoverIndexChange],
@@ -262,6 +283,69 @@ function StackedChart({
     };
   }, [loading]);
 
+  /**
+   * Run periods to bracket on this chart's bands.
+   *
+   * One query per TRACKABLE role, gated on that role actually having a VISIBLE band here — so the
+   * load chart asks about the EV and the generation chart doesn't, and hiding the EV series in the
+   * legend takes its overlay with it. `TRACKABLE_ROLE_IDS` is a module constant, so the hook count
+   * is fixed; `useQueries` keeps it that way as roles are added.
+   *
+   * Energy mode (M/Y) opts out entirely: the stack is daily bars there, and a three-hour charge
+   * session has nothing to bracket on a column that means "this whole day".
+   */
+  const overlayRoles = useMemo(() => {
+    if (!data || data.mode === "energy") return [];
+    return TRACKABLE_ROLE_IDS.map((role) => ({
+      role,
+      series: seriesForRole(role, data.series, effectiveVisibleSeries),
+    })).filter((r): r is { role: RoleId; series: SeriesData } => !!r.series);
+  }, [data, effectiveVisibleSeries]);
+
+  const runQueries = useQueries({
+    queries: TRACKABLE_ROLE_IDS.map((role) => {
+      const hit = overlayRoles.find((r) => r.role === role);
+      return runPeriodsQuery({
+        systemId,
+        role,
+        start: windowStart.toISOString(),
+        end: windowEnd.toISOString(),
+        enabled: !!hit,
+      });
+    }),
+  });
+
+  const runBands = useMemo(() => {
+    const out: RunBand[] = [];
+    TRACKABLE_ROLE_IDS.forEach((role, i) => {
+      const hit = overlayRoles.find((r) => r.role === role);
+      const events = runQueries[i]?.data?.events;
+      if (!hit || !events) return;
+      out.push(
+        ...runBandsForSeries(
+          events,
+          hit.series.id,
+          role,
+          windowStart.getTime(),
+          windowEnd.getTime(),
+        ),
+      );
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayRoles, windowStart, windowEnd, runQueries.map((q) => q.data)]);
+
+  const [hoveredRun, setHoveredRun] = useState<{
+    band: RunBand;
+    at: RunTooltipAnchor;
+  } | null>(null);
+  const handleHoverRun = useCallback(
+    (band: RunBand | null, at?: RunTooltipAnchor) => {
+      setHoveredRun(band && at ? { band, at } : null);
+    },
+    [],
+  );
+
   const handleMouseLeave = useCallback(() => {
     // Only reset hover state on desktop (not touch devices)
     // On mobile, we want the hover line to persist until next tap
@@ -271,6 +355,10 @@ function StackedChart({
         onHoverIndexChange(null);
       }
     }
+    // The run tooltip is dismissed on EITHER platform. Its own `onPointerLeave` fires when the
+    // pointer leaves the band, but a touch that ends outside one never sends that — and unlike the
+    // focus line, a stuck 140px panel covers the chart it is describing.
+    setHoveredRun(null);
   }, [onHoverIndexChange]);
 
   const renderChartContent = () => {
@@ -309,6 +397,9 @@ function StackedChart({
         windowEnd={windowEnd}
         windowStart={windowStart}
         onHoverIndex={handleHover}
+        runBands={runBands}
+        hoveredRunId={hoveredRun?.band.id ?? null}
+        onHoverRun={handleHoverRun}
         className="flex-1 min-h-0 w-full overflow-hidden"
       />
     );
@@ -320,6 +411,94 @@ function StackedChart({
       onMouseLeave={handleMouseLeave}
     >
       {renderChartContent()}
+      {hoveredRun && (
+        <RunTooltip
+          band={hoveredRun.band}
+          at={hoveredRun.at}
+          colour={
+            data?.series.find((s) => s.id === hoveredRun.band.seriesId)
+              ?.color ?? CHART_COLORS.ev
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+/** Clearance between the outlined run and the panel describing it. */
+const RUN_TOOLTIP_GAP = 10;
+
+/**
+ * The hovered run's four figures, rendered with the SAME panel the Sankey's node tooltips use — a
+ * charge session and the Sankey's `load.ev` node describe the same energy, so they should not be two
+ * different-looking objects.
+ *
+ * Positioned as an absolutely-positioned sibling rather than a portal (the `HeatmapChart` pattern):
+ * it lives inside the chart's own box, so it scrolls and unmounts with it, and clamping it is a
+ * comparison against that box's width rather than the viewport's. `beakVariant: "none"` because
+ * there is no node edge to point at — the outlined run below it is its own anchor.
+ */
+function RunTooltip({
+  band,
+  at,
+  colour,
+}: {
+  band: RunBand;
+  at: RunTooltipAnchor;
+  colour: string;
+}) {
+  const data: SankeyNodeTooltip = {
+    name: formatRunWhen(band.event),
+    variant: "full",
+    ...runProvenancePanels(band.event, renewablePct(band.event)),
+  };
+  // The panel's height is not knowable up front — it depends on how many metrics survived (a run
+  // with no provenance shows fewer) and on how the "when" heading wraps. `NodeTooltip` carries
+  // `panelRef` + `hidden` for exactly this measure-then-place pass, which is how the Sankey places
+  // its own panels; reusing it keeps one positioning idiom rather than two.
+  const [height, setHeight] = useState(0);
+  const measure = useCallback((el: HTMLDivElement | null) => {
+    if (el) setHeight(el.getBoundingClientRect().height);
+  }, []);
+
+  // BESIDE the run, never over it — the outlined region is the subject, and a 140px panel centred on
+  // a charge session hides exactly the shape it is explaining. Prefer the right; fall back to the
+  // left when the run sits close enough to the window's end that the panel would not fit; only if
+  // neither side fits does it overlap, clamped into the plot.
+  const { plot } = at;
+  const fitsRight =
+    at.x1 + RUN_TOOLTIP_GAP + PANEL_WIDTH <= plot.left + plot.width;
+  const fitsLeft = at.x0 - RUN_TOOLTIP_GAP - PANEL_WIDTH >= plot.left;
+  const left = fitsRight
+    ? at.x1 + RUN_TOOLTIP_GAP
+    : fitsLeft
+      ? at.x0 - RUN_TOOLTIP_GAP - PANEL_WIDTH
+      : Math.max(
+          plot.left,
+          Math.min(
+            at.x1 + RUN_TOOLTIP_GAP,
+            plot.left + plot.width - PANEL_WIDTH,
+          ),
+        );
+  // Vertically CENTRED ON THE PLOT, not on the pointer and not on the SVG. Following the pointer
+  // made the panel drift up and down while scrubbing across a session, which reads as instability
+  // rather than as feedback; centring on the svg instead would include the time-axis gutter and pull
+  // the panel visibly low against the data it describes.
+  const top = Math.max(plot.top, plot.top + (plot.height - height) / 2);
+  return (
+    <div data-testid="run-tooltip">
+      <NodeTooltip
+        data={data}
+        nodeColor={colour}
+        beakVariant="none"
+        showHeading
+        left={left}
+        top={top}
+        panelRef={measure}
+        // One frame at the wrong offset reads as a jump, and at this size the jump is the first
+        // thing the eye catches.
+        hidden={height === 0}
+      />
     </div>
   );
 }
@@ -660,6 +839,7 @@ export default function SiteChartsCard({
                 <div className="flex-1 min-w-0">
                   <StackedChart
                     mode="load"
+                    systemId={systemId}
                     className="h-full min-h-[375px]"
                     period={period}
                     onHoverIndexChange={handleLoadHoverIndexChange}
@@ -698,6 +878,7 @@ export default function SiteChartsCard({
                 <div className="flex-1 min-w-0">
                   <StackedChart
                     mode="generation"
+                    systemId={systemId}
                     className="h-full min-h-[375px]"
                     period={period}
                     onHoverIndexChange={handleGenerationHoverIndexChange}
@@ -857,12 +1038,8 @@ export default function SiteChartsCard({
                     : 24;
 
               const buildNodeTooltip: SankeyNodeTooltipResolver = (node) => {
-                const avgPower = (energyKwh: number) => {
-                  const avgW =
-                    windowHours > 0 ? (energyKwh * 1000) / windowHours : 0;
-                  const { value, unit: u } = formatValue(avgW, "W");
-                  return { value, unit: u };
-                };
+                const avgPower = (energyKwh: number) =>
+                  avgPowerMetric(energyKwh, windowHours);
 
                 if (unit === "kW") {
                   // Focused sub-daily sample: instantaneous power only (no integrals exist at a point).
@@ -900,34 +1077,21 @@ export default function SiteChartsCard({
                 }): SankeyNodeTooltip => ({
                   name: node.name,
                   variant: "full",
-                  energy: {
-                    primary: {
-                      value: formatKwh(summary.energyKwh),
-                      unit: "kWh",
+                  // Shared with the run-period tooltip (lib/charts/tooltip-metrics.ts). The
+                  // reduction's OWN rates are passed through, not re-derived: it divides by a
+                  // filtered denominator (see `ProvenancePanelInput`). `kgCo2` goes back to grams,
+                  // which is the unit the reducer divided down from.
+                  ...provenancePanels(
+                    {
+                      energyKwh: summary.energyKwh,
+                      costC: summary.costC,
+                      emissionsG: summary.kgCo2 * 1000,
+                      pctRenewable: summary.pctRenewable,
+                      avgCentsPerKwh: summary.avgCentsPerKwh,
+                      avgGramsPerKwh: summary.avgGramsPerKwh,
                     },
-                    secondary: avgPower(summary.energyKwh),
-                  },
-                  emissions: {
-                    primary: { value: formatKgCo2(summary.kgCo2), unit: "kg" },
-                    secondary: {
-                      value: formatGramsPerKwh(summary.avgGramsPerKwh),
-                      unit: "g/kWh",
-                    },
-                  },
-                  cost: {
-                    // "$" is baked into the value — no unit beneath.
-                    primary: { value: formatDollars(summary.costC) },
-                    secondary: {
-                      value: formatCentsPerKwh(summary.avgCentsPerKwh),
-                      unit: "c/kWh",
-                    },
-                  },
-                  // "%" is baked into the value — no unit beneath.
-                  renewable: {
-                    primary: {
-                      value: formatRenewablePct(summary.pctRenewable),
-                    },
-                  },
+                    avgPower(summary.energyKwh),
+                  ),
                   estimatedPct: summary.pctEstimated,
                 });
 
