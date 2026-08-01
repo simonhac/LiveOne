@@ -617,6 +617,39 @@ first is wasted work. #15 (the `now` → `windowEnd` rename) rides along with St
 
 ### Stage 4 — Shared d3 primitives
 
+#### Decisions taken 2026-08-01 (before any primitive was written)
+
+**The zero-pixel-diff rule cannot survive the port, and this doc was wrong to promise it.** Canvas
+and SVG rasterise differently — text hinting/antialiasing, line joins, fractional coordinates — so a
+*correct* port still moves thousands of pixels. Every Stage 5 slice would have failed a
+`maxDiffPixelRatio: 0.0002` gate for reasons unrelated to correctness.
+
+Settled instead:
+
+1. **The pixel gate loosens to 2–3%** and stays the primary check, accepting it catches only gross
+   breakage. ⚠️ **Loosen it in the first SVG port, not before** — there is no Chart.js work left, so
+   holding the tight gate until it must change costs nothing and keeps full sensitivity until then.
+2. **A targeted colour guard covers the gate's worst blind spot** — `lib/charts/__tests__/series-colours.test.ts`.
+   A whole-series colour change was *measured* at 1,345 px (**0.39%**), which a 2–3% band sails past;
+   defect #6 was exactly that and shipped for years. The guard asserts every series resolves to a
+   `CHART_COLORS` value, and that Battery/SoC stay separated by the dash given they share a colour.
+   Negative-controlled: a hardcoded literal, a repointed entry and a removed dash each turn it red.
+3. **Shape: hooks + small presentational pieces**, not a chart framework. `useChartGeometry()` returns
+   scales and the plot-area box; `<TimeAxis>`, `<ValueAxis>`, `<ShadingBands>`, `<FocusLine>` and
+   `usePointerIndex` alongside; **each chart still owns its own `<svg>` and draws its own series**.
+   The heatmap opts out entirely (categorical axes, no focus line), so the real consumer count is
+   three — too few to know the right abstraction, and `SiteChartsCard` (1,017 lines of interaction)
+   is exactly the sort of consumer that would end up fighting one. The shared layer computes
+   *numbers*, which are unit-testable; a wrong number is a bug, a wrong component is a refactor.
+4. **Tick selection matches the visible result, not the mechanism.** Same label text, formats and
+   rough density per period, chosen by clean `d3-time` interval logic. `buildTimeScale`'s quirks —
+   `autoSkip`, five spaces to defeat collision detection, a zero-width space to keep a gridline,
+   multi-line label arrays, the 2→3→4 skip ladder — exist to work *around* Chart.js and have no
+   equivalent under d3. Ticks may land on slightly different days at M scale; the loosened gate
+   allows it. "Measure-to-fit tick density" is noted as possible follow-on, not done here.
+
+
+
 **✅ #18 and #15 DONE 2026-08-01** — both landed ahead of the primitives, since the port would
 otherwise inherit them.
 
