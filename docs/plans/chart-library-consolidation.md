@@ -793,8 +793,23 @@ contradicted the assumption behind it, not by preference. Say if you would rathe
      against a null ref and never runs again. The heatmap rendered an empty box. `ProvenanceChart`
      has no loading state, which is the only reason it did not hit this. Now a **callback ref**, so
      the observer follows the element rather than the mount.
-4. `DashboardChart` `lines`.
-5. `DashboardChart` `stacked-areas` — highest risk, last, with everything else proven.
+4. ✅ **`DashboardChart` — both variants, DONE 2026-08-01.** They live in one component, so `lines`
+   and `stacked-areas` landed together. **No Chart.js importers remain outside `scaffold.ts`.**
+
+   Two Chart.js-era props were dropped rather than carried:
+   - `chartRef` — a `Chart` instance ref both cards created, passed, and never read.
+   - `onHover(event, activeElements, chart)` → **`onHoverIndex(index | null)`**, since only
+     `activeElements[0].index` was ever used. Same shape `ProvenanceChart` takes.
+
+   Bar geometry reproduces Chart.js's `categoryPercentage`/`barPercentage` model and is kept **local**
+   to this component — it is the only chart with bars, so lifting it into the primitives would be a
+   shared abstraction with one consumer.
+
+   One real difference caught by looking: the top gridline sat *below* the data, with the series
+   running past the last labelled tick. `scale.ticks()` picks round numbers strictly inside the
+   padded domain, so a series peaking at 9 in a 0–9.4 domain got a top tick of 5. `buildGeometry`
+   now calls **`.nice()`**, which snaps the domain out to tick boundaries — what Chart.js did
+   implicitly, and what puts the unit label at the top of the plot instead of adrift.
 
 ### Stage 6 — Remove Chart.js
 

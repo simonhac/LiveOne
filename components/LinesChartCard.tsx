@@ -53,7 +53,6 @@ export default function LinesChartCard({
   // Shared focus instant for this chart cluster — publish our hover here, and read it back so the
   // red focus line + the values tooltip follow whatever point is focused on ANY chart in the section.
   const { focusedTime, setFocusedTime } = useChartFocus();
-  const chartRef = useRef<any>(null);
 
   // History data via React Query. The raw OpenNEM payload is cached; the windowing +
   // unit-conversion transform runs in a useMemo so the derived ChartData stays referentially
@@ -128,25 +127,14 @@ export default function LinesChartCard({
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleHover = useCallback(
-    (event: any, activeElements: any[], chart: any) => {
-      // Don't process if no chart data
+    (index: number | null) => {
       if (!chartData) return;
-
-      // Clear any pending timeout
-      if (hoverTimeoutRef.current) {
-        clearTimeout(hoverTimeoutRef.current);
-      }
-
-      // Debounce the hover update. Publish the hovered instant to the shared focus; the displayed
-      // values + red line derive from it below (so they also follow focus set by a sibling chart).
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      // Debounce. Publish the hovered instant to the shared focus; the displayed values + focus line
+      // derive from it below, so they also follow focus set by a sibling chart.
       hoverTimeoutRef.current = setTimeout(() => {
-        if (activeElements && activeElements.length > 0) {
-          const dataIndex = activeElements[0].index;
-          setFocusedTime(chartData.timestamps[dataIndex] ?? null);
-        } else {
-          setFocusedTime(null);
-        }
-      }, 10); // Small debounce delay
+        setFocusedTime(index == null ? null : (chartData.timestamps[index] ?? null));
+      }, 10);
     },
     [chartData, setFocusedTime],
   );
@@ -173,9 +161,6 @@ export default function LinesChartCard({
           timestamp: null,
         };
 
-  const handleMouseLeave = useCallback(() => {
-    if (!("ontouchstart" in window)) setFocusedTime(null);
-  }, [setFocusedTime]);
 
   // X-axis window: prefer the rendered data's actual extent (keeps the axis + daytime/weekday
   // shading aligned with historical data); else the requested window; else the live trailing window.
@@ -294,11 +279,9 @@ export default function LinesChartCard({
           timeRange={period}
           windowEnd={windowEnd}
           windowStart={windowStart}
-          onHover={handleHover}
+          onHoverIndex={handleHover}
           hoveredTimestamp={hoveredData.timestamp}
-          chartRef={chartRef}
           className="flex-1 min-h-0"
-          onMouseLeave={handleMouseLeave}
         />
         <div className="flex justify-center mt-2 px-2 sm:px-0">
           <ChartTooltip

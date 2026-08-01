@@ -69,7 +69,6 @@ function indexOf(timestamps: Date[], t: Date | null): number | null {
 }
 
 function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
-  const chartRef = useRef<unknown>(null);
   const { chartData, paddedSOCData, windowStart, windowEnd } = linesFixture(c);
   const focus = focusInstant(chartData.timestamps, c.focusAt);
   const fi = indexOf(chartData.timestamps, focus);
@@ -107,8 +106,7 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
           windowEnd={windowEnd}
           windowStart={windowStart}
           hoveredTimestamp={focus}
-          onHover={noop}
-          chartRef={chartRef as React.MutableRefObject<unknown>}
+          onHoverIndex={noop}
           className="h-full"
         />
       </div>
@@ -125,7 +123,6 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
 }
 
 function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
-  const chartRef = useRef<unknown>(null);
   const { chartData, visibleSeries, windowStart, windowEnd } =
     stackedFixture(c);
   const focus = focusInstant(chartData.timestamps, c.focusAt);
@@ -141,8 +138,7 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         windowEnd={windowEnd}
         windowStart={windowStart}
         hoveredTimestamp={focus}
-        onHover={noop}
-        chartRef={chartRef as React.MutableRefObject<unknown>}
+        onHoverIndex={noop}
         className="h-full"
       />
     </div>

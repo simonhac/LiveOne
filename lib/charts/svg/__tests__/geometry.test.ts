@@ -101,3 +101,27 @@ describe("niceDomain", () => {
     expect(niceDomain([1, 50], { suggestedMax: 10 })[1]).toBeGreaterThan(50);
   });
 });
+
+describe("buildGeometry — nice() domains", () => {
+  /**
+   * Without `.nice()` the top gridline can sit below the data: `ticks()` picks round numbers inside
+   * the padded domain, so a series peaking at 9 in a 0–9.4 domain draws past a last tick of 5.
+   */
+  it("snaps the y domain out so the top tick reaches the data", () => {
+    const g = buildGeometry({ ...base, yDomain: niceDomain([0, 9]) });
+    const ticks = g.y.ticks(6);
+    const topTick = ticks[ticks.length - 1];
+    expect(topTick).toBeGreaterThanOrEqual(9);
+    expect(g.y.domain()[1]).toBeGreaterThanOrEqual(topTick);
+  });
+
+  it("leaves an already-round domain alone", () => {
+    const g = buildGeometry({ ...base, y1Domain: [0, 100] });
+    expect(g.y1!.domain()).toEqual([0, 100]);
+  });
+
+  it("keeps negative room after snapping", () => {
+    const g = buildGeometry({ ...base, yDomain: niceDomain([-4, 9]) });
+    expect(g.y.domain()[0]).toBeLessThanOrEqual(-4);
+  });
+});

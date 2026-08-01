@@ -89,9 +89,14 @@ export function buildGeometry(input: GeometryInput): ChartGeometry {
 
   const x = scaleTime().domain(input.xDomain).range([0, width]);
   // Inverted range: SVG y grows downward, so the domain maximum sits at pixel 0.
-  const y = scaleLinear().domain(input.yDomain).range([height, 0]);
+  //
+  // `.nice()` matters and is not cosmetic: without it `scale.ticks()` picks round numbers strictly
+  // INSIDE the padded domain, so the topmost gridline can sit below the data and the series runs off
+  // past the last labelled tick. Snapping the domain out to tick boundaries is what Chart.js did
+  // implicitly, and it is also what puts the unit label at the top of the plot rather than adrift.
+  const y = scaleLinear().domain(input.yDomain).range([height, 0]).nice();
   const y1 = input.y1Domain
-    ? scaleLinear().domain(input.y1Domain).range([height, 0])
+    ? scaleLinear().domain(input.y1Domain).range([height, 0]).nice()
     : undefined;
 
   return { plot, x, y, y1, empty: width <= 0 || height <= 0 };
