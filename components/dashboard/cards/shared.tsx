@@ -66,17 +66,26 @@ export function subjectOf(
  * so all whole-area cards share one request; a device-bound card adds one), paused while any
  * modal is open. `paused` is exposed for plugins with a second query of their own (ev-provenance)
  * so modal-open pauses that too.
+ *
+ * `enabled: false` is for callers that must call the hook unconditionally but have no device to ask
+ * about — a tile rendered from fixtures with no `systemId`. `dashboardDataQuery`'s own guard only
+ * rejects null/"", and the usual `systemId ?? 0` fallback is a real-looking id, so without this it
+ * would fetch `/api/data?systemId=0`.
  */
-export function useAreaDatum(systemId: number): {
+export function useAreaDatum(
+  systemId: number,
+  { enabled = true }: { enabled?: boolean } = {},
+): {
   data: unknown;
   datum: AreaDatum | null;
   isLoading: boolean;
   paused: boolean;
 } {
   const { isAnyModalOpen } = useModalContext();
-  const { data, isLoading } = useQuery(
-    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
-  );
+  const { data, isLoading } = useQuery({
+    ...dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+    enabled,
+  });
   return {
     data,
     datum: (data ?? null) as AreaDatum | null,

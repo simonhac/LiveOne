@@ -54,6 +54,10 @@ export interface DailyFlowMatrix {
    *  autarky / own-renewable-self-consumption legs). null cell = self-renewable intensity unknown. */
   selfRenewableKwh?: (number | null)[][];
   costC?: (number | null)[][]; // attributed cost (cents, signed)
+  /** attributed feed-in REVENUE (cents, positive = money in) — the sink-priced mirror of `costC`, so
+   *  only `load.grid` columns are ever non-null. null cell = nothing here is sold (or the Area has no
+   *  export tariff). Opposite sign to Amber's `bidi.grid.export/value`, which books a negative credit. */
+  revenueC?: (number | null)[][];
   estimatedKwh?: number[][];
 }
 
@@ -128,6 +132,10 @@ export interface LoadProvenanceSummary {
   loadLabel: string;
   energyKwh: number;
   costC: number; // signed cents
+  /** Feed-in REVENUE (cents, positive = money in), or null when nothing on this load was sold — the
+   *  sink is not `load.grid`, the Area has no export tariff, or the days predate the revenue leg.
+   *  Deliberately nullable so "no tariff" reads as "—" rather than as an earned $0. */
+  revenueC: number | null;
   avgCentsPerKwh: number | null;
   pctRenewable: number | null; // 0..100
   avgGramsPerKwh: number | null;
@@ -139,6 +147,8 @@ export interface LoadProvenanceSummary {
    *  `energyKwh`, which would disagree whenever a row is only partially attributed. */
   costKnownKwh: number;
   emissionsKnownKwh: number;
+  /** kWh on this load that carried a known SELL price — the `revenueC` known-flag. */
+  revenueKnownKwh: number;
   sources: LoadSourceSplit[]; // descending by energy, zero-energy sources dropped
 }
 
@@ -163,6 +173,8 @@ export function reduceLoadProvenance(
   let renewableKnownKwh = 0;
   let costC = 0;
   let costKnownKwh = 0;
+  let revenueC = 0;
+  let revenueKnownKwh = 0;
   let estimatedKwh = 0;
   const sourceEnergy = d.sources.map(() => 0);
 
@@ -187,6 +199,11 @@ export function reduceLoadProvenance(
         costC += cc;
         costKnownKwh += e;
       }
+      const rv = day.revenueC?.[s]?.[loadIdx];
+      if (rv != null) {
+        revenueC += rv;
+        revenueKnownKwh += e;
+      }
       estimatedKwh += day.estimatedKwh?.[s]?.[loadIdx] ?? 0;
     }
   }
@@ -205,6 +222,7 @@ export function reduceLoadProvenance(
     loadLabel: d.loads[loadIdx].label,
     energyKwh,
     costC,
+    revenueC: revenueKnownKwh > 0 ? revenueC : null,
     avgCentsPerKwh: costKnownKwh > 0 ? costC / costKnownKwh : null,
     pctRenewable:
       renewableKnownKwh > 0 ? (100 * renewableKwh) / renewableKnownKwh : null,
@@ -214,6 +232,7 @@ export function reduceLoadProvenance(
     pctEstimated: energyKwh > 0 ? (100 * estimatedKwh) / energyKwh : 0,
     costKnownKwh,
     emissionsKnownKwh,
+    revenueKnownKwh,
     sources,
   };
 }
@@ -233,6 +252,9 @@ export interface SourceProvenanceSummary {
   sourceLabel: string;
   energyKwh: number;
   costC: number; // signed cents
+  /** Feed-in revenue this source earned on the way out (cents, positive = money in), or null when none
+   *  of its energy was sold. The transpose of {@link LoadProvenanceSummary.revenueC}. */
+  revenueC: number | null;
   avgCentsPerKwh: number | null;
   pctRenewable: number | null; // 0..100
   avgGramsPerKwh: number | null;
@@ -241,6 +263,8 @@ export interface SourceProvenanceSummary {
   /** Filtered averaging denominators — see {@link LoadProvenanceSummary.costKnownKwh}. */
   costKnownKwh: number;
   emissionsKnownKwh: number;
+  /** kWh from this source that reached a sink with a known SELL price — the `revenueC` known-flag. */
+  revenueKnownKwh: number;
   loads: LoadSourceSplit[]; // descending by energy, zero-energy loads dropped
 }
 
@@ -281,6 +305,8 @@ export function reduceSourceProvenance(
   let renewableKnownKwh = 0;
   let costC = 0;
   let costKnownKwh = 0;
+  let revenueC = 0;
+  let revenueKnownKwh = 0;
   let estimatedKwh = 0;
   const loadEnergy = d.loads.map(() => 0);
 
@@ -306,6 +332,11 @@ export function reduceSourceProvenance(
           costC += cc;
           costKnownKwh += e;
         }
+        const rv = day.revenueC?.[s]?.[l];
+        if (rv != null) {
+          revenueC += rv;
+          revenueKnownKwh += e;
+        }
         estimatedKwh += day.estimatedKwh?.[s]?.[l] ?? 0;
       }
     }
@@ -326,6 +357,7 @@ export function reduceSourceProvenance(
     sourceLabel: combined ? "Solar" : d.sources[indices[0]].label,
     energyKwh,
     costC,
+    revenueC: revenueKnownKwh > 0 ? revenueC : null,
     avgCentsPerKwh: costKnownKwh > 0 ? costC / costKnownKwh : null,
     pctRenewable:
       renewableKnownKwh > 0 ? (100 * renewableKwh) / renewableKnownKwh : null,
@@ -335,6 +367,7 @@ export function reduceSourceProvenance(
     pctEstimated: energyKwh > 0 ? (100 * estimatedKwh) / energyKwh : 0,
     costKnownKwh,
     emissionsKnownKwh,
+    revenueKnownKwh,
     loads,
   };
 }

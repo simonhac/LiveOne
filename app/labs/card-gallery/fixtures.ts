@@ -151,31 +151,35 @@ export const GRID_SCENARIOS: Record<string, LatestPointValues> = {
 // ---------------------------------------------------------------------------
 // AmberSmallCard / AmberNow (bidi.grid.import/rate etc. — c/kWh, %, descriptor)
 // ---------------------------------------------------------------------------
+// ⚠️ `bidi.grid.export/rate` is Amber's raw feedIn `perKwh`: NEGATIVE means you are being PAID.
+// (AmberNow flips it for display; BatteryContentsCard values the store with the same flip.) These
+// fixtures previously used the opposite sign, so "low"/"high"/"spike" all rendered as pay-to-export.
+
 export const AMBER_SCENARIOS: Record<
   string,
   Record<string, LatestValue | null>
 > = {
   low: {
     "bidi.grid.import/rate": lv(18),
-    "bidi.grid.export/rate": lv(6),
+    "bidi.grid.export/rate": lv(-6),
     "bidi.grid.renewables/proportion": lv(72),
     "bidi.grid.import/descriptor": lv("low"),
   },
   high: {
     "bidi.grid.import/rate": lv(55),
-    "bidi.grid.export/rate": lv(20),
+    "bidi.grid.export/rate": lv(-20),
     "bidi.grid.renewables/proportion": lv(30),
     "bidi.grid.import/descriptor": lv("high"),
   },
   spike: {
     "bidi.grid.import/rate": lv(182),
-    "bidi.grid.export/rate": lv(40),
+    "bidi.grid.export/rate": lv(-40),
     "bidi.grid.renewables/proportion": lv(12),
     "bidi.grid.import/descriptor": lv("spike"),
   },
   "negative feed-in": {
     "bidi.grid.import/rate": lv(30),
-    "bidi.grid.export/rate": lv(-5),
+    "bidi.grid.export/rate": lv(5),
     "bidi.grid.renewables/proportion": lv(55),
     "bidi.grid.import/descriptor": lv("neutral"),
   },
@@ -351,7 +355,7 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
     [CP.renewableFraction]: 62,
     [CP.priceActual]: 8.4,
     [CP.priceOpportunity]: 14.1,
-    [CP.exportRate]: 5.5,
+    [CP.exportRate]: -5.5,
   }),
   "very green": bc({
     [CP.storedEnergy]: 11.8,
@@ -359,7 +363,7 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
     [CP.renewableFraction]: 96,
     [CP.priceActual]: 1.2,
     [CP.priceOpportunity]: 9.0,
-    [CP.exportRate]: 6.0,
+    [CP.exportRate]: -6.0,
   }),
   "negative actual price": bc({
     [CP.storedEnergy]: 6.0,
@@ -367,7 +371,7 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
     [CP.renewableFraction]: 30,
     [CP.priceActual]: -3.0,
     [CP.priceOpportunity]: 4.0,
-    [CP.exportRate]: 3.0,
+    [CP.exportRate]: -3.0,
   }),
   // No export tariff → opportunity == actual (no split) and no export-value stat.
   "no tariff": bc({
@@ -392,7 +396,7 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
       [CP.renewableFraction]: 62,
       [CP.priceActual]: 8.4,
       [CP.priceOpportunity]: 14.1,
-      [CP.exportRate]: 5.5,
+      [CP.exportRate]: -5.5,
     },
     STALE,
   ),

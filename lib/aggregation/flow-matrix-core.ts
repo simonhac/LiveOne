@@ -85,6 +85,15 @@ export interface FlowAccountingResult {
   selfRenewableKwh: number[][];
   /** [s][l] attributed cost (cents), over intervals with a known price. */
   costC: number[][];
+  /**
+   * [s][l] attributed REVENUE (cents) — what the LOAD paid US for that energy, over intervals with a
+   * known load price. The mirror image of `costC`: `costC` prices energy by its SOURCE (what it cost to
+   * produce/buy), `revenueC` prices it by its SINK (what it earned on the way out). Today the only
+   * priced sink is `load.grid` (the feed-in tariff), so every other column is 0 with a 0 denominator.
+   * Positive = money in — note that is the OPPOSITE sign to Amber's own `bidi.grid.export/value` point,
+   * which books feed-in as a negative credit against your bill.
+   */
+  revenueC: number[][];
   /** [s][l] energy (kWh) whose source intensity was estimated OR unknown (confidence denominator). */
   estimatedKwh: number[][];
   /** [s][l] energy (kWh) with a known emissions intensity — the unbiased-average denominator. */
@@ -95,6 +104,8 @@ export interface FlowAccountingResult {
   selfRenewableKnownKwh: number[][];
   /** [s][l] energy (kWh) with a known price. */
   priceKnownKwh: number[][];
+  /** [s][l] energy (kWh) with a known LOAD price — the `revenueC` denominator / known-flag. */
+  revenueKnownKwh: number[][];
   /** # of intervals that contributed energy (coverage signal). */
   intervalsUsed: number;
 }
@@ -222,7 +233,9 @@ function linkedSourceIndices(
  * integrates each load's trapezoidal energy and allocates it across sources by each source's share of
  * generation (left-endpoint), accumulating ENERGY per edge. When `sourceIntensities` is supplied it ALSO
  * decorates every contribution with that source's per-interval emissions / renewable / cost, so the
- * "metric legs" fall out of the SAME allocation as the energy leg — no second loop to drift.
+ * "metric legs" fall out of the SAME allocation as the energy leg — no second loop to drift. When
+ * `loadPrices` is supplied it likewise decorates each contribution with the SINK's price, giving the
+ * `revenueC` leg (feed-in income on `load.grid`) off that same allocation.
  *
  * `computeFlowMatrix` is the ENERGY PROJECTION of this (Sankey = the energy leg). A null intensity for an
  * interval leaves that contribution out of the attributed sum but counts its energy in `estimatedKwh`; the
@@ -236,6 +249,13 @@ export function computeFlowAccounting(input: {
   /** Index-aligned to `sources`; omit for the energy-only path. A null entry = a source with no intensity. */
   sourceIntensities?: (SourceIntensity | null)[];
   /**
+   * Optional per-load SELL price (c/kWh at each timestamp) — index-aligned to `loads`, a null entry (or
+   * a null sample) meaning "this sink pays nothing knowable". Drives the `revenueC` leg. Independent of
+   * `sourceIntensities`: supply either, both, or neither. Today the caller sets only `load.grid`, from
+   * the resolved export tariff (`resolveExportPriceSeries`).
+   */
+  loadPrices?: ((number | null)[] | null)[];
+  /**
    * Optional attribution window (epoch-ms): accumulate ONLY intervals that lie ENTIRELY within the
    * window — start `timestamps[i] >= startMs` AND end `timestamps[i+1] <= endMs`. Used to slice a single
    * local DAY out of a longer loaded/folded window for the per-day rollup, while the caller's fold ran
@@ -246,16 +266,20 @@ export function computeFlowAccounting(input: {
    */
   window?: { startMs: number; endMs: number };
 }): FlowAccountingResult {
-  const { timestamps, sources, loads, sourceIntensities, window } = input;
+  const { timestamps, sources, loads, sourceIntensities, loadPrices, window } =
+    input;
   const S = sources.length;
   const L = loads.length;
   const withMetrics = sourceIntensities !== undefined;
+  const withRevenue = loadPrices !== undefined;
 
   const energyKwh = zeros(S, L);
   const emissionsG = zeros(S, L);
   const renewableKwh = zeros(S, L);
   const selfRenewableKwh = zeros(S, L);
   const costC = zeros(S, L);
+  const revenueC = zeros(S, L);
+  const revenueKnownKwh = zeros(S, L);
   const estimatedKwh = zeros(S, L);
   const emissionsKnownKwh = zeros(S, L);
   const renewableKnownKwh = zeros(S, L);
@@ -358,6 +382,18 @@ export function computeFlowAccounting(input: {
             estimatedKwh[s][l] += contribution;
           }
         }
+
+        // The SINK-priced leg, deliberately outside `withMetrics`: an unknown load price must NOT feed
+        // `estimatedKwh` (that denominator is the confidence of the SOURCE intensities, and folding a
+        // missing export tariff into it would silently move every existing emissions/renewable/cost
+        // confidence number).
+        if (withRevenue) {
+          const lp = loadPrices![l]?.[i] ?? null;
+          if (lp !== null) {
+            revenueC[s][l] += contribution * lp;
+            revenueKnownKwh[s][l] += contribution;
+          }
+        }
       }
     }
     if (contributed) intervalsUsed++;
@@ -371,11 +407,13 @@ export function computeFlowAccounting(input: {
     renewableKwh,
     selfRenewableKwh,
     costC,
+    revenueC,
     estimatedKwh,
     emissionsKnownKwh,
     renewableKnownKwh,
     selfRenewableKnownKwh,
     priceKnownKwh,
+    revenueKnownKwh,
     intervalsUsed,
   };
 }

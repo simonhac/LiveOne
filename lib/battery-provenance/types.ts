@@ -132,6 +132,14 @@ export interface ProvenanceResult {
   accounting: FlowAccountingResult;
   /** The per-source intensity series (index-aligned to inputs.sources) — for re-running per-day accounting. */
   sourceIntensities: (SourceIntensity | null)[];
+  /**
+   * The resolved feed-in series in the RECEIPTS convention (positive c/kWh = money in; null = no export
+   * tariff at that interval), index-aligned to `inputs.timeline` — `resolveExportReceiptSeries` applied
+   * to `inputs.exportTariff`. Surfaced so the per-day re-runs of `computeFlowAccounting` can price the
+   * `load.grid` sink identically to the window run. NOT the series the fold's opportunity cost uses:
+   * that one keeps each mode's raw sign (see `lib/battery-provenance/tariff.ts`).
+   */
+  exportReceiptPrice: (number | null)[];
   /** The η actually used: a throughput-weighted summary of the learned η(t), or the configured scalar. */
   etaUsed: number;
   /** Per-local-day learned-η trend (the degradation/hardware-step diagnostic); absent for a scalar η. */
