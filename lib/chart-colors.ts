@@ -40,26 +40,44 @@ export const CHART_COLORS = {
   hotWater: "rgb(251, 146, 60)", // orange-400 - Hot Water/HWS/Heat Pump
   pool: "rgb(34, 211, 238)", // cyan-400 - Pool (aqua)
   ev: "rgb(220, 38, 38)", // red-600 - EV charging (mirrors the mySigen EVAC node)
+  // violet-400 - HVAC/climate. Violet is the one wide gap left on the wheel once Solar yellow,
+  // EV red, Hot Water orange, Pool cyan, Battery green, Grid magenta and Other grey are locked.
+  // HVAC used to fall through to LOAD_COLORS, which put it on lime-500 — indistinguishable from
+  // Battery Charge green-400, the band it sits directly against in the stacked load chart.
+  hvac: "rgb(167, 139, 250)",
 
   // Other
   restOfHouse: "rgb(156, 163, 175)", // gray-400 - Rest of House
 } as const;
 
-// Color palette for dynamic load discovery
-// Avoid conflicts with fixed colors above
+// Fallback palette for load stems that have no entry in LOAD_TYPE_COLORS below.
+//
+// 🛑 With the named roles taken the wheel is nearly full, so this rotation exists to keep an
+// unnamed load **visible**, not **identified** — and which colour a load lands on is unstable
+// (`getLoadColor` rotates by list index, `getColorForPath` by a char-code hash, so the same load
+// can be two colours in two views). Any load that persists belongs in LOAD_TYPE_COLORS, not here.
+//
+// The previous rotation actively collided with the fixed palette: red-500 was byte-identical to
+// `focusLine` and sat beside `ev` red-600, lime-500 was indistinguishable from `battery.main`,
+// yellow-600 clashed with solar, and purple-600/violet-500 were near-duplicates of each other.
 export const LOAD_COLORS = [
-  "rgb(147, 51, 234)", // purple-600
-  "rgb(239, 68, 68)", // red-500
-  "rgb(168, 85, 247)", // violet-500
-  "rgb(132, 204, 22)", // lime-500
-  "rgb(234, 179, 8)", // yellow-600
-  "rgb(20, 184, 166)", // teal-500
+  "rgb(45, 212, 191)", // teal-400
+  "rgb(232, 121, 249)", // fuchsia-400
+  "rgb(129, 140, 248)", // indigo-400
+  "rgb(190, 242, 100)", // lime-300
+  "rgb(253, 164, 175)", // rose-300
+  "rgb(125, 211, 252)", // sky-300
 ] as const;
 
 // Special colors for specific load types (by load type identifier)
+// Naming a stem here is what makes its colour STABLE and CONSISTENT: it is the only branch both
+// `getLoadColor` (stacked chart, rotates by index) and `getColorForPath` (Sankey, hashes the stem)
+// consult before falling back, so an unnamed stem can render as two different colours in two views.
+// These are the `load.<stem>` values that actually exist — keep them in sync as sub-meters are added.
 export const LOAD_TYPE_COLORS: Record<string, string> = {
   hws: CHART_COLORS.hotWater,
   pool: CHART_COLORS.pool,
+  hvac: CHART_COLORS.hvac,
   // An EV charger inside the load hierarchy (`load.ev`) keeps the EV colour it had as a top-level
   // `ev.charge` node, so re-parenting it doesn't recolour the chart.
   ev: CHART_COLORS.ev,

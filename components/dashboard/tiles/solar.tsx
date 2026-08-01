@@ -2,6 +2,7 @@
 
 import { Sun } from "lucide-react";
 import Tile from "@/components/Tile";
+import { ROLE_CHROME } from "@/lib/role-chrome";
 import type { LatestPointValues } from "@/lib/types/api";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
@@ -51,9 +52,9 @@ function SolarTile({ latest, staleThresholdSeconds }: TileRenderProps) {
       value={formatPowerValue(solarValue ?? 0)}
       unit="kW"
       icon={<Sun className="w-6 h-6" />}
-      iconColor="text-yellow-400"
-      bgColor="bg-yellow-900/20"
-      borderColor="border-yellow-700"
+      iconColor={ROLE_CHROME.solar.icon}
+      bgColor={ROLE_CHROME.solar.tint}
+      borderColor={ROLE_CHROME.solar.border}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={
         getMeasurementTime(latest, "source.solar/power") ||

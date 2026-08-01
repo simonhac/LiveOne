@@ -701,8 +701,8 @@
       {
         "component": "Tile",
         "props": {
-          "bgColor": "bg-red-900/20",
-          "borderColor": "border-red-700",
+          "bgColor": "bg-pink-900/20",
+          "borderColor": "border-pink-700",
           "extraInfo": "Importing",
           "icon": {
             "$element": "span",
@@ -721,7 +721,7 @@
                               "className": "w-4 h-4"
                             }
                           },
-                          "className": "text-red-400 md:hidden"
+                          "className": "text-pink-500 md:hidden"
                         }
                       },
                       {
@@ -733,7 +733,7 @@
                               "className": "w-5 h-5"
                             }
                           },
-                          "className": "text-red-400 hidden md:block"
+                          "className": "text-pink-500 hidden md:block"
                         }
                       }
                     ]
@@ -749,7 +749,7 @@
               "className": "inline-flex items-center h-6 flex-row-reverse md:flex-row"
             }
           },
-          "iconColor": "text-red-400",
+          "iconColor": "text-pink-500",
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Grid",
@@ -936,7 +936,7 @@
               "className": "w-6 h-6"
             }
           },
-          "iconColor": "text-yellow-400",
+          "iconColor": "text-yellow-200",
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Solar",

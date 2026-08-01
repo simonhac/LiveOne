@@ -3,6 +3,7 @@
 import React from "react";
 import { Home } from "lucide-react";
 import Tile from "@/components/Tile";
+import { ROLE_CHROME } from "@/lib/role-chrome";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
   calculateAllLoads,
@@ -76,9 +77,9 @@ function LoadTile({ latest, staleThresholdSeconds }: TileRenderProps) {
       value={formatPowerValue(totalLoad)}
       unit="kW"
       icon={<Home className="w-6 h-6" />}
-      iconColor="text-blue-400"
-      bgColor="bg-blue-900/20"
-      borderColor="border-blue-700"
+      iconColor={ROLE_CHROME.load.icon}
+      bgColor={ROLE_CHROME.load.tint}
+      borderColor={ROLE_CHROME.load.border}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={loadMeasurementTime || undefined}
       extra={

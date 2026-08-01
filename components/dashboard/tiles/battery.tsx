@@ -2,6 +2,7 @@
 
 import { Battery } from "lucide-react";
 import Tile from "@/components/Tile";
+import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
   formatPowerValue,
@@ -11,10 +12,19 @@ import {
   getMeasurementTime,
 } from "./shared";
 
-/** Battery SoC tile — color/background/chevron keyed on the charge (−) / discharge (+) sign. */
+/**
+ * Battery SoC tile. Chrome is the battery's IDENTITY colour (green, matching `CHART_COLORS.battery`)
+ * whenever there is flow — it used to flip green/orange on the charge (−) / discharge (+) sign, which
+ * made green mean "charging" here and "exporting" on the Grid tile. Direction now rides entirely on
+ * the chevron and the Charging/Discharging label. Below the 100 W dead band — the same threshold
+ * `getFlowChevron` and the label already use — the tile goes grey, which reads as *no flow* rather
+ * than as a direction. See lib/role-chrome.ts.
+ */
 function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
   const batterySoc = getPointValue(latest, "bidi.battery/soc");
   const batteryPower = getPointValue(latest, "bidi.battery/power") || 0;
+  const chrome =
+    Math.abs(batteryPower) >= 100 ? ROLE_CHROME.battery : IDLE_CHROME;
 
   return (
     <Tile
@@ -26,36 +36,14 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
           {getFlowChevron(
             batteryPower,
             batteryPower < 0, // negative = charging = into battery
-            batteryPower < 0
-              ? "text-green-400"
-              : batteryPower > 0
-                ? "text-orange-400"
-                : "text-gray-400",
+            chrome.icon,
           )}
           <Battery className="w-6 h-6" />
         </span>
       }
-      iconColor={
-        batteryPower < 0
-          ? "text-green-400"
-          : batteryPower > 0
-            ? "text-orange-400"
-            : "text-gray-400"
-      }
-      bgColor={
-        batteryPower < 0
-          ? "bg-green-900/20"
-          : batteryPower > 0
-            ? "bg-orange-900/20"
-            : "bg-gray-900/20"
-      }
-      borderColor={
-        batteryPower < 0
-          ? "border-green-700"
-          : batteryPower > 0
-            ? "border-orange-700"
-            : "border-gray-700"
-      }
+      iconColor={chrome.icon}
+      bgColor={chrome.tint}
+      borderColor={chrome.border}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={
         getMeasurementTime(latest, "bidi.battery/soc") || undefined
