@@ -5,7 +5,7 @@
  * (e.g. `dv_01j9xz…`). The DB stores the raw uuid; the prefix is presentation only. The brand makes
  * the six entity IDs NOMINALLY distinct at compile time — passing a `DeviceId` where a `PointId` is
  * expected is a type error, which is the whole point of the scheme (it turns the old integer-handle
- * confusion into a parse/compile error). See docs/plans/config-v4-clean-sheet.md §5.
+ * confusion into a parse/compile error). See the config-v4 clean-sheet design §5.
  */
 
 declare const __idBrand: unique symbol;

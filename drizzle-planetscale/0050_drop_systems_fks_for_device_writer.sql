@@ -74,7 +74,7 @@
 -- forward migration — but not something to do while 1a is deployed.
 --
 -- Preconditions: none in the code. This migration goes FIRST, before slice 1a merges. Then prod
--- `sydney`, then `liveone-dev`. See docs/plans/config-v4-execution-plan.md § Phase 12.
+-- `sydney`, then `liveone-dev`. See the config-v4 epic record § Phase 12.
 
 DO $$
 DECLARE

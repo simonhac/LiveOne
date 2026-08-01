@@ -1,11 +1,13 @@
 # Battery energy provenance — metric-attributed energy flows
 
-> **Status:** engine + data core LIVE on `main` and prod (PR #160 wave, then #173 opportunity-cost
-> delta split, #174 `battery_provenance_daily` incremental learn + fold checkpoints, #175 scoped
-> consistency check). Current branch: the reserve floor becomes the fifth persisted per-day learned
-> parameter (it was previously a KV-cached sliding percentile — the last non-reproducible input).
+> **Status:** current — last verified 2026-08-01. Engine + data core are LIVE on `main` and prod
+> (PR #160 wave, then #173 opportunity-cost delta split, #174 `battery_provenance_daily` incremental
+> learn + fold checkpoints, #175 scoped consistency check). The reserve floor has since landed as the
+> **fifth persisted per-day learned parameter** (`battery_provenance_daily.reserve_floor_pct`); it was
+> previously a KV-cached sliding percentile, and was the last non-reproducible input.
 > Prod runbook: see [Operations](#operations). Companion to
-> [energy-flow-matrix.md](energy-flow-matrix.md): provenance is the **metric legs** of that same flow.
+> [energy-flow-matrix.md](energy-flow-matrix.md): provenance is the **metric legs** of that same flow,
+> materialized into the same `point_readings_flow_attr_1d` rows.
 
 **How to read this doc.** Part 1 explains the problem and the mental model (no prior context assumed).
 Part 2 walks through the algorithm, from the simplest form to the full production model. Part 3 explains
@@ -317,7 +319,7 @@ true floor is unidentifiable from SoC, so it pins to the prior `reserveFloorMaxP
 `/usable-capacity`, `/charge-efficiency`, `/idle-loss`, ordinals 110–113, η/η_c stored ×100). The
 legacy points/bindings/step-rows were equivalence-checked and deleted during the July 2026 rollout.
 The one-shot verifier and deletion scripts were retired after the prod state propagated through the
-full `point_info` prod→dev sync.
+full points prod→dev sync.
 
 ### The conservation invariant
 
@@ -409,7 +411,7 @@ window, with a synced hover crosshair and a value table carrying a description t
 built specifically to make the reserve-floor learner (previous section) and the other learners visible
 without a database session:
 
-- `GET /api/areas/{areaId}/provenance-daily?start=&end=` (`app/api/areas/[areaId]/provenance-daily/route.ts`)
+- `GET /api/v4/areas/{areaId}/provenance-daily?start=&end=` (`app/api/v4/areas/[id]/provenance-daily/route.ts`)
   — dense day-indexed columnar arrays (a missing row is `null` in every field, so gaps render as
   breaks, never bridged lines); fold-checkpoint scalars (`storedKwh`, `carbonG`, …) are extracted
   through `validateFoldCheckpointEnvelope` so a malformed/stale envelope degrades to `null` rather than
@@ -482,13 +484,13 @@ be shoehorned onto a physical child device. It lives on a **helper** — a deriv
 that lives in an Area and owns the Area's computed points (the Home-Assistant "derived device in an
 area" pattern; see [home-assistant-comparison.md](home-assistant-comparison.md)):
 
-- A real `systems` row, `vendor_type = 'helper'`, **owned by the Area's owner** (the blend is private
+- A real `devices` row, `vendor = 'helper'`, **owned by the Area's owner** (the blend is private
   household data — NOT ownerless), `status = 'active'`, never polled (a no-op push adapter,
   `lib/vendors/helper/adapter.ts`, so the minutely poll loop skips it). Created lazily + idempotently
   by `ensureHelperDevice(areaId)` (`lib/areas/helper.ts`), added as an `area_members` member.
 - It owns the 5 derived **blend points** (`bidi.battery/carbon-intensity` gCO₂/kWh,
   `/renewable-fraction` %, `/price` + `/price-opportunity` c/kWh, `/stored-energy` kWh) — ordinary
-  `point_info` rows (the HWS/run-tracking derived-point pattern: written to their own `agg_5m` + KV
+  `points` rows (the HWS/run-tracking derived-point pattern: written to their own `agg_5m` + KV
   latest; the 5m aggregator's `hasCurrent` guard skips them). They are **bound into the Area**
   (`area_bindings`, under `role='battery'`) so they fan out to the Area's KV latest and appear in its
   resolved point set — INERT to the compute/Sankey paths (the loader reads only power/soc/rate/energy;
@@ -508,10 +510,11 @@ area" pattern; see [home-assistant-comparison.md](home-assistant-comparison.md))
 - **Daily state** — `battery_provenance_daily` (migration `0024`): per (area, local-day) learn inputs +
   learned params + fold checkpoint ([Part 3](#battery_provenance_daily--the-incremental-seam)).
 - **Attribution rollup** — `point_readings_flow_attr_1d` (`lib/db/planetscale/schema.ts`; migration
-  `0023`). Keyed exactly like `point_readings_flow_1d` `(area_id, day, source_path, load_path)` and
-  carrying **energy too**, plus `emissions_g` / `renewable_kwh` / `cost_c` (nullable — null = intensity
-  unknown), `estimated_kwh`, `finalized_at`. So `flow_1d` is a strict **subset** of this — the design
-  intent is a later cutover (repoint the Sankey read, drop `flow_1d`).
+  `0023`). Keyed `(area_id, day, source_path, load_path)` and carrying **energy too**, plus
+  `emissions_g` / `renewable_kwh` / `cost_c` (nullable — null = intensity unknown), `estimated_kwh`,
+  `finalized_at`. It was designed as a strict **superset** of the energy-only `point_readings_flow_1d`
+  precisely so it could replace it — that cutover has since happened: `flow_1d` is retired and this is
+  now the sole daily flow matrix ([energy-flow-matrix.md](energy-flow-matrix.md) §Storage).
 
 ### Compute pipeline
 
@@ -569,20 +572,30 @@ and are worth knowing:
   `bidi.grid` power series the fold trapezoid-integrates. Same physical register, different
   integration — close, but not exactly reconcilable.
 
-See [../plans/run-period-provenance.md](../plans/run-period-provenance.md), including the warning
+See [../plans/completed/run-period-provenance.md](../plans/completed/run-period-provenance.md), including the warning
 about regenerating across a detector re-point.
 
 ### Serving
 
-`GET /api/energy-flow-matrix?systemId=&start=&end=&source=legacy|modern`
-(`app/api/energy-flow-matrix/route.ts`):
+`GET /api/history?include=sankey` (`app/api/history/route.ts`) — one endpoint for every window, and
+the same one the energy-only Sankey uses. The attributed matrices arrive as `attributedFlow`
+alongside the energy leg:
 
-- `source=legacy` (default) → `flow_1d`, energy only — today's Sankey, unchanged.
-- `source=modern` → `flow_attr_1d`, the **same raw per-day per-edge** matrices PLUS the metric legs
-  (emissions/renewable/cost/estimated), all additive over days. The client draws the Sankey from the
-  energy slice and derives the per-load **period summary** ("EV: $1.78, 98 % renewable, 29 g/kWh")
-  from the same rows — no second fetch, no separate endpoint. The `source` param is the eventual
-  `flow_1d → flow_attr_1d` cutover switch.
+- **1d and longer** — read from `flow_attr_1d` via `readAttributedDailyMatrices`
+  (`lib/aggregation/flow-attr-read.ts`): the **same raw per-day per-edge** matrices as the energy
+  Sankey, PLUS the metric legs (emissions/renewable/cost/estimated), all additive over days.
+- **Sub-daily** — the fold runs on the fly (`lib/history/build-attributed-flow-matrix.ts`) and
+  degrades gracefully via `attributedFlowOmittedReason`, so a failure here never blocks the
+  energy-only Sankey.
+
+Either way the client draws the Sankey from the energy slice and derives the per-load **period
+summary** ("EV: $1.78, 98 % renewable, 29 g/kWh") from the same rows — no second fetch, no separate
+endpoint.
+
+*(History: this was originally a standalone `GET /api/energy-flow-matrix` with a
+`source=legacy|modern` switch, where `legacy` meant the energy-only `flow_1d`. That cutover completed
+— `flow_1d` and the standalone route are both retired — so there is no `source` param and no legacy
+leg any more.)*
 
 ### Opportunity cost & the export tariff (config detail)
 
@@ -638,23 +651,23 @@ The off-grid `generatorSource` triple and the `exportTariff` live on the battery
 
 ### Operations
 
-- **0. Handle → areaId** — `GET /api/areas/by-handle/{handle}` → `{ areaId, systemId, displayName }`.
+- **0. Handle → areaId** — `GET /api/v4/areas/by-handle/{handle}` → `{ areaId, systemId, displayName }`.
   The recompute / provenance-summary endpoints are keyed on the Area **UUID**, but a human/runbook
   starts from the integer handle (e.g. `8`, `1000002`). Every ops session begins here.
 - **Activate / reprice an Area via API** (the recommended path — no direct DB access) — owner/admin
   (or a `CRON_SECRET` bearer, see below), keyed on the `{areaId}` from step 0:
-  1. `PUT /api/areas/{areaId}/bindings` — the role→point bindings (battery power/soc/charge+discharge
+  1. `PUT /api/v4/areas/{areaId}/bindings` — the role→point bindings (battery power/soc/charge+discharge
      energy, solar, load; for an off-grid site also `bidi.grid` = the generator, `transform:null` to
      inherit its `i` sign flip).
-  2. `PATCH /api/admin/systems/{batterySystemId}/config` — set `batteryProvenance.generatorSource`
+  2. `PATCH /api/admin/devices/{batteryDeviceHandle}/config` — set `batteryProvenance.generatorSource`
      `{emissionsIntensity, pricePerKwh, renewableFraction}` (send the WHOLE config; PATCH **replaces**
      the blob). For an on-grid site with feed-in, set `batteryProvenance.exportTariff` here too (e.g.
      `{mode:"amber"}`).
-  3. `POST /api/areas/{areaId}/recompute-provenance` — bounded-batch materialise: learns params on the
+  3. `POST /api/v4/areas/{areaId}/recompute-provenance` — bounded-batch materialise: learns params on the
      first batch, then recomputes blend + rollup, ensuring the helper device + points on demand. Loop
      on the returned `nextCursor` until `done` (body `{start?,end?,last?,cursor?,limit?}`, same
      semantics as `recompute-flow`).
-- **4. Verify** — `GET /api/areas/{areaId}/provenance-summary?start=&end=` (or `last=Nd`; defaults to
+- **4. Verify** — `GET /api/v4/areas/{areaId}/provenance-summary?start=&end=` (or `last=Nd`; defaults to
   full history) returns, over the window:
   - `sources[]` — per-source intensities `{sourcePath, label, energyKwh, kgCo2, avgGramsPerKwh,
 avgCentsPerKwh, pctRenewable, pctEstimated}`. Confirms a reprice landed (e.g. an off-grid
@@ -717,6 +730,6 @@ standing per-day feed-fault detector. Findings + plan:
 - Prod driver + learn: `lib/db/planetscale/battery-provenance-pg.ts`,
   `lib/db/planetscale/battery-provenance-daily-pg.ts` (`learnAllForHandle`); tables + migrations
   `0023`/`0024` in `lib/db/planetscale/schema.ts` / `drizzle-planetscale/`.
-- Serving: `app/api/energy-flow-matrix/route.ts` (`source=modern`),
-  `lib/aggregation/flow-node-meta.ts`.
+- Serving: `app/api/history/route.ts` (`?include=sankey`), `lib/aggregation/flow-attr-read.ts`,
+  `lib/history/build-attributed-flow-matrix.ts`, `lib/aggregation/flow-node-meta.ts`.
 - Harness / ops: `scripts/replay-battery-provenance.ts`, `scripts/backfill-battery-provenance.ts`.

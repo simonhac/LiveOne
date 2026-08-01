@@ -1,6 +1,7 @@
 /**
  * Stable, vendor-derived point IDENTITY — the Home Assistant `unique_id` analog, distinct from the
- * renameable `(system_id, index)` ADDRESS. See docs/plans/identity-address-split-and-labels.md (Part 1).
+ * renameable `(system_id, index)` ADDRESS. Config-v4 went further than the split that motivated this:
+ * the positional address is gone entirely and `points.id` (this uid) IS the identity.
  *
  * `derivePointUid` is a deterministic UUIDv5 over `(vendor_type, vendor_site_id, physical_path_tail)`,
  * so re-onboarding the same physical point (e.g. a vehicle re-added, a vendor swap that preserves the

@@ -51,12 +51,12 @@ Clerk; this is **not** moved to PG. Net: the engine exposes exactly two inbound 
 
 1. **Split `lib/api-auth.ts`** into Clerk-auth (web) vs secret/signature-auth (engine) — the QStash
    receiver already uses signature auth. _(Vendor-creds-off-Clerk was considered and **dropped** —
-   creds stay in Clerk. `SystemsManager.getSystemByUsernameAndAlias`'s `clerkClient()` username→owner
-   lookup is a web-only concern — keep it out of the engine.)_
+   creds stay in Clerk. The `clerkClient()` username→owner lookup in the device registry
+   (`lib/registry/device-config.ts`) is a web-only concern — keep it out of the engine.)_
 2. **Extract `pollAllSystems()` / daily aggregation / the receiver handler** out of `NextRequest`/SSE
    route handlers into host-agnostic `async` functions (so they run under a Next route _or_ a worker).
-3. **Stop assuming cross-service cache coherence** — `SystemsManager`/`PointManager` 60s caches and the
-   `global`-memoised DB pools are fine per-process; the store is the source of truth.
+3. **Stop assuming cross-service cache coherence** — the `DeviceConfigRegistry` / `PointManager` 60s
+   caches and the `global`-memoised DB pools are fine per-process; the store is the source of truth.
 
 ## 5. Deployment shape
 
@@ -67,6 +67,14 @@ two Vercel projects from one repo (keeps the cron/serverless model); engine-as-w
 a later option if serverless limits bite. The `OBSERVATIONS_QSTASH_RECEIVER_URL` override already
 supports re-pointing the receiver to the engine domain. **Sequence the deploy split AFTER the store is
 on PG** — the decouplings above land incrementally now; the split is then mechanical.
+
+**Partly started, which is worth knowing before you plan the rest.** A monorepo and a Fly host both
+already exist: `packages/usher` is a deployed Fly app (`liveone-flyhub`) that fronts LAN-only push
+devices and reaches the app through `POST /api/gush`, and `packages/protocol` is a first shared
+package. So "move the engine to Fly" is no longer a greenfield decision — the host, the deploy path
+and the inbound contract are proven, and what remains is moving the **pull** vendors' polling there.
+That migration is planned in detail, including an adversarial "never drop a poll" bug register, in
+[`../plans/live-dashboard-roadmap.md`](../plans/live-dashboard-roadmap.md) Phase 4.
 
 ---
 

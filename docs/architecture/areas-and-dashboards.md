@@ -6,11 +6,11 @@
 > authoritative — never hand-rolled SQL, never `drizzle-kit push`).
 >
 > **Config-v4 supersedes this doc on design decisions.** Where the two disagree,
-> [`../plans/config-v4-clean-sheet.md`](../plans/config-v4-clean-sheet.md) wins; three decisions this
+> [`../plans/completed/config-v4-clean-sheet.md`](../plans/completed/config-v4-clean-sheet.md) wins; three decisions this
 > doc used to assert have been **overturned** and are recorded as such in §7. This describes the v4
 > model as designed and delivered; config-v4 **completed 2026-08-01**, so everything below is live. For
 > the record of how it was built and the traps it taught, see
-> [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
+> [`../plans/completed/config-v4-execution-plan.md`](../plans/completed/config-v4-execution-plan.md).
 
 ## 1. The three layers
 
@@ -175,9 +175,11 @@ These survived the v3→v4 transition and still govern the renderer.
   pipeline is keyed on logical paths (`source.solar*`, `load`, `bidi.battery`, `bidi.grid`), so any
   area with both sources and loads qualifies. The renderer is the authority: when generation or load
   is missing, the flow selector returns null and the card renders nothing.
-- **Resolver changes are gated by parity assertions.** Every change that touches point resolution
-  asserts the per-area resolved point set is byte-identical pre/post. This caught real defects
-  through three waves of composite retirement and the cutover itself.
+- **Resolver changes are checked by point-set parity.** Every change that touches point resolution
+  should assert the per-area resolved point set is byte-identical pre/post. This caught real defects
+  through three waves of composite retirement and the cutover itself — but ⚠️ **it has only ever been
+  done by hand.** No harness or test backs it, so the practice is currently a convention, not a gate;
+  see [`../plans/area-point-set-parity-harness.md`](../plans/area-point-set-parity-harness.md).
 
 ## 7. Decisions this doc used to assert — now overturned
 
@@ -196,14 +198,19 @@ Recorded explicitly, because they were stated confidently here and people rememb
 
 - **HA export bridge (still open).** Export the semantic layer — areas + bindings + role
   `device_class` / `state_class` / `unit` metadata — as HA-consumable config. Read-only over the
-  stable semantic layer, and `GET /api/v4/export` is most of the payload already. See
+  stable semantic layer, so it is additive: the role registry (`lib/roles/registry.ts`) already
+  carries the metadata for exactly this purpose. ⚠️ **No export endpoint exists yet** — a
+  `GET /api/v4/export` is the proposed shape, not a route you can call today. See
   [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md) #9 for the more ambitious version, which
   pushes recomputed history _into_ an HA instance rather than just describing config.
-- **Config-v4 Phases 12–14** finish the model: drop `systems` / `point_info` (`roles`, `user_systems`
-  and `area_devices` already went in migrations 0044–0046), kill the
-  handle, collapse the two dashboard shapes, build the v4 editor and the remaining mutation routes.
-  Tracked in [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
+- **The v4 dashboard configurator** — the largest remaining capability gap. The model supports
+  adding, removing, reordering and hiding cards; there is **no UI** for it, only a hand-written
+  whole-doc `PUT`. See [`../plans/v4-dashboard-configurator.md`](../plans/v4-dashboard-configurator.md).
 - **Point-level share narrowing** (§5) — the one remaining access tightening.
+- **Nobody consumes the resolver yet.** `GET /api/v4/areas/{id}/resolution` serves the deterministic
+  per-slot resolution described in §3, but the battery-provenance fold still picks its inputs by
+  `ordinal`, so reordering sources in the Bindings tab changes the report while the fold consumes a
+  different point. See [`../plans/fold-on-the-resolver.md`](../plans/fold-on-the-resolver.md).
 - **Twelve ranked enhancements** measured against Home Assistant:
   [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md).
 
@@ -215,15 +222,15 @@ multi-area keystone, composition-first dashboards, the unified tile model, the g
 was documented phase-by-phase in earlier revisions of this file. That narrative is superseded and
 lives in git; the surviving rationale has been folded into the sections above. The config-v4 story
 from the clean sheet onward is in
-[`../plans/config-v4-clean-sheet.md`](../plans/config-v4-clean-sheet.md) and
-[`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md).
+[`../plans/completed/config-v4-clean-sheet.md`](../plans/completed/config-v4-clean-sheet.md) and
+[`../plans/completed/config-v4-execution-plan.md`](../plans/completed/config-v4-execution-plan.md).
 
 ## Related docs
 
 - [`home-assistant-comparison.md`](home-assistant-comparison.md) — the scorecard against HA.
 - [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md) — twelve ranked enhancements.
-- [`points.md`](points.md) — the point model, paths, and identity.
-- [`data-model.md`](data-model.md) — data semantics & invariants.
+- [`data-model.md`](data-model.md) — data semantics & invariants, including point paths, metric
+  types and identity.
 - [`energy-flow-matrix.md`](energy-flow-matrix.md) — the directional Sankey matrix.
 - [`battery-provenance.md`](battery-provenance.md) — the attributed metric legs.
 - [`authentication.md`](authentication.md) — Clerk, roles, API auth functions.

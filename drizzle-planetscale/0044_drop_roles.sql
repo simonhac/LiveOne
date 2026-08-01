@@ -25,7 +25,7 @@
 -- migrations — undo is a new forward migration), but `roles` is fully rederivable from
 -- lib/roles/registry.ts, and prod PITR + the 2-hourly R2 pg_dump cover recovery either way.
 -- Preconditions: the slice-G code is merged and DEPLOYED first (this is a [D] slice), then prod
--- `sydney`, then `liveone-dev`. See docs/plans/config-v4-execution-plan.md § Phase 12 slice G.
+-- `sydney`, then `liveone-dev`. See the config-v4 epic record § Phase 12 slice G.
 
 DO $$
 DECLARE

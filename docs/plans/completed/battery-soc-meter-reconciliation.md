@@ -1,12 +1,25 @@
 # Battery SoC ↔ meter reconciliation — findings & fold-model improvement plan
 
-**Status: IMPLEMENTED on this branch (2026-07-15), all phases. P1+P2 (fold three-term loss model +
-recal snaps + learner exclusion) validated on the dev mirror: Daylesford sync churn −44%, recal=2 on
-2026-06-25, Kinkora `--no-soc` byte-identical; full-history learner fit η_c 0.944 / idle 0.454 kWh/day
-≈ the SQL ground truth 0.940 / 0.473. P3 = monitor check 5c (`batprov_soc_meter_divergence`,
-`lib/battery-provenance/soc-meter-check.ts`). P4 = closed out in
-`docs/architecture/battery-provenance.md`. Not deployed — needs merge → deploy → per-area
-recompute-provenance (first batch learns + persists η_c/idle).**
+> **Status: SHIPPED — historical record.** All phases implemented 2026-07-15 and **merged as #169 on
+> 2026-07-14** ("Battery provenance: three-term loss model"). The "Not deployed" line this doc carried
+> until 2026-08-01 was stale from the moment the branch merged.
+>
+> P1+P2 (fold three-term loss model + recal snaps + learner exclusion) were validated on the dev
+> mirror: Daylesford sync churn −44%, recal=2 on 2026-06-25, Kinkora `--no-soc` byte-identical;
+> full-history learner fit η_c 0.944 / idle 0.454 kWh/day ≈ the SQL ground truth 0.940 / 0.473.
+> P3 shipped as monitor check `batprov_soc_meter_divergence`
+> (`lib/battery-provenance/soc-meter-check.ts`, wired in
+> `app/api/cron/monitor-observations/route.ts`). P4 closed out in
+> `docs/architecture/battery-provenance.md`.
+>
+> The one step not verifiable from the repo is the post-deploy activation — the per-area
+> `recompute-provenance` whose first batch learns and persists η_c/idle. It is described in
+> "Validation gates" below; treat that section as the activation record, not as pending work.
+>
+> The whole doc is worth keeping for one reason beyond the model: it is the **investigation that
+> disproved a feared data defect**. The PR-#168 caveat was "Daylesford's SoC and its charge/discharge
+> registers disagree" — the reconciliation showed they don't, and the apparent disagreement was
+> η_c + idle drain + BMS recal snaps. That is the method to reuse before assuming a meter is lying.
 
 ## Why
 
@@ -128,4 +141,6 @@ feed failures — the thing the original caveat feared. Recal snaps surface here
 
 - Any vendor/collector change (the Selectronic feed is healthy — that was the point of the investigation).
 - Reserve-floor fixed-anchoring (documented in P4, scheduled separately).
-- The info-producers/consumers resolver (`docs/plans/info-producers-consumers.md`) — unchanged next initiative.
+- The info-producers/consumers resolver — at the time, the next initiative. It was superseded by
+  config-v4 §4.3, which shipped the resolver but wired no consumer to it; the live remainder is
+  [../fold-on-the-resolver.md](../fold-on-the-resolver.md).

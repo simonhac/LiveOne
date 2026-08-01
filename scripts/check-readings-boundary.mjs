@@ -12,7 +12,7 @@
  * `prebuild:local` (mirrors scripts/check-route-slugs.mjs) so it gates both `next build` and
  * `build:local`; unit-tested via scripts/__tests__/check-readings-boundary.test.ts.
  *
- * See docs/plans/config-v4-execution-plan.md §3.
+ * See the config-v4 epic record §3.
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve, relative, sep } from "node:path";

@@ -1,13 +1,16 @@
 # Load Calculations
 
-> **Status:** stale — last verified 2026-06-10. Scoped to the **browser chart** path
-> (`lib/site-data-processor.ts`); it does not describe the flow/Sankey pipeline. Two known drifts:
-> the "Three Cases" below still have a master `load` and its children coexisting as loads, which the
-> `load` hierarchy replaced (see the Directional model in
-> [energy-flow-matrix.md](energy-flow-matrix.md)), and the Data Paths section still uses the
-> pre-`source.solar` `generation.*` naming. Needs its own pass.
+> **Status:** current — last verified 2026-08-01. Scoped to the "Rest of House" complement; it does
+> not describe the flow/Sankey pipeline as a whole (that is
+> [energy-flow-matrix.md](energy-flow-matrix.md)).
+>
+> ⚠️ **This algorithm has two implementations that must agree.** `calculateRestOfHouse` in
+> `lib/site-data-processor.ts` is the browser chart path; `lib/aggregation/flow-series.ts` carries a
+> deliberate server-side port of the same three cases, feeding the Sankey and the materialized daily
+> matrix. Change one and you must change the other, or a chart and its Sankey will disagree about the
+> same day.
 
-This document describes how load calculations work in the site data processor, particularly the "Rest of House" calculation.
+This document describes how the "Rest of House" load is derived.
 
 ## Overview
 
@@ -16,6 +19,19 @@ The site data processor (`lib/site-data-processor.ts`) processes power data from
 ## Rest of House Calculation
 
 The "Rest of House" value represents electrical load that is not directly measured by individual load sensors. The calculation method depends on what data is available from the system.
+
+### The master load is a budget, not a sink
+
+The key rule, and the one that is easy to get wrong: when a master `load` point has children
+(`load.hws`, `load.ev`, …), the master is **not** itself a load to be displayed alongside them. It is
+the site TOTAL — a *budget* — and the things that consume it are the children **plus exactly one
+complement**, `load.rest-of-house`. Emitting both the master and its children double-counts every
+metered circuit against the total.
+
+Sometimes the complement is **measured** rather than synthesised: Sigenergy's `loadPower` excludes
+its own AC charger, so it *is* the complement. Either way there is exactly one. The full statement of
+this rule, including the parallel `source.solar` leaf/residual hierarchy, lives in
+[energy-flow-matrix.md](energy-flow-matrix.md) §Directional model.
 
 ### Three Cases
 
@@ -31,10 +47,13 @@ Rest of House = Master Load - Sum(Child Loads)
 
 **Example**:
 
-- Master Load: 5 kW
+- Master Load (the budget): 5 kW
 - Kitchen (load.kitchen): 2 kW
 - Living Room (load.living_room): 1.5 kW
 - Rest of House: 5 - (2 + 1.5) = 1.5 kW
+
+The sinks here are Kitchen, Living Room and Rest of House — **not** the 5 kW master, which is spent
+in full by the three of them.
 
 **Use Case**: Systems with a whole-house energy monitor plus individual circuit monitors.
 
@@ -93,12 +112,17 @@ The calculation is performed in `lib/site-data-processor.ts`:
 
 ### Data Paths
 
-The system identifies different types of measurements by their `path` attribute:
+The system identifies different types of measurements by their logical path stem:
 
-- `"load"` - Master/whole-house load
-- `"load.xxx"` - Individual load circuits (e.g., "load.kitchen", "load.heat_pump")
-- `"generation"` or `"generation.xxx"` - Generation sources (e.g., solar panels)
-- `"bidi.battery"` - Bidirectional battery (charge/discharge)
+- `"load"` — master / whole-house load (the budget)
+- `"load.xxx"` — individual load circuits (e.g. `load.hws`, `load.ev`)
+- `"load.rest-of-house"` — the complement; exactly one, synthesised or measured
+- `"source.solar"`, `"source.solar.xxx"` — generation sources; the leaves are preferred over the
+  bare total, with a synthetic `source.solar.residual` for any unmetered remainder
+- `"bidi.battery"` — bidirectional battery (negative = charge, positive = discharge)
+- `"bidi.grid"` — bidirectional grid (negative = export, positive = import)
+
+The stem grammar itself is documented in [data-model.md](data-model.md) §Points: paths and metrics.
 
 ### Null Handling
 

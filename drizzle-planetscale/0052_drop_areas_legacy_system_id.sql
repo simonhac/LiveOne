@@ -100,7 +100,8 @@
 -- an explicit failure rather than a confusing no-op. The journal is what prevents a second run. To
 -- re-check a branch, run the gate predicates by hand as plain `SELECT`s.
 --
--- See docs/plans/config-v4-phase13-prs.md § "PR 6".
+-- See the config-v4 epic record § Phase 13 (its per-PR brief was deleted at closeout; the PR bodies
+-- carry the measurements).
 
 -- ── Gates. All of them, before anything is touched. ──────────────────────────────────────────
 DO $$

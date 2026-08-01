@@ -1,8 +1,17 @@
 # Live Dashboard: SSR-first load, then engine → Fly + SSE
 
-> Status: proposed — design doc / roadmap. Author-reviewed 2026-07-21.
+> Status: proposed — design doc / roadmap. Author-reviewed 2026-07-21; moved out of
+> `docs/architecture/` on 2026-08-01, because it describes what's next rather than what is.
 > Related: [`docs/performance/dashboard-fetch-waterfall.md`](../performance/dashboard-fetch-waterfall.md)
-> (the measurements this is built on), [`docs/architecture/engine-web-separation.md`](./engine-web-separation.md).
+> (the measurements this is built on),
+> [`docs/architecture/engine-web-separation.md`](../architecture/engine-web-separation.md).
+>
+> ⚠️ **Two things moved under this doc after it was written; re-measure before acting on §1.**
+> (a) **§1.1 has partly shipped** — `app/dashboard/[...slug]/page.tsx` now calls `listReadableAreas`
+> server-side on the authed path too, so the chrome stage this doc measures may no longer be on the
+> critical path. (b) The **v3 descriptor is gone** (config-v4 Phase 14, migration 0054): the shared
+> path resolves `dashboards.doc`, the single v4 node tree, so wherever this doc says "descriptor",
+> read "the v4 doc". The waterfall numbers themselves predate both.
 
 ## Context & motivation
 
@@ -17,7 +26,7 @@ Italy and from an AWS Lambda **in Sydney (`ap-southeast-2`)**. What we learned:
 - **~700 ms of the load is client boot** (navigation → first fetch: JS bundle + hydrate) before
   anything data-driven happens — for an AU user that's ~2/3 of a ~1 s settle.
 - **The authed page does 6 requests in 2 stages**; the data stage waits client-side for the "chrome"
-  stage (`/api/dashboards`, `/api/user/preferences`, `/api/areas/readable`) just to learn the layout.
+  stage (`/api/v4/dashboards`, `/api/user/preferences`, the readable-areas list) just to learn the layout.
   The **shared (`?access=`) view already resolves that structure server-side** and skips those three
   requests — proof the fix works.
 - **`/api/history` (~198 ms server: `fetch` 82 + `attr` 66) is the real server tail** once network is
@@ -54,12 +63,12 @@ arrival (not after a ~700 ms boot + three client round-trips), and cards arrive 
 
 ### 1.1 Server-render the shell (extend the shared-path resolution to owners)
 
-The shared/grantee path in `app/dashboard/[...slug]/page.tsx` already resolves the v3 descriptor +
+The shared/grantee path in `app/dashboard/[...slug]/page.tsx` already resolves the v4 dashboard doc +
 referenced Areas **server-side** and ships structure in the initial HTML (that's why the shared view
 had ~226 ms boot and zero chrome requests). **Extend that same server resolution to the authed/owner
 path** and render card skeletons server-side.
 
-- **Removes from the critical path:** `/api/dashboards`, `/api/user/preferences`, `/api/areas/readable`.
+- **Removes from the critical path:** `/api/v4/dashboards`, `/api/user/preferences`, the readable-areas list.
 - **Effect:** structure at first paint; **collapses 2 stages → 1** (the data fetches no longer wait
   client-side for the chrome stage).
 
@@ -136,7 +145,7 @@ flowchart TB
 
   subgraph Vercel["Vercel — WEB (syd1)"]
     receiver["POST /api/observations/receive<br/>SINGLE WRITER · idempotent"]
-    web["SSR/RSC + REST reads<br/>/api/data · /api/history · /api/dashboards"]
+    web["SSR/RSC + REST reads<br/>/api/data · /api/history · /api/v4/dashboards"]
     tok["/api/sse-token<br/>(= requireDashboardAccess)"]
   end
 
@@ -311,7 +320,7 @@ Move the _trigger_ off Vercel Cron and add a _disk_; freeze the transport contra
 | **BUG-6**  | Total-publish-failure is swallowed → the spool never triggers when both durable writes fail.                                                                                                   | publish seam (`publishPoll`/`/api/gush`)                                       | High              | 2b — surface a retryable 503 on total-publish failure (without failing the poll itself).                                           |
 | **BUG-7**  | Persistent receiver failure → DLQ with **no `failureCallback`**; the `published` outbox row is GC'd after 7 days → manual-only recovery / permanent loss.                                      | outbox GC + QStash DLQ                                                         | High              | 2c/P4 — `failureCallback` re-inserts to outbox; GC only after presence in `point_readings` confirmed.                              |
 | **BUG-8**  | Disk-full / spool-file corruption **silently disables durability** (blackbox no-ops on full disk; a poison file can infinite-retry or block the drain).                                        | Phase-4 poller volume                                                          | High              | P4 — full/non-writable `dataDir` = health-critical (page); quarantine unparseable files.                                           |
-| **BUG-9**  | Dedupe-key collisions: sub-second reads / NTP backward step / `pointId` mis-derivation (`obs.debug.reference` drift) silently drop or overwrite **real** readings via the unique key.          | key `(system_id, point_id, measurement_time)`; source manifest ↔ `point_info` | High              | 2e — device read-instant at ≥ finest granularity + reject non-monotonic; shared point-metadata module/codegen (not hand-mirrored). |
+| **BUG-9**  | Dedupe-key collisions: sub-second reads / NTP backward step / `pointId` mis-derivation (`obs.debug.reference` drift) silently drop or overwrite **real** readings via the unique key.          | key `(point_rid, measurement_time)`; source manifest ↔ `points` | High              | 2e — device read-instant at ≥ finest granularity + reject non-monotonic; shared point-metadata module/codegen (not hand-mirrored). |
 | **BUG-10** | `buildPollMessages` returning `[]` on a bug is an **invisible drop** — the blackbox journals post-build, so there's no trace.                                                                  | `lib/observations/poll-collector.ts`                                           | Medium            | P4 — journal pre-build (collector boundary) or assert built-count == collected-count.                                              |
 | **SEC-1**  | SSE stream token scoping must mirror `requireDashboardAccess` **exactly**; a bug leaks another system's live values to a share-token viewer.                                                   | `/api/sse-token` + `liveone-sse`                                               | **BLOCKING (P3)** | Short TTL + handle-scoping + TLS; audit that a share-token JWT can never claim an out-of-dashboard handle.                         |
 
@@ -360,7 +369,7 @@ keying-independent). Reconcile against config-v4 before building Phase 3+.
 - **Sizing `liveone-sse`.** Expected concurrent active-tab count + per-system update cadence (drives
   machine count and whether ref-counted SUBSCRIBE is enough).
 - **Point-metadata drift.** Prefer a shared point-metadata module imported by both the poller Source and
-  the server (or codegen) over hand-mirroring the manifest against `point_info` — a silent mis-map defeats
+  the server (or codegen) over hand-mirroring the manifest against `points` — a silent mis-map defeats
   the dedupe key (BUG-9).
 
 ## Appendix — measurements

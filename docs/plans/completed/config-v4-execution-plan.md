@@ -9,10 +9,10 @@
 >
 > The **rationale** is [config-v4-clean-sheet.md](config-v4-clean-sheet.md), which remains the canonical
 > design doc — read it for the model itself. The **invariants that outlive the migration** were folded
-> into [../architecture/data-model.md](../architecture/data-model.md) — the seam rule, the TypeID
+> into [../architecture/data-model.md](../../architecture/data-model.md) — the seam rule, the TypeID
 > scheme, eager areas, fixed-offset days, the v4 document model and its security invariant, and the
 > permanent-shim list — with the areas/dashboards model itself in
-> [../architecture/areas-and-dashboards.md](../architecture/areas-and-dashboards.md). This file does not
+> [../architecture/areas-and-dashboards.md](../../architecture/areas-and-dashboards.md). This file does not
 > restate them.
 >
 > The per-phase narrative docs (phase-7 rehearsal harness, phase-8 cutover, the phase-14 per-PR brief)
@@ -113,7 +113,7 @@ Twenty-two stages ran as parallel worktrees against one orchestrator, in seven w
 
 ## 4. What survives, and where
 
-**The invariants and locked decisions are in [../architecture/data-model.md](../architecture/data-model.md)** —
+**The invariants and locked decisions are in [../architecture/data-model.md](../../architecture/data-model.md)** —
 the seam rule, the TypeID scheme, eager areas, fixed-offset days, the v4 document model and its security
 invariant, and the permanent-shim list. They were moved there deliberately: they are properties of the
 system now, not of the migration that produced them, and nobody reads a plan doc to learn how the system

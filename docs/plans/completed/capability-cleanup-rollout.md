@@ -1,8 +1,11 @@
 # Capability-cleanup — PROD rollout runbook
 
-> Historical rollout record. The capability cleanup was applied to prod in July 2026; its one-shot
-> data-hygiene scripts have since been retired. The steps below document the rollout that occurred,
-> not commands that should be run again.
+> **Status: DONE — historical rollout record.** The capability cleanup was applied to prod in July
+> 2026; its one-shot data-hygiene scripts have since been retired. The steps below document the
+> rollout that occurred, not commands that should be run again. Its lasting value is the **shape** of
+> a safe prod rollout here — short-TTL role, dry-run-by-default scripts that snapshot affected rows,
+> stop reading a column in deployed code *before* dropping it — which is why it stays readable rather
+> than being left to git.
 >
 > **Golden rules** (from `CLAUDE.md`): PG migrations are manual and must be applied to prod **before**
 > the dependent code deploys. `pscale backup create` before any data op / drop. For a column DROP,

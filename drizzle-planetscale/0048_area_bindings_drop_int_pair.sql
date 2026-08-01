@@ -42,7 +42,7 @@
 --
 -- Preconditions: the slice-E PR 2b code is merged and DEPLOYED first (every writer must already have
 -- stopped naming the pair), then prod `sydney`, then `liveone-dev`. See
--- docs/plans/config-v4-execution-plan.md § Phase 12 slice E.
+-- the config-v4 epic record § Phase 12 slice E.
 
 DO $$
 DECLARE

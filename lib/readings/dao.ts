@@ -1,7 +1,7 @@
 /**
  * The time-series data-access seam — UUIDs in, rids below.
  *
- * Config-v4 (docs/plans/config-v4-execution-plan.md §3): the public methods here take the `pt_…`
+ * Config-v4 (the config-v4 epic record §3): the public methods here take the `pt_…`
  * TypeID (`PointId`) and their signatures are IDENTICAL before and after the Phase-8 cutover. Today
  * (pre-cutover) each method resolves `PointId → (system_id, index)` via {@link RegistryCache} and
  * issues the composite-key SQL the hot tables use verbatim; at the cutover the SAME methods will

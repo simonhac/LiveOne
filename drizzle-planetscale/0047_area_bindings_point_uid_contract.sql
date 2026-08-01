@@ -54,7 +54,7 @@
 -- Preconditions: the slice-E PR 2a code is merged and DEPLOYED first (the readers must already be off
 -- the int pair, and the prod→dev sync's ON CONFLICT must already name `point_uid` — it names an INDEX
 -- BY ITS COLUMNS, so the manifest and this re-base move together), then prod `sydney`, then
--- `liveone-dev`. See docs/plans/config-v4-execution-plan.md § Phase 12 slice E.
+-- `liveone-dev`. See the config-v4 epic record § Phase 12 slice E.
 
 DO $$
 DECLARE

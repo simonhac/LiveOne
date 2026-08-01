@@ -4,12 +4,12 @@
 > LiveOne restated as finished config-v4). An analytical scorecard, not a spec.
 >
 > **LiveOne side** describes **config-v4 as designed and delivered**. The cutover ran 2026-07-26 and
-> Phases 0–11 have shipped and Phase 12 is under way (`roles`, `user_systems` and `area_devices`
-> dropped in migrations 0044–0046); Phases 12–14 finish the last of it (drop `systems`/`point_info`,
-> kill the integer handle, collapse the two dashboard shapes). This doc describes the **settled end
-> state** rather than tracking the migration — for what is live _today_ see
-> [config-v4-execution-plan.md](../plans/config-v4-execution-plan.md); for _why_ the model is shaped
-> this way see [config-v4-clean-sheet.md](../plans/config-v4-clean-sheet.md), which supersedes this
+> the epic **completed 2026-08-01** — all 15 phases shipped, `systems` / `point_info` /
+> `polling_status` / `roles` / `user_systems` / `area_devices` are dropped, the integer handle is a
+> compat shim, and there is one dashboard shape. So everything described below is live. For the
+> record of how it was built and what it cost see
+> [config-v4-execution-plan.md](../plans/completed/config-v4-execution-plan.md); for _why_ the model is shaped
+> this way see [config-v4-clean-sheet.md](../plans/completed/config-v4-clean-sheet.md), which supersedes this
 > doc on all design decisions. Schema truth is `lib/db/planetscale/schema.ts`.
 >
 > **Home Assistant side** re-verified against the HA developer docs, user docs and release notes
@@ -48,7 +48,7 @@ from the **runtime/storage architecture** (where we diverge because the _problem
   full at every tier; KV is a derived fast-read.
 
 The actuator caveat is narrower than it used to be: Tesla charge control ships as a real command path
-(`POST /api/systems/[id]/tesla/command` — `charge_start` / `charge_stop` / `set_charge_limit`, through
+(`POST /api/devices/[systemId]/tesla/command` — `charge_start` / `charge_stop` / `set_charge_limit`, through
 the Fleet client's signer seam). But it is _one route in the web tier_, not a command plane — no
 service registry, no uniform invocation contract, and the engine Control API in
 `engine-web-separation.md` is still unbuilt.
@@ -140,9 +140,11 @@ Real design advantages. The first two are new to this revision and are the sharp
 3. **Floors and Labels.** Floor is a strict parent of Area (devices and entities attach to areas
    only). **Labels** are the valuable one: an orthogonal many-to-many tag applicable to areas,
    devices, entities, automations, scenes, scripts and helpers, usable both as a table filter and as
-   an automation _target_. We have a single Area tier. v4 absorbed the identity half of
-   [`identity-address-split-and-labels.md`](../plans/identity-address-split-and-labels.md) and parked
-   the label half deliberately (§12.7).
+   an automation _target_. We have a single Area tier. v4 absorbed the identity half of the old
+   identity/address-split plan (deleted 2026-08-01; see
+   [`../plans/completed/config-v4-clean-sheet.md`](../plans/completed/config-v4-clean-sheet.md) §12.7)
+   and parked the label half deliberately — it is now
+   [`../plans/ha-parity-and-leapfrog.md`](../plans/ha-parity-and-leapfrog.md) #3.
 4. **A far richer semantic vocabulary.** HA has 60+ `device_class`es, four `state_class`es (including
    `measurement_angle`), `entity_category` (config / diagnostic) to demote secondary signals,
    `has_entity_name` composition so `friendly_name` is derived rather than stored,
@@ -337,15 +339,15 @@ Remaining borrowings worth considering, in rough order of value-per-risk:
 
 ## Related docs
 
-- [`../plans/config-v4-clean-sheet.md`](../plans/config-v4-clean-sheet.md) — the canonical rationale;
+- [`../plans/completed/config-v4-clean-sheet.md`](../plans/completed/config-v4-clean-sheet.md) — the canonical rationale;
   §4.1 records the non-adoption of HA's config-entry/device split, §8 the document model (with its
   explicit HA precedents), §12 the deliberate deviations.
-- [`../plans/config-v4-execution-plan.md`](../plans/config-v4-execution-plan.md) — what has landed and
-  what Phases 12–14 still finish.
+- [`../plans/completed/config-v4-execution-plan.md`](../plans/completed/config-v4-execution-plan.md) — the record of
+  the whole epic, and the follow-ups it deliberately did not close.
 - [`areas-and-dashboards.md`](areas-and-dashboards.md) — the Device→Area→Dashboard split and the
   original HA bridge table (partly overturned by the clean sheet).
-- [`points.md`](points.md) — the point model, paths, and identity.
-- [`data-model.md`](data-model.md) — data semantics & invariants.
+- [`data-model.md`](data-model.md) — data semantics & invariants, including point paths, metric
+  types and identity.
 - [`engine-web-separation.md`](engine-web-separation.md) — ingest durability (outbox), engine/web
   split, the (planned) FE→engine command pattern.
 - [`energy-flow-matrix.md`](energy-flow-matrix.md) — the directional Sankey matrix.
