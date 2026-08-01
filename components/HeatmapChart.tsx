@@ -23,8 +23,13 @@ import {
 } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
+import {
+  BLACK_SENTINEL,
+  POWER_BASELINE_W,
+  isBaselinePower,
+  normalizeHeatmapValue,
+} from "@/lib/heatmap-scale";
 import ServerErrorModal from "./ServerErrorModal";
-import { formatTimeAEST } from "@/lib/date-utils";
 import { formatTime, formatDate } from "@/lib/fe-date-format";
 import { PointInfo } from "@/lib/point/point-info";
 
@@ -181,6 +186,7 @@ export default function HeatmapChart({
     undefined,
   );
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const isBaselinePowerSeries = isBaselinePower(pointPath);
 
   // Fetch 30 days of half-hourly data for the selected point. The query carries the raw
   // payload + the computed range; the heatmap grid is derived in a useMemo below so the
@@ -227,14 +233,6 @@ export default function HeatmapChart({
       const seriesSuffix =
         PointInfo.getPreferredAggregationForMetricType(metricType);
       const url = `/api/history?interval=30m&startTime=${startTimeEncoded}&endTime=${endTimeEncoded}&systemId=${systemId}&series=${pointPath}.${seriesSuffix}`;
-      console.log("[HeatmapChart] Fetching:", url);
-      console.log(
-        "[HeatmapChart] Calculated range - Start:",
-        formatTimeAEST(fetchStartTime),
-        "End:",
-        formatTimeAEST(fetchEndTime),
-      );
-
       const response = await fetch(url, {
         credentials: "same-origin",
       });
@@ -248,9 +246,6 @@ export default function HeatmapChart({
       }
 
       const result = await response.json();
-      console.log("[HeatmapChart] Response:", result);
-      console.log("[HeatmapChart] result.data:", result.data);
-
       return { result, fetchStartTime, fetchEndTime };
     },
     staleTime: 60_000,
@@ -286,17 +281,8 @@ export default function HeatmapChart({
     const expectedSeriesPath = `${pointPath}.${seriesSuffix}`;
     const series = result.data?.find((s: any) => {
       const seriesPath = s.path || s.id?.split(".").slice(2).join(".");
-      console.log(
-        "[HeatmapChart] Checking series:",
-        s.id,
-        "path:",
-        seriesPath,
-        "looking for:",
-        expectedSeriesPath,
-      );
       return seriesPath === expectedSeriesPath;
     });
-    console.log("[HeatmapChart] Found series:", series);
 
     if (!series || !series.history) {
       console.error(
@@ -310,6 +296,13 @@ export default function HeatmapChart({
     const { firstInterval, interval, data } = series.history;
     const startTime = new Date(firstInterval).getTime();
     const intervalMs = parseInterval(interval);
+    if (intervalMs === null || intervalMs <= 0) {
+      console.error(
+        "[HeatmapChart] Unrecognised interval from /api/history:",
+        interval,
+      );
+      return null; // surfaces as the "No data found for this point" error path
+    }
 
     // Generate time labels (48 half-hour slots: 00:00, 00:30, ..., 23:30)
     const timeLabels: string[] = [];
@@ -377,7 +370,6 @@ export default function HeatmapChart({
       max = 1;
     }
 
-    console.log("[HeatmapChart] Data processed");
     return {
       data: heatmapPoints,
       min,
@@ -438,10 +430,17 @@ export default function HeatmapChart({
     };
   }, []);
 
-  // Parse interval string to milliseconds
-  function parseInterval(interval: string): number {
+  /**
+   * Parse an interval string ("30m") to milliseconds, or `null` if it is not one.
+   *
+   * Returning `null` rather than `0` matters: with `intervalMs = 0` every reading mapped to the same
+   * instant, so the entire heatmap silently collapsed into a single column and looked like a data
+   * problem rather than a parsing one. The caller turns `null` into the ordinary "no data" error
+   * path, which is visible.
+   */
+  function parseInterval(interval: string): number | null {
     const match = interval.match(/^(\d+)([smhd])$/);
-    if (!match) return 0;
+    if (!match) return null;
 
     const value = parseInt(match[1]);
     const unit = match[2];
@@ -456,36 +455,24 @@ export default function HeatmapChart({
       case "d":
         return value * 24 * 60 * 60 * 1000;
       default:
-        return 0;
+        return null;
     }
   }
 
-  // Get normalized value with special handling for load and source power metrics
+  // Palette position for a raw value — see lib/heatmap-scale.ts (unit-tested there).
   const getNormalizedValue = (
     value: number,
     min: number,
     max: number,
-  ): number => {
-    // Special case: load and source power metrics use black for 0-50W
-    if (
-      (pointPath.startsWith("load") || pointPath.startsWith("source")) &&
-      pointPath.endsWith("/power")
-    ) {
-      if (value <= 50) {
-        return -1; // Special value to indicate "use black"
-      }
-      // Map 50W+ to 0-1 range
-      return (value - 50) / Math.max(max - 50, 1);
-    }
-
-    // Default linear normalization
-    return (value - min) / Math.max(max - min, 1);
-  };
+  ): number =>
+    normalizeHeatmapValue(value, min, max, {
+      baselinePower: isBaselinePowerSeries,
+    });
 
   // Get color for a normalized value (0-1)
   const getColor = (normalizedValue: number): string => {
-    if (normalizedValue === -1) {
-      return "#111827"; // gray-900 (dashboard background) for load power 0-50W
+    if (normalizedValue === BLACK_SENTINEL) {
+      return "#111827"; // gray-900 (dashboard background) for load/source power at or below standby
     }
     const paletteConfig = HEATMAP_PALETTES[palette];
     return paletteConfig.fn(normalizedValue);
@@ -605,8 +592,8 @@ export default function HeatmapChart({
             } else {
               const normalized = getNormalizedValue(
                 dataPoint.v,
-                heatmapData?.min || 0,
-                heatmapData?.max || 1,
+                heatmapData?.min ?? 0,
+                heatmapData?.max ?? 1,
               );
               cellColor = getColor(normalized);
             }
@@ -779,8 +766,8 @@ export default function HeatmapChart({
 
           const normalized = getNormalizedValue(
             value,
-            heatmapData?.min || 0,
-            heatmapData?.max || 1,
+            heatmapData?.min ?? 0,
+            heatmapData?.max ?? 1,
           );
           return getColor(normalized);
         },
@@ -887,12 +874,8 @@ export default function HeatmapChart({
               width: "200px",
               background: (() => {
                 // Special gradient for load and source power: gray-900 baseline (0-50W) then color gradient
-                if (
-                  (pointPath.startsWith("load") ||
-                    pointPath.startsWith("source")) &&
-                  pointPath.endsWith("/power")
-                ) {
-                  const baselineThreshold = 50; // watts
+                if (isBaselinePowerSeries) {
+                  const baselineThreshold = POWER_BASELINE_W;
                   const range = heatmapData.max - heatmapData.min;
                   const baselinePercentage = Math.min(
                     ((baselineThreshold - heatmapData.min) / range) * 100,

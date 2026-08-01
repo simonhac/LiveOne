@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — Stages 0–2 done; Stage 3a/3b/3c shipped 2026-08-01. Next: 3d (DST bucketing).**
-> Written 2026-08-01.
+> **Status: PLAN — Stages 0–2 done; Stage 3a/3b/3c/3e/3f shipped 2026-08-01. Only 3d (DST
+> bucketing) remains in Stage 3.** Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -381,10 +381,10 @@ migration.
 
 | # | Chart | Defect | Proposed |
 |---|---|---|---|
-| 8 | Heatmap | **`console.log` spam in production** — `:221,222,242,243,371` log the URL, the *entire* API response (30 days × 48 slots), and `:280` logs **once per series** inside the `find` predicate. | **Fix** |
+| 8 | Heatmap | ✅ **fixed 3f** — **`console.log` spam in production** — `:221,222,242,243,371` log the URL, the *entire* API response (30 days × 48 slots), and `:280` logs **once per series** inside the `find` predicate. | **Fix** |
 | 9 | Heatmap | ✅ **decided** — bucket by fixed offset. **DST silently loses an hour, twice a year.** Time slots are a hardcoded 48 × half-hour grid (`:306-310`), but a local day has 46 or 50 slots across a DST boundary. On fall-back, two distinct UTC intervals produce the same `timeKey` and `:337` overwrites — one hour of data vanishes. On spring-forward, 02:00/02:30 never exist and render as a fake no-data hole. | **Fix** — see 3d |
-| 10 | Heatmap | ✅ **decided** — true min–max. **Narrow-range series render washed out.** `getNormalizedValue` divides by `Math.max(max - min, 1)` (`:473`). A divide-by-zero guard, but it silently distorts every series whose range is < 1 — a temperature sitting 40.1–40.5 only ever reaches 0.4 of the palette. Common for SoC, temperature, price. | **Fix** |
-| 11 | Heatmap | ✅ **decided** — fixed with #10. **The colour legend lies for those same series.** The gradient always spans `getColor(0)`→`getColor(1)` and is labelled `min`→`max` (`:858-912`), but per #10 the cells never reach 1. Same root cause, separate visible symptom — worth listing so the fix is verified against both. | **Fix with #10** |
+| 10 | Heatmap | ✅ **fixed 3e** — true min–max. **Narrow-range series render washed out.** `getNormalizedValue` divides by `Math.max(max - min, 1)` (`:473`). A divide-by-zero guard, but it silently distorts every series whose range is < 1 — a temperature sitting 40.1–40.5 only ever reaches 0.4 of the palette. Common for SoC, temperature, price. | **Fix** |
+| 11 | Heatmap | ✅ **fixed 3e** — fixed with #10. **The colour legend lies for those same series.** The gradient always spans `getColor(0)`→`getColor(1)` and is labelled `min`→`max` (`:858-912`), but per #10 the cells never reach 1. Same root cause, separate visible symptom — worth listing so the fix is verified against both. | **Fix with #10** |
 | 12 | Heatmap | `parseInterval` returns **0** for an unrecognised interval (`:435,450`). `intervalMs = 0` collapses every reading onto one timestamp and the heatmap silently becomes a single column. Should surface, not guess. | **Fix** |
 | 13 | Heatmap | `heatmapData?.min \|\| 0` / `?.max \|\| 1` (`:599,600,773,774`) — `\|\|` where `??` is meant. Harmless for today's values but a latent trap when a legitimate `0` appears. | **Fix** (trivial) |
 | 14 | Heatmap | Tooltip hiding is implemented **twice**: a container `mousemove` listener (`:486-524`) and the `external` tooltip's own `isInChartArea` check (`:566-577`) test the same condition. Both vanish in the port. | **Won't fix** — deleted by Stage 5 |
@@ -535,7 +535,18 @@ relative to standard time it genuinely does. Handled in the labelling:
   label, with a short footnote under the chart explaining that those days were on a different offset
   and the times shown are in the current frame.
 
-#### 3e — #10/#11, honest colour scaling
+#### 3e — #10/#11, honest colour scaling — ✅ DONE 2026-08-01
+Shipped as decided, and **extracted to `lib/heatmap-scale.ts` so it could be tested at all**. The
+component is a client module pulling in Chart.js + `chartjs-chart-matrix`, so Jest cannot import it,
+and the heatmap has no screenshot baseline yet — which left the arithmetic deciding every cell's
+colour with no coverage of any kind while it was being changed. 16 unit tests now cover it, including
+the 40.1–40.5 °C case that was capped at 0.4 of the palette, the all-equal case, a negative range,
+and out-of-range clamping.
+
+The `load*`/`source*` `/power` predicate was spelled out three times inline; it is now
+`isBaselinePower()` and the magic `50` / `-1` are `POWER_BASELINE_W` / `BLACK_SENTINEL`.
+
+*(Original decision text follows.)*
 Normalise `(value - min) / (max - min)`, with an explicit `max === min` guard painting a single flat
 colour rather than dividing by zero. Drops the `Math.max(…, 1)` floor that washed out every
 narrow-range series, and makes the colour legend truthful for the first time. Verify against **both**
@@ -544,7 +555,15 @@ symptoms — washed-out cells and the over-claiming gradient.
 Deliberately **not** doing per-metric fixed ranges (SoC always 0–100 etc.) here; noted as possible
 follow-on.
 
-#### 3f — housekeeping
+#### 3f — housekeeping — ✅ DONE 2026-08-01
+All `console.log` gone (the full-response dump and the per-series log inside the `find` predicate
+included); `formatTimeAEST` went with them as its only use was a log line. `parseInterval` now
+returns `null` for an unrecognised interval and the caller turns that into the ordinary "no data"
+error path — previously it returned `0`, every reading mapped to the same instant, and the heatmap
+silently collapsed to a single column looking like a data problem rather than a parsing one. Four
+`||` → `??`.
+
+*(Original text follows.)*
 #8 (strip the `console.log`s, including the full-response dump and the per-series log inside a `find`
 predicate), #12 (`parseInterval` must surface an unrecognised interval instead of returning 0 and
 silently collapsing the grid), #13 (`||` → `??`).
