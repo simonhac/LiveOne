@@ -49,7 +49,7 @@ import { chartPlugin } from "./cards/chart";
 import { sankeyPlugin } from "./cards/sankey";
 import { amberNowPlugin } from "./cards/amber-now";
 import { amberTimelinePlugin } from "./cards/amber-timeline";
-import { generatorRunsPlugin } from "./cards/generator-runs";
+import { runsPlugin } from "./cards/generator-runs";
 import { deviceMetricsPlugin } from "./cards/device-metrics";
 import { batteryContentsPlugin } from "./cards/battery-contents";
 import { evProvenancePlugin } from "./cards/ev-provenance";
@@ -81,7 +81,7 @@ export const CARD_RENDERERS = {
   sankey: sankeyPlugin,
   "amber-now": amberNowPlugin,
   "amber-timeline": amberTimelinePlugin,
-  "generator-runs": generatorRunsPlugin,
+  runs: runsPlugin,
   "device-metrics": deviceMetricsPlugin,
   "battery-contents": batteryContentsPlugin,
   "ev-provenance": evProvenancePlugin,

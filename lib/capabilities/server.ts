@@ -7,7 +7,9 @@
  * ONE entry point for a real device OR an area: `getActivePointsForDevice(handle)` already unions an
  * area's member points (areas-backed → member/bound points; real device → its own), so the ATOMIC
  * capabilities fall straight out of `capabilitiesFromPoints`. COMPOUND capabilities are predicates:
- *  - `generator-running` — any member device has an enabled generator run-detector `derivations` row.
+ *  - run-tracking       — any member device has an enabled run-detector `derivations` row for a
+ *                         trackable role, mapped through `RUN_TRACKING_CAPABILITY`
+ *                         (`generator` → `generator-running`, `ev` → `ev-charging`).
  *  - `grid-signals`      — the area's location derives a NEM region backed by a seeded OE device
  *                          (`resolveGridContextForDevice`).
  *
@@ -30,7 +32,12 @@ import {
   type DeviceConfig,
 } from "@/lib/capabilities/config";
 import { buildAreaStrategy } from "@/lib/capabilities/strategy";
-import type { CapabilityId } from "@/lib/capabilities/registry";
+import {
+  RUN_TRACKING_CAPABILITY,
+  type CapabilityId,
+  type TrackableRoleId,
+} from "@/lib/capabilities/registry";
+import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
 import type { DeviceId } from "@/lib/ids";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
@@ -72,19 +79,29 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
   const points = await pm.getActivePointsForDevice(handle, false, false);
   const caps = capabilitiesFromPoints(points);
 
-  // Walk the member devices once: gather generator-run-tracking + merge their config overrides
-  // (later member wins for the same capability). A device's own handle is its own single member.
+  // Walk the member devices once: gather run-tracking + merge their config overrides (later member
+  // wins for the same capability). A device's own handle is its own single member.
+  //
+  // Run-tracking is probed per TRACKABLE ROLE, not just for the generator: a detector hangs off the
+  // area-of-one of the device owning its signal point (see `ensureRunDetector`), so the composite's
+  // own handle is never asked — only its members are. Once a role is found, stop probing it, so a
+  // 7-member area doesn't issue 7 lookups for a role the first member already answered.
   const members = await memberSystemIds(handle);
   const overrides: DeviceConfig["capabilities"] = {};
-  let hasGenerator = false;
+  const tracked = new Set<RoleId>();
   for (const sid of members) {
     const sys = await DeviceConfigRegistry.deviceByHandle(sid);
     if (sys?.config?.capabilities)
       Object.assign(overrides, sys.config.capabilities);
-    if (!hasGenerator && (await hasEnabledRunDetector(sid, "generator")))
-      hasGenerator = true;
+    for (const role of TRACKABLE_ROLE_IDS) {
+      if (tracked.has(role)) continue;
+      if (await hasEnabledRunDetector(sid, role)) tracked.add(role);
+    }
   }
-  if (hasGenerator) caps.add("generator-running");
+  for (const role of tracked) {
+    const cap = RUN_TRACKING_CAPABILITY[role as TrackableRoleId];
+    if (cap) caps.add(cap);
+  }
 
   // grid-signals: the area's location derives a NEM region + a seeded OE region system.
   if (await resolveGridContextForDevice(handle)) caps.add("grid-signals");

@@ -33,7 +33,7 @@ describe("v4 card-type classification", () => {
     ]) {
       expect(isTileViewType(t)).toBe(true);
     }
-    for (const t of ["chart", "sankey", "generator-runs", "tiles", "nope"]) {
+    for (const t of ["chart", "sankey", "runs", "tiles", "nope"]) {
       expect(isTileViewType(t)).toBe(false);
     }
   });
@@ -43,7 +43,7 @@ describe("v4 card-type classification", () => {
       "chart",
       "sankey",
       "amber-now",
-      "generator-runs",
+      "runs",
       "device-metrics",
       "battery-contents",
     ]) {

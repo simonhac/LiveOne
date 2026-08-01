@@ -111,3 +111,47 @@ describe("reduceLoadProvenance", () => {
     expect(reduceLoadProvenance(matrices([day()]), "load.spa")).toBeNull();
   });
 });
+
+describe("reduceLoadProvenance revenue leg", () => {
+  // load.ev stands in for the export sink here — the reducer is path-agnostic; what matters is that
+  // only the cells with a non-null revenueC contribute.
+  const withRevenue = (): DailyFlowMatrix =>
+    day({
+      revenueC: [
+        [60, null],
+        [12, null],
+        [null, null],
+      ],
+    });
+
+  it("sums revenue across sources and days, over the known-price denominator", () => {
+    const r = reduceLoadProvenance(matrices([withRevenue()]), "load.ev")!;
+    expect(r.revenueC).toBeCloseTo(72, 6); // 60 + 12; the grid edge is unpriced
+    expect(r.revenueKnownKwh).toBeCloseTo(12, 6); // solar 10 + battery 2, NOT grid's 1
+    const two = reduceLoadProvenance(
+      matrices([withRevenue(), { ...withRevenue(), day: "2026-07-02" }]),
+      "load.ev",
+    )!;
+    expect(two.revenueC!).toBeCloseTo(2 * r.revenueC!, 6);
+  });
+
+  it("reports null (not 0) when nothing on the load was sold", () => {
+    // No revenue leg at all — an Area with no export tariff, or days written before the leg existed.
+    const r = reduceLoadProvenance(matrices([day()]), "load.ev")!;
+    expect(r.revenueC).toBeNull();
+    expect(r.revenueKnownKwh).toBe(0);
+  });
+
+  it("keeps a genuine zero distinguishable from an unknown", () => {
+    const zero = day({
+      revenueC: [
+        [0, null],
+        [null, null],
+        [null, null],
+      ],
+    });
+    const r = reduceLoadProvenance(matrices([zero]), "load.ev")!;
+    expect(r.revenueC).toBe(0); // exported under a 0 c/kWh feed-in — real, not unknown
+    expect(r.revenueKnownKwh).toBeCloseTo(10, 6);
+  });
+});

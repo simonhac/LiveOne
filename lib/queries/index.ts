@@ -4,7 +4,7 @@ import { isDeviceQuery, type SystemIdLike } from "./keys";
 export * from "./keys";
 export * from "./fetcher";
 export * from "./freshness";
-export { dashboardDataQuery, dashboardDataBatchQuery } from "./data";
+export { dashboardDataQuery } from "./data";
 export { latestReadingsQuery, type LatestReadingValue } from "./latest";
 export { historyQuery, type HistoryQueryParams } from "./history";
 export { siteDataQuery, type SiteDataQueryParams } from "./siteData";

@@ -1,10 +1,9 @@
 # Load-side run provenance — pricing an EV or pump run
 
-> **Status:** proposed — not started (drafted 2026-08-01). Split out of
-> [completed/run-period-provenance.md](completed/run-period-provenance.md), which shipped the
-> generator (source-role) side on 2026-07-28 and now sits in `completed/` as the record of that work.
-> Its "Still to do" section is the analysis this plan starts from; everything below has been
-> re-verified against the code as it stands today.
+> **Status:** SHIPPED 2026-08-01, alongside EV charge-session tracking at Kinkora. Split out of
+> [run-period-provenance.md](run-period-provenance.md), which shipped the generator (source-role)
+> side on 2026-07-28. The design below is what was built; **"What actually shipped"** at the end
+> records the two places the implementation departed from it, both found by measuring.
 
 ## Why
 
@@ -27,7 +26,7 @@ That last sentence is the reason this was not bodged at the time, and it still h
 
 ## Today
 
-The resolver is [`lib/run-tracking/intensity.ts`](../../lib/run-tracking/intensity.ts). Its first
+The resolver is [`lib/run-tracking/intensity.ts`](../../../lib/run-tracking/intensity.ts). Its first
 executable line is the whole story — `intensity.ts:81`:
 
 ```ts
@@ -41,12 +40,12 @@ Only `generator` gets past it, and it resolves via `resolveGeneratorIntensity`
 battery-provenance fold substitutes for the grid signal, deliberately shared so the two cannot drift.
 
 It is wired into the recompute at
-[`lib/db/planetscale/derived-intervals-pg.ts:88`](../../lib/db/planetscale/derived-intervals-pg.ts)
+[`lib/db/planetscale/derived-intervals-pg.ts:88`](../../../lib/db/planetscale/derived-intervals-pg.ts)
 (resolved once per call, outside the transaction, and skipped entirely without an energy point) and
 consumed at `derived-intervals-pg.ts:161` by `assignProvenanceToPeriods`.
 
 **The storage already exists and is nullable.** `derived_intervals`
-([`lib/db/planetscale/schema.ts:806`](../../lib/db/planetscale/schema.ts), renamed from
+([`lib/db/planetscale/schema.ts:806`](../../../lib/db/planetscale/schema.ts), renamed from
 `device_run_periods` per the comment at `:804`) carries `costC` at `:842`, `emissionsG` at `:843` and
 `renewableKwh` at `:844`, all `double precision` and all nullable. They were added by migration
 `0042_derived_intervals_provenance`, which is expand-only — three
@@ -55,9 +54,9 @@ none is proposed here: this is a provider-only change. (Any schema change would 
 first; there is nothing to approve.)
 
 **The integrator is already ready for a time-varying series.** `assignProvenanceToPeriods`
-([`lib/run-tracking/energy.ts:93-98`](../../lib/run-tracking/energy.ts)) takes an `IntensitySeries`
+([`lib/run-tracking/energy.ts:93-98`](../../../lib/run-tracking/energy.ts)) takes an `IntensitySeries`
 whose `at(tMs)` is sampled per counter slice, and
-[`lib/run-tracking/__tests__/energy.test.ts:107-145`](../../lib/run-tracking/__tests__/energy.test.ts)
+[`lib/run-tracking/__tests__/energy.test.ts:107-145`](../../../lib/run-tracking/__tests__/energy.test.ts)
 ("is slice-decomposable: unequal slices sum to the whole-run figure") drives it with a price that
 **steps mid-run** over deliberately uneven slices and asserts the parts sum to the whole. The test
 comment names this explicitly as "the regression guard for the day a time-varying (load-side blend)
@@ -66,15 +65,15 @@ missing.
 
 **Why the provider is the hard part.** There is no per-interval, per-load blended intensity persisted
 anywhere. The load blend only materialises as an aggregate inside `computeFlowAccounting`
-([`lib/aggregation/flow-matrix-core.ts:144`](../../lib/aggregation/flow-matrix-core.ts)) — it is
+([`lib/aggregation/flow-matrix-core.ts:144`](../../../lib/aggregation/flow-matrix-core.ts)) — it is
 computed, consumed, and discarded. The persisted `bidi.battery/*` blend points are the *battery's*
 contents (what is in the battery right now), not a load path. Grid and solar intensities are not
 persisted either: grid intensity comes from separately-bound OE/Amber points, and the generator
 override is config-only. So a load-side provider cannot read a series off a table; it has to
 **reassemble** one — essentially the pair
-[`loadProvenanceInputs` (`lib/battery-provenance/load.ts:286`)](../../lib/battery-provenance/load.ts)
+[`loadProvenanceInputs` (`lib/battery-provenance/load.ts:286`)](../../../lib/battery-provenance/load.ts)
 plus
-[`buildSourceIntensities` (`lib/battery-provenance/compute.ts:87`)](../../lib/battery-provenance/compute.ts),
+[`buildSourceIntensities` (`lib/battery-provenance/compute.ts:87`)](../../../lib/battery-provenance/compute.ts),
 run over the run's window, with the per-step load-path blend surfaced rather than folded away.
 
 ## The change
@@ -151,12 +150,54 @@ site with no battery binding still yields NULL columns rather than a number.
 
 No migration, so no DDL to apply and no schema approval to seek.
 
+## What actually shipped
+
+Two departures from the plan above, both found by measuring rather than by reading:
+
+**1. The fold already returns the per-source intensities.** The plan proposed calling
+`loadProvenanceInputs` + `buildSourceIntensities`. In fact `computeBatteryProvenance` builds that
+array itself to drive `computeFlowAccounting` and returns it on `ProvenanceResult.sourceIntensities`
+(`lib/battery-provenance/compute.ts`). So `resolveLoadIntensity` reads the very array the Sankey
+attributed with, and does not re-derive solar/grid/battery factors at all.
+
+**2. The off-by-one has TWO halves, and the plan only named one.** Which sample belongs to which
+interval is as described (index `i`, the fold's convention, not `interval_end`). But *which interval
+a timestamp lands in* does not follow from it: `assignProvenanceToPeriods` prices each counter slice
+at its **later** reading, so the step lookup must be **right-closed** — the interval that ENDS at or
+after `tMs`. A left-closed lookup is correct for every slice strictly inside an interval (most of
+them, which is why it survives casual testing) and jumps a step for any slice ending exactly on a
+5-minute boundary. Both halves are pinned by tests in `lib/run-tracking/__tests__/energy.test.ts`.
+
+Also worth recording:
+
+- The allocation weights are no longer duplicated. `sourceWeightsForInterval` was extracted from
+  `computeFlowAccounting` (`lib/aggregation/flow-matrix-core.ts`) and is now called by both, so a
+  run's cost and the Sankey's cost for the same kWh cannot drift. It returns `anyExact` too — the
+  kWh-vs-kW switch is set by scanning sources AND loads, so the blend must be told about the loads
+  even though it only reads source weights.
+- Resolution is **lazy and run-windowed**, not "once per recompute call". The series is resolved
+  only when a pass actually detected periods, over the span of those periods — so an idle minutely
+  pass does no fold at all, and a busy one folds hours rather than the whole 6h window. It reads on
+  the pool rather than the recompute's transaction (a read-only side query that cannot deadlock
+  against it). The plan's suggestion to hoist the whole read/detect phase out of the transaction was
+  NOT taken: the anchor lookup has to stay under the advisory lock or the bounded
+  delete-and-reinsert loses its invariant.
+- The requested window is padded by one fold interval either side, so the timeline brackets the runs
+  and a run's first counter slice does not fall before `timeline[0]` and price at null.
+
+**Measured against the Sankey** (`point_readings_flow_attr_1d`, `load_path='load.ev'`, Kinkora, 13
+days): energy agrees within 1.6%, cost within 4.8%, emissions within 2.7% — the expected residual
+from counter-delta vs trapezoid integration. One day (2026-07-15) showed −52%, traced to a data hole
+in the dev mirror's own readings for that day, NOT a defect: dev's raw counter and its `agg_5m` both
+say 3.38 kWh and the run says 3.33, while `flow_attr_1d` carries prod's complete 6.89. See
+[dev-mirror-blind-to-prod-backfills].
+
 ## Related
 
-- [completed/run-period-provenance.md](completed/run-period-provenance.md) — the shipped source-role
+- [run-period-provenance.md](run-period-provenance.md) — the shipped source-role
   side; the record this plan was split out of.
-- [../architecture/battery-provenance.md](../architecture/battery-provenance.md) — the fold, the
+- [../../architecture/battery-provenance.md](../../architecture/battery-provenance.md) — the fold, the
   off-grid-generator section, and how `source.grid` carries generator output.
-- [../../lib/run-tracking/intensity.ts](../../lib/run-tracking/intensity.ts) — the module doc there is
+- [../../../lib/run-tracking/intensity.ts](../../../lib/run-tracking/intensity.ts) — the module doc there is
   the authoritative statement of *what prices a device's energy* and why the gate is enumerated rather
-  than inferred; this plan adds a leg to it, it does not revise it.
+  than inferred; this plan added a leg to it, it did not revise it.

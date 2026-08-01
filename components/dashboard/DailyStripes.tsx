@@ -4,6 +4,13 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { scaleLinear, scaleTime } from "d3-scale";
 import { timeHour } from "d3-time";
 import { interpolateHsl } from "d3-interpolate";
+import {
+  STRIPE_AXIS_H as AXIS_H,
+  STRIPE_STATE_H as STATE_H,
+  STRIPE_VALUE_H as VALUE_H,
+  STRIPE_DAY_GAP as DAY_GAP,
+  dailyStripeSvgHeight,
+} from "@/lib/dashboard/daily-stripe";
 
 /**
  * A day-per-row gradient stripe timeline for one point.
@@ -29,10 +36,8 @@ const DEFAULT_SLOTS_PER_DAY = 288;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const LABEL_W = 96;
-const AXIS_H = 20;
-const STATE_H = 11;
-const VALUE_H = 32;
-const DAY_GAP = 8;
+// AXIS_H / STATE_H / VALUE_H / DAY_GAP now come from lib/dashboard/daily-stripe.ts, so the card
+// plugin's `footprint` can reserve exactly this height before any history has been fetched.
 
 const COLOR_STATE_ON = "rgb(251, 146, 60)";
 const COLOR_STATE_OFF = "#6b7280";
@@ -177,7 +182,7 @@ export default function DailyStripes({
   }, [firstDayMidnightMs, dayCount, slotsPerDay, slotMs, slotAt]);
 
   const chartW = Math.max(0, containerWidth - LABEL_W);
-  const totalH = AXIS_H + dayCount * dayH + (dayCount - 1) * DAY_GAP;
+  const totalH = dailyStripeSvgHeight(dayCount, state != null);
 
   // x-scale on a normalised [0, DAY_MS] domain — every day shares the same scale,
   // and we look up tick offsets relative to the day start.
@@ -238,7 +243,14 @@ export default function DailyStripes({
 
   return (
     <div className="-mx-6 px-3 py-3 sm:mx-0 sm:bg-gray-800 sm:rounded sm:p-4">
-      <div ref={containerRef} className="relative">
+      {/* `ready` is false until the container has been measured, so without a floor here the card
+          would render at zero height for a frame and then jump to `totalH` — the same shift the
+          card's declared footprint exists to prevent, one level further in. */}
+      <div
+        ref={containerRef}
+        className="relative"
+        style={{ minHeight: totalH }}
+      >
         {ready && (
           <svg
             width={containerWidth}

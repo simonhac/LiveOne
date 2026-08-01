@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
-import HeatmapChart from "@/components/HeatmapChart";
+import HeatmapChart, { HEATMAP_CHART_H } from "@/components/HeatmapChart";
 import {
   Select,
   SelectContent,
@@ -79,8 +79,12 @@ export interface HeatmapPanelProps {
 
 /**
  * The loading / error / empty placeholder, sized for its host. `"page"` reproduces the standalone
- * page's original markup exactly; `"card"` matches the geometry of the chart placeholder below
- * (`h-96` + the card's border) so a dashboard row does not reflow as the panel resolves.
+ * page's original markup exactly; `"card"` is exactly `HEATMAP_CHART_H` tall — the SAME height as
+ * the chart it stands in for.
+ *
+ * 🛑 It used to be `h-96` (384px) against a 600px chart, which — with the card plugin's own 360px
+ * placeholder in front of it — made a heatmap card resize TWICE on its way in (360 → 384 → 600+).
+ * All three now read one constant.
  */
 function StatusBlock({
   variant,
@@ -100,7 +104,10 @@ function StatusBlock({
     );
   }
   return (
-    <div className="flex items-center justify-center h-96 bg-gray-900 rounded-lg border border-gray-700">
+    <div
+      className="flex items-center justify-center bg-gray-900 rounded-lg border border-gray-700"
+      style={{ height: HEATMAP_CHART_H }}
+    >
       <div className={text}>{children}</div>
     </div>
   );
@@ -507,7 +514,10 @@ export default function HeatmapPanel({
           onFetchInfo={setFetchInfo}
         />
       ) : (
-        <div className="flex items-center justify-center h-96 bg-gray-900 rounded-lg border border-gray-700">
+        <div
+          className="flex items-center justify-center bg-gray-900 rounded-lg border border-gray-700"
+          style={{ height: HEATMAP_CHART_H }}
+        >
           <div className="text-gray-400">Select a point to view heatmap</div>
         </div>
       )}

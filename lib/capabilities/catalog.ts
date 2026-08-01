@@ -19,7 +19,7 @@
  *
  * TWO NON-NEGOTIABLE CONTRACTS:
  *  1. **`scope`** — `requires` is checked against the AREA UNION for `scope: "area"` entries, and
- *     against a SPECIFIC MEMBER's capability set for `scope: "device"` entries (`generator-runs`,
+ *     against a SPECIFIC MEMBER's capability set for `scope: "device"` entries (`runs`,
  *     `oe-grid`, `device-metrics` bind a member device).
  *  2. **Eligibility ≠ render authority** — this filter is for the Add-Card GALLERY (grey-out) and the
  *     default-dashboard strategy ONLY. It is NEVER the final say on whether a card renders. Renderers
@@ -171,11 +171,17 @@ export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
     scope: "area",
     requires: { all: ["grid/rate"] },
   },
-  "generator-runs": {
-    id: "generator-runs",
-    label: "Generator Runs",
+  // ONE runs card for every trackable role — which one it lists is `config.role`, not the type.
+  // `any` because the two capabilities are alternatives, not both required: a site with only an EV
+  // detector is eligible, and so is a site with only a generator. `bindsCapability` names just the
+  // generator because it is a single-valued hint for an Add-Card gallery that does not exist yet;
+  // when that gallery lands it will need to offer one entry per satisfied role, and that is the
+  // moment to widen the field rather than now, on speculation.
+  runs: {
+    id: "runs",
+    label: "Runs",
     scope: "device",
-    requires: { all: ["generator-running"] },
+    requires: { any: ["generator-running", "ev-charging"] },
     bindsCapability: "generator-running",
   },
   "device-metrics": {
@@ -262,7 +268,7 @@ export function availableAreaCards(caps: CapabilitySet): KnownCardType[] {
   );
 }
 
-/** Device-scoped cards a member device with `caps` can provide (generator-runs/device-metrics/oe-grid). */
+/** Device-scoped cards a member device with `caps` can provide (runs/device-metrics/oe-grid). */
 export function availableDeviceCards(caps: CapabilitySet): KnownCardType[] {
   return CATALOG_IDS.filter(
     (id) =>

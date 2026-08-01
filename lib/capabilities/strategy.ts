@@ -26,7 +26,11 @@
  */
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
-import type { CapabilityId } from "@/lib/capabilities/registry";
+import {
+  RUN_TRACKING_CAPABILITY,
+  type CapabilityId,
+  type TrackableRoleId,
+} from "@/lib/capabilities/registry";
 import { availableTilesFromCaps } from "@/lib/capabilities/catalog";
 import type { CardNode, DashboardNode, GroupNode } from "@/lib/dashboard/v4";
 
@@ -83,6 +87,23 @@ const card = (type: string, extra?: Partial<CardNode>): CardNode => ({
 });
 
 /**
+ * One `runs` card per trackable role the area actually tracks, in registry order.
+ *
+ * Deliberately UNPINNED, exactly as the single `generator-runs` card always was. A detector hangs
+ * off the area-of-one of the device owning its signal point, so a card on a multi-device area needs
+ * `device: dv_…` to resolve one — but the strategy has no member→role mapping to pin WITH (it sees
+ * a capability set, not which member provided it), and inventing one here would be a second, weaker
+ * copy of the resolution `getRunDetectorForHandleRole` already does. Both live dashboards pin these
+ * cards by hand; a seeded one renders empty on a composite until it is pinned, which is the
+ * pre-existing behaviour and not a regression introduced here.
+ */
+function runsCards(caps: CapabilitySet): CardNode[] {
+  return (Object.keys(RUN_TRACKING_CAPABILITY) as TrackableRoleId[])
+    .filter((role) => caps.has(RUN_TRACKING_CAPABILITY[role]))
+    .map((role) => card("runs", { config: { role } }));
+}
+
+/**
  * Build an area's default group. Pure: node ids are NOT assigned here — `normalizeDocV4` mints the
  * `n_…` ids once the group is wrapped into a document (v4-seed.ts).
  */
@@ -104,12 +125,12 @@ export function buildAreaStrategy(ctx: AreaStrategyContext): GroupNode {
   const supported = availableTilesFromCaps(caps);
 
   // Instrumentation-only device (generator / sensor pack): no tile represents its points and it has no
-  // OE grid member → just the generic device-metrics card (+ generator-runs if tracked).
+  // OE grid member → just the generic device-metrics card (+ a runs card per tracked role).
   if (supported.length === 0 && ctx.gridDevice == null) {
     const children: DashboardNode[] = ctx.leadWithDeviceMetrics
       ? [...lead]
       : [card("device-metrics")];
-    if (caps.has("generator-running")) children.push(card("generator-runs"));
+    children.push(...runsCards(caps));
     if (caps.has("battery/provenance"))
       children.push(card("battery-provenance-history"));
     return sectionGroup(ctx, children);
@@ -142,7 +163,7 @@ export function buildAreaStrategy(ctx: AreaStrategyContext): GroupNode {
     children.push(card("chart", { config: { variant: "lines" } }));
   }
 
-  if (caps.has("generator-running")) children.push(card("generator-runs"));
+  children.push(...runsCards(caps));
 
   return sectionGroup(ctx, children);
 }

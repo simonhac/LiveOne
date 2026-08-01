@@ -37,7 +37,17 @@ import { PointInfo } from "@/lib/point/point-info";
  * would shift every cell.
  */
 const MARGIN = { top: 6, right: 12, bottom: 46, left: 96 };
-const GRID_HEIGHT = 560;
+
+/**
+ * The chart's fixed overall height. Exported because it is the ONE number every heatmap placeholder
+ * has to agree with: the panel's status blocks (`HeatmapPanel`), the card plugin's declared footprint
+ * (`dashboard/cards/footprints.ts`), and the spinner below. They used to be 384 / 360 / 600
+ * respectively, so a heatmap card resized twice on its way in.
+ */
+export const HEATMAP_CHART_H = 600;
+
+/** The cell grid, derived so the svg totals exactly {@link HEATMAP_CHART_H} — never a second literal. */
+const GRID_HEIGHT = HEATMAP_CHART_H - MARGIN.top - MARGIN.bottom;
 const TICK_TEXT = "rgb(156, 163, 175)"; // gray-400
 const FONT_FAMILY = "DM Sans, system-ui, sans-serif";
 /** Missing readings — distinct from the black baseline, which means "on but idle". */
@@ -402,7 +412,10 @@ export default function HeatmapChart({
     return (
       <div className={className}>
         <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
-          <div className="flex h-[600px] items-center justify-center">
+          <div
+            className="flex items-center justify-center"
+            style={{ height: HEATMAP_CHART_H }}
+          >
             <div className="h-16 w-16 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
           </div>
         </div>

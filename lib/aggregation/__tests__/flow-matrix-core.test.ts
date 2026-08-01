@@ -304,3 +304,94 @@ describe("computeFlowAccounting per-day window == isolated per-day integration",
     expect(modern.energyKwh[0][0]).toBeCloseTo(legacy.matrix[0][0], 6);
   });
 });
+
+describe("computeFlowAccounting revenue leg (sink-priced)", () => {
+  // Solar 5 kW for 1 h: 3 kWh to the house, 2 kWh exported. Grid import price 30 c/kWh (unused here
+  // — solar is the only source), feed-in 8 c/kWh on the export sink only.
+  const ts = hours(2);
+  const sources: FlowSeries[] = [{ path: "source.solar", power: [5, 5] }];
+  const loads: FlowSeries[] = [
+    { path: "load", power: [3, 3] },
+    { path: "load.grid", power: [2, 2] },
+  ];
+  const solarIntensity = {
+    emissions: [0, 0],
+    renewable: [1, 1],
+    selfRenewable: [1, 1],
+    price: [0, 0],
+    estimated: [false, false],
+  };
+
+  it("prices only the load.grid column, at the feed-in rate", () => {
+    const acc = computeFlowAccounting({
+      timestamps: ts,
+      sources,
+      loads,
+      sourceIntensities: [solarIntensity],
+      loadPrices: [null, [8, 8]],
+    });
+    // 2 kWh exported × 8 c/kWh = 16 c earned; the house column earns nothing and has no denominator.
+    expect(acc.revenueC[0][1]).toBeCloseTo(16, 6);
+    expect(acc.revenueKnownKwh[0][1]).toBeCloseTo(2, 6);
+    expect(acc.revenueC[0][0]).toBe(0);
+    expect(acc.revenueKnownKwh[0][0]).toBe(0);
+  });
+
+  it("leaves the revenue leg empty when no load price is supplied", () => {
+    const acc = computeFlowAccounting({
+      timestamps: ts,
+      sources,
+      loads,
+      sourceIntensities: [solarIntensity],
+    });
+    expect(acc.revenueC[0][1]).toBe(0);
+    expect(acc.revenueKnownKwh[0][1]).toBe(0);
+  });
+
+  it("does not let an unknown feed-in price bleed into estimatedKwh or costC", () => {
+    const priced = computeFlowAccounting({
+      timestamps: ts,
+      sources,
+      loads,
+      sourceIntensities: [solarIntensity],
+      loadPrices: [null, [8, 8]],
+    });
+    // A null feed-in sample (no tariff at that interval) must earn nothing AND leave every
+    // source-side leg byte-identical to the priced run.
+    const unpriced = computeFlowAccounting({
+      timestamps: ts,
+      sources,
+      loads,
+      sourceIntensities: [solarIntensity],
+      loadPrices: [null, [null, null]],
+    });
+    expect(unpriced.revenueC[0][1]).toBe(0);
+    expect(unpriced.revenueKnownKwh[0][1]).toBe(0);
+    expect(unpriced.estimatedKwh).toEqual(priced.estimatedKwh);
+    expect(unpriced.costC).toEqual(priced.costC);
+    expect(unpriced.energyKwh).toEqual(priced.energyKwh);
+  });
+
+  it("attributes export revenue back to the source that produced the exported energy", () => {
+    // Solar 4 kW + battery discharge 2 kW for 1 h; 3 kWh to the house, 3 kWh exported. The export is
+    // allocated by generation share (2/3 solar, 1/3 battery), and so is its revenue.
+    const mixedSources: FlowSeries[] = [
+      { path: "source.solar", power: [4, 4] },
+      { path: "source.battery", power: [2, 2] },
+    ];
+    const acc = computeFlowAccounting({
+      timestamps: ts,
+      sources: mixedSources,
+      loads: [
+        { path: "load", power: [3, 3] },
+        { path: "load.grid", power: [3, 3] },
+      ],
+      sourceIntensities: [solarIntensity, null],
+      loadPrices: [null, [10, 10]],
+    });
+    expect(acc.energyKwh[0][1]).toBeCloseTo(2, 6); // solar → export
+    expect(acc.energyKwh[1][1]).toBeCloseTo(1, 6); // battery → export
+    expect(acc.revenueC[0][1]).toBeCloseTo(20, 6);
+    expect(acc.revenueC[1][1]).toBeCloseTo(10, 6);
+  });
+});

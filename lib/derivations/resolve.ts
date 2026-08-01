@@ -31,6 +31,8 @@ import {
 } from "@/lib/db/planetscale/schema";
 import { Device, Point, type PointId } from "@/lib/ids";
 import { DeviceRegistry } from "@/lib/registry/device-registry";
+import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
+import { deriveDerivationId } from "./ids";
 import { mergeDetectConfig, type DetectConfig } from "./params";
 import {
   DEFAULT_HWS_MODEL_OPTIONS,
@@ -296,6 +298,114 @@ export async function hasEnabledRunDetector(
     )
     .limit(1);
   return !!row;
+}
+
+export interface EnsureRunDetectorInput {
+  /** The handle whose AREA the detector hangs off — see the note on placement below. */
+  handle: number;
+  role: RoleId;
+  name: string;
+  /** `points.id` uuid of the series the detector thresholds. */
+  signalPointUid: string;
+  /** `points.id` uuid of a cumulative energy counter, or null for a detector with no kWh. */
+  energyPointUid?: string | null;
+  params: RunDetectorParams;
+  /** False = report what would happen without writing. */
+  apply: boolean;
+}
+
+export interface EnsureRunDetectorResult {
+  status:
+    | "created"
+    | "exists"
+    | "no-area"
+    | "not-trackable"
+    | "no-signal-point"
+    | "no-energy-point"
+    | "no-bounds";
+  handle: number;
+  role: string;
+  derivationId?: string;
+  areaId?: string;
+}
+
+/**
+ * Ensure the run-detector derivation for `(handle's area, role)` exists. The write-side twin of
+ * {@link getRunDetectorForHandleRole}, modelled on `ensureHwsDerivation` (lib/hws/register.ts) —
+ * until now the only derivation with a writer at all, which is why Daylesford's generator row was
+ * hand-written SQL.
+ *
+ * Idempotent via the deterministic id (`deriveDerivationId`), which is also what lets
+ * `prod-dev-sync` copy `derivations` as a plain by-PK upsert: seed prod and dev inherits the same
+ * row, pointing at the same `derived_intervals`.
+ *
+ * 🛑 **WHICH HANDLE.** Pass the handle of the area that OWNS THE SIGNAL POINT'S DEVICE — typically
+ * its area-of-one — not the composite site area you want the card on. `capabilitiesForDevice`
+ * probes `hasEnabledRunDetector` for each MEMBER handle of an area and never for the area's own
+ * handle, so a detector parked on the composite is invisible to the capability that lights its card
+ * up. Daylesford's generator detector lives on handle 1 (a member of the Daylesford composite) for
+ * exactly this reason. The consequence is that the dashboard card must be pinned with `device:`.
+ *
+ * Every failure mode is a distinct status rather than a throw, because the callers are a dry-run
+ * script and (eventually) an admin route, both of which want to report rather than crash. The point
+ * existence checks matter: `resolveRunDetector` only WARNS on a dangling `source_points.signal`, so
+ * a typo'd uuid would otherwise persist as a detector that silently derives nothing forever.
+ */
+export async function ensureRunDetector(
+  input: EnsureRunDetectorInput,
+): Promise<EnsureRunDetectorResult> {
+  const { handle, role, signalPointUid, energyPointUid, params, apply } = input;
+  const base = { handle, role };
+
+  if (!TRACKABLE_ROLE_IDS.includes(role))
+    return { ...base, status: "not-trackable" };
+  // detectRunPeriods throws without a bound, and it throws deep inside the cron rather than here.
+  if (params.lowerW == null && params.upperW == null)
+    return { ...base, status: "no-bounds" };
+
+  const db = requirePlanetscaleDb();
+  const wanted = [signalPointUid, ...(energyPointUid ? [energyPointUid] : [])];
+  const found = new Set(
+    (
+      await db
+        .select({ id: points.id })
+        .from(points)
+        .where(inArray(points.id, wanted))
+    ).map((r) => r.id),
+  );
+  if (!found.has(signalPointUid)) return { ...base, status: "no-signal-point" };
+  if (energyPointUid && !found.has(energyPointUid))
+    return { ...base, status: "no-energy-point" };
+
+  const areaId = await resolveAreaIdForHandle(handle);
+  if (!areaId) return { ...base, status: "no-area" };
+
+  const id = deriveDerivationId(areaId, RUN_DETECTOR_KIND, role);
+  const [existing] = await db
+    .select({ id: derivations.id })
+    .from(derivations)
+    .where(eq(derivations.id, id))
+    .limit(1);
+  if (existing) return { ...base, status: "exists", derivationId: id, areaId };
+  if (!apply) return { ...base, status: "created", derivationId: id, areaId };
+
+  await db.insert(derivations).values({
+    id,
+    areaId,
+    kind: RUN_DETECTOR_KIND,
+    role,
+    name: input.name,
+    enabled: true,
+    output: "intervals",
+    // Sparse by convention: anything absent inherits `detectorDefaultsForRole` at resolve time.
+    params,
+    sourcePoints: {
+      signal: signalPointUid,
+      energy: energyPointUid ?? null,
+    } satisfies RunDetectorSourcePoints,
+  });
+
+  return { ...base, status: "created", derivationId: id, areaId };
 }
 
 // ---------------------------------------------------------------------------

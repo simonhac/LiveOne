@@ -85,6 +85,15 @@ export interface FlowAccountingResult {
   selfRenewableKwh: number[][];
   /** [s][l] attributed cost (cents), over intervals with a known price. */
   costC: number[][];
+  /**
+   * [s][l] attributed REVENUE (cents) — what the LOAD paid US for that energy, over intervals with a
+   * known load price. The mirror image of `costC`: `costC` prices energy by its SOURCE (what it cost to
+   * produce/buy), `revenueC` prices it by its SINK (what it earned on the way out). Today the only
+   * priced sink is `load.grid` (the feed-in tariff), so every other column is 0 with a 0 denominator.
+   * Positive = money in — note that is the OPPOSITE sign to Amber's own `bidi.grid.export/value` point,
+   * which books feed-in as a negative credit against your bill.
+   */
+  revenueC: number[][];
   /** [s][l] energy (kWh) whose source intensity was estimated OR unknown (confidence denominator). */
   estimatedKwh: number[][];
   /** [s][l] energy (kWh) with a known emissions intensity — the unbiased-average denominator. */
@@ -95,6 +104,8 @@ export interface FlowAccountingResult {
   selfRenewableKnownKwh: number[][];
   /** [s][l] energy (kWh) with a known price. */
   priceKnownKwh: number[][];
+  /** [s][l] energy (kWh) with a known LOAD price — the `revenueC` denominator / known-flag. */
+  revenueKnownKwh: number[][];
   /** # of intervals that contributed energy (coverage signal). */
   intervalsUsed: number;
 }
@@ -113,6 +124,94 @@ function zeros(rows: number, cols: number): number[][] {
 function channelId(path: string): string {
   const dot = path.indexOf(".");
   return dot === -1 ? path : path.slice(dot + 1);
+}
+
+/** One interval's per-source attribution weights — the shared allocation rule. */
+export interface SourceWeights {
+  /** The generation pool: every source's best-known magnitude. Index-aligned to `sources`. */
+  denomW: number[];
+  /** Allocation eligibility: null where this source is in the pool but out of the allocation. */
+  numerW: (number | null)[];
+  /** Σ denomW. `<= 0` means nothing generated this interval and it contributes nothing. */
+  totalGenW: number;
+  /**
+   * Whether ANY source or load carried a metered interval energy here — i.e. whether the weights
+   * above are kWh (exact mode) or kW (legacy power mode). The caller needs it because the LOAD
+   * magnitude is decided by the same switch, and the two must agree within an interval.
+   */
+  anyExact: boolean;
+}
+
+/**
+ * The per-source attribution weights for interval `i` — how the generation pool is divided.
+ *
+ * **Exported because it is the definition of "where a load's energy came from", and there must be
+ * exactly one.** `computeFlowAccounting` uses it to allocate energy across Sankey edges;
+ * `resolveLoadIntensity` (lib/run-tracking/intensity.ts) uses the same weights to blend the source
+ * intensities into the load-path factor a run period is priced at. Two copies of this arithmetic
+ * would let a charge session's cost drift from the Sankey's cost for the same kWh, in a way that
+ * only shows up as a small unexplained discrepancy.
+ *
+ * Exact-energy overlay (`FlowSeries.energyKwh`): when ANY series carries a metered interval energy
+ * here, magnitudes and weights switch to kWh — exact where present, left-endpoint power × dt where
+ * not — one coherent weight pool, no renormalisation. When NONE does, the legacy power arithmetic
+ * runs with the SAME code (weights are kW and dt never enters), so power-only inputs are
+ * bit-for-bit identical to the pre-overlay implementation.
+ *
+ *  - `denomW` (the generation pool): every source's best-known magnitude — exact energy, else the
+ *    LEFT endpoint, matching the legacy denominator (which counts a left endpoint even when the
+ *    right endpoint is null);
+ *  - `numerW` (allocation eligibility): exact energy, else BOTH endpoints non-null (the legacy gate
+ *    — a mid-interval gap keeps a source in the pool but out of the allocation).
+ */
+export function sourceWeightsForInterval(
+  sources: FlowSeries[],
+  loads: FlowSeries[],
+  i: number,
+  deltaHours: number,
+): SourceWeights {
+  const S = sources.length;
+  let anyExact = false;
+  for (const s of sources) {
+    const e = s.energyKwh?.[i];
+    if (e !== null && e !== undefined) {
+      anyExact = true;
+      break;
+    }
+  }
+  if (!anyExact)
+    for (const l of loads) {
+      const e = l.energyKwh?.[i];
+      if (e !== null && e !== undefined) {
+        anyExact = true;
+        break;
+      }
+    }
+
+  const denomW = new Array<number>(S).fill(0);
+  const numerW = new Array<number | null>(S).fill(null);
+  let totalGenW = 0;
+  for (let s = 0; s < S; s++) {
+    const exact = sources[s].energyKwh?.[i];
+    const p1 = sources[s].power[i];
+    const p2 = sources[s].power[i + 1];
+    if (anyExact) {
+      const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
+      if (d !== null && d !== undefined) {
+        denomW[s] = d;
+        totalGenW += d;
+      }
+      numerW[s] =
+        exact ?? (p1 !== null && p2 !== null ? p1 * deltaHours : null);
+    } else {
+      if (p1 !== null) {
+        denomW[s] = p1;
+        totalGenW += p1;
+      }
+      numerW[s] = p1 !== null && p2 !== null ? p1 : null;
+    }
+  }
+  return { denomW, numerW, totalGenW, anyExact };
 }
 
 /**
@@ -134,7 +233,9 @@ function linkedSourceIndices(
  * integrates each load's trapezoidal energy and allocates it across sources by each source's share of
  * generation (left-endpoint), accumulating ENERGY per edge. When `sourceIntensities` is supplied it ALSO
  * decorates every contribution with that source's per-interval emissions / renewable / cost, so the
- * "metric legs" fall out of the SAME allocation as the energy leg — no second loop to drift.
+ * "metric legs" fall out of the SAME allocation as the energy leg — no second loop to drift. When
+ * `loadPrices` is supplied it likewise decorates each contribution with the SINK's price, giving the
+ * `revenueC` leg (feed-in income on `load.grid`) off that same allocation.
  *
  * `computeFlowMatrix` is the ENERGY PROJECTION of this (Sankey = the energy leg). A null intensity for an
  * interval leaves that contribution out of the attributed sum but counts its energy in `estimatedKwh`; the
@@ -148,6 +249,13 @@ export function computeFlowAccounting(input: {
   /** Index-aligned to `sources`; omit for the energy-only path. A null entry = a source with no intensity. */
   sourceIntensities?: (SourceIntensity | null)[];
   /**
+   * Optional per-load SELL price (c/kWh at each timestamp) — index-aligned to `loads`, a null entry (or
+   * a null sample) meaning "this sink pays nothing knowable". Drives the `revenueC` leg. Independent of
+   * `sourceIntensities`: supply either, both, or neither. Today the caller sets only `load.grid`, from
+   * the resolved export tariff (`resolveExportPriceSeries`).
+   */
+  loadPrices?: ((number | null)[] | null)[];
+  /**
    * Optional attribution window (epoch-ms): accumulate ONLY intervals that lie ENTIRELY within the
    * window — start `timestamps[i] >= startMs` AND end `timestamps[i+1] <= endMs`. Used to slice a single
    * local DAY out of a longer loaded/folded window for the per-day rollup, while the caller's fold ran
@@ -158,16 +266,20 @@ export function computeFlowAccounting(input: {
    */
   window?: { startMs: number; endMs: number };
 }): FlowAccountingResult {
-  const { timestamps, sources, loads, sourceIntensities, window } = input;
+  const { timestamps, sources, loads, sourceIntensities, loadPrices, window } =
+    input;
   const S = sources.length;
   const L = loads.length;
   const withMetrics = sourceIntensities !== undefined;
+  const withRevenue = loadPrices !== undefined;
 
   const energyKwh = zeros(S, L);
   const emissionsG = zeros(S, L);
   const renewableKwh = zeros(S, L);
   const selfRenewableKwh = zeros(S, L);
   const costC = zeros(S, L);
+  const revenueC = zeros(S, L);
+  const revenueKnownKwh = zeros(S, L);
   const estimatedKwh = zeros(S, L);
   const emissionsKnownKwh = zeros(S, L);
   const renewableKnownKwh = zeros(S, L);
@@ -193,57 +305,12 @@ export function computeFlowAccounting(input: {
     }
     const deltaHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
 
-    // Exact-energy overlay (`FlowSeries.energyKwh`): when ANY series carries a metered interval
-    // energy here, magnitudes and attribution weights switch to kWh — exact where present,
-    // left-endpoint power × dt where not — one coherent weight pool, no renormalisation. When NONE
-    // does, the legacy power arithmetic runs with the SAME code below (weights are kW and dt never
-    // enters), so power-only inputs are bit-for-bit identical to the pre-overlay implementation.
-    let anyExact = false;
-    for (const s of sources) {
-      const e = s.energyKwh?.[i];
-      if (e !== null && e !== undefined) {
-        anyExact = true;
-        break;
-      }
-    }
-    if (!anyExact)
-      for (const l of loads) {
-        const e = l.energyKwh?.[i];
-        if (e !== null && e !== undefined) {
-          anyExact = true;
-          break;
-        }
-      }
-
-    // Per-source attribution weight (kWh in exact mode, kW in legacy mode):
-    //  - `denomW` (the generation pool): every source's best-known magnitude — exact energy, else
-    //    the LEFT endpoint, matching the legacy denominator (which counts a left endpoint even
-    //    when the right endpoint is null);
-    //  - `numerW` (allocation eligibility): exact energy, else BOTH endpoints non-null (the legacy
-    //    gate — a mid-interval gap keeps a source in the pool but out of the allocation).
-    const denomW = new Array<number>(S).fill(0);
-    const numerW = new Array<number | null>(S).fill(null);
-    let totalGenW = 0;
-    for (let s = 0; s < S; s++) {
-      const exact = sources[s].energyKwh?.[i];
-      const p1 = sources[s].power[i];
-      const p2 = sources[s].power[i + 1];
-      if (anyExact) {
-        const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
-        if (d !== null && d !== undefined) {
-          denomW[s] = d;
-          totalGenW += d;
-        }
-        numerW[s] =
-          exact ?? (p1 !== null && p2 !== null ? p1 * deltaHours : null);
-      } else {
-        if (p1 !== null) {
-          denomW[s] = p1;
-          totalGenW += p1;
-        }
-        numerW[s] = p1 !== null && p2 !== null ? p1 : null;
-      }
-    }
+    const { denomW, numerW, totalGenW, anyExact } = sourceWeightsForInterval(
+      sources,
+      loads,
+      i,
+      deltaHours,
+    );
     if (totalGenW <= 0) continue;
 
     let contributed = false;
@@ -315,6 +382,18 @@ export function computeFlowAccounting(input: {
             estimatedKwh[s][l] += contribution;
           }
         }
+
+        // The SINK-priced leg, deliberately outside `withMetrics`: an unknown load price must NOT feed
+        // `estimatedKwh` (that denominator is the confidence of the SOURCE intensities, and folding a
+        // missing export tariff into it would silently move every existing emissions/renewable/cost
+        // confidence number).
+        if (withRevenue) {
+          const lp = loadPrices![l]?.[i] ?? null;
+          if (lp !== null) {
+            revenueC[s][l] += contribution * lp;
+            revenueKnownKwh[s][l] += contribution;
+          }
+        }
       }
     }
     if (contributed) intervalsUsed++;
@@ -328,11 +407,13 @@ export function computeFlowAccounting(input: {
     renewableKwh,
     selfRenewableKwh,
     costC,
+    revenueC,
     estimatedKwh,
     emissionsKnownKwh,
     renewableKnownKwh,
     selfRenewableKnownKwh,
     priceKnownKwh,
+    revenueKnownKwh,
     intervalsUsed,
   };
 }

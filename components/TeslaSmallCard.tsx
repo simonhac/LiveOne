@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react";
 import Value from "@/components/ui/value";
-import Image from "next/image";
+import ProgressRing from "@/components/ui/progress-ring";
 import {
   Battery,
   BatteryCharging,
@@ -11,6 +11,8 @@ import {
   Settings,
 } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
+import { TeslaMark } from "@/lib/tesla-icons";
+import { getEvStatus, getEvStatusWords } from "@/lib/vendors/tesla/status";
 import TeslaControlDialog from "@/components/TeslaControlDialog";
 
 interface LatestValue {
@@ -63,6 +65,25 @@ function getStringValue(
 }
 
 /**
+ * Get a boolean value from latest values store.
+ *
+ * Boolean points round-trip through KV as 1/0 — `convertValueByMetadata` only
+ * special-cases `metricUnit === "text"`, so everything else is stored numeric.
+ */
+function getBooleanValue(
+  latest: Record<string, LatestValue | null> | null,
+  path: string,
+): boolean | null {
+  const point = latest?.[path];
+  if (!point) return null;
+  if (typeof point.value === "boolean") return point.value;
+  if (typeof point.value === "number") return point.value !== 0;
+  if (typeof point.value === "string")
+    return point.value === "true" || point.value === "1";
+  return null;
+}
+
+/**
  * Format hours to "Xh Ym" format
  */
 function formatTimeRemaining(hours: number): string {
@@ -85,15 +106,22 @@ function getBatteryColor(soc: number): string {
 }
 
 /**
- * Compact Tesla card - displays battery state and charging info
+ * Compact Tesla card - SoC donut plus the car's state.
  *
- * Container Query Breakpoints (all based on card width, no viewport breakpoints):
- * | Width    | Height | Padding | Circle D | Logo     | Chevron | Status Text |
- * |----------|--------|---------|----------|----------|---------|-------------|
- * | 66px min | 110px  | 8px     | 70       | Hidden   | Hidden  | 9px         |
- * | 90px+    | 110px  | 8px     | 70       | 36px     | 16px    | 9px         |
- * | 120px+   | 110px  | 8px     | 80       | 36px     | 16px    | 10px        |
- * | 180px+   | 180px  | 12px    | 120      | 45px     | 20px    | 14px (sm)   |
+ * One layout throughout; container queries (card width, never the viewport) do
+ * all the scaling. The donut diameters match AmberSmallCard's disc at every
+ * step so the two tiles line up side by side.
+ *
+ * | Width    | Height | Padding | Donut D | Mark   | Chevron | Status Text        |
+ * |----------|--------|---------|---------|--------|---------|--------------------|
+ * | 66px min | 110px  | 8px     | 75      | Hidden | Hidden  | 9px, state only    |
+ * | 90px+    | 110px  | 8px     | 75      | 16px   | 16px    | 9px, state only    |
+ * | 120px+   | 110px  | 8px     | 85      | 16px   | 16px    | 10px, state only   |
+ * | 180px+   | 180px  | 12px    | 140     | 20px   | 20px    | 12px, state only   |
+ * | 260px+   | 180px  | 12px    | 140     | 20px   | 20px    | 12px + 10px detail |
+ *
+ * The charging detail (kW, ETA) waits for 260px because below that it cannot
+ * clear the 140px donut in the corner it shares with it.
  */
 export default function TeslaSmallCard({
   latest,
@@ -152,26 +180,26 @@ export default function TeslaSmallCard({
   const chargePower = getNumericValue(latest, "ev.charge/power");
   const timeToFull = getNumericValue(latest, "ev.charge/remaining");
   const chargeLimit = getNumericValue(latest, "ev.charge.limit/soc");
+  const shift = getStringValue(latest, "ev/shift");
+  const pluggedIn = getBooleanValue(latest, "ev.charge/engaged");
 
   // Don't render if no data available
   if (batterySoc === null) {
     return null;
   }
 
-  const isCharging = chargingState === "Charging";
+  const status = getEvStatus({ shift, chargingState, pluggedIn });
+  const statusWords = getEvStatusWords(status);
+  const isCharging = status === "charging";
   const batteryColor = getBatteryColor(batterySoc);
 
-  // Build charging status string
-  let chargingStatus = "Not Charging";
-  if (isCharging && chargePower !== null) {
-    const limitStr = chargeLimit ? `${Math.round(chargeLimit)}%` : "full";
-    const timeStr = timeToFull
-      ? `${formatTimeRemaining(timeToFull)} to ${limitStr}`
-      : "";
-    chargingStatus = timeStr
-      ? `Charging at ${chargePower} kW — ${timeStr}`
-      : `Charging at ${chargePower} kW`;
-  }
+  // Charging detail: power fuses onto the state line, the ETA gets its own.
+  const powerText =
+    isCharging && chargePower !== null ? `${chargePower} kW` : null;
+  const etaText =
+    isCharging && timeToFull
+      ? `${formatTimeRemaining(timeToFull)} to ${chargeLimit ? `${Math.round(chargeLimit)}%` : "full"}`
+      : null;
 
   // Determine if we should show double chevrons (high power charging)
   const isHighPower = chargePower !== null && chargePower > 10;
@@ -209,109 +237,69 @@ export default function TeslaSmallCard({
         />
       )}
 
-      {/* Compact layout - shown when card < 180px */}
-      <div className="@[180px]:hidden h-full flex flex-col">
-        {/* Tesla logo with charging chevrons - absolute positioned top left */}
-        <div className="absolute top-2 left-2 hidden @[90px]:flex items-center">
-          <Image
-            src="/icons/tesla-logo.png"
-            alt="Tesla"
-            width={36}
-            height={36}
-            className="opacity-60"
-          />
-          {isCharging && (
-            <span style={{ color: "#892D39" }}>
-              {isHighPower ? (
-                <ChevronsLeft className="w-4 h-4" />
-              ) : (
-                <ChevronLeft className="w-4 h-4" />
-              )}
-            </span>
-          )}
-        </div>
-
-        {/* Battery circle - centered */}
-        <div className="flex-1 flex items-center justify-center">
-          <div
-            className="w-[70px] h-[70px] @[120px]:w-[80px] @[120px]:h-[80px] rounded-full flex flex-col items-center justify-center bg-gray-700/50 border-2"
-            style={{ borderColor: batteryColor }}
-          >
-            {isCharging ? (
-              <BatteryCharging
-                className="w-5 h-5 mb-1"
-                style={{ color: batteryColor }}
-              />
+      {/* Tesla mark with charging chevrons - absolute positioned top left */}
+      <div className="absolute top-2 left-2 @[180px]:top-3 @[180px]:left-3 hidden @[90px]:flex items-center">
+        <TeslaMark className="w-4 h-4 @[180px]:w-5 @[180px]:h-5 text-white" />
+        {isCharging && (
+          <span style={{ color: batteryColor }}>
+            {isHighPower ? (
+              <ChevronsLeft className="w-4 h-4 @[180px]:w-5 @[180px]:h-5" />
             ) : (
-              <Battery
-                className="w-5 h-5 mb-1"
-                style={{ color: batteryColor }}
-              />
+              <ChevronLeft className="w-4 h-4 @[180px]:w-5 @[180px]:h-5" />
             )}
-            <div className="font-bold leading-none text-[22px] text-white">
-              <Value value={Math.round(batterySoc)} unit="%" />
-            </div>
-          </div>
-        </div>
+          </span>
+        )}
       </div>
 
-      {/* Charging status at bottom - compact mode */}
-      <div className="@[180px]:hidden absolute bottom-3 left-1.5 right-1.5 text-center">
-        <span className="text-gray-400 text-[9px] @[120px]:text-[10px] truncate block">
-          {chargingStatus}
-        </span>
+      {/* SoC donut - centred in the full card height */}
+      <div className="h-full flex items-center justify-center">
+        <ProgressRing
+          fraction={batterySoc / 100}
+          color={batteryColor}
+          className="w-[75px] h-[75px] @[120px]:w-[85px] @[120px]:h-[85px] @[180px]:w-[140px] @[180px]:h-[140px] rounded-full bg-gray-700/50"
+        >
+          {isCharging ? (
+            <BatteryCharging
+              className="w-4 h-4 @[180px]:w-6 @[180px]:h-6 mb-1"
+              style={{ color: batteryColor }}
+            />
+          ) : (
+            <Battery
+              className="w-4 h-4 @[180px]:w-6 @[180px]:h-6 mb-1"
+              style={{ color: batteryColor }}
+            />
+          )}
+          <div className="font-bold leading-none text-[22px] @[180px]:text-[36px] text-white">
+            <Value value={Math.round(batterySoc)} unit="%" />
+          </div>
+          <div className="hidden @[180px]:block text-gray-400 text-xs mt-1">
+            Battery
+          </div>
+        </ProgressRing>
       </div>
 
-      {/* Full layout - shown when card ≥ 180px */}
-      <div className="hidden @[180px]:flex h-full flex-col">
-        {/* Tesla logo with charging chevrons - absolute positioned top left */}
-        <div className="absolute top-3 left-3 flex items-center">
-          <Image
-            src="/icons/tesla-logo.png"
-            alt="Tesla"
-            width={45}
-            height={45}
-            className="opacity-60"
-          />
-          {isCharging && (
-            <span style={{ color: "#892D39" }}>
-              {isHighPower ? (
-                <ChevronsLeft className="w-5 h-5" />
-              ) : (
-                <ChevronLeft className="w-5 h-5" />
-              )}
-            </span>
-          )}
-        </div>
-
-        {/* Battery circle - centered */}
-        <div className="flex-1 flex items-center justify-center">
-          <div
-            className="w-[120px] h-[120px] rounded-full flex flex-col items-center justify-center bg-gray-700/50 border-4"
-            style={{ borderColor: batteryColor }}
-          >
-            {isCharging ? (
-              <BatteryCharging
-                className="w-6 h-6 mb-1"
-                style={{ color: batteryColor }}
-              />
-            ) : (
-              <Battery
-                className="w-6 h-6 mb-1"
-                style={{ color: batteryColor }}
-              />
+      {/* Status - bottom right, one word per line so the donut keeps the height.
+          It sits in the corner the donut leaves free, so it hugs the very edge
+          and the charging detail waits for a card wide enough to hold it. */}
+      <div className="absolute bottom-1.5 right-1.5 @[180px]:bottom-2 @[180px]:right-2 text-right leading-tight text-gray-400 text-[9px] @[120px]:text-[10px] @[180px]:text-xs">
+        {statusWords.map((word, i) => (
+          <div key={word}>
+            {word}
+            {/* Power fuses onto the last state word, a size down so the pair
+                still clears the donut on the narrowest card that shows it */}
+            {powerText && i === statusWords.length - 1 && (
+              <span className="hidden @[260px]:inline text-[10px]">
+                {" "}
+                {powerText}
+              </span>
             )}
-            <div className="font-bold leading-none text-[32px] text-white">
-              <Value value={Math.round(batterySoc)} unit="%" />
-            </div>
-            <div className="text-gray-400 text-xs mt-1">Battery</div>
           </div>
-        </div>
-
-        {/* Charging status at bottom */}
-        <div className="text-center pt-1.5 pb-1">
-          <span className="text-gray-400 text-sm">{chargingStatus}</span>
-        </div>
+        ))}
+        {etaText && (
+          <div className="hidden @[260px]:block text-[10px] text-gray-500">
+            {etaText}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -78,6 +78,39 @@ interface SiteChartsCardProps {
 
 const SANKEY_OPTIONS_STORAGE_PREFIX = "sankey.options:";
 
+/**
+ * The sankey SVG's fixed size. Hand-rolled d3-sankey drawing into a fixed-size SVG (no viewBox — see
+ * EnergyFlowSankey), so these are real pixels, and `SankeyBlockPlaceholder` below must hold exactly
+ * them open while the history loads. They are also the basis of `SANKEY_BLOCK` in
+ * components/dashboard/cards/footprints.ts, which is what the HOST reserves for this whole block.
+ */
+const SANKEY_W = 600;
+const SANKEY_H = 680;
+
+/**
+ * The sankey block's stand-in: the same wrapper, the same header row, a box of the same SVG size,
+ * and the same label line — so it measures identically to the real thing at every breakpoint rather
+ * than being a magic number that has to be re-tuned whenever the block's padding changes.
+ * (`FlowsSettingsMenu` is omitted: it needs the capabilities that only arrive with the data, and its
+ * button sits inside the fixed-height header row either way.)
+ */
+function SankeyBlockPlaceholder() {
+  return (
+    <div className="sm:p-4" data-skeleton="" aria-hidden>
+      <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
+        <h3 className="text-base font-semibold text-gray-300">Flows</h3>
+      </div>
+      <div className="flex justify-center">
+        <div
+          style={{ width: SANKEY_W, height: SANKEY_H }}
+          className="max-w-full animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
+        />
+      </div>
+      <div className="mt-1 text-center text-xs text-gray-500">&nbsp;</div>
+    </div>
+  );
+}
+
 /** Defensive parse of persisted Sankey options — unknown/malformed fields fall back to the default. */
 function coerceSankeyOptions(raw: unknown): SankeyOptions {
   const next = { ...DEFAULT_SANKEY_OPTIONS };
@@ -336,6 +369,10 @@ export default function SiteChartsCard({
   // the query, and pairing the two across that boundary would briefly mix windows.
   const [tableAttributedFlow, setTableAttributedFlow] =
     useState<DailyFlowMatrices | null>(null);
+  // The grid buy/sell price series behind the legend tables' hovered price line. Mirrored here for the
+  // same reason as `tableAttributedFlow`: a row's price and its energy must come from ONE fetch.
+  const [tableGridRates, setTableGridRates] =
+    useState<ProcessedSiteData["gridRates"]>(null);
   // Which metric the legend tables' last column shows. Shared by both tables so they cycle together;
   // session-only by design (no localStorage) — it resets to "%" on reload.
   const [energyMetric, setEnergyMetric] = useState<EnergyTableMetric>("pct");
@@ -440,6 +477,7 @@ export default function SiteChartsCard({
       setLoadChartData(siteData.load);
       setGenerationChartData(siteData.generation);
       setTableAttributedFlow(siteData.attributedFlow ?? null);
+      setTableGridRates(siteData.gridRates ?? null);
     }
   }, [siteData]);
 
@@ -646,6 +684,7 @@ export default function SiteChartsCard({
                     attributedFlow={tableAttributedFlow}
                     metric={energyMetric}
                     onCycleMetric={cycleEnergyMetric}
+                    gridRate={tableGridRates?.export ?? null}
                   />
                 </div>
               </div>
@@ -687,13 +726,24 @@ export default function SiteChartsCard({
                     attributedFlow={tableAttributedFlow}
                     metric={energyMetric}
                     onCycleMetric={cycleEnergyMetric}
+                    gridRate={tableGridRates?.import ?? null}
                   />
                 </div>
               </div>
             </div>
           )}
 
-          {/* Energy Flow Sankey Diagram */}
+          {/* Energy Flow Sankey Diagram.
+              🛑 The visibility gate is `cardVisible("sankey")` ALONE. It used to also require the
+              processed history, which meant the largest single element on a dashboard — a 680px SVG
+              plus its header and label, 764px of block — materialised out of zero reserved space
+              once `/api/history` landed, shoving everything below it down. (Measured on Kinkora
+              2026-08-01: the site-charts block went 806px → 1570px mid-load.) The data check now
+              chooses between the sankey and a same-sized placeholder instead of between the sankey
+              and nothing. */}
+          {cardVisible("sankey") &&
+            (!processedHistoryData.generation ||
+              !processedHistoryData.load) && <SankeyBlockPlaceholder />}
           {cardVisible("sankey") &&
             processedHistoryData.generation &&
             processedHistoryData.load &&
@@ -979,17 +1029,17 @@ export default function SiteChartsCard({
                           ? "battery-middle"
                           : "columns"
                       }
-                      width={600}
-                      height={680}
+                      width={SANKEY_W}
+                      height={SANKEY_H}
                       nodeTooltip={buildNodeTooltip}
                       linkTooltip={buildLinkTooltip}
                     />
                   </div>
-                  {label && (
-                    <div className="mt-1 text-center text-xs text-gray-500">
-                      {label}
-                    </div>
-                  )}
+                  {/* Rendered unconditionally (` ` when there is no period label yet) so the
+                      line's 16px never appears or disappears under the block. */}
+                  <div className="mt-1 text-center text-xs text-gray-500">
+                    {label || " "}
+                  </div>
                 </div>
               );
             })()}

@@ -107,10 +107,7 @@ async function renderCompositionDashboard(
   const areaById = new Map(
     (sharedAreas ?? initialReadableAreas ?? []).map((a) => [a.id, a] as const),
   );
-  // Section handles (the whole-area devices). These ALONE form the client's dashboardDataBatchQuery
-  // key (the client derives it from section handles, ignoring device pins), so keep them separate
-  // from the expanded per-tile seed set below — folding pins into `batchIds` would break the key
-  // match and force a client batch refetch.
+  // Section handles (the whole-area devices).
   const handles = [
     ...new Set(
       dashboardAreaUuids(dashboard)
@@ -119,7 +116,6 @@ async function renderCompositionDashboard(
     ),
   ];
   const queryClient = getQueryClient();
-  const seeded: Record<string, unknown> = {};
   // A tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a public NEM
   // region device; a member device for `device-metrics`). Those pins are NOT section handles, so
   // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
@@ -169,7 +165,6 @@ async function renderCompositionDashboard(
             if (!safe) return; // private pin we can't cheaply authorize → let the card self-fetch
           }
           queryClient.setQueryData(queryKeys.data(id), value);
-          seeded[String(id)] = value;
         } catch {
           // best-effort prefetch — the card will self-fetch on the client
         }
@@ -177,14 +172,10 @@ async function renderCompositionDashboard(
     );
   };
   await (timer ? timer.time("data", prefetch) : prefetch());
-  // A multi-device dashboard also runs dashboardDataBatchQuery(handles); seed its key (the same
-  // sorted string-id set the client derives from SECTION HANDLES — not the pins) so it doesn't
-  // refetch despite warm per-device caches. The extra pin entries in `seeded` are harmless (the
-  // client seeds per-id from the same map shape).
-  const batchIds = [...new Set(handles.map(String))].sort();
-  if (batchIds.length > 1) {
-    queryClient.setQueryData(queryKeys.dataBatch(batchIds), seeded);
-  }
+  // 🛑 There is no `dataBatch` seed here any more. It wrote a SECOND copy of every payload above
+  // into `queryKeys.dataBatch(handles)` for a `dashboardDataBatchQuery` that no component has ever
+  // mounted — so it only ever doubled the dehydrated hydration JSON on a multi-area dashboard. The
+  // query went with it; the per-id seeds below/above are what the cards actually read.
 
   // SP1.4: on the authed owner/admin path (the read-only shared view disables the switcher via
   // `enabled = !sharedAreas`), SSR-seed the header switcher's two queries — the user's dashboards

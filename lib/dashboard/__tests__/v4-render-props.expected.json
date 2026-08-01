@@ -10,7 +10,8 @@
         "id": "n_amber_now",
         "kind": "card",
         "type": "amber-now"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -38,7 +39,8 @@
         "id": "n_amber_timeline",
         "kind": "card",
         "type": "amber-timeline"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -64,7 +66,8 @@
         "id": "n_b_dm",
         "kind": "card",
         "type": "device-metrics"
-      }
+      },
+      "sharedSiteData": false
     },
     "leaves": [
       {
@@ -87,7 +90,8 @@
         "id": "n_batt_contents",
         "kind": "card",
         "type": "battery-contents"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -109,7 +113,8 @@
         "id": "n_batt_prov",
         "kind": "card",
         "type": "battery-provenance-history"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -135,7 +140,8 @@
         "id": "n_chart_lines",
         "kind": "card",
         "type": "chart"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -143,6 +149,7 @@
         "props": {
           "className": "h-full min-h-[360px]",
           "maxPowerHint": 9,
+          "sharedSiteData": true,
           "systemId": 1,
           "timezoneOffsetMin": 600
         }
@@ -178,7 +185,8 @@
         "id": "n_daily_stripe",
         "kind": "card",
         "type": "daily-stripe"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": []
   },
@@ -199,7 +207,8 @@
         "id": "n_dm_device",
         "kind": "card",
         "type": "device-metrics"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -226,7 +235,8 @@
         "id": "n_dm_inherit",
         "kind": "card",
         "type": "device-metrics"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -250,7 +260,8 @@
         "id": "n_ev_prov",
         "kind": "card",
         "type": "ev-provenance"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -264,8 +275,43 @@
       }
     ]
   },
+  "n_ev_runs": {
+    "plugin": "card:runs",
+    "renderProps": {
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001",
+        "device": "dv_01j4q2m000e00800000000000j"
+      },
+      "deviceSystemId": 12,
+      "handle": 1,
+      "node": {
+        "config": {
+          "role": "ev"
+        },
+        "device": "dv_01j4q2m000e00800000000000j",
+        "id": "n_ev_runs",
+        "kind": "card",
+        "type": "runs"
+      },
+      "sharedSiteData": true
+    },
+    "leaves": [
+      {
+        "component": "GeneratorRunsCard",
+        "props": {
+          "activeLabel": "charging",
+          "emptyText": "No charge sessions in this period",
+          "noun": "session",
+          "role": "ev",
+          "systemId": 12,
+          "timezoneOffsetMin": 600,
+          "title": "EV charging"
+        }
+      }
+    ]
+  },
   "n_gen_device": {
-    "plugin": "card:generator-runs",
+    "plugin": "card:runs",
     "renderProps": {
       "context": {
         "area": "ar_01j4q2m000e008000000000001",
@@ -277,21 +323,27 @@
         "device": "dv_01j4q2m000e00800000000000j",
         "id": "n_gen_device",
         "kind": "card",
-        "type": "generator-runs"
-      }
+        "type": "runs"
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
         "component": "GeneratorRunsCard",
         "props": {
+          "activeLabel": "running",
+          "emptyText": "No generator runs in this period",
+          "noun": "run",
+          "role": "generator",
           "systemId": 12,
-          "timezoneOffsetMin": 600
+          "timezoneOffsetMin": 600,
+          "title": "Generator runs"
         }
       }
     ]
   },
   "n_gen_inherit": {
-    "plugin": "card:generator-runs",
+    "plugin": "card:runs",
     "renderProps": {
       "context": {
         "area": "ar_01j4q2m000e008000000000001"
@@ -300,15 +352,21 @@
       "node": {
         "id": "n_gen_inherit",
         "kind": "card",
-        "type": "generator-runs"
-      }
+        "type": "runs"
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
         "component": "GeneratorRunsCard",
         "props": {
+          "activeLabel": "running",
+          "emptyText": "No generator runs in this period",
+          "noun": "run",
+          "role": "generator",
           "systemId": 1,
-          "timezoneOffsetMin": 600
+          "timezoneOffsetMin": 600,
+          "title": "Generator runs"
         }
       }
     ]
@@ -331,7 +389,8 @@
         "id": "n_heatmap",
         "kind": "card",
         "type": "heatmap"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -358,7 +417,8 @@
         "id": "n_heatmap_bare",
         "kind": "card",
         "type": "heatmap"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {

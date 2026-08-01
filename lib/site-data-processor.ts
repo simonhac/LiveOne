@@ -25,12 +25,39 @@ export interface ProcessedSiteData {
    *  tile's sparkline is always a 24h/5m window, which the D site fetch already is, so it reads this
    *  instead of firing its own `/api/history` call in that case. */
   hwsTemperature?: { timestamps: Date[]; values: (number | null)[] } | null;
+  /**
+   * The grid's per-interval BUY and SELL prices (c/kWh, aligned to the chart timestamps), behind the
+   * legend tables' hovered "Import Price" / "Export Price" line. Requested for every period; absent
+   * (null entries throughout) for an Area with no bound grid rate points.
+   *
+   * ⚠️ Signs are the vendor's, NOT normalised: `import` is positive when you pay, and `export` is
+   * Amber's raw `feedIn.perKwh`, which is NEGATIVE when you are PAID. The engine normalises its own
+   * copy for the `revenue_c` leg (`resolveExportReceiptSeries`) but that never touches these raw
+   * series, so the display flip lives at the render site — see `EnergyTable`.
+   *
+   * Forward-filled to the chart grid by {@link forwardFillRate}: Amber's rates are 30-min native, so
+   * at the D period's 5-min grid 5 of every 6 buckets arrive null and would otherwise read "—".
+   */
+  gridRates?: { import: (number | null)[]; export: (number | null)[] } | null;
+  /**
+   * Every series of this fetch's `/api/history` response, UNFILTERED and UNSPLIT — i.e. before the
+   * power/SoC/hws partition and before `splitBatteryPower`. `LinesChartCard` feeds it straight to
+   * `buildChartData` (whose `findSeries` micromatches on `id`), which is how a `lines` chart rides
+   * this fetch instead of issuing a second, redundant `/api/history` for the same window.
+   *
+   * `fetchAndProcessSiteData` — the only producer — sets this on EVERY path where the HTTP fetch
+   * succeeded, including the ones where there is nothing to chart as a site (no series at all, or
+   * none of type `power`): an area the site processor can't chart must still be able to hand the
+   * lines chart its raw series, or the merge would trade one request for a blank card. Optional
+   * only so hand-built `ProcessedSiteData` fixtures (energy-flow-matrix tests) need not carry it.
+   */
+  rawSeries?: ParsedSeries[];
 }
 
 /**
  * Series data from the history API with parsed path
  */
-interface ParsedSeries {
+export interface ParsedSeries {
   id: string;
   type: string;
   units: string;
@@ -123,6 +150,8 @@ interface FetchedSiteData {
   socSeries: ParsedSeries[];
   /** `load.hws/temperature` series, when requested (1D only — see `fetchSiteData`). */
   hwsSeries: ParsedSeries[];
+  /** `bidi.grid.{import,export}/rate` series — the legend tables' hovered price. Empty when unbound. */
+  rateSeries: ParsedSeries[];
   timestamps: Date[];
   selectedIndices: number[];
   filteredTimestamps: Date[];
@@ -289,14 +318,19 @@ function calculateTimeWindow(
 }
 
 /**
- * Fetch site data from API and prepare it for processing
+ * Fetch site data from API and prepare it for processing.
+ *
+ * Returns BOTH halves separately: `rawSeries` (every series the response carried, always) and
+ * `processable` (null when there is nothing to chart as a site). They are split because the two have
+ * different audiences — the stacked charts/Sankey need the processed halves, while the `lines` chart
+ * rides `rawSeries` and must still get its data on the paths where the site processing bails.
  */
 async function fetchSiteData(
   systemId: string,
   period: ChartTimeRange,
   startTime?: string,
   endTime?: string,
-): Promise<FetchedSiteData | null> {
+): Promise<{ rawSeries: ParsedSeries[]; processable: FetchedSiteData | null }> {
   // Map period to request parameters. `duration` (the `last=` live window) is only used by D/W —
   // M/Y always pass an explicit `startTime`/`endTime` calendar window.
   let requestInterval: string;
@@ -326,6 +360,11 @@ async function fetchSiteData(
   if (period === "D") {
     seriesFilter += ",load.hws/temperature.avg";
   }
+  // The grid's buy/sell prices, for the legend tables' hovered "Import Price" / "Export Price" line.
+  // Every period: at 1d `rate.avg` is that day's mean price, which is what a hovered day should show.
+  // (Only ever DISPLAYED — the window's dollar totals come from the attributed flow matrix's
+  // cost/revenue legs, never from multiplying these by anything client-side.)
+  seriesFilter += ",bidi.grid.import/rate.avg,bidi.grid.export/rate.avg";
 
   // Fetch and parse all series data
   const {
@@ -345,12 +384,13 @@ async function fetchSiteData(
 
   if (allSeries.length === 0) {
     console.warn("No series data available in response");
-    return null;
+    return { rawSeries: allSeries, processable: null };
   }
 
-  // Separate power, SoC, and hot-water-temperature series. SoC/hws series are typed "power" in the
-  // OpenNEM payload (a legacy field, not the real metric — see build-series.ts), so the type filter
-  // alone would pull them in; exclude them by path so they're handled only via their own overlays
+  // Separate power, SoC, hot-water-temperature and grid-rate series. The non-power ones are ALL typed
+  // "power" in the OpenNEM payload (a legacy field, not the real metric — see build-series.ts), so the
+  // type filter alone would pull them in; exclude them by path so they're handled only via their own
+  // overlays — a c/kWh price stacked into a kW chart would be silently absurd rather than an error.
   // (socSeries / addSocSeries below; hwsSeries via ProcessedSiteData.hwsTemperature). Otherwise an
   // empty SoC series (e.g. a battery SoC point with no 1d aggregates, which sorts first) would become
   // powerSeries[0] and zero the whole chart's timeline in calculateTimeWindow.
@@ -358,11 +398,12 @@ async function fetchSiteData(
     (d) =>
       d.type === "power" &&
       !matchesLogicalPath(d.seriesPath!.pointPath, "bidi.battery", "soc") &&
-      !matchesLogicalPath(d.seriesPath!.pointPath, "load.hws", "temperature"),
+      !matchesLogicalPath(d.seriesPath!.pointPath, "load.hws", "temperature") &&
+      !matchesLogicalPath(d.seriesPath!.pointPath, "bidi.grid", "rate"),
   );
   if (powerSeries.length === 0) {
     console.warn("No power series data available in response");
-    return null;
+    return { rawSeries: allSeries, processable: null };
   }
 
   // Split battery power into charge/discharge
@@ -386,6 +427,11 @@ async function fetchSiteData(
     matchesLogicalPath(d.seriesPath!.pointPath, "load.hws", "temperature"),
   );
 
+  // Extract the grid buy/sell rate series (empty for an Area with no bound rate points).
+  const rateSeries = allSeries.filter((d) =>
+    matchesLogicalPath(d.seriesPath!.pointPath, "bidi.grid", "rate"),
+  );
+
   // Calculate timestamps and time window. Build the master timeline from a series that actually has
   // data — a single empty/short leading series must never collapse the whole chart's timeline.
   const timelineSeries =
@@ -394,17 +440,21 @@ async function fetchSiteData(
     calculateTimeWindow(timelineSeries, period, startTime, endTime);
 
   return {
-    powerSeries,
-    socSeries,
-    hwsSeries,
-    timestamps,
-    selectedIndices,
-    filteredTimestamps,
-    requestInterval,
-    requestStart,
-    requestEnd,
-    flowMatrix,
-    attributedFlow,
+    rawSeries: allSeries,
+    processable: {
+      powerSeries,
+      socSeries,
+      hwsSeries,
+      rateSeries,
+      timestamps,
+      selectedIndices,
+      filteredTimestamps,
+      requestInterval,
+      requestStart,
+      requestEnd,
+      flowMatrix,
+      attributedFlow,
+    },
   };
 }
 
@@ -715,13 +765,78 @@ function addSocSeries(
 }
 
 /**
+ * How stale a grid rate may be and still apply. Amber's rates are 30-min native, so on the D period's
+ * 5-min grid only every 6th bucket carries a value — without a hold, hovering between price boundaries
+ * would read "—" five times out of six. 35 min is one native interval plus slack, matching the server's
+ * own `RATE_FILL_MS` in `lib/battery-provenance/load.ts`; a genuinely missed tick still reads "—".
+ * At the 1d interval the limit never fires, so a hovered day shows only its own average price.
+ */
+const RATE_FILL_MS = 35 * 60 * 1000;
+
+/**
+ * A sparse rate series held forward onto the chart's timestamps. Index-aligned to `timestamps`; a
+ * value older than {@link RATE_FILL_MS} (or none yet) reads null.
+ *
+ * A local re-implementation on purpose: the engine's `forwardFill` lives in
+ * `lib/battery-provenance/load.ts`, which pulls the DB in with it and can't be imported here.
+ */
+export function forwardFillRate(
+  timestamps: Date[],
+  values: (number | null)[],
+): (number | null)[] {
+  let lastValue: number | null = null;
+  let lastAtMs = 0;
+  return timestamps.map((t, i) => {
+    const v = values[i] ?? null;
+    if (v !== null) {
+      lastValue = v;
+      lastAtMs = t.getTime();
+      return v;
+    }
+    if (lastValue === null) return null;
+    return t.getTime() - lastAtMs <= RATE_FILL_MS ? lastValue : null;
+  });
+}
+
+/**
+ * Shape the raw `bidi.grid.{import,export}/rate` series into {@link ProcessedSiteData.gridRates},
+ * windowed to the chart's own timestamps and held forward. Returns null when neither is bound, so
+ * "this Area has no prices" stays distinct from "prices exist but not at this instant".
+ */
+function buildGridRates(
+  rateSeries: ParsedSeries[],
+  selectedIndices: number[],
+  filteredTimestamps: Date[],
+): ProcessedSiteData["gridRates"] {
+  const pick = (stem: string) => {
+    const s = rateSeries.find((r) =>
+      matchesLogicalPath(r.seriesPath!.pointPath, stem, "rate"),
+    );
+    if (!s) return null;
+    return forwardFillRate(
+      filteredTimestamps,
+      selectedIndices.map((i) => s.history.data[i] ?? null),
+    );
+  };
+  const imp = pick("bidi.grid.import");
+  const exp = pick("bidi.grid.export");
+  if (!imp && !exp) return null;
+  const empty = filteredTimestamps.map(() => null);
+  return { import: imp ?? empty, export: exp ?? empty };
+}
+
+/**
  * Process site data for both load and generation charts
  */
-function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
+function processSiteData(
+  fetchedData: FetchedSiteData,
+  rawSeries: ParsedSeries[],
+): ProcessedSiteData {
   const {
     powerSeries,
     socSeries,
     hwsSeries,
+    rateSeries,
     selectedIndices,
     filteredTimestamps,
     requestInterval,
@@ -734,6 +849,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
   const processedData: ProcessedSiteData = {
     load: null,
     generation: null,
+    rawSeries,
     requestStart,
     requestEnd,
     flowMatrix,
@@ -744,6 +860,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
           values: selectedIndices.map((i) => hwsSeries[0].history.data[i]),
         }
       : null,
+    gridRates: buildGridRates(rateSeries, selectedIndices, filteredTimestamps),
   };
 
   // Process generation FIRST (needed for load Case 3)
@@ -792,14 +909,20 @@ export async function fetchAndProcessSiteData(
   startTime?: string,
   endTime?: string,
 ): Promise<ProcessedSiteData> {
-  const fetchedData = await fetchSiteData(systemId, period, startTime, endTime);
+  const { rawSeries, processable } = await fetchSiteData(
+    systemId,
+    period,
+    startTime,
+    endTime,
+  );
 
-  if (!fetchedData) {
+  if (!processable) {
     return {
       load: null,
       generation: null,
+      rawSeries,
     };
   }
 
-  return processSiteData(fetchedData);
+  return processSiteData(processable, rawSeries);
 }

@@ -22,6 +22,29 @@ describe("mergeDetectConfig", () => {
     expect(cfg.delayOffMs).toBe(120_000);
   });
 
+  it("gives ev its own defaults — NOT the generic ones it would otherwise inherit", () => {
+    // The regression this guards: `ev` is a role the registry has always known, so before it got an
+    // entry in DEFAULTS_BY_ROLE it silently took GENERIC_DEFAULTS — a 120s delay_off on a 120s-cadence
+    // meter, which is the knife edge that fragments a run on one missed poll.
+    const cfg = mergeDetectConfig(
+      { signalKind: "power-threshold", upperW: 100 },
+      "ev",
+    );
+    expect(cfg).toEqual({
+      lowerW: null,
+      upperW: 100,
+      hysteresisW: 0,
+      delayOnMs: 0,
+      delayOffMs: 300_000,
+      boundaryMode: "midpoint",
+    });
+  });
+
+  it("midpoint boundaries are ev's, not everyone's", () => {
+    expect(mergeDetectConfig(base, "generator").boundaryMode).toBe("edge");
+    expect(mergeDetectConfig(base, "pump").boundaryMode).toBe("edge");
+  });
+
   it("lets explicit params win over the defaults", () => {
     const cfg = mergeDetectConfig(
       { ...base, hysteresisW: 25, delayOnSeconds: 45, delayOffSeconds: 90 },

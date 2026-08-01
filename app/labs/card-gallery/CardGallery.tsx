@@ -318,7 +318,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Tesla — small card"
-          note="Container-query layout: 66 / 90 / 120 / 180 width breakpoints. Returns null if no SoC."
+          note="One container-query layout: 66 / 90 / 120 / 180 width breakpoints. SoC donut matches Amber's disc at every step. Returns null if no SoC."
           scenarios={Object.keys(TESLA_SCENARIOS)}
           defaultScenario="charging (high power)"
           presetWidths={CQ_WIDTHS}

@@ -18,6 +18,7 @@ import { readableAreasQuery } from "@/lib/queries";
 import { docAreaRefs, docHasCards } from "@/lib/dashboard/add-area";
 import {
   hasTimeTravelingCard,
+  mayHaveTimeTravelingCard,
   primaryHandle,
 } from "@/lib/dashboard/temporal-cards";
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
@@ -126,6 +127,15 @@ export default function DashboardClient({
   // the page via the shared URL window.
   const showNav = hasTimeTravelingCard(dashboard.doc, areaById);
   const navHandle = primaryHandle(dashboard.doc, areaById);
+  // Both answers above need `areaById`, which is empty until the areas resolve — so on any path
+  // WITHOUT the SSR seed (`initialReadableAreas`) the navigator appears a beat late, and on mobile
+  // it is a whole extra header row that pushes the page down when it does. Hold its space from the
+  // first paint on the documents that could host it. `sm:hidden` mirrors the mobile row below;
+  // the desktop control sits inside a flex row where a late arrival costs width, not height.
+  const navRowPending =
+    !areasResolved &&
+    !(showNav && navHandle != null) &&
+    mayHaveTimeTravelingCard(dashboard.doc);
 
   return (
     <ChartFocusProvider>
@@ -227,11 +237,15 @@ export default function DashboardClient({
                 </DropdownMenu.Root>
               )}
             </div>
-            {showNav && navHandle != null && (
+            {showNav && navHandle != null ? (
               <div className="w-full sm:hidden">
                 <HeaderTemporalNav handle={navHandle} />
               </div>
-            )}
+            ) : navRowPending ? (
+              // Same box, no content — `TemporalNavigator` is one row of `px-2 py-1 text-sm`
+              // buttons, i.e. 20px of line box + 8px padding + 2px border.
+              <div className="h-[30px] w-full sm:hidden" aria-hidden />
+            ) : null}
           </div>
         </header>
 

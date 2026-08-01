@@ -334,6 +334,12 @@ export const pointReadingsFlowAttr1d = pgTable(
     // (a partial-day edge makes metrics 1-2 unavailable; metric 3 uses renewable_kwh and is unaffected).
     selfRenewableKwh: doublePrecision("self_renewable_kwh"),
     costC: doublePrecision("cost_c"), // attributed cost (cents, signed)
+    // Attributed feed-in REVENUE (cents, positive = money in) — the sink-priced mirror of cost_c:
+    // cost_c prices energy by its SOURCE, revenue_c by its SINK. Only `load.grid` edges are ever
+    // non-null (the export tariff is the only sink that pays us); null elsewhere, and null on a
+    // `load.grid` edge whose Area has no export tariff configured. Note the sign is the opposite of
+    // Amber's own `bidi.grid.export/value` point, which books feed-in as a negative credit.
+    revenueC: doublePrecision("revenue_c"),
 
     // Confidence: energy whose attribution used an estimated/unknown source intensity.
     estimatedKwh: doublePrecision("estimated_kwh").notNull().default(0),

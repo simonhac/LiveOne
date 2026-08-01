@@ -88,17 +88,26 @@ export function dayOffsetOf(
  * so all whole-area cards share one request; a device-bound card adds one), paused while any
  * modal is open. `paused` is exposed for plugins with a second query of their own (ev-provenance)
  * so modal-open pauses that too.
+ *
+ * `enabled: false` is for callers that must call the hook unconditionally but have no device to ask
+ * about — a tile rendered from fixtures with no `systemId`. `dashboardDataQuery`'s own guard only
+ * rejects null/"", and the usual `systemId ?? 0` fallback is a real-looking id, so without this it
+ * would fetch `/api/data?systemId=0`.
  */
-export function useAreaDatum(systemId: number): {
+export function useAreaDatum(
+  systemId: number,
+  { enabled = true }: { enabled?: boolean } = {},
+): {
   data: unknown;
   datum: AreaDatum | null;
   isLoading: boolean;
   paused: boolean;
 } {
   const { isAnyModalOpen } = useModalContext();
-  const { data, isLoading } = useQuery(
-    dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
-  );
+  const { data, isLoading } = useQuery({
+    ...dashboardDataQuery(systemId, { paused: isAnyModalOpen }),
+    enabled,
+  });
   return {
     data,
     datum: (data ?? null) as AreaDatum | null,
@@ -138,16 +147,14 @@ export function maxPowerHintFromDeviceInfo(deviceInfo?: {
   return solarKW ?? inverterKW;
 }
 
-/** A tile-shaped loading placeholder shown while a TileCell's data is in flight. */
-export function TileSkeleton() {
-  return (
-    <div className="min-h-[120px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
-  );
-}
-
-/** A card-height loading placeholder for non-tile cards (charts / sankey / amber / generator-runs). */
-export function ChartSkeleton() {
-  return (
-    <div className="min-h-[360px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
-  );
-}
+/**
+ * The loading placeholders, re-exported so the card layer has one import site. They are DEFINED in
+ * components/ui/skeleton.tsx (and documented there) because the leaf components use them too, and
+ * those must not pull this module's react-query plumbing in just to draw a grey rectangle.
+ */
+export {
+  SKELETON_CLASS,
+  TileSkeleton,
+  CardSkeleton,
+  StatGridSkeleton,
+} from "@/components/ui/skeleton";

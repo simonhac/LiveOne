@@ -1,7 +1,10 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — Stages 0–3 COMPLETE; Stage 4's type/naming cleanups (#18, #15) also done.
-> Remaining: the d3 primitives, then Stage 5 porting.** Written 2026-08-01.
+> **Status: ✅ COMPLETE — all six stages done 2026-08-01 on `simonhac/consolidate-charts-to-d3`,
+> merged with `origin/main` and awaiting review. NOT yet on main.** Chart.js is gone; every chart
+> renders SVG. Net −78.9 kB gzip, −83 kB First Load JS on both main routes. Kept as the as-built
+> record — the defect register, the decisions, and the "what has NOT been verified" list are the
+> parts worth re-reading. Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 

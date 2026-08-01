@@ -24,6 +24,7 @@ import {
 import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
+import { buildLoadPrices } from "@/lib/aggregation/flow-node-meta";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
 import type {
   ProvenanceInputs,
@@ -102,7 +103,9 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
 // v3: exact energy-accumulator magnitudes (`FlowSeries.energyKwh`) — gross bidi flows preserved
 // through intra-interval reversals, dropped power intervals recovered. Power-only areas
 // re-materialise to identical values.
-export const FLOW_ATTR_VERSION = 4;
+// v5: added the `revenue_c` leg — feed-in income attributed to the source that produced the exported
+// energy. Areas with no export tariff re-materialise to identical values plus a null revenue column.
+export const FLOW_ATTR_VERSION = 5;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */
@@ -185,6 +188,7 @@ async function writeAttrRollup(
       sources: inputs.sources,
       loads: inputs.loads,
       sourceIntensities: result.sourceIntensities,
+      loadPrices: buildLoadPrices(inputs.loads, result.exportReceiptPrice),
       window: { startMs: startUnix * 1000, endMs: endUnix * 1000 },
     });
     const rows: (typeof pointReadingsFlowAttr1d.$inferInsert)[] = [];
@@ -210,6 +214,9 @@ async function writeAttrRollup(
               ? acc.selfRenewableKwh[s][l]
               : null,
           costC: acc.priceKnownKwh[s][l] > 0 ? acc.costC[s][l] : null,
+          // null = this edge earned nothing knowable — either the sink isn't `load.grid` (nothing pays
+          // us) or the Area has no export tariff configured. Distinct from a real 0.
+          revenueC: acc.revenueKnownKwh[s][l] > 0 ? acc.revenueC[s][l] : null,
           estimatedKwh: acc.estimatedKwh[s][l],
           sampleCount: acc.intervalsUsed,
           version: FLOW_ATTR_VERSION,

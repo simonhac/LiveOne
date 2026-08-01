@@ -105,3 +105,30 @@ export function resolveExportPriceSeries(
   const provider = new ScheduleTariffProvider(cfg.plans, tzOffsetMin);
   return timeline.map((ms) => provider.exportPriceAt(ms));
 }
+
+/**
+ * The same feed-in series in the RECEIPTS convention — positive c/kWh = money we RECEIVE — which is what
+ * the flow accounting's `revenueC` leg needs. It is NOT interchangeable with
+ * {@link resolveExportPriceSeries}: the two tariff modes disagree in sign at the source, and that
+ * function hands both to the fold verbatim.
+ *
+ *   - `amber`    — the measured `bidi.grid.export/rate` is Amber's raw feedIn `perKwh`, which is
+ *                  NEGATIVE when you are being paid (`AmberNow.tsx` flips it the same way for display).
+ *                  Negated here.
+ *   - `schedule` — an `ExportTariffPlan`'s `cPerKwh` is already a plain positive receipt. Passed through.
+ *
+ * ⚠️ The fold's own solar opportunity cost reads the un-normalised series through
+ * `Math.max(0, exportPrice[i])`, so on an `amber` Area every interval floors to 0 and `forgoneC` /
+ * the `price-opportunity` point stay flat. That predates this function and is deliberately left alone —
+ * changing it would move existing battery-provenance numbers.
+ */
+export function resolveExportReceiptSeries(
+  cfg: ExportTariffConfig | undefined,
+  timeline: number[],
+  tzOffsetMin: number,
+  amberExportPrice: (number | null)[],
+): (number | null)[] {
+  if (cfg?.mode === "amber")
+    return amberExportPrice.map((v) => (v === null ? null : -v));
+  return resolveExportPriceSeries(cfg, timeline, tzOffsetMin, amberExportPrice);
+}

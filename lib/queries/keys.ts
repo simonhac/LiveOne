@@ -17,11 +17,8 @@
  * both its stringification and a wire-native TypeID (`dv_…` / `ar_…`), so a caller that already holds a
  * TypeID can key off it directly rather than round-tripping through a handle.
  *
- * 🛑 The key and the WIRE ADDRESS must move together. `dashboardDataBatchQuery` seeds
- * `queryKeys.data(id)` from the `{data: {[id]: …}}` map that `/api/data?systemId=a,b` returns — if the
- * request's id grammar and the key's disagree, the seed lands under a key nobody reads (a silent miss,
- * not a compile error), or under one already holding a different payload shape. That is why the batch
- * leg is deliberately `systemId`-only.
+ * 🛑 The key and the WIRE ADDRESS must move together: a key built from an id grammar the request
+ * doesn't use lands under a key nobody reads — a silent miss, not a compile error.
  */
 export type SystemIdLike = number | string;
 
@@ -47,10 +44,6 @@ export const queryKeys = {
    * SSR seed, which `getDeviceDataForCache` writes under this same key from the same build.
    */
   data: (systemId: SystemIdLike) => ["data", sid(systemId)] as const,
-
-  /** `ids` must already be deduped + sorted (see `dashboardDataBatchQuery`) so the key is stable
-   *  regardless of caller ordering. */
-  dataBatch: (ids: string[]) => ["dataBatch", ids.join(",")] as const,
 
   latest: (systemId: SystemIdLike) => ["latest", sid(systemId)] as const,
 

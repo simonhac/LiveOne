@@ -32,6 +32,7 @@ import {
   type FlowAccountingResult,
 } from "@/lib/aggregation/flow-matrix-core";
 import {
+  buildLoadPrices,
   compareLoadPaths,
   compareSourcePaths,
   colorForFlowPath,
@@ -96,6 +97,7 @@ export function shapeAttributedFlowMatrix(
       acc.selfRenewableKnownKwh,
     ),
     costC: knownGrid(acc.costC, acc.priceKnownKwh),
+    revenueC: knownGrid(acc.revenueC, acc.revenueKnownKwh),
     estimatedKwh: numGrid(acc.estimatedKwh),
   };
 
@@ -181,6 +183,7 @@ export async function buildAttributedFlowMatrix(
     sources: inputs.sources,
     loads: inputs.loads,
     sourceIntensities: result.sourceIntensities,
+    loadPrices: buildLoadPrices(inputs.loads, result.exportReceiptPrice),
     window: { startMs, endMs },
   });
 

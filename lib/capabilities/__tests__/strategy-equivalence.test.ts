@@ -16,7 +16,11 @@ import {
   buildAreaStrategy,
   type AreaStrategyContext,
 } from "@/lib/capabilities/strategy";
-import type { CapabilityId } from "@/lib/capabilities/registry";
+import {
+  RUN_TRACKING_CAPABILITY,
+  type CapabilityId,
+} from "@/lib/capabilities/registry";
+import { TRACKABLE_ROLE_IDS } from "@/lib/roles/registry";
 import type { GroupNode } from "@/lib/dashboard/v4";
 import { validateDocV4 } from "@/lib/dashboard/v4-validate";
 import { Area, Device } from "@/lib/ids";
@@ -43,7 +47,7 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: GroupNode }[] = [
       leadWithDeviceMetrics: true,
     },
     want: golden(
-      '{"kind":"group","area":"ar_01k0000000e008000000000001","heading":true,"children":[{"kind":"card","type":"device-metrics","config":{"variant":"table"}},{"kind":"group","direction":"row","wrap":true,"children":[{"kind":"card","type":"solar"},{"kind":"card","type":"load"},{"kind":"card","type":"battery"},{"kind":"card","type":"house-to-grid"},{"kind":"card","type":"renewables"}]},{"kind":"card","type":"chart","config":{"variant":"lines"}},{"kind":"card","type":"generator-runs"}]}',
+      '{"kind":"group","area":"ar_01k0000000e008000000000001","heading":true,"children":[{"kind":"card","type":"device-metrics","config":{"variant":"table"}},{"kind":"group","direction":"row","wrap":true,"children":[{"kind":"card","type":"solar"},{"kind":"card","type":"load"},{"kind":"card","type":"battery"},{"kind":"card","type":"house-to-grid"},{"kind":"card","type":"renewables"}]},{"kind":"card","type":"chart","config":{"variant":"lines"}},{"kind":"card","type":"runs","config":{"role":"generator"}}]}',
     ),
   },
   {
@@ -112,7 +116,39 @@ const CASES: { name: string; ctx: AreaStrategyContext; want: GroupNode }[] = [
       aggregate: false,
     },
     want: golden(
-      '{"kind":"group","area":"ar_01k0000000e008000000000001","heading":true,"children":[{"kind":"card","type":"device-metrics"},{"kind":"card","type":"generator-runs"}]}',
+      '{"kind":"group","area":"ar_01k0000000e008000000000001","heading":true,"children":[{"kind":"card","type":"device-metrics"},{"kind":"card","type":"runs","config":{"role":"generator"}}]}',
+    ),
+  },
+  {
+    // Kinkora's shape: an EV detector on a member, so the site gets a `runs` card for the EV and
+    // NOT one for a generator it doesn't have. Pinning is deliberately absent — see `runsCards`.
+    name: "EV charge tracking (no generator)",
+    ctx: {
+      area: A,
+      capabilities: caps(
+        "solar/power",
+        "load/power",
+        "battery/soc",
+        "battery/power",
+        "grid/power",
+        "ev-charging",
+      ),
+      aggregate: false,
+    },
+    want: golden(
+      '{"kind":"group","area":"ar_01k0000000e008000000000001","heading":true,"children":[{"kind":"group","direction":"row","wrap":true,"children":[{"kind":"card","type":"solar"},{"kind":"card","type":"load"},{"kind":"card","type":"battery"},{"kind":"card","type":"house-to-grid"},{"kind":"card","type":"renewables"}]},{"kind":"card","type":"chart","config":{"variant":"lines"}},{"kind":"card","type":"runs","config":{"role":"ev"}}]}',
+    ),
+  },
+  {
+    // Both detectors on one area: two runs cards, in registry order, distinguished only by config.
+    name: "both trackable roles → one runs card each",
+    ctx: {
+      area: A,
+      capabilities: caps("instrumentation", "generator-running", "ev-charging"),
+      aggregate: false,
+    },
+    want: golden(
+      '{"kind":"group","area":"ar_01k0000000e008000000000001","heading":true,"children":[{"kind":"card","type":"device-metrics"},{"kind":"card","type":"runs","config":{"role":"generator"}},{"kind":"card","type":"runs","config":{"role":"ev"}}]}',
     ),
   },
   {
@@ -142,6 +178,23 @@ describe("buildAreaStrategy golden output", () => {
       expect(buildAreaStrategy(c.ctx)).toEqual(c.want);
     });
   }
+
+  /**
+   * The half of the trackable-role ⇄ capability agreement that TypeScript can't state.
+   *
+   * `RUN_TRACKING_CAPABILITY` is a total `Record<TrackableRoleId, …>`, so a capability without a
+   * role is a compile error. The reverse — marking a role `device.trackable` in the role registry
+   * and forgetting to give it a capability here — is not, and it fails SILENTLY: the detector runs,
+   * writes intervals, publishes its running point, and the card it exists to feed is simply never
+   * eligible. (`lib/capabilities/registry.ts` carries the matching note.)
+   */
+  it("every trackable role advertises a capability", () => {
+    for (const role of TRACKABLE_ROLE_IDS) {
+      expect(
+        RUN_TRACKING_CAPABILITY[role as keyof typeof RUN_TRACKING_CAPABILITY],
+      ).toBeTruthy();
+    }
+  });
 
   // The strategy is machine-built, so it must only ever emit KNOWN card types carrying config their
   // per-type schema accepts: an unknown type would only warn, and a bad config would 422 on save.

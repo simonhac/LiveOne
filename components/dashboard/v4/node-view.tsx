@@ -45,8 +45,9 @@ import {
   useAreaDatum,
   staleThreshold,
   TileSkeleton,
-  ChartSkeleton,
+  CardSkeleton,
 } from "@/components/dashboard/cards/shared";
+import { siteChartsFootprint } from "@/components/dashboard/cards/footprints";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
 import {
   TILE_GRID_CONTAINER,
@@ -121,7 +122,7 @@ function V4TileCell({
 }) {
   const { data, datum, isLoading } = useAreaDatum(systemId);
   const latest = datum?.latest ?? {};
-  if (isLoading) return <TileSkeleton />;
+  if (isLoading) return <TileSkeleton className={plugin.skeletonClass} />;
   const showGrid = !!latest["bidi.grid/power"];
   if (!plugin.isAvailable({ latest, data, showGrid })) return null;
   return (
@@ -144,11 +145,14 @@ function CardNodeView({
   context,
   resolver,
   areasResolved,
+  sharedSiteData,
 }: {
   node: CardNode;
   context: NodeContext;
   resolver: ShellResolver;
+  /** Whether the readable-Area set is KNOWN yet — tells "still loading" from "unresolvable". */
   areasResolved: boolean;
+  sharedSiteData?: boolean;
 }) {
   const area: ResolvedArea | null = context.area
     ? resolver.area(context.area)
@@ -180,13 +184,26 @@ function CardNodeView({
 
   // Tile plugin → a self-fetching tile cell.
   if (plugin.kind === "tile") {
-    if (systemId == null) return <TileSkeleton />;
+    if (systemId == null)
+      return <TileSkeleton className={plugin.skeletonClass} />;
     return <V4TileCell plugin={plugin} systemId={systemId} />;
   }
 
   // Card plugin → handed the node + its inherited context.
-  if (plugin.pending !== "self" && handle == null) {
-    return areasResolved ? null : <ChartSkeleton />;
+  //
+  // 🛑 A card with no handle keeps its FOOTPRINT either way — it used to collapse to `null` once
+  // the areas resolved, which meant a whole card's worth of height vanishing mid-load and
+  // everything below it jumping up. What changes with `areasResolved` is only what fills that
+  // space: a skeleton while the answer is still coming, and an honest notice once it has come and
+  // the area can't be addressed. (A permanent shimmer would be the other, quieter, lie.)
+  const footprint = plugin.footprint(node);
+  const unaddressable = plugin.pending !== "self" && handle == null;
+  if (unaddressable) {
+    return areasResolved ? (
+      <CardUnavailable height={footprint} />
+    ) : (
+      <CardSkeleton height={footprint} />
+    );
   }
   return (
     <plugin.Render
@@ -194,6 +211,7 @@ function CardNodeView({
       context={context}
       handle={handle ?? undefined}
       deviceSystemId={device?.systemId ?? undefined}
+      sharedSiteData={sharedSiteData}
     />
   );
 }
@@ -258,6 +276,18 @@ function GroupNodeView({
     const k = collapseKeyOf(child);
     if (k != null) chartKeys.add(k);
   }
+  // Will a <SiteChartsGroup> actually MOUNT for this group, and will it run its `siteDataQuery`?
+  // Mirrors the two gates below exactly: pass 2 emits it only for a non-hidden collapse member with a
+  // resolved `handle`, and SiteChartsGroup itself bails on `!chartCapable`. A standalone `lines`
+  // chart in this same group reads this to decide whether it can ride that fetch instead of issuing
+  // its own `/api/history` for the same window — so it must not be true when nothing drives the
+  // query, or the chart would wait forever on a payload nobody fetches. Note `chartKeys` is NOT the
+  // right input: it deliberately includes hidden members (they stay addressable via `cardVisible`),
+  // and an all-hidden collapse emits no group at all.
+  const siteChartsMounted =
+    handle != null &&
+    !!area?.chartCapable &&
+    node.children.some((c) => !c.hidden && collapseKeyOf(c) != null);
   const sankeyChild = node.children.find(
     (c) => c.kind === "card" && c.type === "sankey",
   );
@@ -270,11 +300,14 @@ function GroupNodeView({
   // Collapse pass 2 + render.
   let chartsEmitted = false;
   const body: ReactNode[] = node.children
-    .filter((c) => !c.hidden)
     .map((child, i) => {
+      if (child.hidden) return null;
       if (collapseKeyOf(child) != null) {
         if (chartsEmitted) return null;
         chartsEmitted = true;
+        // The block's height is additive in the very keys the collapse pass just gathered, so the
+        // reservation is exact rather than approximate — and it must NOT collapse once areas
+        // resolve. This is the single biggest thing on a dashboard (Kinkora: 1570px).
         return handle != null ? (
           <SiteChartsGroup
             key="site-charts"
@@ -283,8 +316,16 @@ function GroupNodeView({
             sankeyOptionsKey={sankeyOptionsKey}
             chartCapable={area?.chartCapable}
           />
-        ) : areasResolved ? null : (
-          <ChartSkeleton key="site-charts" />
+        ) : areasResolved ? (
+          <CardUnavailable
+            key="site-charts"
+            height={siteChartsFootprint(chartKeys)}
+          />
+        ) : (
+          <CardSkeleton
+            key="site-charts"
+            height={siteChartsFootprint(chartKeys)}
+          />
         );
       }
       return (
@@ -295,9 +336,11 @@ function GroupNodeView({
           resolver={resolver}
           dashboardId={dashboardId}
           areasResolved={areasResolved}
+          sharedSiteData={siteChartsMounted}
         />
       );
-    });
+    })
+    .filter((n) => n !== null);
 
   // A `row` group is a GRID of equal columns, not a flex row: flex items size to max-content, which
   // leaves tiles ragged and collapses the ones that size themselves from their own `@container`
@@ -308,9 +351,7 @@ function GroupNodeView({
       <div className={TILE_GRID_CONTAINER}>
         <div
           className={
-            node.wrap === false
-              ? tileRowClass()
-              : tileGridClass(body.filter(Boolean).length)
+            node.wrap === false ? tileRowClass() : tileGridClass(body.length)
           }
         >
           {body}
@@ -334,6 +375,22 @@ function GroupNodeView({
   return inner;
 }
 
+/**
+ * A card that can't be addressed — its area resolved to nothing readable. Occupies the card's
+ * declared footprint rather than collapsing, so an unresolvable reference costs a message and not a
+ * page-wide jump, and says what it is rather than shimmering forever.
+ */
+function CardUnavailable({ height }: { height: number }) {
+  return (
+    <div
+      style={{ minHeight: height }}
+      className="flex items-center justify-center rounded-lg border border-gray-700/50 bg-gray-900/30 px-4 py-3 text-sm text-gray-500"
+    >
+      This card&rsquo;s area couldn&rsquo;t be loaded.
+    </div>
+  );
+}
+
 function DeviceUnavailable() {
   return (
     <div className="flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm">
@@ -355,14 +412,20 @@ export function NodeView({
   resolver,
   dashboardId,
   areasResolved,
+  sharedSiteData,
 }: {
   node: DashboardNode;
   context: NodeContext;
   resolver: ShellResolver;
   dashboardId?: string;
   areasResolved: boolean;
+  /** Set by the parent GroupNodeView for its DIRECT card children — see `siteChartsMounted`. */
+  sharedSiteData?: boolean;
 }): React.ReactElement | null {
   if (node.kind === "group") {
+    // Deliberately NOT forwarded: a nested group has its own area/handle and its own collapse
+    // members, so it recomputes `siteChartsMounted` for its own children. Inheriting the parent's
+    // would claim a fetch keyed on a DIFFERENT handle.
     return (
       <GroupNodeView
         node={node}
@@ -379,6 +442,7 @@ export function NodeView({
       context={childContext(node, context)}
       resolver={resolver}
       areasResolved={areasResolved}
+      sharedSiteData={sharedSiteData}
     />
   );
 }
