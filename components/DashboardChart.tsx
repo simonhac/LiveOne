@@ -43,6 +43,17 @@ import type {
 
 const SOC_DOMAIN: [number, number] = [0, 100];
 
+/**
+ * Stroke width for a stacked band's upper edge — a hairline.
+ *
+ * Deliberately thinner than the `lines` variant's 2 px, and thinner than the `borderWidth: 2` that
+ * Chart.js used here (measured: both rendered 2 CSS px, so this is a change, not a restoration).
+ * The two strokes do different jobs. On the lines chart the stroke IS the data and earns its weight;
+ * on a filled band it is only a boundary. At 2 px that boundary dominates a narrow chart, and a
+ * series resting at zero reads as a heavy rule along the axis rather than a quiet edge.
+ */
+const BAND_EDGE_WIDTH = 1;
+
 type CommonProps = {
   timeRange: ChartTimeRange;
   /** End of the rendered window (the last data timestamp), NOT the wall clock. */
@@ -311,7 +322,7 @@ export default function DashboardChart(props: DashboardChartProps) {
                           d={band.topD}
                           fill="none"
                           stroke={series[i].colour}
-                          strokeWidth={2}
+                          strokeWidth={BAND_EDGE_WIDTH}
                         />
                       )}
                     </g>
