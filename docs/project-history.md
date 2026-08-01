@@ -1011,6 +1011,282 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 
 - **Postgres-only**: config, readings, and all aggregation served from PostgreSQL (PlanetScale `sydney`); Vercel compute in `syd1`; raw durability anchored by the PG transactional outbox + relay; off-site DR to R2. Turso is gone
 
+## 12 June 2026
+
+### Turso cleanup + FK rebuild
+
+- **Migration 0006**: the decommission-time FK rebuild — 8 foreign keys, with the large tables (`sessions`, `point_readings`, `point_readings_agg_5m`) added `NOT VALID` then `VALIDATE`d separately; every statement guarded on `pg_constraint` (idempotent)
+- **Dependencies dropped**: `@libsql/client`, `better-sqlite3`; the legacy plain-SQL SQLite `migrations/` folder deleted; docs rewritten Postgres-only
+- **`liveone-tokyo` retained**: downgraded to Turso's free Starter plan and kept as a frozen, no-longer-written cold archive rather than destroyed
+
+### TanStack React Query
+
+- **React Query v5** replaces every hand-rolled fetch/poll/cache: `app/providers.tsx` + `lib/queries/` factories (`data`, `latest`, `history`, `siteData`, `flowMatrix`, `amber`) with freshness-tuned `staleTime`/`refetchInterval` (settled history is `staleTime: Infinity`)
+- ~26 self-fetching components migrated; `setInterval` polling and the `dashboard:refresh` event bus removed in favour of `invalidateQueries`. SSE poll-progress and 1s display clocks deliberately left outside RQ
+
+### Tesla re-platformed onto the Fleet API
+
+- In-app Owner API onboarding landed first, then was **removed entirely** — the Owner API auth path is de-registered. Connect is Fleet-only OAuth with a region-aware base URL persisted in credentials
+- **Charge control** (`charge_start`/`stop`, `set_charge_limit`, `set_charging_amps`) behind a pluggable signer seam; `POST /api/systems/[id]/tesla/command`, `POST /api/admin/tesla/register-partner`, and the public key served at `/.well-known/appspecific/com.tesla.3p.public-key.pem`
+- Per-system polling config in `systems.metadata.tesla` (`wakeToPoll`, idle/charging intervals) — skipping the force-wake removes the wake charge and phantom drain. New `docs/tesla-api-brief.md`
+
+## 13 June 2026
+
+### OpenElectricity (Eighth Vendor)
+
+- **NEM regional signals**: emissions intensity (computed emissions ÷ energy), spot price, renewable proportion, operational demand; 5m-native, interval-START converted to interval-END
+- **Public/ownerless systems**: `ownerClerkUserId = null` is readable by any user and pollable with app credentials — a new ownership class (`lib/vendors/ownership.ts`)
+- **Latency-minimizing scheduler**: KV-backed EWMA arrival window with bounded adaptive lookback (15m steady / 24h auto-heal); online backfill cron + offline bulk ingester
+- New docs `docs/devices/README.md` (integration anatomy) and `docs/devices/open-electricity.md`
+
+### Device Run-Tracking
+
+- **Migration 0009**: `device_trackers` (signal point + threshold/hysteresis config) and `device_run_periods` (PK `(system_id, role, start_time)`; nullable `end_time` = running now, plus duration/energy/min/max/avg power)
+- Pure detector (`detect.ts`: HA-style threshold + hysteresis + `delay_on`/`delay_off`) and `energy.ts`; idempotent chunked recompute under a per-system advisory lock, driven by a minutely cron
+- `generator-runs` dashboard card; `/api/system/[systemId]/generator-events` (the unbounded full-history hack) removed
+- **Flags retired**: `RUN_TRACKING`, `DASHBOARD_PERSISTENCE`, `DECLARATIVE_DASHBOARD` — run-tracking, dashboard persistence and descriptor rendering all become permanent
+
+### `liveone-dev` — the shared dev/preview database
+
+- A **separate** PlanetScale database (`ap-southeast-2`) becomes the sole datastore for both local dev and Vercel preview
+- **`CRONS_ENABLED` kill-switch**: scheduled crons short-circuit to a 200 no-op unless `"true"`, so dev/preview never double-poll vendors; admin/`x-claude`/`?force=true` bypass
+- **Incremental prod→dev sync** (`db:sync-dev-db`) with a read-only prod role; refuses to run if the write target resolves to prod. Later joined by a KV-rebuild leg (`db:rebuild-dev-kv`), since crons are off in dev so KV is never written organically
+
+## 13–18 June 2026
+
+### Areas & Dashboards — the logical layer
+
+The month's dominant thread: separate **physical** (a device and its points), **semantic** (an Area — what the energy means), and **presentation** (a Dashboard) into three layers, and retire the composite-as-system special case. Doc: `docs/architecture/areas-and-dashboards.md`.
+
+- **Role registry** (`lib/roles/registry.ts`): one HA-aware source of truth for the solar/battery/load/grid/ev vocabulary, replacing four duplicated definitions
+- **Migration 0007**: `dashboards` (per-user, per-system `descriptor` jsonb) + a card registry where each card declares `canRender` and its required roles — replacing the `vendor_type` if/else ladder
+- **Migration 0008**: `areas` (owner, handle, timezone, status) + `area_bindings` (role → point) + `roles`; the three composite read sites resolve role→point from bindings instead of `systems.metadata` JSON
+- **Migration 0010**: `areas.location` jsonb, from which the NEM region is derived for the Local Grid card (off-grid areas get no card)
+- **Migration 0012**: `dashboard_share_tokens` + `dashboard_grants`; `resolveDashboardReadPoints` computes the exact `(systemId, pointId)` scope a dashboard exposes, and `requireDashboardAccess` grants read via `?access=` for that scope only
+- **Migration 0013**: `point_readings_flow_1d` re-keyed from `system_id` to `area_id` (guarded, PK rebuilt) — a pure re-key of a derived cache
+- **Migration 0014** (destructive, doubly guarded): the composite `systems` rows are **deleted**. Composites become areas-only; creating one allocates a high-range integer handle and writes an Area + bindings with no `systems` row
+- **Migration 0016**: `users.default_dashboard_id`, lazily migrated from `default_system_id`
+- **Migration 0017**: `dashboards.system_id` made nullable + `display_name`/`alias` — **first-class composition dashboards**, owned by a user rather than a system, addressable at `/dashboard/{user}/{alias}`
+- **Migration 0018**: `area_devices` membership. An Area is **1..N member devices**; single-vs-multi is structural, not a `kind` string. An Area with bindings uses them; an Area without defaults to the union of its members' own points
+- **Migration 0019**: `areas.kind` dropped, and with it the entire composite special case — the virtual-system synthesis, the pseudo-vendor adapter, the cron skip, and the "View Data disabled for composite" forks
+- **Terminology settled**: identity Area → **area-of-one**, composite → **multi-device area**
+
+### Dashboards v3 — the nested document model
+
+- **v3 descriptor**: `Dashboard → AreaSection → Card → device-bound Tile`. A section stores only `{areaId, cards}`; handle, layout and header are derived from the Area at render
+- **Card generalization**: `lib/charts/` scaffold + `DashboardChart` with `lines` and `stacked-areas` variants collapse `EnergyChart`/`SitePowerChart`; a vendor-independent **`chart` card** replaces `site-charts`/`energy-chart`; the monolithic `amber` card splits into `amber-now` + `amber-timeline`; the three hardcoded layout forks collapse into one responsive grid. "Power cards" become **tiles**
+- **Devices/Dashboards split**: read-only `/device/{id}` renders a device's default layout; `/dashboard/*` serves composition dashboards only, and `/dashboard/{systemId}` 301s to the device view. Sharing moves entirely onto composition dashboards (old per-system share links 404)
+- **Sankey generalized**: data-driven eligibility rather than a mondo/composite vendor gate; per-node/link hover; a shared `applyPowerTransform` applied in both the 5m and 1d builders so an inverted grid channel (a generator reading import-negative) is no longer integrated as export
+- **`TemporalNavigator` + `ChartFocusContext`**: one shared period/window in the URL, one focused timestamp per section, so charts and the Sankey stay in sync
+- **Point identity**: **migration 0015** adds `point_info.point_uid` — a deterministic `uuidv5(vendor_type, vendor_site_id, physical_path_tail)`, distinct from the `(system_id, index)` address (the HA `unique_id` analog)
+
+### HWS Modelled Temperature
+
+- The hot-water thermal model becomes a **derived point** (`load.hws/temperature`) in the generic readings system — no bespoke table, no bespoke API. A minutely cron plus a daily heal recompute it from the `load.hws/power` 5m aggregates and UPSERT into `point_readings_agg_5m` + KV
+
+### Environment Guards
+
+- **Symmetric prod-DB guard** (`assertDbEnvironmentMatches`): PlanetScale puts every branch in a region on one gateway host and encodes the branch in the username, so the guard matches `PLANETSCALE_PROD_BRANCH_ID` as a substring of the connection identity. Dev/preview **fail closed** if a connection carries the prod token; production **alerts** (fail-open) if it does not
+- `scripts/check-route-slugs.mjs` wired as a prebuild gate after two different dynamic slug names at the same path level (`[id]` vs `[systemId]`) crashed `next dev` and broke the prod route tree
+
+### Incident: prod down ~5h50m (16 June)
+
+- PR #101 merged code reading `users.default_dashboard_id` while **migration 0016 had been applied only to `liveone-dev`, never to prod `sydney`**. Every authenticated page 500'd for ~15:37–21:25 AEST
+- Availability-only; anonymous `?access=` shared links resolved before the preferences path and were largely unaffected. Fixed by applying the purely additive migration
+- **The lesson**: Postgres migrations in this project are **manual** — they are not applied at deploy time. Schema-dependent code must never merge before the migration reaches prod. `docs/incidents/2026-06-16-prod-down-default-dashboard-migration-not-applied.md`
+
+## 19–24 June 2026
+
+### SystemsManager targeted reads
+
+- The static-singleton + 60s TTL cache is replaced by a `React.cache()`-memoized per-request loader (config always fresh; no stale-across-warm-lambdas window), and the fleet-wide map is replaced by indexed point lookups. **Migration 0020**: index on `systems.vendor_site_id`
+
+### Backup platform → `the-gitfather`
+
+- The in-repo backup script and its daily workflows are replaced by thin caller workflows delegating to the reusable workflows in `simonhac/the-gitfather`; project config lives in `pg-backup/liveone.yaml`, credentials stay in GitHub secrets
+- **2-hourly GFS backups** (2hourly → daily → weekly → monthly) to R2; the weekly restore-drill is superseded by a **daily durable-verify** (hash-check every durable object, restore the freshest daily plus an aged weekly/monthly); twice-hourly staleness self-heal; a published backup-history dashboard on a shared ops bucket
+- GitHub cron removed in favour of a Cloudflare scheduler firing `workflow_dispatch` (more punctual than best-effort Actions cron); the staleness watchdog remains the backstop
+
+---
+
+# July 2026
+
+> Three threads run in parallel: **new vendors and a push architecture** (Sigenergy, DeepSea via usher/musher/gusher), **battery energy provenance** (attributing carbon, cost and renewable content through a battery), and — from 22 July — the **config v4** re-platform that closes the Areas/Dashboards work by rebuilding the identity layer underneath it.
+
+## 6 July 2026
+
+### Sigenergy (Ninth Vendor)
+
+- Per-user 5-minute poll-snapshot vendor: PV / battery / SoC / grid / load / EV, modelled on Selectronic, from a reverse-engineered cloud API
+- **Native 5-min energy** (12 July): six energy points differenced from cumulative-since-midnight counters, labelled at `interval_end`, with the completed day's residual tail reconciled to the vendor's daily total exactly. A `Math.max(0, ·)` clamp on interval diffs was found to inflate flickering near-zero counters (a day's grid import read 370 Wh against 10 Wh actual) — signed diffs telescope
+
+### Owner-facing Area builder
+
+- `POST /api/areas` and `/api/areas/[areaId]` (+ `/devices`, `/bindings`, `/candidate-systems`), an Area Builder dialog with Members/Bindings tabs, and a "My sites" owner list. Multi-device sites get a synthetic handle (≥1,000,001) so a site grows 1..N without re-keying an existing device
+
+## 11–12 July 2026
+
+### usher / musher / gusher — the push architecture
+
+- **gusher**: `POST /api/gush`, a generic **self-describing** push receiver — the payload carries its own point metadata, so a new device type needs no server-side schema
+- **musher**: a Deep Sea Electronics DSE7410 genset read over Modbus (GenComm register map), running on a Fly WireGuard hub rather than Vercel, since the controller is LAN-only
+- **usher**: npm workspaces introduced with `packages/protocol` (shared wire types) and `packages/usher` (a host managing device source plugins, YAML-configured, with an SSE inspector). fusher (Fronius) ported in; Kinkora's two inverters cut over
+- **Durability** (14 July): after a DB outage lost ~35 min of push-fed data (the collector held each batch in memory for one tick), usher gains an on-disk **blackbox** flight recorder and a **spool** for batches whose push transiently fails, drained idempotently on recovery. gusher gains a hard-fail contract — retryable 503 when it cannot persist, 422 for a batch with nothing storable (previously a silent 200)
+- **Display registry**: per-device-type precision/units in a central JSON registry with Excel-style format strings, resolved server-side, so collectors stay purely semantic
+
+## 12 July 2026
+
+### The Capability Model Replaces `vendorType`
+
+- **Migration 0021**: `systems.config` jsonb — typed per-device config plus capability overrides
+- `lib/capabilities/`: a single stem/metric rule table derives `(role, metric)` capabilities from a device's points; cards and tiles declare what they require, and the render path, device viewer and seed builders all select from capabilities
+- **Every vendor-keyed builder is deleted** — `CARD_REGISTRY`, `TILES`, `getLayout`, `isSiteVendor`, `availableTiles`. No production code selects cards or layout from a `vendorType` string. Equivalence tested over all 2048 path subsets
+- **Migration 0022** (guarded) completes the demolition of the legacy per-system dashboard path: drops `dashboards.system_id`, `dashboards.area_id`, `users.default_system_id`, `areas.source_system_id`
+
+### Incident: Amber import-channel key collision
+
+- `derivePointKey` stripped the first path segment, but `physicalPathTail` carries no vendor prefix (`E1/perKwh`, not `amber/E1/perKwh`) — so import (E1) and export (B1) collapsed onto one key and export overwrote import every interval
+- **Grid-import price, cost and energy were dead from 2025-11-26** — silent, ~7½ months. Fixed by keeping all segments; regression tests for the collision; two-phase backfill tooling. `docs/incidents/2025-11-26-amber-import-channel-collision.md`
+
+## 12–16 July 2026
+
+### Battery Energy Provenance
+
+A metric-attributed energy-flow engine: emissions, renewable proportion and cost accumulate into the battery on charge and are vended on discharge, so stored energy carries a blended provenance.
+
+- **The fold** (`lib/battery-provenance/fold.ts`): a pure, deterministic weighted-average inventory — reset-relative, with round-trip efficiency priced into delivered energy, loss buckets, a reserve floor, E-minimum re-anchoring and a conservation self-audit
+- **One allocation, many legs**: `computeFlowAccounting` makes the Sankey energy matrix the _energy projection_ of a single allocation that also carries emissions/renewable/cost per source→load edge
+- **Migration 0023**: `point_readings_flow_attr_1d` — energy plus nullable `emissions_g`/`renewable_kwh`/`cost_c`, a strict superset of `flow_1d`
+- **The `helper` device**: a derived, never-polled `systems` row (`vendor_type='helper'`) owned by the Area's owner, which owns the Area's computed points — so learned parameters and blend results are ordinary points in the ordinary pipeline
+- **Learned physics**: round-trip efficiency, usable capacity (from discharge vs SoC down-swing, plus a SoC-independent floor from the largest continuous charging run — **migration 0026**), charge-side efficiency and a constant idle/standby drain. A hybrid SoC-anchor overlay took Daylesford's unattributed loss from 21% to ~0%
+- **Migration 0024**: `battery_provenance_daily` — one row per (area, local day) holding learn inputs, learned params and a `fold_state` checkpoint, making the fold resumable (the first-batch learn had been reading full history three times and blowing the 60s function limit, leaving every battery area unarmed)
+- **Migration 0025**: `soc_min` + `reserve_floor_pct` — the reserve floor becomes a per-day, persisted, reproducible parameter instead of a sliding 90-day SoC percentile that re-froze into checkpoints and self-perpetuated
+- **Opportunity cost**: solar valuation is first-class in the fold (a parallel accumulator at the feed-in price), so the Battery Contents card can split cost into out-of-pocket and forgone export
+- **UI**: Battery Contents card, load-provenance card, and a daily-history panel with a one-year navigator driven by a field registry that is the single source of truth for columns, chart grouping, series styling and API shape
+- Doc: `docs/architecture/battery-provenance.md`
+
+## 16–20 July 2026
+
+### Coverage-Repair Framework
+
+- A two-stage self-heal for re-fetchable vendors (Amber, OpenElectricity, Sigenergy): a generic gap-finder plus per-vendor backfill adapters, driven by a weekly cron that posts an itemised report
+- **Migration 0027**: `systems.commissioned_on` — each system's repair window is floored at its commission date, so freshly-onboarded systems stop flagging phantom pre-existence gaps
+- Doc: `docs/architecture/coverage-repair.md`
+
+### `flow_1d` Retired
+
+- **Migration 0029** (guarded): `point_readings_flow_1d` is **dropped**. `flow_attr_1d` becomes the sole flow/Sankey matrix, materialised for every complete logical system (energy-only for battery-less areas)
+- `/api/energy-flow-matrix` is **deleted**; attributed legs are served through `/api/history?include=sankey` — computed on the fly for sub-daily windows, read from the daily rollup at 1d
+- **`finalized_at` settlement contract**: the daily heal re-materialises any day still inside a ~72h settlement window (so late-settling Amber/OE inputs and backfills flow in), then stamps the day final so it is never re-ground
+
+### prod→dev sync rewritten
+
+- The sync moves onto two persistent connections streaming `COPY … TO STDOUT` → `COPY … FROM STDIN`, replacing ~150 per-operation psql connections (~190s of cross-Pacific handshakes, independent of row count). **Migration 0028** adds the watermark index on `point_readings_agg_5m(updated_at)`
+- A `point_readings` filter was changed from `IN (SELECT id FROM sessions) OR IS NULL` to a correlated `EXISTS` — the `OR` blocked a hash semijoin and degraded to a per-row scan (~20 min per run)
+
+## 21–22 July 2026
+
+### Dashboard Performance
+
+- Kinkora's dashboard settled in ~44.5s across 7 fetches in 3 sequential stages; collapsed to 2 stages / 6 fetches by parallelising independent reads, resolving the logical system once per request, checkpoint-seeding the provenance fold, and batching `/api/data` across a dashboard's distinct Areas
+- **`Server-Timing` instrumentation** (`lib/server-timing.ts`), including the middleware's own Clerk cost — mirrored under `x-server-timing` because Vercel strips the reserved header on prod/preview
+- **SSR-first**: readable areas, per-system latest values and the header's dashboard list are resolved server-side and seeded into a `HydrationBoundary`, so cards render filled with no client round-trip
+- **Measurement, not guesswork**: a Sydney-region Lambda harness (puppeteer + `@sparticuz/chromium`, one-shot deploy/invoke/teardown) proved the ~600 ms/request floor was `fra1`→`syd1` network, not app code — the floor is ~46 ms from Sydney. Doc: `docs/performance/dashboard-fetch-waterfall.md`
+
+### Renewables and the `self_renewable` leg
+
+- **Migration 0031**: `self_renewable_kwh` on `flow_attr_1d`, fed by a new fold stock that tracks _own-solar_ renewable energy through the battery separately from grid-sourced renewable content
+- A Renewables tile (renewable autarky · own-renewable self-consumption · renewable share of consumption), following the dashboard's own period rather than a bespoke endpoint
+
+### config v4 begins
+
+- `lib/ids/`: a client-safe **TypeID** codec (Crockford base32 ↔ uuidv7) with six branded entity codecs — cross-entity misuse is a compile error
+- **Migration 0030**: `point_info.point_uid` made NOT NULL, and `point_info.rid` — an internal integer key with its own sequence, deterministically backfilled. The uuid/rid seam: opaque TypeIDs above, integers on the hot path
+- **The `ReadingsDao` seam** (`lib/readings/dao.ts`): the sole chokepoint for the three hot readings tables, enforced by a **lint ratchet** (`no-restricted-imports` + a prebuild boundary check with a checked-in baseline) where both new and stale violations hard-fail. Every reader and writer was migrated behind it over the following week until the app-side count reached zero and the escape hatch was removed
+- Docs: `docs/plans/config-v4-clean-sheet.md` (the design) and `config-v4-execution-plan.md` (the phased plan and its progress ledger)
+
+## 28–31 July 2026
+
+### Sigenergy sign convention and the load hierarchy
+
+- **Sigenergy reported both bidirectional channels outflow-positive** while LiveOne is inflow-positive, and the vendor sign was stored verbatim — so night-time discharge landed on the load side and the flow accounting skipped every interval whose sources summed ≤ 0, **dropping ~2/3 of each day from the Sankey** (1.3 kWh solar recorded against 24.6 actual). Proven by the vendor's own power identity across 2,329 samples; normalisation goes in the adapter, not a point transform, because the transform does not run on the KV-latest/tile path
+- **`load` becomes a hierarchy**, like `source.solar`: the master is the site total, `load.<sub>` are metered subsets, and `load.rest-of-house` is the single synthesised or measured complement. Removes the load-sibling special case and a latent double count (an EV charge counted twice: 42.7 vs 33.3 kWh in one week)
+- **Exact energy over power integration**: every flow/provenance consumer now uses per-interval energy registers where a channel has them, falling back to integrating average power
+
+### UI
+
+- **Hero-number typography** (`docs/architecture/number-typography.md`): one rule replacing three contradictory ad-hoc ones — tight and unmuted for glyph modifiers (`%`, `°C`, `¢`), hair-spaced and muted for word symbols (`kW`, `kWh`), word-spaced for qualifiers. `formatValueParts()` alongside `formatValueWithUnit()`, since the concatenated string was why device metrics rendered "1234 rpm" entirely at hero size
+- **Sankey tooltips**: node and link tooltips built from an exact per-edge reduction over the same attributed data, with a beaked panel that works on desktop, mobile and touch through one code path
+- **Legend column cycling**: the legend's last column cycles `% → $ → c/kWh → kg → g/kWh`, sourced from the attributed flow matrix already fetched for the Sankey so the numbers match exactly
+- **Generic cards**: `daily-stripe` (any logical path painted as day-per-row gradient stripes) and `heatmap` — both configured entirely from the document node, replacing bespoke pages
+- **Home Energy tile** (formerly Renewables): consumed kWh, rate, emissions intensity, renewable %, then absolute cost/carbon and two own-generation ratios
+
+### Incident: prod→dev sync connection dropouts
+
+- 2026-07-22→24: 8 dropout events across 7 of 34 runs; 4 of 25 scheduled runs failed fatally. **Reliability only — no data loss** (the sync writes only to dev)
+- Not fully root-caused; the best-supported explanation is transient resets at the shared PlanetScale Sydney endpoint. Connection forensics (`probeConnectionPath`, `armSocketForensics` — passive FIN vs RST, socket age, phase) were added to both COPY clients and the shared pool, plus a bounded transient retry. `docs/incidents/2026-07-25-prod-dev-sync-connection-dropouts.md`
+
+### Preview subdomain CI
+
+- On push to a non-main branch, CI finds the Vercel preview for the commit, waits for READY, and aliases `<branch>.preview.liveone.energy`; branch deletion removes it
+- The branch-name cap is derived from the zone: the binding constraint is the **64-char TLS common name** over the whole hostname, not the 63-char DNS label limit — so with `.preview.liveone.energy` the real ceiling is 41 characters
+
+---
+
+# August 2026
+
+## config v4 — the identity and config re-platform (22 July – 1 August)
+
+> A 15-phase re-platform of the config layer: 26 migrations (`0030`→`0055`), ~89 commits, closed 1 August. It replaced three overlapping identity schemes and two dashboard shapes with **three layers and one identity space**. Nothing in the readings pipeline was redesigned — the readings tables, outbox, receiver and aggregation ladder were **re-keyed, not rebuilt**.
+
+### The shape
+
+- **Physical** — `devices` / `points`: uuidv7 keys, an internal integer `rid` for the hot path
+- **Semantic** — `areas` / `area_members` / `area_bindings` / `derivations`
+- **Presentation** — `dashboards`, a recursive node-tree `doc`
+- **On the wire** — TypeIDs only: `dv_` (device), `ar_` (area), `pt_` (point), `db_` (dashboard), `n_` (doc node). Raw uuid and `rid` are confined to the data layer
+
+### The cutover (26 July)
+
+- **Migration 0035** added the four v4 registry tables (`devices`, `points`, `area_members`, `device_state`) as pure additive dark copies — predecessors were COPIED, not renamed, so the abort path stayed intact
+- **The pollers kept running.** A KV `cutover:paused` flag, deliberately separate from `CRONS_ENABLED`, paused only the writers — collection buffered through `observations_outbox` and drained afterwards. The receiver gained a fail-closed gate (500, never ack) so a write could not land in the old tables mid-swap
+- The transform was reordered so the irreversible hot rename-swap became the **terminal act** rather than preceding ~35 destructive config statements. `liveone-dev` cut over first as a dress rehearsal, then prod the same day
+- The rehearsal harness found defects a green suite had not: an authz check that passed **vacuously** (both legs narrowed together after a column rename), and columns declared optional in `schema.ts` that would have raised `23502` on the irreversible side. The terminal window on 30 July ran ~11 minutes — no gap, no DLQ, no rollback
+
+### What it deleted
+
+- **Tables**: `systems`, `point_info`, `polling_status` (migration 0051); `device_trackers`, `device_run_periods` (0041); `roles` (0044); `user_systems` (0045); `area_devices` (0046); the three `_old` hot tables — the cutover's abort path, ~4.2 GB per environment (0038)
+- **Columns**: `area_bindings.(point_system_id, point_id)` (0048); `areas.legacy_system_id` (0052); `dashboards.descriptor` (0054)
+- **Code**: `lib/systems-manager.ts`, the dark mirror, the v3 dashboard island and its renderer, the v3→v4 rewriter and v4→v3 adapter, and 28 legacy route handlers across 15 route files
+- Every destructive migration was hand-written with `DO`/`RAISE EXCEPTION` guards — drizzle-kit emits a bare `DROP TABLE CASCADE`, which is the migration-0016 failure mode. The guards were negative-tested before use
+
+### Phase 11 — derivations
+
+- Run-tracking and the HWS thermal model are re-keyed onto `derivations` / `derived_intervals`, so a run detector and a thermal model are **discovered the same way**. One cron (`/api/cron/derivations`) replaces `/api/cron/run-periods` and the minutely HWS hard-wire
+- **Migration 0042** adds `cost_c` / `emissions_g` / `renewable_kwh` to `derived_intervals` — per-run provenance accumulated by the recompute, riding the readings array the energy assignment already reads, so the read path stays a plain column select
+
+### Phase 13 — the integer handle retired
+
+- `ServingSubject` becomes area-native and the wire goes TypeID-only; the virtual-system synthesis is deleted and the `?areaId=` leg authorizes the **area** instead of inheriting a device's grant
+- The KV keyspace goes TypeID-native (`latest:system:{int}` → `latest:device:{dv_}` | `latest:area:{ar_}`) and four duplicate key builders collapse onto one
+- The mechanical `systems`→`devices` rename across **315 files** — 2,860 whole-word occurrences down to 611 — with `/api/system*` → `/api/device*` behind temporary back-compat rewrites (expired and removed a day later). Deliberately untouched: the `[systemId]` route segment, `legacySystemId`, and vendor-literal grammars
+
+### Phase 14 — one dashboard shape (22 stages)
+
+- The finding that set the sequencing: **`/api/v4` had zero callers and zero tests**, so no legacy handler could be retired onto a twin that had never executed. All 12 existing handlers were driven end-to-end against a real server, session and database first — surfacing four defects invisible to review, including that `err.code === "23505"` **never matched** (drizzle ≥0.44 wraps the query error, moving the SQLSTATE to `.cause`; PlanetScale's proxy additionally strips `constraint`/`table`/`column` from every error it forwards, so no migration would help). `lib/db/pg-error.ts` is the resulting helper
+- A **prop-equivalence harness** captured the exact props every card and tile plugin receives, so the v3→v4 port's before/after diff was real
+- One `CARD_RENDERERS` and one `NODE_CATALOG` over an 18-type vocabulary; `CardRenderProps` goes v4-native; the v3 renderer is deleted; `/device/{id}` server-builds a device-bound v4 document
+- Every client moves to `/api/v4` and both legacy route trees are deleted in one stage
+- **Migration 0053**: helper devices' `vendor_site_id` carried a raw `areas.id` uuid that `/api/data` emitted verbatim — the last raw-uuid leak on the wire, reachable by an anonymous share viewer. The migration validates its own encoder at apply time against `dashboards.doc`'s TypeID refs as an in-database oracle
+- **Migration 0054**: `dashboards.descriptor` dropped — the dual shape ends
+- **Migration 0055**: `derived_intervals.{max,min,avg}_power_w` → `{max,min,avg}_signal` plus a `signal_unit` column. The columns were never Watts by construction, only by the accident of the first detector's signal being grid power; re-pointing Daylesford to DSE engine speed made them rpm. **The unit is now a property of the row**, and the `detector_version` gate that suppressed the statistic for older rows is gone
+
+### Closeout (1 August)
+
+- `docs/plans/config-v4-execution-plan.md` is rewritten from an active plan into **the epic's record** — what was done, what it cost, the decisions not recoverable from the code, and the traps list. Surviving invariants (the uuid/rid seam, the TypeID scheme, eager areas, fixed-offset days, the v4 document model and its security invariant, the permanent-shim list) fold into `docs/architecture/data-model.md`
+- Roughly as much test code as production code: nearly every phase's proof was an **executable gate** — a migration `DO` block, a negative control, a prop-equivalence golden — rather than a review claim
+- Deliberately left open: `POST /api/v4/dashboards` is not atomic; the `members` full-replace never evicts a `helper` member by omission; run-interval cost/emissions still lack a load-side provider
+
 ---
 
 # Major Architectural Milestones
@@ -1031,6 +1307,12 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 12. **Postgres-primary readings cutover** (9 June 2026): PG serves all readings and is the sole raw-vendor aggregator; Turso → fallback only (raw + sessions best-effort backup)
 13. **Sydney region move + HA** (10 June 2026): PlanetScale → 3-node HA `sydney` branch (`ap-southeast-2`), Vercel compute → `syd1`; PG transactional outbox + relay for raw durability
 14. **Turso decommission — Postgres-only** (11 June 2026): every Turso read/write removed, `lib/db/turso` deleted, migration flags retired; PostgreSQL (PlanetScale Sydney) is the sole datastore, with off-site DR to Cloudflare R2
+15. **Areas as the semantic layer** (13–18 June 2026, migrations 0008–0019): `areas` + `area_bindings` + `area_devices`; composite `systems` rows deleted and the composite special case retired — an Area is 1..N member devices
+16. **`liveone-dev`** (13 June 2026): a separate shared database for dev + preview, with a symmetric prod-connection guard and a 2-hourly incremental sync
+17. **Attributed flow matrix** (12–16 July 2026, migration 0023): `point_readings_flow_attr_1d` carries emissions/renewable/cost alongside energy; `battery_provenance_daily` (0024) makes the fold resumable
+18. **`flow_1d` retired** (20 July 2026, migration 0029): `flow_attr_1d` is the sole flow/Sankey matrix
+19. **config v4 registry** (26 July 2026, migration 0035): `devices` / `points` / `area_members` / `device_state` — uuidv7 identity with an internal integer `rid` for the hot path
+20. **The terminal drop** (30 July 2026, migration 0051): `systems`, `point_info` and `polling_status` dropped; `dashboards.descriptor` follows (0054, 1 August)
 
 ## Vendor Integration Timeline
 
@@ -1042,6 +1324,11 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 6. **Amber Electric** (16 November): Pricing data
 7. **Tesla** (29 November): EV/battery via Fleet API OAuth, charge-aware polling
    - **fronius → fusher** (29 November): Push vendor renamed (with compat alias)
+   - **Tesla re-platformed** (12 June 2026): Owner API path removed entirely; Fleet-only OAuth + pluggable command signer
+8. **OpenElectricity** (13 June 2026): NEM regional signals; the first public/ownerless systems
+9. **Sigenergy** (6 July 2026): poll-snapshot hybrid — raw power live, interval energy differenced from daily counters
+10. **DeepSea DSE7410** (11 July 2026): LAN-only genset over Modbus, pushed via usher/musher → gusher from a Fly WireGuard hub
+11. **`helper`** (12 July 2026): a derived, never-polled pseudo-vendor owning an Area's computed points
 
 ## Authentication Journey
 
@@ -1050,6 +1337,8 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 3. **Session claims** (23 September): Performance optimization
 4. **View-only share tokens** (28 April 2026): `?access=<token>` read-only links, no Clerk required
 5. **Middleware enforcement** (7 June 2026): Real `await auth.protect()` at the Edge + self-auth route allow-list
+6. **Dashboard sharing & grants** (14–18 June 2026): `dashboard_share_tokens` + `dashboard_grants`; a `?access=` token authorizes exactly the point scope its dashboard exposes, GET/HEAD on share-eligible routes only
+7. **`user_systems` dropped** (28 July 2026, migration 0045): `dashboard_grants` becomes the sole non-owner read path; `canRead = isAdmin || isClaudeDev || isOwner || isPublic` plus a grant
 
 ## API Architecture
 
@@ -1061,6 +1350,11 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 6. **Route restructure** (23 November): `/api/system/[systemId]/` namespace
 7. **QStash observations queue** (29 November): Async receiver + admin endpoints
 8. **Postgres store migration** (June 2026): Flag-gated, shadow-diff cutover off Turso
+9. **Areas & dashboards API** (16 June 2026): `/api/areas` + `/api/dashboards` — dashboards owned by users, not systems
+10. **Single latest-cache producer** (17 June 2026): `/api/data` becomes the sole latest-values endpoint; `/api/system/{id}/latest` deleted
+11. **Sankey folded into `/api/history`** (20 July 2026): `?include=sankey` replaces `/api/energy-flow-matrix`
+12. **`/api/v4`** (24 July – 1 August 2026): a TypeID-native tree that replaces both legacy areas/dashboards trees (28 handlers across 15 files deleted)
+13. **`/api/system*` → `/api/device*`** (30 July 2026): renamed across the tree behind temporary back-compat rewrites
 
 ## Key UI Components
 
@@ -1077,13 +1371,23 @@ A chronological record of major features, APIs, subsystems, migrations, and arch
 11. **SystemPowerCards & TeslaSmallCard** (29 November): Consolidated power cards with directional chevrons
 12. **Observations admin viewer** (29 November): Live queue/DLQ inspection
 13. **kinkora-hws thermal timeline** (28 April 2026): D3 SVG hot-water thermal model
+14. **Nested v3 dashboards** (17 June 2026): `Dashboard → AreaSection → Card → Tile`; the three hardcoded layout forks collapse into one responsive grid
+15. **`TemporalNavigator` + `ChartFocusContext`** (17 June 2026): one shared period/window in the URL, one focused timestamp per section
+16. **Battery Contents card** (July 2026): usable kWh with blended carbon, cost (out-of-pocket + forgone export) and renewable content
+17. **Home Energy tile** (31 July 2026): consumption rate, emissions intensity, renewable share and own-generation ratios
+18. **v4 document renderer** (31 July 2026): one `CARD_RENDERERS` + `NODE_CATALOG` over a recursive node tree; the v3 renderer deleted
+19. **Generic `daily-stripe` + `heatmap` cards** (31 July – 1 August 2026): bespoke pages become document-configured cards
+20. **Sankey node/link tooltips** (July 2026): exact per-edge provenance, one beaked panel across desktop, mobile and touch
 
 ## Critical Incidents
 
 1. **Migration 0016** (3 November): 345K records lost, 8-hour recovery — A composite-primary-key migration dropped tables without validating the copy, losing 345,456 `point_readings`; all rows were fully restored from backup over an 8+ hour recovery with no permanent data loss.
 2. **Migration 0034/0035** (10 November): Energy delta corruption — Faulty energy-delta calculations corrupted aggregate energy values; the affected aggregates were restored from backup with no permanent data loss.
 3. **Migration 0036** (16 November): Point_info corruption — A migration corrupted `point_info` records; the data was fully repaired in place via a follow-up data-repair migration with no permanent data loss.
+4. **Prod down ~5h50m** (16 June 2026): Migration drift — code reading a new column shipped while the migration had been applied only to `liveone-dev`, so every authenticated page 500'd. Availability only, no data loss. The lesson is now a standing rule: PG migrations are manual, and schema-dependent code must never merge before the migration reaches prod.
+5. **Amber import-channel collision** (found 12 July 2026, dating from 26 November 2025): A point-key derivation collapsed the import (E1) and export (B1) channels onto one key, so export silently overwrote import — grid-import price, cost and energy were dead for ~7½ months. Fixed and backfilled.
+6. **prod→dev sync dropouts** (22–24 July 2026): 4 of 25 scheduled syncs failed on transient connection resets at the shared PlanetScale Sydney endpoint. Reliability only — the sync writes only to dev, so no data was at risk. Not fully root-caused; connection forensics and a bounded transient retry were added.
 
 ---
 
-_This document chronicles the evolution of LiveOne from a single-vendor Selectronic monitor to a comprehensive multi-vendor solar monitoring platform with advanced features including composite systems, point-level granularity, real-time caching, and sophisticated aggregation pipelines. Its most recent chapter — the staged Turso → Postgres migration — is now complete: the platform runs Postgres-only (PlanetScale, Sydney), co-located with Vercel compute in `syd1`, with raw durability anchored by a transactional outbox and off-site DR to Cloudflare R2. The next chapter is the engine/web separation this migration enables: an independently deployable data-collection engine._
+_This document chronicles the evolution of LiveOne from a single-vendor Selectronic monitor to a comprehensive multi-vendor solar monitoring platform with advanced features including point-level granularity, real-time caching, and sophisticated aggregation pipelines. The staged Turso → Postgres migration completed in June 2026: the platform runs Postgres-only (PlanetScale, Sydney), co-located with Vercel compute in `syd1`, with raw durability anchored by a transactional outbox and off-site DR to Cloudflare R2. Two chapters followed — **Areas & Dashboards**, which separated the physical, semantic and presentation layers and retired the composite-as-system special case, and **config v4**, which rebuilt the identity layer underneath it (uuid/TypeID above, integer `rid` on the hot path) and dropped `systems`, `point_info` and `polling_status` outright. The next chapter is the engine/web separation these enable: an independently deployable data-collection engine (`docs/architecture/engine-web-separation.md`)._

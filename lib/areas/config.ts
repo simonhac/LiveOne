@@ -13,7 +13,7 @@ import type { AreaConfig } from "./types";
  * (zero areas updated, no error). Config-v4 Phase 12 slice E PR 2a re-points the device test from
  * `ab.point_system_id` to the binding's `point_uid`, hopping `points.device_id → devices.rid` (the
  * seam invariant `devices.rid == systems.id`, lib/registry/v4-mirror.ts). Exercised against a live
- * database, not merely compiled — see the slice-E block in docs/plans/config-v4-execution-plan.md.
+ * database, not merely compiled — see the slice-E block in the config-v4 epic record.
  */
 export async function syncAreaBatteryConfigFromDevice(
   systemId: number,

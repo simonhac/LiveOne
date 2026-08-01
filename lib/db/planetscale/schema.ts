@@ -756,7 +756,7 @@ export const areaBindings = pgTable(
 // a few FK-adds. Nothing reads or writes them until the cutover-era migrations/routes land. FKs are
 // wired ONLY where the target already exists in its FINAL form (`areas.id` uuid; sibling new tables);
 // FKs to points/devices/dashboards-as-uuid are DEFERRED to cutover (those tables / uuid PKs don't
-// exist yet) and left as bare `uuid` columns. See docs/plans/config-v4-clean-sheet.md §4.4/§4.6/§11.
+// exist yet) and left as bare `uuid` columns. See the config-v4 clean-sheet design §4.4/§4.6/§11.
 // ============================================================================
 
 // derivations — the ONE mechanism for a derived signal (config-v4 Phase 11): config that computes a

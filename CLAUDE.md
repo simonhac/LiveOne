@@ -24,7 +24,7 @@ To check TypeScript compilation:
 
 - **Docs index**: `docs/README.md` — start here; canonical docs are `docs/architecture/overview.md` and `docs/architecture/engine-web-separation.md`
 - **Data Model**: See `docs/architecture/data-model.md` (semantics/invariants); schema source of truth is `lib/db/planetscale/schema.ts`
-- **API Documentation**: See `docs/architecture/api.md` for conventions and route inventory
+- **API Documentation**: See `docs/architecture/api.md` for conventions and external contracts (there is deliberately no route inventory — `find app/api -name route.ts` is ground truth)
 - **Database**: PostgreSQL on PlanetScale (the sole datastore) — prod = `sydney` branch (`aws-ap-southeast-2`), dev = shared PlanetScale dev branch
 - **Deployment**: Vercel (automatic from main branch; region `syd1`)
 

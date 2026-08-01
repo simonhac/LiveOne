@@ -1,0 +1,604 @@
+{
+  "region": "ap-southeast-2",
+  "target": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+  "chromiumPath": "/tmp/chromium",
+  "health": [
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "dns": 41,
+      "tcp": 43,
+      "tls": 51,
+      "status": 200,
+      "xServerTiming": "mw;dur=1.0, db;dur=2.6, total;dur=2.7",
+      "xVercelId": "syd1::syd1::z8pfq-1785550994144-510a637f1b6f",
+      "xVercelCache": "MISS",
+      "ttfb": 105,
+      "total": 106
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.6, db;dur=2.5, total;dur=2.5",
+      "xVercelId": "syd1::syd1::hxt2z-1785550994200-49247ce5dc17",
+      "xVercelCache": "MISS",
+      "ttfb": 56,
+      "total": 56
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.2, db;dur=2.4, total;dur=2.4",
+      "xVercelId": "syd1::syd1::62mx6-1785550994256-a5eab774f0fd",
+      "xVercelCache": "MISS",
+      "ttfb": 54,
+      "total": 54
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.1, db;dur=2.9, total;dur=2.9",
+      "xVercelId": "syd1::syd1::62mx6-1785550994310-925f24c15804",
+      "xVercelCache": "MISS",
+      "ttfb": 52,
+      "total": 52
+    },
+    {
+      "url": "https://www.liveone.energy/api/health",
+      "status": 200,
+      "xServerTiming": "mw;dur=1.3, db;dur=2.9, total;dur=3.0",
+      "xVercelId": "syd1::syd1::62mx6-1785550994363-8f8b8f80408b",
+      "xVercelCache": "MISS",
+      "ttfb": 43,
+      "total": 43
+    }
+  ],
+  "document": [
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::62mx6-1785550994406-472ef22c5419",
+      "xVercelCache": "MISS",
+      "ttfb": 173,
+      "total": 174
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::62mx6-1785550994580-dad0849d3e9e",
+      "xVercelCache": "MISS",
+      "ttfb": 107,
+      "total": 108
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::62mx6-1785550994688-42b94416d913",
+      "xVercelCache": "MISS",
+      "ttfb": 104,
+      "total": 105
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::62mx6-1785550994793-75e598f26c2a",
+      "xVercelCache": "MISS",
+      "ttfb": 96,
+      "total": 96
+    },
+    {
+      "url": "https://www.liveone.energy/dashboard/id/5?access=honest-buttery-tapir",
+      "status": 200,
+      "xServerTiming": null,
+      "xVercelId": "syd1::syd1::62mx6-1785550994889-4c13c5798f9b",
+      "xVercelCache": "MISS",
+      "ttfb": 98,
+      "total": 98
+    }
+  ],
+  "browserRuns": [
+    {
+      "count": 1,
+      "settleRaw": 1014,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 4,
+        "responseEnd": 128,
+        "domInteractive": 360,
+        "domContentLoadedEventEnd": 360,
+        "domComplete": 494,
+        "loadEventEnd": 494,
+        "transferSize": 12679,
+        "encodedBodySize": 12379,
+        "decodedBodySize": 66460
+      },
+      "paint": { "firstPaint": 300, "firstContentfulPaint": 300 },
+      "lcp": 300,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.2",
+        "token;dur=3.8",
+        "dashboard;dur=7.9",
+        "areas;dur=17.5",
+        "data;dur=27.2",
+        "total;dur=62.8"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 579,
+          "end": 1014,
+          "dur": 435,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.9",
+            "auth;dur=40.9",
+            "logical;dur=21.5",
+            "fetch;dur=91.1",
+            "attr;dur=98.9",
+            "serialize;dur=0.9",
+            "total;dur=253.9"
+          ],
+          "vid": "syd1::syd1::tpmxq-1785551012060-251f5cd8a781"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 658,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 3,
+        "responseEnd": 114,
+        "domInteractive": 257,
+        "domContentLoadedEventEnd": 258,
+        "domComplete": 358,
+        "loadEventEnd": 358,
+        "transferSize": 12638,
+        "encodedBodySize": 12338,
+        "decodedBodySize": 66460
+      },
+      "paint": { "firstPaint": 280, "firstContentfulPaint": 280 },
+      "lcp": 280,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.1",
+        "token;dur=4.0",
+        "dashboard;dur=2.9",
+        "areas;dur=16.9",
+        "data;dur=19.8",
+        "total;dur=49.8"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 345,
+          "end": 658,
+          "dur": 313,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.0",
+            "auth;dur=33.6",
+            "logical;dur=20.8",
+            "fetch;dur=100.6",
+            "attr;dur=60.9",
+            "serialize;dur=1.1",
+            "total;dur=217.7"
+          ],
+          "vid": "syd1::syd1::n48pj-1785551018473-343e66c73325"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 577,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 4,
+        "responseEnd": 118,
+        "domInteractive": 172,
+        "domContentLoadedEventEnd": 173,
+        "domComplete": 291,
+        "loadEventEnd": 292,
+        "transferSize": 12669,
+        "encodedBodySize": 12369,
+        "decodedBodySize": 66460
+      },
+      "paint": { "firstPaint": 168, "firstContentfulPaint": 256 },
+      "lcp": 256,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.1",
+        "token;dur=4.2",
+        "dashboard;dur=2.8",
+        "areas;dur=16.6",
+        "data;dur=26.7",
+        "total;dur=56.5"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 271,
+          "end": 577,
+          "dur": 307,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.3",
+            "auth;dur=34.1",
+            "logical;dur=22.7",
+            "fetch;dur=73.0",
+            "attr;dur=96.1",
+            "serialize;dur=0.9",
+            "total;dur=227.3"
+          ],
+          "vid": "syd1::syd1::qjkhv-1785551024775-79a6963e13b2"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 599,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 3,
+        "responseEnd": 114,
+        "domInteractive": 260,
+        "domContentLoadedEventEnd": 260,
+        "domComplete": 275,
+        "loadEventEnd": 275,
+        "transferSize": 12653,
+        "encodedBodySize": 12353,
+        "decodedBodySize": 66460
+      },
+      "paint": { "firstPaint": 216, "firstContentfulPaint": 216 },
+      "lcp": 216,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.8",
+        "token;dur=3.6",
+        "dashboard;dur=2.9",
+        "areas;dur=18.1",
+        "data;dur=22.4",
+        "total;dur=53.5"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 316,
+          "end": 599,
+          "dur": 283,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.3",
+            "auth;dur=34.0",
+            "logical;dur=20.0",
+            "fetch;dur=64.5",
+            "attr;dur=93.3",
+            "serialize;dur=0.9",
+            "total;dur=213.3"
+          ],
+          "vid": "syd1::syd1::hbpt6-1785551031157-d96e5bdcce8f"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 586,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 3,
+        "responseEnd": 119,
+        "domInteractive": 245,
+        "domContentLoadedEventEnd": 245,
+        "domComplete": 292,
+        "loadEventEnd": 292,
+        "transferSize": 12674,
+        "encodedBodySize": 12374,
+        "decodedBodySize": 66460
+      },
+      "paint": { "firstPaint": 264, "firstContentfulPaint": 264 },
+      "lcp": 264,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.7",
+        "token;dur=4.8",
+        "dashboard;dur=2.9",
+        "areas;dur=16.8",
+        "data;dur=23.6",
+        "total;dur=54.8"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 294,
+          "end": 586,
+          "dur": 292,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "auth;dur=34.9",
+            "logical;dur=20.6",
+            "fetch;dur=98.9",
+            "attr;dur=90.5",
+            "serialize;dur=0.9",
+            "total;dur=246.4"
+          ],
+          "vid": "syd1::syd1::64fsk-1785551037519-40cfc26962b4"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 595,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 4,
+        "responseEnd": 125,
+        "domInteractive": 277,
+        "domContentLoadedEventEnd": 277,
+        "domComplete": 299,
+        "loadEventEnd": 299,
+        "transferSize": 12666,
+        "encodedBodySize": 12366,
+        "decodedBodySize": 66460
+      },
+      "paint": { "firstPaint": 228, "firstContentfulPaint": 228 },
+      "lcp": 228,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.1",
+        "token;dur=4.1",
+        "dashboard;dur=2.9",
+        "areas;dur=16.6",
+        "data;dur=23.1",
+        "total;dur=52.8"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 312,
+          "end": 595,
+          "dur": 283,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "auth;dur=38.8",
+            "logical;dur=24.2",
+            "fetch;dur=89.9",
+            "attr;dur=95.1",
+            "serialize;dur=0.9",
+            "total;dur=249.4"
+          ],
+          "vid": "syd1::syd1::8cx8k-1785551044016-3187b8df3a62"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 640,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 3,
+        "responseEnd": 127,
+        "domInteractive": 173,
+        "domContentLoadedEventEnd": 173,
+        "domComplete": 302,
+        "loadEventEnd": 302,
+        "transferSize": 12665,
+        "encodedBodySize": 12365,
+        "decodedBodySize": 66462
+      },
+      "paint": { "firstPaint": 252, "firstContentfulPaint": 252 },
+      "lcp": 252,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.1",
+        "token;dur=3.6",
+        "dashboard;dur=2.9",
+        "areas;dur=24.6",
+        "data;dur=27.1",
+        "total;dur=64.5"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 332,
+          "end": 640,
+          "dur": 309,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.4",
+            "auth;dur=35.7",
+            "logical;dur=20.4",
+            "fetch;dur=67.7",
+            "attr;dur=100.6",
+            "serialize;dur=0.9",
+            "total;dur=225.8"
+          ],
+          "vid": "syd1::syd1::hxt2z-1785551050514-50499323ef07"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 657,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 3,
+        "responseEnd": 115,
+        "domInteractive": 194,
+        "domContentLoadedEventEnd": 194,
+        "domComplete": 275,
+        "loadEventEnd": 275,
+        "transferSize": 12677,
+        "encodedBodySize": 12377,
+        "decodedBodySize": 66462
+      },
+      "paint": { "firstPaint": 156, "firstContentfulPaint": 260 },
+      "lcp": 260,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.1",
+        "token;dur=4.0",
+        "dashboard;dur=2.8",
+        "areas;dur=16.7",
+        "data;dur=26.1",
+        "total;dur=55.8"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 340,
+          "end": 657,
+          "dur": 317,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.3",
+            "auth;dur=35.4",
+            "logical;dur=22.2",
+            "fetch;dur=80.5",
+            "attr;dur=89.2",
+            "serialize;dur=0.9",
+            "total;dur=228.6"
+          ],
+          "vid": "syd1::syd1::8cx8k-1785551056858-d48fbfe00fcc"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 601,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 2,
+        "responseStart": 4,
+        "responseEnd": 137,
+        "domInteractive": 241,
+        "domContentLoadedEventEnd": 241,
+        "domComplete": 318,
+        "loadEventEnd": 319,
+        "transferSize": 12681,
+        "encodedBodySize": 12381,
+        "decodedBodySize": 66462
+      },
+      "paint": { "firstPaint": 280, "firstContentfulPaint": 280 },
+      "lcp": 280,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.7",
+        "token;dur=3.3",
+        "dashboard;dur=2.8",
+        "areas;dur=19.0",
+        "data;dur=36.0",
+        "total;dur=68.1"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 321,
+          "end": 601,
+          "dur": 280,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=2.0",
+            "auth;dur=35.0",
+            "logical;dur=20.0",
+            "fetch;dur=86.7",
+            "attr;dur=91.8",
+            "serialize;dur=0.9",
+            "total;dur=234.8"
+          ],
+          "vid": "syd1::syd1::qjkhv-1785551063293-b65dbc4a254d"
+        }
+      ]
+    },
+    {
+      "count": 1,
+      "settleRaw": 596,
+      "nav": {
+        "startType": "navigate",
+        "requestStart": 1,
+        "responseStart": 3,
+        "responseEnd": 113,
+        "domInteractive": 252,
+        "domContentLoadedEventEnd": 253,
+        "domComplete": 288,
+        "loadEventEnd": 288,
+        "transferSize": 12707,
+        "encodedBodySize": 12407,
+        "decodedBodySize": 66462
+      },
+      "paint": { "firstPaint": 216, "firstContentfulPaint": 216 },
+      "lcp": 216,
+      "content": { "skeletons": 0, "renderedValues": 19, "bodyTextLen": 1101 },
+      "ssrTiming": [
+        "auth;dur=1.2",
+        "token;dur=3.6",
+        "dashboard;dur=3.0",
+        "areas;dur=16.5",
+        "data;dur=21.5",
+        "total;dur=51.4"
+      ],
+      "entries": [
+        {
+          "path": "/api/history",
+          "sys": "8",
+          "sankey": true,
+          "start": 311,
+          "end": 596,
+          "dur": 285,
+          "ttfb": 0,
+          "conn": 0,
+          "st": [
+            "mw;dur=1.2",
+            "auth;dur=33.9",
+            "logical;dur=20.7",
+            "fetch;dur=80.0",
+            "attr;dur=92.4",
+            "serialize;dur=1.1",
+            "total;dur=228.7"
+          ],
+          "vid": "syd1::syd1::pqs6j-1785551069736-b47d70d76936"
+        }
+      ]
+    }
+  ]
+}

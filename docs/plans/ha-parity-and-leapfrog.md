@@ -99,6 +99,35 @@ single-tenant: **label-scoped share tokens** (share "everything labelled `farm`"
 dashboard) and label-driven generated groups (#7) — "a card for every point labelled `hot-water`,
 across all my sites".
 
+**What it's actually for.** The shape only earns its keep against concrete uses, so name them:
+`region:nsw`, `hardware-gen:selectronic-v2`, `support-tier:vip`, `beta-cohort`, `share-public`,
+`needs-review`, `migrated-2026`. None of those is a _site_ (Area) or a _signal kind_ (role) — that
+mismatch is the whole argument. Three payoffs stand out:
+
+- **Rollout cohorts as data, not code.** Roll a feature out to labelled devices; the cohort lives in
+  the DB, not a hard-coded list or an env flag.
+- **Bulk ops as queries.** "Re-aggregate everything tagged `migrated-2026`", "list every dashboard
+  tagged `share-public`" — an indexed many-to-many instead of a jsonb scan.
+- **It stops grouping drift.** Config-v4 cleaned up the specific leaks (`systems.alias` → a
+  first-class `devices.slug`, `systems.metadata` → the honestly-named `adapter_state`, `areas.metadata`
+  gone entirely in favour of typed `config`/`location`). But it did not create a _home_ for
+  cross-cutting grouping, so the pressure that produced those leaks is still there and will re-accrete
+  as jsonb keys. That, not parity with HA, is the strongest reason to do this.
+
+**Honest scope, and the brake.** ROI scales with object count: with a handful of devices the payoff
+is low, and it grows with the multi-tenant footprint. So **tie the first cut to a concrete use case**
+— ops tagging for a multi-tenant rollout, or share-cohorts pairing with label-scoped tokens — rather
+than building it speculatively. Cost is genuinely small (one registry table + one assignment table,
+both additive, no data migration since labels start empty), which is exactly what makes it tempting
+to build with no user. **Minimal first cut:** `labels` + assignments for `device` only, plus an admin
+UI to tag devices; add `area` / `dashboard` / `point` targets as use cases appear.
+
+> Note on the polymorphic choice: an earlier plan left "polymorphic (HA-like, no FK) vs typed
+> junctions (FK integrity)" open and leaned typed, on this project's house preference for FK-enforced
+> bindings. Config-v4 settled it the other way by making it true that every target is a uuid in one
+> namespace — so the single polymorphic `label_assignments` table above is the right call now, and
+> that older lean is stale.
+
 ---
 
 ## 4. Time-weighted means and counter-reset detection — **Parity → Leapfrog, M**
@@ -299,8 +328,8 @@ That means we can do something HA cannot do for itself.
 
 1. **Config out.** MQTT Discovery (or a custom integration) publishes each LiveOne point as an HA
    entity with the right `device_class` / `state_class` / unit, grouped into HA Areas that mirror
-   ours. The role registry already carries this metadata for exactly this purpose; `GET /api/v4/export`
-   is most of the payload.
+   ours. The role registry already carries this metadata for exactly this purpose; a
+   `GET /api/v4/export` (**to be built** — no such route exists today) would be most of the payload.
 2. **History in — the differentiator.** A small HA integration pulls our long-term aggregates and
    imports them as HA long-term statistics. An HA user who installs it gets: history from before they
    ran HA; history recomputed under corrected models rather than frozen at whatever was computed at
@@ -339,8 +368,10 @@ but is the most work). #10 (portfolio) whenever a second site makes it real.
 ## Deliberately not here
 
 - **HA's config-entry/device split** and config subentries. Config-v4 §4.1 declined it with a stated
-  rationale; the trigger is the first vendor connection that yields several independently-addressable
-  devices, and that hasn't happened. Revisit then, not now.
+  rationale; the 2026-06 areas refactor had already deferred the same thing ("the clean HA end-state,
+  but orthogonal and XL"). Credentials still live on `devices` (`adapter_state`). The trigger is the
+  first vendor connection that yields several independently-addressable devices, and that hasn't
+  happened. Revisit then, not now.
 - **A command/service registry.** Real gap, but it belongs to `engine-web-separation.md`'s Control API
   rather than to HA parity — and with one shipped command (Tesla charge control) the demand isn't
   there yet.
@@ -353,10 +384,8 @@ but is the most work). #10 (portfolio) whenever a second site makes it real.
   scorecard, and the evidence base for every HA claim above.
 - [`../architecture/areas-and-dashboards.md`](../architecture/areas-and-dashboards.md) — the
   three-layer model these build on.
-- [`config-v4-clean-sheet.md`](config-v4-clean-sheet.md) — the model as designed, including the
-  deliberate deviations several of these would revisit.
-- [`identity-address-split-and-labels.md`](identity-address-split-and-labels.md) — the original label
-  proposal absorbed by config-v4 (#3 here).
+- [`completed/config-v4-clean-sheet.md`](completed/config-v4-clean-sheet.md) — the model as designed,
+  including the deliberate deviations several of these would revisit.
 - [`../architecture/coverage-repair.md`](../architecture/coverage-repair.md) — the repair path #2
   would drive automatically.
 - [`../architecture/battery-provenance.md`](../architecture/battery-provenance.md) — the model #9

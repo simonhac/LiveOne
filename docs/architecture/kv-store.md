@@ -122,7 +122,7 @@ multi-device Areas) unioned with `getBindinglessAreaMemberPoints()` (union-defau
 **Read by:** `getPointSubscribers()` (inside `updateLatestPointValue`) and `getSubscriberAreaIds()`
 (`lib/system-summary-store.ts`).
 **Rebuild triggers:** automatically via `refreshAreaServing` on every area/binding mutation; by hand
-with `npx tsx scripts/build-subscription-registry.ts`, or `GET /api/systems/subscriptions?action=build`
+with `npx tsx scripts/build-subscription-registry.ts`, or `GET /api/devices/subscriptions?action=build`
 (admin).
 **TTL:** none. Stale entries are garbage-collected by the next rebuild, which deletes any key matching
 the family pattern that it did not itself write (a whole-key-string comparison — the old code parsed the
@@ -140,7 +140,7 @@ last.
 
 **Written by:** `updateSystemSummary()` (source device, from the poll's own batch) and
 `updateSubscriberSummary()` (a subscriber Area, from its own `latest:area:` hash).
-**Read by:** `getAllSystemSummaries()` / `getSystemSummary()` — `lib/admin/get-systems-data.ts` and
+**Read by:** `getAllSystemSummaries()` / `getSystemSummary()` — `lib/admin/get-devices-data.ts` and
 `GET /api/admin/latest`.
 
 ### `oe:sched:device:{dv_…}` — OpenElectricity poll-scheduler state
@@ -200,7 +200,7 @@ writes land under the new key while reads come from the old, with no error anywh
 curl -H "x-claude: true" "http://localhost:3000/api/admin/latest?action=clear"
 
 # Inspect the registry
-curl -H "x-claude: true" http://localhost:3000/api/systems/subscriptions
+curl -H "x-claude: true" http://localhost:3000/api/devices/subscriptions
 
 # Latest values for a handle (device leg ∪ area leg)
 curl -H "x-claude: true" "http://localhost:3000/api/data?systemId=13&include=readings"
@@ -222,7 +222,7 @@ concurrently, so wall-clock latency is unchanged from the single-hash era.
 
 ## Security
 
-- **Admin-only:** `/api/systems/subscriptions`, `/api/admin/latest`.
+- **Admin-only:** `/api/devices/subscriptions`, `/api/admin/latest`.
 - **Share-token aware:** `/api/data` (`requireDashboardAccess`).
 - Latest values are user energy data; the registry is config metadata; the username cache maps usernames
   to Clerk ids.

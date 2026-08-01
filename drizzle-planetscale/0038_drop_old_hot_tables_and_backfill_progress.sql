@@ -20,7 +20,7 @@
 -- dev for a perfectly healthy database. The real invariant is containment: live must hold AT LEAST
 -- what _old held, on both row count and high-water mark. On prod live is genuinely ahead.
 --
--- IRREVERSIBLE. Preconditions (checklist, docs/plans/config-v4-execution-plan.md §Phase 10 step 6):
+-- IRREVERSIBLE. Preconditions (checklist, the config-v4 epic record §Phase 10 step 6):
 -- the validation window has passed, a one-off `pscale backup create` has been taken, and the 2-hourly
 -- R2 dumps from before this migration still contain the `_old` data (retention: daily 21d / weekly 91d
 -- / monthly 365d).

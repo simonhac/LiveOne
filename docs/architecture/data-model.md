@@ -7,8 +7,8 @@
 > - **PostgreSQL:** `lib/db/planetscale/schema.ts` (well-commented; read it)
 >
 > The config layer was rebuilt over 2026-07-22 → 2026-08-01 (config-v4). The _why_ is
-> [../plans/config-v4-clean-sheet.md](../plans/config-v4-clean-sheet.md); the record of what was done and
-> what it cost is [../plans/config-v4-execution-plan.md](../plans/config-v4-execution-plan.md), which
+> [../plans/completed/config-v4-clean-sheet.md](../plans/completed/config-v4-clean-sheet.md); the record of what was done and
+> what it cost is [../plans/completed/config-v4-execution-plan.md](../plans/completed/config-v4-execution-plan.md), which
 > also carries the **Traps and rules** list — read that before touching a migration.
 
 ## Stores and their roles
@@ -67,11 +67,15 @@ truth for every column; these are roles, not schemas.
 
 ## Identity: TypeIDs above, rids below
 
-- **Every config row has a UUIDv7 `id`.** The wire/URL form is a **TypeID** — `prefix_` +
+- **Every config row has a UUID `id`.** The wire/URL form is a **TypeID** — `prefix_` +
   Crockford-base32 of that uuid, 26 chars. **The database never stores the prefix.** Prefixes are
   locked: `dv` device, `pt` point, `ar` area, `db` dashboard, `dx` derivation, `bn` binding.
   `lib/ids/` is the single source of truth, and its six codecs are branded so that passing a `dv_` where
   an `ar_` is expected is a **compile error**.
+- **Points are the exception to "v7": their id is _deterministic_.** `points.id` is
+  `uuidv5(vendorType : vendorSiteId : physicalPath)` (`lib/identifiers/point-uid.ts`), with a v7
+  fallback only on collision. That is what makes re-onboarding a device reproduce the same point ids,
+  and why point ids mean the same row in prod and `liveone-dev` while area/dashboard ids do not.
 - **The hot path uses an internal integer `rid`** (`points.rid`, `devices.rid`) — HA-recorder style.
   Re-keying `point_readings` on `(point_rid, time)` is _smaller_ than the `(system_id, point_id, time)`
   it replaced. `devices.rid` deliberately preserves the old `systems.id` values, so `sessions` and
@@ -128,6 +132,52 @@ These are load-bearing; don't violate them without updating
 - Timezone, day offset and location resolve on the **Area**, never the device — see
   [Time: fixed-offset days](#time-fixed-offset-days) below.
 
+### Points: paths and metrics
+
+Every point carries **two** addresses, and the distinction is load-bearing.
+
+| Field           | Separator | Set by         | Purpose                                                    | Example               |
+| --------------- | --------- | -------------- | ---------------------------------------------------------- | --------------------- |
+| `physical_path` | `/`       | Vendor adapter | The vendor's own identifier. Collection and dedup only.    | `selectronic/solar_w` |
+| `logical_path`  | `.`       | Vendor adapter | Semantic classification. Nullable if unclassified.         | `source.solar`        |
+
+`logical_path` + `/` + `metric_type` gives the **full logical path** — `source.solar/power` — and
+that string is the one the rest of the system is keyed by: KV latest-value hash fields, Sankey node
+identity, `series=` glob patterns, role shape-matching. The physical path never leaves the collector.
+
+**Stem conventions.** First segment is the flow type (`source`, `bidi`, `load`), second the equipment
+(`solar`, `battery`, `grid`), and any further segments are qualifiers:
+
+```
+source.solar          source.solar.local     source.solar.remote
+bidi.battery          bidi.grid
+load                  load.hws               load.ev
+```
+
+Two hierarchies get special treatment in the flow pipeline and are documented in
+[energy-flow-matrix.md](energy-flow-matrix.md) §Directional model — don't re-derive them: the solar
+**leaves** are preferred over the bare total with a synthetic `source.solar.residual` for the
+remainder, and a master `load` with children becomes a **budget** whose sinks are the children plus
+exactly one complement (`load.rest-of-house`), never both the master and its children.
+
+**Metric types.** The metric type determines how a point aggregates and whether it needs a transform:
+
+| Metric type   | Units     | Aggregation         | Transform   |
+| ------------- | --------- | ------------------- | ----------- |
+| `power`       | W         | avg, min, max, last | `n` (none)  |
+| `energy`      | Wh        | delta (sum)         | `d` (delta) |
+| `soc`         | %         | avg, min, max, last | `n`         |
+| `proportion`  | %         | avg                 | `n`         |
+| `rate`        | cents/kWh | avg                 | `n`         |
+| `value`       | cents     | delta (sum)         | `d` (delta) |
+| `code`        | —         | last (`value_str`)  | `n`         |
+| `temperature` | °C        | avg, min, max       | `n`         |
+
+The **delta transform** (`transform = 'd'`) is what turns a vendor's cumulative running total into a
+per-interval change — a meter reading 1000 Wh then 1250 Wh contributes 250 Wh to the interval. Get it
+wrong on an energy point and the aggregates report the odometer instead of the trip. None of this is
+recoverable from `schema.ts`, which only knows `metric_type text`.
+
 ### Units & precision
 
 - Power: Watts (float in point tables).
@@ -163,6 +213,15 @@ forever.** Deleting them was the tidier model and was **rejected**: `point_readi
 filtered out of the picker at render time instead. The area — not the device — is the sole home for
 timezone and location.
 
+🛑 **Never put `ON DELETE CASCADE` on `point_readings_flow_attr_1d.area_id`.** Its plain `NO ACTION` FK
+(`lib/db/planetscale/schema.ts`, the `pointReadingsFlowAttr1d` definition) is the **data-loss firewall**:
+Postgres _refuses_ to delete an area that still has flow rows. Today's area delete is soft, so the
+firewall is not currently load-bearing — which is exactly why it is easy to loosen by accident. Any
+future hard-delete path must pre-check `SELECT 1 FROM point_readings_flow_attr_1d WHERE area_id = $1
+LIMIT 1` and refuse if present. The same rule applied to the retired `point_readings_flow_1d` and is the
+reason no flow table has ever cascaded. (`area_members` _does_ cascade; that is deliberate and does not
+loosen this — membership is config, flow rows are history.)
+
 🛑 **Handle precedence is device-first, forever.** An integer handle can legitimately name both a device
 and an Area (handle 13 does). `?systemId=N` resolves **device-first** — that is the behaviour-preserving
 order, and it is written down at the top of `lib/dashboard/subject.ts`. The area-native reading of a
@@ -177,8 +236,8 @@ area's blend bindings and blank its provenance card until the next daily recompu
 `app/api/v4/areas/[id]/members/route.ts`.
 
 The KV subscription registry maps source points → subscribing areas/devices so latest-value updates fan
-out. See [areas-and-dashboards.md](areas-and-dashboards.md) for the full model and [points.md](points.md)
-for path grammar.
+out. See [areas-and-dashboards.md](areas-and-dashboards.md) for the full model and
+[Points: paths and metrics](#points-paths-and-metrics) above for the path grammar.
 
 ### The v4 dashboard document
 

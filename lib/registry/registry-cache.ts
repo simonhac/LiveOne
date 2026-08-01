@@ -1,7 +1,7 @@
 /**
  * The point identity registry — the ONLY owner of the uuid↔rid↔address mapping.
  *
- * Config-v4 seam (see docs/plans/config-v4-execution-plan.md §3, config-v4-clean-sheet.md §5):
+ * Config-v4 seam (see the config-v4 epic record §3 and the clean-sheet design §5):
  * above the seam everything speaks the public `pt_…` TypeID (`PointId`); below it the hot
  * time-series tables key on the compact integer `rid`. This module is the runtime bridge across the
  * `point_info` columns that hold those identities:

@@ -2,7 +2,10 @@
 
 > **Status:** proposed — not started (drafted 2026-06-13). Companion to the read-layer
 > bugfix that made the admin readings views coerce the epoch-ms projection correctly
-> (`::bigint` + `Number()` in `lib/db/planetscale/readings-read-pg.ts`). That fix is
+> (`::bigint` + `Number()` in what is now `lib/readings/dao.ts` — config-v4 moved the read layer
+> behind the readings DAO; the file was `lib/db/planetscale/readings-read-pg.ts` when this was
+> drafted). Re-verified still-relevant 2026-08-01: every time column is a bare `timestamp` and the
+> DAO still projects epoch-ms in six places. That fix is
 > defensive; this plan removes the underlying epoch-ms round-trip entirely. **No schema
 > change has been made — get explicit approval before generating/applying any migration**
 > (see `CLAUDE.md` → Database Migrations).
@@ -121,7 +124,7 @@ Two ways to manage that — pick per measured rewrite time (test on a branch fir
 
 node-postgres now returns these columns as JS `Date`s. Remove the epoch-ms machinery:
 
-- **`lib/db/planetscale/readings-read-pg.ts`** — drop the `EXTRACT(EPOCH …)*1000::bigint`
+- **`lib/readings/dao.ts`** (was `lib/db/planetscale/readings-read-pg.ts`) — drop the `EXTRACT(EPOCH …)*1000::bigint`
   projections (and the `Number()` coercion added by the bugfix); select the column directly.
   Decide the in-process shape:
   - _Minimal:_ keep the existing epoch-ms contract to consumers by doing `date.getTime()` in

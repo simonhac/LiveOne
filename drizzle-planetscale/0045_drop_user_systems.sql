@@ -32,7 +32,7 @@
 -- Idempotent: a re-run finds the table absent and skips. IRREVERSIBLE (this project has no rollback
 -- migrations — undo is a new forward migration); prod PITR + the 2-hourly R2 pg_dump cover recovery, and
 -- prod is empty regardless. Preconditions: the slice-F code is merged and DEPLOYED first (this is a [D]
--- slice), then prod `sydney`, then `liveone-dev`. See docs/plans/config-v4-execution-plan.md § Phase 12
+-- slice), then prod `sydney`, then `liveone-dev`. See the config-v4 epic record § Phase 12
 -- slice F.
 
 DO $$

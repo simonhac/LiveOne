@@ -105,7 +105,7 @@ describe("assignProvenanceToPeriods", () => {
   });
 
   it("is slice-decomposable: unequal slices sum to the whole-run figure", () => {
-    // THE GATE for this design (docs/plans/run-period-provenance.md): the per-slice integral must
+    // THE GATE for the run-period-provenance design: the per-slice integral must
     // equal the whole-run figure. Trivially true for a constant series — and the regression guard
     // for the day a time-varying (load-side blend) series lands.
     const varying: IntensitySeries = {

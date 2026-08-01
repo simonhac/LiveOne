@@ -125,7 +125,7 @@
 -- Not idempotent, and deliberately not: it drops tables. The journal is what prevents a second run. To
 -- re-check a branch, run the gate predicates by hand as plain `SELECT`s.
 --
--- See docs/plans/config-v4-execution-plan.md § "The collapsed terminal window".
+-- See the config-v4 epic record § "The collapsed terminal window".
 
 -- ── Gates. All of them, before anything is touched. ──────────────────────────────────────────
 DO $$

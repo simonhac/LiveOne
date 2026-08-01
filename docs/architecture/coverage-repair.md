@@ -1,6 +1,6 @@
 # Coverage repair — weekly self-heal for re-fetchable vendors
 
-Status: **current** (framework built + validated; not yet deployed — see [Status](#status--deployment)).
+Status: **current** — deployed and running weekly in prod (see [Status](#status--deployment)).
 
 A weekly, two-stage job that finds coverage gaps in the serving store and backfills them from the
 vendor API, for every **re-fetchable** external vendor (Amber, OpenElectricity, Sigenergy). It is the
@@ -8,7 +8,7 @@ generalization of the one-off Amber usage backfill into standing infrastructure.
 (Fronius/DeepSea) are **out of scope** — their gaps are device/network downtime, gone for good.
 
 Engine: `lib/coverage/`. Providers: `lib/vendors/<vendor>/coverage-repair.ts`. Cron:
-`app/api/cron/repair-coverage/route.ts` (weekly, in `vercel.json`).
+`app/api/cron/repair-coverage/route.ts` (weekly, Monday, in `vercel.json`).
 
 ## Why
 
@@ -82,7 +82,7 @@ day)` per repaired system-day, plus per-area `recomputeFlowMatrixForDay` + batte
 - **Per-vendor budget.** `REPAIR_MAX_DAYS_PER_RUN` caps repairs _per vendor_ so one vendor can't starve
   the others; overflow rolls to next week (reported as `deferred (cap)`).
 - **Sigenergy's recoverable window is UNKNOWN — do not assume 90 days.** We could not measure it: the
-  only Sigen site available (Kutis, `systems.created_at` 2026-07-06) is younger than ~2 weeks, so a
+  only Sigen site available (Kutis, `devices.created_at` 2026-07-06) is younger than ~2 weeks, so a
   fetch for any older day returns empty because the site didn't exist yet — which says nothing about
   the API's retention. Determine the real limit against an older site (or from Sigen's API docs) before
   relying on the uniform 7–90d window for Sigen; if it proves short, give Sigen a shorter `lookbackDays`
@@ -167,7 +167,20 @@ lets you **re-fetch history** — push/webhook vendors cannot self-heal.
 
 ## Status / deployment
 
-Built + validated on branch `simonhac/rebase-env-fix` (2026-07-16); **not yet deployed**. Validation:
-typecheck clean; Stage-1 detection + provider `prepare`/`backfillDay` proven on dev for all three
-vendors; full write→land→recompute proven on prod for OpenElectricity (healed 12 real gaps). Deploying
-requires the merge + `CRONS_ENABLED=true` (already set in prod).
+**Live.** The cron is scheduled in `vercel.json` (`30 15 * * 1` UTC — Monday, weekly) and
+`CRONS_ENABLED=true` in prod, so it runs unattended. It was built and validated in 2026-07
+(Stage-1 detection + provider `prepare`/`backfillDay` proven on dev for all three vendors; full
+write→land→recompute proven on prod for OpenElectricity, healing 12 real gaps) and has since healed
+gaps in normal operation.
+
+Two things are still open, and both are about *interpreting* the weekly report rather than about the
+machinery:
+
+- **Sigenergy's recoverable window is still unmeasured** — see the gotcha above. Until it is known,
+  old Sigen days may be reported `unsettled` every week without ever being recoverable.
+- **A source-confirmed permanent hole is reported forever.** There is no way to mark a gap
+  "accepted — the vendor genuinely has no data here", so a known-unrecoverable day recurs in every
+  weekly report as noise. A commission-date floor already suppresses pre-commissioning days (and
+  note the trap that a vendor's commission date can *predate* all its data and manufacture a phantom
+  gap — investigated and fixed for Kutis, 2026-07-28), but that only covers the before-the-start
+  case.

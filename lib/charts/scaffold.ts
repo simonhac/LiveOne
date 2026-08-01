@@ -2,8 +2,8 @@
  * Shared Chart.js scaffolding for the dashboard time-series charts (the lines + stacked charts).
  *
  * These two charts grew up separately but share ~70% of their Chart.js setup verbatim. This
- * module is the first extraction of that duplicated scaffold (phase 1 of the chart-generalization,
- * see docs/plans/chart-card-generalization.md) — pure, framework-agnostic helpers with no behaviour
+ * module is the first extraction of that duplicated scaffold (phase 1 of the chart-generalization
+ * plan, since retired) — pure, framework-agnostic helpers with no behaviour
  * change. The genuinely-divergent parts (the y-axes, the dataset builders) stay in DashboardChart.
  */
 import { format } from "date-fns";

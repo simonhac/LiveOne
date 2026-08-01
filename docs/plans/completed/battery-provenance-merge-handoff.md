@@ -1,13 +1,30 @@
 # Battery-energy-provenance branch — merge handoff
 
-> **Status:** active checklist. Owns the pre-merge gates and post-merge/deploy choreography for the
-> `simonhac/battery-energy-provenance` branch (memphis-v3 workspace). Written 2026-07-13 after an
-> independent review verified the branch's two bug fixes against code + raw dev-mirror data.
-> Companions: [`battery-provenance-ops-hardening.md`](battery-provenance-ops-hardening.md) (the bugs +
-> the ranked ops follow-ups), [`info-producers-consumers.md`](info-producers-consumers.md) (the
-> resolver design this branch unblocks).
+> **Status: DONE — historical record.** The `simonhac/battery-energy-provenance` branch merged as
+> **#164 on 2026-07-13** and every gate and post-merge step below was executed. Written 2026-07-13 as
+> an active checklist, after an independent review verified the branch's two bug fixes against code +
+> raw dev-mirror data; kept because it records the *choreography* a provenance activation needs —
+> deploy, verify the two new points self-register, re-backfill ONCE on fixed code, then accept against
+> a number. Reuse it as the template for the next one.
+>
+> Read the imperative voice below as past tense. Two of its forward-looking items did **not** land as
+> written, and are corrected here rather than in the body:
+>
+> - **Step 5's first item — the `Σ modern == Σ legacy` monitor — is moot.** `point_readings_flow_1d`
+>   was retired (migration `0029`), so there is no legacy view left to diverge from.
+>   `point_readings_flow_attr_1d` is the sole per-day flow matrix.
+> - **Step 6's `TariffProvider` → `resolveInfoSources` generalization was never done.**
+>   `lib/battery-provenance/tariff.ts` is still the narrow instance and the fold still reads
+>   `exportTariff` straight off device config. It survives as a live proposal in
+>   [../fold-on-the-resolver.md](../fold-on-the-resolver.md).
+>
+> Companions: [battery-provenance-ops-hardening.md](battery-provenance-ops-hardening.md) (the bugs +
+> the ranked ops follow-ups, also now closed out). `info-producers-consumers.md` — the resolver design
+> this branch was to unblock — was deleted 2026-08-01; its surviving ideas are
+> [../fold-on-the-resolver.md](../fold-on-the-resolver.md) and
+> [../availability-to-estimated.md](../availability-to-estimated.md).
 
-## What the branch contains
+## What the branch contained
 
 - **Battery Contents card** (replaces BatteryBlendCard): inventory valuation of the store — usable
   kWh, total carbon + intensity, actual + forgone-export cost, renewable %, export value. Two new

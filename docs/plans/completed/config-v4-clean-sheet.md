@@ -4,21 +4,23 @@
 > **implemented in full by 2026-08-01** over fifteen phases. This doc stays the canonical rationale:
 > read it for the model and the argument. What was actually built, what it cost, and where the plan was
 > corrected by measurement is [config-v4-execution-plan.md](config-v4-execution-plan.md); the resulting
-> invariants live in [../architecture/data-model.md](../architecture/data-model.md).
+> invariants live in [../architecture/data-model.md](../../architecture/data-model.md).
 >
 > ⚠️ Treat the forward-looking passages below (phasing, "will", the §15 open questions) as **the plan as
 > it stood at approval**, not as the state of the system. Two items named here were never built and are
 > not owed: `?include=resolved` on the dashboard read (§9.2, §9.4) and `capabilities` on the readable-
 > devices read (§9.2) — see the execution plan's decisions section.
 
-> **This document supersedes** — they inspired it, they do not constrain it:
-> [identity-address-split-and-labels.md](identity-address-split-and-labels.md) (absorbed: `points.id`
-> _is_ the identity; labels stay a deferred seam), [info-producers-consumers.md](info-producers-consumers.md)
-> (absorbed: per-slot deterministic resolution with priority, bind-time shape validation, config
-> producers, availability — see §4.3–4.4), and
-> [home-assistant-comparison.md](../architecture/home-assistant-comparison.md) (the HA-relationship
+> **This document superseded** two earlier plans — they inspired it, they did not constrain it, and
+> both were **deleted 2026-08-01** once this shipped (git is the archive):
+> `identity-address-split-and-labels.md` (absorbed: `points.id` _is_ the identity; labels stayed a
+> deferred seam and now live in [../ha-parity-and-leapfrog.md](../ha-parity-and-leapfrog.md) #3) and
+> `info-producers-consumers.md` (absorbed: per-slot deterministic resolution with priority, bind-time
+> shape validation, config producers, availability — see §4.3–4.4 **and the correction appended to
+> §4.3**). It also supersedes
+> [home-assistant-comparison.md](../../architecture/home-assistant-comparison.md) (the HA-relationship
 > decisions now live here). It also overturns parts of
-> [areas-and-dashboards.md](../architecture/areas-and-dashboards.md): the "Not planned — retiring
+> [areas-and-dashboards.md](../../architecture/areas-and-dashboards.md): the "Not planned — retiring
 > integer system addressing" section and the lazy-areas policy.
 
 ## 1. Context & motivation
@@ -226,6 +228,19 @@ explicit binding is a "needs your choice" state surfaced in the editor, never a 
 degrades to best-effort, never a wrong fact. Site-level config values are just config-kind
 producers in the same chain, which also fixes the old scoping wrinkle (config lived on a device;
 consumers are area-scoped — in v4 those knobs live on `areas.config`, §4.3).
+
+> ⚠️ **Correction, 2026-08-01 — §4.3 shipped only half-way.** The resolver itself is real and good:
+> `lib/areas/resolution.ts` implements exactly the chain above, `area_bindings.priority` is a real
+> column with a unique index, bind-time shape validation *enforces* (it rejects, it does not warn),
+> and the report is served at `GET /api/v4/areas/{id}/resolution`. But **"used by every consumer" is
+> not true.** No engine path calls it. The battery-provenance fold still orders bindings by `ordinal`
+> (which has no unique index) and picks first-wins — last-wins for grid price — and reads config
+> straight off the owning device rather than as a config producer. So the resolution *report* and the
+> numbers the fold actually computes can disagree. Likewise `available` means only `points.active`;
+> there is no staleness input, so the "degrades to best-effort, never a wrong fact" sentence above
+> describes an intent, not a mechanism. Both gaps are now tracked as
+> [../fold-on-the-resolver.md](../fold-on-the-resolver.md) and
+> [../availability-to-estimated.md](../availability-to-estimated.md).
 
 ### 4.4 derivations (generalizes `device_trackers`) + derived_intervals
 
@@ -644,7 +659,7 @@ slug URLs unchanged · share-token strings unchanged.
    covers devices. A third grant surface is speculative.
 6. **Fixed-offset day-bucketing kept** over DST-aware wall-clock days (§7).
 7. **Labels deferred** — an orthogonal tag dimension is a clean future add
-   (see identity-address-split-and-labels.md); nothing reads them yet.
+   (now [../ha-parity-and-leapfrog.md](../ha-parity-and-leapfrog.md) #3); nothing reads them yet.
 
 ## 13. Risks
 

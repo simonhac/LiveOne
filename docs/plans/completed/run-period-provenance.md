@@ -1,8 +1,13 @@
 # Per-run provenance — cost, emissions and renewable share for a run period
 
-> **Status: SHIPPED for producing (source-role) devices, 2026-07-28.** `derived_intervals` carries
-> `cost_c` / `emissions_g` / `renewable_kwh`, accumulated by the recompute. The remaining work is the
-> **load-side** provider (EV, pump) — see [Still to do](#still-to-do).
+> **Status: SHIPPED — historical record.** Landed 2026-07-28 for producing (source-role) devices.
+> `derived_intervals` carries `cost_c` / `emissions_g` / `renewable_kwh` (migration `0042`,
+> expand-only), accumulated by the recompute rather than derived at render time — which is the
+> decision that dissolved the original blocker, and the reason this doc is worth keeping.
+>
+> The **load-side** provider (EV, pump) was never built and is now tracked separately as
+> [../load-side-run-provenance.md](../load-side-run-provenance.md). The "Still to do" section below is
+> retained as the analysis that plan starts from.
 
 ## Context
 
@@ -103,7 +108,9 @@ curl -X POST https://liveone.energy/api/cron/derivations \
 > are **deleted, not re-priced**. Daylesford's detector moved to DSE Engine Speed on 2026-07-27 and
 > that point only has data from 2026-07-11; a full-range regenerate on dev collapsed 71 rows to 3.
 > Bound `start` to the current signal's data window. Older runs simply keep NULL provenance — which is
-> consistent, since their `avgSignal` is already suppressed by the `detector_version` unit gate.
+> consistent. (The original clause here said their `avgSignal` was already suppressed by the
+`detector_version` unit gate — that gate was **retired** by migration `0055`, which put `signal_unit`
+on each row instead. The regenerate warning above still stands; only its footnote was stale.)
 
 ### Backfill after the migration
 
@@ -136,7 +143,7 @@ Also open:
 
 ## Related
 
-- [../architecture/battery-provenance.md](../architecture/battery-provenance.md) — the fold, the
+- [../architecture/battery-provenance.md](../../architecture/battery-provenance.md) — the fold, the
   off-grid-generator section, and how `source.grid` carries generator output.
 - [config-v4-execution-plan.md](config-v4-execution-plan.md) — the sibling "run-interval statistics
   assume the signal IS power" issue, fixed in the unit-honesty change.

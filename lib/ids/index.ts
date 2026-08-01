@@ -3,7 +3,7 @@
  *
  * Client-safe barrel: no `node:crypto`. Above the data-access seam everything speaks these TypeIDs;
  * the DB stores the raw uuid and the internal integer `rid` lives only below the seam (see
- * docs/plans/config-v4-clean-sheet.md §5). Usage:
+ * the config-v4 clean-sheet design §5). Usage:
  *
  *   const id = Device.generate();           // DeviceId, e.g. "dv_01j9xz…"
  *   const uuid = Point.toUuid(pointId);     // -> canonical uuid for the DB

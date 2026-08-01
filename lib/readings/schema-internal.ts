@@ -1,7 +1,7 @@
 /**
  * The ONLY re-export of the hot time-series table symbols.
  *
- * Config-v4 seam (docs/plans/config-v4-execution-plan.md §3): everything that issues SQL against
+ * Config-v4 seam (the config-v4 epic record §3): everything that issues SQL against
  * `point_readings` / `point_readings_agg_5m` / `point_readings_agg_1d` imports the Drizzle symbols
  * FROM HERE, never from the `@/lib/db/planetscale/schema` barrel. The lint ratchet
  * (`.eslintrc.json` no-restricted-imports + scripts/check-readings-boundary.mjs) bans the raw symbols

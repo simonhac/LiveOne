@@ -12,7 +12,7 @@
 -- `doc` SUPERSEDED rather than duplicated: `doc` is the product of `rewriteV3ToV4` plus every edit made
 -- through the v4 `PUT` since, so it is neither a superset nor a lossless encoding of the v3 shape (v3
 -- card ids such as `chart:lines` are deliberately NOT carried into `doc` — see the stage-8 note in
--- docs/plans/config-v4-execution-plan.md). Once this lands, the only copy of the old descriptors is a
+-- the config-v4 epic record). Once this lands, the only copy of the old descriptors is a
 -- backup.
 --
 -- 🛑 **TAKE THE BACKUP FIRST, ON BOTH ENVIRONMENTS**, before applying:

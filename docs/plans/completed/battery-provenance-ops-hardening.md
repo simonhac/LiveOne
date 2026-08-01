@@ -1,10 +1,36 @@
 # Battery energy provenance — correctness bugs & ops hardening
 
-> **Status:** in progress. The two correctness **bugs (Part 1) are root-caused and FIXED in this branch**
-> (with regression tests); the operational-ergonomics items (Part 2) remain as follow-ups. Surfaced while
-> repricing Daylesford's off-grid generator on prod (2026-07-13). Code touched:
-> `lib/aggregation/flow-matrix-core.ts`, `lib/db/planetscale/battery-provenance-pg.ts`; the
-> recompute/flow-matrix APIs are unchanged. Feature name: **battery energy provenance**.
+> **Status: CLOSED — historical record.** Surfaced while repricing Daylesford's off-grid generator on
+> prod (2026-07-13); shipped with #164 the same day. Kept for the diagnostic method in "How these were
+> found", which is the reusable part: a metrics-only reprice moved an *energy* total, and that
+> impossibility is what exposed both defects.
+>
+> **Part 1 (the two correctness bugs)** — root-caused and FIXED, with regression tests. Code touched:
+> `lib/aggregation/flow-matrix-core.ts`, `lib/db/planetscale/battery-provenance-pg.ts`.
+>
+> **Part 2 (ops ergonomics)** — resolved as follows, as at 2026-08-01:
+>
+> - **#1, the `Σ modern == Σ legacy` consistency monitor — MOOT, never built.** It was ranked first,
+>   but `point_readings_flow_1d` was retired in migration `0029`, so there is no legacy view left to
+>   compare against. `point_readings_flow_attr_1d` is now the sole per-day flow matrix and the
+>   invariant it would have policed no longer has two sides. The monitoring need it stood for is met
+>   differently: `batprov_blend_missing` / `batprov_blend_stale` / `batprov_rollup_stale` /
+>   `batprov_estimated_fraction_high` / `batprov_soc_meter_divergence` in
+>   `app/api/cron/monitor-observations/route.ts`.
+> - **#2, `provenance-summary` — BUILT.** `app/api/v4/areas/[id]/provenance-summary/route.ts` (plus a
+>   sibling `provenance-daily`). The `reprice-area` CLI wrapper was trimmed as planned and never built.
+> - **#3, handle→areaId lookup — MOOT.** The integer handle was retired by config-v4; areas are
+>   addressed by `ar_` TypeID and the `/api/v4/areas/[id]/…` routes take it directly.
+> - **#4, unify the API/script recompute paths — NOT DONE.** Deferred as planned ("the next time the
+>   recompute is touched"); still open, still low-priority.
+> - **#5, the reprice runbook — NOT written as a standalone doc.** The stale `build-registry`
+>   reference in `CLAUDE.md` was fixed.
+> - **#6, `CRON_SECRET` bearer on the recompute endpoints — BUILT.** See the auth note at the top of
+>   `app/api/v4/areas/[id]/recompute-provenance/route.ts`, including the middleware carve-out it needs.
+> - **#7 — folded into #5 as intended; nothing to build.**
+>
+> The "Verification / repro" section below is preserved as the historical acceptance record. Its
+> `?source=legacy|modern` comparisons **can no longer be run** — that API and `flow_1d` are both gone.
 
 ## How these were found
 

@@ -23,6 +23,16 @@ PRE_SSR = {
     'history_dur': 250, 'history_server': 176,
     'data8_dur': 86, 'data12_dur': 90,
 }
+# Most recent recorded Sydney run — diff new runs against THIS, not PRE_SSR.
+# 2026-08-01, post-config-v4 (352da181); shared view, 1 client request.
+LATEST = {
+    'date': '2026-08-01',
+    'health_floor': 53,           # ms warm, node /api/health
+    'doc_ttfb': 104,              # ms warm, node document probe
+    'fcp': 258, 'shared_settle': 600,
+    'history_dur': 300, 'history_server': 229,
+    'ssr_total': 55.3,
+}
 # Italy (fra1 edge) reference, for the geography contrast.
 ITALY_HEALTH_TTFB = 613
 ITALY_DOC_TTFB = 705              # ms, single warm doc TTFB from Italy (dashboards row, fra1)
@@ -59,10 +69,11 @@ def main():
     if hw:
         vid = (d['health'][-1].get('xVercelId') or '')[:12]
         print(f"\nNETWORK FLOOR (node /api/health, warm): {hw}  median={med(hw):.0f} ms  vid={vid}")
-        print(f"  -> vs ITALY(fra1) ~{ITALY_HEALTH_TTFB} ms   (pre-SSR Sydney floor ~{PRE_SSR['health_floor']} ms)")
+        print(f"  -> vs ITALY(fra1) ~{ITALY_HEALTH_TTFB} ms   (last recorded {LATEST['date']}: ~{LATEST['health_floor']} ms)")
     if dw:
         dvid = (d['document'][-1].get('xVercelId') or '')[:12]
-        print(f"\nSSR DOCUMENT TTFB (node, warm): {dw}  median={med(dw):.0f} ms  vid={dvid}")
+        print(f"\nSSR DOCUMENT TTFB (node, warm): {dw}  median={med(dw):.0f} ms  vid={dvid}"
+              f"   (last recorded {LATEST['date']}: {LATEST['doc_ttfb']} ms)")
         if hw:
             print(f"  -> SSR server compute ≈ doc {med(dw):.0f} − floor {med(hw):.0f} = ~{med(dw)-med(hw):.0f} ms"
                   f"   (vs ITALY doc TTFB ~{ITALY_DOC_TTFB} ms, mostly fra1↔syd1 network)")
@@ -78,7 +89,8 @@ def main():
     dcl = [r['nav']['domContentLoadedEventEnd'] for r in runs if r.get('nav', {}).get('domContentLoadedEventEnd')]
     lcp = [r['lcp'] for r in runs if r.get('lcp')]
     print(f"\nTIME-TO-CONTENT (browser, {len(runs)} runs):")
-    if fcp: print(f"  FCP (≈ time-to-tiles):     min={min(fcp)} median={med(fcp):.0f} max={max(fcp)} ms")
+    if fcp: print(f"  FCP (≈ time-to-tiles):     min={min(fcp)} median={med(fcp):.0f} max={max(fcp)} ms"
+                  f"   (last recorded {LATEST['date']}: {LATEST['fcp']} ms)")
     if dcl: print(f"  DOMContentLoaded:          min={min(dcl)} median={med(dcl):.0f} max={max(dcl)} ms")
     if lcp: print(f"  LCP:                       min={min(lcp)} median={med(lcp):.0f} max={max(lcp)} ms")
     c = runs[0].get('content', {})
@@ -90,7 +102,8 @@ def main():
     counts = sorted(set(r['count'] for r in runs))
     print(f"\nTIME-TO-SETTLE — /api waterfall ({len(runs)} runs, counts={counts}):")
     print(f"  settle (raw max end): min={min(settles)} median={med(settles):.0f} max={max(settles)} ms"
-          f"   (pre-SSR Sydney ~{PRE_SSR['shared_settle']} ms, 3 req)")
+          f"   (last recorded {LATEST['date']}: ~{LATEST['shared_settle']} ms, 1 req;"
+          f" pre-SSR ~{PRE_SSR['shared_settle']} ms, 3 req)")
     hist = [max((e['end'] for e in r['entries'] if e['path'] == '/api/history'), default=0) for r in runs]
     hist = [h for h in hist if h]
     if hist:
