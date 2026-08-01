@@ -37,6 +37,14 @@ export interface CardRenderProps {
    *  `generator-runs`) read `deviceSystemId ?? handle`: their data is keyed by a member device,
    *  not the synthetic area handle. Undefined ⇒ no device in scope. */
   deviceSystemId?: number;
+  /**
+   * True ⇒ a <SiteChartsGroup> for THIS SAME `handle` is mounted in this card's group and is
+   * driving `siteDataQuery`. A card whose data is a subset of that payload can then read it instead
+   * of issuing its own request (React Query dedupes on the shared key). Only `chart`'s `lines`
+   * variant uses it today — see LinesChartCard. False/undefined ⇒ nothing is fetching site data
+   * here, so the card MUST fall back to its own query.
+   */
+  sharedSiteData?: boolean;
 }
 
 export interface CardPlugin {

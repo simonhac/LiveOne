@@ -5,6 +5,10 @@
  * fetch doesn't need the handle's `system` to have landed yet — see the tz note below); the
  * stacked-areas variant never renders standalone: `collapseKey` folds it into the section's
  * SiteChartsGroup (chart:load / chart:generation).
+ *
+ * "Standalone" is about RENDERING, not fetching: `sharedSiteData` tells the lines chart whether a
+ * SiteChartsGroup in the same group is already fetching a superset of its series for the same
+ * window, in which case it rides that instead of issuing a second `/api/history`.
  */
 import LinesChartCard from "@/components/LinesChartCard";
 import type { ChartConfig } from "@/lib/dashboard/card-types";
@@ -12,7 +16,7 @@ import type { CardPlugin, CardRenderProps } from "./types";
 import { maxPowerHintFromDeviceInfo, subjectOf, useAreaDatum } from "./shared";
 import { CARD_FOOTPRINTS } from "./footprints";
 
-function AreaLinesChart({ handle }: CardRenderProps) {
+function AreaLinesChart({ handle, sharedSiteData }: CardRenderProps) {
   const systemId = handle!;
   const { data, datum } = useAreaDatum(systemId);
   // `timezoneOffsetMin` only drives LinesChartCard's refetch-cadence scheduling and future
@@ -35,6 +39,7 @@ function AreaLinesChart({ handle }: CardRenderProps) {
       className="h-full min-h-[360px]"
       timezoneOffsetMin={tz}
       maxPowerHint={maxPowerHint}
+      sharedSiteData={sharedSiteData}
     />
   );
 }

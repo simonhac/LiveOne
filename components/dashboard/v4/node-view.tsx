@@ -151,6 +151,7 @@ function CardNodeView({
   resolver,
   areasResolved,
   path,
+  sharedSiteData,
 }: {
   node: CardNode;
   context: NodeContext;
@@ -159,6 +160,7 @@ function CardNodeView({
   areasResolved: boolean;
   /** Child-index path from the document root — the fallback identity for a node with no `id`. */
   path: readonly number[];
+  sharedSiteData?: boolean;
 }) {
   const area: ResolvedArea | null = context.area
     ? resolver.area(context.area)
@@ -197,11 +199,6 @@ function CardNodeView({
 
   // Card plugin → handed the node + its inherited context.
   //
-  // 🛑 This holds the card's declared footprint open even once `areasResolved` — it used to collapse
-  // to `null` there, which meant a whole card's worth of height vanishing mid-load and everything
-  // below it jumping up. An area that genuinely can't be resolved is already reported, once and
-  // legibly, by the section's "Area unavailable" notice (GroupNodeView below); a card silently
-  // disappearing is not a second, better report of it, just a relayout.
   // 🛑 A card with no handle keeps its FOOTPRINT either way — it used to collapse to `null` once
   // the areas resolved, which meant a whole card's worth of height vanishing mid-load and
   // everything below it jumping up. What changes with `areasResolved` is only what fills that
@@ -226,6 +223,7 @@ function CardNodeView({
           context={context}
           handle={handle ?? undefined}
           deviceSystemId={device?.systemId ?? undefined}
+          sharedSiteData={sharedSiteData}
         />
       )}
     </CardSlot>
@@ -294,6 +292,18 @@ function GroupNodeView({
     const k = collapseKeyOf(child);
     if (k != null) chartKeys.add(k);
   }
+  // Will a <SiteChartsGroup> actually MOUNT for this group, and will it run its `siteDataQuery`?
+  // Mirrors the two gates below exactly: pass 2 emits it only for a non-hidden collapse member with a
+  // resolved `handle`, and SiteChartsGroup itself bails on `!chartCapable`. A standalone `lines`
+  // chart in this same group reads this to decide whether it can ride that fetch instead of issuing
+  // its own `/api/history` for the same window — so it must not be true when nothing drives the
+  // query, or the chart would wait forever on a payload nobody fetches. Note `chartKeys` is NOT the
+  // right input: it deliberately includes hidden members (they stay addressable via `cardVisible`),
+  // and an all-hidden collapse emits no group at all.
+  const siteChartsMounted =
+    handle != null &&
+    !!area?.chartCapable &&
+    node.children.some((c) => !c.hidden && collapseKeyOf(c) != null);
   const sankeyChild = node.children.find(
     (c) => c.kind === "card" && c.type === "sankey",
   );
@@ -345,6 +355,7 @@ function GroupNodeView({
           dashboardId={dashboardId}
           areasResolved={areasResolved}
           path={[...path, i]}
+          sharedSiteData={siteChartsMounted}
         />
       );
     })
@@ -429,6 +440,7 @@ export function NodeView({
   dashboardId,
   areasResolved,
   path = [],
+  sharedSiteData,
 }: {
   node: DashboardNode;
   context: NodeContext;
@@ -437,8 +449,13 @@ export function NodeView({
   areasResolved: boolean;
   /** Child-index path from the root; only used to identify nodes that carry no `id`. */
   path?: readonly number[];
+  /** Set by the parent GroupNodeView for its DIRECT card children — see `siteChartsMounted`. */
+  sharedSiteData?: boolean;
 }): React.ReactElement | null {
   if (node.kind === "group") {
+    // Deliberately NOT forwarded: a nested group has its own area/handle and its own collapse
+    // members, so it recomputes `siteChartsMounted` for its own children. Inheriting the parent's
+    // would claim a fetch keyed on a DIFFERENT handle.
     return (
       <GroupNodeView
         node={node}
@@ -457,6 +474,7 @@ export function NodeView({
       resolver={resolver}
       areasResolved={areasResolved}
       path={path}
+      sharedSiteData={sharedSiteData}
     />
   );
 }
