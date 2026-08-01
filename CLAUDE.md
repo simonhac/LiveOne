@@ -223,7 +223,10 @@ SELECT MAX(interval_end) AS latest_agg,
 FROM point_readings_agg_5m;
 
 -- Approximate row counts (instant; never COUNT(*) the big tables)
-SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
+-- Use pg_class.reltuples, NOT pg_stat_user_tables.n_live_tup — see the warning below.
+SELECT relname, reltuples::bigint AS approx_rows
+FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace
+ORDER BY reltuples DESC;
 ```
 
 **PG backups:** PITR schedules are database-wide, set in the PlanetScale dashboard (currently 12h-keep-2d immutable + 3-day-keep-6mo); `pscale backup create` makes a one-off base backup.
@@ -234,8 +237,9 @@ SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC;
 
 > ⚠️ **Never `COUNT(*)` (or run any full-table scan/aggregate) on the big tables** — `point_readings` (~13M rows), `point_readings_agg_5m` (~3M), `sessions` (~870K). It's slow and almost never what you actually need.
 >
-> - **Approximate row counts:** `SELECT relname, n_live_tup FROM pg_stat_user_tables ORDER BY n_live_tup DESC` (planner estimate, instant).
-> - **Presence / recency / "is it current":** use an indexed `ORDER BY <indexed col> DESC LIMIT 1` — e.g. `SELECT MAX(measurement_time) FROM point_readings` or `SELECT 1 FROM <table> LIMIT 1`. This is how you verify a snapshot/backup has data, too.
+> - **Approximate row counts:** `SELECT relname, reltuples::bigint FROM pg_class WHERE relkind='r' AND relnamespace='public'::regnamespace ORDER BY reltuples DESC` (the planner's own estimate, instant).
+>   **Do NOT use `pg_stat_user_tables.n_live_tup`** — it is not the planner estimate, and on the append-only tables it is wildly low. `n_live_tup` is a running counter that is only corrected when VACUUM/ANALYZE touches the table; `point_readings` and `sessions` take inserts only, so they generate no dead tuples, autovacuum never has anything to do, and their `n_live_tup` never gets corrected — it just equals "rows inserted since this branch's stats began". Measured on prod 2026-08-01: `point_readings` `reltuples` 15.6M (correct, matches 2.2 GB on disk) vs `n_live_tup` 205,902 — a 60× undercount. Nothing is wrong with the database; the number is just the wrong number.
+> - **Presence / recency / "is it current":** use an indexed `ORDER BY <indexed col> DESC LIMIT 1` — e.g. `SELECT MAX(measurement_time) FROM point_readings` or `SELECT 1 FROM <table> LIMIT 1`. This is how you verify a snapshot/backup has data, too — and note that a restore check based on `n_live_tup` would have you conclude you'd lost 98% of `point_readings`.
 > - **Exact `COUNT(*)` is fine** only on the small config tables: `systems`, `point_info`, `users`, `polling_status`, `share_tokens`.
 
 ```sql
