@@ -44,13 +44,40 @@ const METRIC_HEADER: Record<EnergyTableMetric, string> = {
 /** The subset both `LoadProvenanceSummary` and `SourceProvenanceSummary` carry, which is all this
  *  table reads — so one code path serves the load and generation halves. */
 type ProvenanceRow = {
+  energyKwh: number;
   costC: number; // signed cents
   avgCentsPerKwh: number | null;
   kgCo2: number;
   avgGramsPerKwh: number | null;
   costKnownKwh: number;
   emissionsKnownKwh: number;
+  /** Feed-in credit, POSITIVE = money in; null = nothing sold or nothing priced (never an earned $0). */
+  revenueC: number | null;
+  revenueKnownKwh: number;
 };
+
+/**
+ * How much of a row's energy must carry a price before its window total is quotable. The reducers sum
+ * whatever is priced, so a partially-materialised window otherwise returns a confident, far-too-small
+ * figure — the workspace that built the revenue leg saw "$0.08" against 54.8 kWh exported. Below this,
+ * the money line renders "—".
+ *
+ * Deliberately NOT applied to the last column: those per-row cost/rate cells are specified as averages
+ * over KNOWN energy (see the Total-row comment below, which re-divides by the filtered denominators for
+ * exactly that reason). This guard is for the headline line, where an unqualified dollar figure that
+ * silently covers only part of the window is a lie rather than an average.
+ */
+const MONEY_COVERAGE_MIN = 0.995;
+
+/** `cents` if the row is priced end-to-end, else null (→ "—"). See {@link MONEY_COVERAGE_MIN}. */
+export function quotableCents(
+  cents: number | null,
+  knownKwh: number,
+  energyKwh: number,
+): number | null {
+  if (cents === null || energyKwh <= 0) return null;
+  return knownKwh >= energyKwh * MONEY_COVERAGE_MIN ? cents : null;
+}
 
 export function nextEnergyTableMetric(m: EnergyTableMetric): EnergyTableMetric {
   const i = ENERGY_TABLE_METRICS.indexOf(m);
@@ -77,6 +104,15 @@ interface EnergyTableProps {
   metric?: EnergyTableMetric;
   /** Advance to the next metric — bound to a click anywhere in the last column. */
   onCycleMetric?: () => void;
+  /**
+   * This half's grid price series (c/kWh, aligned to `chartData.timestamps`) — the BUY price for the
+   * generation table, the SELL price for the load table. Shown on the money line while hovering, in
+   * place of the window total. Absent/all-null ⇒ the line shows "—" on hover.
+   *
+   * ⚠️ Carries the VENDOR's sign: Amber's feed-in `perKwh` is negative when you are paid, so the load
+   * table flips it for display (see `moneyValue` below). Nothing upstream normalises this series.
+   */
+  gridRate?: (number | null)[] | null;
 }
 
 export default function EnergyTable({
@@ -89,6 +125,7 @@ export default function EnergyTable({
   attributedFlow,
   metric = "pct",
   onCycleMetric,
+  gridRate,
 }: EnergyTableProps) {
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isPressedRef = useRef(false);
@@ -148,6 +185,7 @@ export default function EnergyTable({
     return {
       id: series.id,
       label: series.description,
+      flowPath: series.flowPath,
       powerValue: series.data[dataIndex], // Power value at specific point (kW)
       energyValue: energyValues.get(series.id) ?? null, // Total energy (kWh)
       color: series.color,
@@ -228,6 +266,9 @@ export default function EnergyTable({
   let kgCo2Total = 0;
   let costKnownKwhTotal = 0;
   let emissionsKnownKwhTotal = 0;
+  let energyKwhTotal = 0;
+  let revenueCTotal: number | null = null;
+  let revenueKnownKwhTotal = 0;
   let hasProvenance = false;
   tableData.forEach((item) => {
     if (!item.isVisible || !item.provenance) return;
@@ -236,6 +277,11 @@ export default function EnergyTable({
     kgCo2Total += item.provenance.kgCo2;
     costKnownKwhTotal += item.provenance.costKnownKwh;
     emissionsKnownKwhTotal += item.provenance.emissionsKnownKwh;
+    energyKwhTotal += item.provenance.energyKwh;
+    if (item.provenance.revenueC !== null) {
+      revenueCTotal = (revenueCTotal ?? 0) + item.provenance.revenueC;
+      revenueKnownKwhTotal += item.provenance.revenueKnownKwh;
+    }
   });
 
   /** The last column's cell text for one row (or for the Total row, via `totalsRow`). */
@@ -263,6 +309,9 @@ export default function EnergyTable({
         kgCo2: kgCo2Total,
         costKnownKwh: costKnownKwhTotal,
         emissionsKnownKwh: emissionsKnownKwhTotal,
+        energyKwh: energyKwhTotal,
+        revenueC: revenueCTotal,
+        revenueKnownKwh: revenueKnownKwhTotal,
         avgCentsPerKwh:
           costKnownKwhTotal > 0 ? costCTotal / costKnownKwhTotal : null,
         avgGramsPerKwh:
@@ -271,6 +320,55 @@ export default function EnergyTable({
             : null,
       }
     : null;
+
+  // ── The grid money line ──────────────────────────────────────────────────────────────────────
+  // What the grid cost you (sources) / paid you (loads) over the window, under the SoC line. The two
+  // halves are mirror images: the generation table reads the grid-as-SOURCE row and its `costC` (what
+  // the imported energy cost); the load table reads the grid-as-LOAD row and its `revenueC` (what the
+  // exported energy earned). They are NOT the same quantity read twice — `costC` on a `load.grid` row
+  // is the cost of PRODUCING the energy you exported, which is why this line reads `revenueC` instead.
+  //
+  // Hovering has no window total to show, so the line switches to the price at that instant. The label
+  // switches with it ("Import Cost" → "Import Price") rather than leaving a c/kWh under a $ caption.
+  const gridFlowPath = mode === "load" ? "load.grid" : "source.grid";
+  const gridProvenance =
+    tableData.find((r) => r.flowPath === gridFlowPath)?.provenance ?? null;
+  const windowCents = gridProvenance
+    ? mode === "load"
+      ? quotableCents(
+          gridProvenance.revenueC,
+          gridProvenance.revenueKnownKwh,
+          gridProvenance.energyKwh,
+        )
+      : quotableCents(
+          gridProvenance.costC,
+          gridProvenance.costKnownKwh,
+          gridProvenance.energyKwh,
+        )
+    : null;
+  const rateNow = gridRate?.[dataIndex] ?? null;
+  // Hidden entirely when this Area has neither a priced window nor any price to hover — an off-grid
+  // site, or a grid with no tariff bound, shouldn't carry a permanent "—".
+  const showMoneyRow =
+    !!gridProvenance &&
+    (windowCents !== null || (gridRate?.some((v) => v !== null) ?? false));
+  const moneyLabel = isHovering
+    ? mode === "load"
+      ? "Export Price"
+      : "Import Price"
+    : mode === "load"
+      ? "Export Credit"
+      : "Import Cost";
+  const moneyValue = isHovering
+    ? rateNow === null
+      ? "—"
+      : // The load half flips the sign: `bidi.grid.export/rate` is Amber's feedIn `perKwh`, negative
+        // when you are PAID, and this line is captioned as a credit. (`revenueC` above arrives already
+        // normalised — the engine does that at its own seam — so only the raw hover series needs it.)
+        `${formatCentsPerKwh(mode === "load" ? -rateNow : rateNow)} c/kWh`
+    : windowCents === null
+      ? "—"
+      : formatDollars(windowCents);
 
   // Click anywhere in the last column — header, any row, the Total, the SoC row — to cycle.
   const metricCellProps = {
@@ -426,30 +524,53 @@ export default function EnergyTable({
           </div>
         </div>
 
-        {/* Battery SoC - show if SoC series exists */}
-        {socSeries.length > 0 && (
-          <div style={{ paddingTop: "20px", paddingBottom: "20px" }}>
-            <div className="flex items-center text-xs">
-              <div className="flex items-center gap-2 flex-1">
-                <div
-                  className="w-3 h-3 rounded-sm flex-shrink-0"
-                  style={{ backgroundColor: "rgb(74, 222, 128)" }}
-                />
-                <span className="text-gray-300">Battery SoC</span>
+        {/* Footer lines below the Total: Battery SoC (generation half only — addSocSeries is
+            generation-only), then the grid money line. Either may be absent, so the block itself is
+            conditional; the load half typically shows only the money line. */}
+        {(socSeries.length > 0 || showMoneyRow) && (
+          <div
+            className="space-y-1"
+            style={{ paddingTop: "20px", paddingBottom: "20px" }}
+          >
+            {socSeries.length > 0 && (
+              <div className="flex items-center text-xs">
+                <div className="flex items-center gap-2 flex-1">
+                  <div
+                    className="w-3 h-3 rounded-sm flex-shrink-0"
+                    style={{ backgroundColor: "rgb(74, 222, 128)" }}
+                  />
+                  <span className="text-gray-300">Battery SoC</span>
+                </div>
+                <span className="text-gray-100 font-mono w-20 text-right">
+                  {socValue !== null && socValue !== undefined
+                    ? `${socValue.toFixed(1)}%`
+                    : "—"}
+                </span>
+                <span
+                  className={`text-gray-400 ${metricCellClass}`}
+                  {...metricCellProps}
+                >
+                  {/* Always empty - SoC has no share/cost/emissions of its own. Still part of the
+                      column, so clicking it cycles like anywhere else. */}
+                </span>
               </div>
-              <span className="text-gray-100 font-mono w-20 text-right">
-                {socValue !== null && socValue !== undefined
-                  ? `${socValue.toFixed(1)}%`
-                  : "—"}
-              </span>
-              <span
-                className={`text-gray-400 ${metricCellClass}`}
-                {...metricCellProps}
-              >
-                {/* Always empty - SoC has no share/cost/emissions of its own. Still part of the
-                    column, so clicking it cycles like anywhere else. */}
-              </span>
-            </div>
+            )}
+
+            {showMoneyRow && (
+              <div className="flex items-center text-xs">
+                {/* No colour swatch: this is a summary line like Total, not a chart series. */}
+                <span className="text-gray-300 flex-1">{moneyLabel}</span>
+                <span className="text-gray-100 font-mono w-20 text-right whitespace-nowrap">
+                  {moneyValue}
+                </span>
+                <span
+                  className={`text-gray-400 ${metricCellClass}`}
+                  {...metricCellProps}
+                >
+                  {/* Empty, like the SoC line — but still part of the column, so clicking cycles. */}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
