@@ -6,33 +6,52 @@ import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
-import { formatDollars } from "@/lib/provenance-format";
+import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
 
 /**
- * A dashboard panel listing a device's generator runs WITHIN the temporal-navigator window — the
- * same D/W/M/Y + prev/next window the charts respect (read via {@link useTemporalRange}). A run
+ * A dashboard panel listing one tracked device's run periods WITHIN the temporal-navigator window —
+ * the same D/W/M/Y + prev/next window the charts respect (read via {@link useTemporalRange}). A run
  * that overlaps the window is shown in full.
  *
- * The footer totals (run count, run-time, kWh) sum the FULL value of every overlapping run — a run
- * that extends before/after the window is counted whole (its generation isn't uniform, so it can't
- * be meaningfully clipped). Such a run is marked with an asterisk and a footnote appears under the
+ * ROLE-GENERIC. `role` selects which detector's periods to list (`generator` runs, `ev` charge
+ * sessions); the copy comes in as props because only the caller knows which noun is right. The data
+ * path never needed generalising — `/api/device/{id}/run-periods` has always taken `?role=`, and the
+ * columns it advertises are planned from the ROWS (units, provenance), not from the role, so an EV
+ * session and a generator run render through exactly the same table.
+ *
+ * The footer totals (count, run-time, kWh) sum the FULL value of every overlapping run — a run that
+ * extends before/after the window is counted whole (its energy isn't uniform, so it can't be
+ * meaningfully clipped). Such a run is marked with an asterisk and a footnote appears under the
  * table explaining it (only when at least one run is marked).
  *
- * Shown on dashboards whose device has an enabled generator tracker (see lib/dashboard/card-types.ts
- * "generator-runs"). In live mode (D/W) it requests period mode (`1d`/`7d`, stable query key);
- * in historical mode (and always for M/Y) it requests the explicit `start`/`end` range from the URL.
+ * Shown on dashboards whose member device has an enabled run detector (see the `runs` entry in
+ * lib/capabilities/catalog.ts). In live mode (D/W) it requests period mode (`1d`/`7d`, stable query
+ * key); in historical mode (and always for M/Y) it requests the explicit `start`/`end` range.
  *
- * `runningOverride` carries the live running state from the generic latest map (the derived
- * `source.generator/running` point) so the badge comes from /api/data like every other live value;
- * it falls back to the run-periods response's open-period flag when that point isn't present.
+ * `runningOverride` carries the live on/off state from the generic latest map (the derived
+ * `<role stem>/running` point) so the badge comes from /api/data like every other live value; it
+ * falls back to the run-periods response's open-period flag when that point isn't present.
  */
 export default function GeneratorRunsCard({
   systemId,
   timezoneOffsetMin,
+  role = "generator",
+  title = "Generator runs",
+  emptyText = "No generator runs in this period",
+  activeLabel = "running",
+  noun = "run",
   runningOverride,
 }: {
   systemId: number;
   timezoneOffsetMin: number;
+  /** Which detector's periods to list. Defaults to the generator, this card's only role until EV. */
+  role?: string;
+  title?: string;
+  emptyText?: string;
+  /** Badge text while a period is open, e.g. "running" / "charging". */
+  activeLabel?: string;
+  /** Footer count noun, singular; pluralised with a bare "s" ("run"/"runs", "session"/"sessions"). */
+  noun?: string;
   runningOverride?: boolean;
 }) {
   const { period, start, end, isHistoricalMode } = useTemporalRange({
@@ -42,10 +61,10 @@ export default function GeneratorRunsCard({
   const { data, isPending, isError } = useQuery(
     runPeriodsQuery(
       isHistoricalMode && start && end
-        ? { systemId, role: "generator", start, end }
+        ? { systemId, role, start, end }
         : {
             systemId,
-            role: "generator",
+            role,
             // Live D/W → the run-periods API expects an `Nd` string (`parseInt(period.replace("d",""))`).
             // D→"1d", W→"7d" (M/Y always take the explicit start/end branch above, so never reach here).
             period: `${Math.round(getPeriodDuration(period) / 86_400_000)}d`,
@@ -83,27 +102,43 @@ export default function GeneratorRunsCard({
   const totalEnergyKwh = rows.reduce((s, r) => s + r.e.energyKwh, 0);
   const anyOutside = rows.some((r) => r.spansOutside);
 
-  // Merging Date+Time into one column frees exactly one slot, so the card can answer "what did that
-  // cost?" without getting wider. Gated server-side like every other column: absent, never $0.00.
+  // The two provenance columns, each gated SERVER-side on what the returned rows actually carry
+  // (`resolveShape` in the run-periods route) rather than on the site's config — so a column is
+  // absent rather than a wall of "—", and never $0.00 for an unpriced run.
+  //
+  // Merging Date+Time into one "when" column bought one slot back; cost took it and CO₂ makes this
+  // genuinely wider than the original four. That is affordable because the numbers are short and
+  // `when` is the only wrappable cell, but it is the reason each column stays gated: a device with
+  // no energy point still renders the narrow three-column table.
   const showCost = data?.columns?.cost ?? false;
+  const showEmissions = data?.columns?.emissions ?? false;
   // Totals sum only the runs that carry a figure, matching how the footer's other totals behave.
   const totalCostC = rows.reduce<number | null>(
     (s, r) => (r.e.costC == null ? s : (s ?? 0) + r.e.costC),
     null,
   );
+  const totalEmissionsG = rows.reduce<number | null>(
+    (s, r) => (r.e.emissionsG == null ? s : (s ?? 0) + r.e.emissionsG),
+    null,
+  );
 
   const th = "px-4 py-2 text-xs font-medium text-gray-200";
   const td = "px-4 py-2 text-sm";
+  /** A header's unit, carried alongside the label rather than parenthesised inside it, and muted so
+   *  the scanned word is the quantity ("Energy") and not its unit. */
+  const unit = (u: string) => (
+    <span className="ml-1 font-normal text-gray-400">{u}</span>
+  );
 
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
         <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
-          Generator runs
+          {title}
           {(runningOverride ?? data?.running) && (
             <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              running
+              {activeLabel}
             </span>
           )}
         </h2>
@@ -111,19 +146,17 @@ export default function GeneratorRunsCard({
 
       {isPending && !data ? (
         // Sized to the empty/short settled body rather than a line of text, so the common case —
-        // "no generator runs in this period" — is a swap rather than a resize. A long run list
-        // still grows past this — a known residual (see dashboard-layout-stability.md).
+        // "nothing in this period" — is a swap rather than a resize. A long run list still grows
+        // past this — a known residual (see dashboard-layout-stability.md).
         <div className="px-4 py-6" data-skeleton="" aria-hidden>
           <div className="h-5 w-2/3 animate-pulse rounded bg-gray-700/30" />
         </div>
       ) : isError ? (
         <div className="px-4 py-6 text-sm text-red-400">
-          Failed to load generator runs
+          Failed to load {title.toLowerCase()}
         </div>
       ) : rows.length === 0 ? (
-        <div className="px-4 py-6 text-sm text-gray-400">
-          No generator runs in this period
-        </div>
+        <div className="px-4 py-6 text-sm text-gray-400">{emptyText}</div>
       ) : (
         <>
           <div className="max-h-[420px] overflow-y-auto">
@@ -132,7 +165,10 @@ export default function GeneratorRunsCard({
                 <tr>
                   <th className={`${th} text-left`}>When</th>
                   <th className={`${th} text-right`}>Duration</th>
-                  <th className={`${th} text-right`}>Energy (kWh)</th>
+                  <th className={`${th} text-right`}>Energy{unit("kWh")}</th>
+                  {showEmissions && (
+                    <th className={`${th} text-right`}>CO₂{unit("kg")}</th>
+                  )}
                   {showCost && <th className={`${th} text-right`}>Cost</th>}
                 </tr>
               </thead>
@@ -158,8 +194,15 @@ export default function GeneratorRunsCard({
                         : "—"}
                     </td>
                     <td className={`${td} text-right tabular-nums`}>
-                      {e.energyKwh.toFixed(2)}
+                      {e.energyKwh.toFixed(1)}
                     </td>
+                    {showEmissions && (
+                      <td className={`${td} text-right tabular-nums`}>
+                        {e.emissionsG != null
+                          ? formatKgCo2(e.emissionsG / 1000)
+                          : "—"}
+                      </td>
+                    )}
                     {showCost && (
                       <td className={`${td} text-right tabular-nums`}>
                         {e.costC != null ? formatDollars(e.costC) : "—"}
@@ -171,14 +214,21 @@ export default function GeneratorRunsCard({
               <tfoot className="sticky bottom-0">
                 <tr className="bg-gray-700 text-gray-100 font-medium border-t border-gray-600">
                   <td className={td}>
-                    {rows.length} {rows.length === 1 ? "run" : "runs"}
+                    {rows.length} {rows.length === 1 ? noun : `${noun}s`}
                   </td>
                   <td className={`${td} text-right tabular-nums`}>
                     {formatSecondsAsDuration(totalSeconds)}
                   </td>
                   <td className={`${td} text-right tabular-nums`}>
-                    {totalEnergyKwh.toFixed(2)}
+                    {totalEnergyKwh.toFixed(1)}
                   </td>
+                  {showEmissions && (
+                    <td className={`${td} text-right tabular-nums`}>
+                      {totalEmissionsG != null
+                        ? formatKgCo2(totalEmissionsG / 1000)
+                        : "—"}
+                    </td>
+                  )}
                   {showCost && (
                     <td className={`${td} text-right tabular-nums`}>
                       {totalCostC != null ? formatDollars(totalCostC) : "—"}

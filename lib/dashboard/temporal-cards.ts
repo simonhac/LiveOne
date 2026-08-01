@@ -33,8 +33,8 @@ function cardTravels(node: CardNode, chartCapable: boolean): boolean {
         : true;
     case "sankey":
       return chartCapable; // SiteChartsGroup, gated on chartCapable
-    case "generator-runs":
-      return true; // consumes the shared window
+    case "runs":
+      return true; // consumes the shared window, for every role
     // hotWater renders the shared window's sparkline; renewables (the Home Energy card) reduces the
     // window's attributed flow. Either one means the navigator has to be there.
     case "hotWater":

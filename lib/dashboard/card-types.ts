@@ -49,7 +49,10 @@ export const V4_NON_TILE_CARD_TYPES = [
   "sankey",
   "amber-now",
   "amber-timeline",
-  "generator-runs",
+  // Was `generator-runs`; role-generic since EV charge tracking (see `runsConfigSchema`). Documents
+  // holding the old type still parse — `CardType` is open — and render as a labelled placeholder,
+  // so a doc that misses the migration degrades visibly rather than silently.
+  "runs",
   "device-metrics",
   "battery-contents",
   "ev-provenance",
@@ -262,6 +265,33 @@ export const heatmapConfigSchema = z
   .describe("heatmap");
 export type HeatmapCardConfig = z.infer<typeof heatmapConfigSchema>;
 
+// --- runs ---------------------------------------------------------------------------------------
+
+/**
+ * The `runs` card config — WHICH TRACKED DEVICE'S run periods to list.
+ *
+ * This card was `generator-runs` until EV charge tracking landed, and the rename is the point: the
+ * run-tracking stack underneath it (`detect.ts`, `derived_intervals`, the `?role=` API) has always
+ * been role-generic, and the card type was the only thing asserting otherwise. Same reasoning as
+ * migration 0055's `*_power_w` → `*_signal`: a name that only accidentally described its contents.
+ *
+ * `role` is a closed enum rather than the open `RoleId`, because a card can only exist for a role
+ * that is `device.trackable` in lib/roles/registry.ts. Keep the two in step by hand — the alternative
+ * (deriving the enum from `TRACKABLE_ROLE_IDS`) would make a zod *value* out of the role registry and
+ * drag it into every validator call site, the same trade `HEATMAP_PALETTE_KEYS` above documents.
+ *
+ * 🛑 The role does NOT choose the device: `area`/`device` live in the node envelope (§8.3). Because
+ * a detector hangs off a member area-of-one rather than the composite (see `ensureRunDetector`), a
+ * `runs` card on a multi-device area must carry `device: dv_…` or it resolves no detector and renders
+ * empty.
+ */
+export const runsConfigSchema = z
+  .strictObject({
+    role: z.enum(["generator", "ev"]).default("generator"),
+  })
+  .describe("runs");
+export type RunsCardConfig = z.infer<typeof runsConfigSchema>;
+
 /**
  * Known-type → config schema. A known type ABSENT from this map is BARE: it must carry no config
  * (an empty object or omitted). Unknown (non-`KnownCardType`) types bypass this entirely — their
@@ -272,6 +302,7 @@ export const CARD_CONFIG_SCHEMAS: Partial<Record<KnownCardType, z.ZodType>> = {
   "device-metrics": deviceMetricsConfigSchema,
   "daily-stripe": dailyStripeConfigSchema,
   heatmap: heatmapConfigSchema,
+  runs: runsConfigSchema,
   // Promoted tiles: inert `features` only.
   solar: tileCardConfigSchema,
   load: tileCardConfigSchema,

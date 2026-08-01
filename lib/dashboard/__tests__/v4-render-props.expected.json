@@ -275,8 +275,43 @@
       }
     ]
   },
+  "n_ev_runs": {
+    "plugin": "card:runs",
+    "renderProps": {
+      "context": {
+        "area": "ar_01j4q2m000e008000000000001",
+        "device": "dv_01j4q2m000e00800000000000j"
+      },
+      "deviceSystemId": 12,
+      "handle": 1,
+      "node": {
+        "config": {
+          "role": "ev"
+        },
+        "device": "dv_01j4q2m000e00800000000000j",
+        "id": "n_ev_runs",
+        "kind": "card",
+        "type": "runs"
+      },
+      "sharedSiteData": true
+    },
+    "leaves": [
+      {
+        "component": "GeneratorRunsCard",
+        "props": {
+          "activeLabel": "charging",
+          "emptyText": "No charge sessions in this period",
+          "noun": "session",
+          "role": "ev",
+          "systemId": 12,
+          "timezoneOffsetMin": 600,
+          "title": "EV charging"
+        }
+      }
+    ]
+  },
   "n_gen_device": {
-    "plugin": "card:generator-runs",
+    "plugin": "card:runs",
     "renderProps": {
       "context": {
         "area": "ar_01j4q2m000e008000000000001",
@@ -288,7 +323,7 @@
         "device": "dv_01j4q2m000e00800000000000j",
         "id": "n_gen_device",
         "kind": "card",
-        "type": "generator-runs"
+        "type": "runs"
       },
       "sharedSiteData": true
     },
@@ -296,14 +331,19 @@
       {
         "component": "GeneratorRunsCard",
         "props": {
+          "activeLabel": "running",
+          "emptyText": "No generator runs in this period",
+          "noun": "run",
+          "role": "generator",
           "systemId": 12,
-          "timezoneOffsetMin": 600
+          "timezoneOffsetMin": 600,
+          "title": "Generator runs"
         }
       }
     ]
   },
   "n_gen_inherit": {
-    "plugin": "card:generator-runs",
+    "plugin": "card:runs",
     "renderProps": {
       "context": {
         "area": "ar_01j4q2m000e008000000000001"
@@ -312,7 +352,7 @@
       "node": {
         "id": "n_gen_inherit",
         "kind": "card",
-        "type": "generator-runs"
+        "type": "runs"
       },
       "sharedSiteData": true
     },
@@ -320,8 +360,13 @@
       {
         "component": "GeneratorRunsCard",
         "props": {
+          "activeLabel": "running",
+          "emptyText": "No generator runs in this period",
+          "noun": "run",
+          "role": "generator",
           "systemId": 1,
-          "timezoneOffsetMin": 600
+          "timezoneOffsetMin": 600,
+          "title": "Generator runs"
         }
       }
     ]

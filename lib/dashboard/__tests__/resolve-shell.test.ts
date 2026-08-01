@@ -72,7 +72,7 @@ describe("resolveDashboardShell", () => {
             heading: true,
             children: [
               { kind: "card", type: "solar" },
-              { kind: "card", type: "generator-runs", device: D1 },
+              { kind: "card", type: "runs", device: D1 },
             ],
           },
           // A1 again → the area lookup must be cached and the handle deduped

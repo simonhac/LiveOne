@@ -312,10 +312,20 @@ const FIXTURE_DOC: DashboardV4 = {
           {
             id: "n_gen_device",
             kind: "card",
-            type: "generator-runs",
+            type: "runs",
             device: DEV_GEN,
           },
-          { id: "n_gen_inherit", kind: "card", type: "generator-runs" },
+          // No config at all — the pre-rename shape. Must still resolve to the generator, which is
+          // what such a node has always meant; `runsConfigSchema`'s default is what guarantees it.
+          { id: "n_gen_inherit", kind: "card", type: "runs" },
+          // The other role, so the golden pins BOTH sets of card copy rather than just the default.
+          {
+            id: "n_ev_runs",
+            kind: "card",
+            type: "runs",
+            config: { role: "ev" },
+            device: DEV_GEN,
+          },
           // ---- must NOT render ------------------------------------------------------------------
           { id: "n_hidden", kind: "card", type: "amber-now", hidden: true },
           // `tiles` is a v3 card type but NOT a v4 one (it became a group) → placeholder branch.
@@ -372,6 +382,7 @@ const EXPECTED_KEYS = [
   "n_dm_device",
   "n_dm_inherit",
   "n_ev_prov",
+  "n_ev_runs",
   "n_gen_device",
   "n_gen_inherit",
   "n_heatmap",

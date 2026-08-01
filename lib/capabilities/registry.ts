@@ -27,7 +27,7 @@
  *    NEM region + a seeded OE row → `grid-signals`), not a point-presence scan.
  */
 
-import { stemMatchesRole } from "@/lib/roles/registry";
+import { stemMatchesRole, type RoleId } from "@/lib/roles/registry";
 
 /** A `role/metric` (or compound) capability a device can offer. */
 export type CapabilityId =
@@ -45,6 +45,7 @@ export type CapabilityId =
   | "instrumentation"
   // Compound / derived — satisfaction is a server-side predicate, not a point scan:
   | "generator-running"
+  | "ev-charging"
   | "grid-signals";
 
 /**
@@ -158,12 +159,47 @@ export const CAPABILITIES: Record<CapabilityId, CapabilityDef> = {
     tier: "compound",
     label: "Generator running",
   },
+  "ev-charging": {
+    id: "ev-charging",
+    tier: "compound",
+    label: "EV charging",
+  },
   "grid-signals": {
     id: "grid-signals",
     tier: "compound",
     label: "Local grid (NEM)",
   },
 };
+
+/**
+ * Trackable role → the compound capability an enabled run detector for it provides.
+ *
+ * An explicit map rather than a `${role}-running` template, because the names are not variations on
+ * one word: a generator is *running*, an EV is *charging*, and a future pump would be *pumping*.
+ * That is the same judgement `ROLES[role].device.haDeviceClass` makes (`running` vs
+ * `battery_charging`) — the label has to say what the thing is actually doing, or the Add-Card
+ * gallery reads as nonsense.
+ *
+ * The keys are the roles carrying `device.trackable`; `TRACKABLE_ROLE_IDS` is the source of truth
+ * for WHICH roles those are, and this map answers what each one advertises. A trackable role missing
+ * from here provides no capability, so its card can never become eligible — hence the total
+ * `Record` over `TrackableRoleId` rather than a `Partial`, which makes that a compile error.
+ */
+export type TrackableRoleId = "generator" | "ev";
+
+export const RUN_TRACKING_CAPABILITY: Record<TrackableRoleId, CapabilityId> = {
+  generator: "generator-running",
+  ev: "ev-charging",
+};
+
+// Compile gate, one direction: every key above is a real role id. The other direction — a role that
+// gained `device.trackable` but no capability here — can't be a type error (this module must not
+// import a runtime value from the role registry to stay a pure data table), so it is asserted in
+// lib/capabilities/__tests__/strategy-equivalence.test.ts instead.
+const _trackableRolesAreRoles: readonly RoleId[] = Object.keys(
+  RUN_TRACKING_CAPABILITY,
+) as TrackableRoleId[];
+void _trackableRolesAreRoles;
 
 /** The atomic capability rules, in registry order — the only stem/metric matchers in the codebase. */
 export const ATOMIC_CAPABILITY_RULES: ReadonlyArray<

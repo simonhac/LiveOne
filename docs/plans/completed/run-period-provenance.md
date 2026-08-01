@@ -6,7 +6,7 @@
 > decision that dissolved the original blocker, and the reason this doc is worth keeping.
 >
 > The **load-side** provider (EV, pump) was never built and is now tracked separately as
-> [../load-side-run-provenance.md](../load-side-run-provenance.md). The "Still to do" section below is
+> [load-side-run-provenance.md](load-side-run-provenance.md). The "Still to do" section below is
 > retained as the analysis that plan starts from.
 
 ## Context

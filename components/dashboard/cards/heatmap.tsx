@@ -74,7 +74,7 @@ function AreaHeatmap({ handle, deviceSystemId, node }: CardRenderProps) {
     [node.config],
   );
   // A bound member device wins over the area handle — the same rule `device-metrics` and
-  // `generator-runs` use, and the one the catalog's `scope: "device"` implies. A heatmap is of ONE
+  // the `runs` card's use, and the one the catalog's `scope: "device"` implies. A heatmap is of ONE
   // device's point set, so when the node (or an ancestor) pins a device, that is the subject.
   const systemId = deviceSystemId ?? handle;
 

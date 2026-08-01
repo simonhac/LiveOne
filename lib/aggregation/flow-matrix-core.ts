@@ -115,6 +115,94 @@ function channelId(path: string): string {
   return dot === -1 ? path : path.slice(dot + 1);
 }
 
+/** One interval's per-source attribution weights — the shared allocation rule. */
+export interface SourceWeights {
+  /** The generation pool: every source's best-known magnitude. Index-aligned to `sources`. */
+  denomW: number[];
+  /** Allocation eligibility: null where this source is in the pool but out of the allocation. */
+  numerW: (number | null)[];
+  /** Σ denomW. `<= 0` means nothing generated this interval and it contributes nothing. */
+  totalGenW: number;
+  /**
+   * Whether ANY source or load carried a metered interval energy here — i.e. whether the weights
+   * above are kWh (exact mode) or kW (legacy power mode). The caller needs it because the LOAD
+   * magnitude is decided by the same switch, and the two must agree within an interval.
+   */
+  anyExact: boolean;
+}
+
+/**
+ * The per-source attribution weights for interval `i` — how the generation pool is divided.
+ *
+ * **Exported because it is the definition of "where a load's energy came from", and there must be
+ * exactly one.** `computeFlowAccounting` uses it to allocate energy across Sankey edges;
+ * `resolveLoadIntensity` (lib/run-tracking/intensity.ts) uses the same weights to blend the source
+ * intensities into the load-path factor a run period is priced at. Two copies of this arithmetic
+ * would let a charge session's cost drift from the Sankey's cost for the same kWh, in a way that
+ * only shows up as a small unexplained discrepancy.
+ *
+ * Exact-energy overlay (`FlowSeries.energyKwh`): when ANY series carries a metered interval energy
+ * here, magnitudes and weights switch to kWh — exact where present, left-endpoint power × dt where
+ * not — one coherent weight pool, no renormalisation. When NONE does, the legacy power arithmetic
+ * runs with the SAME code (weights are kW and dt never enters), so power-only inputs are
+ * bit-for-bit identical to the pre-overlay implementation.
+ *
+ *  - `denomW` (the generation pool): every source's best-known magnitude — exact energy, else the
+ *    LEFT endpoint, matching the legacy denominator (which counts a left endpoint even when the
+ *    right endpoint is null);
+ *  - `numerW` (allocation eligibility): exact energy, else BOTH endpoints non-null (the legacy gate
+ *    — a mid-interval gap keeps a source in the pool but out of the allocation).
+ */
+export function sourceWeightsForInterval(
+  sources: FlowSeries[],
+  loads: FlowSeries[],
+  i: number,
+  deltaHours: number,
+): SourceWeights {
+  const S = sources.length;
+  let anyExact = false;
+  for (const s of sources) {
+    const e = s.energyKwh?.[i];
+    if (e !== null && e !== undefined) {
+      anyExact = true;
+      break;
+    }
+  }
+  if (!anyExact)
+    for (const l of loads) {
+      const e = l.energyKwh?.[i];
+      if (e !== null && e !== undefined) {
+        anyExact = true;
+        break;
+      }
+    }
+
+  const denomW = new Array<number>(S).fill(0);
+  const numerW = new Array<number | null>(S).fill(null);
+  let totalGenW = 0;
+  for (let s = 0; s < S; s++) {
+    const exact = sources[s].energyKwh?.[i];
+    const p1 = sources[s].power[i];
+    const p2 = sources[s].power[i + 1];
+    if (anyExact) {
+      const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
+      if (d !== null && d !== undefined) {
+        denomW[s] = d;
+        totalGenW += d;
+      }
+      numerW[s] =
+        exact ?? (p1 !== null && p2 !== null ? p1 * deltaHours : null);
+    } else {
+      if (p1 !== null) {
+        denomW[s] = p1;
+        totalGenW += p1;
+      }
+      numerW[s] = p1 !== null && p2 !== null ? p1 : null;
+    }
+  }
+  return { denomW, numerW, totalGenW, anyExact };
+}
+
 /**
  * For each load, the index of its linked source (same channel id, e.g. load.battery ↔
  * source.battery) — or -1 if the load has none (a plain load like `load` or `load.hws`).
@@ -193,57 +281,12 @@ export function computeFlowAccounting(input: {
     }
     const deltaHours = (timestamps[i + 1] - timestamps[i]) / (1000 * 60 * 60);
 
-    // Exact-energy overlay (`FlowSeries.energyKwh`): when ANY series carries a metered interval
-    // energy here, magnitudes and attribution weights switch to kWh — exact where present,
-    // left-endpoint power × dt where not — one coherent weight pool, no renormalisation. When NONE
-    // does, the legacy power arithmetic runs with the SAME code below (weights are kW and dt never
-    // enters), so power-only inputs are bit-for-bit identical to the pre-overlay implementation.
-    let anyExact = false;
-    for (const s of sources) {
-      const e = s.energyKwh?.[i];
-      if (e !== null && e !== undefined) {
-        anyExact = true;
-        break;
-      }
-    }
-    if (!anyExact)
-      for (const l of loads) {
-        const e = l.energyKwh?.[i];
-        if (e !== null && e !== undefined) {
-          anyExact = true;
-          break;
-        }
-      }
-
-    // Per-source attribution weight (kWh in exact mode, kW in legacy mode):
-    //  - `denomW` (the generation pool): every source's best-known magnitude — exact energy, else
-    //    the LEFT endpoint, matching the legacy denominator (which counts a left endpoint even
-    //    when the right endpoint is null);
-    //  - `numerW` (allocation eligibility): exact energy, else BOTH endpoints non-null (the legacy
-    //    gate — a mid-interval gap keeps a source in the pool but out of the allocation).
-    const denomW = new Array<number>(S).fill(0);
-    const numerW = new Array<number | null>(S).fill(null);
-    let totalGenW = 0;
-    for (let s = 0; s < S; s++) {
-      const exact = sources[s].energyKwh?.[i];
-      const p1 = sources[s].power[i];
-      const p2 = sources[s].power[i + 1];
-      if (anyExact) {
-        const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
-        if (d !== null && d !== undefined) {
-          denomW[s] = d;
-          totalGenW += d;
-        }
-        numerW[s] =
-          exact ?? (p1 !== null && p2 !== null ? p1 * deltaHours : null);
-      } else {
-        if (p1 !== null) {
-          denomW[s] = p1;
-          totalGenW += p1;
-        }
-        numerW[s] = p1 !== null && p2 !== null ? p1 : null;
-      }
-    }
+    const { denomW, numerW, totalGenW, anyExact } = sourceWeightsForInterval(
+      sources,
+      loads,
+      i,
+      deltaHours,
+    );
     if (totalGenW <= 0) continue;
 
     let contributed = false;
