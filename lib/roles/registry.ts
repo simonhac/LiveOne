@@ -81,8 +81,20 @@ export interface RoleDef {
    *
    * A trackable role is NOT necessarily outside `ROLE_IDS`: `generator` exists only to be tracked,
    * but `ev` is an energy-flow role that is also trackable.
+   *
+   * `chartFlowPath` is the flow-matrix node whose stacked band this role's run periods are drawn
+   * over (`SeriesData.flowPath`, set by `flowPathForSeries`). Spelled out per role rather than
+   * derived from `category` + `stem`, because the two roles disagree about what `stem` already
+   * contains: `ev` is `{load, ev}` → `load.ev`, but `generator` is `{source, source.generator}` →
+   * `source.generator`. Any concatenation rule gets exactly one of them wrong, silently, and the
+   * symptom is a chart with no overlay rather than an error. Same hand-kept-enum reasoning as
+   * `runsConfigSchema`. Absent = this role has no band to draw on.
    */
-  device?: { trackable: true; haDeviceClass: string };
+  device?: {
+    trackable: true;
+    haDeviceClass: string;
+    chartFlowPath?: string;
+  };
 }
 
 /** Canonical role order — drives the composite editor's panel order. */
@@ -147,7 +159,11 @@ export const ROLES: Record<RoleId, RoleDef> = {
     label: "EV",
     ha: { deviceClass: "battery", stateClass: "measurement", unit: "%" },
     validatesCompositePath: false,
-    device: { trackable: true, haDeviceClass: "battery_charging" },
+    device: {
+      trackable: true,
+      haDeviceClass: "battery_charging",
+      chartFlowPath: "load.ev",
+    },
   },
   // Run-tracking device role (see lib/run-tracking). Deliberately NOT in ROLE_IDS below, so it
   // does not appear in the composite editor's energy-flow panels or get composite-path-validated;
@@ -161,7 +177,11 @@ export const ROLES: Record<RoleId, RoleDef> = {
     label: "Generator",
     ha: { deviceClass: "power", stateClass: "measurement", unit: "W" },
     validatesCompositePath: false,
-    device: { trackable: true, haDeviceClass: "running" },
+    device: {
+      trackable: true,
+      haDeviceClass: "running",
+      chartFlowPath: "source.generator",
+    },
   },
 };
 

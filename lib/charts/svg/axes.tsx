@@ -184,6 +184,11 @@ export interface FocusLineProps {
  *
  * Renders nothing when unfocused, rather than a hidden element — so "is anything focused?" is
  * answerable from the DOM.
+ *
+ * 🛑 `pointerEvents="none"` is load-bearing, not tidiness. This line FOLLOWS THE CURSOR and is drawn
+ * last, so it is permanently the topmost element under the pointer. Anything below it that listens
+ * for enter/leave therefore sees the pointer leave and re-enter on every single mouse move — which
+ * made the run-period tooltip strobe while scrubbing across a charge session.
  */
 export function FocusLine({ at, x, plotHeight }: FocusLineProps) {
   if (!at) return null;
@@ -196,6 +201,7 @@ export function FocusLine({ at, x, plotHeight }: FocusLineProps) {
       y2={plotHeight}
       stroke={CHART_COLORS.focusLine}
       strokeWidth={1}
+      pointerEvents="none"
     />
   );
 }

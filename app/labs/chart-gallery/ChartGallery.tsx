@@ -43,6 +43,7 @@ import {
   ingestionFixture,
   linesFixture,
   provenanceFixture,
+  runBandsFixture,
   stackedFixture,
 } from "./fixtures";
 
@@ -123,9 +124,10 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
 }
 
 function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
-  const { chartData, visibleSeries, windowStart, windowEnd } =
-    stackedFixture(c);
+  const fixture = stackedFixture(c);
+  const { chartData, visibleSeries, windowStart, windowEnd } = fixture;
   const focus = focusInstant(chartData.timestamps, c.focusAt);
+  const runBands = c.withRuns ? runBandsFixture(fixture) : undefined;
 
   return (
     <div style={{ width: c.width, height: c.height }}>
@@ -139,6 +141,10 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
         windowStart={windowStart}
         hoveredTimestamp={focus}
         onHoverIndex={noop}
+        runBands={runBands}
+        // The hovered state is driven by the CASE, not by a pointer: a screenshot cannot hover, and
+        // the whole point of the pair is to show that hovering changes the ink.
+        hoveredRunId={c.hoveredRun ? (runBands?.[0]?.id ?? null) : null}
         className="h-full"
       />
     </div>

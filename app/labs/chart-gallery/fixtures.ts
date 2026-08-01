@@ -22,6 +22,7 @@ import {
   getPeriodIntervalMinutes,
 } from "@/lib/charts/temporal";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import type { RunBand } from "@/lib/charts/run-bands";
 import type { ProvenanceChartDef } from "@/lib/battery-provenance/field-registry";
 import type { ProvenanceBand } from "@/components/battery-provenance/ProvenanceChart";
 
@@ -245,9 +246,14 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
           build("load.hws", "Hot water", CHART_COLORS.hotWater, (d) =>
             d.getHours() >= 1 && d.getHours() < 4 ? 3.4 : 0,
           ),
-          build("load.ev", "EV", CHART_COLORS.ev, (d) =>
-            d.getHours() >= 22 || d.getHours() < 2 ? 7.2 : 0,
-          ),
+          {
+            // `flowPath` is what maps a trackable role to its band (`seriesForRole`), so the run
+            // overlay cases below need it here rather than only in the real processor.
+            ...build("load.ev", "EV", CHART_COLORS.ev, (d) =>
+              d.getHours() >= 22 || d.getHours() < 2 ? 7.2 : 0,
+            ),
+            flowPath: "load.ev",
+          },
           build("bidi.grid.out", "Export", CHART_COLORS.grid.main, (d) =>
             Math.max(0, solarShape(d) * 4.4 - loadShape(d)),
           ),
@@ -275,6 +281,56 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
     windowStart,
     windowEnd,
   };
+}
+
+/**
+ * A run period over the fixture's EV band — an outlined charge session.
+ *
+ * Derived FROM the fixture's own data (the first contiguous block where `load.ev` is on) rather than
+ * from hardcoded times, so the overlay is guaranteed to sit on the shape it is outlining no matter
+ * what window `buildTimestamps` produced. Its boundaries are deliberately pulled INSIDE that block by
+ * a fraction of an interval, which is what a real detector's `midpoint` boundary does — and is
+ * exactly the case `snapToSamples` exists to render correctly.
+ */
+export function runBandsFixture(f: StackedFixture): RunBand[] {
+  const ev = f.chartData.series.find((s) => s.flowPath === "load.ev");
+  if (!ev) return [];
+  const on = ev.data.map((v) => v != null && v > 0);
+  const start = on.indexOf(true);
+  if (start < 0) return [];
+  let end = start;
+  while (end + 1 < on.length && on[end + 1]) end++;
+  if (end === start) return [];
+
+  const ts = f.chartData.timestamps;
+  const step = ts.length > 1 ? ts[1].getTime() - ts[0].getTime() : 0;
+  const startMs = ts[start].getTime() + step * 0.4;
+  const endMs = ts[end].getTime() - step * 0.4;
+  const startISO = new Date(startMs).toISOString();
+  return [
+    {
+      id: `${ev.id}:${startISO}`,
+      seriesId: ev.id,
+      startMs,
+      endMs,
+      running: false,
+      role: "ev",
+      event: {
+        date: "Sat 1 Aug",
+        startTime: "22:04",
+        endTime: "01:39",
+        endDate: "Sun 2 Aug",
+        running: false,
+        startTimeISO: startISO,
+        endTimeISO: new Date(endMs).toISOString(),
+        durationSeconds: Math.round((endMs - startMs) / 1000),
+        energyKwh: 24.6,
+        costC: 412.5,
+        emissionsG: 9840,
+        renewableKwh: 11.3,
+      },
+    },
+  ];
 }
 
 // ---------------------------------------------------------------------------------------------
