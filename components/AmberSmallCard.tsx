@@ -32,8 +32,8 @@ interface AmberSmallCardProps {
  * | 66px min | 110px  | 8px     | 75       | Center   | Hidden    | 6px edges   | Hide | Medium | Hidden  |
  * | 90px+    | 110px  | 8px     | 75       | Center   | LogoMark  | 6px edges   | Show | Medium | Hidden  |
  * | 120px+   | 110px  | 8px     | 85       | Center   | LogoMark  | 8px edges   | Show | Bold   | Hidden  |
- * | 180px+   | 180px  | 12px    | 140      | Centre+20| Full logo | 10px edges  | Show | Bold   | Hidden  |
- * | 300px+   | 180px  | 12px    | 140      | Centre+20| Full logo | 10px edges  | Show | Bold   | Visible |
+ * | 180px+   | 180px  | 12px    | 140      | Center   | Full logo | 10px edges  | Show | Bold   | Hidden  |
+ * | 300px+   | 180px  | 12px    | 140      | Center   | Full logo | 10px edges  | Show | Bold   | Visible |
  */
 export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -172,7 +172,7 @@ export default function AmberSmallCard({ latest }: AmberSmallCardProps) {
         {/* Price circle - centered horizontally and vertically */}
         <div className="flex-1 flex items-center justify-center">
           <div
-            className="w-[140px] h-[140px] rounded-full flex flex-col items-center justify-center mt-5"
+            className="w-[140px] h-[140px] rounded-full flex flex-col items-center justify-center"
             style={{ background: circleGradient }}
           >
             {/* Lightning icon */}

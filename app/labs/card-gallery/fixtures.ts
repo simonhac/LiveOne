@@ -187,8 +187,13 @@ export const AMBER_SCENARIOS: Record<
 };
 
 // ---------------------------------------------------------------------------
-// TeslaSmallCard (ev.battery/soc, ev.charge/state|power|remaining, limit/soc)
+// TeslaSmallCard (ev.battery/soc, ev.charge/state|power|remaining|engaged,
+// limit/soc, ev/shift)
 // (TeslaSmallCard has no staleness UI, so no stale scenario.)
+//
+// `ev.charge/engaged` is a boolean point but reaches the client as 1/0 —
+// convertValueByMetadata only special-cases metricUnit "text" — so it is
+// faithfully mocked here as a number.
 // ---------------------------------------------------------------------------
 export const TESLA_SCENARIOS: Record<
   string,
@@ -200,6 +205,8 @@ export const TESLA_SCENARIOS: Record<
     "ev.charge/power": lv(22),
     "ev.charge/remaining": lv(1.5),
     "ev.charge.limit/soc": lv(80),
+    "ev.charge/engaged": lv(1),
+    "ev/shift": lv("P"),
   },
   charging: {
     "ev.battery/soc": lv(70),
@@ -207,24 +214,48 @@ export const TESLA_SCENARIOS: Record<
     "ev.charge/power": lv(7),
     "ev.charge/remaining": lv(2.25),
     "ev.charge.limit/soc": lv(90),
+    "ev.charge/engaged": lv(1),
+    "ev/shift": lv("P"),
   },
-  "not charging": {
+  connected: {
     "ev.battery/soc": lv(90),
     "ev.charge/state": lv("Stopped"),
     "ev.charge/power": lv(0),
     "ev.charge.limit/soc": lv(90),
+    "ev.charge/engaged": lv(1),
+    "ev/shift": lv("P"),
+  },
+  "not connected": {
+    "ev.battery/soc": lv(64),
+    "ev.charge/state": lv("Disconnected"),
+    "ev.charge/power": lv(0),
+    "ev.charge.limit/soc": lv(80),
+    "ev.charge/engaged": lv(0),
+    "ev/shift": lv("P"),
+  },
+  driving: {
+    "ev.battery/soc": lv(42),
+    "ev.charge/state": lv("Disconnected"),
+    "ev.charge/power": lv(0),
+    "ev.charge.limit/soc": lv(80),
+    "ev.charge/engaged": lv(0),
+    "ev/shift": lv("D"),
   },
   full: {
     "ev.battery/soc": lv(100),
     "ev.charge/state": lv("Complete"),
     "ev.charge/power": lv(0),
     "ev.charge.limit/soc": lv(100),
+    "ev.charge/engaged": lv(1),
+    "ev/shift": lv("P"),
   },
   low: {
     "ev.battery/soc": lv(12),
-    "ev.charge/state": lv("Stopped"),
+    "ev.charge/state": lv("Disconnected"),
     "ev.charge/power": lv(0),
     "ev.charge.limit/soc": lv(80),
+    "ev.charge/engaged": lv(0),
+    "ev/shift": lv("P"),
   },
 };
 

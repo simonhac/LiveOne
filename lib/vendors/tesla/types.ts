@@ -45,6 +45,7 @@ export interface TeslaDriveState {
   longitude: number;
   speed: number | null; // mph, null when parked
   heading: number;
+  shift_state?: "P" | "R" | "N" | "D" | null; // null when parked/asleep
 }
 
 // Vehicle state from vehicle_data

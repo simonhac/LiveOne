@@ -154,6 +154,20 @@ export const TESLA_POINTS: TeslaPointConfig[] = [
       transform: null,
     },
   },
+  {
+    // `?? "P"` matters: the adapter skips null extracts, so a bare null would
+    // leave a stale "D" in the KV latest map forever after a drive ends.
+    extract: (data) => data.drive_state.shift_state ?? "P",
+    metadata: {
+      physicalPathTail: "shift_state",
+      logicalPathStem: "ev",
+      metricType: "shift",
+      metricUnit: "text",
+      defaultName: "Shift State",
+      subsystem: "ev",
+      transform: null,
+    },
+  },
 
   // ============================================================================
   // VEHICLE STATE
