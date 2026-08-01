@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef } from "react";
+import { CHART_COLORS } from "@/lib/chart-colors";
 import { SeriesData } from "@/lib/charts/types";
 import { calculateSeriesEnergy } from "@/lib/energy-calculator";
 import {
@@ -537,7 +538,7 @@ export default function EnergyTable({
                 <div className="flex items-center gap-2 flex-1">
                   <div
                     className="w-3 h-3 rounded-sm flex-shrink-0"
-                    style={{ backgroundColor: "rgb(74, 222, 128)" }}
+                    style={{ backgroundColor: CHART_COLORS.battery.soc }}
                   />
                   <span className="text-gray-300">Battery SoC</span>
                 </div>
@@ -558,8 +559,15 @@ export default function EnergyTable({
 
             {showMoneyRow && (
               <div className="flex items-center text-xs">
-                {/* No colour swatch: this is a summary line like Total, not a chart series. */}
-                <span className="text-gray-300 flex-1">{moneyLabel}</span>
+                <div className="flex items-center gap-2 flex-1">
+                  {/* The grid colour, matching the Grid Import / Grid Export series this line
+                      prices — one hue serves both directions everywhere in the app. */}
+                  <div
+                    className="w-3 h-3 rounded-sm flex-shrink-0"
+                    style={{ backgroundColor: CHART_COLORS.grid.main }}
+                  />
+                  <span className="text-gray-300">{moneyLabel}</span>
+                </div>
                 <span className="text-gray-100 font-mono w-20 text-right whitespace-nowrap">
                   {moneyValue}
                 </span>
