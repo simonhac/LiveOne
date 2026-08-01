@@ -185,3 +185,45 @@ describe("step-after interpolation", () => {
     expect(subPaths(bands[0].d)).toBe(2);
   });
 });
+
+describe("stackedBands — fill and stroke are separate paths", () => {
+  const a = { key: "a", values: [1, 1, 1, 1, 1, 1] };
+
+  /**
+   * The bug this exists to stop. `area()` emits a CLOSED path, so stroking it draws the baseline and
+   * the vertical end caps as well as the top edge — on the real dashboard that put a hard line along
+   * y=0 for the whole width of a Grid Export series, which Chart.js never drew.
+   */
+  it("the fill path is closed and the top path is not", () => {
+    const [band] = stackedBands(ts, [a], x, y);
+    expect(band.d).toMatch(/Z$/); // closed — fill only
+    expect(band.topD).not.toMatch(/Z/); // open — safe to stroke
+  });
+
+  it("the top path traces the band's upper edge, never the baseline", () => {
+    // Band spans 0..1 in data space; y maps 0→50 and 1→45. The stroke must only touch 45.
+    const [band] = stackedBands(ts, [a], x, y);
+    const ys = [...band.topD!.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) =>
+      Number(m[2]),
+    );
+    expect(new Set(ys)).toEqual(new Set([45]));
+    expect(ys).not.toContain(50); // 50 is the baseline
+  });
+
+  it("a series sitting at zero strokes only its own line, not a doubled baseline", () => {
+    const zero = { key: "z", values: [0, 0, 0, 0, 0, 0] };
+    const [band] = stackedBands(ts, [zero], x, y);
+    const ys = [...band.topD!.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) =>
+      Number(m[2]),
+    );
+    // One line at y(0), which is what Chart.js drew for an all-zero dataset — not two.
+    expect(new Set(ys)).toEqual(new Set([50]));
+  });
+
+  it("the stroke breaks wherever the fill does", () => {
+    const holed = { key: "b", values: [2, 2, null, 2, 2, 2] };
+    const [band] = stackedBands(ts, [a, holed], x, y).slice(1);
+    expect(subPaths(band.d)).toBe(2);
+    expect(subPaths(band.topD)).toBe(2);
+  });
+});

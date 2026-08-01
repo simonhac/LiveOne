@@ -105,8 +105,18 @@ export interface StackedSeries {
 
 export interface StackedBand {
   key: string;
-  /** `d` for this band, or null when it has nothing drawable. */
+  /** Closed area for the band's fill, or null when it has nothing drawable. */
   d: string | null;
+  /**
+   * OPEN path along the band's upper edge only — what to stroke.
+   *
+   * 🛑 Never stroke `d`. `area()` emits a CLOSED path (top edge, back along the baseline, `Z`), so
+   * stroking it draws the baseline and the vertical end caps too. On a series sitting at zero that
+   * renders as a hard line along the axis, and under a series with height it draws a line beneath
+   * the fill — neither of which Chart.js did, because `fill: "stack"` + `borderWidth` stroked only
+   * the dataset's own line.
+   */
+  topD: string | null;
 }
 
 /**
@@ -154,9 +164,18 @@ export function stackedBands(
     .y0((dp) => y(dp[0]))
     .y1((dp) => y(dp[1]));
 
+  // The upper edge as its own open path, so callers stroke the boundary rather than the outline.
+  // Same `defined` predicate, so a hole breaks the stroke exactly where it breaks the fill.
+  const topGen = line<[number, number]>()
+    .curve(CURVES[curve])
+    .defined((_, i) => columnDefined[i])
+    .x((_, i) => x(timestamps[i]))
+    .y((dp) => y(dp[1]));
+
   return stacked.map((layer, idx) => ({
     key: series[idx].key,
     d: gen(layer as unknown as [number, number][]) || null,
+    topD: topGen(layer as unknown as [number, number][]) || null,
   }));
 }
 

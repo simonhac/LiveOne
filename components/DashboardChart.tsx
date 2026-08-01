@@ -294,17 +294,28 @@ export default function DashboardChart(props: DashboardChartProps) {
                 }),
               )
             : props.variant === "stacked-areas"
-              ? stackedBands(timestamps, series, geo.x, geo.y).map((band, i) =>
-                  band.d ? (
-                    <path
-                      key={band.key}
-                      d={band.d}
-                      fill={series[i].colour}
-                      stroke={series[i].colour}
-                      strokeWidth={2}
-                      data-series={band.key}
-                    />
-                  ) : null,
+              ? stackedBands(timestamps, series, geo.x, geo.y).map(
+                  (band, i) => (
+                    // Fill and stroke are SEPARATE paths. Stroking the filled area would stroke its
+                    // closed outline — baseline included — which is not what Chart.js drew.
+                    <g key={band.key} data-series={band.key}>
+                      {band.d && (
+                        <path
+                          d={band.d}
+                          fill={series[i].colour}
+                          stroke="none"
+                        />
+                      )}
+                      {band.topD && (
+                        <path
+                          d={band.topD}
+                          fill="none"
+                          stroke={series[i].colour}
+                          strokeWidth={2}
+                        />
+                      )}
+                    </g>
+                  ),
                 )
               : series.map((s) => {
                   const d = linePath(timestamps, s.values, geo.x, geo.y);
