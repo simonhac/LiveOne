@@ -16,8 +16,7 @@
  *
  * Deliberately NOT unified with `app/labs/kinkora-hws/page.tsx`. The lab carries the HWS model's
  * last value forward across gaps; the generic card does not (a gap shows the background), so the two
- * differ exactly where the lab is modelling rather than reporting. Accepted duplication —
- * docs/plans/hws-stripe-and-heatmap-cards.md.
+ * differ exactly where the lab is modelling rather than reporting. Accepted duplication.
  *
  * No `collapseKey`: this is a standalone card, never folded into the section's SiteChartsGroup.
  */

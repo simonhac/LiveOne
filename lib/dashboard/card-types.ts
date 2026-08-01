@@ -159,7 +159,7 @@ export type TileCardConfig = z.infer<typeof tileCardConfigSchema>;
  * 🛑 INLINE LITERALS ON PURPOSE, and they must stay that way: this module is SERVER-SAFE (the doc
  * validator imports it on the request path), while `lib/heatmap-colors.ts` pulls in the heavy,
  * ESM-only `d3-scale-chromatic`. Do not import a palette from there to "share" it — keep these two
- * in sync by hand instead (docs/plans/hws-stripe-and-heatmap-cards.md §"Shared wiring").
+ * in sync by hand instead.
  */
 export const DAILY_STRIPE_DEFAULT_PALETTE: readonly [string, string] = [
   "hsl(210,80%,50%)",

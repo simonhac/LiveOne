@@ -1,8 +1,16 @@
 # Config v4 — the clean-sheet config model
 
-> **Status: APPROVED 2026-07-22** — implementation underway; dark-prep phases ship first, behind the
-> unchanged v3 app. Written 2026-07-21 (this doc stays the canonical rationale).
+> **Status: SHIPPED — the canonical design doc.** Written 2026-07-21, approved 2026-07-22, and
+> **implemented in full by 2026-08-01** over fifteen phases. This doc stays the canonical rationale:
+> read it for the model and the argument. What was actually built, what it cost, and where the plan was
+> corrected by measurement is [config-v4-execution-plan.md](config-v4-execution-plan.md); the resulting
+> invariants live in [../architecture/data-model.md](../architecture/data-model.md).
 >
+> ⚠️ Treat the forward-looking passages below (phasing, "will", the §15 open questions) as **the plan as
+> it stood at approval**, not as the state of the system. Two items named here were never built and are
+> not owed: `?include=resolved` on the dashboard read (§9.2, §9.4) and `capabilities` on the readable-
+> devices read (§9.2) — see the execution plan's decisions section.
+
 > **This document supersedes** — they inspired it, they do not constrain it:
 > [identity-address-split-and-labels.md](identity-address-split-and-labels.md) (absorbed: `points.id`
 > _is_ the identity; labels stay a deferred seam), [info-producers-consumers.md](info-producers-consumers.md)
