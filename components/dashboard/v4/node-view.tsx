@@ -49,11 +49,6 @@ import {
 } from "@/components/dashboard/cards/shared";
 import { siteChartsFootprint } from "@/components/dashboard/cards/footprints";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
-import { CardSlot, CardHeightsProvider } from "./card-slot";
-import {
-  cardHeightKey,
-  type CardHeightStore,
-} from "@/lib/dashboard/card-heights";
 import {
   TILE_GRID_CONTAINER,
   tileGridClass,
@@ -150,7 +145,6 @@ function CardNodeView({
   context,
   resolver,
   areasResolved,
-  path,
   sharedSiteData,
 }: {
   node: CardNode;
@@ -158,8 +152,6 @@ function CardNodeView({
   resolver: ShellResolver;
   /** Whether the readable-Area set is KNOWN yet — tells "still loading" from "unresolvable". */
   areasResolved: boolean;
-  /** Child-index path from the document root — the fallback identity for a node with no `id`. */
-  path: readonly number[];
   sharedSiteData?: boolean;
 }) {
   const area: ResolvedArea | null = context.area
@@ -206,27 +198,21 @@ function CardNodeView({
   // the area can't be addressed. (A permanent shimmer would be the other, quieter, lie.)
   const footprint = plugin.footprint(node);
   const unaddressable = plugin.pending !== "self" && handle == null;
+  if (unaddressable) {
+    return areasResolved ? (
+      <CardUnavailable height={footprint} />
+    ) : (
+      <CardSkeleton height={footprint} />
+    );
+  }
   return (
-    <CardSlot
-      heightKey={cardHeightKey(node.id, path, node.type)}
-      footprint={footprint}
-    >
-      {unaddressable ? (
-        areasResolved ? (
-          <CardUnavailable height={footprint} />
-        ) : (
-          <CardSkeleton height={footprint} />
-        )
-      ) : (
-        <plugin.Render
-          node={node}
-          context={context}
-          handle={handle ?? undefined}
-          deviceSystemId={device?.systemId ?? undefined}
-          sharedSiteData={sharedSiteData}
-        />
-      )}
-    </CardSlot>
+    <plugin.Render
+      node={node}
+      context={context}
+      handle={handle ?? undefined}
+      deviceSystemId={device?.systemId ?? undefined}
+      sharedSiteData={sharedSiteData}
+    />
   );
 }
 
@@ -244,14 +230,12 @@ function GroupNodeView({
   resolver,
   dashboardId,
   areasResolved,
-  path,
 }: {
   node: GroupNode;
   context: NodeContext;
   resolver: ShellResolver;
   dashboardId?: string;
   areasResolved: boolean;
-  path: readonly number[];
 }) {
   const nodeContext = childContext(node, context);
   const area: ResolvedArea | null = nodeContext.area
@@ -313,8 +297,7 @@ function GroupNodeView({
       ? `${sankeyChild?.id ?? "sankey"}:${areaUuid}:${dashboardId}`
       : undefined;
 
-  // Collapse pass 2 + render. `i` is the index in `node.children`, NOT in the filtered list, so a
-  // hidden sibling can't shift the path a remembered height is filed under.
+  // Collapse pass 2 + render.
   let chartsEmitted = false;
   const body: ReactNode[] = node.children
     .map((child, i) => {
@@ -325,25 +308,24 @@ function GroupNodeView({
         // The block's height is additive in the very keys the collapse pass just gathered, so the
         // reservation is exact rather than approximate — and it must NOT collapse once areas
         // resolve. This is the single biggest thing on a dashboard (Kinkora: 1570px).
-        return (
-          <CardSlot
+        return handle != null ? (
+          <SiteChartsGroup
             key="site-charts"
-            heightKey={cardHeightKey(node.id, path, "site-charts")}
-            footprint={siteChartsFootprint(chartKeys)}
-          >
-            {handle != null ? (
-              <SiteChartsGroup
-                systemId={handle}
-                keys={chartKeys}
-                sankeyOptionsKey={sankeyOptionsKey}
-                chartCapable={area?.chartCapable}
-              />
-            ) : areasResolved ? (
-              <CardUnavailable height={siteChartsFootprint(chartKeys)} />
-            ) : (
-              <CardSkeleton height={siteChartsFootprint(chartKeys)} />
-            )}
-          </CardSlot>
+            systemId={handle}
+            keys={chartKeys}
+            sankeyOptionsKey={sankeyOptionsKey}
+            chartCapable={area?.chartCapable}
+          />
+        ) : areasResolved ? (
+          <CardUnavailable
+            key="site-charts"
+            height={siteChartsFootprint(chartKeys)}
+          />
+        ) : (
+          <CardSkeleton
+            key="site-charts"
+            height={siteChartsFootprint(chartKeys)}
+          />
         );
       }
       return (
@@ -354,7 +336,6 @@ function GroupNodeView({
           resolver={resolver}
           dashboardId={dashboardId}
           areasResolved={areasResolved}
-          path={[...path, i]}
           sharedSiteData={siteChartsMounted}
         />
       );
@@ -367,23 +348,15 @@ function GroupNodeView({
   // child count and the container's width — see lib/dashboard/tile-grid.ts.
   const inner =
     node.direction === "row" ? (
-      // The row is slotted with a footprint of 0 — i.e. it reserves nothing it hasn't already
-      // LEARNED. A tile row's height can't be predicted statically (it depends on the column count
-      // at this container width, and on how many tiles survive `isAvailable`), but it is perfectly
-      // stable from one visit to the next, so remembering it is what stops the two residual row
-      // shifts: a tile that vanishes once its data says it isn't applicable, and the skeleton→tile
-      // height step on any handle the SSR prefetch couldn't seed.
-      <CardSlot heightKey={cardHeightKey(node.id, path, "row")} footprint={0}>
-        <div className={TILE_GRID_CONTAINER}>
-          <div
-            className={
-              node.wrap === false ? tileRowClass() : tileGridClass(body.length)
-            }
-          >
-            {body}
-          </div>
+      <div className={TILE_GRID_CONTAINER}>
+        <div
+          className={
+            node.wrap === false ? tileRowClass() : tileGridClass(body.length)
+          }
+        >
+          {body}
         </div>
-      </CardSlot>
+      </div>
     ) : (
       <div className="flex flex-col gap-4">{body}</div>
     );
@@ -439,7 +412,6 @@ export function NodeView({
   resolver,
   dashboardId,
   areasResolved,
-  path = [],
   sharedSiteData,
 }: {
   node: DashboardNode;
@@ -447,8 +419,6 @@ export function NodeView({
   resolver: ShellResolver;
   dashboardId?: string;
   areasResolved: boolean;
-  /** Child-index path from the root; only used to identify nodes that carry no `id`. */
-  path?: readonly number[];
   /** Set by the parent GroupNodeView for its DIRECT card children — see `siteChartsMounted`. */
   sharedSiteData?: boolean;
 }): React.ReactElement | null {
@@ -463,7 +433,6 @@ export function NodeView({
         resolver={resolver}
         dashboardId={dashboardId}
         areasResolved={areasResolved}
-        path={path}
       />
     );
   }
@@ -473,7 +442,6 @@ export function NodeView({
       context={childContext(node, context)}
       resolver={resolver}
       areasResolved={areasResolved}
-      path={path}
       sharedSiteData={sharedSiteData}
     />
   );
@@ -486,34 +454,21 @@ export function DashboardV4View({
   dashboardId,
   areasResolved = true,
   deviceById,
-  cardHeights,
-  heightScopeId,
 }: {
   doc: DashboardV4;
   areaById: Map<string, ReadableArea>;
   dashboardId?: string;
   areasResolved?: boolean;
   deviceById?: Map<string, ResolvedDevice>;
-  /** Heights learned on a previous visit, read from the request cookie by the host RSC. Omitted ⇒
-   *  every card reserves its declared footprint instead (and nothing is learned). */
-  cardHeights?: CardHeightStore | null;
-  /** What those heights are filed under. Defaults to `dashboardId`; a device view passes its own. */
-  heightScopeId?: string | null;
 }) {
   const resolver = clientShellResolver(areaById, deviceById);
   return (
-    <CardHeightsProvider
-      store={cardHeights}
-      scopeId={heightScopeId ?? dashboardId ?? null}
-    >
-      <NodeView
-        node={doc.root}
-        context={{}}
-        resolver={resolver}
-        dashboardId={dashboardId}
-        areasResolved={areasResolved}
-        path={[]}
-      />
-    </CardHeightsProvider>
+    <NodeView
+      node={doc.root}
+      context={{}}
+      resolver={resolver}
+      dashboardId={dashboardId}
+      areasResolved={areasResolved}
+    />
   );
 }

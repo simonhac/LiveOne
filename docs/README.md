@@ -43,7 +43,7 @@
 
 - [operations.md](operations.md) — monitoring signals & the Slack alert catalog (what each alert means + first triage)
 - [performance/dashboard-fetch-waterfall.md](performance/dashboard-fetch-waterfall.md) — reusable fetch-waterfall benchmark: PROD baseline + post-merge + CPU-tier runs, the Server-Timing phase decomposition (post-#199), and the **cross-region Sydney-vs-Italy** finding (the ~600ms/request floor is `fra1→syd1` network, not app code). Turnkey Sydney re-run harness at `scripts/perf/sydney-lambda/`
-- [performance/dashboard-layout-stability.md](performance/dashboard-layout-stability.md) — why a loading dashboard used to relayout by ~800px and what stops it: the per-card-type **declared footprint** (`CardPlugin.footprint`, compile-enforced) plus the **remembered height** cookie. Carries the recorded footprint table and the height-over-time measurement recipe (CLS reads 0.0 here and is the wrong metric — it only scores in-viewport movement)
+- [performance/dashboard-layout-stability.md](performance/dashboard-layout-stability.md) — why a loading dashboard used to relayout by ~800px and what stops it: the per-card-type **declared footprint** (`CardPlugin.footprint`, compile-enforced). Carries the recorded footprint table and the height-over-time measurement recipe (CLS reads 0.0 here and is the wrong metric — it only scores in-viewport movement)
 
 ## Plans (proposed — not yet started)
 

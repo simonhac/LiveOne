@@ -7,7 +7,6 @@ import { AlertTriangle, Home } from "lucide-react";
 import { useModalContext } from "@/contexts/ModalContext";
 import { dashboardDataQuery } from "@/lib/queries";
 import { DashboardV4View } from "@/components/dashboard/v4/node-view";
-import type { CardHeightStore } from "@/lib/dashboard/card-heights";
 import type { ReadableArea } from "@/lib/areas/list";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import type { ResolvedDevice } from "@/lib/dashboard/resolve-shell";
@@ -52,9 +51,6 @@ interface DeviceViewerProps {
   doc: DashboardV4 | null;
   /** Every `dv_` the doc binds (this device + any pin) — the renderer's device resolver input. */
   resolvedDevices: ResolvedDevice[];
-  /** Card heights learned on a previous visit to THIS device's view, read from the request cookie
-   *  by the page's RSC. See lib/dashboard/card-heights.ts. */
-  cardHeights?: CardHeightStore | null;
 }
 
 /**
@@ -71,7 +67,6 @@ export default function DeviceViewer({
   deviceExists,
   doc,
   resolvedDevices,
-  cardHeights,
 }: DeviceViewerProps) {
   const { isAnyModalOpen } = useModalContext();
 
@@ -182,10 +177,6 @@ export default function DeviceViewer({
             areaById={areaById}
             deviceById={deviceById}
             areasResolved
-            cardHeights={cardHeights}
-            // A device view has no dashboard id; scope its remembered heights to the device so two
-            // devices' views can't inherit each other's.
-            heightScopeId={`device:${systemId}`}
           />
         </div>
       )}

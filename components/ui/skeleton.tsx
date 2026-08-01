@@ -19,10 +19,11 @@ import React from "react";
 /**
  * The class every placeholder wears.
  *
- * `data-skeleton` is LOAD-BEARING, not decoration: `<CardSlot>` (dashboard/v4/node-view.tsx)
- * refuses to learn a card's height while its subtree still contains one, which is what stops a
- * placeholder's height being remembered as though it were the real card. Every placeholder in the
- * dashboard tree — host-drawn, or drawn by a leaf component's own loading branch — must carry it.
+ * `data-skeleton` marks a subtree as "still a placeholder". Nothing in the render path branches on
+ * it — it is there for MEASUREMENT: the layout-stability probe reads it to tell a reserved box from
+ * the settled card, which is how you check that a footprint is right rather than merely stable.
+ * (See the recipe in docs/performance/dashboard-layout-stability.md.) Every placeholder in the
+ * dashboard tree — host-drawn, or drawn by a leaf component's own loading branch — should carry it.
  */
 export const SKELETON_CLASS =
   "animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30";

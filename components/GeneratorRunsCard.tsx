@@ -112,7 +112,7 @@ export default function GeneratorRunsCard({
       {isPending && !data ? (
         // Sized to the empty/short settled body rather than a line of text, so the common case —
         // "no generator runs in this period" — is a swap rather than a resize. A long run list
-        // still grows past this; `<CardSlot>` learns that per node.
+        // still grows past this — a known residual (see dashboard-layout-stability.md).
         <div className="px-4 py-6" data-skeleton="" aria-hidden>
           <div className="h-5 w-2/3 animate-pulse rounded bg-gray-700/30" />
         </div>

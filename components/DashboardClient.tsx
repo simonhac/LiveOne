@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Settings, Plus, Layers, ChevronDown } from "lucide-react";
 import { DashboardV4View } from "@/components/dashboard/v4/node-view";
-import type { CardHeightStore } from "@/lib/dashboard/card-heights";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
 import DashboardsMenu, {
@@ -65,13 +64,6 @@ interface DashboardClientProps {
   initialReadableAreas?: ReadableArea[];
   /** Device refs already resolved and authorized by the server render path. */
   resolvedDevices?: ReadableDevice[];
-  /**
-   * Card heights learned on a previous visit, read from the request cookie during the SSR render
-   * (lib/dashboard/card-heights.ts). Passed as a prop rather than fetched here precisely so the
-   * reservations are in the FIRST painted frame — a client-side read could only be applied after
-   * hydration, which would add a shift instead of removing one.
-   */
-  cardHeights?: CardHeightStore | null;
 }
 
 export default function DashboardClient({
@@ -80,7 +72,6 @@ export default function DashboardClient({
   sharedAreas,
   initialReadableAreas,
   resolvedDevices = [],
-  cardHeights,
 }: DashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -266,7 +257,6 @@ export default function DashboardClient({
               dashboardId={dashboard.id}
               areasResolved={areasResolved}
               deviceById={deviceById}
-              cardHeights={cardHeights}
             />
           ) : (
             // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally

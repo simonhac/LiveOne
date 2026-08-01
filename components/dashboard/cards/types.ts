@@ -53,8 +53,7 @@ export interface CardPlugin {
   type: NonTileCardType;
   /**
    * The card's reserved footprint in CSS px, BEFORE any of its data has arrived — what the host
-   * draws instead of the card, and what `<CardSlot>` holds open as a `min-height` while the card's
-   * own queries settle.
+   * draws in place of the card while its own queries settle.
    *
    * REQUIRED, deliberately: the registry's `satisfies { [T in KnownCardType]: PluginFor<T> }` gate
    * then makes "a new card type that doesn't say how much room it needs" a build error, which is
@@ -67,9 +66,9 @@ export interface CardPlugin {
    * the height is a function of config rather than of data — daily-stripe's `days`, device-metrics'
    * `variant` — compute it from `node.config` instead of averaging the cases.
    *
-   * It is a floor, not a promise: a card whose real height depends on how many rows its data has
-   * (device-metrics, amber-timeline) can only be approximated here, and `<CardSlot>` learns the
-   * true value for next time.
+   * It is an estimate, not a promise: a card whose real height depends on how many rows its data
+   * has (device-metrics, amber-timeline) cannot be exact here, and will still resize a little when
+   * its data lands. Those are the KNOWN residuals, listed in the doc above.
    */
   footprint: (node: CardNode) => number;
   /**

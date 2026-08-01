@@ -14,9 +14,8 @@ function AreaAmberNow({ handle }: CardRenderProps) {
   // from "this area has no Amber tariff" — so the gate lives here, where `isLoading` answers it.
   // Settled-and-absent still collapses (correctly); in-flight now holds the card's space.
   if (isLoading) return <CardSkeleton height={CARD_FOOTPRINTS["amber-now"]} />;
-  // ONE root element, not a fragment: the host wraps each card in a `<CardSlot>` to reserve its
-  // height, and a fragment's two children would have gone from being separate `gap-4` flex items to
-  // being adjacent blocks inside that wrapper. The gap moves here, where it is visible.
+  // ONE root element, not a fragment, so the card's own spacing is its own business rather than an
+  // artefact of how many children it happens to hand its parent flex column.
   return (
     <div className="flex flex-col gap-4">
       <div className="px-1">

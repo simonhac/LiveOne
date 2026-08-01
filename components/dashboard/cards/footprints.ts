@@ -14,11 +14,11 @@
  * docs/performance/dashboard-layout-stability.md for the recipe and the raw numbers. When a card's
  * layout changes, RE-MEASURE; do not nudge. The `estimated` values are for card types that are not
  * placed on any dashboard yet, so there was nothing settled to measure — they are derived from the
- * component's own box model and are corrected in practice by `<CardSlot>`'s remembered heights.
+ * component's own box model. Re-measure the first time one is placed on a dashboard.
  *
- * A footprint is a FLOOR, not a promise. Cards whose height follows their row count
- * (device-metrics, amber-timeline, generator-runs) can only be approximated statically; the value
- * here is the typical case, and the true one is learned per node on first render.
+ * A footprint is an ESTIMATE for the cards whose height follows their row count (device-metrics,
+ * amber-timeline, generator-runs) — the value here is the typical case, and those cards will still
+ * resize a little when their data lands. Everything else is exact.
  */
 
 /** Site-charts collapse: one stacked chart + its side table, including the block's own padding. */
@@ -33,7 +33,7 @@ export const CARD_FOOTPRINTS = {
   /** measured — Daylesford: the header plus the "no generator runs in this period" line. A
    *  populated table grows to `max-h-[420px]`, but the empty/short case is the honest default:
    *  over-reserving leaves visible dead space on EVERY load, where under-reserving costs one load's
-   *  shift before `<CardSlot>` has learned the real height. */
+   *  shift on a device that does have runs. */
   "generator-runs": 115,
   /** measured — Daylesford's DeepSea grid, one row of gauge tiles (`Tile` is content-sized from
    *  `md:` up, so this sits below the 110px mobile floor). */

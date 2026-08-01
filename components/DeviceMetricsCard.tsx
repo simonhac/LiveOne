@@ -117,11 +117,11 @@ export default function DeviceMetricsCard({
   }
 
   if (isPending && rows.length === 0) {
-    // The real tile count is the device's point count, which is exactly what this fetch is for —
-    // so this placeholder can only ever be the typical case. It uses the SAME `TileSkeleton` and
-    // the same grid policy as the settled tiles so at least the box model matches; the enclosing
-    // `<CardSlot>` holds the previously-learned height for this node, which is what actually keeps
-    // a 20-point DeepSea grid from shoving the page around on every load.
+    // The real tile count is the device's point count, which is exactly what this fetch is for, so
+    // this placeholder can only ever be the typical case. It uses the SAME `TileSkeleton` and the
+    // same grid policy as the settled tiles, so at least the box model matches — but a 20-point
+    // DeepSea grid still grows on arrival. A known residual; see
+    // docs/performance/dashboard-layout-stability.md.
     return (
       <div className={TILE_GRID_CONTAINER}>
         <div className={tileGridClass(SKELETON_TILE_COUNT)}>

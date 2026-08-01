@@ -1,5 +1,4 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { cookies } from "next/headers";
 import { redirect, permanentRedirect } from "next/navigation";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
@@ -33,10 +32,6 @@ import {
   type ReadableDevice,
 } from "@/lib/devices/list";
 import { collectRefs } from "@/lib/dashboard/v4-validate";
-import {
-  CARD_HEIGHTS_COOKIE,
-  parseCardHeights,
-} from "@/lib/dashboard/card-heights";
 
 interface PageProps {
   params: Promise<{
@@ -241,12 +236,6 @@ async function renderCompositionDashboard(
             revision: dashboard.revision,
           }}
           canEdit={canEdit}
-          // Heights this viewer's browser measured on a previous visit. Read HERE, in the RSC, so
-          // the reservations land in the first painted frame — see lib/dashboard/card-heights.ts
-          // for why this is a cookie and not localStorage.
-          cardHeights={parseCardHeights(
-            (await cookies()).get(CARD_HEIGHTS_COOKIE)?.value,
-          )}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
           // (below the seam) up to this point; the client's areaById must match the read-normalized
           // (ar_) document refs and the `ar_`-returning /api/v4/areas fetch fallback.

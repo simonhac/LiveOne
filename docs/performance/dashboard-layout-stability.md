@@ -35,26 +35,43 @@ than half the height of the stat grid that replaced it.
 
 ## The mechanism
 
-Two layers, in `components/dashboard/`:
+**A declared footprint per card type** — `CardPlugin.footprint(node)`, a REQUIRED field, with the
+numbers tabled in [`cards/footprints.ts`](../../components/dashboard/cards/footprints.ts). The
+registry's `satisfies { [T in KnownCardType]: PluginFor<T> }` makes a new card type that doesn't
+declare one a build error, which is the only durable way to stop this regressing one card at a time.
 
-1. **A declared footprint per card type** — `CardPlugin.footprint(node)`, a REQUIRED field, with the
-   numbers tabled in [`cards/footprints.ts`](../../components/dashboard/cards/footprints.ts). The
-   registry's `satisfies { [T in KnownCardType]: PluginFor<T> }` makes a new card type that doesn't
-   declare one a build error. Where the height follows CONFIG rather than data it is computed, not
-   estimated: `daily-stripe` is `days` rows tall (`dailyStripeFootprint`), the collapsed site-charts
-   block is additive in its collapse keys (`siteChartsFootprint`).
-2. **A remembered height per node** — `<CardSlot>` measures each settled card and files the height in
-   the `lo_ch` cookie ([`lib/dashboard/card-heights.ts`](../../lib/dashboard/card-heights.ts)), so
-   the next visit reserves the real number. This is what covers the cards whose height is a property
-   of their DATA — a device-metrics grid is as tall as the device has points, a generator-run table
-   as tall as the period has runs — where no static footprint can be right.
+Where the height follows CONFIG rather than data it is COMPUTED, not estimated — `daily-stripe` is
+`days` rows tall (`dailyStripeFootprint`), and the collapsed site-charts block is additive in its
+collapse keys (`siteChartsFootprint`), which is why the biggest thing on the page is also the one
+reserved exactly. Everything else is a measured constant.
 
-A cookie rather than `localStorage` because the RSC has to be able to read it: a height applied
-after hydration would ADD a paint, not remove one. Everything about the trade-offs is documented in
-those two files.
+Placeholders carry `data-skeleton`. Nothing branches on it; it is there so the probe below can tell
+a reserved box from a settled card, which is how you check a footprint is RIGHT rather than merely
+stable.
 
-Placeholders all carry `data-skeleton`; `<CardSlot>` refuses to record a height while one is in its
-subtree, so a placeholder can never be remembered as if it were the card.
+### Rejected: remembering measured heights
+
+An earlier cut of this added a `<CardSlot>` that measured each settled card and replayed the height
+on the next visit, so the data-shaped cards could be exact too. It needed the value at SSR time (a
+height applied after hydration ADDS a paint rather than removing one), which ruled out
+`localStorage` and left a cookie — and a cookie rides on every request to the origin, was inflated
+~1.5x by `encodeURIComponent`, and was capped on its JSON length rather than its encoded length.
+~350 lines and a permanent per-request cost to fix a residual that measures **zero** on the real
+dashboards. Dropped. If the device-page residual below ever becomes worth fixing, `user_preferences`
+is the place — the dashboard page already SSR-reads it, so the read is free and nothing rides on the
+wire.
+
+### Known residuals
+
+The cards whose height is a property of their DATA cannot be exact from a static footprint, and do
+still resize a little when their query lands:
+
+- `device-metrics` — as tall as the device has points. Worst case measured: `/device/1` reserves
+  192 and settles at 463.
+- `generator-runs` — as tall as the period has runs; the footprint is the empty case.
+- `amber-timeline` — as tall as its forecast strip.
+
+None of the three is placed on a dashboard that shows the effect above the fold today.
 
 ## Recorded footprints
 
@@ -148,9 +165,9 @@ for (const s of window.__probe) {
 out.map((s) => ({ t: s.t, k: s.k.map((x) => x.h + (x.sk ? "*" : "")) }));
 ```
 
-**Clear `lo_ch` first** (`document.cookie = 'lo_ch=; path=/; max-age=0'`) — otherwise you are
-measuring the remembered heights, not the declared footprints. Measure at 375 / 768 / 1440 too: the
-cookie's tier bucket (`sm`/`md`/`lg`) exists because these heights are width-dependent.
+Measure at 375 / 768 / 1440 as well as wide — these heights are width-dependent (a stat grid
+reflows 2→3→4 columns, a chart's side table moves from beside it to below it), and a footprint
+measured only at desktop can be wrong on a phone.
 
 To read a single card's settled height for the footprint table, let the page settle and inspect the
 section's direct children:

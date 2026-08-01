@@ -33,8 +33,9 @@ export const deviceMetricsPlugin: CardPlugin = {
   kind: "card",
   type: "device-metrics",
   // The two variants are different shapes, and which one this node is IS known from config — so
-  // read it rather than average them. Neither can be exact (the height follows the device's point
-  // COUNT, which needs the readings fetch); `<CardSlot>` learns the real one per node.
+  // read it rather than average them. Neither can be exact: the height follows the device's point
+  // COUNT, which is what the readings fetch is for, so a device with many points still grows a
+  // little on arrival.
   footprint: (node) =>
     (node.config as DeviceMetricsConfig | undefined)?.variant === "table"
       ? CARD_FOOTPRINTS["device-metrics-table"]
