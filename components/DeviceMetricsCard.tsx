@@ -10,6 +10,10 @@ import {
 import { latestReadingsQuery } from "@/lib/queries";
 import { useModalContext } from "@/contexts/ModalContext";
 import { TILE_GRID_CONTAINER, tileGridClass } from "@/lib/dashboard/tile-grid";
+import { SKELETON_CLASS, TileSkeleton } from "@/components/ui/skeleton";
+
+/** Tiles drawn while the point list is in flight — see the note at the placeholder below. */
+const SKELETON_TILE_COUNT = 4;
 
 /**
  * Generic device-metrics card — a single device's numeric points, rendered straight from their own
@@ -51,7 +55,11 @@ export default function DeviceMetricsCard({
   if (variant === "table") {
     if (isPending && rows.length === 0) {
       return (
-        <div className="mx-1 h-48 animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
+        <div
+          data-skeleton=""
+          className={`mx-1 h-48 ${SKELETON_CLASS}`}
+          aria-hidden
+        />
       );
     }
     if (rows.length === 0) {
@@ -109,14 +117,16 @@ export default function DeviceMetricsCard({
   }
 
   if (isPending && rows.length === 0) {
+    // The real tile count is the device's point count, which is exactly what this fetch is for —
+    // so this placeholder can only ever be the typical case. It uses the SAME `TileSkeleton` and
+    // the same grid policy as the settled tiles so at least the box model matches; the enclosing
+    // `<CardSlot>` holds the previously-learned height for this node, which is what actually keeps
+    // a 20-point DeepSea grid from shoving the page around on every load.
     return (
       <div className={TILE_GRID_CONTAINER}>
-        <div className={tileGridClass(4)}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div
-              key={i}
-              className="min-h-[110px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
-            />
+        <div className={tileGridClass(SKELETON_TILE_COUNT)}>
+          {Array.from({ length: SKELETON_TILE_COUNT }).map((_, i) => (
+            <TileSkeleton key={i} />
           ))}
         </div>
       </div>

@@ -110,7 +110,12 @@ export default function GeneratorRunsCard({
       </div>
 
       {isPending && !data ? (
-        <div className="px-4 py-6 text-sm text-gray-400">Loading…</div>
+        // Sized to the empty/short settled body rather than a line of text, so the common case —
+        // "no generator runs in this period" — is a swap rather than a resize. A long run list
+        // still grows past this; `<CardSlot>` learns that per node.
+        <div className="px-4 py-6" data-skeleton="" aria-hidden>
+          <div className="h-5 w-2/3 animate-pulse rounded bg-gray-700/30" />
+        </div>
       ) : isError ? (
         <div className="px-4 py-6 text-sm text-red-400">
           Failed to load generator runs

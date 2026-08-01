@@ -47,37 +47,3 @@ export function dashboardDataQuery(
     enabled: systemId != null && systemId !== "",
   });
 }
-
-/**
- * Prefetch-and-seed accelerant for a dashboard with 2+ devices (e.g. an area's own handle + an
- * `oe-grid` tile's region device): one `/api/data?systemId=a,b,...` request instead of N, seeding
- * each id's own `dashboardDataQuery` cache entry so the many per-card `useAreaDatum(systemId)`
- * subscribers across the page find fresh data already there. Purely additive — every card still
- * calls `dashboardDataQuery` itself and self-fetches exactly as before if this hasn't landed yet by
- * the time it mounts (e.g. a slower network, or a card for an id outside this set), so there's no
- * behavior change if the race goes the other way, only an opportunity to skip a redundant request.
- * No-ops (disabled) for a single id — a "batch of 1" would just be a second request, not a saving.
- */
-export function dashboardDataBatchQuery(
-  systemIds: SystemIdLike[],
-  queryClient: QueryClient,
-) {
-  const ids = [...new Set(systemIds.map((id) => String(id)))].sort();
-  return queryOptions({
-    queryKey: queryKeys.dataBatch(ids),
-    queryFn: async () => {
-      const { data } = await fetchJson<{ data: Record<string, unknown> }>(
-        `/api/data?systemId=${ids.join(",")}`,
-      );
-      for (const id of ids) {
-        if (data[id] !== undefined) {
-          queryClient.setQueryData(queryKeys.data(id), data[id]);
-        }
-      }
-      return data;
-    },
-    staleTime: LIVE_STALE,
-    refetchInterval: 30_000,
-    enabled: ids.length > 1,
-  });
-}

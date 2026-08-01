@@ -20,18 +20,24 @@ import BatteryProvenancePanel from "@/components/battery-provenance/BatteryProve
 import { parentAreaIdFromHelperSiteId } from "@/lib/areas/helper-site-id";
 import { areaRefToArId } from "@/lib/areas/ref";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
+
+const FOOTPRINT = CARD_FOOTPRINTS["battery-provenance-history"];
 
 function AreaBatteryProvenanceHistory({ context, handle }: CardRenderProps) {
   const { datum } = useAreaDatum(handle!);
   const device = subjectOf(datum);
-  if (!device) return <ChartSkeleton />;
+  if (!device) return <CardSkeleton height={FOOTPRINT} />;
 
   const areaRef =
     device.vendorType === "helper"
       ? parentAreaIdFromHelperSiteId(device.vendorSiteId ?? "")
       : context.area;
   const areaId = areaRef ? areaRefToArId(areaRef) : null;
+  // No resolvable battery area — the card has nothing to show, and this is a SETTLED answer (the
+  // device has landed; its `vendorSiteId`/the node's `context.area` simply don't name one), so
+  // collapsing is correct here where it would be a shift while the device was still in flight.
   if (!areaId) return null;
 
   return (
@@ -45,5 +51,6 @@ function AreaBatteryProvenanceHistory({ context, handle }: CardRenderProps) {
 export const batteryProvenanceHistoryPlugin: CardPlugin = {
   kind: "card",
   type: "battery-provenance-history",
+  footprint: () => FOOTPRINT,
   Render: AreaBatteryProvenanceHistory,
 };

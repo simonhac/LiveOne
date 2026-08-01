@@ -9,7 +9,11 @@ const dmSans = DM_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   display: "swap",
-  preload: false, // Disable preloading to avoid unused preload warnings
+  // Preloaded. It was off ("to avoid unused preload warnings"), which meant the body font was
+  // discovered only once the CSS had parsed — so every page painted in the fallback first and then
+  // re-laid-out on swap. `next/font` also generates a size-adjusted fallback face for a Google
+  // font, so the swap itself is metric-compatible; the preload is what removes the delay before it.
+  preload: true,
 });
 
 export const metadata: Metadata = {

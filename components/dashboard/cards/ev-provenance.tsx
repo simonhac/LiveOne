@@ -12,6 +12,7 @@ import { attributedFlowDailyQuery } from "@/lib/queries/attributedFlowDaily";
 import { reduceLoadProvenance } from "@/lib/energy-flow-matrix";
 import type { CardPlugin, CardRenderProps } from "./types";
 import { subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
 
 function AreaLoadProvenance({ handle }: CardRenderProps) {
   const systemId = handle!;
@@ -51,5 +52,6 @@ function AreaLoadProvenance({ handle }: CardRenderProps) {
 export const evProvenancePlugin: CardPlugin = {
   kind: "card",
   type: "ev-provenance",
+  footprint: () => CARD_FOOTPRINTS["ev-provenance"],
   Render: AreaLoadProvenance,
 };

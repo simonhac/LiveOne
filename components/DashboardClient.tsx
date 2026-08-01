@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Settings, Plus, Layers, ChevronDown } from "lucide-react";
 import { DashboardV4View } from "@/components/dashboard/v4/node-view";
+import type { CardHeightStore } from "@/lib/dashboard/card-heights";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import DashboardSettingsDialog from "@/components/DashboardSettingsDialog";
 import DashboardsMenu, {
@@ -18,6 +19,7 @@ import { readableAreasQuery } from "@/lib/queries";
 import { docAreaRefs, docHasCards } from "@/lib/dashboard/add-area";
 import {
   hasTimeTravelingCard,
+  mayHaveTimeTravelingCard,
   primaryHandle,
 } from "@/lib/dashboard/temporal-cards";
 import { HeaderTemporalNav } from "@/components/dashboard/HeaderTemporalNav";
@@ -63,6 +65,13 @@ interface DashboardClientProps {
   initialReadableAreas?: ReadableArea[];
   /** Device refs already resolved and authorized by the server render path. */
   resolvedDevices?: ReadableDevice[];
+  /**
+   * Card heights learned on a previous visit, read from the request cookie during the SSR render
+   * (lib/dashboard/card-heights.ts). Passed as a prop rather than fetched here precisely so the
+   * reservations are in the FIRST painted frame — a client-side read could only be applied after
+   * hydration, which would add a shift instead of removing one.
+   */
+  cardHeights?: CardHeightStore | null;
 }
 
 export default function DashboardClient({
@@ -71,6 +80,7 @@ export default function DashboardClient({
   sharedAreas,
   initialReadableAreas,
   resolvedDevices = [],
+  cardHeights,
 }: DashboardClientProps) {
   const router = useRouter();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -126,6 +136,15 @@ export default function DashboardClient({
   // the page via the shared URL window.
   const showNav = hasTimeTravelingCard(dashboard.doc, areaById);
   const navHandle = primaryHandle(dashboard.doc, areaById);
+  // Both answers above need `areaById`, which is empty until the areas resolve — so on any path
+  // WITHOUT the SSR seed (`initialReadableAreas`) the navigator appears a beat late, and on mobile
+  // it is a whole extra header row that pushes the page down when it does. Hold its space from the
+  // first paint on the documents that could host it. `sm:hidden` mirrors the mobile row below;
+  // the desktop control sits inside a flex row where a late arrival costs width, not height.
+  const navRowPending =
+    !areasResolved &&
+    !(showNav && navHandle != null) &&
+    mayHaveTimeTravelingCard(dashboard.doc);
 
   return (
     <ChartFocusProvider>
@@ -227,11 +246,15 @@ export default function DashboardClient({
                 </DropdownMenu.Root>
               )}
             </div>
-            {showNav && navHandle != null && (
+            {showNav && navHandle != null ? (
               <div className="w-full sm:hidden">
                 <HeaderTemporalNav handle={navHandle} />
               </div>
-            )}
+            ) : navRowPending ? (
+              // Same box, no content — `TemporalNavigator` is one row of `px-2 py-1 text-sm`
+              // buttons, i.e. 20px of line box + 8px padding + 2px border.
+              <div className="h-[30px] w-full sm:hidden" aria-hidden />
+            ) : null}
           </div>
         </header>
 
@@ -243,6 +266,7 @@ export default function DashboardClient({
               dashboardId={dashboard.id}
               areasResolved={areasResolved}
               deviceById={deviceById}
+              cardHeights={cardHeights}
             />
           ) : (
             // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally

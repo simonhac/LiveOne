@@ -20,13 +20,16 @@ import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
  *   the only order that preserves handle 13 (a real Sigenergy device AND a 3-member Area) at its
  *   device's own 12 points. See `lib/dashboard/subject.ts` for the precedence table (trap D-l).
  *
- * Exactly one of the three. A comma-separated `systemId` list is a BATCH request (used only by the
- * dashboard's own prefetch, `dashboardDataBatchQuery` — see lib/queries/data.ts): one request instead
+ * Exactly one of the three. A comma-separated `systemId` list is a BATCH request: one request instead
  * of N, response shaped `{data: {[systemId]: <the single-subject payload>}}`. Any id that fails auth is
  * silently OMITTED from `data` (not a whole-request failure) — a batch mixes subjects with different
  * access, same as fetching them individually would. A lone id keeps the flat single-subject shape.
- * The batch leg is `systemId`-only on purpose: its response keys ARE the React Query cache keys the
- * caller seeds (`queryKeys.data(id)`), so the id grammar on the wire and in the key cannot diverge.
+ * The batch leg is `systemId`-only on purpose: its response keys ARE the React Query cache keys a
+ * caller would seed (`queryKeys.data(id)`), so the id grammar on the wire and in the key cannot
+ * diverge. NOTE: the dashboard no longer uses it — SSR prefetches each handle in-process instead
+ * (app/dashboard/[...slug]/page.tsx), and the client-side `dashboardDataBatchQuery` that once did
+ * was removed after it was found never to have been mounted. The leg is kept because it is the
+ * documented multi-subject wire form, not because something calls it.
  */
 export async function GET(request: NextRequest) {
   const t = makeTimer(request);

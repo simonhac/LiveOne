@@ -1,4 +1,5 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
 // config-v4 slice K2: the page chrome still renders the three free-text spec strings, which are no
 // longer columns — project them from `config.spec` at the prop boundary.
 import { withSpecDisplayStrings } from "@/lib/capabilities/config";
@@ -20,6 +21,10 @@ import { resolveDefaultDashboardRoute } from "@/lib/user-preferences";
 import { getViewerDevices } from "@/lib/devices/viewer-devices";
 import { hasTimeTravelingCard } from "@/lib/dashboard/temporal-cards";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
+import {
+  CARD_HEIGHTS_COOKIE,
+  parseCardHeights,
+} from "@/lib/dashboard/card-heights";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 interface PageProps {
@@ -274,6 +279,12 @@ export default async function DevicePage({ params }: PageProps) {
       ? { handle: device.id, timezoneOffsetMin: device.timezoneOffsetMin }
       : null;
 
+  // Heights this viewer's browser measured on a previous visit to this device's view. Read in the
+  // RSC so the reservations are in the first painted frame (lib/dashboard/card-heights.ts).
+  const cardHeights = parseCardHeights(
+    (await cookies()).get(CARD_HEIGHTS_COOKIE)?.value,
+  );
+
   // Render the device viewer. When the device doesn't exist, render without the chrome (the viewer
   // shows the Access-Denied state).
   if (!device) {
@@ -287,6 +298,7 @@ export default async function DevicePage({ params }: PageProps) {
         userId={userId}
         doc={doc}
         resolvedDevices={resolvedDevices}
+        cardHeights={cardHeights}
       />
     );
   }
@@ -311,6 +323,7 @@ export default async function DevicePage({ params }: PageProps) {
         userId={userId}
         doc={doc}
         resolvedDevices={resolvedDevices}
+        cardHeights={cardHeights}
       />
     </DeviceLayout>
   );

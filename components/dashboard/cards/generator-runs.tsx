@@ -8,14 +8,15 @@
  */
 import GeneratorRunsCard from "@/components/GeneratorRunsCard";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
 
 function AreaGeneratorRuns({ handle, deviceSystemId }: CardRenderProps) {
   const systemId = deviceSystemId ?? handle!;
   const { datum } = useAreaDatum(systemId);
   const tz = subjectOf(datum)?.timezoneOffsetMin;
   if (tz == null) {
-    return <ChartSkeleton />;
+    return <CardSkeleton height={CARD_FOOTPRINTS["generator-runs"]} />;
   }
   return <GeneratorRunsCard systemId={systemId} timezoneOffsetMin={tz} />;
 }
@@ -23,5 +24,6 @@ function AreaGeneratorRuns({ handle, deviceSystemId }: CardRenderProps) {
 export const generatorRunsPlugin: CardPlugin = {
   kind: "card",
   type: "generator-runs",
+  footprint: () => CARD_FOOTPRINTS["generator-runs"],
   Render: AreaGeneratorRuns,
 };

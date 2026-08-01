@@ -45,9 +45,15 @@ import {
   useAreaDatum,
   staleThreshold,
   TileSkeleton,
-  ChartSkeleton,
+  CardSkeleton,
 } from "@/components/dashboard/cards/shared";
+import { siteChartsFootprint } from "@/components/dashboard/cards/footprints";
 import { SiteChartsGroup } from "@/components/dashboard/cards/site-charts";
+import { CardSlot, CardHeightsProvider } from "./card-slot";
+import {
+  cardHeightKey,
+  type CardHeightStore,
+} from "@/lib/dashboard/card-heights";
 import {
   TILE_GRID_CONTAINER,
   tileGridClass,
@@ -121,7 +127,7 @@ function V4TileCell({
 }) {
   const { data, datum, isLoading } = useAreaDatum(systemId);
   const latest = datum?.latest ?? {};
-  if (isLoading) return <TileSkeleton />;
+  if (isLoading) return <TileSkeleton className={plugin.skeletonClass} />;
   const showGrid = !!latest["bidi.grid/power"];
   if (!plugin.isAvailable({ latest, data, showGrid })) return null;
   return (
@@ -144,11 +150,15 @@ function CardNodeView({
   context,
   resolver,
   areasResolved,
+  path,
 }: {
   node: CardNode;
   context: NodeContext;
   resolver: ShellResolver;
+  /** Whether the readable-Area set is KNOWN yet — tells "still loading" from "unresolvable". */
   areasResolved: boolean;
+  /** Child-index path from the document root — the fallback identity for a node with no `id`. */
+  path: readonly number[];
 }) {
   const area: ResolvedArea | null = context.area
     ? resolver.area(context.area)
@@ -180,21 +190,45 @@ function CardNodeView({
 
   // Tile plugin → a self-fetching tile cell.
   if (plugin.kind === "tile") {
-    if (systemId == null) return <TileSkeleton />;
+    if (systemId == null)
+      return <TileSkeleton className={plugin.skeletonClass} />;
     return <V4TileCell plugin={plugin} systemId={systemId} />;
   }
 
   // Card plugin → handed the node + its inherited context.
-  if (plugin.pending !== "self" && handle == null) {
-    return areasResolved ? null : <ChartSkeleton />;
-  }
+  //
+  // 🛑 This holds the card's declared footprint open even once `areasResolved` — it used to collapse
+  // to `null` there, which meant a whole card's worth of height vanishing mid-load and everything
+  // below it jumping up. An area that genuinely can't be resolved is already reported, once and
+  // legibly, by the section's "Area unavailable" notice (GroupNodeView below); a card silently
+  // disappearing is not a second, better report of it, just a relayout.
+  // 🛑 A card with no handle keeps its FOOTPRINT either way — it used to collapse to `null` once
+  // the areas resolved, which meant a whole card's worth of height vanishing mid-load and
+  // everything below it jumping up. What changes with `areasResolved` is only what fills that
+  // space: a skeleton while the answer is still coming, and an honest notice once it has come and
+  // the area can't be addressed. (A permanent shimmer would be the other, quieter, lie.)
+  const footprint = plugin.footprint(node);
+  const unaddressable = plugin.pending !== "self" && handle == null;
   return (
-    <plugin.Render
-      node={node}
-      context={context}
-      handle={handle ?? undefined}
-      deviceSystemId={device?.systemId ?? undefined}
-    />
+    <CardSlot
+      heightKey={cardHeightKey(node.id, path, node.type)}
+      footprint={footprint}
+    >
+      {unaddressable ? (
+        areasResolved ? (
+          <CardUnavailable height={footprint} />
+        ) : (
+          <CardSkeleton height={footprint} />
+        )
+      ) : (
+        <plugin.Render
+          node={node}
+          context={context}
+          handle={handle ?? undefined}
+          deviceSystemId={device?.systemId ?? undefined}
+        />
+      )}
+    </CardSlot>
   );
 }
 
@@ -212,12 +246,14 @@ function GroupNodeView({
   resolver,
   dashboardId,
   areasResolved,
+  path,
 }: {
   node: GroupNode;
   context: NodeContext;
   resolver: ShellResolver;
   dashboardId?: string;
   areasResolved: boolean;
+  path: readonly number[];
 }) {
   const nodeContext = childContext(node, context);
   const area: ResolvedArea | null = nodeContext.area
@@ -267,24 +303,37 @@ function GroupNodeView({
       ? `${sankeyChild?.id ?? "sankey"}:${areaUuid}:${dashboardId}`
       : undefined;
 
-  // Collapse pass 2 + render.
+  // Collapse pass 2 + render. `i` is the index in `node.children`, NOT in the filtered list, so a
+  // hidden sibling can't shift the path a remembered height is filed under.
   let chartsEmitted = false;
   const body: ReactNode[] = node.children
-    .filter((c) => !c.hidden)
     .map((child, i) => {
+      if (child.hidden) return null;
       if (collapseKeyOf(child) != null) {
         if (chartsEmitted) return null;
         chartsEmitted = true;
-        return handle != null ? (
-          <SiteChartsGroup
+        // The block's height is additive in the very keys the collapse pass just gathered, so the
+        // reservation is exact rather than approximate — and it must NOT collapse once areas
+        // resolve. This is the single biggest thing on a dashboard (Kinkora: 1570px).
+        return (
+          <CardSlot
             key="site-charts"
-            systemId={handle}
-            keys={chartKeys}
-            sankeyOptionsKey={sankeyOptionsKey}
-            chartCapable={area?.chartCapable}
-          />
-        ) : areasResolved ? null : (
-          <ChartSkeleton key="site-charts" />
+            heightKey={cardHeightKey(node.id, path, "site-charts")}
+            footprint={siteChartsFootprint(chartKeys)}
+          >
+            {handle != null ? (
+              <SiteChartsGroup
+                systemId={handle}
+                keys={chartKeys}
+                sankeyOptionsKey={sankeyOptionsKey}
+                chartCapable={area?.chartCapable}
+              />
+            ) : areasResolved ? (
+              <CardUnavailable height={siteChartsFootprint(chartKeys)} />
+            ) : (
+              <CardSkeleton height={siteChartsFootprint(chartKeys)} />
+            )}
+          </CardSlot>
         );
       }
       return (
@@ -295,9 +344,11 @@ function GroupNodeView({
           resolver={resolver}
           dashboardId={dashboardId}
           areasResolved={areasResolved}
+          path={[...path, i]}
         />
       );
-    });
+    })
+    .filter((n) => n !== null);
 
   // A `row` group is a GRID of equal columns, not a flex row: flex items size to max-content, which
   // leaves tiles ragged and collapses the ones that size themselves from their own `@container`
@@ -305,17 +356,23 @@ function GroupNodeView({
   // child count and the container's width — see lib/dashboard/tile-grid.ts.
   const inner =
     node.direction === "row" ? (
-      <div className={TILE_GRID_CONTAINER}>
-        <div
-          className={
-            node.wrap === false
-              ? tileRowClass()
-              : tileGridClass(body.filter(Boolean).length)
-          }
-        >
-          {body}
+      // The row is slotted with a footprint of 0 — i.e. it reserves nothing it hasn't already
+      // LEARNED. A tile row's height can't be predicted statically (it depends on the column count
+      // at this container width, and on how many tiles survive `isAvailable`), but it is perfectly
+      // stable from one visit to the next, so remembering it is what stops the two residual row
+      // shifts: a tile that vanishes once its data says it isn't applicable, and the skeleton→tile
+      // height step on any handle the SSR prefetch couldn't seed.
+      <CardSlot heightKey={cardHeightKey(node.id, path, "row")} footprint={0}>
+        <div className={TILE_GRID_CONTAINER}>
+          <div
+            className={
+              node.wrap === false ? tileRowClass() : tileGridClass(body.length)
+            }
+          >
+            {body}
+          </div>
         </div>
-      </div>
+      </CardSlot>
     ) : (
       <div className="flex flex-col gap-4">{body}</div>
     );
@@ -332,6 +389,22 @@ function GroupNodeView({
     );
   }
   return inner;
+}
+
+/**
+ * A card that can't be addressed — its area resolved to nothing readable. Occupies the card's
+ * declared footprint rather than collapsing, so an unresolvable reference costs a message and not a
+ * page-wide jump, and says what it is rather than shimmering forever.
+ */
+function CardUnavailable({ height }: { height: number }) {
+  return (
+    <div
+      style={{ minHeight: height }}
+      className="flex items-center justify-center rounded-lg border border-gray-700/50 bg-gray-900/30 px-4 py-3 text-sm text-gray-500"
+    >
+      This card&rsquo;s area couldn&rsquo;t be loaded.
+    </div>
+  );
 }
 
 function DeviceUnavailable() {
@@ -355,12 +428,15 @@ export function NodeView({
   resolver,
   dashboardId,
   areasResolved,
+  path = [],
 }: {
   node: DashboardNode;
   context: NodeContext;
   resolver: ShellResolver;
   dashboardId?: string;
   areasResolved: boolean;
+  /** Child-index path from the root; only used to identify nodes that carry no `id`. */
+  path?: readonly number[];
 }): React.ReactElement | null {
   if (node.kind === "group") {
     return (
@@ -370,6 +446,7 @@ export function NodeView({
         resolver={resolver}
         dashboardId={dashboardId}
         areasResolved={areasResolved}
+        path={path}
       />
     );
   }
@@ -379,6 +456,7 @@ export function NodeView({
       context={childContext(node, context)}
       resolver={resolver}
       areasResolved={areasResolved}
+      path={path}
     />
   );
 }
@@ -390,21 +468,34 @@ export function DashboardV4View({
   dashboardId,
   areasResolved = true,
   deviceById,
+  cardHeights,
+  heightScopeId,
 }: {
   doc: DashboardV4;
   areaById: Map<string, ReadableArea>;
   dashboardId?: string;
   areasResolved?: boolean;
   deviceById?: Map<string, ResolvedDevice>;
+  /** Heights learned on a previous visit, read from the request cookie by the host RSC. Omitted ⇒
+   *  every card reserves its declared footprint instead (and nothing is learned). */
+  cardHeights?: CardHeightStore | null;
+  /** What those heights are filed under. Defaults to `dashboardId`; a device view passes its own. */
+  heightScopeId?: string | null;
 }) {
   const resolver = clientShellResolver(areaById, deviceById);
   return (
-    <NodeView
-      node={doc.root}
-      context={{}}
-      resolver={resolver}
-      dashboardId={dashboardId}
-      areasResolved={areasResolved}
-    />
+    <CardHeightsProvider
+      store={cardHeights}
+      scopeId={heightScopeId ?? dashboardId ?? null}
+    >
+      <NodeView
+        node={doc.root}
+        context={{}}
+        resolver={resolver}
+        dashboardId={dashboardId}
+        areasResolved={areasResolved}
+        path={[]}
+      />
+    </CardHeightsProvider>
   );
 }

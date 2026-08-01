@@ -26,6 +26,7 @@ import DailyStripes from "@/components/dashboard/DailyStripes";
 import { historyQuery } from "@/lib/queries/history";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
 import {
+  dailyStripeFootprint,
   dailyStripeWindow,
   resolveDailyStripeConfig,
   resolveDomain,
@@ -36,7 +37,7 @@ import {
   STRIPE_SLOT_MS,
 } from "@/lib/dashboard/daily-stripe";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
 
 function ConfigNotice() {
   return (
@@ -94,7 +95,10 @@ function AreaDailyStripes({ node, handle, deviceSystemId }: CardRenderProps) {
   );
 
   if (!config) return <ConfigNotice />;
-  if (tz == null || isLoading) return <ChartSkeleton />;
+  // Exactly the height the stripe will occupy: it is `config.days` rows tall whatever the history
+  // turns out to contain, so this placeholder is the same size as its replacement.
+  if (tz == null || isLoading)
+    return <CardSkeleton height={dailyStripeFootprint(config)} />;
 
   return (
     <DailyStripes
@@ -117,5 +121,7 @@ function AreaDailyStripes({ node, handle, deviceSystemId }: CardRenderProps) {
 export const dailyStripePlugin: CardPlugin = {
   kind: "card",
   type: "daily-stripe",
+  footprint: (node) =>
+    dailyStripeFootprint(resolveDailyStripeConfig(node.config)),
   Render: AreaDailyStripes,
 };

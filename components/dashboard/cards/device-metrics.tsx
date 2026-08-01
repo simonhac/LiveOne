@@ -10,6 +10,7 @@ import DeviceMetricsCard from "@/components/DeviceMetricsCard";
 import type { DeviceMetricsConfig } from "@/lib/dashboard/card-types";
 import type { CardPlugin, CardRenderProps } from "./types";
 import { staleThreshold, subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
 
 function AreaDeviceMetrics({ node, handle, deviceSystemId }: CardRenderProps) {
   const systemId = deviceSystemId ?? handle!;
@@ -31,5 +32,12 @@ function AreaDeviceMetrics({ node, handle, deviceSystemId }: CardRenderProps) {
 export const deviceMetricsPlugin: CardPlugin = {
   kind: "card",
   type: "device-metrics",
+  // The two variants are different shapes, and which one this node is IS known from config — so
+  // read it rather than average them. Neither can be exact (the height follows the device's point
+  // COUNT, which needs the readings fetch); `<CardSlot>` learns the real one per node.
+  footprint: (node) =>
+    (node.config as DeviceMetricsConfig | undefined)?.variant === "table"
+      ? CARD_FOOTPRINTS["device-metrics-table"]
+      : CARD_FOOTPRINTS["device-metrics-grid"],
   Render: AreaDeviceMetrics,
 };
