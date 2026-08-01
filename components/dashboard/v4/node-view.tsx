@@ -144,11 +144,13 @@ function CardNodeView({
   context,
   resolver,
   areasResolved,
+  sharedSiteData,
 }: {
   node: CardNode;
   context: NodeContext;
   resolver: ShellResolver;
   areasResolved: boolean;
+  sharedSiteData?: boolean;
 }) {
   const area: ResolvedArea | null = context.area
     ? resolver.area(context.area)
@@ -194,6 +196,7 @@ function CardNodeView({
       context={context}
       handle={handle ?? undefined}
       deviceSystemId={device?.systemId ?? undefined}
+      sharedSiteData={sharedSiteData}
     />
   );
 }
@@ -258,6 +261,18 @@ function GroupNodeView({
     const k = collapseKeyOf(child);
     if (k != null) chartKeys.add(k);
   }
+  // Will a <SiteChartsGroup> actually MOUNT for this group, and will it run its `siteDataQuery`?
+  // Mirrors the two gates below exactly: pass 2 emits it only for a non-hidden collapse member with a
+  // resolved `handle`, and SiteChartsGroup itself bails on `!chartCapable`. A standalone `lines`
+  // chart in this same group reads this to decide whether it can ride that fetch instead of issuing
+  // its own `/api/history` for the same window — so it must not be true when nothing drives the
+  // query, or the chart would wait forever on a payload nobody fetches. Note `chartKeys` is NOT the
+  // right input: it deliberately includes hidden members (they stay addressable via `cardVisible`),
+  // and an all-hidden collapse emits no group at all.
+  const siteChartsMounted =
+    handle != null &&
+    !!area?.chartCapable &&
+    node.children.some((c) => !c.hidden && collapseKeyOf(c) != null);
   const sankeyChild = node.children.find(
     (c) => c.kind === "card" && c.type === "sankey",
   );
@@ -295,6 +310,7 @@ function GroupNodeView({
           resolver={resolver}
           dashboardId={dashboardId}
           areasResolved={areasResolved}
+          sharedSiteData={siteChartsMounted}
         />
       );
     });
@@ -355,14 +371,20 @@ export function NodeView({
   resolver,
   dashboardId,
   areasResolved,
+  sharedSiteData,
 }: {
   node: DashboardNode;
   context: NodeContext;
   resolver: ShellResolver;
   dashboardId?: string;
   areasResolved: boolean;
+  /** Set by the parent GroupNodeView for its DIRECT card children — see `siteChartsMounted`. */
+  sharedSiteData?: boolean;
 }): React.ReactElement | null {
   if (node.kind === "group") {
+    // Deliberately NOT forwarded: a nested group has its own area/handle and its own collapse
+    // members, so it recomputes `siteChartsMounted` for its own children. Inheriting the parent's
+    // would claim a fetch keyed on a DIFFERENT handle.
     return (
       <GroupNodeView
         node={node}
@@ -379,6 +401,7 @@ export function NodeView({
       context={childContext(node, context)}
       resolver={resolver}
       areasResolved={areasResolved}
+      sharedSiteData={sharedSiteData}
     />
   );
 }

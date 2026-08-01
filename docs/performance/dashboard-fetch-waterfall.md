@@ -830,3 +830,75 @@ card's metrics table is a *separate* query, `latestReadingsQuery` → `queryKeys
 pin authorization from #208 is working; the `latest` key is simply outside it. Both are cheap
 concurrent calls and neither is the settle tail (the sankey `/api/history` is), so per the #207
 lesson they should only be seeded if it can be done **without** adding blocking SSR work.
+
+## The `lines` chart merge — Daylesford 4 → 3, 2026-08-01
+
+Acting on the lever above: a `lines` chart now rides the section's `siteDataQuery` instead of issuing
+its own `/api/history`, **for D and W only**.
+
+`ProcessedSiteData` gained `rawSeries` (the response's series verbatim — pre-filter, pre
+`splitBatteryPower`), and `LinesChartCard` feeds that to the same `buildChartData` it always used.
+Whether it may is decided **structurally**, not by probing the cache: `GroupNodeView` computes
+`siteChartsMounted` — a non-hidden collapse member, a resolved handle, and `area.chartCapable` — and
+passes it down as the `sharedSiteData` render prop. That is exactly the condition under which a
+`<SiteChartsGroup>` mounts *and* runs its query, so the chart never waits on a fetch nobody is
+driving. `chartCapable` arrives via SSR props, so the flag is right on the first render — there is no
+fire-then-switch window.
+
+**D/W only, deliberately.** M/Y put this chart in energy mode, where `buildSeriesParam(true)` wants
+`*/energy.delta` + `bidi.battery/soc.{avg,min,max}` — series the site fetch does not request at `1d`.
+Widening the `1d` filter would add server work to every dashboard's M/Y view, so M/Y keep their own
+query and still fire two `/api/history` calls. Verified below.
+
+### Measured (local dev, Daylesford + Kinkora, authed owner)
+
+| View                        | Before | After | `/api/history` calls after                     |
+| --------------------------- | ------ | ----- | ---------------------------------------------- |
+| Daylesford **D** (default)  | 4      | **3** | 1 — `5m/last=24h`, `include=sankey`            |
+| Daylesford **W**            | 4      | **3** | 1 — `30m/last=168h`, `include=sankey`          |
+| Daylesford **D, historical**| 4      | **3** | 1 — explicit window, `include=sankey`          |
+| Daylesford **M**            | 4      | 4     | 2 — by design (energy mode)                    |
+| Daylesford **Y**            | 4      | 4     | 2 — by design (energy mode)                    |
+| **Kinkora** (baseline)      | 1      | **1** | 1 — unchanged                                  |
+
+The chart renders identically before and after in every period, and in historical mode. The
+lines-only fallback (a `lines` chart with no sankey/site-charts card in its group) was exercised by
+forcing `sharedSiteData` false: the bare `/api/history` returns, the count goes back to 4, and the
+chart renders — i.e. the fallback is intact. No live dashboard has that shape today (Kew and
+Daylesford both pair `lines` with a `sankey`).
+
+⚠️ **No timings are recorded here, on purpose.** This was measured on a dev server, and the measuring
+tab reported `visibilityState: "hidden"` throughout, which invalidates FCP/settle (see "Two
+harness-affecting facts" above). Request counts and rendered output are structural and unaffected.
+Per the #207 lesson the expected win is **request count only** — the removed call was concurrent and
+was never the tail (293 ms against the sankey's 1226 ms), so **do not expect settle to move**, and
+check any apparent movement against the ±800 ms run-to-run variance this doc records. A Sydney-Lambda
+re-run against Daylesford is still owed.
+
+### Requests 3 and 4: deliberately left alone
+
+Both are cheap, concurrent, and far from the tail (219 ms and 100 ms against 1226 ms). Per the #207
+lesson they are worth removing only if it costs **no** blocking SSR work. Neither qualifies.
+
+**`generator-runs`** — pinned to system **1** (the Selectronic; the detector follows its grid power
+as a run proxy), not the DeepSea. Its key, `queryKeys.runPeriods(systemId, role, modeKey)` with
+`modeKey` ∈ `period:1d` / `period:7d` / `range:<start>_<end>`, is derived client-side from
+`useTemporalRange` — URL-driven, tz-dependent, with an `isHistoricalMode` branch. Reproducing that
+server-side and getting it wrong is a seed nobody reads: the request still fires *and* the SSR cost is
+paid. Streaming it via Suspense doesn't rescue it either — the card mounts and fetches during
+hydration, before a later-streamed `HydrationBoundary` could land.
+
+**`device-metrics`** — seeding `queryKeys.latest(id)` would work, but it adds a
+`getActivePointsForDevice` read plus a readings array to the awaited render. **The better fix is to
+delete the query family, not seed it.** A tile renders via `V4TileCell` → `useAreaDatum(id)` →
+`queryKeys.data(id)` and reads values off that payload's `latest` map — no `include=readings`, no
+second key. The evidence is already on the page: `device-metrics.tsx` itself calls `useAreaDatum(14)`
+for its stale threshold and *that* half is silent; only `latestReadingsQuery` fires. So a purpose-built
+tile for the four DeepSea points (`generator.engine/speed`, `generator.output/frequency`,
+`generator.battery/voltage`, `generator.charge_alt/voltage`) would remove the request outright, at
+zero SSR cost. It must be **device-pinned**: none of those points are bound into the Daylesford area
+(all 15 bindings come from device 1 and the derived helper 10001), so an area-scoped tile would find
+nothing in the area's `latest` map. Daylesford is the **only** dashboard using `device-metrics`, so
+that retires the `latest` key's only consumer. The trade — losing the generic role-free raw-points
+table, the escape hatch when commissioning a new vendor — makes this a product decision, not a
+fetch-slimming one, which is why it was recorded rather than done.
