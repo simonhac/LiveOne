@@ -386,6 +386,10 @@ export default function SiteChartsCard({
   // the query, and pairing the two across that boundary would briefly mix windows.
   const [tableAttributedFlow, setTableAttributedFlow] =
     useState<DailyFlowMatrices | null>(null);
+  // The grid buy/sell price series behind the legend tables' hovered price line. Mirrored here for the
+  // same reason as `tableAttributedFlow`: a row's price and its energy must come from ONE fetch.
+  const [tableGridRates, setTableGridRates] =
+    useState<ProcessedSiteData["gridRates"]>(null);
   // Which metric the legend tables' last column shows. Shared by both tables so they cycle together;
   // session-only by design (no localStorage) — it resets to "%" on reload.
   const [energyMetric, setEnergyMetric] = useState<EnergyTableMetric>("pct");
@@ -490,6 +494,7 @@ export default function SiteChartsCard({
       setLoadChartData(siteData.load);
       setGenerationChartData(siteData.generation);
       setTableAttributedFlow(siteData.attributedFlow ?? null);
+      setTableGridRates(siteData.gridRates ?? null);
     }
   }, [siteData]);
 
@@ -696,6 +701,7 @@ export default function SiteChartsCard({
                     attributedFlow={tableAttributedFlow}
                     metric={energyMetric}
                     onCycleMetric={cycleEnergyMetric}
+                    gridRate={tableGridRates?.export ?? null}
                   />
                 </div>
               </div>
@@ -737,6 +743,7 @@ export default function SiteChartsCard({
                     attributedFlow={tableAttributedFlow}
                     metric={energyMetric}
                     onCycleMetric={cycleEnergyMetric}
+                    gridRate={tableGridRates?.import ?? null}
                   />
                 </div>
               </div>
