@@ -12,6 +12,7 @@ import {
 } from "@/lib/energy-flow-matrix";
 import { formatDollars, formatKwh } from "@/lib/provenance-format";
 import { siteDataQuery } from "@/lib/queries";
+import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
   formatPowerValue,
@@ -102,6 +103,12 @@ function HouseToGridTile({
   const imported = flow ? reduceSourceProvenance(flow, "source.grid") : null;
   const exported = flow ? reduceLoadProvenance(flow, "load.grid") : null;
 
+  // Chrome is the grid's IDENTITY colour (magenta, matching `CHART_COLORS.grid`) whenever there is
+  // flow. It used to be red for import / green for export, which collided with `ev` red-600 and the
+  // red crosshair, and made green mean "exporting" here while it meant "charging" on the Battery
+  // tile. Direction rides on the chevron and the Importing/Exporting label. See lib/role-chrome.ts.
+  const chrome = Math.abs(gridPower) >= 100 ? ROLE_CHROME.grid : IDLE_CHROME;
+
   return (
     <Tile
       title="Grid"
@@ -116,36 +123,14 @@ function HouseToGridTile({
           {getFlowChevron(
             gridPower,
             gridPower < 0, // negative = exporting = into grid
-            gridPower >= 100
-              ? "text-red-400"
-              : gridPower <= -100
-                ? "text-green-400"
-                : "text-gray-400",
+            chrome.icon,
           )}
           <Zap className="w-6 h-6" />
         </span>
       }
-      iconColor={
-        gridPower >= 100
-          ? "text-red-400"
-          : gridPower <= -100
-            ? "text-green-400"
-            : "text-gray-400"
-      }
-      bgColor={
-        gridPower >= 100
-          ? "bg-red-900/20"
-          : gridPower <= -100
-            ? "bg-green-900/20"
-            : "bg-gray-900/20"
-      }
-      borderColor={
-        gridPower >= 100
-          ? "border-red-700"
-          : gridPower <= -100
-            ? "border-green-700"
-            : "border-gray-700"
-      }
+      iconColor={chrome.icon}
+      bgColor={chrome.tint}
+      borderColor={chrome.border}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={
         getMeasurementTime(latest, "bidi.grid/power") || undefined

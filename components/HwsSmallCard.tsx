@@ -2,8 +2,8 @@
 
 import { Thermometer } from "lucide-react";
 import Tile from "@/components/Tile";
-
-const HWS_COLOR = "rgb(251, 146, 60)"; // CHART_COLORS.hotWater (orange-400)
+import { CHART_COLORS } from "@/lib/chart-colors";
+import { ROLE_CHROME } from "@/lib/role-chrome";
 
 /**
  * Compact "Hot Water" mini-card: the current modelled faucet temperature (°C, orange) from the
@@ -33,9 +33,9 @@ export default function HwsSmallCard({
       value={faucetC.toFixed(1)}
       unit="°C"
       icon={<Thermometer className="w-6 h-6" />}
-      iconColor="text-orange-400"
-      bgColor="bg-orange-900/20"
-      borderColor="border-orange-700"
+      iconColor={ROLE_CHROME.hotWater.icon}
+      bgColor={ROLE_CHROME.hotWater.tint}
+      borderColor={ROLE_CHROME.hotWater.border}
       staleThresholdSeconds={staleThresholdSeconds}
       measurementTime={measurementTime}
       extra={
@@ -72,7 +72,7 @@ function Sparkline({ values }: { values: number[] }) {
       <polyline
         points={pts}
         fill="none"
-        stroke={HWS_COLOR}
+        stroke={CHART_COLORS.hotWater}
         strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
         strokeLinejoin="round"
