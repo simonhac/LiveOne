@@ -6,7 +6,7 @@ import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
-import { formatDollars } from "@/lib/provenance-format";
+import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
 
 /**
  * A dashboard panel listing one tracked device's run periods WITHIN the temporal-navigator window —
@@ -102,17 +102,33 @@ export default function GeneratorRunsCard({
   const totalEnergyKwh = rows.reduce((s, r) => s + r.e.energyKwh, 0);
   const anyOutside = rows.some((r) => r.spansOutside);
 
-  // Merging Date+Time into one column frees exactly one slot, so the card can answer "what did that
-  // cost?" without getting wider. Gated server-side like every other column: absent, never $0.00.
+  // The two provenance columns, each gated SERVER-side on what the returned rows actually carry
+  // (`resolveShape` in the run-periods route) rather than on the site's config — so a column is
+  // absent rather than a wall of "—", and never $0.00 for an unpriced run.
+  //
+  // Merging Date+Time into one "when" column bought one slot back; cost took it and CO₂ makes this
+  // genuinely wider than the original four. That is affordable because the numbers are short and
+  // `when` is the only wrappable cell, but it is the reason each column stays gated: a device with
+  // no energy point still renders the narrow three-column table.
   const showCost = data?.columns?.cost ?? false;
+  const showEmissions = data?.columns?.emissions ?? false;
   // Totals sum only the runs that carry a figure, matching how the footer's other totals behave.
   const totalCostC = rows.reduce<number | null>(
     (s, r) => (r.e.costC == null ? s : (s ?? 0) + r.e.costC),
     null,
   );
+  const totalEmissionsG = rows.reduce<number | null>(
+    (s, r) => (r.e.emissionsG == null ? s : (s ?? 0) + r.e.emissionsG),
+    null,
+  );
 
   const th = "px-4 py-2 text-xs font-medium text-gray-200";
   const td = "px-4 py-2 text-sm";
+  /** A header's unit, carried alongside the label rather than parenthesised inside it, and muted so
+   *  the scanned word is the quantity ("Energy") and not its unit. */
+  const unit = (u: string) => (
+    <span className="ml-1 font-normal text-gray-400">{u}</span>
+  );
 
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -149,7 +165,10 @@ export default function GeneratorRunsCard({
                 <tr>
                   <th className={`${th} text-left`}>When</th>
                   <th className={`${th} text-right`}>Duration</th>
-                  <th className={`${th} text-right`}>Energy (kWh)</th>
+                  <th className={`${th} text-right`}>Energy{unit("kWh")}</th>
+                  {showEmissions && (
+                    <th className={`${th} text-right`}>CO₂{unit("kg")}</th>
+                  )}
                   {showCost && <th className={`${th} text-right`}>Cost</th>}
                 </tr>
               </thead>
@@ -175,8 +194,15 @@ export default function GeneratorRunsCard({
                         : "—"}
                     </td>
                     <td className={`${td} text-right tabular-nums`}>
-                      {e.energyKwh.toFixed(2)}
+                      {e.energyKwh.toFixed(1)}
                     </td>
+                    {showEmissions && (
+                      <td className={`${td} text-right tabular-nums`}>
+                        {e.emissionsG != null
+                          ? formatKgCo2(e.emissionsG / 1000)
+                          : "—"}
+                      </td>
+                    )}
                     {showCost && (
                       <td className={`${td} text-right tabular-nums`}>
                         {e.costC != null ? formatDollars(e.costC) : "—"}
@@ -194,8 +220,15 @@ export default function GeneratorRunsCard({
                     {formatSecondsAsDuration(totalSeconds)}
                   </td>
                   <td className={`${td} text-right tabular-nums`}>
-                    {totalEnergyKwh.toFixed(2)}
+                    {totalEnergyKwh.toFixed(1)}
                   </td>
+                  {showEmissions && (
+                    <td className={`${td} text-right tabular-nums`}>
+                      {totalEmissionsG != null
+                        ? formatKgCo2(totalEmissionsG / 1000)
+                        : "—"}
+                    </td>
+                  )}
                   {showCost && (
                     <td className={`${td} text-right tabular-nums`}>
                       {totalCostC != null ? formatDollars(totalCostC) : "—"}
