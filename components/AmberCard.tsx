@@ -18,6 +18,13 @@ interface AmberCardProps {
   displayTimezone?: string | null;
 }
 
+/**
+ * The forecast strip's height — the scrollable slot table below the heading. Used by the loading
+ * and error branches so the card is one size from mount, and mirrored by the `amber-timeline`
+ * footprint in components/dashboard/cards/footprints.ts.
+ */
+const AMBER_STRIP_H = 300;
+
 interface TimeSlot {
   periodEnd: Date;
   priceInCents: number | null;
@@ -139,7 +146,14 @@ export default function AmberCard({
         <h2 className="text-lg font-bold text-white mb-4">
           30 MIN FORECAST — GENERAL USAGE
         </h2>
-        <div className="text-gray-400">Loading...</div>
+        {/* A body-sized block, not a line of text: the forecast strip that replaces it is ~300px
+            tall, so "Loading..." made the card quadruple in height the moment the query landed. */}
+        <div
+          data-skeleton=""
+          style={{ height: AMBER_STRIP_H }}
+          className="animate-pulse rounded bg-gray-700/30"
+          aria-hidden
+        />
       </div>
     );
   }
@@ -170,7 +184,12 @@ export default function AmberCard({
       <div
         ref={scrollContainerRef}
         className="overflow-x-auto scrollbar-hide"
-        style={{ maxWidth: "100%", scrollBehavior: "smooth" }}
+        style={{
+          maxWidth: "100%",
+          scrollBehavior: "smooth",
+          // Matches the loading placeholder above, so the swap is a swap and not a resize.
+          minHeight: AMBER_STRIP_H,
+        }}
       >
         <table
           className="border-separate"

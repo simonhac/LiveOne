@@ -116,16 +116,14 @@ export function maxPowerHintFromDeviceInfo(deviceInfo?: {
   return solarKW ?? inverterKW;
 }
 
-/** A tile-shaped loading placeholder shown while a TileCell's data is in flight. */
-export function TileSkeleton() {
-  return (
-    <div className="min-h-[120px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
-  );
-}
-
-/** A card-height loading placeholder for non-tile cards (charts / sankey / amber / generator-runs). */
-export function ChartSkeleton() {
-  return (
-    <div className="min-h-[360px] animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30" />
-  );
-}
+/**
+ * The loading placeholders, re-exported so the card layer has one import site. They are DEFINED in
+ * components/ui/skeleton.tsx (and documented there) because the leaf components use them too, and
+ * those must not pull this module's react-query plumbing in just to draw a grey rectangle.
+ */
+export {
+  SKELETON_CLASS,
+  TileSkeleton,
+  CardSkeleton,
+  StatGridSkeleton,
+} from "@/components/ui/skeleton";

@@ -19,4 +19,13 @@ export const ttInterphases = localFont({
   ],
   display: "swap",
   variable: "--font-tt-interphases",
+  /**
+   * 🛑 A LOCAL font gets no automatic size-adjusted fallback from `next/font` — that is only
+   * generated for Google fonts, whose metrics next knows. Without these, every Amber-styled surface
+   * (Tile, AmberSmallCard, AmberNow, the stat cards, LoadProvenanceCard) painted in the system font
+   * and then re-laid-out on swap. `adjustFontFallback` names the face whose metrics to scale the
+   * fallback to, so the pre-swap text occupies the same box as the post-swap text.
+   */
+  fallback: ["system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+  adjustFontFallback: "Arial",
 });

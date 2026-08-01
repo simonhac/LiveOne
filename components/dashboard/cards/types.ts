@@ -52,8 +52,28 @@ export interface CardPlugin {
   kind: "card";
   type: NonTileCardType;
   /**
+   * The card's reserved footprint in CSS px, BEFORE any of its data has arrived — what the host
+   * draws in place of the card while its own queries settle.
+   *
+   * REQUIRED, deliberately: the registry's `satisfies { [T in KnownCardType]: PluginFor<T> }` gate
+   * then makes "a new card type that doesn't say how much room it needs" a build error, which is
+   * the only durable way to stop the loading-relayout regressing one card at a time.
+   *
+   * 🛑 These numbers are MEASURED, not guessed — read off the settled card at a wide viewport (see
+   * docs/performance/dashboard-layout-stability.md for the measurement recipe and the recorded
+   * values). A footprint that is too SMALL shifts the page down when content lands; one that is too
+   * LARGE leaves the card sitting in dead space, because the slot's min-height never shrinks. Where
+   * the height is a function of config rather than of data — daily-stripe's `days`, device-metrics'
+   * `variant` — compute it from `node.config` instead of averaging the cases.
+   *
+   * It is an estimate, not a promise: a card whose real height depends on how many rows its data
+   * has (device-metrics, amber-timeline) cannot be exact here, and will still resize a little when
+   * its data lands. Those are the KNOWN residuals, listed in the doc above.
+   */
+  footprint: (node: CardNode) => number;
+  /**
    * Unresolved-handle behavior:
-   *  - "host-skeleton" (default): the host renders <ChartSkeleton/> until the handle resolves,
+   *  - "host-skeleton" (default): the host reserves `footprint` until the handle resolves,
    *    then mounts Render with a defined handle. (All chart-ish cards.)
    *  - "self": Render always mounts and handles handle === undefined itself.
    */

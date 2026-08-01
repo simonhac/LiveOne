@@ -81,6 +81,24 @@ export function hasTimeTravelingCard(
 }
 
 /**
+ * The same question asked of the DOCUMENT ALONE, assuming every bound area turns out to be
+ * chart-capable — i.e. "could this dashboard end up showing the header navigator, once the areas
+ * resolve?".
+ *
+ * The host needs this to hold the navigator's space open while `areaById` is still empty. Without
+ * it the control simply appears late, and on mobile it is a full extra header row, so the entire
+ * page steps down the moment `/api/v4/areas` lands. Optimistic on purpose: reserving a row that
+ * turns out not to be needed costs one collapse on an uncommon path, where the alternative costs a
+ * shift on every load that isn't SSR-seeded.
+ */
+export function mayHaveTimeTravelingCard(doc: DashboardV4): boolean {
+  return walkVisible(doc, (node) => {
+    if (node.kind !== "card") return false;
+    return cardTravels(node, true);
+  });
+}
+
+/**
  * The handle whose timezone the header navigator formats its label in — the first visible node that
  * binds an area, resolved to that area's handle. Undefined while the areas are still resolving (the
  * navigator holds until then), or when the document binds no area at all (a `/device` doc, which

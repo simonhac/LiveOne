@@ -3,6 +3,7 @@
 import { Car } from "lucide-react";
 import { ttInterphases } from "@/lib/fonts/amber";
 import Stat from "@/components/ui/stat";
+import { StatGridSkeleton } from "@/components/ui/skeleton";
 import type { LoadProvenanceSummary } from "@/lib/energy-flow-matrix";
 import {
   formatCentsPerKwh,
@@ -59,8 +60,36 @@ export default function LoadProvenanceCard({
   );
 
   if (loading) {
+    // Mirrors the settled body — the 4-stat grid, the source-split line, the confidence chip row —
+    // instead of a flat 64px bar that the real content then doubles.
     return shell(
-      <div className="h-16 animate-pulse rounded bg-gray-700/40" aria-hidden />,
+      <div>
+        <StatGridSkeleton
+          cells={4}
+          gridClassName="grid grid-cols-2 gap-x-4 gap-y-3 @[360px]:grid-cols-4"
+        />
+        {/* Transparent text in the real classes rather than bars of a guessed height — see the
+            note on the same pattern in HomeEnergyCard: only real glyphs reproduce a `normal`
+            (fractional) line box exactly. */}
+        <div className="mt-3 border-t border-gray-700/60 pt-2" aria-hidden>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-transparent">
+            <span className="animate-pulse rounded bg-gray-700/30">
+              00% solar
+            </span>
+            <span className="animate-pulse rounded bg-gray-700/30">
+              00% grid
+            </span>
+          </div>
+        </div>
+        <div
+          className="mt-2 flex items-center gap-2 text-[11px] text-transparent"
+          aria-hidden
+        >
+          <span className="animate-pulse rounded bg-gray-700/30">
+            avg 00.0¢/kWh
+          </span>
+        </div>
+      </div>,
     );
   }
   if (!summary || summary.energyKwh <= 0) {

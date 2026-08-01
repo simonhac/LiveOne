@@ -4,6 +4,7 @@
 import AmberCard from "@/components/AmberCard";
 import type { CardPlugin, CardRenderProps } from "./types";
 import { subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
 
 function AreaAmberTimeline({ handle }: CardRenderProps) {
   const systemId = handle!;
@@ -21,5 +22,6 @@ function AreaAmberTimeline({ handle }: CardRenderProps) {
 export const amberTimelinePlugin: CardPlugin = {
   kind: "card",
   type: "amber-timeline",
+  footprint: () => CARD_FOOTPRINTS["amber-timeline"],
   Render: AreaAmberTimeline,
 };

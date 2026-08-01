@@ -22,6 +22,40 @@ export const STRIPE_SLOTS_PER_DAY = 288;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * The stripe's VERTICAL geometry. It lives here, next to the window maths, because two callers need
+ * it and they must not drift: `<DailyStripes/>` sizes its SVG from it, and the card plugin's
+ * `footprint` reserves the same space BEFORE any history has arrived — which it can do exactly,
+ * because the height is a function of `config.days`, not of the data.
+ */
+export const STRIPE_AXIS_H = 20;
+export const STRIPE_STATE_H = 11;
+export const STRIPE_VALUE_H = 32;
+export const STRIPE_DAY_GAP = 8;
+/** The wrapper's own `sm:p-4` top+bottom. */
+export const STRIPE_PADDING_H = 32;
+
+/** The SVG's height: a top axis, then one row per day with a gap between rows. */
+export function dailyStripeSvgHeight(
+  dayCount: number,
+  hasState: boolean,
+): number {
+  const dayH = (hasState ? STRIPE_STATE_H : 0) + STRIPE_VALUE_H;
+  return STRIPE_AXIS_H + dayCount * dayH + (dayCount - 1) * STRIPE_DAY_GAP;
+}
+
+/**
+ * The whole card's reserved height, from its config alone. `null` config (unparseable — the plugin
+ * renders a notice instead) falls back to the schema's own `days: 7` default so the placeholder is
+ * still the right order of magnitude.
+ */
+export function dailyStripeFootprint(config: DailyStripeConfig | null): number {
+  return (
+    STRIPE_PADDING_H +
+    dailyStripeSvgHeight(config?.days ?? 7, config?.state != null)
+  );
+}
+
+/**
  * Parse a card node's opaque `config` (§8.4) into the resolved shape, with schema defaults applied
  * (`days: 7`, `state.onThreshold: 0`). `null` ⇒ the config does not satisfy the schema, which the
  * doc validator rejects on write but which a doc persisted by another build could still carry — the
@@ -51,7 +85,9 @@ export function seriesTermFor(series: {
 }): string {
   const agg =
     series.agg ??
-    PointInfo.getPreferredAggregationForMetricType(metricOf(series.logicalPath));
+    PointInfo.getPreferredAggregationForMetricType(
+      metricOf(series.logicalPath),
+    );
   return `${series.logicalPath}.${agg}`;
 }
 
@@ -94,8 +130,7 @@ export function parseIntervalMs(interval: string): number {
   if (!m) return 0;
   const n = parseInt(m[1], 10);
   return (
-    n *
-    ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2]] as number)
+    n * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2]] as number)
   );
 }
 

@@ -4,6 +4,7 @@ import { Leaf } from "lucide-react";
 import Stat from "@/components/ui/stat";
 import Value from "@/components/ui/value";
 import StatCardShell from "@/components/ui/stat-card-shell";
+import { StatGridSkeleton } from "@/components/ui/skeleton";
 import type { RenewablesSummary } from "@/lib/renewables/summary";
 import {
   formatCarbonTotal,
@@ -72,8 +73,33 @@ export default function HomeEnergyCard({
   );
 
   if (loading) {
+    // Mirrors the settled body — the 4-stat headline grid AND the secondary totals/ratios block —
+    // rather than a flat bar. The old `h-16` stub was 60px short of the real content, so this card
+    // grew every time its attributed-flow query landed (measured 125px → 185px on Kinkora).
+    // 🛑 The secondary block's placeholder rows are TRANSPARENT TEXT in the real classes, not bars
+    // of a guessed height. `text-[11px]` is an arbitrary font-size, so Tailwind sets no
+    // line-height and the real line box is `normal` — a FRACTIONAL 13.5px that no `h-*` can name.
+    // A hard `h-[14px]` here left the card half a pixel short and it grew on arrival; letting real
+    // glyphs generate the line box makes the placeholder exactly the size of what replaces it, and
+    // keeps it that way if the typography changes.
     return shell(
-      <div className="h-16 animate-pulse rounded bg-gray-700/40" aria-hidden />,
+      <>
+        <StatGridSkeleton cells={4} />
+        <div className="mt-3 border-t border-gray-700/60 pt-2" aria-hidden>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-transparent">
+            <span className="animate-pulse rounded bg-gray-700/30">
+              $0.00 financial cost
+            </span>
+            <span className="animate-pulse rounded bg-gray-700/30">
+              0.0 kg CO₂
+            </span>
+          </div>
+          <div className="mt-2 space-y-0.5 text-xs text-transparent">
+            <div className="animate-pulse rounded bg-gray-700/30">Autarky</div>
+            <div className="animate-pulse rounded bg-gray-700/30">Self-use</div>
+          </div>
+        </div>
+      </>,
     );
   }
   if (!summary || summary.consumptionKwh <= 0) {

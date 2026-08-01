@@ -9,15 +9,21 @@
 import BatteryContentsCard from "@/components/BatteryContentsCard";
 import { batteryContentsFromData } from "@/lib/battery/contents-latest";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { useAreaDatum } from "./shared";
+import { CardSkeleton, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
 
 function AreaBatteryContents({ handle }: CardRenderProps) {
-  const { data } = useAreaDatum(handle!);
+  const { data, isLoading } = useAreaDatum(handle!);
+  // Same reasoning as `amber-now`: `BatteryContentsCard` collapses on a null valuation and cannot
+  // distinguish "not fetched yet" from "no battery bound to this area". `isLoading` can.
+  if (isLoading)
+    return <CardSkeleton height={CARD_FOOTPRINTS["battery-contents"]} />;
   return <BatteryContentsCard values={batteryContentsFromData(data ?? null)} />;
 }
 
 export const batteryContentsPlugin: CardPlugin = {
   kind: "card",
   type: "battery-contents",
+  footprint: () => CARD_FOOTPRINTS["battery-contents"],
   Render: AreaBatteryContents,
 };

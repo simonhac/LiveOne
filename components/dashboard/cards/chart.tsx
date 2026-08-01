@@ -14,6 +14,7 @@ import LinesChartCard from "@/components/LinesChartCard";
 import type { ChartConfig } from "@/lib/dashboard/card-types";
 import type { CardPlugin, CardRenderProps } from "./types";
 import { maxPowerHintFromDeviceInfo, subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
 
 function AreaLinesChart({ handle, sharedSiteData }: CardRenderProps) {
   const systemId = handle!;
@@ -46,6 +47,9 @@ function AreaLinesChart({ handle, sharedSiteData }: CardRenderProps) {
 export const chartPlugin: CardPlugin = {
   kind: "card",
   type: "chart",
+  // Only the LINES variant is ever drawn by this plugin — the stacked-areas variant collapses into
+  // the section's SiteChartsGroup, whose footprint is `siteChartsFootprint` on the group instead.
+  footprint: () => CARD_FOOTPRINTS.chart,
   collapseKey: (node) => {
     const config = node.config as ChartConfig | undefined;
     return config?.variant === "stacked-areas"

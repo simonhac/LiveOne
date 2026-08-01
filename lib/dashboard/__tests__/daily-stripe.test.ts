@@ -15,6 +15,13 @@ import {
   seriesTermFor,
   seriesToMap,
   STRIPE_SLOT_MS,
+  STRIPE_AXIS_H,
+  STRIPE_DAY_GAP,
+  STRIPE_PADDING_H,
+  STRIPE_STATE_H,
+  STRIPE_VALUE_H,
+  dailyStripeFootprint,
+  dailyStripeSvgHeight,
 } from "../daily-stripe";
 import { DAILY_STRIPE_DEFAULT_PALETTE } from "../card-types";
 
@@ -178,7 +185,9 @@ describe("resolveDailyStripeConfig", () => {
   it("returns null for a config the schema rejects (the plugin's notice branch)", () => {
     expect(resolveDailyStripeConfig({})).toBeNull();
     expect(resolveDailyStripeConfig(null)).toBeNull();
-    expect(resolveDailyStripeConfig({ primary: { logicalPath: 1 } })).toBeNull();
+    expect(
+      resolveDailyStripeConfig({ primary: { logicalPath: 1 } }),
+    ).toBeNull();
   });
 });
 
@@ -205,9 +214,9 @@ describe("seriesTermFor / metricOf", () => {
   });
 
   it("lets config pin the aggregation", () => {
-    expect(
-      seriesTermFor({ logicalPath: "bidi.battery/soc", agg: "avg" }),
-    ).toBe("bidi.battery/soc.avg");
+    expect(seriesTermFor({ logicalPath: "bidi.battery/soc", agg: "avg" })).toBe(
+      "bidi.battery/soc.avg",
+    );
   });
 });
 
@@ -321,13 +330,31 @@ describe("seriesToMap", () => {
   it("returns an empty map on an unusable history block", () => {
     expect(
       seriesToMap(
-        { data: [{ path: "a", history: { firstInterval: "nonsense", interval: "5m", data: [1] } }] },
+        {
+          data: [
+            {
+              path: "a",
+              history: { firstInterval: "nonsense", interval: "5m", data: [1] },
+            },
+          ],
+        },
         "a",
       ).size,
     ).toBe(0);
     expect(
       seriesToMap(
-        { data: [{ path: "a", history: { firstInterval: "2026-07-31T00:00:00Z", interval: "?", data: [1] } }] },
+        {
+          data: [
+            {
+              path: "a",
+              history: {
+                firstInterval: "2026-07-31T00:00:00Z",
+                interval: "?",
+                data: [1],
+              },
+            },
+          ],
+        },
         "a",
       ).size,
     ).toBe(0);
@@ -375,5 +402,50 @@ describe("resolveDomain / resolvePalette", () => {
       "#000",
       "#fff",
     ]);
+  });
+});
+
+/**
+ * The stripe is the one card whose exact settled height is knowable from its CONFIG — it is
+ * `days` rows tall whatever the history contains — so its placeholder can be exact rather than
+ * approximate. These pin the geometry the plugin's `footprint` and `<DailyStripes>` both read, so
+ * the reservation and the thing it reserves for cannot drift apart.
+ */
+describe("stripe geometry", () => {
+  it("is an axis, N day rows, and the gaps between them", () => {
+    expect(dailyStripeSvgHeight(1, false)).toBe(STRIPE_AXIS_H + STRIPE_VALUE_H);
+    expect(dailyStripeSvgHeight(7, false)).toBe(
+      STRIPE_AXIS_H + 7 * STRIPE_VALUE_H + 6 * STRIPE_DAY_GAP,
+    );
+  });
+
+  it("adds the on/off strip per day only when a state series is bound", () => {
+    expect(dailyStripeSvgHeight(7, true) - dailyStripeSvgHeight(7, false)).toBe(
+      7 * STRIPE_STATE_H,
+    );
+  });
+
+  it("grows with the configured day count", () => {
+    const three = dailyStripeFootprint(
+      resolveDailyStripeConfig({
+        primary: { logicalPath: "load.hws/temperature" },
+        days: 3,
+      }),
+    );
+    const seven = dailyStripeFootprint(
+      resolveDailyStripeConfig({
+        primary: { logicalPath: "load.hws/temperature" },
+        days: 7,
+      }),
+    );
+    expect(seven).toBeGreaterThan(three);
+    expect(three).toBe(STRIPE_PADDING_H + dailyStripeSvgHeight(3, false));
+  });
+
+  it("falls back to the schema's own 7-day default for an unparseable config", () => {
+    expect(resolveDailyStripeConfig({ nope: true })).toBeNull();
+    expect(dailyStripeFootprint(null)).toBe(
+      STRIPE_PADDING_H + dailyStripeSvgHeight(7, false),
+    );
   });
 });

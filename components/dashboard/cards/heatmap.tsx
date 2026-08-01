@@ -21,9 +21,9 @@
  * hijack arrow keys for whichever heatmap card mounted last, and two cards would fight over them.
  *
  * `pending: "self"`. The panel already owns a loading state for the points fetch it cannot avoid, so
- * letting the host draw `ChartSkeleton` first would show the user two different placeholders in
- * sequence for one card. Instead the card mounts immediately and shows one, consistent, card-sized
- * block from mount until the chart appears.
+ * letting the host draw its own placeholder first would show the user two in sequence for one card.
+ * Instead the card mounts immediately and shows one, consistent, card-sized block from mount until
+ * the chart appears — every one of them `HEATMAP_CHART_H` tall, the height of the chart itself.
  *
  * No `collapseKey`: this is a standalone card, never folded into the section's SiteChartsGroup.
  */
@@ -36,7 +36,11 @@ import type {
 } from "@/lib/dashboard/card-types";
 import type { HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { CARD_FOOTPRINTS } from "./footprints";
+
+/** One number for every placeholder this card can show; tracks `HEATMAP_CHART_H` (HeatmapChart). */
+const FOOTPRINT = CARD_FOOTPRINTS.heatmap;
 
 /**
  * 🛑 The keep-in-sync gate for `HEATMAP_PALETTE_KEYS` (lib/dashboard/card-types.ts), which restates
@@ -45,9 +49,15 @@ import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
  * removing OR renaming a palette in lib/heatmap-colors.ts without updating that tuple is a build
  * error HERE, in a client module where the type import is erased at runtime.
  */
-type Mutually<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
-const _paletteVocabularyInSync: Mutually<HeatmapPaletteName, HeatmapPaletteKey> =
-  true;
+type Mutually<A, B> = [A] extends [B]
+  ? [B] extends [A]
+    ? true
+    : never
+  : never;
+const _paletteVocabularyInSync: Mutually<
+  HeatmapPaletteName,
+  HeatmapPaletteKey
+> = true;
 void _paletteVocabularyInSync;
 
 function ConfigNotice() {
@@ -59,7 +69,10 @@ function ConfigNotice() {
 }
 
 function AreaHeatmap({ handle, deviceSystemId, node }: CardRenderProps) {
-  const config = useMemo(() => resolveHeatmapConfig(node.config), [node.config]);
+  const config = useMemo(
+    () => resolveHeatmapConfig(node.config),
+    [node.config],
+  );
   // A bound member device wins over the area handle — the same rule `device-metrics` and
   // `generator-runs` use, and the one the catalog's `scope: "device"` implies. A heatmap is of ONE
   // device's point set, so when the node (or an ancestor) pins a device, that is the subject.
@@ -70,7 +83,7 @@ function AreaHeatmap({ handle, deviceSystemId, node }: CardRenderProps) {
   // resolve a tick after mount). The subject query lives in the child rather than here precisely so
   // that this branch does not have to invent a systemId to keep the hook order stable — a
   // `useAreaDatum(0)` placeholder would fire a real `/api/data?systemId=0` on every dashboard load.
-  if (systemId == null) return <ChartSkeleton />;
+  if (systemId == null) return <CardSkeleton height={FOOTPRINT} />;
   return <ResolvedHeatmap systemId={systemId} config={config} />;
 }
 
@@ -85,7 +98,7 @@ function ResolvedHeatmap({
   // The IANA zone, not the offset: `HeatmapChart` buckets into local half-hours across a 30-day
   // window, which straddles DST wherever the subject observes it.
   const timezone = subjectOf(datum)?.displayTimezone;
-  if (!timezone) return <ChartSkeleton />;
+  if (!timezone) return <CardSkeleton height={FOOTPRINT} />;
 
   return (
     <HeatmapPanel
@@ -101,6 +114,7 @@ function ResolvedHeatmap({
 export const heatmapPlugin: CardPlugin = {
   kind: "card",
   type: "heatmap",
+  footprint: () => FOOTPRINT,
   pending: "self",
   Render: AreaHeatmap,
 };

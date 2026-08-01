@@ -45,5 +45,13 @@ export interface TilePlugin {
   isAvailable(
     props: Pick<TileRenderProps, "latest" | "data" | "showGrid">,
   ): boolean;
+  /**
+   * Extra classes for this tile's loading placeholder, when the tile does not have the standard
+   * `Tile` box model. The tile grid is `auto-rows-fr`, so a placeholder that measures differently
+   * from the tile it stands in for resizes the ENTIRE row when the swap happens — the two
+   * container-query tiles (`amber`, `ev`) step up at `@[180px]` and must say so. Omit for a plain
+   * `Tile`; see `TileSkeleton` in ../cards/shared.tsx for the default.
+   */
+  skeletonClass?: string;
   Render: React.FC<TileRenderProps>;
 }

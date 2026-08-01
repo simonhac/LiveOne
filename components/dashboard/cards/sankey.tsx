@@ -6,10 +6,15 @@
  * exhaustiveness check total.
  */
 import type { CardPlugin } from "./types";
+import { siteChartsFootprint } from "./footprints";
 
 export const sankeyPlugin: CardPlugin = {
   kind: "card",
   type: "sankey",
+  // Unreachable in practice for the same reason `Render` is — the collapse always claims this node,
+  // and the GROUP reserves the block's height via `siteChartsFootprint`. Declared consistently
+  // anyway so the number can never be two different things.
+  footprint: () => siteChartsFootprint(["sankey"]),
   collapseKey: () => "sankey",
   Render: () => null,
 };

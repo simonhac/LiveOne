@@ -145,6 +145,14 @@ interface HeatmapFetchResult {
   fetchEndTime: ZonedDateTime;
 }
 
+/**
+ * The chart's fixed plot height. Exported because it is the ONE number every heatmap placeholder
+ * has to agree with: the panel's status blocks (HeatmapPanel), the card plugin's declared footprint
+ * (dashboard/cards/footprints.ts), and the spinner below. They used to be 384 / 360 / 600
+ * respectively, so a heatmap card resized twice on its way in.
+ */
+export const HEATMAP_CHART_H = 600;
+
 /** Thrown when the API replies with an HTML page (e.g. an expired session), so the
  *  caller can surface the "connection" modal instead of a generic server error. */
 class HeatmapHtmlError extends Error {
@@ -798,7 +806,7 @@ export default function HeatmapChart({
         <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
           <div
             className="flex items-center justify-center"
-            style={{ height: "600px" }}
+            style={{ height: HEATMAP_CHART_H }}
           >
             <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
@@ -842,7 +850,7 @@ export default function HeatmapChart({
     <div className={className}>
       <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
         <div className="relative">
-          <div ref={chartContainerRef} style={{ height: "600px" }}>
+          <div ref={chartContainerRef} style={{ height: HEATMAP_CHART_H }}>
             <Chart type="matrix" data={chartData} options={chartOptions} />
           </div>
 
