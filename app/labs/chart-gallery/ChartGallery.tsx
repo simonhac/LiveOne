@@ -16,12 +16,13 @@
  *
  * `?case=<id>` renders one case alone (what the harness screenshots). No param renders the index.
  */
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import DashboardChart from "@/components/DashboardChart";
 import ChartTooltip from "@/components/ChartTooltip";
-// 🛑 Deliberate side-effect import — do NOT remove as "unused".
+import ProvenanceChart from "@/components/battery-provenance/ProvenanceChart";
+// 🛑 Imported for its CASES *and* deliberately for its side effects — do NOT drop either.
 //
 // The real dashboard loads every chart module: `components/dashboard/registry.tsx` statically imports
 // all 20 card plugins, so `HeatmapChart` is in the graph of every dashboard page whether or not a
@@ -33,9 +34,9 @@ import ChartTooltip from "@/components/ChartTooltip";
 // Keeping the import here makes the baselines faithful AND makes this a permanent regression guard:
 // re-introduce a `ChartJS.register(...)` of a chart-specific plugin anywhere in this graph and every
 // lines/stacked baseline fails immediately.
-import "@/components/HeatmapChart";
+import HeatmapChart from "@/components/HeatmapChart";
 import { CHART_CASES, type ChartCase } from "./cases";
-import { linesFixture, stackedFixture } from "./fixtures";
+import { linesFixture, provenanceFixture, stackedFixture } from "./fixtures";
 
 const noop = () => {};
 
@@ -185,26 +186,99 @@ function ColoursCase({ c }: { c: Extract<ChartCase, { kind: "colours" }> }) {
   );
 }
 
+function ProvenanceCase({
+  c,
+}: {
+  c: Extract<ChartCase, { kind: "provenance" }>;
+}) {
+  const f = provenanceFixture(c);
+  const focus = focusInstant(f.timestamps, c.focusAt);
+  return (
+    <div style={{ width: c.width }}>
+      <ProvenanceChart
+        def={f.def}
+        timestamps={f.timestamps}
+        seriesValues={f.seriesValues}
+        visibleSeries={f.visibleSeries}
+        hoveredTimestamp={focus}
+        onHoverIndexChange={noop}
+        timeRange={c.range}
+        windowStart={f.windowStart}
+        windowEnd={f.windowEnd}
+        bandAnnotations={f.bandAnnotations}
+      />
+    </div>
+  );
+}
+
+function HeatmapCase({ c }: { c: Extract<ChartCase, { kind: "heatmap" }> }) {
+  // No props carry the data — HeatmapChart issues its own /api/history query, which the harness
+  // intercepts. See `heatmapHistoryFixture`.
+  return (
+    <div style={{ width: c.width }}>
+      <HeatmapChart
+        systemId={1}
+        pointPath={c.pointPath}
+        pointUnit={c.pointUnit}
+        metricType={c.metricType}
+        timezone={c.timezone}
+        dayOffsetMin={c.dayOffsetMin}
+        palette={c.palette}
+      />
+    </div>
+  );
+}
+
 function CaseBody({ c }: { c: ChartCase }) {
   if (c.kind === "lines") return <LinesCase c={c} />;
   if (c.kind === "stacked") return <StackedCase c={c} />;
+  if (c.kind === "provenance") return <ProvenanceCase c={c} />;
+  if (c.kind === "heatmap") return <HeatmapCase c={c} />;
   return <ColoursCase c={c} />;
 }
 
 /**
- * The screenshot target. `data-case-ready` is what the harness waits on, and the fixed pixel box is
- * what it clips to — never the viewport, so an unrelated layout change can't churn every baseline.
+ * True once webfonts have loaded.
+ *
+ * 🛑 Load-bearing for baseline stability, not a nicety. Chart.js measures tick-label widths at its
+ * FIRST layout and never re-measures when a font arrives later. Mounting before DM Sans is ready
+ * therefore sizes the axes with the fallback font, which shifts `chartArea` — and with it every
+ * cell/bar/point position — by a sub-pixel amount that varies with load timing. It made the heatmap
+ * cases flaky between runs (they have 60 rotated tick labels, so the error accumulates instead of
+ * rounding away); the other charts were quietly exposed to the same race.
+ *
+ * Waiting in the test instead does not work: by then the chart has already laid out.
+ */
+function useFontsReady(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    document.fonts.ready.then(() => {
+      if (!cancelled) setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return ready;
+}
+
+/**
+ * The screenshot target. `data-case-ready` is what the harness waits on — it only flips true once
+ * fonts have loaded AND the case has mounted. The fixed pixel box is what the harness clips to,
+ * never the viewport, so an unrelated layout change can't churn every baseline.
  */
 function CaseFrame({ c }: { c: ChartCase }) {
+  const fontsReady = useFontsReady();
   return (
     <div
       data-testid="chart-case"
       data-case-id={c.id}
-      data-case-ready="true"
+      data-case-ready={fontsReady ? "true" : "false"}
       className="inline-block bg-gray-900 p-4"
       style={{ width: c.width + 32 }}
     >
-      <CaseBody c={c} />
+      {fontsReady ? <CaseBody c={c} /> : null}
     </div>
   );
 }

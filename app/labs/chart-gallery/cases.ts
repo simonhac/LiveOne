@@ -36,6 +36,31 @@ export type ChartCase = {
     }
   | {
       /**
+       * The heatmap fetches its own data, so these cases are fed by Playwright intercepting
+       * `/api/history` (see `heatmapHistoryFixture`) rather than by props. `endDay` picks the local
+       * date the window ends on, which is what decides whether any rows are off-frame.
+       */
+      kind: "heatmap";
+      pointPath: string;
+      pointUnit: string;
+      metricType: string;
+      palette: "viridis" | "plasma" | "turbo" | "rdylbu" | "greens";
+      /** Local `YYYY-MM-DD` the 30-day window ends on. */
+      endDay: string;
+      timezone: string;
+      dayOffsetMin: number;
+    }
+  | {
+      kind: "provenance";
+      range: ChartTimeRange;
+      dualAxis?: boolean;
+      withProbe?: boolean;
+      withBands?: boolean;
+      withGap?: boolean;
+      focusAt?: number;
+    }
+  | {
+      /**
        * Both charts stacked vertically over the SAME window — the arrangement the dashboard actually
        * uses. Exists to pin DEFECT #6: the lines chart paints Battery orange-400 and Grid red-500,
        * while the stacked chart paints Battery green-400 and Grid pink-500 (and orange-400 is Hot
@@ -190,6 +215,89 @@ export const CHART_CASES: ChartCase[] = [
     note: "stacked crosshair at the shared focus instant",
     width: W,
     height: H,
+  },
+
+  // --- ProvenanceChart -----------------------------------------------------------------------
+  {
+    id: "provenance-y",
+    kind: "provenance",
+    range: "Y",
+    note: "daily series at local noon over a year; stepped reserve floor; honest gaps (spanGaps: false)",
+    width: W,
+    height: 176,
+  },
+  {
+    id: "provenance-m-dual-axis",
+    kind: "provenance",
+    range: "M",
+    dualAxis: true,
+    withProbe: true,
+    note: "dual axes + a dashed probe overlay (ProvenanceChart styles dashed series at 1px, not 1.5px)",
+    width: W,
+    height: 176,
+  },
+  {
+    id: "provenance-m-bands-focused",
+    kind: "provenance",
+    range: "M",
+    withBands: true,
+    focusAt: 0.62,
+    note: "recal band annotations behind the series, with the crosshair drawn after them",
+    width: W,
+    height: 176,
+  },
+  {
+    id: "provenance-m-gap",
+    kind: "provenance",
+    range: "M",
+    withGap: true,
+    note: "null hole — spanGaps is false here, so the line must BREAK rather than bridge",
+    width: W,
+    height: 176,
+  },
+
+  // --- HeatmapChart (fed by route-stubbed /api/history) ---------------------------------------
+  {
+    id: "heatmap-power-midwinter",
+    kind: "heatmap",
+    pointPath: "load/power",
+    pointUnit: "W",
+    metricType: "power",
+    palette: "viridis",
+    endDay: "2026-06-15",
+    timezone: "Australia/Melbourne",
+    dayOffsetMin: 600,
+    note: "load power: the <=50 W black baseline, viridis ramp, no off-frame rows (whole window is AEST)",
+    width: 900,
+    height: 600,
+  },
+  {
+    id: "heatmap-temperature-narrow-range",
+    kind: "heatmap",
+    pointPath: "load.hws/temperature",
+    pointUnit: "\u00b0C",
+    metricType: "temperature",
+    palette: "turbo",
+    endDay: "2026-06-15",
+    timezone: "Australia/Melbourne",
+    dayOffsetMin: 600,
+    note: "non-power metric: no black baseline, and the full palette is used across the range (was defect #10/#11)",
+    width: 900,
+    height: 600,
+  },
+  {
+    id: "heatmap-spanning-dst",
+    kind: "heatmap",
+    pointPath: "load/power",
+    pointUnit: "W",
+    metricType: "power",
+    palette: "viridis",
+    endDay: "2026-04-20",
+    timezone: "Australia/Melbourne",
+    dayOffsetMin: 600,
+    note: "window spans the 5 Apr fall-back: rows before it are asterisked and the footnote appears",
+    width: 900,
+    height: 600,
   },
 
   // --- DEFECT #6: the two charts' palettes, side by side ------------------------------------

@@ -6,6 +6,7 @@ import {
   dayKeyAt,
   daysOffFrame,
   offsetMinAt,
+  resolveFrameOffsetMin,
   slotKeyAt,
 } from "../heatmap-buckets";
 
@@ -60,7 +61,7 @@ describe("bucketHeatmap", () => {
     values: Array.from({ length: count }, (_, i) => i),
     firstIntervalEndMs: Date.parse(firstEndIso),
     intervalMs: HALF_HOUR,
-    dayOffsetMin: AEST,
+    frameOffsetMin: AEST,
   });
 
   it("places a reading by its interval START, not its end", () => {
@@ -159,5 +160,57 @@ describe("daysOffFrame", () => {
     expect(daysOffFrame([SPRING_FORWARD_DAY], ZONE, 600)).toEqual(
       new Set([SPRING_FORWARD_DAY]),
     );
+  });
+});
+
+describe("resolveFrameOffsetMin — the rolling frame", () => {
+  const at = (iso: string) => Date.parse(iso);
+
+  it("follows the newest reading's real offset", () => {
+    expect(resolveFrameOffsetMin(at("2026-06-15T02:00:00Z"), ZONE, 600)).toBe(
+      600,
+    ); // AEST
+    expect(resolveFrameOffsetMin(at("2026-01-15T02:00:00Z"), ZONE, 600)).toBe(
+      660,
+    ); // AEDT
+  });
+
+  it("falls back to the area's fixed offset when the zone is unusable", () => {
+    // A bad display_timezone must degrade to standard time, not break the chart.
+    expect(
+      resolveFrameOffsetMin(at("2026-06-15T02:00:00Z"), "Not/AZone", 570),
+    ).toBe(570);
+  });
+});
+
+/**
+ * The measurement that decided the frame convention (see the module doc). A standard-time frame
+ * asterisks EVERY row of a midsummer window, which makes the mark meaningless exactly when it fires
+ * most; anchoring to the newest day marks rows only near a real transition.
+ */
+describe("frame choice — why the frame rolls", () => {
+  const thirtyDaysTo = (endIso: string) =>
+    Array.from({ length: 30 }, (_, i) =>
+      new Date(Date.parse(endIso) - (29 - i) * 86_400_000)
+        .toISOString()
+        .slice(0, 10),
+    );
+
+  const marked = (endIso: string, frame: number) =>
+    daysOffFrame(thirtyDaysTo(endIso), ZONE, frame).size;
+
+  it("a standard-time frame would mark all 30 rows in midsummer", () => {
+    expect(marked("2026-01-20T00:00:00Z", 600)).toBe(30);
+  });
+
+  it("the rolling frame marks none in midsummer or midwinter", () => {
+    expect(marked("2026-01-20T00:00:00Z", 660)).toBe(0); // frame = AEDT, as the newest day is
+    expect(marked("2026-06-20T00:00:00Z", 600)).toBe(0); // frame = AEST, as the newest day is
+  });
+
+  it("but still marks the days that genuinely differ, spanning a transition", () => {
+    const n = marked("2026-04-20T00:00:00Z", 600);
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThan(30);
   });
 });

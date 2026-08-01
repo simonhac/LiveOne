@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { CHART_CASES } from "../app/labs/chart-gallery/cases";
+import { heatmapHistoryFixture } from "../app/labs/chart-gallery/fixtures";
+import { PointInfo } from "../lib/point/point-info";
 
 /**
  * Pixel baselines for every time-series chart, ahead of the Chart.js → d3 migration
@@ -45,15 +47,38 @@ test.describe("chart gallery baselines", () => {
         if (r.status() >= 400) note(`${r.status()} ${r.url()}`);
       });
 
+      // The heatmap is the one chart that fetches for itself, so its data arrives by interception
+      // rather than as props. Everything rendered derives from this payload, so the baseline is just
+      // as deterministic as the prop-driven ones — the component's own request window (which does
+      // come from the real clock) only affects the URL, which is matched by pattern.
+      if (c.kind === "heatmap") {
+        const body = heatmapHistoryFixture({
+          pointPath: c.pointPath,
+          seriesSuffix: PointInfo.getPreferredAggregationForMetricType(
+            c.metricType,
+          ),
+          units: c.pointUnit,
+          endDayIso: c.endDay,
+          offsetMin: c.dayOffsetMin,
+        });
+        await page.route("**/api/history**", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify(body),
+          }),
+        );
+      }
+
       await page.goto(`/labs/chart-gallery?case=${c.id}`);
 
       const frame = page.getByTestId("chart-case");
       await expect(frame).toHaveAttribute("data-case-id", c.id);
 
-      // Chart.js paints into a <canvas> on a rAF after mount, and the axis labels need DM Sans to
-      // have loaded — screenshotting before either lands produces a blank or a fallback-font
-      // baseline. Wait for both explicitly rather than sleeping.
-      await page.evaluate(() => document.fonts.ready);
+      // The gallery holds the chart unmounted until webfonts are ready, because Chart.js measures
+      // tick widths at first layout and never re-measures (see `useFontsReady`). Waiting on the flag
+      // it sets is therefore both the font wait AND the mount wait.
+      await expect(frame).toHaveAttribute("data-case-ready", "true");
       await expect
         .poll(
           () =>

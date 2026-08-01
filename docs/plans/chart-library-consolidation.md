@@ -323,14 +323,27 @@ the `VERCEL_ENV !== "production"` guard means the existing assertions only ever 
 non-prod branch. Both galleries are now asserted public in dev **and** gated under a re-imported
 `VERCEL_ENV=production`, with a control assertion so the re-import can't pass vacuously.
 
-**Still to cover** (deferred, not forgotten — both self-fetch rather than taking props, so they need
-Playwright route stubbing rather than a fixture prop):
+**Coverage completed 2026-08-01 — now 50 baselines (25 cases × desktop/mobile).**
 
-- `HeatmapChart` — issues its own `/api/history` query (30 days × 48 half-hour slots).
-- `ProvenanceChart` — props-driven itself, but its panel owns the fetch; needs a fixture route.
-- `observations-viewer` — admin page, self-fetching. Lowest value; cover last or accept manual.
+- `ProvenanceChart` — 4 cases in the gallery with fixture props (it is props-driven; the *panel*
+  fetches). Pins the stepped line, the dashed 1px probe overlay, dual axes, recal bands behind the
+  crosshair, and `spanGaps: false` breaking rather than bridging a hole.
+- `HeatmapChart` — 3 cases fed by Playwright intercepting `/api/history` with
+  `heatmapHistoryFixture`. Its own request window still comes from the real clock, but nothing
+  rendered depends on it. Covers the ≤50 W black baseline, a non-power metric using the full palette
+  (#10/#11), and a window spanning the 5 Apr fall-back — where the asterisks and footnote appear, and
+  the solar arc visibly steps one column at the boundary.
+- `observations-viewer` — deliberately **not** covered: we are changing how it looks (#17), so a
+  baseline would only record something we intend to discard.
 
-These must be added **before** their Stage 5 slice, not before Stage 3.
+> 🛑 **The heatmap cases were flaky on first attempt, and the cause applied to every chart.** They
+> passed on generation and failed on re-run with sub-pixel drift plus speckled tick text. Chart.js
+> measures tick-label widths at its FIRST layout and never re-measures when a webfont arrives later,
+> so mounting before DM Sans loaded sized the axes with the fallback font and shifted `chartArea` by
+> an amount that varied with load timing. The heatmap merely exposed it — 60 rotated tick labels, so
+> the error accumulates instead of rounding away. Waiting in the test does not help; by then the
+> chart has laid out. The gallery now holds every case unmounted until `document.fonts.ready`, and
+> `data-case-ready` is the flag the harness waits on. Verified stable over three consecutive runs.
 
 ### Stage 2 — Catalogue defects — ✅ DONE 2026-08-01
 
@@ -539,13 +552,17 @@ offset differed gets an **asterisk** plus a footnote naming the frame (`UTC+10:0
 local clock read an hour later that day. The footnote only renders when some row is actually
 off-frame, so it never becomes background noise.
 
-> ⚠️ **One deviation to confirm.** The brief said "always use the most recent date as the date".
-> Taken literally — labelling columns in the *most recent day's actual* offset — the labels would
-> stop describing the buckets whenever today is on DST, since the buckets are fixed-offset. I chose
-> the self-consistent reading: **label in the fixed offset the data is bucketed in**, and asterisk
-> every row that differs from it. If you meant the buckets should follow today's offset instead
-> (which is also coherent, and keeps routines aligned, at the cost of the day rows no longer matching
-> `point_readings_agg_1d`), say so — it is a small change to `dayOffsetMin`'s source.
+> ✅ **Frame convention settled 2026-08-01 — and my first pass was wrong.** I originally used the
+> FIXED offset as the frame, reasoning that labels must describe the buckets. Measured, that marks
+> **30/30 rows in midsummer** — the asterisk fires on everything and stops meaning anything.
+> Anchoring the frame to the **newest day's real offset** marks 0/30 in midsummer, 0/30 in midwinter
+> and ~11/30 only when the window actually spans a transition, and it matches the brief literally.
+>
+> The trade is that day boundaries follow the display offset while DST is in effect. Acceptable
+> *here specifically* because the heatmap never shows a daily total, so nothing in it is compared
+> against `agg_1d` — do not carry that reasoning to a chart that does. `dayOffsetMin` is retained as
+> the fallback when `display_timezone` is unusable. The measurement is now itself a test, so nobody
+> reverts to the standard-time frame without seeing why.
 
 *(Original decision text follows.)*
 **Bucket by the fixed offset (`areas.day_offset_min`), not the DST-aware IANA zone.** Every day is

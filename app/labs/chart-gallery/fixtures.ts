@@ -22,6 +22,7 @@ import {
   getPeriodIntervalMinutes,
 } from "@/lib/charts/temporal";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import type { ProvenanceChartDef } from "@/lib/battery-provenance/field-registry";
 
 /**
  * The frozen "now" every case is rendered against: 2026-06-15 14:30 AEST (a Monday afternoon, mid
@@ -272,5 +273,233 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
     visibleSeries: new Set(series.map((s) => s.id)),
     windowStart,
     windowEnd,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// ProvenanceChart
+// ---------------------------------------------------------------------------------------------
+
+export type ProvenanceCaseOpts = {
+  range: ChartTimeRange;
+  /** Include the second (right-hand) axis and a series bound to it. */
+  dualAxis?: boolean;
+  /** Include a dashed "probe-like" overlay — the variant ProvenanceChart styles differently. */
+  withProbe?: boolean;
+  /** Include recalibration band annotations behind the series. */
+  withBands?: boolean;
+  withGap?: boolean;
+};
+
+export type ProvenanceFixture = {
+  def: ProvenanceChartDef;
+  timestamps: Date[];
+  seriesValues: Record<string, (number | null)[]>;
+  visibleSeries: Set<string>;
+  bandAnnotations: object[];
+  windowStart: Date;
+  windowEnd: Date;
+};
+
+/**
+ * A provenance panel chart: daily points at local noon, a stepped series, an optional dashed probe
+ * overlay and an optional second axis.
+ *
+ * `def.series[].value` is never called here — `ProvenanceChart` reads from the `seriesValues` map the
+ * panel hands it, and the registry's `value` accessors only run upstream. Supplying a throwing stub
+ * would therefore hide a real regression if that ever changed, so these return null instead.
+ */
+export function provenanceFixture(opts: ProvenanceCaseOpts): ProvenanceFixture {
+  const { range, dualAxis, withProbe, withBands, withGap } = opts;
+  const { windowStart, windowEnd } = buildTimestamps(range);
+  const rand = rng(0x9a1de5);
+
+  // Daily points at local noon, exactly as BatteryProvenancePanel produces them.
+  const dayCount =
+    range === "Y" ? 365 : range === "M" ? 30 : range === "W" ? 7 : 1;
+  const timestamps: Date[] = [];
+  for (let i = dayCount - 1; i >= 0; i--) {
+    const d = new Date(windowEnd.getTime() - i * 24 * 60 * 60 * 1000);
+    d.setHours(12, 0, 0, 0);
+    timestamps.push(d);
+  }
+
+  const gapFrom = Math.floor(timestamps.length * 0.4);
+  const gapTo = Math.floor(timestamps.length * 0.48);
+  const holed = (v: number, i: number): number | null =>
+    withGap && i >= gapFrom && i < gapTo ? null : round(v, 2);
+
+  const series: ProvenanceChartDef["series"] = [
+    {
+      id: "renewable",
+      label: "Renewable",
+      unit: "%",
+      axis: "y",
+      color: CHART_COLORS.solar.primary,
+      decimals: 1,
+      description: "Renewable share",
+      value: () => null,
+    },
+    {
+      id: "reserve",
+      label: "Reserve floor",
+      unit: "%",
+      axis: "y",
+      color: CHART_COLORS.battery.main,
+      stepped: true, // applied params hold for the whole day
+      decimals: 0,
+      description: "Applied reserve floor",
+      value: () => null,
+    },
+  ];
+  if (withProbe) {
+    series.push({
+      id: "probe",
+      label: "Forgone (probe)",
+      unit: "%",
+      axis: "y",
+      color: CHART_COLORS.grid.main,
+      dash: [4, 3],
+      decimals: 1,
+      description: "Probe overlay",
+      value: () => null,
+    });
+  }
+  if (dualAxis) {
+    series.push({
+      id: "cost",
+      label: "Cost",
+      unit: "$",
+      axis: "y1",
+      color: CHART_COLORS.ev,
+      decimals: 2,
+      description: "Daily cost",
+      value: () => null,
+    });
+  }
+
+  const seriesValues: Record<string, (number | null)[]> = {
+    renewable: timestamps.map((_, i) =>
+      holed(45 + 30 * Math.sin(i / 9) + rand() * 8, i),
+    ),
+    // Stepped: a handful of discrete levels, so the step-after rendering is actually visible.
+    reserve: timestamps.map((_, i) => holed(20 + 10 * Math.floor(i / 7), i)),
+    ...(withProbe
+      ? {
+          probe: timestamps.map((_, i) =>
+            holed(30 + 20 * Math.cos(i / 11) + rand() * 5, i),
+          ),
+        }
+      : {}),
+    ...(dualAxis
+      ? { cost: timestamps.map((_, i) => holed(2 + Math.sin(i / 5) * 1.5, i)) }
+      : {}),
+  };
+
+  // Recal bands: xMin/xMax boxes behind the series, the shape ProvenanceChart appends before the
+  // crosshair.
+  const bandAnnotations: object[] = withBands
+    ? [
+        {
+          type: "box",
+          xMin: timestamps[Math.floor(dayCount * 0.2)]?.getTime(),
+          xMax: timestamps[Math.floor(dayCount * 0.28)]?.getTime(),
+          backgroundColor: "rgba(255, 255, 255, 0.07)",
+          borderWidth: 0,
+        },
+        {
+          type: "box",
+          xMin: timestamps[Math.floor(dayCount * 0.66)]?.getTime(),
+          xMax: timestamps[Math.floor(dayCount * 0.72)]?.getTime(),
+          backgroundColor: "rgba(255, 255, 255, 0.07)",
+          borderWidth: 0,
+        },
+      ]
+    : [];
+
+  const def: ProvenanceChartDef = {
+    id: "fixture",
+    title: "Renewable share and reserve floor",
+    y: { unit: "%", min: 0, max: 100 },
+    ...(dualAxis ? { y1: { unit: "$", suggestedMin: 0 } } : {}),
+    series,
+  };
+
+  return {
+    def,
+    timestamps,
+    seriesValues,
+    visibleSeries: new Set(series.map((x) => x.id)),
+    bandAnnotations,
+    windowStart,
+    windowEnd,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// HeatmapChart
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A deterministic `/api/history` payload for the heatmap, in the shape the real endpoint returns.
+ *
+ * The heatmap fetches for itself rather than taking data as props, so — unlike every other case —
+ * its baseline is produced by Playwright intercepting the request and fulfilling it with this. The
+ * component's own request window still comes from the real clock, but nothing rendered depends on
+ * it: the rows, the columns, the colour domain and the DST frame are all derived from the payload's
+ * `firstInterval` and values, which are fixed here.
+ *
+ * `endDayIso` is the LOCAL date the window ends on, so a case can sit in midwinter (no off-frame
+ * rows) or span a DST transition (some rows asterisked) on purpose.
+ */
+export function heatmapHistoryFixture(opts: {
+  pointPath: string;
+  seriesSuffix: string;
+  units: string;
+  endDayIso: string;
+  days?: number;
+  offsetMin?: number;
+}): unknown {
+  const {
+    pointPath,
+    seriesSuffix,
+    units,
+    endDayIso,
+    days = 30,
+    offsetMin = 600,
+  } = opts;
+  const SLOT = 30 * 60 * 1000;
+  const rand = rng(0x4ea7);
+
+  // Local midnight after `endDayIso`, expressed as a UTC instant.
+  const endMs =
+    Date.parse(`${endDayIso}T00:00:00Z`) + 86_400_000 - offsetMin * 60_000;
+  const count = days * 48;
+  const firstIntervalEndMs = endMs - (count - 1) * SLOT;
+
+  const data: (number | null)[] = [];
+  for (let i = 0; i < count; i++) {
+    const slotOfDay = i % 48;
+    const hour = slotOfDay / 2;
+    // A daily arc with a mild day-to-day drift, plus deliberate holes so no-data cells are covered.
+    const arc = Math.max(0, Math.sin(((hour - 6) / 12) * Math.PI)) ** 1.3;
+    const drift = 1 + 0.25 * Math.sin(i / (48 * 6));
+    const missing = i % 811 === 0 || (i > count - 20 && i % 3 === 0);
+    data.push(missing ? null : round(arc * 4200 * drift + rand() * 180, 1));
+  }
+
+  return {
+    data: [
+      {
+        id: `device.1.${pointPath}.${seriesSuffix}`,
+        path: `${pointPath}.${seriesSuffix}`,
+        units,
+        history: {
+          firstInterval: new Date(firstIntervalEndMs).toISOString(),
+          interval: "30m",
+          data,
+        },
+      },
+    ],
   };
 }

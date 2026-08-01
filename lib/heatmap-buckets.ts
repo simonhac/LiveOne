@@ -2,28 +2,37 @@
  * Day × time-of-day bucketing for the heatmap.
  *
  * Pure and dependency-free so it can be unit-tested: `components/HeatmapChart.tsx` is a client module
- * that pulls in Chart.js and `chartjs-chart-matrix`, so Jest cannot import it, and the heatmap has no
- * screenshot baseline. Without this split, the code deciding which reading lands in which cell would
- * have no coverage at all.
+ * that pulls in Chart.js and `chartjs-chart-matrix`, so Jest cannot import it. Without this split, the
+ * code deciding which reading lands in which cell would have no coverage at all.
  *
- * ## Why the fixed offset, not the IANA zone
+ * ## One offset for the whole grid — the "frame"
  *
- * This used to bucket with `fromDate(ts, ianaZone)` — the DST-aware *display* zone — against a
- * hardcoded 48 × half-hour grid. A local day has 46 or 50 half-hour slots across a DST boundary, so:
+ * This used to bucket with `fromDate(ts, ianaZone)`, the DST-aware zone, against a hardcoded 48 ×
+ * half-hour grid. A local day has 46 or 50 half-hour slots across a DST boundary, so:
  *
  *  - **fall-back**: two distinct UTC intervals produced the same `HH:mm` key and the second silently
  *    overwrote the first. An hour of real data vanished, once a year, with no indication.
  *  - **spring-forward**: 02:00/02:30 never occurred, so those cells rendered as the no-data grey —
  *    a gap that was never a gap.
  *
- * Bucketing by the area's FIXED offset (`areas.day_offset_min`) makes every day exactly 48 slots, so
- * both defects dissolve rather than being special-cased — and the heatmap's day rows finally agree
- * with `point_readings_agg_1d`, the Sankey and the daily stripe, all of which have always used the
- * fixed offset. See docs/architecture/data-model.md → "Time: fixed-offset days".
+ * The fix is to bucket every row against a SINGLE fixed offset, so every day is exactly 48 slots and
+ * both defects dissolve rather than being special-cased.
  *
- * The visible cost is that a routine appears to shift by an hour across a DST boundary, because
- * relative to standard time it genuinely does. {@link daysOffFrame} marks those rows so the chart can
- * say so rather than letting the reader assume their habits changed.
+ * ## Why that frame is the most recent day's offset, not standard time
+ *
+ * The obvious choice was the area's `day_offset_min` (always standard time), which would also keep
+ * the day rows aligned with `point_readings_agg_1d`. It was tried and rejected on measurement: with a
+ * standard-time frame, **every row of a midsummer window is off-frame** (30/30), so the asterisk that
+ * marks off-frame rows fires on everything and stops meaning anything.
+ *
+ * Anchoring the frame to the newest day instead marks 0/30 in midsummer, 0/30 in midwinter, and only
+ * ~11/30 for a window actually spanning a transition — which is what the mark is for. It also means
+ * the columns match the wall clock the reader last experienced.
+ *
+ * The trade is that day boundaries follow the display offset rather than `day_offset_min` while DST
+ * is in effect. That is acceptable *here specifically* because the heatmap never displays a daily
+ * total — it is a time-of-day pattern view — so nothing in it is ever compared against `agg_1d`.
+ * Do not copy this reasoning to a chart that does show daily figures.
  */
 
 export const SLOTS_PER_DAY = 48;
@@ -57,6 +66,20 @@ export function slotKeyAt(utcMs: number, offsetMin: number): string {
   return `${String(d.getUTCHours()).padStart(2, "0")}:${mins}`;
 }
 
+/**
+ * The offset the whole grid is bucketed and labelled in: whatever the site was really on for the
+ * newest reading. Falls back to `fallbackOffsetMin` (the area's fixed day offset) if the zone is
+ * unusable, so a bad `display_timezone` degrades to standard time rather than breaking the chart.
+ */
+export function resolveFrameOffsetMin(
+  lastReadingMs: number,
+  ianaZone: string,
+  fallbackOffsetMin: number,
+): number {
+  const actual = offsetMinAt(new Date(lastReadingMs).toISOString(), ianaZone);
+  return actual ?? fallbackOffsetMin;
+}
+
 export interface HeatmapCell {
   /** Time of day, `HH:mm`. */
   x: string;
@@ -85,17 +108,18 @@ export function bucketHeatmap(
   opts: {
     firstIntervalEndMs: number;
     intervalMs: number;
-    dayOffsetMin: number;
+    /** The single offset every row is bucketed in — see {@link resolveFrameOffsetMin}. */
+    frameOffsetMin: number;
   },
 ): BucketedHeatmap {
-  const { firstIntervalEndMs, intervalMs, dayOffsetMin } = opts;
+  const { firstIntervalEndMs, intervalMs, frameOffsetMin } = opts;
   const timeLabels = buildTimeLabels();
 
   const byDay = new Map<string, Map<string, number | null>>();
   values.forEach((value, i) => {
     const intervalStartMs = firstIntervalEndMs + i * intervalMs - intervalMs;
-    const dayKey = dayKeyAt(intervalStartMs, dayOffsetMin);
-    const slotKey = slotKeyAt(intervalStartMs, dayOffsetMin);
+    const dayKey = dayKeyAt(intervalStartMs, frameOffsetMin);
+    const slotKey = slotKeyAt(intervalStartMs, frameOffsetMin);
     let day = byDay.get(dayKey);
     if (!day) {
       day = new Map();
@@ -133,9 +157,12 @@ export function bucketHeatmap(
 /**
  * Which day rows were on a different real UTC offset than the frame the axis is labelled in.
  *
- * With fixed-offset bucketing the columns mean standard time for every row. On a day the site was
- * actually observing DST, the wall clock read an hour later than the column says — so those rows are
- * marked, and the chart footnotes what the mark means. Returns a Set of `YYYY-MM-DD` keys.
+ * Every column means the frame offset for every row. On a day the site was really on a different
+ * offset, the wall clock read an hour out from what the column says — so those rows are marked and
+ * the chart footnotes what the mark means. Returns a Set of `YYYY-MM-DD` keys.
+ *
+ * With the frame anchored to the newest day (see the module doc) this is empty for any window that
+ * does not span a transition, which is what keeps the mark meaningful.
  *
  * Days are compared at local midday, deliberately: it is far from any transition instant, so the
  * lookup can never land inside the ambiguous or non-existent hour itself.

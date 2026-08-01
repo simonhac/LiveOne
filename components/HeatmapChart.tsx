@@ -26,6 +26,7 @@ import {
   bucketHeatmap,
   daysOffFrame,
   formatUtcOffset,
+  resolveFrameOffsetMin,
 } from "@/lib/heatmap-buckets";
 import {
   BLACK_SENTINEL,
@@ -133,9 +134,9 @@ interface HeatmapChartProps {
   /** IANA display zone — used ONLY to work out which days were on a different real offset. */
   timezone: string;
   /**
-   * `areas.day_offset_min` — the fixed offset every day is bucketed and labelled in. NOT the tz
-   * offset (they diverge after a re-bucket) and NOT the IANA zone (which observes DST, which is what
-   * used to lose an hour of data twice a year). See lib/heatmap-buckets.ts.
+   * `areas.day_offset_min` — the FALLBACK frame, used only when `timezone` is unusable. The grid is
+   * normally bucketed in the newest day's real offset; see `resolveFrameOffsetMin` and the rationale
+   * in lib/heatmap-buckets.ts for why the frame rolls rather than sitting on standard time.
    */
   dayOffsetMin: number;
   palette: HeatmapPaletteKey;
@@ -160,7 +161,9 @@ interface HeatmapData {
   max: number;
   xLabels: string[]; // Time labels
   yLabels: string[]; // Date labels
-  /** Date keys whose real UTC offset differed from the labelling frame (DST). Asterisked in the axis. */
+  /** The offset the whole grid is bucketed and labelled in. */
+  frameOffsetMin: number;
+  /** Date keys whose real UTC offset differed from the frame (DST). Asterisked in the axis. */
   offFrameDays: Set<string>;
 }
 
@@ -313,13 +316,24 @@ export default function HeatmapChart({
       return null; // surfaces as the "No data found for this point" error path
     }
 
-    // Bucket by the FIXED day offset, never the DST-aware zone — see lib/heatmap-buckets.ts for
-    // why (a 46/50-slot local day used to lose an hour or fabricate a gap). Unit-tested there
-    // against both real Melbourne transitions.
-    const bucketed = bucketHeatmap(data as (number | null)[], {
-      firstIntervalEndMs: new Date(firstInterval).getTime(),
+    // ONE offset for the whole grid, so every day is exactly 48 slots and the DST hour-loss /
+    // phantom-gap defects cannot occur. The frame follows the NEWEST day's real offset rather than
+    // standard time — with standard time every row of a midsummer window is off-frame, which makes
+    // the asterisk meaningless. Measured and unit-tested in lib/heatmap-buckets.ts.
+    const firstIntervalEndMs = new Date(firstInterval).getTime();
+    const values = data as (number | null)[];
+    const lastReadingMs =
+      firstIntervalEndMs + Math.max(0, values.length - 1) * intervalMs;
+    const frameOffsetMin = resolveFrameOffsetMin(
+      lastReadingMs,
+      timezone,
+      dayOffsetMin, // fallback if display_timezone is unusable
+    );
+
+    const bucketed = bucketHeatmap(values, {
+      firstIntervalEndMs,
       intervalMs,
-      dayOffsetMin,
+      frameOffsetMin,
     });
 
     return {
@@ -328,9 +342,10 @@ export default function HeatmapChart({
       max: bucketed.max,
       xLabels: bucketed.timeLabels,
       yLabels: bucketed.dayKeys,
-      // Rows the axis frame does not describe: the site was on a different real offset that day, so
-      // its columns read an hour out. Marked with an asterisk + footnote rather than silently shown.
-      offFrameDays: daysOffFrame(bucketed.dayKeys, timezone, dayOffsetMin),
+      frameOffsetMin,
+      // Rows the frame does not describe: the site was on a different real offset that day, so its
+      // columns read an hour out. Marked with an asterisk + footnote rather than silently shown.
+      offFrameDays: daysOffFrame(bucketed.dayKeys, timezone, frameOffsetMin),
     };
   }, [fetchResult, pointPath, metricType, timezone, dayOffsetMin]);
 
