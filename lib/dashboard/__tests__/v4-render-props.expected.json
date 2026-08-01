@@ -10,7 +10,8 @@
         "id": "n_amber_now",
         "kind": "card",
         "type": "amber-now"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -38,7 +39,8 @@
         "id": "n_amber_timeline",
         "kind": "card",
         "type": "amber-timeline"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -64,7 +66,8 @@
         "id": "n_b_dm",
         "kind": "card",
         "type": "device-metrics"
-      }
+      },
+      "sharedSiteData": false
     },
     "leaves": [
       {
@@ -87,7 +90,8 @@
         "id": "n_batt_contents",
         "kind": "card",
         "type": "battery-contents"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -109,7 +113,8 @@
         "id": "n_batt_prov",
         "kind": "card",
         "type": "battery-provenance-history"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -135,7 +140,8 @@
         "id": "n_chart_lines",
         "kind": "card",
         "type": "chart"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -143,6 +149,7 @@
         "props": {
           "className": "h-full min-h-[360px]",
           "maxPowerHint": 9,
+          "sharedSiteData": true,
           "systemId": 1,
           "timezoneOffsetMin": 600
         }
@@ -178,7 +185,8 @@
         "id": "n_daily_stripe",
         "kind": "card",
         "type": "daily-stripe"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": []
   },
@@ -199,7 +207,8 @@
         "id": "n_dm_device",
         "kind": "card",
         "type": "device-metrics"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -226,7 +235,8 @@
         "id": "n_dm_inherit",
         "kind": "card",
         "type": "device-metrics"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -250,7 +260,8 @@
         "id": "n_ev_prov",
         "kind": "card",
         "type": "ev-provenance"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -278,7 +289,8 @@
         "id": "n_gen_device",
         "kind": "card",
         "type": "generator-runs"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -301,7 +313,8 @@
         "id": "n_gen_inherit",
         "kind": "card",
         "type": "generator-runs"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -331,7 +344,8 @@
         "id": "n_heatmap",
         "kind": "card",
         "type": "heatmap"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -357,7 +371,8 @@
         "id": "n_heatmap_bare",
         "kind": "card",
         "type": "heatmap"
-      }
+      },
+      "sharedSiteData": true
     },
     "leaves": [
       {
@@ -381,11 +396,7 @@
           "sankeyOptionsKey": "n_sankey:01912e2a-0000-7000-8000-000000000001:db_fixture",
           "siteCapable": true,
           "systemId": "1",
-          "visibleKeys": [
-            "chart:generation",
-            "chart:load",
-            "sankey"
-          ]
+          "visibleKeys": ["chart:generation", "chart:load", "sankey"]
         }
       }
     ]

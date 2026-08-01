@@ -25,12 +25,25 @@ export interface ProcessedSiteData {
    *  tile's sparkline is always a 24h/5m window, which the D site fetch already is, so it reads this
    *  instead of firing its own `/api/history` call in that case. */
   hwsTemperature?: { timestamps: Date[]; values: (number | null)[] } | null;
+  /**
+   * Every series of this fetch's `/api/history` response, UNFILTERED and UNSPLIT — i.e. before the
+   * power/SoC/hws partition and before `splitBatteryPower`. `LinesChartCard` feeds it straight to
+   * `buildChartData` (whose `findSeries` micromatches on `id`), which is how a `lines` chart rides
+   * this fetch instead of issuing a second, redundant `/api/history` for the same window.
+   *
+   * `fetchAndProcessSiteData` — the only producer — sets this on EVERY path where the HTTP fetch
+   * succeeded, including the ones where there is nothing to chart as a site (no series at all, or
+   * none of type `power`): an area the site processor can't chart must still be able to hand the
+   * lines chart its raw series, or the merge would trade one request for a blank card. Optional
+   * only so hand-built `ProcessedSiteData` fixtures (energy-flow-matrix tests) need not carry it.
+   */
+  rawSeries?: ParsedSeries[];
 }
 
 /**
  * Series data from the history API with parsed path
  */
-interface ParsedSeries {
+export interface ParsedSeries {
   id: string;
   type: string;
   units: string;
@@ -289,14 +302,19 @@ function calculateTimeWindow(
 }
 
 /**
- * Fetch site data from API and prepare it for processing
+ * Fetch site data from API and prepare it for processing.
+ *
+ * Returns BOTH halves separately: `rawSeries` (every series the response carried, always) and
+ * `processable` (null when there is nothing to chart as a site). They are split because the two have
+ * different audiences — the stacked charts/Sankey need the processed halves, while the `lines` chart
+ * rides `rawSeries` and must still get its data on the paths where the site processing bails.
  */
 async function fetchSiteData(
   systemId: string,
   period: ChartTimeRange,
   startTime?: string,
   endTime?: string,
-): Promise<FetchedSiteData | null> {
+): Promise<{ rawSeries: ParsedSeries[]; processable: FetchedSiteData | null }> {
   // Map period to request parameters. `duration` (the `last=` live window) is only used by D/W —
   // M/Y always pass an explicit `startTime`/`endTime` calendar window.
   let requestInterval: string;
@@ -345,7 +363,7 @@ async function fetchSiteData(
 
   if (allSeries.length === 0) {
     console.warn("No series data available in response");
-    return null;
+    return { rawSeries: allSeries, processable: null };
   }
 
   // Separate power, SoC, and hot-water-temperature series. SoC/hws series are typed "power" in the
@@ -362,7 +380,7 @@ async function fetchSiteData(
   );
   if (powerSeries.length === 0) {
     console.warn("No power series data available in response");
-    return null;
+    return { rawSeries: allSeries, processable: null };
   }
 
   // Split battery power into charge/discharge
@@ -394,17 +412,20 @@ async function fetchSiteData(
     calculateTimeWindow(timelineSeries, period, startTime, endTime);
 
   return {
-    powerSeries,
-    socSeries,
-    hwsSeries,
-    timestamps,
-    selectedIndices,
-    filteredTimestamps,
-    requestInterval,
-    requestStart,
-    requestEnd,
-    flowMatrix,
-    attributedFlow,
+    rawSeries: allSeries,
+    processable: {
+      powerSeries,
+      socSeries,
+      hwsSeries,
+      timestamps,
+      selectedIndices,
+      filteredTimestamps,
+      requestInterval,
+      requestStart,
+      requestEnd,
+      flowMatrix,
+      attributedFlow,
+    },
   };
 }
 
@@ -717,7 +738,10 @@ function addSocSeries(
 /**
  * Process site data for both load and generation charts
  */
-function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
+function processSiteData(
+  fetchedData: FetchedSiteData,
+  rawSeries: ParsedSeries[],
+): ProcessedSiteData {
   const {
     powerSeries,
     socSeries,
@@ -734,6 +758,7 @@ function processSiteData(fetchedData: FetchedSiteData): ProcessedSiteData {
   const processedData: ProcessedSiteData = {
     load: null,
     generation: null,
+    rawSeries,
     requestStart,
     requestEnd,
     flowMatrix,
@@ -792,14 +817,20 @@ export async function fetchAndProcessSiteData(
   startTime?: string,
   endTime?: string,
 ): Promise<ProcessedSiteData> {
-  const fetchedData = await fetchSiteData(systemId, period, startTime, endTime);
+  const { rawSeries, processable } = await fetchSiteData(
+    systemId,
+    period,
+    startTime,
+    endTime,
+  );
 
-  if (!fetchedData) {
+  if (!processable) {
     return {
       load: null,
       generation: null,
+      rawSeries,
     };
   }
 
-  return processSiteData(fetchedData);
+  return processSiteData(processable, rawSeries);
 }

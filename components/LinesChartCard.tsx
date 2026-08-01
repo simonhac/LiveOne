@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { historyQuery } from "@/lib/queries";
+import { historyQuery, siteDataQuery } from "@/lib/queries";
 import ChartTooltip from "./ChartTooltip";
 import ServerErrorModal from "./ServerErrorModal";
 import DashboardChart from "./DashboardChart";
@@ -19,6 +19,12 @@ interface LinesChartCardProps {
   systemId: number; // Device ID (e.g., 648, 1586)
   /** Device/area timezone offset (minutes) — drives the navigator label + historical URL encoding. */
   timezoneOffsetMin: number;
+  /**
+   * True ⇒ a SiteChartsGroup for this same handle is mounted and driving `siteDataQuery`, so for D/W
+   * this chart reads THAT payload instead of firing its own `/api/history` (see the fetch note
+   * below). Undefined/false ⇒ nothing else is fetching site data, so the own-query path is used.
+   */
+  sharedSiteData?: boolean;
 }
 
 export default function LinesChartCard({
@@ -26,6 +32,7 @@ export default function LinesChartCard({
   maxPowerHint,
   systemId,
   timezoneOffsetMin,
+  sharedSiteData,
 }: LinesChartCardProps) {
   const [serverError, setServerError] = useState<{
     type: "connection" | "server" | null;
@@ -71,18 +78,51 @@ export default function LinesChartCard({
       ? encodeHistoryWindow(start, end, requestInterval)
       : null;
 
+  // Ride the section's site-data fetch instead of issuing our own, when one exists and covers us.
+  //
+  // The site fetch (`lib/site-data-processor.ts`) requests `*/power.avg,bidi.battery/soc.last` over
+  // the SAME interval and window as this chart for D (5m/24h) and W (30m/168h) — a strict superset
+  // of `buildSeriesParam(false)`, and historical windows go through the same `encodeHistoryWindow`.
+  // So for D/W the second `/api/history` was pure duplication; we read `rawSeries` off that payload
+  // and hand it to the identical `buildChartData` below. Same pattern as `tiles/hot-water.tsx`.
+  //
+  // 🛑 D/W ONLY. M/Y switch this chart to energy mode, where `buildSeriesParam(true)` asks for
+  // `*/energy.delta` + `bidi.battery/soc.{avg,min,max}` — series the site fetch does NOT request at
+  // `1d`. Widening it there would cost every dashboard's M/Y view, so M/Y keep their own query.
+  const useShared = !!sharedSiteData && (period === "D" || period === "W");
+
+  const {
+    data: siteData,
+    isPending: sitePending,
+    isFetching: siteFetching,
+    isError: siteIsError,
+    error: siteError,
+  } = useQuery(
+    siteDataQuery({
+      systemId,
+      period,
+      // The COMMITTED window, matching what SiteChartsCard passes — same key, one shared fetch, and
+      // the two `useSettledWindow` committers then observe one `isFetching`.
+      start,
+      end,
+      timezoneOffsetMin,
+      enabled: useShared,
+    }),
+  );
+
   const {
     data: rawHistory,
-    isPending,
-    isFetching,
-    isError,
-    error: queryError,
+    isPending: historyPending,
+    isFetching: historyFetching,
+    isError: historyIsError,
+    error: historyError,
   } = useQuery(
     historyQuery({
       systemId,
       interval: requestInterval,
       series: buildSeriesParam(requestInterval === "1d"),
       timezoneOffsetMin,
+      enabled: !useShared,
       ...(historicalWindow
         ? {
             startTime: historicalWindow.startTime,
@@ -92,22 +132,47 @@ export default function LinesChartCard({
     }),
   );
 
+  // Everything below reads the ACTIVE query only — the disabled one sits at isPending:true forever,
+  // so mixing them would strand the card on "Loading chart..." (and stall useSettledWindow, which
+  // advances to the next requested window only when the current fetch reports it has settled).
+  const isPending = useShared ? sitePending : historyPending;
+  const isFetching = useShared ? siteFetching : historyFetching;
+  const isError = useShared ? siteIsError : historyIsError;
+  const queryError = useShared ? siteError : historyError;
+
   // Report the fetch state back to the committer so it advances to the next requested window only
   // once the current fetch settles (single-flight — see useSettledWindow).
   useEffect(() => {
     reportHistoryFetching(isFetching);
   }, [isFetching, reportHistoryFetching]);
 
+  // The raw OpenNEM-shaped payload `buildChartData` consumes, from whichever query is active. The
+  // shared path re-wraps `siteData.rawSeries` as `{ data }` — those are the response's series
+  // verbatim (pre-filter, pre-battery-split), so `findSeries`' micromatch on `id` behaves identically
+  // to the own-fetch path.
+  // Memoized: the shared path allocates a wrapper, and an unstable one here would defeat the
+  // referential stability the chartData useMemo below exists to provide (it would recompute, and
+  // hand DashboardChart fresh arrays, on EVERY render rather than only on refetch).
+  const rawChartSource = useMemo(
+    () =>
+      useShared
+        ? siteData
+          ? { data: siteData.rawSeries ?? [] }
+          : undefined
+        : rawHistory,
+    [useShared, siteData, rawHistory],
+  );
+
   const chartData = useMemo<ChartData | null>(
     () =>
       buildChartData(
-        rawHistory,
+        rawChartSource,
         period,
         start && end
           ? { start: new Date(start), end: new Date(end) }
           : undefined,
       ),
-    [rawHistory, period, start, end],
+    [rawChartSource, period, start, end],
   );
 
   const loading = isPending;
