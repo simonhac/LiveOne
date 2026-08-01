@@ -137,6 +137,23 @@ Per-source intensities:
 | battery | **the fold's per-interval blend** (below) | ″                      | ″                                                                                                                         |
 | other   | unknown (null)                            | unknown                | unknown                                                                                                                   |
 
+#### The revenue leg
+
+Every leg above prices energy by its **source** — what it cost to produce or buy. `revenueC` is the
+mirror: it prices energy by its **sink**, from an optional per-load price series (`loadPrices`), and
+accumulates in the same loop so it can't drift from energy either. Today the only priced sink is
+`load.grid` — the feed-in tariff — so every other column is zero with a zero denominator.
+
+This exists because `costC` on a `load.grid` edge is **not** feed-in income: it is the cost basis of
+the energy you exported (≈0 for solar, the blend for battery-sourced export). On Kinkora 2026-07-30
+that distinction is 39.7 c of cost basis versus ~94 c actually earned. Read `revenueC` (positive =
+money in) for income; read `costC` for what the exported energy cost you.
+
+Stored as `point_readings_flow_attr_1d.revenue_c`, null when nothing on the edge was sold or the area
+has no export tariff. `revenueKnownKwh` on the provenance summaries is the coverage denominator —
+callers should refuse to render a total that isn't essentially fully priced, or a half-backfilled
+window reads as a confident, too-small number.
+
 ### The fold: the battery model, step by step
 
 `lib/battery-provenance/fold.ts` — pure, deterministic, DB-free (the structural analogue of
@@ -614,8 +631,34 @@ only a per-interval `exportPrice[]` series — it never sees modes/schedules.
 
 Designed so a future **persisted tariff device** drops in with no fold change — it would materialise
 the same schedule (reusing `ScheduleTariffProvider`) into a `bidi.grid.export/rate` point the loader
-reads exactly like Amber. The per-day attribution rollup stays ACTUAL cost; opportunity lives only in
-the battery fold / the Contents card.
+reads exactly like Amber. The per-day attribution rollup carries BOTH the actual cost (`cost_c`) and
+the feed-in income (`revenue_c`, see [the revenue leg](#the-revenue-leg)); opportunity cost still lives
+only in the battery fold / the Contents card.
+
+#### ⚠️ The two modes disagree about the sign of the feed-in price
+
+This has caused real bugs, so state it plainly. `resolveExportPriceSeries` returns each mode's series
+**verbatim**, and they use opposite conventions:
+
+| mode | source | sign when you are being PAID |
+| --- | --- | --- |
+| `amber` | `bidi.grid.export/rate` = Amber's raw feedIn `perKwh` | **negative** |
+| `schedule` | `ExportTariffPlan.cPerKwh` | **positive** |
+
+Anything that presents feed-in money to a user must normalise first — use
+`resolveExportReceiptSeries` (same file), which returns the receipts convention (**positive = money
+in**) for both modes. That is what the `revenue_c` leg consumes; `AmberNow` and `BatteryContentsCard`
+apply the same flip for their own live displays.
+
+Two known consequences of the un-normalised series, **not yet fixed**:
+
+- `solarCostOpp` in `compute.ts` floors the raw series at 0, so on an `amber` area it books forgone
+  revenue only in the intervals where exporting would have *cost* money, and zeroes it in exactly the
+  intervals where exporting would have *paid*. `price-opportunity` is therefore approximately inverted
+  for Amber areas. The doc text above ("floored at 0 … nothing was forgone") describes the intent, not
+  the observed behaviour.
+- Fixing it moves published `price-opportunity` values and needs its own backfill, so it is
+  deliberately out of scope of the change that introduced `revenue_c`.
 
 ### Invariants
 

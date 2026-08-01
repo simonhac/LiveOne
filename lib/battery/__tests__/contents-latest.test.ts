@@ -22,7 +22,7 @@ describe("batteryContentsFromData", () => {
         [P.renewableFraction]: e(80),
         [P.priceActual]: e(5),
         [P.priceOpportunity]: e(8), // the point IS the additional (delta) component
-        [P.exportRate]: e(7),
+        [P.exportRate]: e(-7), // Amber's feedIn perKwh: NEGATIVE = you are paid 7 c/kWh
       }),
     );
     expect(v).not.toBeNull();
@@ -31,8 +31,17 @@ describe("batteryContentsFromData", () => {
     expect(v!.totalCostActualC).toBeCloseTo(50, 6); // 5 × 10
     expect(v!.totalCostOpportunityC).toBeCloseTo(80, 6); // 8 × 10
     expect(v!.renewableKwh).toBeCloseTo(8, 6); // 80% × 10
-    expect(v!.exportValueC).toBeCloseTo(70, 6); // 7 × 10
+    expect(v!.exportValueC).toBeCloseTo(70, 6); // −(−7 × 10) — a credit reads POSITIVE
     expect(v!.measurementTime).toBe(iso);
+  });
+
+  it("reports a positive-rate (pay-to-export) window as a NEGATIVE export value", () => {
+    // The other half of Amber's convention: a POSITIVE feedIn perKwh means exporting costs you money
+    // (negative wholesale), so the stored energy's export value is genuinely negative.
+    const v = batteryContentsFromData(
+      data({ [P.storedEnergy]: e(10), [P.exportRate]: e(3) }),
+    );
+    expect(v!.exportValueC).toBeCloseTo(-30, 6);
   });
 
   it("gates export value on the presence of an export tariff", () => {

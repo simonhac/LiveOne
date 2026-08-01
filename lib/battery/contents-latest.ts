@@ -51,7 +51,15 @@ export interface BatteryContentsValues {
   totalCostOpportunityC: number | null;
   /** Renewable energy content (kWh) = renewableFraction% × E. */
   renewableKwh: number | null;
-  /** Value of the contents at the current feed-in rate (cents) = exportRate × E; null without a tariff. */
+  /**
+   * Value of the contents at the current feed-in rate (cents, POSITIVE = what you'd be paid)
+   * = −exportRate × E; null without a tariff.
+   *
+   * The negation is the point: `bidi.grid.export/rate` carries Amber's raw feedIn `perKwh`, which is
+   * NEGATIVE when you are being paid (`AmberNow.tsx` flips it the same way to display a feed-in price).
+   * Without it this card reported a battery holding 36.8 kWh under a −1.98 c/kWh feed-in as
+   * "−$0.73 export value" — i.e. showed a credit as a debt.
+   */
   exportValueC: number | null;
 
   /** Newest measurement time across the battery points (ISO-8601), for staleness. */
@@ -114,6 +122,7 @@ export function batteryContentsFromData(
 
   const scale = (per: number | null): number | null =>
     E != null && per != null ? per * E : null;
+  const negate = (v: number | null): number | null => (v == null ? null : -v);
 
   const newestMs = [stored, carbon, renewable, priceA, priceO]
     .map((m) => (m?.measurementTime ? Date.parse(m.measurementTime) : NaN))
@@ -133,7 +142,9 @@ export function batteryContentsFromData(
       E != null && renewableFraction != null
         ? (renewableFraction / 100) * E
         : null,
-    exportValueC: scale(exportRate),
+    // Negated — see the field doc: the stored rate is paid-is-negative, the displayed value is
+    // paid-is-positive.
+    exportValueC: negate(scale(exportRate)),
     measurementTime: newestMs.length
       ? new Date(Math.max(...newestMs)).toISOString()
       : null,

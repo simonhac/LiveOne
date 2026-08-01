@@ -126,6 +126,22 @@ export function labelForFlowPath(
 }
 
 /**
+ * The per-load SELL price series feeding `computeFlowAccounting`'s `revenueC` leg. Only the grid EXPORT
+ * sink is priced — by the resolved feed-in tariff (`resolveExportPriceSeries`) — because it is the only
+ * sink that pays us; every other load consumes energy rather than buying it, so it gets `null` ("no
+ * knowable price") and contributes nothing to the revenue leg or its denominator.
+ *
+ * Structurally typed on `path` so this stays importable from both the engine and the history path
+ * without dragging `FlowSeries` (and `flow-matrix-core`'s deliberately domain-free module) along.
+ */
+export function buildLoadPrices(
+  loads: { path: string }[],
+  exportPrice: (number | null)[],
+): ((number | null)[] | null)[] {
+  return loads.map((l) => (l.path === "load.grid" ? exportPrice : null));
+}
+
+/**
  * Canonical ordering ranks so the served matrix tiles like the browser's `buildFlowSeries`
  * order: solar → battery → grid for sources; battery → grid → master → sub-meters →
  * rest-of-house for loads. Ties break alphabetically by path.
@@ -224,10 +240,11 @@ export function toDailyFlowMatrices(
     renewableKwh?: unknown;
     selfRenewableKwh?: unknown;
     costC?: unknown;
+    revenueC?: unknown;
     estimatedKwh?: unknown;
   }[],
   displayNameByStem: Map<string, string>,
-  /** Also build the metric legs (emissions/renewable/cost/estimated) from the rows — `source=modern`. */
+  /** Also build the metric legs (emissions/renewable/cost/revenue/estimated) from the rows — `source=modern`. */
   includeMetrics = false,
 ): DailyFlowMatrices {
   const sourcePaths = [...new Set(rows.map((r) => r.sourcePath))].sort(
@@ -251,6 +268,7 @@ export function toDailyFlowMatrices(
     renewableKwh?: (number | null)[][];
     selfRenewableKwh?: (number | null)[][];
     costC?: (number | null)[][];
+    revenueC?: (number | null)[][];
     estimatedKwh?: number[][];
   }
   const num = (v: unknown): number | null => (v == null ? null : Number(v));
@@ -265,6 +283,7 @@ export function toDailyFlowMatrices(
         d.renewableKwh = nullGrid();
         d.selfRenewableKwh = nullGrid();
         d.costC = nullGrid();
+        d.revenueC = nullGrid();
         d.estimatedKwh = numGrid();
       }
       byDay.set(r.day, d);
@@ -277,6 +296,7 @@ export function toDailyFlowMatrices(
       d.renewableKwh![si][li] = num(r.renewableKwh);
       d.selfRenewableKwh![si][li] = num(r.selfRenewableKwh);
       d.costC![si][li] = num(r.costC);
+      d.revenueC![si][li] = num(r.revenueC);
       d.estimatedKwh![si][li] = Number(r.estimatedKwh) || 0;
     }
   }

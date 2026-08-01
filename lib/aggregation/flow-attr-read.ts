@@ -40,6 +40,7 @@ export async function readAttributedDailyMatrices(
       renewableKwh: pointReadingsFlowAttr1d.renewableKwh,
       selfRenewableKwh: pointReadingsFlowAttr1d.selfRenewableKwh,
       costC: pointReadingsFlowAttr1d.costC,
+      revenueC: pointReadingsFlowAttr1d.revenueC,
       estimatedKwh: pointReadingsFlowAttr1d.estimatedKwh,
     })
     .from(pointReadingsFlowAttr1d)
