@@ -841,6 +841,22 @@ Two things that were not the stated goal and turned out to matter as much:
 - **`HeatmapChart` lost 224 lines** (899 → 675) while gaining the DST fix, honest colour scaling and
   a real tooltip — the library was costing more than it provided there.
 
+### Stage 6b — the dead code the port left behind — ✅ DONE 2026-08-01
+
+`lib/charts/datasets.ts` (338 lines of Chart.js dataset config) was entirely dead once
+`DashboardChart` built its own series — **and `series-colours.test.ts` was still testing it.** A guard
+pointing at code no consumer reaches is worse than no guard, because it reads as coverage: the real
+chart's colours could have drifted with the suite green.
+
+`lineSeries` + `SOC_DASH` moved to `lib/charts/line-series.ts` — pure, so the guard can target what
+actually renders — `datasets.ts` is deleted, and the guard was re-negative-controlled against the new
+target (repoint Grid at `CHART_COLORS.ev` → red). It also gained the inverse assertion the old one
+lacked: an all-nulls array must NOT be treated as absent, or defects #1/#2 come back from the other
+direction.
+
+> Worth generalising: **after a port, check what the old code path took with it.** Dead code is
+> ordinary; dead code with live tests pointed at it is a false safety signal.
+
 ---
 
 ## Where this leaves things

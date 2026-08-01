@@ -1,7 +1,7 @@
 import React from "react";
 import Value from "@/components/ui/value";
 import { CHART_COLORS } from "@/lib/chart-colors";
-import { SOC_DASH } from "@/lib/charts/datasets";
+import { SOC_DASH } from "@/lib/charts/line-series";
 
 /**
  * A legend swatch. Solid series get a filled square; a dashed series gets a dashed rule, so the
@@ -50,8 +50,7 @@ function Swatch({ color, dash }: { color: string; dash?: number[] }) {
  * vanished from the legend entirely, and while hovering they flickered out whenever the focused
  * index landed on a null sample (a data gap).
  *
- * `hasBattery`/`hasGrid` mirror the `!= null` tests `buildLineDatasets` uses to decide which datasets
- * to draw, so the legend and the chart now list exactly the same series by construction. Solar, Load
+ * `hasBattery`/`hasGrid` mirror the `!= null` tests `lineSeries` uses to decide which series exist, so the legend and the chart now list exactly the same series by construction. Solar, Load
  * and Battery SoC have no flag because their datasets are unconditional.
  */
 interface ChartTooltipProps {

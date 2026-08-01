@@ -17,7 +17,7 @@ import {
   usePointerIndex,
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
-import { SOC_DASH } from "@/lib/charts/datasets";
+import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
 import type {
   ChartData,
@@ -97,28 +97,6 @@ function barLayout(
       s * slotW +
       (slotW * (1 - barPct)) / 2,
   };
-}
-
-/** The lines variant's series, in draw order, resolved from the shared palette. */
-function lineSeries(d: LineChartData) {
-  const out: Array<{ key: string; colour: string; values: (number | null)[] }> =
-    [
-      { key: "solar", colour: CHART_COLORS.solar.primary, values: d.solar },
-      { key: "load", colour: CHART_COLORS.load, values: d.load },
-    ];
-  // Presence is structural — `!= null`, matching buildLineDatasets. An all-nulls array would be
-  // truthy, which was defect #3.
-  if (d.batteryW != null) {
-    out.push({
-      key: "battery",
-      colour: CHART_COLORS.battery.main,
-      values: d.batteryW,
-    });
-  }
-  if (d.grid != null) {
-    out.push({ key: "grid", colour: CHART_COLORS.grid.main, values: d.grid });
-  }
-  return out;
 }
 
 export default function DashboardChart(props: DashboardChartProps) {
