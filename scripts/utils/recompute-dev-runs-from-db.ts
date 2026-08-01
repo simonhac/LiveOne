@@ -47,10 +47,8 @@ async function main() {
     `Recomputing dev run periods, last ${days}d ` +
       `(${new Date(startMs).toISOString()} .. ${new Date(nowMs).toISOString()})`,
   );
-  const summary = await recomputeRange(startMs, nowMs, nowMs, undefined, {
-    maxAttempts: 3,
-    retryDelayMs: 500,
-    failOnError: true,
+  const summary = await recomputeRange(startMs, nowMs, nowMs, {
+    retry: { maxAttempts: 3, retryDelayMs: 500, failOnError: true },
   });
   console.log(
     `✓ ${summary.trackersProcessed} tracker(s): ` +

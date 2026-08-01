@@ -23,6 +23,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  areaMembers,
   areas,
   derivations,
   devices,
@@ -230,21 +231,50 @@ async function attachSignalUnits(
   return detectors;
 }
 
+/**
+ * Narrow a detector listing to ONE detector — by its `derivations.id`, or by the (handle, role) pair
+ * that names it.
+ *
+ * 🛑 This exists so a recompute can be aimed. `recomputeRange`/`deleteRange` delete-and-reinsert every
+ * enabled detector's intervals over the window, which makes an unscoped historical backfill
+ * DESTRUCTIVE to detectors other than the one being backfilled: a detector whose signal has been
+ * re-pointed (Daylesford's generator moved to the DeepSea engine-speed point, whose history starts
+ * 2026-07-11) regenerates NOTHING for a window predating its current signal, so its existing rows
+ * are deleted and not replaced. Scope every historical pass.
+ */
+export type RunDetectorFilter =
+  | { derivationId: string }
+  | { handle: number; role: string };
+
 /** All enabled run-detector derivations, resolved. Unresolvable rows are dropped with a warning. */
-export async function listEnabledRunDetectors(): Promise<
-  ResolvedRunDetector[]
-> {
+export async function listEnabledRunDetectors(
+  filter?: RunDetectorFilter,
+): Promise<ResolvedRunDetector[]> {
+  const conds = [
+    eq(derivations.kind, RUN_DETECTOR_KIND),
+    eq(derivations.enabled, true),
+  ];
+  if (filter) {
+    if ("derivationId" in filter) {
+      conds.push(eq(derivations.id, filter.derivationId));
+    } else {
+      const areaId = await resolveAreaIdForHandle(filter.handle);
+      // An unresolvable handle must select NOTHING, never everything. The caller asked to be
+      // narrowed; silently widening back to the whole fleet is how a scoped backfill becomes a
+      // fleet-wide delete-and-reinsert.
+      if (!areaId) return [];
+      conds.push(
+        eq(derivations.areaId, areaId),
+        eq(derivations.role, filter.role),
+      );
+    }
+  }
   const rows = await requirePlanetscaleDb()
     .select({ d: derivations, a: areaFactsProjection })
     .from(derivations)
     .innerJoin(areas, eq(areas.id, derivations.areaId))
     .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-    .where(
-      and(
-        eq(derivations.kind, RUN_DETECTOR_KIND),
-        eq(derivations.enabled, true),
-      ),
-    );
+    .where(and(...conds));
   return attachSignalUnits(
     rows
       .map(({ d, a }) => resolveRunDetector(d, a))
@@ -301,8 +331,8 @@ export async function hasEnabledRunDetector(
 }
 
 export interface EnsureRunDetectorInput {
-  /** The handle whose AREA the detector hangs off — see the note on placement below. */
-  handle: number;
+  /** The area the detector hangs off — see the placement note below. */
+  areaId: string;
   role: RoleId;
   name: string;
   /** `points.id` uuid of the series the detector thresholds. */
@@ -314,23 +344,27 @@ export interface EnsureRunDetectorInput {
   apply: boolean;
 }
 
+export type EnsureRunDetectorStatus =
+  | "created"
+  | "exists"
+  | "no-area"
+  | "not-trackable"
+  | "no-signal-point"
+  | "no-energy-point"
+  | "no-bounds"
+  | "area-not-probed";
+
 export interface EnsureRunDetectorResult {
-  status:
-    | "created"
-    | "exists"
-    | "no-area"
-    | "not-trackable"
-    | "no-signal-point"
-    | "no-energy-point"
-    | "no-bounds";
-  handle: number;
+  status: EnsureRunDetectorStatus;
   role: string;
   derivationId?: string;
   areaId?: string;
+  /** For `area-not-probed`: the member handles that ARE eligible to carry the detector. */
+  memberHandles?: number[];
 }
 
 /**
- * Ensure the run-detector derivation for `(handle's area, role)` exists. The write-side twin of
+ * Ensure the run-detector derivation for `(areaId, role)` exists. The write-side twin of
  * {@link getRunDetectorForHandleRole}, modelled on `ensureHwsDerivation` (lib/hws/register.ts) —
  * until now the only derivation with a writer at all, which is why Daylesford's generator row was
  * hand-written SQL.
@@ -339,23 +373,37 @@ export interface EnsureRunDetectorResult {
  * `prod-dev-sync` copy `derivations` as a plain by-PK upsert: seed prod and dev inherits the same
  * row, pointing at the same `derived_intervals`.
  *
- * 🛑 **WHICH HANDLE.** Pass the handle of the area that OWNS THE SIGNAL POINT'S DEVICE — typically
- * its area-of-one — not the composite site area you want the card on. `capabilitiesForDevice`
- * probes `hasEnabledRunDetector` for each MEMBER handle of an area and never for the area's own
- * handle, so a detector parked on the composite is invisible to the capability that lights its card
- * up. Daylesford's generator detector lives on handle 1 (a member of the Daylesford composite) for
- * exactly this reason. The consequence is that the dashboard card must be pinned with `device:`.
+ * 🛑 **WHICH AREA.** A detector belongs on a device's own AREA-OF-ONE, never on the composite site
+ * area you want the card on. `capabilitiesForDevice` probes `hasEnabledRunDetector` for each MEMBER
+ * handle of an area and never for the area's own handle, so a detector parked on the composite is
+ * invisible to the capability that lights its card up. Daylesford's generator detector lives on
+ * handle 1 (a member of the Daylesford composite) for exactly this reason. The consequence is that
+ * the dashboard card must be pinned with `device:`.
+ *
+ * That rule used to be a docstring a caller had to read and obey; it is now ENFORCED, and stated in
+ * the same terms as the probe it protects: **the area's own handle must be one of its member
+ * devices' handles** — precisely the condition under which `memberSystemIds` will hand this area's
+ * handle to `hasEnabledRunDetector`. A composite fails it (its handle names no device); an
+ * area-of-one passes. Refusal is `area-not-probed`, carrying the member handles that would work.
+ *
+ * ⚠️ What is deliberately NOT checked is where the SIGNAL POINT lives. A detector may watch a point
+ * on a different device entirely, and one does: Daylesford's generator sits on area/handle 1
+ * (Selectronic) with its energy point there, but takes its signal from the DeepSea genset's Engine
+ * Speed on handle 14 — because handle 1's Grid-import proxy was measurably unable to tell a running
+ * genset from a stopped one. `resolveRunDetector` has always allowed this. An earlier version of
+ * this guard required the signal point's device to own the area and would have refused to recreate
+ * Daylesford's own detector; `scripts/utils/v4-surface-smoke.ts` caught it by driving the real row.
  *
  * Every failure mode is a distinct status rather than a throw, because the callers are a dry-run
- * script and (eventually) an admin route, both of which want to report rather than crash. The point
- * existence checks matter: `resolveRunDetector` only WARNS on a dangling `source_points.signal`, so
- * a typo'd uuid would otherwise persist as a detector that silently derives nothing forever.
+ * script and an API route, both of which want to report rather than crash. The point existence
+ * checks matter: `resolveRunDetector` only WARNS on a dangling `source_points.signal`, so a typo'd
+ * uuid would otherwise persist as a detector that silently derives nothing forever.
  */
 export async function ensureRunDetector(
   input: EnsureRunDetectorInput,
 ): Promise<EnsureRunDetectorResult> {
-  const { handle, role, signalPointUid, energyPointUid, params, apply } = input;
-  const base = { handle, role };
+  const { areaId, role, signalPointUid, energyPointUid, params, apply } = input;
+  const base = { role, areaId };
 
   if (!TRACKABLE_ROLE_IDS.includes(role))
     return { ...base, status: "not-trackable" };
@@ -377,8 +425,22 @@ export async function ensureRunDetector(
   if (energyPointUid && !found.has(energyPointUid))
     return { ...base, status: "no-energy-point" };
 
-  const areaId = await resolveAreaIdForHandle(handle);
-  if (!areaId) return { ...base, status: "no-area" };
+  // Is this an area the capability probe will ask? See the WHICH AREA note above.
+  const [handleRow] = await db
+    .select({ handle: legacyHandles.handle })
+    .from(legacyHandles)
+    .where(eq(legacyHandles.areaId, areaId))
+    .limit(1);
+  const memberHandles = (
+    await db
+      .select({ rid: devices.rid })
+      .from(areaMembers)
+      .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
+      .where(eq(areaMembers.areaId, areaId))
+  ).map((r) => r.rid);
+  if (handleRow == null) return { ...base, status: "no-area" };
+  if (!memberHandles.includes(handleRow.handle))
+    return { ...base, status: "area-not-probed", memberHandles };
 
   const id = deriveDerivationId(areaId, RUN_DETECTOR_KIND, role);
   const [existing] = await db
@@ -386,8 +448,8 @@ export async function ensureRunDetector(
     .from(derivations)
     .where(eq(derivations.id, id))
     .limit(1);
-  if (existing) return { ...base, status: "exists", derivationId: id, areaId };
-  if (!apply) return { ...base, status: "created", derivationId: id, areaId };
+  if (existing) return { ...base, status: "exists", derivationId: id };
+  if (!apply) return { ...base, status: "created", derivationId: id };
 
   await db.insert(derivations).values({
     id,
@@ -405,7 +467,21 @@ export async function ensureRunDetector(
     } satisfies RunDetectorSourcePoints,
   });
 
-  return { ...base, status: "created", derivationId: id, areaId };
+  return { ...base, status: "created", derivationId: id };
+}
+
+/**
+ * `ensureRunDetector` addressed by the legacy integer handle — what the seed script's `--handle`
+ * flag means. Kept as a thin wrapper rather than a second implementation so the placement rule is
+ * enforced in exactly one place.
+ */
+export async function ensureRunDetectorForHandle(
+  input: Omit<EnsureRunDetectorInput, "areaId"> & { handle: number },
+): Promise<EnsureRunDetectorResult> {
+  const areaId = await resolveAreaIdForHandle(input.handle);
+  if (!areaId) return { role: input.role, status: "no-area" };
+  const { handle: _handle, ...rest } = input;
+  return ensureRunDetector({ ...rest, areaId });
 }
 
 // ---------------------------------------------------------------------------

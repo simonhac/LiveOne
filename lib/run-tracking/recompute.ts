@@ -6,7 +6,7 @@
  * Decoupling invariant: this reads only the serving store (`point_readings`) and writes only
  * `derived_intervals`. It is never wired into the queue receiver / hot ingest path.
  */
-import { and, gte, lte } from "drizzle-orm";
+import { and, gte, inArray, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { derivedIntervals } from "@/lib/db/planetscale/schema";
 import {
@@ -14,7 +14,10 @@ import {
   type TransientPostgresRetryOptions,
 } from "@/lib/db/planetscale/transient-retry";
 import { recomputeIntervalsForWindow } from "@/lib/db/planetscale/derived-intervals-pg";
-import { listEnabledRunDetectors } from "@/lib/derivations/resolve";
+import {
+  listEnabledRunDetectors,
+  type RunDetectorFilter,
+} from "@/lib/derivations/resolve";
 
 export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // 6h trailing window for the minutely cron
 
@@ -46,6 +49,22 @@ export interface RecomputeSummary {
 export interface RecomputeRetryOptions extends TransientPostgresRetryOptions {
   /** Surface exhausted tracker failures after processing the remaining trackers. */
   failOnError?: boolean;
+}
+
+export interface RecomputeRangeOptions {
+  /** Called after each chunk (for a CLI progress bar). */
+  onProgress?: (info: {
+    tracker: string;
+    chunkStartMs: number;
+    chunkEndMs: number;
+    inserted: number;
+  }) => void;
+  retry?: RecomputeRetryOptions;
+  /**
+   * Narrow the pass to ONE detector. Omitted = every enabled detector, which is correct for the
+   * trailing reconcile and wrong for anything historical — see {@link RunDetectorFilter}.
+   */
+  filter?: RunDetectorFilter;
 }
 
 /** Recompute every enabled run detector over [winStartMs, winEndMs], "as of" nowMs. */
@@ -120,23 +139,23 @@ export async function reconcileTrailingWindow(
  * the whole history in one transaction. Each chunk is its own bounded read + delete-and-reinsert;
  * a run spanning a chunk boundary is stitched by the next chunk's anchor/margin. Detection is "as
  * of" real now, so historical tails close correctly while a range ending at now keeps its open
- * period. `onProgress` is called after each chunk (for a CLI progress bar).
+ * period. `options.onProgress` is called after each chunk (for a CLI progress bar).
+ *
+ * 🛑 `options.filter` is not optional in spirit for a HISTORICAL range: this is delete-and-reinsert,
+ * so an unscoped pass rebuilds every detector, and one whose signal has been re-pointed loses the
+ * rows its current signal cannot reproduce. See {@link RunDetectorFilter}.
  */
 export async function recomputeRange(
   startMs: number,
   endMs: number,
   nowMs: number,
-  onProgress?: (info: {
-    tracker: string;
-    chunkStartMs: number;
-    chunkEndMs: number;
-    inserted: number;
-  }) => void,
-  retryOptions: RecomputeRetryOptions = {},
+  options: RecomputeRangeOptions = {},
 ): Promise<RecomputeSummary> {
+  const { onProgress, filter } = options;
+  const retryOptions = options.retry ?? {};
   const db = requirePlanetscaleDb();
   const trackers = await withTransientPostgresRetry(
-    () => listEnabledRunDetectors(),
+    () => listEnabledRunDetectors(filter),
     retryOptions,
   );
   let rowsDeleted = 0;
@@ -188,7 +207,8 @@ export async function recomputeRange(
     openPeriods,
   };
   console.log(
-    `[RunTracking] recompute range ${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}: ` +
+    `[RunTracking] recompute range ${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}` +
+      `${filter ? ` [scoped: ${describeFilter(filter)}]` : ""}: ` +
       `${summary.trackersProcessed} trackers, ${summary.rowsInserted} periods`,
   );
   if (retryOptions.failOnError && failures.length > 0) {
@@ -200,23 +220,50 @@ export async function recomputeRange(
   return summary;
 }
 
-/** Delete all derived intervals whose start_time falls in [startMs, endMs] (all detectors). */
+/** One-line rendering of a scope, for the log lines and the cron's JSON response. */
+export function describeFilter(filter: RunDetectorFilter): string {
+  return "derivationId" in filter
+    ? filter.derivationId
+    : `${filter.handle}/${filter.role}`;
+}
+
+/**
+ * Delete derived intervals whose start_time falls in [startMs, endMs].
+ *
+ * Without a `filter` this is EVERY detector's intervals in the window — which is what the unscoped
+ * `action=delete`/`action=regenerate` cron path has always meant, and why a historical range should
+ * carry a filter. With one, only that detector's rows are touched.
+ *
+ * A filter that resolves to no enabled detector deletes NOTHING (and says so), rather than falling
+ * back to the unfiltered delete.
+ */
 export async function deleteRange(
   startMs: number,
   endMs: number,
+  filter?: RunDetectorFilter,
 ): Promise<{ rowsDeleted: number }> {
+  const conds = [
+    gte(derivedIntervals.startTime, new Date(startMs)),
+    lte(derivedIntervals.startTime, new Date(endMs)),
+  ];
+  if (filter) {
+    const ids = (await listEnabledRunDetectors(filter)).map((d) => d.id);
+    if (ids.length === 0) {
+      console.log(
+        `[RunTracking] delete scoped to ${describeFilter(filter)} matched no enabled detector — nothing deleted`,
+      );
+      return { rowsDeleted: 0 };
+    }
+    conds.push(inArray(derivedIntervals.derivationId, ids));
+  }
   const deleted = await requirePlanetscaleDb()
     .delete(derivedIntervals)
-    .where(
-      and(
-        gte(derivedIntervals.startTime, new Date(startMs)),
-        lte(derivedIntervals.startTime, new Date(endMs)),
-      ),
-    )
+    .where(and(...conds))
     .returning({ startTime: derivedIntervals.startTime });
   console.log(
     `[RunTracking] deleted ${deleted.length} run periods in ` +
-      `${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}`,
+      `${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}` +
+      `${filter ? ` [scoped: ${describeFilter(filter)}]` : ""}`,
   );
   return { rowsDeleted: deleted.length };
 }

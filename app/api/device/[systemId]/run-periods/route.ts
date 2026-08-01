@@ -13,6 +13,7 @@ import {
   getRunDetectorForHandleRole,
   type ResolvedRunDetector,
 } from "@/lib/derivations/resolve";
+import { memberSystemIds } from "@/lib/capabilities/server";
 import { Point, type PointId } from "@/lib/ids";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { getUnitDisplay } from "@/lib/point/unit-display";
@@ -222,6 +223,38 @@ async function resolveShape(
 }
 
 /**
+ * The enabled detector for `(handle, role)`, looking through an AREA'S MEMBERS when the handle
+ * itself has none.
+ *
+ * A detector hangs off the area-of-one of the device that owns its signal point (`ensureRunDetector`
+ * says so at length, and `capabilitiesForDevice` probes members for exactly this reason) — never off
+ * the composite site area. But a composite is precisely what the caller usually holds: the stacked
+ * chart is keyed on Kinkora Unified (handle 8) while the EV detector lives on Kinkora Mondo (6). So
+ * ask the handle first, then its members.
+ *
+ * First member wins. A composite with two detectors for the same role is not a shape that exists
+ * here (a role is one physical thing per site), and picking arbitrarily between them would be a
+ * worse answer than picking the first — but neither is a *good* answer, so the ambiguity is left
+ * visible rather than papered over with a merge.
+ *
+ * `memberSystemIds` returns `[handle]` for a real device, so the fallback is a no-op — not a second
+ * lookup — in the single-device case.
+ */
+async function resolveDetector(
+  handle: number,
+  role: string,
+): Promise<ResolvedRunDetector | null> {
+  const own = await getRunDetectorForHandleRole(handle, role);
+  if (own) return own;
+  for (const member of await memberSystemIds(handle)) {
+    if (member === handle) continue;
+    const det = await getRunDetectorForHandleRole(member, role);
+    if (det) return det;
+  }
+  return null;
+}
+
+/**
  * GET /api/device/{systemId}/run-periods?role=generator&period=30d
  *
  * Bounded, indexed read of persisted device run periods. The open (NULL end_time) period renders
@@ -256,8 +289,9 @@ export async function GET(
 
     // The intervals hang off the run detector for this (handle, role). No detector configured →
     // no rows, which is the same empty response this endpoint has always given for an untracked
-    // system. Resolved through the shared handle→area mapping so reader and writer always agree.
-    const detector = await getRunDetectorForHandleRole(systemId, role);
+    // system. Resolved through the shared handle→area mapping so reader and writer always agree,
+    // then through the area's members (see `resolveDetector`).
+    const detector = await resolveDetector(systemId, role);
 
     // Paged mode (limit present): most-recent-first, page back through ALL history. Used by the
     // dashboard `runs` card. Bounded by limit (no time window).
