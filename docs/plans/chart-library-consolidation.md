@@ -877,6 +877,29 @@ chart was simplified rather than reproduced).
   how many labels actually fit from measured text width would be better.
 - **Per-metric fixed heatmap ranges** (SoC always 0–100 rather than min-observed–max-observed).
 
+### 🛑 What has NOT been verified — read before merging
+
+Every chart in this work was verified **in isolation, against fixtures**, in the gallery. The real
+pages have not been loaded once since the port, because they are Clerk-gated and the harness cannot
+reach them. Specifically **unverified**:
+
+- `/dashboard/[...slug]` and `/device/[...slug]` rendering against **real data** from `liveone-dev` —
+  including a device with no battery, an off-grid device, and a window containing genuine gaps.
+- **Cross-chart hover sync.** `ChartFocusContext` is untouched and its contract is unchanged, but the
+  producers changed: `onHover(_, activeElements, _)` → `onHoverIndex`. Hover the lines chart and
+  confirm the stacked chart, the energy table and the Sankey all follow — and the reverse.
+- **Series toggling** in `EnergyTable` (it drives `effectiveVisibleSeries`, which the stacked variant
+  now reads directly) and the cycling metric column.
+- **D/W/M/Y paging** via the temporal navigator, including a historical window, where `windowEnd` is
+  the last data timestamp rather than the clock.
+- **Touch behaviour on a real phone.** `usePointerIndex` keeps the `"ontouchstart" in window`
+  desktop-only-clear rule, but tap-to-focus has not been exercised on hardware.
+- The battery-provenance panel end to end (`ProvenanceChart` was verified only via fixtures).
+
+Also note `npm run test:all` currently fails 4 integration suites — `history-api`, `device/point`,
+`device/points`, `device/series`. Those hit `http://localhost:3000` and fail identically on
+`origin/main` with no server running. **Pre-existing and unrelated**; none is chart-related.
+
 **The standing rule for anyone touching these charts:** the pixel gate is tight, and it is tight
 *because* every port re-baselined deliberately. If a baseline moves, that is a finding — explain it
 before updating it. Three of this project's real bugs were caught exactly that way, and one of them
