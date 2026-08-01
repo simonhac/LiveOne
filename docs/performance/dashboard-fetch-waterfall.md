@@ -13,6 +13,7 @@ overall **settle time** (when the last request finishes). Run in a real signed-i
 against a real dashboard, not synthetic — this is the actual fetch fan-out a user experiences.
 
 Two things matter, and they're not the same:
+
 - **Settle time** (ms) — sensitive to the environment's DB round-trip latency (dev sandbox: 330ms+
   cold per round trip; prod, co-located Vercel `syd1` + PlanetScale Sydney: ~1-5ms). A given
   structural fix can look dramatic in dev and modest in prod, or vice versa — see the 2026-07-20
@@ -29,27 +30,53 @@ Paste into the browser DevTools console (or run via `mcp__claude-in-chrome__java
 every request's path/timing as JSON.
 
 ```js
-const maxWaitMs = 60000, quietMs = 5000, pollMs = 500;
+const maxWaitMs = 60000,
+  quietMs = 5000,
+  pollMs = 500;
 const t0 = performance.now();
-let lastCount = -1, lastMaxEnd = -1, stableSince = null;
+let lastCount = -1,
+  lastMaxEnd = -1,
+  stableSince = null;
 while (performance.now() - t0 < maxWaitMs) {
-  const entries = performance.getEntriesByType('resource').filter(e => e.name.includes('/api/'));
+  const entries = performance
+    .getEntriesByType("resource")
+    .filter((e) => e.name.includes("/api/"));
   const count = entries.length;
-  const maxEnd = entries.reduce((m,e) => Math.max(m, e.startTime + e.duration), 0);
+  const maxEnd = entries.reduce(
+    (m, e) => Math.max(m, e.startTime + e.duration),
+    0,
+  );
   if (count === lastCount && maxEnd === lastMaxEnd && count > 0) {
     if (stableSince === null) stableSince = performance.now();
     if (performance.now() - stableSince >= quietMs) break;
   } else {
     stableSince = null;
-    lastCount = count; lastMaxEnd = maxEnd;
+    lastCount = count;
+    lastMaxEnd = maxEnd;
   }
-  await new Promise(r => setTimeout(r, pollMs));
+  await new Promise((r) => setTimeout(r, pollMs));
 }
-const entries2 = performance.getEntriesByType('resource').filter(e => e.name.includes('/api/'));
-JSON.stringify({ waitedMs: Math.round(performance.now()-t0), count: entries2.length, entries: entries2.map(e => {
-  const u = new URL(e.name);
-  return { path: u.pathname, systemId: u.searchParams.get('systemId'), sankey: e.name.includes('include=sankey'), hws: e.name.includes('temperature'), start: Math.round(e.startTime), end: Math.round(e.startTime + e.duration), dur: Math.round(e.duration) };
-}).sort((a,b) => a.start - b.start) })
+const entries2 = performance
+  .getEntriesByType("resource")
+  .filter((e) => e.name.includes("/api/"));
+JSON.stringify({
+  waitedMs: Math.round(performance.now() - t0),
+  count: entries2.length,
+  entries: entries2
+    .map((e) => {
+      const u = new URL(e.name);
+      return {
+        path: u.pathname,
+        systemId: u.searchParams.get("systemId"),
+        sankey: e.name.includes("include=sankey"),
+        hws: e.name.includes("temperature"),
+        start: Math.round(e.startTime),
+        end: Math.round(e.startTime + e.duration),
+        dur: Math.round(e.duration),
+      };
+    })
+    .sort((a, b) => a.start - b.start),
+});
 ```
 
 **Gotcha — the quiet window matters.** An early version of this harness used `quietMs = 2500` and
@@ -59,6 +86,7 @@ tiles/history stage (seen on a cold Vercel preview function), capturing only 3/7
 post-fix on this branch) before trusting a result.
 
 **Per-run protocol:**
+
 1. Full navigation (`location.href = url` or a hard reload) — not a client-side route change, so
    `performance`'s resource timeline and React Query's cache both start fresh.
 2. Run the harness snippet above; capture its JSON output.
@@ -85,14 +113,14 @@ Target: `https://liveone.energy/dashboard/id/5` (Kinkora), signed in as the acco
 10 runs, raw data in
 [`dashboard-fetch-waterfall-baseline-prod-2026-07-20.jsonl`](./dashboard-fetch-waterfall-baseline-prod-2026-07-20.jsonl).
 
-| Metric | Value |
-|---|---|
-| Requests (every run) | 7 |
-| Settle time — min | 2575 ms |
+| Metric               | Value       |
+| -------------------- | ----------- |
+| Requests (every run) | 7           |
+| Settle time — min    | 2575 ms     |
 | Settle time — median | **3150 ms** |
-| Settle time — mean | 3276 ms |
-| Settle time — max | 4353 ms |
-| Settle time — stdev | 462 ms |
+| Settle time — mean   | 3276 ms     |
+| Settle time — max    | 4353 ms     |
+| Settle time — stdev  | 462 ms      |
 
 Waterfall shape observed (unpatched code): 3 chrome requests (`/api/dashboards`,
 `/api/user/preferences`, `/api/areas/readable`) run concurrently and finish around ~600-1300ms in;
@@ -104,7 +132,7 @@ requests (not yet merged).
 **Important caveat vs. the dev-sandbox numbers from the same work session:** the same page on the
 local dev sandbox measured ~44.5s pre-fix / ~31.8s post-fix (7→6 requests, 3→2 stages) — a dramatic
 difference driven by the dev DB connection's much higher per-round-trip latency (cold connects,
-non-co-located). On PROD, at ~3.2s median pre-fix, the *sequential-stage* penalty this branch
+non-co-located). On PROD, at ~3.2s median pre-fix, the _sequential-stage_ penalty this branch
 removes is inherently much smaller in absolute terms (each stage is already fast), so expect the
 prod delta to show up mostly as **request count** (7→6, once the hot-water fetch merges into the
 main site fetch) and low-hundreds-of-ms, not multiple seconds. That's still a real, worthwhile
@@ -132,14 +160,14 @@ Target: `https://liveone.energy/dashboard/id/5` (Kinkora), signed in as the acco
 [`dashboard-fetch-waterfall-after-prod-2026-07-21.jsonl`](./dashboard-fetch-waterfall-after-prod-2026-07-21.jsonl).
 Merged code live on prod since 2026-07-20T23:19Z (PR #195, commit `32ded88`).
 
-| Metric | Baseline (pre-merge, 7 req) | After (post-merge, 6 req) | Δ |
-|---|---|---|---|
-| Requests (every run) | 7 | **6** | **−1** |
-| Settle — min | 2575 ms | 1802 ms | −773 ms |
-| Settle — median | 3150 ms | **2362 ms** | **−788 ms (−25%)** |
-| Settle — mean | 3276 ms | 2279 ms | −997 ms |
-| Settle — max | 4353 ms | 2685 ms | −1668 ms |
-| Settle — stdev | 462 ms | 323 ms | −139 ms |
+| Metric               | Baseline (pre-merge, 7 req) | After (post-merge, 6 req) | Δ                  |
+| -------------------- | --------------------------- | ------------------------- | ------------------ |
+| Requests (every run) | 7                           | **6**                     | **−1**             |
+| Settle — min         | 2575 ms                     | 1802 ms                   | −773 ms            |
+| Settle — median      | 3150 ms                     | **2362 ms**               | **−788 ms (−25%)** |
+| Settle — mean        | 3276 ms                     | 2279 ms                   | −997 ms            |
+| Settle — max         | 4353 ms                     | 2685 ms                   | −1668 ms           |
+| Settle — stdev       | 462 ms                      | 323 ms                    | −139 ms            |
 
 Waterfall shape observed (patched code): stage 1 is the 3 chrome requests (`/api/dashboards`,
 `/api/user/preferences`, `/api/areas/readable`) running concurrently (finishing ~900–1800 ms in);
@@ -169,17 +197,17 @@ protocol (same target, same signed-in session, one warm-up navigation first). Ra
 Confound note: prod had also picked up PR #196 (Sankey tooltip cosmetics — no API/fetch-path code),
 so the CPU tier is the only meaningful delta vs. the post-merge run above.
 
-| Metric | Standard (1 vCPU) | Performance (2 vCPU) | Δ |
-|---|---|---|---|
-| Requests (every run) | 6 | 6 | — |
-| Settle — min | 1802 ms | 1654 ms | −148 ms |
-| Settle — median | 2362 ms | **1962 ms** | **−401 ms (−17%)** |
-| Settle — mean | 2279 ms | 2037 ms | −242 ms |
-| Settle — max | 2685 ms | 2598 ms | −87 ms |
-| Settle — stdev | 323 ms | 289 ms | −34 ms |
+| Metric               | Standard (1 vCPU) | Performance (2 vCPU) | Δ                  |
+| -------------------- | ----------------- | -------------------- | ------------------ |
+| Requests (every run) | 6                 | 6                    | —                  |
+| Settle — min         | 1802 ms           | 1654 ms              | −148 ms            |
+| Settle — median      | 2362 ms           | **1962 ms**          | **−401 ms (−17%)** |
+| Settle — mean        | 2279 ms           | 2037 ms              | −242 ms            |
+| Settle — max         | 2685 ms           | 2598 ms              | −87 ms             |
+| Settle — stdev       | 323 ms            | 289 ms               | −34 ms             |
 
 Where the −401 ms came from (median per-request duration, Standard → Performance):
-`/api/areas/readable` **750 → 464 ms (−286)** — and since this is the request that *gates* the data
+`/api/areas/readable` **750 → 464 ms (−286)** — and since this is the request that _gates_ the data
 stage (the stage fires as soon as areas resolve, not when all three chrome calls finish), its win
 propagates: the data stage starts at 1446 → 1260 ms median. `/api/data?sys=12` −153 ms,
 `/api/history` −115 ms. But `/api/dashboards` (−5), `/api/user/preferences` (−6) and
@@ -214,11 +242,14 @@ merge `st` back onto each entry by path:
 ```js
 // after the settle loop, before building the JSON result — `entries2` is the settled resource list
 const stByUrl = {};
-for (const url of [...new Set(entries2.map(e => e.name))]) {
+for (const url of [...new Set(entries2.map((e) => e.name))]) {
   try {
-    const r = await fetch(url, { credentials: 'include' });
-    const h = r.headers.get('x-server-timing');
-    if (h) stByUrl[url] = h.split(', ').map(s => s.replace(/;dur=/, ':').replace(/(\.\d)\d*$/, '$1'));
+    const r = await fetch(url, { credentials: "include" });
+    const h = r.headers.get("x-server-timing");
+    if (h)
+      stByUrl[url] = h
+        .split(", ")
+        .map((s) => s.replace(/;dur=/, ":").replace(/(\.\d)\d*$/, "$1"));
   } catch {}
 }
 // …then in the per-entry mapper add:  st: stByUrl[e.name] || []
@@ -230,7 +261,7 @@ header survives there.)
 
 Span names: `mw` (the **whole** edge middleware invocation — Clerk's `authenticateRequest`
 session/JWT verification + JWKS fetch on cold instances + `auth.protect()`; timed by wrapping
-`clerkMiddleware` itself, since Clerk does its expensive work *before* the app callback runs and
+`clerkMiddleware` itself, since Clerk does its expensive work _before_ the app callback runs and
 protect() is only an in-memory check), `clerk` (handler-side session resolution), `admin`
 (isUserAdmin — falls back to a Clerk **API network call** when the isPlatformAdmin session claim
 isn't configured), `auth` (the whole access check, containing clerk/admin), then per-route work:
@@ -269,14 +300,14 @@ measuring-client location anyway. `tier` is logged as `"unknown"` in the `.jsonl
 `dur` = client-observed; `mw` (Clerk edge middleware) and `total` (handler) + route spans come from the
 warm `x-server-timing` re-fetch. `residual = dur − mw − total`.
 
-| Endpoint | client `dur` | `mw` | `total` | **residual** | fattest server span(s) |
-|---|---|---|---|---|---|
-| `/api/dashboards` | 614 | 2.8 | 7.5 | **604** | list 5.8 |
-| `/api/user/preferences` | 608 | 2.8 | 4.2 | **600** | prefs 3.0 |
-| `/api/areas/readable` | 672 | 3.0 | 84.8 | **584** | areas 83.3 (DB, varies 44–140) |
-| `/api/data?sys=8` | 642 | 3.3 | 25.9 | **613** | auth 14.9, build 11.2, kv 11.1 |
-| `/api/data?sys=12` | 610 | 2.8 | 12.1 | **596** | auth 8.2 |
-| `/api/history` (sankey+hws) | 818 | 3.1 | 198.4 | **617** | fetch 82.2, attr 66.3, logical 23.1 |
+| Endpoint                    | client `dur` | `mw` | `total` | **residual** | fattest server span(s)              |
+| --------------------------- | ------------ | ---- | ------- | ------------ | ----------------------------------- |
+| `/api/dashboards`           | 614          | 2.8  | 7.5     | **604**      | list 5.8                            |
+| `/api/user/preferences`     | 608          | 2.8  | 4.2     | **600**      | prefs 3.0                           |
+| `/api/areas/readable`       | 672          | 3.0  | 84.8    | **584**      | areas 83.3 (DB, varies 44–140)      |
+| `/api/data?sys=8`           | 642          | 3.3  | 25.9    | **613**      | auth 14.9, build 11.2, kv 11.1      |
+| `/api/data?sys=12`          | 610          | 2.8  | 12.1    | **596**      | auth 8.2                            |
+| `/api/history` (sankey+hws) | 818          | 3.1  | 198.4   | **617**      | fetch 82.2, attr 66.3, logical 23.1 |
 
 ### The ~600 ms floor is network transport (fra1→syd1), not compute — mystery solved
 
@@ -284,27 +315,28 @@ The CPU experiment above flagged a "~600 ms floor dominated by something other t
 Server-Timing before optimizing further." The instrumentation answers it: **the residual is a nearly
 constant ~585–617 ms on every endpoint, regardless of how much server work it does** (handler `total`
 ranges 4 → 198 ms; the residual barely moves). The single-run `PerformanceResourceTiming` breakdown
-pins down what that residual *is*:
+pins down what that residual _is_:
 
-| Request | dns | conn | tls | **ttfb** | download |
-|---|---|---|---|---|---|
-| dashboards | 0 | 0 | 0 | 705 | 1 |
-| user/preferences | 0 | 0 | 0 | 689 | 1 |
-| areas/readable | 0 | 0 | 0 | 752 | 1 |
-| data?sys=8 | 0 | 0 | 0 | 612 | 9 |
-| data?sys=12 | 0 | 0 | 0 | 597 | 1 |
-| history | 0 | 0 | 0 | 880 | 4 |
+| Request          | dns | conn | tls | **ttfb** | download |
+| ---------------- | --- | ---- | --- | -------- | -------- |
+| dashboards       | 0   | 0    | 0   | 705      | 1        |
+| user/preferences | 0   | 0    | 0   | 689      | 1        |
+| areas/readable   | 0   | 0    | 0   | 752      | 1        |
+| data?sys=8       | 0   | 0    | 0   | 612      | 9        |
+| data?sys=12      | 0   | 0    | 0   | 597      | 1        |
+| history          | 0   | 0    | 0   | 880      | 4        |
 
 DNS/connection/TLS are **0** (HTTP/2 connection reused) and downloads are ~1 ms (tiny payloads) — the
 **entire ~600 ms is TTFB**. And the request's edge id was **`x-vercel-id: fra1::syd1::…`**: the client
 reached Vercel at the **Frankfurt** edge (`fra1`), while the function executes in **Sydney** (`syd1`).
 So each request pays the **fra1↔syd1 round trip** (~585 ms) on top of its server time:
 `TTFB ≈ 585 ms network floor + server total` (history 880 ≈ 585 + ~198; data8 612 ≈ 585 + ~26;
-data12 597 ≈ 585 + ~12). The floor is **geography**, not application code — and it is *not* cold-start
+data12 597 ≈ 585 + ~12). The floor is **geography**, not application code — and it is _not_ cold-start
 (zero connection time; residual is identical on the warm data-stage requests as on the first chrome
 request).
 
 **Consequences.**
+
 - This measuring client is far from `syd1` (ingress via `fra1` — traveling / VPN / anycast routing).
   A real user in Australia hits the `syd1` edge, where the edge→function hop is ~0, so their per-request
   TTFB collapses to ~server time (5–200 ms) and settle time is far lower than the 2.3 s recorded here.
@@ -330,7 +362,7 @@ request).
 `/api/history` (the sankey + hot-water request) is the only route where server work is a meaningful
 slice of its latency: `total` ≈ **198 ms**, dominated by `fetch` ≈ 82 ms (series DB read) + `attr` ≈
 66 ms (battery-provenance attribution) + `logical` ≈ 23 ms. It is also the **last request to settle**,
-so it gates the page's settle time — for an Australian user (no network floor) this ~198 ms *is* the
+so it gates the page's settle time — for an Australian user (no network floor) this ~198 ms _is_ the
 tail. If a server-side optimization is wanted, `history`'s `fetch` + `attr` is where it pays off;
 `/api/areas/readable` (`areas` ≈ 85 ms, DB-bound, high variance) is a distant second.
 
@@ -347,10 +379,10 @@ profiled request carries a `logical` span, which the route emits only for `inclu
 "1d"` (`app/api/history/route.ts:614`). That path computes the attributed flow matrix **live**
 (`route.ts:682` → `buildAttributedFlowMatrix`); the **1d** path instead reads the precomputed
 `flow_attr_1d` rollup in a single indexed lookup (`route.ts:654-682`, `readAttributedDailyMatrices`). So
-the tail measured here is the *un-materialized* variant, and that sets how hard each lever below is. All
+the tail measured here is the _un-materialized_ variant, and that sets how hard each lever below is. All
 three are code fixes in the **existing PostgreSQL path — none needs a new datastore.** (A columnar/OLAP
 engine like ClickHouse would not move them: the DB-read slice they touch is already a bounded, indexed
-range scan of *pre-aggregated* `agg_5m` rows — no scan/aggregation for a column store to accelerate — and
+range scan of _pre-aggregated_ `agg_5m` rows — no scan/aggregation for a column store to accelerate — and
 the bulk of the 148 ms is in-Node CPU, which a faster database does not reduce. Fuller ClickHouse
 assessment: it helps ~nothing at current scale, since the page's latency is network geography + client
 waterfall shape + in-Node CPU, not DB scan/aggregation.)
@@ -365,10 +397,10 @@ Ordered cheapest → hardest:
    overlapping rows in one request. **Lever:** hand the already-fetched rows to the attribution path (or a
    per-request cache) instead of re-querying. Smallest change, no new storage.
 
-2. **Warm-up over-read in `attr`.** The battery-provenance fold is *stateful*, so `attr` loads **more**
+2. **Warm-up over-read in `attr`.** The battery-provenance fold is _stateful_, so `attr` loads **more**
    `agg_5m` history than the displayed window: seeded from a checkpoint anchor capped at `MAX_SEED_SPAN_MS
-   = 3.5 days` (`lib/db/planetscale/battery-provenance-pg.ts:516`), or — when seeding fails — from `startMs
-   − WARMUP_MS` with `WARMUP_MS = 7 days` (`battery-provenance-pg.ts:71`, applied at
+= 3.5 days` (`lib/db/planetscale/battery-provenance-pg.ts:516`), or — when seeding fails — from `startMs
+− WARMUP_MS` with `WARMUP_MS = 7 days` (`battery-provenance-pg.ts:71`, applied at
    `lib/history/build-attributed-flow-matrix.ts:155`). So a 1-day sankey can pull up to a week of rows.
    **Lever:** keep the seeded (≤ 3.5-day) path the norm and avoid the 7-day fallback; tighten the seed span.
 
@@ -378,7 +410,7 @@ Ordered cheapest → hardest:
    stateful `foldBatteryProvenance` + `computeFlowAccounting` (`lib/battery-provenance/compute.ts`,
    `flow-matrix-core.ts:117-248`). **Lever:** materialize the sub-daily sankey + attributed series so the
    request serves a stored result. Note there is **no sub-daily counterpart to `flow_attr_1d` today** (only
-   the 1d rollup exists), so this is a genuinely *new* materialization, not a cache of an existing table —
+   the 1d rollup exists), so this is a genuinely _new_ materialization, not a cache of an existing table —
    the biggest lift, worth doing last and only if levers 1–2 don't bring the tail down enough.
 
 These three are the concrete unpacking of `live-dashboard-roadmap.md` §1.3 (1.3a / 1.3b / 1.3c).
@@ -394,21 +426,22 @@ bypasses Clerk), plus a node-level `/api/health` probe for a clean network floor
 deleted after the run. Raw result:
 [`dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-21.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-21.json).
 
-**The origin flipped as intended:** every request returned **`x-vercel-id: syd1::syd1`** (ingress *and*
+**The origin flipped as intended:** every request returned **`x-vercel-id: syd1::syd1`** (ingress _and_
 function both in Sydney), vs Italy's `fra1::syd1`. That collapses the network floor:
 
-| Metric | Italy (fra1 edge) | Sydney (`ap-southeast-2`) | Δ |
-|---|---|---|---|
-| `/api/health` warm TTFB (network floor; server ~2.7 ms) | ~610 ms | **~46–50 ms** | **~13× / −93%** |
-| Shared-view settle (3 req, 1 stage) | ~1850 ms (1 run) | **496 ms** (median of 10) | ~3.7× |
-| `/api/data?sys=8` client `dur` | ~740 ms | **86 ms** (server 34 ms) | — |
-| `/api/history` client `dur` | ~1015 ms | **250 ms** (server 176 ms) | — |
+| Metric                                                  | Italy (fra1 edge) | Sydney (`ap-southeast-2`)  | Δ               |
+| ------------------------------------------------------- | ----------------- | -------------------------- | --------------- |
+| `/api/health` warm TTFB (network floor; server ~2.7 ms) | ~610 ms           | **~46–50 ms**              | **~13× / −93%** |
+| Shared-view settle (3 req, 1 stage)                     | ~1850 ms (1 run)  | **496 ms** (median of 10)  | ~3.7×           |
+| `/api/data?sys=8` client `dur`                          | ~740 ms           | **86 ms** (server 34 ms)   | —               |
+| `/api/history` client `dur`                             | ~1015 ms          | **250 ms** (server 176 ms) | —               |
 
 Server-side `total` per route was **unchanged** across regions (history ~176–198 ms, data ~26–34 ms) —
 exactly as predicted, since the function always runs in `syd1`; only the network leg moved. This is the
 direct confirmation that the ~585 ms floor in the Italy runs was **geography, not application code**.
 
 **Implications, now measured rather than modelled:**
+
 - A real Australian user pays a **~46 ms** per-request network floor, not ~585 ms. Reconstructing the
   authed 6-req / 2-stage page for an AU user (network ~46 ms + the known location-independent server
   phases): settle ≈ boot (~700 ms) + stage-1 (~46 + areas 85) + stage-2 (~46 + history 198) ≈
@@ -448,19 +481,19 @@ It now also captures Navigation Timing + Paint (FCP/LCP) in-page and a **node-le
 probe** (the browser's `responseStart` is unreliable under headless Chromium — it read ~4 ms here vs
 the node probe's 107 ms). `syd1::syd1` confirmed on every request (health, document, and both `/api`).
 
-| Metric | Pre-SSR Sydney (2026-07-21) | **Post-SSR Sydney (2026-07-22)** | Δ |
-|---|---|---|---|
-| Network floor — health warm TTFB | ~46 ms | 48 ms | — (physics) |
-| Client requests (shared) | 3 (`data`×2 + `history`) | **2** (`history` + 1 un-seeded device `data`) | −1 |
-| Waterfall stages | 1 | 1 | — |
-| **Time-to-content — FCP (tiles)** | n/a¹ | **202 ms** (156–236) | NEW |
-| LCP | — | 202 ms | NEW |
-| DOMContentLoaded | — | 224 ms | NEW |
-| **Time-to-settle — chart (`/api/history` end)** | 496 ms | **519 ms** (463–575) | ~flat² |
-| `/api/history` client `dur` | 250 ms | 212 ms | −38 ms |
-| `/api/history` server `total` | 176 ms | ~150–185 ms³ | ~flat³ |
-| SSR document TTFB (node, warm) | n/a | **107 ms** | NEW |
-| SSR server compute (doc − floor) | n/a | **~40–59 ms**³ | NEW |
+| Metric                                          | Pre-SSR Sydney (2026-07-21) | **Post-SSR Sydney (2026-07-22)**              | Δ           |
+| ----------------------------------------------- | --------------------------- | --------------------------------------------- | ----------- |
+| Network floor — health warm TTFB                | ~46 ms                      | 48 ms                                         | — (physics) |
+| Client requests (shared)                        | 3 (`data`×2 + `history`)    | **2** (`history` + 1 un-seeded device `data`) | −1          |
+| Waterfall stages                                | 1                           | 1                                             | —           |
+| **Time-to-content — FCP (tiles)**               | n/a¹                        | **202 ms** (156–236)                          | NEW         |
+| LCP                                             | —                           | 202 ms                                        | NEW         |
+| DOMContentLoaded                                | —                           | 224 ms                                        | NEW         |
+| **Time-to-settle — chart (`/api/history` end)** | 496 ms                      | **519 ms** (463–575)                          | ~flat²      |
+| `/api/history` client `dur`                     | 250 ms                      | 212 ms                                        | −38 ms      |
+| `/api/history` server `total`                   | 176 ms                      | ~150–185 ms³                                  | ~flat³      |
+| SSR document TTFB (node, warm)                  | n/a                         | **107 ms**                                    | NEW         |
+| SSR server compute (doc − floor)                | n/a                         | **~40–59 ms**³                                | NEW         |
 
 The headline column is the core run
 ([`…-2026-07-22.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22.json)); a second,
@@ -470,12 +503,12 @@ same shape, run-to-run variance (³).
 
 ¹ Pre-SSR the tiles could not paint until `/api/data` returned (~430 ms into the Sydney baseline
 load), and the old harness captured no paint timing — so there's no pre-SSR FCP to diff. The
-structural change *is* the headline: **tile values are now in the SSR HTML** (harness content proof:
+structural change _is_ the headline: **tile values are now in the SSR HTML** (harness content proof:
 `skeletons=0`, 17 rendered value-strings at settle), so they paint at FCP ~202 ms regardless of any
 `/api` call.
 
 ² Settle is ~flat by design: SSR **did not touch `/api/history`** (it's still an un-seeded client
-round-trip, the settle-gating tail). What SSR moved is *content*, not settle — see below.
+round-trip, the settle-gating tail). What SSR moved is _content_, not settle — see below.
 
 ### What the numbers say
 
@@ -487,7 +520,7 @@ round-trip, the settle-gating tail). What SSR moved is *content*, not settle —
   `/api/data` KV prefetch + areas/dashboard resolve + React render all fit in ~59 ms. The per-request
   decomposition of that 59 ms lands with the SSR-render instrumentation (separate PR — see below).
 - **Waterfall shape 3 → 2 requests.** The area handle (sys 8) is seeded server-side and never fires.
-  The *other* system (12) still fires — but **not** from staleness: it's a directly-referenced device,
+  The _other_ system (12) still fires — but **not** from staleness: it's a directly-referenced device,
   **not in the dehydrated seed at all** (only `["data","8"]` is; see the prefetch-gap note below), so
   its card self-fetches every load. Its tile is a skeleton until that returns (~460 ms) — a small
   per-card time-to-content gap. The chart's `/api/history` is the true settle tail.
@@ -495,8 +528,8 @@ round-trip, the settle-gating tail). What SSR moved is *content*, not settle —
   176 ms. SP1.3a (`agg5m-cache.ts`) eliminated the `agg_5m` double-read, but at Sydney's co-located
   DB latency (~1–5 ms/read) that saving is smaller than the run-to-run variance, so it doesn't show
   cleanly here; the span is dominated by in-Node CPU, not the DB read Lever 1 removed.
-- **The un-seeded system is a prefetch *gap*, not staleness.** Only the area handle (`legacySystemId
-  8`) is in the dehydrated seed; the dashboard's other system (12) is a directly-referenced device,
+- **The un-seeded system is a prefetch _gap_, not staleness.** Only the area handle (`legacySystemId
+8`) is in the dehydrated seed; the dashboard's other system (12) is a directly-referenced device,
   **not reachable via `descriptorAreaIds → areaById → legacySystemId`**, so SP1.2's prefetch skips it
   and its card self-fetches `/api/data?sys=12` every load. Extending the prefetch to cover
   directly-referenced device systems (not just area handles) would seed it too.
@@ -510,19 +543,19 @@ With the render instrumented (PR #205, `page.tsx` emits an inline `#__ssr_timing
 — a Next page can't set response headers), the ~40–59 ms SSR server compute splits cleanly (Sydney,
 warm):
 
-| span | warm median | what it is |
-|---|---|---|
-| `auth` | 1.1 ms | Clerk `auth()` (signed-out share request) |
-| `token` | 3.7 ms | `validateDashboardShareToken` (DB lookup) |
-| `dashboard` | 1.9 ms | `getDashboard` |
-| `areas` | 10.7 ms | `resolveAreasByIds` (DB) |
-| `data` | 11.2 ms | `getSystemDataForCache` KV latest prefetch |
+| span        | warm median | what it is                                                                                        |
+| ----------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| `auth`      | 1.1 ms      | Clerk `auth()` (signed-out share request)                                                         |
+| `token`     | 3.7 ms      | `validateDashboardShareToken` (DB lookup)                                                         |
+| `dashboard` | 1.9 ms      | `getDashboard`                                                                                    |
+| `areas`     | 10.7 ms     | `resolveAreasByIds` (DB)                                                                          |
+| `data`      | 11.2 ms     | `getSystemDataForCache` KV latest prefetch                                                        |
 | **`total`** | **28.1 ms** | data-gather (spans overlap; the remaining ~12 ms of the node doc-TTFB is React/RSC serialization) |
 
 **No fat phase — the SSR render is cheap and balanced.** `areas` (11) + `data` (11) dominate; `auth`/
 `token`/`dashboard` are trivial warm. Note `token` read **108 ms in a cold fra1 sample** but **3.7 ms
 warm** — a cold-instance artifact (first DB connect), not a real cost; don't optimize it. This confirms
-the SSR render is *not* where the remaining latency is — the tail is the client-side, un-seeded
+the SSR render is _not_ where the remaining latency is — the tail is the client-side, un-seeded
 `/api/history` (see next-fruit below), and SSR-prefetching it would move ~150–185 ms of `history`
 server work into this render (28 → ~180 ms), which is exactly why it should **stream via Suspense** so
 the tiles' FCP (~200 ms) doesn't regress.
@@ -534,20 +567,20 @@ PR #207 (SP1.2b) extended the SSR prefetch to also seed a tile's `deviceSystemId
 self-fetch. Re-ran the Sydney harness on the deployed build. Raw data:
 [`…-sydney-lambda-prod-2026-07-22-ttc.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22-ttc.json).
 
-| Metric | Pre-#207 (instrumented) | Post-#207 (device pins seeded) | Δ |
-|---|---|---|---|
-| Client requests (shared) | 2 (`history` + `data?sys=12`) | **1** (`history` only) | **−1 (shape win)** |
-| **FCP (time-to-content)** | 214 ms | **268 ms** | **+54 ms (regression)** |
-| Settle (`/api/history` end) | 586 ms | 606 ms | +20 ms (~flat, noisy) |
-| SSR `data` span | 11.2 ms | **24.6 ms** | **+13 ms** |
-| SSR `total` span | 28.1 ms | **50.9 ms** | **+23 ms** |
+| Metric                      | Pre-#207 (instrumented)       | Post-#207 (device pins seeded) | Δ                       |
+| --------------------------- | ----------------------------- | ------------------------------ | ----------------------- |
+| Client requests (shared)    | 2 (`history` + `data?sys=12`) | **1** (`history` only)         | **−1 (shape win)**      |
+| **FCP (time-to-content)**   | 214 ms                        | **268 ms**                     | **+54 ms (regression)** |
+| Settle (`/api/history` end) | 586 ms                        | 606 ms                         | +20 ms (~flat, noisy)   |
+| SSR `data` span             | 11.2 ms                       | **24.6 ms**                    | **+13 ms**              |
+| SSR `total` span            | 28.1 ms                       | **50.9 ms**                    | **+23 ms**              |
 
 Both SSR spans are tight distributions (data 22.7–28.9, total 45.4–58.1 over 10 runs) — the +23 ms is
 real, not an outlier. FCP shifted up across the whole distribution (min 236 > the pre-#207 median 214).
 
 **The trade was net-negative, and the mechanism is the exact one the section above predicted.** The
 removed `/api/data?sys=12` was **concurrent with `/api/history`** (it fired at hydration alongside it and
-finished first — it was *never* the settle tail), so deleting it saved **nothing** on settle. But the
+finished first — it was _never_ the settle tail), so deleting it saved **nothing** on settle. But the
 work that replaced it — `getAreaDeviceSystemIds` + `resolveGridContextForSystem` (3 DB queries) + the
 sys-12 `getSystemDataForCache` — runs **inside the awaited SSR render**, on the critical path, so it
 added ~23 ms to the document and pushed FCP for **every** tile from ~214 → ~268 ms. Net: worse FCP, no
@@ -556,7 +589,7 @@ client-fetch return (~460 ms).
 
 **Lesson (same as the `/api/history` case): don't block the SSR render on off-critical-path prefetches.**
 A concurrent client request that isn't the settle tail costs the user ~nothing; moving it into the
-blocking render costs *everyone* the added server time. The fix is to either (a) revert the device-pin
+blocking render costs _everyone_ the added server time. The fix is to either (a) revert the device-pin
 seed, or (b) make it non-blocking / cheap — authorize the public oe-grid pin with one lightweight
 "is-public-OE-system" check instead of `resolveGridContextForSystem`'s 3 queries, and/or resolve it
 outside the awaited path. SP1.4 (the authed header-switcher seed) is **not** exercised here (shared
@@ -570,26 +603,26 @@ or owned by the viewer — dropping `#207`'s `getAreaDeviceSystemIds` + `resolve
 (3 DB queries) entirely. Re-ran the Sydney harness. Raw data:
 [`…-sydney-lambda-prod-2026-07-22-pinauth.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-07-22-pinauth.json).
 
-| Signal (median) | pre-#207 | #207 | **#208** |
-|---|---|---|---|
-| Client requests (shared) | 2 | 1 | **1** (shape win kept) |
-| **Document TTFB (node, warm)** — the clean signal | 95 ms | 131 ms | **104 ms** |
-| SSR `data` span | 11.2 ms | 24.6 ms | **16.8 ms** |
-| SSR `total` span | 28.1 ms | 50.9 ms | **38.9 ms** |
-| Browser FCP | 208 ms | 268 ms | 294 ms (too noisy — see below) |
+| Signal (median)                                   | pre-#207 | #207    | **#208**                       |
+| ------------------------------------------------- | -------- | ------- | ------------------------------ |
+| Client requests (shared)                          | 2        | 1       | **1** (shape win kept)         |
+| **Document TTFB (node, warm)** — the clean signal | 95 ms    | 131 ms  | **104 ms**                     |
+| SSR `data` span                                   | 11.2 ms  | 24.6 ms | **16.8 ms**                    |
+| SSR `total` span                                  | 28.1 ms  | 50.9 ms | **38.9 ms**                    |
+| Browser FCP                                       | 208 ms   | 268 ms  | 294 ms (too noisy — see below) |
 
 **The regression is recovered on the metric that can be trusted.** The node-measured document TTFB —
 tight (warm samples 92/94/104/115) and the honest measure of the SSR render — came back from 131 → 104 ms,
 essentially the pre-#207 95 ms baseline; the SSR spans dropped in step. The auth overhead is gone.
 
 **Browser FCP is not reliable at this precision and should not be read as a regression.** Its medians
-(208 / 268 / 294) move *opposite* to the provably-cheaper render, with hugely overlapping ranges
+(208 / 268 / 294) move _opposite_ to the provably-cheaper render, with hugely overlapping ranges
 (#208 FCP spans 216–420) — headless-Chromium paint jitter + cold-instance hits dominate the 10-run
 sample (this is the same `responseStart = 0` class of headless quirk the doc flags). Trust the node
 document TTFB, not the in-page paint timing, for server-render cost from this harness.
 
 **Residual and verdict.** #208's document TTFB sits ~9 ms above the pre-#207 baseline (104 vs 95) — the
-*inherent* cost of actually fetching the extra sys-12 payload on the blocking path (one more KV read),
+_inherent_ cost of actually fetching the extra sys-12 payload on the blocking path (one more KV read),
 which is the seed we want. That is a **good trade** (the sys-12 tile now renders at first paint instead
 of ~460 ms, and one fewer client request), unlike #207's ~36 ms. If even ~9 ms is unwanted, reverting
 the pin seed entirely remains valid since it doesn't affect settle — but at ~9 ms the seed is worth

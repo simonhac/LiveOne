@@ -13,11 +13,11 @@ and `components/ui/value.tsx` (`<Value>`). This document holds the _why_.
 
 Three components each encoded their own tight-vs-spaced rule, and they disagreed:
 
-| Where                    | Rule it encoded                                       |
-| ------------------------ | ----------------------------------------------------- |
-| `Tile.tsx`               | narrow space before every unit **except `%`**; unmuted |
-| `BatteryContentsCard`    | `<Unit>` gap defaults **true**; unit **always** muted   |
-| `GridSignalsCard`        | `<Unit>` gap defaults **false**; muting **opt-in**      |
+| Where                 | Rule it encoded                                        |
+| --------------------- | ------------------------------------------------------ |
+| `Tile.tsx`            | narrow space before every unit **except `%`**; unmuted |
+| `BatteryContentsCard` | `<Unit>` gap defaults **true**; unit **always** muted  |
+| `GridSignalsCard`     | `<Unit>` gap defaults **false**; muting **opt-in**     |
 
 So `40.0 °C` was spaced in the Hot Water tile but tight in the HWS labs page;
 `77%` was muted in the battery strip but `37%` was not in the grid card; the
@@ -36,13 +36,13 @@ Everything except the NUMBER renders at **`0.72em`, `font-semibold`** — sized 
 `em` so it scales with whatever hero size the parent sets (a `text-2xl` tile, a
 `text-[32px]` donut).
 
-| Part            | Gap before  | Muted | Examples                                     |
-| --------------- | ----------- | ----- | -------------------------------------------- |
-| **prefix**      | —           | no    | `$`93                                        |
-| **tight unit**  | none        | no    | 83`%` · 40.0`°C` · 4.0`¢`                    |
-| **spaced unit** | hair 0.08em | yes   | 0.0` kW` · 2.0` kWh` · 356` g` · 1450` rpm`  |
-| **per-tail**    | none        | yes   | $93`/MWh` · 21¢`/kWh`                        |
-| **qualifier**   | word 0.3em  | yes   | 763` EI` · 37%` RE`                          |
+| Part            | Gap before  | Muted | Examples                                    |
+| --------------- | ----------- | ----- | ------------------------------------------- |
+| **prefix**      | —           | no    | `$`93                                       |
+| **tight unit**  | none        | no    | 83`%` · 40.0`°C` · 4.0`¢`                   |
+| **spaced unit** | hair 0.08em | yes   | 0.0` kW` · 2.0` kWh` · 356` g` · 1450` rpm` |
+| **per-tail**    | none        | yes   | $93`/MWh` · 21¢`/kWh`                       |
+| **qualifier**   | word 0.3em  | yes   | 763` EI` · 37%` RE`                         |
 
 ### Why some units fuse and others don't
 
@@ -93,12 +93,12 @@ Both are baked into `<Value>` — you get them by using it.
 
 ### Colour & size tokens
 
-| Role       | Token                                                      |
-| ---------- | ---------------------------------------------------------- |
-| Hero value | `text-xl md:text-2xl font-bold text-gray-100`               |
-| Unit       | `text-[0.72em] font-semibold`, muted = `text-gray-400`      |
+| Role       | Token                                                          |
+| ---------- | -------------------------------------------------------------- |
+| Hero value | `text-xl md:text-2xl font-bold text-gray-100`                  |
+| Unit       | `text-[0.72em] font-semibold`, muted = `text-gray-400`         |
 | Caption    | `text-[10px] uppercase tracking-wide text-gray-500 md:text-xs` |
-| Card title | `text-xs md:text-sm text-gray-400`                          |
+| Card title | `text-xs md:text-sm text-gray-400`                             |
 
 ## Using it
 
@@ -124,21 +124,21 @@ already documents; `lib/energy-formatting.ts:formatValue` already returns
 
 ## Worked examples, from the real cards
 
-| Card                     | Renders as   | Class                       |
-| ------------------------ | ------------ | --------------------------- |
-| Solar / Load / Grid tile | `0.0 kW`     | spaced unit                 |
-| Hot Water tile           | `40.0°C`     | tight unit                  |
-| Battery tile             | `10.0%`      | tight unit                  |
-| Amber price              | `21¢`        | tight unit                  |
-| Tesla donut              | `83%`        | tight unit                  |
-| Grid price               | `$93/MWh`    | prefix + per-tail           |
-| Grid emissions           | `763 EI`     | qualifier only              |
-| Grid renewables          | `37% RE`     | tight unit + qualifier      |
-| Grid demand              | `7,126 MW`   | spaced unit                 |
-| Battery strip            | `2.0 kWh`    | spaced unit                 |
-| Battery strip            | `4.0¢`       | tight unit                  |
-| Battery strip            | `356 g`      | spaced unit                 |
-| Device metrics           | `1450 rpm`   | spaced unit                 |
+| Card                     | Renders as | Class                  |
+| ------------------------ | ---------- | ---------------------- |
+| Solar / Load / Grid tile | `0.0 kW`   | spaced unit            |
+| Hot Water tile           | `40.0°C`   | tight unit             |
+| Battery tile             | `10.0%`    | tight unit             |
+| Amber price              | `21¢`      | tight unit             |
+| Tesla donut              | `83%`      | tight unit             |
+| Grid price               | `$93/MWh`  | prefix + per-tail      |
+| Grid emissions           | `763 EI`   | qualifier only         |
+| Grid renewables          | `37% RE`   | tight unit + qualifier |
+| Grid demand              | `7,126 MW` | spaced unit            |
+| Battery strip            | `2.0 kWh`  | spaced unit            |
+| Battery strip            | `4.0¢`     | tight unit             |
+| Battery strip            | `356 g`    | spaced unit            |
+| Device metrics           | `1450 rpm` | spaced unit            |
 
 ## Deliberately exempt
 

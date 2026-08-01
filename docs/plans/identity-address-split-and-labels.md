@@ -1,7 +1,7 @@
 # Plan: two HA-borrowings — split identity from address + a Label tag dimension
 
 > **Status:** superseded by [config-v4-clean-sheet.md](config-v4-clean-sheet.md) (2026-07-21) —
-> the identity/address split is absorbed there (`points.id` *is* the identity; the sequential
+> the identity/address split is absorbed there (`points.id` _is_ the identity; the sequential
 > address dies), and Labels remain a deferred seam in its terms. Kept as the argument record.
 > Original status: proposed — not started (drafted 2026-06-15). Two _independent_ arguments,
 > drawn from the [Home Assistant comparison](../architecture/home-assistant-comparison.md).

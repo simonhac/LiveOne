@@ -135,7 +135,7 @@ export default async function KinkoraHwsPage({
   for (const tsMs of [...tsSet].sort((a, b) => a - b)) {
     // Use the modelled temperature; for a power-only timestamp (a gap in the derived
     // series) carry the last modelled value forward rather than dropping to tFloor. The generic
-    // card deliberately drops this carry-forward; the lab keeps it (docs/plans/hws-stripe-and-heatmap-cards.md).
+    // card deliberately drops this carry-forward; the lab keeps it.
     const faucetC = tempByTs.get(tsMs) ?? prevFaucetC;
     prevFaucetC = faucetC;
     faucetByTs.set(tsMs, faucetC);

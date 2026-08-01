@@ -50,7 +50,7 @@ export interface HeatmapPinResolution {
  * live. Re-pointing a card at another device, a vendor renaming a point, or a point going inactive
  * all leave a doc whose pin no longer resolves — a permanent, silent blank card if the pin is
  * honoured regardless. Degrading to the selector keeps the card useful and makes the staleness
- * legible (docs/plans/hws-stripe-and-heatmap-cards.md §"Edge cases").
+ * legible.
  *
  * @param availablePaths the device's logical paths (`/api/device/{id}/points`)
  * @param pinnedSeries   `config.series`, if any
