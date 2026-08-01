@@ -1,24 +1,41 @@
 import React from "react";
 import Value from "@/components/ui/value";
 
+/**
+ * The lines chart's legend + focused-value readout.
+ *
+ * 🛑 **Presence and value are separate props, and must stay separate.** Which entries exist is a
+ * property of the DATA (does this device have a battery / a grid meter?); what they read is a
+ * property of the HOVER. Conflating them was the original defect: the Battery and Grid rows were
+ * gated on `battery !== null` / `grid !== null` — the hovered *value* — so with nothing hovered they
+ * vanished from the legend entirely, and while hovering they flickered out whenever the focused
+ * index landed on a null sample (a data gap).
+ *
+ * `hasBattery`/`hasGrid` mirror the `!= null` tests `buildLineDatasets` uses to decide which datasets
+ * to draw, so the legend and the chart now list exactly the same series by construction. Solar, Load
+ * and Battery SoC have no flag because their datasets are unconditional.
+ */
 interface ChartTooltipProps {
+  /** Whether the series EXISTS (mirrors the dataset gate) — not whether it has a value right now. */
+  hasBattery: boolean;
+  hasGrid: boolean;
   solar: number | null;
   load: number | null;
   battery?: number | null;
   grid?: number | null;
   batterySOC: number | null;
   unit: "kW" | "kWh";
-  visible: boolean;
 }
 
 export default function ChartTooltip({
+  hasBattery,
+  hasGrid,
   solar,
   load,
   battery,
   grid,
   batterySOC,
   unit,
-  visible,
 }: ChartTooltipProps) {
   return (
     <div className="flex items-center gap-3 sm:gap-6 md:gap-10 text-xs">
@@ -62,8 +79,8 @@ export default function ChartTooltip({
         </span>
       </div>
 
-      {/* Battery Power - only show if battery data is available */}
-      {battery !== null && battery !== undefined && (
+      {/* Battery power — shown whenever the SERIES exists, blank when this instant has no sample. */}
+      {hasBattery && (
         <div className="flex items-center gap-1">
           <span className="w-3 h-3 bg-orange-400"></span>
           <span className="text-gray-400">Battery</span>
@@ -75,17 +92,19 @@ export default function ChartTooltip({
               justifyContent: "flex-end",
             }}
           >
-            <Value
-              className="text-white"
-              value={battery.toFixed(1)}
-              unit={unit}
-            />
+            {battery !== null && battery !== undefined ? (
+              <Value
+                className="text-white"
+                value={battery.toFixed(1)}
+                unit={unit}
+              />
+            ) : null}
           </span>
         </div>
       )}
 
-      {/* Grid - only show if grid data is available */}
-      {grid !== null && grid !== undefined && (
+      {/* Grid — shown whenever the SERIES exists, blank when this instant has no sample. */}
+      {hasGrid && (
         <div className="flex items-center gap-1">
           <span className="w-3 h-3 bg-red-500"></span>
           <span className="text-gray-400">Grid</span>
@@ -97,7 +116,13 @@ export default function ChartTooltip({
               justifyContent: "flex-end",
             }}
           >
-            <Value className="text-white" value={grid.toFixed(1)} unit={unit} />
+            {grid !== null && grid !== undefined ? (
+              <Value
+                className="text-white"
+                value={grid.toFixed(1)}
+                unit={unit}
+              />
+            ) : null}
           </span>
         </div>
       )}

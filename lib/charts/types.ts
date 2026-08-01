@@ -35,7 +35,17 @@ export interface LineChartData {
   timestamps: Date[];
   solar: number[];
   load: number[];
-  batteryW: number[];
+  /**
+   * Battery power, or `undefined` when the device has no battery-power series — and in energy mode,
+   * where there is no battery *energy* series to fetch (`lines-data.ts` nulls it deliberately).
+   *
+   * Optional, like `grid`, and that symmetry is load-bearing: this used to be a non-optional
+   * all-nulls array, which is TRUTHY, so `chartData.batteryW ? …` in the dataset builder always
+   * passed and a phantom Battery dataset was added for battery-less devices. In energy mode that was
+   * visible — Chart.js allocates a grouped-bar slot per dataset, so the real bars were narrowed and
+   * offset by an empty one. Absent means absent.
+   */
+  batteryW?: number[];
   batterySOC: number[];
   batterySOCMin?: number[]; // Min SOC for daily data
   batterySOCMax?: number[]; // Max SOC for daily data

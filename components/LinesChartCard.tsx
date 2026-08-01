@@ -301,13 +301,17 @@ export default function LinesChartCard({
         />
         <div className="flex justify-center mt-2 px-2 sm:px-0">
           <ChartTooltip
+            // Presence comes from the DATA and mirrors the dataset gates in `buildLineDatasets`, so
+            // the legend lists exactly the series the chart draws. Values come from the hover, and
+            // are null whenever nothing is focused or the focused sample is a gap.
+            hasBattery={chartData?.batteryW != null}
+            hasGrid={chartData?.grid != null}
             solar={hoveredData.solar}
             load={hoveredData.load}
             battery={hoveredData.battery}
             grid={hoveredData.grid}
             batterySOC={hoveredData.batterySOC}
             unit={chartData?.mode === "energy" ? "kWh" : "kW"}
-            visible={true}
           />
         </div>
       </>

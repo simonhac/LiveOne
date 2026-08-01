@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — assessment complete, execution approved. Stages 0–2 done, defect decisions signed
-> off 2026-08-01; Stage 3 ready to start.** Written 2026-08-01.
+> **Status: PLAN — Stages 0–2 done, defect decisions signed off, Stage 3a+3b shipped 2026-08-01.
+> Next: 3c (one palette).** Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -390,7 +390,31 @@ migration.
 | 14 | Heatmap | Tooltip hiding is implemented **twice**: a container `mousemove` listener (`:486-524`) and the `external` tooltip's own `isInChartArea` check (`:566-577`) test the same condition. Both vanish in the port. | **Won't fix** — deleted by Stage 5 |
 | 15 | Provenance | `buildTimeScale(timeRange, windowEnd, windowStart)` — the shared helper names that parameter `now`, and in `buildShadingAnnotations` it genuinely is "now". Correct here (no shading), but the name is wrong and invites a real bug. | **Fix** — rename to `windowEnd` in Stage 4 |
 | 16 | Provenance | The crosshair red `rgb(239, 68, 68)` is hardcoded a **third** time (`:135`), alongside two copies in `DashboardChart`. Belongs with #6. | **Fix with #6** |
+| 18 | Lines chart | ✅ **found in 3b** — `LineChartData`'s `number[]` element types are false; every field carries nulls, laundered by an `as ChartData` cast. The root enabler of #1–#3. See below. | **Fix in Stage 4** |
 | 17 | Admin viewer | Uses Chart.js's **built-in legend and tooltip** — the only site that does (`:344-347`). Not a defect; a scope correction. See the Verdict note and the sizing decision below. | **Simplify**, don't reproduce |
+
+#### #18 — `LineChartData`'s element types are a lie (found during Stage 3b)
+
+`LineChartData` declares `solar: number[]`, `load: number[]`, `batteryW?: number[]`,
+`batterySOC: number[]`. **All of them contain `null` in production.** `buildChartData` fills them
+from `convertToKw`, whose signature is `(value: number | null, units: string) => number | null`, and
+also emits `selectedIndices.map(() => null)` for an absent solar/load series — then launders the
+whole mismatch through a blanket `as ChartData` at its own return statement
+(`lib/charts/lines-data.ts`).
+
+This is not cosmetic: it is the reason the #1/#2/#3 family was possible to write. Because the type
+says "no nulls here", every consumer is free to reason as if a value is always present, and the
+compiler cannot object when one conflates "the series is absent" with "this sample is null". It also
+propagated into the harness — the fixture's `?? NaN` existed *purely* to satisfy the false type, and
+that silently disabled the gap cases.
+
+**Proposed: fix to `(number | null)[]` and delete the `as ChartData` cast**, letting the compiler
+find the call sites that assume non-null. Not done in 3b to keep that slice reviewable as one idea.
+Natural home is Stage 4, alongside the other type/naming cleanups (#15) — and it wants doing *before*
+Stage 5, since the port will otherwise inherit the same blind spot. The gallery fixture carries an
+`as unknown as LineChartData` cast with a pointer here; delete it when this lands.
+
+---
 
 `ProvenanceChart` is otherwise the healthiest of the four: honest gaps (`spanGaps: false`), a
 documented re-entrancy guard on `onHover`, no console noise, per-series styling driven off the field
@@ -425,17 +449,45 @@ like.
 **Decisions taken 2026-08-01.** Everything below is signed off; baseline churn is expected and
 reviewed deliberately. **Freeze the baseline at the end of this stage.**
 
-#### 3a — #7, the global plugin (ships first, alone)
-Scope `customYAxisPlugin` to the heatmap instance (`plugins` array on its `<Chart>`) instead of
-`ChartJS.register`. One line. Ships ahead of everything else because it is a live production defect
-**and** because until it lands the Stage 1 baselines describe a rendering the dashboard never
-produces. Expect `lines-*` and `stacked-*` baselines to change — that change *is* the fix.
+#### 3a — #7, the global plugin — ✅ DONE 2026-08-01
+`customYAxisPlugin` is now passed per-instance via the `plugins` prop on the heatmap's `<Chart>`,
+instead of `ChartJS.register`.
 
-#### 3b — #1/#2/#3, the legend presence bug
-Make `batteryW` optional and `undefined`-when-absent in `LineChartData`, matching `grid`. The dataset
-gate and the legend gate then become the same structural `!= null` test, and the legend derives from
-*which series exist* rather than from the hovered sample. Kills the missing entries, the mid-hover
-flicker, and the phantom dataset together. Also drop the dead `visible` prop (#5).
+**The gallery now deliberately side-effect-imports `HeatmapChart`.** The real dashboard loads every
+chart module (`registry.tsx` statically imports all 20 card plugins), so a gallery importing only
+`DashboardChart` was screenshotting something the dashboard never renders. Keeping the import makes
+the baselines faithful *and* turns them into a permanent regression guard: globally register a
+chart-specific plugin anywhere in that graph again and every lines/stacked baseline fails.
+
+> **Prediction corrected.** This section previously said "expect the baselines to change — that
+> change *is* the fix". Wrong. With the fix **and** the faithful import in place, all 34 baselines
+> passed **unchanged**. The baselines were captured uncontaminated, so they already described the
+> correct rendering; what was wrong was *production*, not the baseline. Nothing to re-approve.
+
+#### 3b — #1/#2/#3/#5, the legend presence bug — ✅ DONE 2026-08-01
+`batteryW` is now optional and `undefined`-when-absent in `LineChartData`, matching `grid`;
+`buildLineDatasets` gates on an explicit `!= null` (not truthiness — an all-nulls array is truthy,
+which was the whole bug); and `ChartTooltip` takes **`hasBattery`/`hasGrid` presence props separate
+from the value props**, mirroring those same dataset gates. Legend and chart now list the same series
+by construction. Dead `visible` prop dropped (#5).
+
+Eight baselines changed, all four periods of the lines chart plus the two battery-less and the two
+gap cases — and, informatively, the *focused-with-full-data* cases did **not** change, because that
+was the one state the old code already got right.
+
+Verified visually, not just by green ticks:
+- `lines-m-no-battery-bars` — bars are now full-width and evenly spaced (the phantom dataset was
+  stealing a grouped-bar slot), and **Grid appears in the legend with nothing hovered** (#1, #3).
+- `lines-d-gap-focused` — crosshair inside the hole, **all five entries remain with blank values**
+  where Battery and Grid previously vanished (#2).
+
+##### 🛑 Harness bug found while verifying — worth knowing about
+The gap fixtures were emitting `NaN`, not `null` (`holed(...) ?? NaN`, written only to satisfy
+`LineChartData`'s `number[]`). `NaN !== null`, so the old value-gated legend still rendered its
+entries and **defect #2 never actually reproduced in the harness** — `lines-d-gap-focused` passed
+unchanged after the fix, which is what exposed it. Fixed to emit real nulls, which is also what
+`buildChartData` genuinely produces. A screenshot suite can be green because the fixture is wrong;
+this one nearly was.
 
 #### 3c — #6/#16, one palette
 **`CHART_COLORS` wins.** The lines chart stops hardcoding RGB and resolves through it, so Solar
@@ -484,6 +536,10 @@ silently collapsing the grid), #13 (`||` → `??`).
 first is wasted work. #15 (the `now` → `windowEnd` rename) rides along with Stage 4.
 
 ### Stage 4 — Shared d3 primitives
+
+Also lands the type/naming cleanups the port would otherwise inherit: **#18** (`LineChartData`'s
+false `number[]` element types + the `as ChartData` cast) and **#15** (`buildTimeScale`'s `now`
+parameter renamed to `windowEnd`).
 
 `lib/charts/svg/`, extracted from the `DailyStripes` idiom rather than invented: `useContainerSize`
 (lift the existing `useContainerWidth`), `<TimeAxis>`, `<ValueAxis>`, `<ShadingBands>` (replacing

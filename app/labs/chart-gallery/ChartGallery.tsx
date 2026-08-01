@@ -19,6 +19,19 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import DashboardChart from "@/components/DashboardChart";
 import ChartTooltip from "@/components/ChartTooltip";
+// 🛑 Deliberate side-effect import — do NOT remove as "unused".
+//
+// The real dashboard loads every chart module: `components/dashboard/registry.tsx` statically imports
+// all 20 card plugins, so `HeatmapChart` is in the graph of every dashboard page whether or not a
+// heatmap card is on it. A gallery that imported only `DashboardChart` was therefore screenshotting
+// something the dashboard never actually renders — and that is not hypothetical: until defect #7 was
+// fixed, HeatmapChart globally registered a y-axis plugin that re-drew the tick labels of every other
+// Chart.js chart in the process (ghosted axis labels, live in production).
+//
+// Keeping the import here makes the baselines faithful AND makes this a permanent regression guard:
+// re-introduce a `ChartJS.register(...)` of a chart-specific plugin anywhere in this graph and every
+// lines/stacked baseline fails immediately.
+import "@/components/HeatmapChart";
 import { CHART_CASES, type ChartCase } from "./cases";
 import { linesFixture, stackedFixture } from "./fixtures";
 
@@ -90,8 +103,9 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
       <div className="mt-2 flex justify-center">
         <ChartTooltip
           {...hovered}
+          hasBattery={chartData.batteryW != null}
+          hasGrid={chartData.grid != null}
           unit={chartData.mode === "energy" ? "kWh" : "kW"}
-          visible={true}
         />
       </div>
     </div>

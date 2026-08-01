@@ -95,10 +95,12 @@ export type LinesFixture = {
 };
 
 /**
- * The `lines` variant's data. Note `batteryW` is populated as an all-nulls array when `noBattery` is
- * set, faithfully reproducing what `buildChartData` does today (`lib/charts/lines-data.ts:150-154`)
- * — that asymmetry with `grid` (which becomes `undefined`) IS defect #3 in the plan, and this
- * fixture exists so the fix shows up as a visible baseline diff.
+ * The `lines` variant's data, mirroring what `buildChartData` (`lib/charts/lines-data.ts`) produces.
+ *
+ * `noBattery` yields `batteryW: undefined`, symmetrical with `noGrid`/`grid`. It used to yield an
+ * all-nulls ARRAY here, faithfully reproducing defect #3 — an array is truthy, so the dataset builder
+ * added a phantom Battery series and the legend gate misfired. Fixed in Stage 3b; the fixture tracks
+ * the fix because its job is to match the real builder, not to freeze the old bug.
  */
 export function linesFixture(opts: LinesCaseOpts): LinesFixture {
   const { range, noBattery, noGrid, withGap } = opts;
@@ -110,28 +112,33 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
   const scale = isEnergy ? 24 * 0.6 : 1;
   const gapFrom = Math.floor(timestamps.length * 0.42);
   const gapTo = Math.floor(timestamps.length * 0.5);
-  const holed = <T>(v: T, i: number): T | null =>
-    withGap && i >= gapFrom && i < gapTo ? null : v;
+  /**
+   * A gapped sample is a REAL `null`, not `NaN`.
+   *
+   * This previously read `holed(...) ?? NaN` — written only to satisfy `LineChartData`'s `number[]`
+   * — and that silently defeated the whole point of the gap cases: `NaN !== null`, so the old
+   * value-gated legend still rendered its Battery/Grid entries and defect #2 never reproduced in the
+   * harness. Real nulls are also what `buildChartData` actually emits (`convertToKw` returns
+   * `number | null`), so this is the faithful shape as well as the useful one.
+   */
+  const holed = (v: number, i: number): number | null =>
+    withGap && i >= gapFrom && i < gapTo ? null : round(v);
 
   const solar = timestamps.map((d, i) =>
-    round(holed(solarShape(d) * 6.2 * (0.85 + rand() * 0.3) * scale, i) ?? NaN),
+    holed(solarShape(d) * 6.2 * (0.85 + rand() * 0.3) * scale, i),
   );
   const load = timestamps.map((d, i) =>
-    round(holed(loadShape(d) * (0.9 + rand() * 0.2) * scale, i) ?? NaN),
+    holed(loadShape(d) * (0.9 + rand() * 0.2) * scale, i),
   );
   // Battery mops up the difference, clamped to a plausible inverter limit.
   const batteryW = timestamps.map((d, i) =>
-    round(
-      holed(
-        Math.max(-5, Math.min(5, (solarShape(d) * 6.2 - loadShape(d)) * scale)),
-        i,
-      ) ?? NaN,
+    holed(
+      Math.max(-5, Math.min(5, (solarShape(d) * 6.2 - loadShape(d)) * scale)),
+      i,
     ),
   );
   const grid = timestamps.map((_, i) =>
-    round(
-      holed((load[i] ?? 0) - (solar[i] ?? 0) - (batteryW[i] ?? 0), i) ?? NaN,
-    ),
+    holed((load[i] ?? 0) - (solar[i] ?? 0) - (batteryW[i] ?? 0), i),
   );
 
   // SoC integrates the battery flow, clamped 20–100 %.
@@ -141,18 +148,21 @@ export function linesFixture(opts: LinesCaseOpts): LinesFixture {
     return round(soc, 1);
   });
 
-  const chartData: LineChartData = {
+  // 🛑 The cast mirrors a type lie in the real builder, and is not laziness. `LineChartData` declares
+  // `solar`/`load`/`batteryW`/`batterySOC` as `number[]`, but `buildChartData` fills them from
+  // `convertToKw` (which returns `number | null`) and launders the mismatch through a blanket
+  // `as ChartData` at its own return. Nulls are the production reality; the declared type is wrong.
+  // Tracked as defect #18 — when that is fixed to `(number | null)[]`, delete this cast.
+  const chartData = {
     timestamps,
     solar,
     load,
-    // Faithful to buildChartData: absent battery ⇒ all-nulls array, NOT undefined.
-    batteryW: noBattery
-      ? (timestamps.map(() => null) as unknown as number[])
-      : batteryW,
+    // Faithful to buildChartData: absent battery ⇒ undefined, exactly like `grid` below.
+    ...(noBattery ? {} : { batteryW }),
     batterySOC,
     ...(noGrid ? {} : { grid }),
     mode: isEnergy ? "energy" : "power",
-  };
+  } as unknown as LineChartData;
 
   // The SoC min/max band only exists in energy (daily) mode.
   const paddedSOCData: PaddedSOCData | null = isEnergy

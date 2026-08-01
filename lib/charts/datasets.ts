@@ -39,7 +39,7 @@ export function buildLineDatasets(
         categoryPercentage: 0.8,
       },
       // Add battery power if available (for energy mode, this would be battery energy)
-      ...(chartData.batteryW
+      ...(chartData.batteryW != null
         ? [
             {
               label: "Battery",
@@ -53,7 +53,7 @@ export function buildLineDatasets(
           ]
         : []),
       // Add grid if available
-      ...(chartData.grid
+      ...(chartData.grid != null
         ? [
             {
               label: "Grid",
@@ -154,7 +154,7 @@ export function buildLineDatasets(
       fill: false, // Don't fill under the line
     },
     // Add battery power if available
-    ...(chartData.batteryW
+    ...(chartData.batteryW != null
       ? [
           {
             label: "Battery",
@@ -170,7 +170,7 @@ export function buildLineDatasets(
         ]
       : []),
     // Add grid if available
-    ...(chartData.grid
+    ...(chartData.grid != null
       ? [
           {
             label: "Grid",

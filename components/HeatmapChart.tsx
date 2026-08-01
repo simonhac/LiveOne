@@ -28,7 +28,19 @@ import { formatTimeAEST } from "@/lib/date-utils";
 import { formatTime, formatDate } from "@/lib/fe-date-format";
 import { PointInfo } from "@/lib/point/point-info";
 
-// Custom plugin to render y-axis labels with mixed colors
+/**
+ * Renders this chart's y-axis labels with a mixed weight (bold month, normal day).
+ *
+ * 🛑 **Must stay a per-instance plugin — never `ChartJS.register(...)`.** A globally-registered
+ * plugin runs on EVERY Chart.js instance in the process, and this one has no chart-type guard, so
+ * registering it globally made it re-draw the y-tick labels of the dashboard's lines and stacked
+ * charts on top of the ones Chart.js had already drawn (right-aligned at `chartArea.left - 10`,
+ * against Chart.js's own padding) — doubled, ghosted axis labels. That was live in production,
+ * because `components/dashboard/registry.tsx` statically imports every card plugin, so merely
+ * loading this module contaminated every dashboard page whether or not a heatmap was on it.
+ * It is passed via the `plugins` prop on the `<Chart>` below instead. See
+ * `docs/plans/chart-library-consolidation.md` defect #7.
+ */
 const customYAxisPlugin = {
   id: "customYAxisLabels",
   afterDraw: (chart: any) => {
@@ -103,9 +115,6 @@ ChartJS.register(
   MatrixController,
   MatrixElement,
 );
-
-// Register custom plugin
-ChartJS.register(customYAxisPlugin as any);
 
 interface HeatmapChartProps {
   systemId: number;
@@ -843,7 +852,13 @@ export default function HeatmapChart({
       <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
         <div className="relative">
           <div ref={chartContainerRef} style={{ height: "600px" }}>
-            <Chart type="matrix" data={chartData} options={chartOptions} />
+            <Chart
+              type="matrix"
+              data={chartData}
+              options={chartOptions}
+              // Per-instance, NOT ChartJS.register — see the plugin's own comment.
+              plugins={[customYAxisPlugin as never]}
+            />
           </div>
 
           {/* Loading overlay - dims chart and shows spinner while loading new data */}
