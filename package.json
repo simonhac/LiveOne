@@ -15,6 +15,7 @@
     "build": "next build",
     "prebuild:local": "node scripts/check-route-slugs.mjs && node scripts/check-readings-boundary.mjs",
     "build:local": "BUILD_DIR=.next-build next build",
+    "analyze": "ANALYZE=true BUILD_DIR=.next-analyze next build",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
@@ -113,6 +114,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^15.5.22",
     "@tanstack/react-query-devtools": "^5.101.0",
     "@types/d3-array": "^3.2.2",
     "@types/d3-sankey": "^0.12.4",

@@ -18,7 +18,7 @@ product reasons about.
 ## Stack (as deployed)
 
 - **App:** Next.js 15 (App Router), single Vercel deployment, region `syd1`. shadcn/ui,
-  Recharts, TanStack React Query, Clerk for auth, Drizzle ORM, Jest.
+  Chart.js + modular d3 for charts, TanStack React Query, Clerk for auth, Drizzle ORM, Jest.
 - **DB:** PostgreSQL 17 on PlanetScale (`sydney` branch, `aws-ap-southeast-2`,
   3-node HA) — the sole store: serving store, config authority, and raw-durability outbox.
 - **Queue:** Upstash QStash — decoupling transport for observations.

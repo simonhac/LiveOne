@@ -166,15 +166,16 @@ for (const [modulePath, name] of Object.entries(LEAF_MODULES)) {
     return { __esModule: true, default: h.makeLeaf(name) };
   });
 }
-// 🛑 `DailyStripes` is stubbed OUT of the capture set rather than added to `LEAF_MODULES`, for two
-// independent reasons (config-v4 Phase 14 stage 19):
-//   1. Its props embed a `Date.now()`-derived local-day window (`firstDayMidnightMs`), so recording
-//      them would bake today's date into the checked-in golden and turn it red at the next local
-//      midnight — exactly what the fixture world's "no clocks, no randomness" rule exists to stop.
-//   2. It imports `d3-scale`/`d3-time`/`d3-interpolate`, which ship ESM-only; jest does not
-//      transform `node_modules`, so merely LOADING it (the registry imports the plugin, which
-//      imports it) throws `SyntaxError: Unexpected token 'export'`. A `jest.mock` factory keeps the
-//      real module from ever being required — same reason the chart.js leaves are mocked.
+// 🛑 `DailyStripes` is stubbed OUT of the capture set rather than added to `LEAF_MODULES`, for one
+// remaining reason (config-v4 Phase 14 stage 19):
+//   1. Its props embed a `Date.now()`-derived local-day window (`firstDayMidnightMs`, set at
+//      `components/dashboard/cards/daily-stripe.tsx:67`), so recording them would bake today's date
+//      into the checked-in golden and turn it red at the next local midnight — exactly what the
+//      fixture world's "no clocks, no randomness" rule exists to stop.
+//   2. ~~ESM-only d3 cannot be loaded under jest at all.~~ **No longer true** as of the chart-library
+//      consolidation Stage 0: `jest.shared.js` now transforms `d3-*`, guarded by
+//      `lib/charts/__tests__/d3-esm-imports.test.ts`. Reason 1 is load-bearing on its own, so the
+//      mock stays — but do not cite ESM as the blocker.
 // The `daily-stripe` entry therefore records `renderProps` (node + config + resolved scope, all
 // deterministic) with an empty `leaves` list; the window/parse/domain logic that would have shown up
 // in `leaves` is unit-tested directly in ./daily-stripe.test.ts.

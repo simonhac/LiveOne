@@ -124,7 +124,7 @@ flowchart TD
 - **Queue** — Upstash QStash for durable observation delivery
 - **Auth** — Clerk (multi-user; vendor credentials stored in Clerk, never in the database)
 - **Data layer** — TanStack React Query v5, with SSR prefetch and hydration
-- **Visualization** — Recharts, D3 Sankey, and Chart.js
+- **Visualization** — Chart.js (time-series, heatmap) and modular d3 (Sankey, scales, palettes)
 - **Collection** — Vercel Cron (minutely polling, daily aggregation, weekly coverage repair); LAN devices via `packages/usher` on a Fly WireGuard hub
 
 For the full picture, see [`docs/architecture/overview.md`](docs/architecture/overview.md) and the [documentation index](docs/README.md).
