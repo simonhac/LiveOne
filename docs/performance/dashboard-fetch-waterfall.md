@@ -1,9 +1,11 @@
 # Dashboard fetch-waterfall benchmark
 
-> Status: current — reusable harness; the recorded run below is a PROD baseline for the
-> `simonhac/dashboard-fetch-slim-handoff` branch's fetch-slimming work
-> (`.context/plans/slim-the-dashboard-s-fetch-fan-out-db-round-trips.md`). Re-run and diff after
-> that branch merges — see "Re-run after merge" below.
+> Status: current — reusable harness plus a dated series of PROD recordings, newest last. The
+> **latest run is 2026-08-01 (post-config-v4)**; start there. Everything above it is history kept
+> for the deltas it explains. Two things that run has changed for future re-runs: the benchmark
+> target should now be the **canonical `db_…` URL** (the legacy `/dashboard/id/{int}` form costs an
+> 85 ms redirect), and **Kinkora is saturated at 1 client request** — use **Daylesford** when you
+> want a target that still exercises waterfall shape. See "Where to point the benchmark next".
 
 ## What this measures
 
@@ -465,7 +467,7 @@ The Sydney harness is captured as reusable code at
 Lambda, deploys it to `ap-southeast-2`, invokes the same 10-run harness + `/api/health` floor probe, saves
 the JSON, and **tears everything down** (cost: a few cents); `python3 analyse.py <result.json>` prints the
 Sydney-vs-Italy comparison. **Re-run after Superphase 1 lands** (see
-[`../architecture/live-dashboard-roadmap.md`](../architecture/live-dashboard-roadmap.md)) and add a dated
+[`../plans/live-dashboard-roadmap.md`](../plans/live-dashboard-roadmap.md)) and add a dated
 `-sydney-lambda-prod-<date>.json` + a comparison row here. Expect the shared-view **settle** to drop (the
 `/api/history` precompute + SSR prefetch touch this render path); the **~46 ms network floor won't move**.
 
@@ -628,3 +630,203 @@ of ~460 ms, and one fewer client request), unlike #207's ~36 ms. If even ~9 ms i
 the pin seed entirely remains valid since it doesn't affect settle — but at ~9 ms the seed is worth
 keeping. Settle is unchanged throughout (~590–610 ms, gated by the un-seeded `/api/history` — the
 outstanding lever, to be done via Suspense streaming so it doesn't repeat this blocking-render mistake).
+
+## Post-config-v4 re-run — Sydney Lambda + local AU browser, 2026-08-01
+
+First re-run since the **entire config-v4 epic** landed (Phase 14 closed at `352da181`; prod deploy
+~40 min before these runs). Config-v4 rewrote the dashboard render path end to end — v4 JSONB
+documents, TypeID addressing (`db_`/`ar_`/`dv_`), `/api/v4/{areas,dashboards,devices}` replacing
+`/api/dashboards` + `/api/areas/readable`. Two captures:
+
+- **Sydney Lambda** (headless Chromium in `ap-southeast-2`, shared `?access=` view, the existing
+  turnkey harness): [`…-sydney-lambda-prod-2026-08-01.json`](./dashboard-fetch-waterfall-sydney-lambda-prod-2026-08-01.json).
+- **Local browser, in Australia** (real Chrome on the operator's machine, 10 shared + 10 **authed**
+  runs): [`…-local-au-prod-2026-08-01.jsonl`](./dashboard-fetch-waterfall-local-au-prod-2026-08-01.jsonl).
+  This is the **first authed capture that is not taxed by `fra1↔syd1`** — every prior authed number
+  in this doc was measured from Italy.
+
+`syd1::syd1` confirmed on every request in both captures.
+
+### Headline: the authed page went 6 client requests → 1
+
+| Metric (authed owner page)      | 2026-07-21 (Italy, `fra1`) | **2026-08-01 (local, AU)** |
+| ------------------------------- | -------------------------- | -------------------------- |
+| Client `/api` requests          | 6                          | **1** (`/api/history`)     |
+| Waterfall stages                | 2 (chrome → data)          | **1**                      |
+| Settle (last request end)       | 2310 ms                    | **560 ms**                 |
+| Per-request network floor       | ~585 ms                    | **~73 ms**                 |
+
+The three "chrome" requests (`/api/dashboards`, `/api/user/preferences`, `/api/areas/readable`) and
+both `/api/data` calls are gone — resolved or seeded server-side. **The 2-stage waterfall this doc
+spent three sections chasing no longer exists**, and with it the environment-independent metric
+(request count / stage shape) has bottomed out at 1/1 for this dashboard.
+
+That also **retires the doc's modelled AU prediction**. The Cross-region section reconstructed an AU
+user's authed settle as "≈ **1.0–1.1 s**" by assuming network ~46 ms plus the known 2-stage shape.
+Measured, it is **560 ms** — roughly 2× better than modelled, because the model still carried a
+waterfall that config-v4 + SSR has since deleted. Replace the model with this measurement.
+
+### Local AU browser — 10 runs each (medians; min–max in brackets)
+
+| Signal                                     | Shared (`?access=`) | Authed owner       |
+| ------------------------------------------ | ------------------- | ------------------ |
+| Client `/api` requests (every run)         | 1                   | 1                  |
+| **FCP (time-to-tiles)**                    | **246** (188–1016¹) | **244** (208–316)  |
+| Document `responseEnd` (SSR fully streamed)| 178 (150–960¹)      | 189 (164–276)      |
+| DOMContentLoaded                           | 221 (179–991¹)      | 226 (184–294)      |
+| **Settle (`/api/history` end)**            | **564** (512–1349¹) | **560** (510–751)  |
+| `/api/history` start (hydration)           | 242                 | 240                |
+| `/api/history` client `dur`                | 318                 | 320                |
+| `/api/history` server `total`              | 236.8               | 231.9              |
+| `/api/health` round trip (network floor)   | — (76.5 ms median, server 2.8 ms → **~73 ms network**) ||
+
+¹ One cold-instance hit per view; the warm distribution is tight (shared warm settle 512–655).
+
+**Document `responseStart` is ~23 ms and is NOT the SSR render time** — it is the streamed shell (and
+Vercel's `103 Early Hints`) landing before the awaited data. Use **`responseEnd`** (browser) or the
+node document probe for SSR cost; the Lambda's node probe and the browser's `responseStart` disagree
+by ~80 ms for exactly this reason. Worth knowing before comparing the two captures' "TTFB" rows.
+
+### SSR-render decomposition (inline `#__ssr_timing`, warm medians)
+
+| span         | Shared, AU | Authed, AU | note                                                    |
+| ------------ | ---------- | ---------- | ------------------------------------------------------- |
+| `auth`       | 2.2        | 1.8        | Clerk `auth()`                                          |
+| `token`      | 7.2        | —          | `validateDashboardShareToken` (share path only)         |
+| `admin`      | —          | 0.9        | `isUserAdmin` (authed path only)                        |
+| `dashboard`  | 3.3        | 4.2        | `getDashboard`                                          |
+| **`areas`**  | **16.2**   | **44.2**   | authed = `listReadableAreas` over all readable areas    |
+| `data`       | 25.9       | 21.8       | KV latest prefetch                                      |
+| `switcher`   | —          | 5.2        | SP1.4 header-switcher seed                              |
+| **`total`**  | **60.4**   | **84.8**   |                                                         |
+
+`areas` is now the fattest SSR span on the authed path at **44 ms** (vs 16 ms shared, and vs the
+10.7 ms recorded pre-#207) — it is the authed render's one real cost, and the natural next target if
+the SSR document is to get cheaper. SP1.4's `switcher` seed is cheap (5 ms), so the warning left in
+the #207 section ("watch its FCP") is answered: it is not a problem.
+
+### Sydney Lambda (shared view) vs the 2026-07-22 `-pinauth` run
+
+| Signal (median)                     | 2026-07-22 (#208) | **2026-08-01** | Δ            |
+| ----------------------------------- | ----------------- | -------------- | ------------ |
+| Network floor (health warm TTFB)    | 48 ms             | 53 ms          | — (physics)  |
+| Client requests (shared)            | 1                 | **1**          | —            |
+| FCP                                 | 294 ms (noisy)    | **258 ms**     | −36          |
+| Settle (`/api/history` end)         | ~606 ms           | **600 ms**     | ~flat        |
+| Node document TTFB (warm)           | 104 ms            | **104 ms**     | **0**        |
+| SSR `data` span                     | 16.8 ms           | 24.9 ms        | +8           |
+| SSR `total` span                    | 38.9 ms           | **55.3 ms**    | **+16**      |
+| `/api/history` server `total`       | ~150–185 ms       | **228.6 ms**   | **+50–80**   |
+
+Config-v4 added ~16 ms to the SSR render (`areas` 10.7 → 16.9, `data` 16.8 → 24.9) — but the
+**node document TTFB is unchanged at 104 ms**, so none of it reached the user: the extra work fits
+inside the streaming render. That is the honest read; the SSR span total is not the document time.
+
+### The one real regression: `/api/history` server time
+
+`/api/history` is still the settle tail, and its server `total` has gone **~198 ms (2026-07-21) →
+~232 ms**. Decomposition (local AU authed medians, vs the 2026-07-21 Italy capture):
+
+| span        | 2026-07-21 | **2026-08-01** | Δ        |
+| ----------- | ---------- | -------------- | -------- |
+| `logical`   | 23.1       | 26.6           | +3       |
+| `fetch`     | 82.2       | 90.1           | +8       |
+| **`attr`**  | **66.3**   | **97.8**       | **+32**  |
+| `auth`      | —          | 15.1           | —        |
+| `serialize` | —          | 0.9            | —        |
+| **`total`** | **198.4**  | **231.9**      | **+34**  |
+
+The regression is concentrated in **`attr`** (battery-provenance attribution, +32 ms) with `fetch`
+up ~8 ms. Note SP1.3a's `agg5m-cache` (Lever 1, the `agg_5m` double-read) is in place and `fetch` did
+not fall — consistent with the earlier finding that this span is dominated by in-Node CPU (densify /
+fold / trapezoidal integration), not the DB read. **Levers 2 and 3 from the "Inside `/api/history`"
+section are unchanged and are now the whole remaining story** for this page's tail.
+
+One new asymmetry worth recording: on the **shared** path `/api/history`'s `auth` span is **41.3 ms**
+vs **15.1 ms** authed — the share-token is re-validated on every card request. It is not the tail, but
+it is ~26 ms of avoidable per-request work on the anonymous path.
+
+### Two harness-affecting facts discovered in this run
+
+1. **The legacy `/dashboard/id/{int}` URL now costs an 85 ms redirect** on the **authed** path —
+   config-v4 added a `permanentRedirect` to the canonical `db_…` id
+   (`app/dashboard/[...slug]/page.tsx:333-337`). Measured: `redirectStart 1 → redirectEnd 86`, FCP
+   304 ms vs 244 ms for the canonical URL. The `?access=` **share** path is unaffected because the
+   token branch (`:287-312`) resolves the dashboard from the token and short-circuits *before* the
+   redirect — which is the only reason `scripts/perf/sydney-lambda/`'s default `TARGET_URL` still
+   works unchanged. ⚠️ **That redirect drops the query string**, so if the token short-circuit ever
+   moves below it the shared harness URL dies silently. Prefer the canonical form:
+   `…/dashboard/id/db_01kyf18trhf5xrchbsv6yt8np0`.
+2. **The measuring tab must be visible.** A first attempt via the browser-automation tab measured
+   FCP **131,744 ms** (the page only painted when a screenshot forced a render) and hydration at
+   6.7 s — background-tab throttling, with `document.visibilityState === "hidden"`. Every run
+   recorded here has `vis: "visible"` asserted in the raw data. Check it, or the numbers are fiction.
+   (Related: the in-page harness must not emit the literal string `token` — the browser extension's
+   credential guard blocks the tool result. The recorded span names are truncated to 3 chars in-page
+   and expanded when written to the `.jsonl`.)
+
+### Where to point the benchmark next
+
+Kinkora is now **saturated**: 1 request, 1 stage, shared and authed alike. The waterfall-shape
+metric — the one this doc calls "the trustworthy cross-environment metric" — can no longer move on
+it. A single authed probe of each dashboard on prod (2026-08-01):
+
+| Dashboard      | Client `/api` requests | Settle  | What still fires                                                      |
+| -------------- | ---------------------- | ------- | --------------------------------------------------------------------- |
+| Kinkora        | 1                      | 560 ms  | `/api/history`                                                        |
+| Kew            | 2                      | 620 ms  | `/api/history` ×2                                                     |
+| **Daylesford** | **4**                  | **1546 ms** | `/api/history` ×2 (one **1226 ms**), `/api/device/1/run-periods`, **`/api/data`** |
+
+**Recommendation: keep Kinkora as the continuity baseline** (it is what every dated run above
+measures — changing it would break the series) **and add Daylesford as the new working target.** It
+is the only dashboard that still has shape to measure: 4 concurrent requests, an **un-seeded
+`/api/data`** (the same prefetch-gap class as the sys-12 case fixed in #207/#208, still open here),
+a `run-periods` call, and a 1226 ms `/api/history` — a settle **2.8× worse** than Kinkora's and by
+far the worst real page on prod. Its SSR `areas` span is also the fattest measured (88 ms).
+
+#### Why Daylesford fires 4 requests and Kinkora fires 1
+
+All four fire concurrently at ~408 ms (still **one stage** — the shape win holds), so this is
+fan-out, not serialization:
+
+| Request                                     | Card             | Query (key)                             |
+| ------------------------------------------- | ---------------- | --------------------------------------- |
+| `/api/history?systemId=1000002&interval=5m`  | `chart` (lines)  | `historyQuery` → `["history",…]`        |
+| `/api/history?…&interval=5m&include=sankey`  | `sankey`         | `siteDataQuery` → `["siteData",…]`      |
+| `/api/device/1/run-periods`                  | `generator-runs` | `["runPeriods",…]`                      |
+| `/api/data?systemId=14&include=readings`     | `device-metrics` | `latestReadingsQuery` → `["latest",…]`  |
+
+**The double `/api/history` is a `chart`-card *variant* split, not a config quirk.** Two distinct
+query families reach the same route:
+
+- `siteDataQuery` (`lib/queries/siteData.ts`, key `["siteData", sid, period, rangeKey]`) →
+  `fetchAndProcessSiteData` → `/api/history?…&include=sankey`, series `*/power.avg,…`.
+- `historyQuery` (`lib/queries/history.ts`, key `["history", sid, interval, rangeKey, seriesKey]`) →
+  `/api/history?…&series=buildSeriesParam()`, **no** `include`.
+
+Which one a `chart` card uses is decided by `chartPlugin.collapseKey`
+(`components/dashboard/cards/chart.tsx`): variant **`stacked-areas`** collapses into the section's
+`SiteChartsGroup` and rides `siteDataQuery`; variant **`lines`** renders standalone as
+`LinesChartCard` and issues its own `historyQuery`. Measured card configs confirm it exactly:
+
+| Dashboard  | `chart` variants                     | `/api/history` calls |
+| ---------- | ------------------------------------ | -------------------- |
+| Kinkora    | `stacked-areas` ×2 (load, generation) | **1**                |
+| Daylesford | `lines`                              | **2**                |
+| Kew        | `lines`                              | **2**                |
+
+So Kinkora reads as "1 request" only because both its charts are the collapsing variant — **any
+dashboard with a `lines` chart pays a second `/api/history` for the same subject, interval and
+window.** The sankey call's `*/power.avg` is a **superset** of the lines call's explicit series list,
+so the second request is redundant on the wire. That is the concrete next fetch-slimming lever, and
+the same class of fix as the 7→6 hot-water merge in the 2026-07-21 section — where `hot-water.tsx`
+already demonstrates the pattern (read `siteDataQuery`'s cache instead of firing its own call).
+
+The other two are prefetch gaps. `generator-runs` has no SSR seed at all. `device-metrics` is
+subtler: the SSR pin seed **does** cover system 14 — but it writes `queryKeys.data(14)`, while the
+card's metrics table is a *separate* query, `latestReadingsQuery` → `queryKeys.latest(14)` →
+`/api/data?systemId=14&include=readings` (a superset payload the seed doesn't carry, because
+`getDeviceDataForCache` calls `buildDevicePayload(subject, false)` — `false` = no `readings`). So the
+pin authorization from #208 is working; the `latest` key is simply outside it. Both are cheap
+concurrent calls and neither is the settle tail (the sankey `/api/history` is), so per the #207
+lesson they should only be seeded if it can be done **without** adding blocking SSR work.

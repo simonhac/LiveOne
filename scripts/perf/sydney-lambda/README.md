@@ -11,7 +11,7 @@ the `syd1` functions + PlanetScale `sydney`.
 The dashboard's ~600 ms/request "floor" measured from Italy is **`fra1↔syd1` network latency, not app
 code** (`x-vercel-id: fra1::syd1`). From Sydney the same routes return in ~46 ms (`syd1::syd1`) and the
 server-side phase times are identical. This harness makes that measurable and **repeatable**, so we can
-re-run it after the SSR work (Superphase 1, see [`docs/architecture/live-dashboard-roadmap.md`](../../../docs/architecture/live-dashboard-roadmap.md))
+re-run it after the SSR work (Superphase 1, see [`docs/plans/live-dashboard-roadmap.md`](../../../docs/plans/live-dashboard-roadmap.md))
 lands and see what changed.
 
 ## Run it
@@ -93,3 +93,40 @@ a *cold* fra1 sample but 3.7 ms warm — cold-instance artifact, not a real cost
 and balanced; the tail is client-side `/api/history`, not the SSR render. The authed owner-path win
 (SP1.1) is **not** visible here (no auth) — measure that with a signed-in browser per the main
 waterfall doc.
+
+## Recorded — post-config-v4 (2026-08-01)
+
+First re-run after the config-v4 epic (`352da181`). Shared view, 10 runs, `syd1::syd1` on every
+request. Full write-up + raw data:
+[`docs/performance/dashboard-fetch-waterfall.md`](../../../docs/performance/dashboard-fetch-waterfall.md)
+("Post-config-v4 re-run — Sydney Lambda + local AU browser") and
+`docs/performance/dashboard-fetch-waterfall-sydney-lambda-prod-2026-08-01.json`.
+
+| Metric | 2026-07-22 (#208) | **2026-08-01** |
+|---|---|---|
+| Network floor (health warm) | 48 ms | 53 ms |
+| Client requests (shared) | 1 | **1** |
+| FCP (time-to-tiles) | 294 ms (noisy) | **258 ms** |
+| Settle (`/api/history` end) | ~606 ms | **600 ms** |
+| Node document TTFB (warm) | 104 ms | **104 ms** (unchanged) |
+| SSR `total` span | 38.9 ms | **55.3 ms** |
+| `/api/history` server `total` | ~150–185 ms | **228.6 ms** |
+
+Config-v4 added ~16 ms of SSR span time but the **document TTFB did not move** — it fits inside the
+streaming render. The one real regression is `/api/history`'s `attr` span (battery-provenance
+attribution) at 66 → 98 ms.
+
+**Two things changed for future runs:**
+
+1. **Prefer the canonical `db_…` URL.** `TARGET_URL`'s legacy `/dashboard/id/5?access=…` still works
+   *only* because the share-token branch short-circuits before config-v4's new legacy-id
+   `permanentRedirect` — and that redirect **drops the query string**. On the authed path the
+   redirect costs ~85 ms. Safer:
+   `TARGET_URL='https://www.liveone.energy/dashboard/id/db_01kyf18trhf5xrchbsv6yt8np0?access=<token>' ./run.sh`
+2. **Kinkora is saturated** (1 request, 1 stage — shared *and* authed). For waterfall **shape**, point
+   the harness at **Daylesford** (`db_01kyf18tp3e5brm474zf0fzvkm`): 4 client requests, 1546 ms settle,
+   an un-seeded `/api/data`, and a 1226 ms `/api/history`. Keep Kinkora for series continuity.
+
+**Harness caveat if you run the in-page harness from a browser-automation tab** (not this Lambda):
+assert `document.visibilityState === 'visible'`. A hidden tab throttles hydration and never paints —
+a first attempt recorded FCP 131,744 ms and hydration at 6.7 s.
