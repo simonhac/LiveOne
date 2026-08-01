@@ -503,3 +503,35 @@ export function heatmapHistoryFixture(opts: {
     ],
   };
 }
+
+// ---------------------------------------------------------------------------------------------
+// IngestionChart (/admin/observations)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * 24h of per-minute ingestion counts.
+ *
+ * The admin page fetches for itself, but the chart was extracted into a props-driven component by
+ * the Stage 5 port — which is what makes a baseline possible at all. Shaped like the real thing:
+ * a steady minutely poll, a 5-minute aggregation spike every fifth minute, and an outage stretch,
+ * because "did ingestion stop?" is the question this chart exists to answer.
+ */
+export function ingestionFixture(opts: { outage?: boolean } = {}) {
+  const MIN = 60_000;
+  const end = Math.floor(FIXED_NOW.getTime() / MIN) * MIN;
+  const start = end - 24 * 60 * MIN;
+  const rand = rng(0x1e657);
+
+  const timestamps: Date[] = [];
+  const raw: number[] = [];
+  const agg: number[] = [];
+  let i = 0;
+  for (let t = start; t <= end; t += MIN, i++) {
+    timestamps.push(new Date(t));
+    // A flat-zero stretch is how a real outage reads — deliberately not a gap.
+    const down = opts.outage && i > 700 && i < 820;
+    raw.push(down ? 0 : Math.round(34 + rand() * 8));
+    agg.push(down ? 0 : i % 5 === 0 ? Math.round(28 + rand() * 6) : 0);
+  }
+  return { timestamps, raw, agg };
+}

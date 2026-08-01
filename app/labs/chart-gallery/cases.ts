@@ -51,6 +51,11 @@ export type ChartCase = {
       dayOffsetMin: number;
     }
   | {
+      kind: "ingestion";
+      outage?: boolean;
+      focusAt?: number;
+    }
+  | {
       /** The `lib/charts/svg` primitives rendering on their own — see PrimitivesDemo. */
       kind: "primitives";
       range: ChartTimeRange;
@@ -223,6 +228,23 @@ export const CHART_CASES: ChartCase[] = [
     note: "stacked crosshair at the shared focus instant",
     width: W,
     height: H,
+  },
+
+  // --- IngestionChart (/admin/observations), ported to SVG in Stage 5 -------------------------
+  {
+    id: "ingestion-24h",
+    kind: "ingestion",
+    note: "1,441 per-minute buckets as stacked step-after areas — two paths, not 2,882 sub-pixel bars",
+    width: W,
+    height: 360,
+  },
+  {
+    id: "ingestion-outage",
+    kind: "ingestion",
+    outage: true,
+    note: "an ingestion outage reads as a flat-zero stretch, which is what the chart exists to show",
+    width: W,
+    height: 360,
   },
 
   // --- lib/charts/svg primitives, rendering standalone ----------------------------------------

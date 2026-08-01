@@ -157,3 +157,31 @@ describe("stackedBands", () => {
     expect(empty[0].d).toBeNull();
   });
 });
+
+describe("step-after interpolation", () => {
+  /**
+   * A value that HOLDS for an interval — a per-minute count, a reserve floor that changes once a day
+   * — must not be drawn as a slope, which asserts readings that were never taken.
+   */
+  it("linePath emits horizontal-then-vertical rather than a diagonal", () => {
+    const two = [ts[0], ts[1]];
+    const linear = linePath(two, [0, 10], x, y, "linear")!;
+    const stepped = linePath(two, [0, 10], x, y, "stepAfter")!;
+    expect(stepped).not.toBe(linear);
+    // The step introduces an intermediate vertex; the straight line has exactly two.
+    const verts = (d: string) =>
+      [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].length;
+    expect(verts(stepped)).toBeGreaterThan(verts(linear));
+  });
+
+  it("still breaks at nulls when stepped", () => {
+    const d = linePath(ts, [1, 2, null, 4, 5, 6], x, y, "stepAfter");
+    expect(subPaths(d)).toBe(2);
+  });
+
+  it("stackedBands accepts the same curve and keeps its hole semantics", () => {
+    const a2 = { key: "a", values: [1, 1, null, 1, 1, 1] };
+    const bands = stackedBands(ts, [a2], x, y, "stepAfter");
+    expect(subPaths(bands[0].d)).toBe(2);
+  });
+});

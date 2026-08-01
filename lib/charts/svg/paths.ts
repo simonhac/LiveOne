@@ -14,10 +14,34 @@
  * x, and the baseline resumes when data does. That is the honest rendering and it matches what the
  * Chart.js charts do today, where `spanGaps: false` breaks each filled series at the same index.
  */
-import { area, line, stack, stackOffsetNone, stackOrderNone } from "d3-shape";
+import {
+  area,
+  curveLinear,
+  curveStepAfter,
+  line,
+  stack,
+  stackOffsetNone,
+  stackOrderNone,
+  type CurveFactory,
+} from "d3-shape";
 import type { ScaleLinear, ScaleTime } from "d3-scale";
 
 export type Scale = ScaleLinear<number, number> | ScaleTime<number, number>;
+
+/**
+ * Interpolation between points.
+ *
+ * `stepAfter` is not decoration: a value that HOLDS for an interval — a per-minute count, an applied
+ * reserve floor that changes once a day — is misrepresented by a sloped line, which implies readings
+ * between the samples that were never taken. It is also what makes a dense series render like
+ * touching bars without emitting one node per bar.
+ */
+export type CurveKind = "linear" | "stepAfter";
+
+const CURVES: Record<CurveKind, CurveFactory> = {
+  linear: curveLinear,
+  stepAfter: curveStepAfter,
+};
 
 /**
  * `d` for a line through `values`, broken wherever a value is null.
@@ -30,8 +54,10 @@ export function linePath(
   values: readonly (number | null | undefined)[],
   x: ScaleTime<number, number>,
   y: ScaleLinear<number, number>,
+  curve: CurveKind = "linear",
 ): string | null {
   const gen = line<number>()
+    .curve(CURVES[curve])
     .defined((_, i) => {
       const v = values[i];
       return v != null && Number.isFinite(v);
@@ -95,6 +121,7 @@ export function stackedBands(
   series: readonly StackedSeries[],
   x: ScaleTime<number, number>,
   y: ScaleLinear<number, number>,
+  curve: CurveKind = "linear",
 ): StackedBand[] {
   if (series.length === 0) return [];
 
@@ -121,6 +148,7 @@ export function stackedBands(
     .offset(stackOffsetNone)(rows);
 
   const gen = area<[number, number]>()
+    .curve(CURVES[curve])
     .defined((_, i) => columnDefined[i])
     .x((_, i) => x(timestamps[i]))
     .y0((dp) => y(dp[0]))

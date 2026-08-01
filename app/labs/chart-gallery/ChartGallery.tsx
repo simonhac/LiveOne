@@ -36,9 +36,15 @@ import ProvenanceChart from "@/components/battery-provenance/ProvenanceChart";
 // lines/stacked baseline fails immediately.
 import HeatmapChart from "@/components/HeatmapChart";
 import PrimitivesDemo from "./PrimitivesDemo";
+import IngestionChart from "@/app/admin/observations/IngestionChart";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { CHART_CASES, type ChartCase } from "./cases";
-import { linesFixture, provenanceFixture, stackedFixture } from "./fixtures";
+import {
+  ingestionFixture,
+  linesFixture,
+  provenanceFixture,
+  stackedFixture,
+} from "./fixtures";
 
 const noop = () => {};
 
@@ -270,12 +276,25 @@ function PrimitivesCase({
   );
 }
 
+function IngestionCase({
+  c,
+}: {
+  c: Extract<ChartCase, { kind: "ingestion" }>;
+}) {
+  return (
+    <div style={{ width: c.width }}>
+      <IngestionChart series={ingestionFixture(c)} loading={false} configured />
+    </div>
+  );
+}
+
 function CaseBody({ c }: { c: ChartCase }) {
   if (c.kind === "lines") return <LinesCase c={c} />;
   if (c.kind === "stacked") return <StackedCase c={c} />;
   if (c.kind === "provenance") return <ProvenanceCase c={c} />;
   if (c.kind === "heatmap") return <HeatmapCase c={c} />;
   if (c.kind === "primitives") return <PrimitivesCase c={c} />;
+  if (c.kind === "ingestion") return <IngestionCase c={c} />;
   return <ColoursCase c={c} />;
 }
 

@@ -711,8 +711,26 @@ which is the behaviour the hardest part of Stage 5 depends on.
 Acceptance rule from here on: **the screenshots must not change.** Any diff is a bug or a
 regression and must be explained.
 
-1. `observations-viewer` bar chart — admin-only, lowest stakes. **Simplify its legend/tooltip rather
-   than reproduce them** (#17); its baseline is expected to change.
+1. ✅ **`observations-viewer` — DONE 2026-08-01.** Extracted to
+   `app/admin/observations/IngestionChart.tsx`; the viewer no longer imports Chart.js at all.
+
+   Simplified as agreed (#17): two static legend swatches and a hover readout replace Chart.js's
+   built-in legend and tooltip, rather than rebuilding either for one admin consumer.
+
+   **Drawn as stacked step-after areas, not bars.** The source is 1,441 one-minute buckets; as bars
+   across ~850 px that is 0.6 px each — 2,882 sub-pixel `<rect>`s that moiré and read worse than the
+   canvas did. Two `<path>`s look like touching bars, and step-after is the honest curve: a
+   per-minute count holds for its minute, so a slope would assert readings never taken. `stepAfter`
+   was added to `linePath`/`stackedBands` for this and is reused by `ProvenanceChart`'s stepped
+   series next.
+
+   The port made it **props-driven**, so it now has baselines it could never have had before —
+   `ingestion-24h` and `ingestion-outage`. The outage case is the one worth looking at: a flat-zero
+   stretch, which is the question this chart exists to answer.
+
+   ⚠️ The pixel gate is **still tight**. This chart had no prior baseline, so there is no canvas→SVG
+   diff to absorb; loosening happens in the ProvenanceChart slice, where the noise floor can actually
+   be measured against an existing baseline.
 2. `ProvenanceChart` — the real proof of Stage 4's primitives: crosshair, annotation bands,
    `stepped`, `spanGaps`, dual axes, all shared with the dashboard charts.
 3. `HeatmapChart` — biggest win. Deletes `chartjs-chart-matrix`, the `#chartjs-tooltip` body-append
