@@ -12,6 +12,7 @@
  */
 import type { ScaleLinear, ScaleTime } from "d3-scale";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import { classifyUnit } from "@/lib/point/unit-typography";
 import type { TimeTick } from "./time-ticks";
 
 /** Matches the Chart.js styling these replace, so the port is not also a restyle. */
@@ -80,8 +81,6 @@ export interface ValueAxisProps {
   side: "left" | "right";
   /** Appended to the TOPMOST tick only, matching the existing charts (`10 kW`, `100%`). */
   unit?: string;
-  /** Hair-space before the unit — `40.0 °C` reads wrong tight, `100%` reads wrong spaced. */
-  unitGap?: boolean;
   tickCount?: number;
   /** Left axes draw gridlines across the plot; a right axis would double them up. */
   gridlines?: boolean;
@@ -92,15 +91,22 @@ export interface ValueAxisProps {
 /**
  * Horizontal gridlines plus value labels beside the plot.
  *
- * The unit sits on the top tick only. That is not decoration: repeating it on every tick is what the
- * charts deliberately avoid, and `number-typography.md` governs whether it is hair-spaced.
+ * The unit sits on the top tick only — repeating it on every tick is what these charts deliberately
+ * avoid.
+ *
+ * Spacing is decided by `classifyUnit`, not by the caller: `100%` and `40°C` are tight, `10 kW` is
+ * hair-spaced (number-typography.md). A boolean prop here would be one more thing to get wrong per
+ * call site, and the old Chart.js axis got it wrong exactly that way — its `axisTicks` helper emitted
+ * `${value} ${unit}` unconditionally, so the provenance axes read `100 %` and `3.5 $`.
+ *
+ * The gap is a `<tspan dx>`, never a space character — the typography doc is explicit that a literal
+ * space is full-width and renders differently across the two fonts in use.
  */
 export function ValueAxis({
   scale,
   plotWidth,
   side,
   unit,
-  unitGap = true,
   tickCount = 6,
   gridlines = side === "left",
   hidden = false,
@@ -113,8 +119,8 @@ export function ValueAxis({
       {ticks.map((v, i) => {
         const py = scale(v);
         const isTop = v === top;
-        const text =
-          isTop && unit ? `${v}${unitGap ? " " : ""}${unit}` : `${v}`;
+        const showUnit = isTop && !!unit;
+        const gap = showUnit && classifyUnit(unit).headGap === "hair" ? 2 : 0;
         return (
           <g key={i} transform={`translate(0, ${py})`}>
             {gridlines && (
@@ -129,7 +135,8 @@ export function ValueAxis({
               fontFamily={FONT_FAMILY}
               data-tick-label
             >
-              {text}
+              {v}
+              {showUnit && <tspan dx={gap}>{unit}</tspan>}
             </text>
           </g>
         );

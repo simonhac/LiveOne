@@ -113,7 +113,6 @@ export default function PrimitivesDemo({
             plotWidth={geo.plot.width}
             side="right"
             unit="%"
-            unitGap={false}
           />
         )}
 

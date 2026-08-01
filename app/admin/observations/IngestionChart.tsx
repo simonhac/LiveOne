@@ -155,7 +155,6 @@ export default function IngestionChart({
                 plotWidth={geo.plot.width}
                 side="left"
                 unit="/min"
-                unitGap={false}
               />
               {stackedBands(
                 series.timestamps,

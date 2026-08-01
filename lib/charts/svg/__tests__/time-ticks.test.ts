@@ -73,34 +73,39 @@ describe("buildTimeTicks — W", () => {
 describe("buildTimeTicks — M", () => {
   const ticks = buildTimeTicks("M", back(30), END);
 
-  it("puts a gridline on each local midnight", () => {
-    expect(ticks.length).toBeGreaterThanOrEqual(29);
-    for (const t of ticks) expect(t.value.getHours()).toBe(0);
+  it("emits only labelled ticks — no bare gridlines, unlike D", () => {
+    // 🛑 Measured, not assumed. Against the Chart.js baselines a 30-day window drew ~15 gridlines,
+    // and keeping all 31 daily ones rendered visibly noisier than what it replaces. D is the
+    // opposite case and keeps its unlabelled gridlines, because there the canvas genuinely draws
+    // them (24 gridlines to 12 labels).
+    expect(ticks.length).toBeGreaterThan(0);
+    for (const t of ticks) {
+      expect(t.value.getHours()).toBe(0);
+      expect(t.label).not.toBeNull();
+    }
   });
 
-  it("thins labels to every 4th day at 30-day density", () => {
-    // Matches what the current axis shows (Sun 17, Thu 21, Mon 25, Fri 29 …) — the >25-tick rung of
+  it("spaces them every 4th day at 30-day density", () => {
+    // The spacing the current axis shows: Sun 17, Thu 21, Mon 25, Fri 29 … — the >25-tick rung of
     // the skip ladder carried over from buildTimeScale.
-    const l = labelled(ticks);
-    const days = l.map((t) => t.value.getTime());
+    const days = ticks.map((t) => t.value.getTime());
+    expect(days.length).toBeGreaterThanOrEqual(7);
     for (let i = 1; i < days.length; i++) {
       expect(Math.round((days[i] - days[i - 1]) / DAY_MS)).toBe(4);
     }
-    expect(l.length).toBeLessThan(ticks.length);
   });
 
   it("thins less aggressively over a shorter window", () => {
-    // 18 days ⇒ ~19 ticks ⇒ the "<= 20" rung ⇒ every 2nd.
+    // 18 days ⇒ ~19 candidate days ⇒ the "<= 20" rung ⇒ every 2nd.
     const short = buildTimeTicks("M", back(18), END);
-    const l = labelled(short);
     const gapDays = Math.round(
-      (l[1].value.getTime() - l[0].value.getTime()) / DAY_MS,
+      (short[1].value.getTime() - short[0].value.getTime()) / DAY_MS,
     );
     expect(gapDays).toBe(2);
   });
 
   it("labels are two lines, like W", () => {
-    for (const t of labelled(ticks)) expect(t.label).toHaveLength(2);
+    for (const t of ticks) expect(t.label).toHaveLength(2);
   });
 });
 

@@ -23,6 +23,7 @@ import {
 } from "@/lib/charts/temporal";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import type { ProvenanceChartDef } from "@/lib/battery-provenance/field-registry";
+import type { ProvenanceBand } from "@/components/battery-provenance/ProvenanceChart";
 
 /**
  * The frozen "now" every case is rendered against: 2026-06-15 14:30 AEST (a Monday afternoon, mid
@@ -296,7 +297,7 @@ export type ProvenanceFixture = {
   timestamps: Date[];
   seriesValues: Record<string, (number | null)[]>;
   visibleSeries: Set<string>;
-  bandAnnotations: object[];
+  bandAnnotations: ProvenanceBand[];
   windowStart: Date;
   windowEnd: Date;
 };
@@ -398,21 +399,16 @@ export function provenanceFixture(opts: ProvenanceCaseOpts): ProvenanceFixture {
 
   // Recal bands: xMin/xMax boxes behind the series, the shape ProvenanceChart appends before the
   // crosshair.
-  const bandAnnotations: object[] = withBands
+  // Plain intervals — the chart owns the fill (RECAL_BAND_COLOR, amber at 15%).
+  const bandAnnotations: ProvenanceBand[] = withBands
     ? [
         {
-          type: "box",
-          xMin: timestamps[Math.floor(dayCount * 0.2)]?.getTime(),
-          xMax: timestamps[Math.floor(dayCount * 0.28)]?.getTime(),
-          backgroundColor: "rgba(255, 255, 255, 0.07)",
-          borderWidth: 0,
+          xMin: timestamps[Math.floor(dayCount * 0.2)].getTime(),
+          xMax: timestamps[Math.floor(dayCount * 0.28)].getTime(),
         },
         {
-          type: "box",
-          xMin: timestamps[Math.floor(dayCount * 0.66)]?.getTime(),
-          xMax: timestamps[Math.floor(dayCount * 0.72)]?.getTime(),
-          backgroundColor: "rgba(255, 255, 255, 0.07)",
-          borderWidth: 0,
+          xMin: timestamps[Math.floor(dayCount * 0.66)].getTime(),
+          xMax: timestamps[Math.floor(dayCount * 0.72)].getTime(),
         },
       ]
     : [];

@@ -63,7 +63,8 @@ function intervalFor(range: ChartTimeRange): CountableTimeInterval {
  * Per period, matching what the Chart.js axis renders today:
  *  - **D** — hourly gridlines, `HH:mm` on every second one (so labels read 2-hourly).
  *  - **W** — daily gridlines, every one labelled `[EEE, d MMM]` across two lines.
- *  - **M** — daily gridlines, `[EEE, d MMM]` every 2nd/3rd/4th by count (see {@link monthSkipInterval}).
+ *  - **M** — gridlines every 2nd/3rd/4th day by count, each labelled `[EEE, d MMM]`. Unlike D, the
+ *    skipped days get no gridline at all (see the note at the call site).
  *  - **Y** — monthly gridlines labelled `MMM`, with `MMM yy` on January and on the first tick, so
  *    the reader can always orient without hunting for a year.
  */
@@ -97,13 +98,17 @@ export function buildTimeTicks(
     }));
   }
 
-  // W and M: two-line [weekday, date]. W labels every tick; M thins by count.
+  // W labels every daily tick. M thins by count and DROPS the unlabelled ticks entirely rather than
+  // keeping bare gridlines: measured against the Chart.js baselines, a 30-day window drew ~15
+  // gridlines, and keeping all 31 daily ones renders visibly noisier than what it replaces. D keeps
+  // its unlabelled gridlines because there the canvas genuinely draws them (24 gridlines, 12 labels).
   const skip = range === "M" ? monthSkipInterval(values.length) : 1;
-  return values.map((value, i) => ({
-    value,
-    label:
-      i % skip === 0 ? [format(value, "EEE"), format(value, "d MMM")] : null,
-  }));
+  return values
+    .filter((_, i) => i % skip === 0)
+    .map((value) => ({
+      value,
+      label: [format(value, "EEE"), format(value, "d MMM")],
+    }));
 }
 
 /**

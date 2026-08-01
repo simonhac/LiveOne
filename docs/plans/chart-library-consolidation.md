@@ -731,8 +731,47 @@ regression and must be explained.
    ⚠️ The pixel gate is **still tight**. This chart had no prior baseline, so there is no canvas→SVG
    diff to absorb; loosening happens in the ProvenanceChart slice, where the noise floor can actually
    be measured against an existing baseline.
-2. `ProvenanceChart` — the real proof of Stage 4's primitives: crosshair, annotation bands,
-   `stepped`, `spanGaps`, dual axes, all shared with the dashboard charts.
+2. ✅ **`ProvenanceChart` — DONE 2026-08-01.** Rebuilt on the primitives: crosshair, recal bands,
+   stepped series, honest gaps, dual axes, dedup'd hover. Verified against the canvas baselines by
+   eye before re-baselining.
+
+   Three things it surfaced, all of which would have shipped silently:
+
+   - **The recal bands were nearly recoloured.** I had hardcoded the dashboard's 7 % white shading
+     into the new chart; the real value is `RECAL_BAND_COLOR` — **amber at 15 %**. Those bands mean
+     "the BMS recalibrated here", an event worth noticing, not background texture. The band type now
+     carries an optional `fill` defaulting to the registry colour, and the panel passes plain
+     `{xMin, xMax}` intervals instead of chartjs-plugin-annotation box specs.
+   - **M was drawing twice the gridlines it should.** Measured off the baselines: Chart.js drew ~15
+     for a 30-day window; the primitives drew all 31 daily ones. `buildTimeTicks` now drops
+     unlabelled M ticks entirely → 8. **D is the opposite** and keeps its unlabelled gridlines,
+     because the canvas genuinely draws them there (24 gridlines to 12 labels). So the
+     "gridlines and labels are separate" model is right, but the *default* was wrong for M.
+   - **The old axis violated the repo's own typography rule.** `axisTicks` emitted
+     `${value} ${unit}` unconditionally, so the provenance axes read `100 %` and `3.5 $`.
+     `number-typography.md` says `%` is tight. `ValueAxis` now derives the gap from `classifyUnit`
+     rather than a caller-supplied boolean — one less thing to get wrong per call site — and renders
+     it as a `<tspan dx>`, never a space character, as that doc requires.
+
+#### 🛑 The pixel gate: measured, and the 2–3 % decision does not survive it
+
+The canvas→SVG floor was **measured at 5–6 %** on this chart (10,256–12,352 px), against my estimate
+of ~1–1.5 %. It stayed at 5–6 % *after* the gridline and unit fixes, so it is genuine distributed
+rasterisation across dense lines and text in a short frame, not a residual difference.
+
+That breaks the agreed gate, because two requirements are now incompatible:
+
+- the tolerance must exceed **5–6 %** or a correct port fails, and
+- a whole-series colour change measures **0.39 %**, so anything above ~1 % catches nothing.
+
+There is no number that satisfies both. Tolerance-based comparison simply does not survive a renderer
+change.
+
+**Proceeding as: re-baseline at each port, keep the gate tight.** The before/after is reviewed by eye
+during the port (which caught all three findings above), `series-colours.test.ts` covers the palette
+blind spot, and the tight gate then protects everything *after* the port — which is where regressions
+actually accumulate over time. ⚠️ This reverses the Q1b answer; it is reversed by a measurement that
+contradicted the assumption behind it, not by preference. Say if you would rather widen the gate.
 3. `HeatmapChart` — biggest win. Deletes `chartjs-chart-matrix`, the `#chartjs-tooltip` body-append
    hack, and the custom `afterDraw` y-axis-label plugin. Expect the file to get *shorter*.
 4. `DashboardChart` `lines`.
