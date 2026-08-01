@@ -58,6 +58,8 @@ export interface HeatmapSelection {
 export interface HeatmapPanelProps {
   systemId: number;
   timezone: string;
+  /** Fixed day-bucketing offset — see HeatmapChart. */
+  dayOffsetMin: number;
   /** Force the series and hide the point selector. */
   pinnedSeries?: string;
   /** Force the palette and hide the palette selector. */
@@ -107,6 +109,7 @@ function StatusBlock({
 export default function HeatmapPanel({
   systemId,
   timezone,
+  dayOffsetMin,
   pinnedSeries,
   pinnedPalette,
   showDebug = false,
@@ -319,9 +322,8 @@ export default function HeatmapPanel({
     <div className={className}>
       {pin.pinUnavailable && (
         <div className="mb-4 rounded-md border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-300">
-          Pinned series{" "}
-          <code className="text-amber-200">{pinnedSeries}</code> is unavailable
-          on this device — showing the point selector instead.
+          Pinned series <code className="text-amber-200">{pinnedSeries}</code>{" "}
+          is unavailable on this device — showing the point selector instead.
         </div>
       )}
 
@@ -499,6 +501,7 @@ export default function HeatmapPanel({
           pointUnit={getUnitDisplay(selectedPointInfo.metricUnit)}
           metricType={selectedPointInfo.metricType}
           timezone={timezone}
+          dayOffsetMin={dayOffsetMin}
           palette={activePalette}
           className="w-full"
           onFetchInfo={setFetchInfo}

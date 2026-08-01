@@ -1,7 +1,7 @@
 # Consolidating the chart stack onto d3
 
-> **Status: PLAN — Stages 0–2 done; Stage 3a/3b/3c/3e/3f shipped 2026-08-01. Only 3d (DST
-> bucketing) remains in Stage 3.** Written 2026-08-01.
+> **Status: PLAN — Stages 0–3 COMPLETE (all six slices shipped 2026-08-01). Baseline is frozen;
+> next is Stage 4 (shared d3 primitives + #18/#15).** Written 2026-08-01.
 > Answers "we have three chart libraries, can we consolidate to just d3?". The premise is wrong in a
 > useful way (there are two), the answer is yes, and the hard part is not the porting.
 
@@ -382,7 +382,7 @@ migration.
 | # | Chart | Defect | Proposed |
 |---|---|---|---|
 | 8 | Heatmap | ✅ **fixed 3f** — **`console.log` spam in production** — `:221,222,242,243,371` log the URL, the *entire* API response (30 days × 48 slots), and `:280` logs **once per series** inside the `find` predicate. | **Fix** |
-| 9 | Heatmap | ✅ **decided** — bucket by fixed offset. **DST silently loses an hour, twice a year.** Time slots are a hardcoded 48 × half-hour grid (`:306-310`), but a local day has 46 or 50 slots across a DST boundary. On fall-back, two distinct UTC intervals produce the same `timeKey` and `:337` overwrites — one hour of data vanishes. On spring-forward, 02:00/02:30 never exist and render as a fake no-data hole. | **Fix** — see 3d |
+| 9 | Heatmap | ✅ **fixed 3d** — bucketed by fixed offset. **DST silently loses an hour, twice a year.** Time slots are a hardcoded 48 × half-hour grid (`:306-310`), but a local day has 46 or 50 slots across a DST boundary. On fall-back, two distinct UTC intervals produce the same `timeKey` and `:337` overwrites — one hour of data vanishes. On spring-forward, 02:00/02:30 never exist and render as a fake no-data hole. | **Fix** — see 3d |
 | 10 | Heatmap | ✅ **fixed 3e** — true min–max. **Narrow-range series render washed out.** `getNormalizedValue` divides by `Math.max(max - min, 1)` (`:473`). A divide-by-zero guard, but it silently distorts every series whose range is < 1 — a temperature sitting 40.1–40.5 only ever reaches 0.4 of the palette. Common for SoC, temperature, price. | **Fix** |
 | 11 | Heatmap | ✅ **fixed 3e** — fixed with #10. **The colour legend lies for those same series.** The gradient always spans `getColor(0)`→`getColor(1)` and is labelled `min`→`max` (`:858-912`), but per #10 the cells never reach 1. Same root cause, separate visible symptom — worth listing so the fix is verified against both. | **Fix with #10** |
 | 12 | Heatmap | `parseInterval` returns **0** for an unrecognised interval (`:435,450`). `intervalMs = 0` collapses every reading onto one timestamp and the heatmap silently becomes a single column. Should surface, not guess. | **Fix** |
@@ -520,7 +520,34 @@ resolution instead of naming a Tailwind class, and the crosshair red is centrali
 Also fixes #4 — the two rows both labelled "Battery" become "Battery" and "Battery SoC", matching
 the dataset labels.
 
-#### 3d — #9, DST and day bucketing
+#### 3d — #9, DST and day bucketing — ✅ DONE 2026-08-01
+Bucketing moved to **`lib/heatmap-buckets.ts`** — pure, dependency-free, and unit-tested against
+**both real 2026 Melbourne transitions** (fall-back 2026-04-05, spring-forward 2026-10-04). That
+split was not tidiness: `HeatmapChart` is a client module pulling in Chart.js, so Jest cannot import
+it and the heatmap still has no screenshot baseline, which would have left this change completely
+unverified. 16 tests now assert that a fall-back day keeps all 48 distinct readings (nothing
+overwritten) and a spring-forward day has real data at 02:00/02:30 rather than a fabricated gap.
+
+`areas.day_offset_min` is now plumbed through: `AreaBlock` → `AreaDatum.area` → a new
+**`dayOffsetOf(datum)`** helper. Deliberately a helper rather than a field on `AreaDatumSubject`:
+the device leg has no day bucket, so supplying one meant `subjectOf` returning a *copy* of
+`datum.device` — new identity every render. The props golden caught exactly that, which is what it
+is for. The standalone `/device/…/heatmap` page passes the device's tz offset, the same fallback.
+
+Labelling, per the agreed convention: columns are one frame for every row, and any row whose real
+offset differed gets an **asterisk** plus a footnote naming the frame (`UTC+10:00`) and saying the
+local clock read an hour later that day. The footnote only renders when some row is actually
+off-frame, so it never becomes background noise.
+
+> ⚠️ **One deviation to confirm.** The brief said "always use the most recent date as the date".
+> Taken literally — labelling columns in the *most recent day's actual* offset — the labels would
+> stop describing the buckets whenever today is on DST, since the buckets are fixed-offset. I chose
+> the self-consistent reading: **label in the fixed offset the data is bucketed in**, and asterisk
+> every row that differs from it. If you meant the buckets should follow today's offset instead
+> (which is also coherent, and keeps routines aligned, at the cost of the day rows no longer matching
+> `point_readings_agg_1d`), say so — it is a small change to `dayOffsetMin`'s source.
+
+*(Original decision text follows.)*
 **Bucket by the fixed offset (`areas.day_offset_min`), not the DST-aware IANA zone.** Every day is
 then exactly 48 slots, so the silent fall-back overwrite and the fabricated spring-forward gap both
 *dissolve* rather than being special-cased — and the heatmap's day rows finally agree with the daily

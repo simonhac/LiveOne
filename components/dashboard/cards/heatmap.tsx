@@ -36,7 +36,7 @@ import type {
 } from "@/lib/dashboard/card-types";
 import type { HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import type { CardPlugin, CardRenderProps } from "./types";
-import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
+import { ChartSkeleton, dayOffsetOf, subjectOf, useAreaDatum } from "./shared";
 
 /**
  * 🛑 The keep-in-sync gate for `HEATMAP_PALETTE_KEYS` (lib/dashboard/card-types.ts), which restates
@@ -45,9 +45,15 @@ import { ChartSkeleton, subjectOf, useAreaDatum } from "./shared";
  * removing OR renaming a palette in lib/heatmap-colors.ts without updating that tuple is a build
  * error HERE, in a client module where the type import is erased at runtime.
  */
-type Mutually<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
-const _paletteVocabularyInSync: Mutually<HeatmapPaletteName, HeatmapPaletteKey> =
-  true;
+type Mutually<A, B> = [A] extends [B]
+  ? [B] extends [A]
+    ? true
+    : never
+  : never;
+const _paletteVocabularyInSync: Mutually<
+  HeatmapPaletteName,
+  HeatmapPaletteKey
+> = true;
 void _paletteVocabularyInSync;
 
 function ConfigNotice() {
@@ -59,7 +65,10 @@ function ConfigNotice() {
 }
 
 function AreaHeatmap({ handle, deviceSystemId, node }: CardRenderProps) {
-  const config = useMemo(() => resolveHeatmapConfig(node.config), [node.config]);
+  const config = useMemo(
+    () => resolveHeatmapConfig(node.config),
+    [node.config],
+  );
   // A bound member device wins over the area handle — the same rule `device-metrics` and
   // `generator-runs` use, and the one the catalog's `scope: "device"` implies. A heatmap is of ONE
   // device's point set, so when the node (or an ancestor) pins a device, that is the subject.
@@ -85,12 +94,15 @@ function ResolvedHeatmap({
   // The IANA zone, not the offset: `HeatmapChart` buckets into local half-hours across a 30-day
   // window, which straddles DST wherever the subject observes it.
   const timezone = subjectOf(datum)?.displayTimezone;
-  if (!timezone) return <ChartSkeleton />;
+  // The fixed day bucket, NOT the tz offset — see lib/heatmap-buckets.ts.
+  const dayOffsetMin = dayOffsetOf(datum);
+  if (!timezone || dayOffsetMin == null) return <ChartSkeleton />;
 
   return (
     <HeatmapPanel
       systemId={systemId}
       timezone={timezone}
+      dayOffsetMin={dayOffsetMin}
       pinnedSeries={config.series}
       pinnedPalette={config.palette}
       variant="card"

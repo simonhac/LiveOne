@@ -16,13 +16,17 @@ import { Chart } from "react-chartjs-2";
 import { MatrixController, MatrixElement } from "chartjs-chart-matrix";
 import { format } from "date-fns";
 import {
-  fromDate,
   now,
   toCalendarDate,
   type ZonedDateTime,
 } from "@internationalized/date";
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
+import {
+  bucketHeatmap,
+  daysOffFrame,
+  formatUtcOffset,
+} from "@/lib/heatmap-buckets";
 import {
   BLACK_SENTINEL,
   POWER_BASELINE_W,
@@ -126,7 +130,14 @@ interface HeatmapChartProps {
   pointPath: string;
   pointUnit: string;
   metricType: string;
+  /** IANA display zone — used ONLY to work out which days were on a different real offset. */
   timezone: string;
+  /**
+   * `areas.day_offset_min` — the fixed offset every day is bucketed and labelled in. NOT the tz
+   * offset (they diverge after a re-bucket) and NOT the IANA zone (which observes DST, which is what
+   * used to lose an hour of data twice a year). See lib/heatmap-buckets.ts.
+   */
+  dayOffsetMin: number;
   palette: HeatmapPaletteKey;
   className?: string;
   onFetchInfo?: (info: {
@@ -149,6 +160,8 @@ interface HeatmapData {
   max: number;
   xLabels: string[]; // Time labels
   yLabels: string[]; // Date labels
+  /** Date keys whose real UTC offset differed from the labelling frame (DST). Asterisked in the axis. */
+  offFrameDays: Set<string>;
 }
 
 /** Raw fetch result carried in the React Query cache; transformed into `HeatmapData`
@@ -174,6 +187,7 @@ export default function HeatmapChart({
   pointUnit,
   metricType,
   timezone,
+  dayOffsetMin,
   palette,
   className = "",
   onFetchInfo,
@@ -274,8 +288,8 @@ export default function HeatmapChart({
     if (!fetchResult) return null;
     const { result } = fetchResult;
 
-    // Find the series for the requested point
-    // Use .delta for energy metrics, .avg for others (same as request)
+    // Find the series for the requested point.
+    // Use .delta for energy metrics, .avg for others (same as request).
     const seriesSuffix =
       PointInfo.getPreferredAggregationForMetricType(metricType);
     const expectedSeriesPath = `${pointPath}.${seriesSuffix}`;
@@ -285,16 +299,11 @@ export default function HeatmapChart({
     });
 
     if (!series || !series.history) {
-      console.error(
-        "[HeatmapChart] No series or history found. series:",
-        series,
-      );
+      console.error("[HeatmapChart] No series/history for", expectedSeriesPath);
       return null;
     }
 
-    // Process the data
     const { firstInterval, interval, data } = series.history;
-    const startTime = new Date(firstInterval).getTime();
     const intervalMs = parseInterval(interval);
     if (intervalMs === null || intervalMs <= 0) {
       console.error(
@@ -304,81 +313,26 @@ export default function HeatmapChart({
       return null; // surfaces as the "No data found for this point" error path
     }
 
-    // Generate time labels (48 half-hour slots: 00:00, 00:30, ..., 23:30)
-    const timeLabels: string[] = [];
-    for (let h = 0; h < 24; h++) {
-      timeLabels.push(`${String(h).padStart(2, "0")}:00`);
-      timeLabels.push(`${String(h).padStart(2, "0")}:30`);
-    }
-
-    // Group data by date and time
-    const dataByDate = new Map<string, Map<string, number | null>>();
-    const dates = new Set<string>();
-
-    data.forEach((value: number | null, index: number) => {
-      // startTime is the end of the first interval
-      const intervalEndTimestamp = startTime + index * intervalMs;
-      const intervalStartTimestamp = intervalEndTimestamp - intervalMs;
-
-      // Use interval START time for the time slot (e.g., 00:00 for the 00:00-00:30 interval)
-      const jsDateForTime = new Date(intervalStartTimestamp);
-      const zonedDateForTime = fromDate(jsDateForTime, timezone);
-      const timeKey = `${String(zonedDateForTime.hour).padStart(2, "0")}:${String(zonedDateForTime.minute).padStart(2, "0")}`;
-
-      // Use interval START time for the date (consistent with time key)
-      const jsDateForDate = new Date(intervalStartTimestamp);
-      const zonedDateForDate = fromDate(jsDateForDate, timezone);
-      const dateKey = `${zonedDateForDate.year}-${String(zonedDateForDate.month).padStart(2, "0")}-${String(zonedDateForDate.day).padStart(2, "0")}`;
-
-      dates.add(dateKey);
-
-      if (!dataByDate.has(dateKey)) {
-        dataByDate.set(dateKey, new Map());
-      }
-      // Store null values as well
-      dataByDate.get(dateKey)!.set(timeKey, value);
+    // Bucket by the FIXED day offset, never the DST-aware zone — see lib/heatmap-buckets.ts for
+    // why (a 46/50-slot local day used to lose an hour or fabricate a gap). Unit-tested there
+    // against both real Melbourne transitions.
+    const bucketed = bucketHeatmap(data as (number | null)[], {
+      firstIntervalEndMs: new Date(firstInterval).getTime(),
+      intervalMs,
+      dayOffsetMin,
     });
-
-    // Sort dates (most recent first)
-    const sortedDates = Array.from(dates).sort().reverse();
-
-    // Build heatmap data points
-    const heatmapPoints: HeatmapDataPoint[] = [];
-    let min = Infinity;
-    let max = -Infinity;
-
-    sortedDates.forEach((dateKey) => {
-      const timeData = dataByDate.get(dateKey)!;
-      timeLabels.forEach((timeKey) => {
-        const value = timeData.get(timeKey) ?? null;
-        heatmapPoints.push({
-          x: timeKey,
-          y: dateKey,
-          v: value,
-        });
-
-        if (value !== null) {
-          min = Math.min(min, value);
-          max = Math.max(max, value);
-        }
-      });
-    });
-
-    // Handle case where all values are null
-    if (min === Infinity || max === -Infinity) {
-      min = 0;
-      max = 1;
-    }
 
     return {
-      data: heatmapPoints,
-      min,
-      max,
-      xLabels: timeLabels,
-      yLabels: sortedDates,
+      data: bucketed.cells,
+      min: bucketed.min,
+      max: bucketed.max,
+      xLabels: bucketed.timeLabels,
+      yLabels: bucketed.dayKeys,
+      // Rows the axis frame does not describe: the site was on a different real offset that day, so
+      // its columns read an hour out. Marked with an asterisk + footnote rather than silently shown.
+      offFrameDays: daysOffFrame(bucketed.dayKeys, timezone, dayOffsetMin),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchResult, pointPath, metricType, timezone]);
+  }, [fetchResult, pointPath, metricType, timezone, dayOffsetMin]);
 
   // Initial-load spinner vs. refetch overlay (preserves the original `loading` gate).
   // A successful fetch whose series is missing is an error state, not still-loading.
@@ -732,6 +686,9 @@ export default function HeatmapChart({
             const date = heatmapData?.yLabels[index];
             if (!date) return "";
 
+            // The asterisk means "this day was on a different UTC offset than the columns are
+            // labelled in" — i.e. DST. Explained in the footnote under the chart.
+            const mark = heatmapData?.offFrameDays.has(date) ? "*" : "";
             const localDate = new Date(date + "T00:00:00");
             // Dates are sorted most recent first, so last index is the oldest (first chronologically)
             const isFirstChronologically =
@@ -740,11 +697,11 @@ export default function HeatmapChart({
 
             // Show month for first chronological date or first of month
             if (isFirstChronologically || isFirstOfMonth) {
-              return format(localDate, "MMM EEE d");
+              return format(localDate, "MMM EEE d") + mark;
             }
 
             // Regular format
-            return format(localDate, "EEE d");
+            return format(localDate, "EEE d") + mark;
           },
         },
         grid: {
@@ -909,6 +866,17 @@ export default function HeatmapChart({
                 : pointUnit}
           </span>
         </div>
+
+        {/* Only shown when some row actually is off-frame, so it never becomes background noise. */}
+        {heatmapData.offFrameDays.size > 0 && (
+          <p className="mt-2 text-center text-[11px] text-gray-500">
+            Times are {formatUtcOffset(dayOffsetMin)} for every day, so a
+            routine lines up across the whole chart.{" "}
+            <span className="text-gray-400">*</span> marks days the site was on
+            a different offset (daylight saving) — the local clock read an hour
+            later than the column says.
+          </p>
+        )}
       </div>
     </div>
   );

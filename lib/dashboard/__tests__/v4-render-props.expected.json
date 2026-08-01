@@ -337,6 +337,7 @@
       {
         "component": "HeatmapPanel",
         "props": {
+          "dayOffsetMin": 600,
           "pinnedPalette": "turbo",
           "pinnedSeries": "load.hws/temperature",
           "systemId": 11,
@@ -363,6 +364,7 @@
       {
         "component": "HeatmapPanel",
         "props": {
+          "dayOffsetMin": 600,
           "systemId": 1,
           "timezone": "Australia/Sydney",
           "variant": "card"
@@ -381,11 +383,7 @@
           "sankeyOptionsKey": "n_sankey:01912e2a-0000-7000-8000-000000000001:db_fixture",
           "siteCapable": true,
           "systemId": "1",
-          "visibleKeys": [
-            "chart:generation",
-            "chart:load",
-            "sankey"
-          ]
+          "visibleKeys": ["chart:generation", "chart:load", "sankey"]
         }
       }
     ]
