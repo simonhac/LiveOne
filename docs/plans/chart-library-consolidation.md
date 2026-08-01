@@ -772,8 +772,27 @@ during the port (which caught all three findings above), `series-colours.test.ts
 blind spot, and the tight gate then protects everything *after* the port — which is where regressions
 actually accumulate over time. ⚠️ This reverses the Q1b answer; it is reversed by a measurement that
 contradicted the assumption behind it, not by preference. Say if you would rather widen the gate.
-3. `HeatmapChart` — biggest win. Deletes `chartjs-chart-matrix`, the `#chartjs-tooltip` body-append
-   hack, and the custom `afterDraw` y-axis-label plugin. Expect the file to get *shorter*.
+3. ✅ **`HeatmapChart` — DONE 2026-08-01.** 899 → 675 lines, and it deletes the three things that
+   made it the worst of the four: `chartjs-chart-matrix`, the `#chartjs-tooltip` div appended to
+   `document.body` (created, measured, placed and cleaned up by hand, and hidden again on refetch and
+   unmount), and the `afterDraw` y-axis-label plugin that caused defect #7. The tooltip is now a
+   positioned sibling; the day labels are ordinary `<text>` with a bold month `<tspan>`.
+
+   Cells are 1,440 `<rect>`s with `shapeRendering="crispEdges"` — visibly sharper than the canvas,
+   which softened every cell edge.
+
+   Two bugs caught by looking at it:
+
+   - **The rows came out upside-down.** `yLabels` is newest-first and I drew row 0 at the top;
+     Chart.js's category y-axis puts index 0 at the *bottom*, so the grid reads oldest-at-top. Fixed
+     with a `rowY()` flip rather than reversing the data, so tooltip and `offFrameDays` lookups stay
+     index-aligned.
+   - **🛑 `useContainerSize` never measured — a bug in the PRIMITIVE, not this chart.** The obvious
+     `useRef` + `useLayoutEffect(…, [])` silently fails when the element attaches on a later render
+     than the first, which is exactly what a chart with a loading spinner does: the effect runs
+     against a null ref and never runs again. The heatmap rendered an empty box. `ProvenanceChart`
+     has no loading state, which is the only reason it did not hit this. Now a **callback ref**, so
+     the observer follows the element rather than the mount.
 4. `DashboardChart` `lines`.
 5. `DashboardChart` `stacked-areas` — highest risk, last, with everything else proven.
 

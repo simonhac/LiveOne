@@ -8,13 +8,7 @@
  * — it is not part of this migration, and rewiring it would put an untested component in the diff
  * for no benefit. Fold it in when it is next touched.
  */
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface Size {
   width: number;
@@ -26,16 +20,27 @@ export interface Size {
  *
  * Charts must render nothing at `{0,0}` rather than guessing a size: a chart drawn at a placeholder
  * width and then re-drawn is a visible flash, and under the screenshot harness it is a race.
+ *
+ * 🛑 **A callback ref, not a ref object with a mount effect.** The obvious implementation —
+ * `useRef` plus `useLayoutEffect(..., [])` — silently never measures when the element attaches on a
+ * LATER render than the first. That is not a corner case: any chart that returns a spinner while its
+ * data loads mounts its container on the second render, so the effect has already run against a null
+ * ref and will not run again. `HeatmapChart` hit exactly this and rendered an empty box;
+ * `ProvenanceChart` has no loading state, which is the only reason it did not.
+ *
+ * A callback ref runs whenever the node attaches or detaches, so the observer follows the element
+ * rather than the mount.
  */
 export function useContainerSize<T extends HTMLElement = HTMLDivElement>(): [
-  React.RefObject<T | null>,
+  (el: T | null) => void,
   Size,
 ] {
-  const ref = useRef<T | null>(null);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+  const observerRef = useRef<ResizeObserver | null>(null);
 
-  useLayoutEffect(() => {
-    const el = ref.current;
+  const setNode = useCallback((el: T | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
     if (!el) return;
 
     const measure = () => {
@@ -51,10 +56,13 @@ export function useContainerSize<T extends HTMLElement = HTMLDivElement>(): [
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    observerRef.current = ro;
   }, []);
 
-  return [ref, size];
+  // Disconnect if the whole chart unmounts without the ref being called with null first.
+  useEffect(() => () => observerRef.current?.disconnect(), []);
+
+  return [setNode, size];
 }
 
 /**
