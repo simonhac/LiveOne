@@ -35,6 +35,8 @@ import ProvenanceChart from "@/components/battery-provenance/ProvenanceChart";
 // re-introduce a `ChartJS.register(...)` of a chart-specific plugin anywhere in this graph and every
 // lines/stacked baseline fails immediately.
 import HeatmapChart from "@/components/HeatmapChart";
+import PrimitivesDemo from "./PrimitivesDemo";
+import { CHART_COLORS } from "@/lib/chart-colors";
 import { CHART_CASES, type ChartCase } from "./cases";
 import { linesFixture, provenanceFixture, stackedFixture } from "./fixtures";
 
@@ -229,11 +231,51 @@ function HeatmapCase({ c }: { c: Extract<ChartCase, { kind: "heatmap" }> }) {
   );
 }
 
+function PrimitivesCase({
+  c,
+}: {
+  c: Extract<ChartCase, { kind: "primitives" }>;
+}) {
+  // Reuses the lines/stacked fixtures so the demo is fed exactly what the real charts are.
+  const lf = linesFixture({ range: c.range, withGap: c.withGap });
+  const sf = c.withStack
+    ? stackedFixture({ range: c.range, mode: "load", withGap: c.withGap })
+    : null;
+  const focus = focusInstant(lf.chartData.timestamps, c.focusAt);
+
+  return (
+    <PrimitivesDemo
+      range={c.range}
+      timestamps={lf.chartData.timestamps}
+      lines={[
+        {
+          key: "solar",
+          colour: CHART_COLORS.solar.primary,
+          values: lf.chartData.solar,
+        },
+        { key: "load", colour: CHART_COLORS.load, values: lf.chartData.load },
+      ]}
+      stack={
+        sf
+          ? sf.chartData.series
+              .filter((s) => s.seriesType !== "soc")
+              .map((s) => ({ key: s.id, colour: s.color, values: s.data }))
+          : undefined
+      }
+      soc={lf.chartData.batterySOC}
+      focus={focus}
+      width={c.width}
+      height={c.height}
+    />
+  );
+}
+
 function CaseBody({ c }: { c: ChartCase }) {
   if (c.kind === "lines") return <LinesCase c={c} />;
   if (c.kind === "stacked") return <StackedCase c={c} />;
   if (c.kind === "provenance") return <ProvenanceCase c={c} />;
   if (c.kind === "heatmap") return <HeatmapCase c={c} />;
+  if (c.kind === "primitives") return <PrimitivesCase c={c} />;
   return <ColoursCase c={c} />;
 }
 

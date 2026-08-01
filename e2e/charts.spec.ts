@@ -79,16 +79,26 @@ test.describe("chart gallery baselines", () => {
       // tick widths at first layout and never re-measures (see `useFontsReady`). Waiting on the flag
       // it sets is therefore both the font wait AND the mount wait.
       await expect(frame).toHaveAttribute("data-case-ready", "true");
+      // Wait for a drawing surface with a real size — canvas OR svg. Both matter: Chart.js paints
+      // into a canvas, the ported charts render SVG, and during Stage 5 the suite covers a mix of
+      // the two. Checking only for a canvas would fail every SVG chart with a misleading timeout.
       await expect
         .poll(
           () =>
             page.evaluate(() => {
-              const cv = document.querySelector("canvas");
-              if (!cv) return false;
-              const r = cv.getBoundingClientRect();
-              return r.width > 0 && r.height > 0;
+              const frame = document.querySelector(
+                '[data-testid="chart-case"]',
+              );
+              const surfaces = frame?.querySelectorAll("canvas, svg") ?? [];
+              for (const el of Array.from(surfaces)) {
+                const r = el.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) return true;
+              }
+              return false;
             }),
-          { message: "chart canvas never acquired a size" },
+          {
+            message: "no canvas or svg in the case frame ever acquired a size",
+          },
         )
         .toBe(true);
       await page.evaluate(

@@ -667,9 +667,44 @@ otherwise inherit them.
 
 Still to do in Stage 4: the primitives themselves.
 
-`lib/charts/svg/`, extracted from the `DailyStripes` idiom rather than invented: `useContainerSize`
-(lift the existing `useContainerWidth`), `<TimeAxis>`, `<ValueAxis>`, `<ShadingBands>` (replacing
-`buildShadingAnnotations`), `<FocusLine>`, `usePointerIndex`, `<Tooltip>`.
+#### ✅ Primitives DONE 2026-08-01 — `lib/charts/svg/`
+
+A toolkit, not a chart component. 54 unit tests; proven on screen by four gallery cases before being
+used anywhere.
+
+| Module | What it owns |
+|---|---|
+| `geometry.ts` | `buildGeometry` (plot box + d3 scales), `niceDomain` (zero-anchored, keeps negative room, never degenerate) |
+| `time-ticks.ts` | `buildTimeTicks`, `buildShadingBands` |
+| `paths.ts` | `linePath`, `bandPath`, `stackedBands`, `definedSegments` |
+| `hooks.ts` | `useContainerSize`, `usePointerIndex`, `nearestIndexForTime` |
+| `axes.tsx` | `<TimeAxis>`, `<ValueAxis>`, `<ShadingBands>`, `<FocusLine>` |
+
+Three decisions inside it worth knowing:
+
+- **Gridlines and labels are separate.** A tick carries `label: string[] | null`; null means "gridline,
+  no label". That distinction is precisely what forced the old zero-width-space and five-space hacks,
+  and it is explicit here instead of encoded in whitespace.
+- **A null breaks the whole stacked column.** `stackedBands` evaluates `defined` across every series
+  at each x, so an outage in one series punches a hole through all the bands. Treating it as zero
+  would slide every band above it downward and render a sensor dropout as a genuine trough. Pinned by
+  a test that asserts the null and zero cases differ.
+- **`usePointerIndex` deduplicates and is desktop-only on leave.** Both are carried from behaviour the
+  Chart.js versions had to learn: `ProvenanceChart` documents an infinite render loop without the
+  dedup, and clearing focus on leave fights tap-to-focus on touch.
+
+`useContainerSize` generalises `DailyStripes`' `useContainerWidth`, but **`DailyStripes` was not
+rewired** — it is not part of this migration and changing it would put an untested component in the
+diff for no benefit. Fold it in when it is next touched.
+
+**`PrimitivesDemo`** (`app/labs/chart-gallery/`) is the worked example to copy when porting: it uses
+every piece deliberately rather than the minimum that would draw. Its `primitives-d-stack-gap`
+baseline is the one to look at — the stacked bands break cleanly through the column at the hole,
+which is the behaviour the hardest part of Stage 5 depends on.
+
+> The harness needed one fix to accept it: the readiness poll waited for a `<canvas>`, which no SVG
+> chart has. It now accepts a canvas **or** an svg with a non-zero box, which matters throughout
+> Stage 5 when the suite covers a mix of both.
 
 ### Stage 5 — Migrate, one chart per PR
 

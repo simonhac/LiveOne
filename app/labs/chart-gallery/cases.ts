@@ -51,6 +51,14 @@ export type ChartCase = {
       dayOffsetMin: number;
     }
   | {
+      /** The `lib/charts/svg` primitives rendering on their own — see PrimitivesDemo. */
+      kind: "primitives";
+      range: ChartTimeRange;
+      withStack?: boolean;
+      withGap?: boolean;
+      focusAt?: number;
+    }
+  | {
       kind: "provenance";
       range: ChartTimeRange;
       dualAxis?: boolean;
@@ -213,6 +221,43 @@ export const CHART_CASES: ChartCase[] = [
     mode: "load",
     focusAt: 0.62,
     note: "stacked crosshair at the shared focus instant",
+    width: W,
+    height: H,
+  },
+
+  // --- lib/charts/svg primitives, rendering standalone ----------------------------------------
+  {
+    id: "primitives-d-lines",
+    kind: "primitives",
+    range: "D",
+    focusAt: 0.62,
+    note: "the SVG toolkit end to end: hourly gridlines with 2-hourly labels, daytime shading, both axes, dashed SoC on y1, focus line",
+    width: W,
+    height: H,
+  },
+  {
+    id: "primitives-m-lines",
+    kind: "primitives",
+    range: "M",
+    note: "M density: daily gridlines, two-line [weekday, date] labels every 4th day, weekday shading",
+    width: W,
+    height: H,
+  },
+  {
+    id: "primitives-y-lines",
+    kind: "primitives",
+    range: "Y",
+    note: "Y: monthly gridlines, year carried on January and the first tick, no shading",
+    width: W,
+    height: H,
+  },
+  {
+    id: "primitives-d-stack-gap",
+    kind: "primitives",
+    range: "D",
+    withStack: true,
+    withGap: true,
+    note: "stacked bands with a null hole — every band must BREAK through the column, not treat the null as zero",
     width: W,
     height: H,
   },
