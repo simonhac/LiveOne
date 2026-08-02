@@ -173,11 +173,25 @@ export function assignEnergyToPeriods(
   );
 }
 
-/** Cost (cents), emissions (grams CO₂) and renewable energy (kWh) attributed to one run. */
+/**
+ * Cost (cents), emissions (grams CO₂), renewable energy (kWh) and estimated energy (kWh) attributed
+ * to one run.
+ */
 export interface PeriodProvenance {
   costC: number | null;
   emissionsG: number | null;
   renewableKwh: number | null;
+  /**
+   * kWh whose source intensity was estimated or unknown — `estimated_kwh` for a run, with exactly
+   * the meaning `point_readings_flow_attr_1d.estimated_kwh` carries for a day. It is the CONFIDENCE
+   * denominator for the three figures above: when a source cannot be priced its energy contributes
+   * nothing to `costC` (the Sankey does the same), so a run can read cheap for a reason this number
+   * is the only record of.
+   *
+   * Null ONLY when nothing at all is known — no allocation, or no intensity series for the device.
+   * A run whose every slice was unpriceable carries its WHOLE energy here, never 0.
+   */
+  estimatedKwh: number | null;
 }
 
 /** "Nothing is known about this run's provenance" — the value for an unpriced device. */
@@ -185,6 +199,7 @@ export const NO_PROVENANCE: PeriodProvenance = {
   costC: null,
   emissionsG: null,
   renewableKwh: null,
+  estimatedKwh: null,
 };
 
 /**
@@ -200,6 +215,7 @@ export const NO_PROVENANCE: PeriodProvenance = {
  * Each accumulator is INDEPENDENTLY null when its factor is unknown across the whole run, so a site
  * that configures emissions but no price reports emissions and OMITS cost rather than claiming
  * $0.00. A window the counter never spanned ⇒ all null, matching the energy path (unknown ≠ zero).
+ * `estimatedKwh` is the exception and deliberately so — see `PeriodProvenance`.
  *
  * With a constant series (the off-grid generator) this reduces exactly to `energy × factor` — the
  * degenerate case of the same integral, not a separate code path.
@@ -230,6 +246,15 @@ export function provenanceFromAllocation(
     let costC: number | null = null;
     let emissionsG: number | null = null;
     let renewableKwh: number | null = null;
+    // Same discipline, but `estimatedFraction` is never null, so this becomes a number the moment
+    // any slice exists. That asymmetry is the point:
+    //   - an unpriced DEVICE has no series at all, so this function is never called for it and
+    //     NO_PROVENANCE's null stands;
+    //   - a window the counter never spanned returns NO_PROVENANCE above — null, matching energy;
+    //   - a fully-unpriceable RUN accumulates fraction 1 per slice → estimatedKwh === energyKwh.
+    // Zero must never stand in for "we don't know" on a confidence denominator: that is the one
+    // reading which turns a run nothing could price into a claim that everything was priced.
+    let estimatedKwh: number | null = null;
 
     for (const s of slices) {
       const f = series.at(s.tMs);
@@ -237,6 +262,7 @@ export function provenanceFromAllocation(
       if (f.gPerKwh != null) emissionsG = (emissionsG ?? 0) + s.kwh * f.gPerKwh;
       if (f.renewable != null)
         renewableKwh = (renewableKwh ?? 0) + s.kwh * f.renewable;
+      estimatedKwh = (estimatedKwh ?? 0) + s.kwh * f.estimatedFraction;
     }
 
     // Rounded to the stored 3dp so accumulated float noise (…299999999997 cents) never reaches the
@@ -245,6 +271,7 @@ export function provenanceFromAllocation(
       costC: roundToThree(costC),
       emissionsG: roundToThree(emissionsG),
       renewableKwh: roundToThree(renewableKwh),
+      estimatedKwh: roundToThree(estimatedKwh),
     };
   });
 }

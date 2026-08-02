@@ -53,6 +53,14 @@ export interface RunPeriodEvent {
   costC?: number | null; // cents (signed) — formatDollars divides by 100
   emissionsG?: number | null; // grams CO₂ — formatKgCo2 wants kg, so ÷1000
   renewableKwh?: number | null; // kWh; shown as a % of the run's energy
+  /**
+   * kWh of this run whose source intensity was estimated or unknown — the CONFIDENCE denominator for
+   * the three figures above, and the same quantity the Sankey reports as `estimated_kwh`. Energy
+   * that cannot be priced contributes nothing to `costC`, so a run can read cheap for a reason only
+   * this number records. Null = unknown (an unpriced device, or a row written before migration 0057
+   * that no recompute has rewritten); a run nothing could price carries its whole energy here.
+   */
+  estimatedKwh?: number | null;
 }
 
 /**
@@ -80,6 +88,7 @@ export interface RunPeriodsResponse {
   totalCostC?: number | null;
   totalEmissionsG?: number | null;
   totalRenewableKwh?: number | null;
+  totalEstimatedKwh?: number | null;
   /**
    * period mode: Σ energy of only those runs that carried each figure. Two uses: it is the honest
    * denominator for the renewable %, and comparing it against `totalEnergyKwh` tells the client
@@ -89,6 +98,7 @@ export interface RunPeriodsResponse {
   costKnownKwh?: number;
   emissionsKnownKwh?: number;
   renewableKnownKwh?: number;
+  estimatedKnownKwh?: number;
   running?: boolean;
 }
 

@@ -848,6 +848,18 @@ export const derivedIntervals = pgTable(
     costC: doublePrecision("cost_c"), // cents (signed) — Σ sliceKwh × price(t)
     emissionsG: doublePrecision("emissions_g"), // grams CO₂ — Σ sliceKwh × intensity(t)
     renewableKwh: doublePrecision("renewable_kwh"), // kWh — Σ sliceKwh × renewableFraction(t)
+    // The CONFIDENCE leg of the three above (migration 0057), with exactly the meaning
+    // `point_readings_flow_attr_1d.estimated_kwh` carries for a day: energy whose source intensity
+    // was estimated OR unknown. ONE number, not one per metric — the matrix's condition
+    // (`est || ei === null || rf === null || pr === null`) is a single verdict per contribution.
+    // It is what stops an unpriceable share reading as a genuinely cheaper run: that energy
+    // contributes nothing to cost_c (the Sankey does the same), and this says how much of it there was.
+    //
+    // NULLABLE, deliberately unlike flow_attr_1d's `NOT NULL DEFAULT 0`: a row exists there only
+    // where energy was attributed, whereas here NULL = UNKNOWN and 0 is a positive claim that none
+    // of the run leaned on a missing intensity. A run nothing could price carries its WHOLE energy
+    // here, never 0.
+    estimatedKwh: doublePrecision("estimated_kwh"), // kWh — Σ sliceKwh × estimatedFraction(t)
     sampleCount: integer("sample_count").notNull().default(0),
     detectorVersion: integer("detector_version").notNull().default(1),
     createdAt: timestamp("created_at").notNull().defaultNow(),
