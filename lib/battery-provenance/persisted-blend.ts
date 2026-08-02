@@ -64,6 +64,17 @@ const BLEND_METRICS = {
  */
 const PRESENCE_METRIC = "stored-energy";
 
+/**
+ * Every `bidi.battery` metric this reader consults — the four blend factors plus the presence
+ * marker. Exported so the run-provenance staleness probe (`resolveIntensityInputPoints`,
+ * lib/run-tracking/intensity.ts) watches exactly the rows a run's price was read from: a metric
+ * added here that isn't watched there is a factor that can move without marking the run stale.
+ */
+export const PERSISTED_BLEND_METRICS: readonly string[] = [
+  ...Object.keys(BLEND_METRICS),
+  PRESENCE_METRIC,
+];
+
 export interface PersistedBatteryBlend {
   /** One entry per interval — `timeline.length - 1` of them, index-aligned to the fold's own steps. */
   steps: BatterySourceStep[];

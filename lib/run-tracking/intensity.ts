@@ -32,17 +32,28 @@ import type { planetscaleDb } from "@/lib/db/planetscale";
 import {
   areaBindings,
   areaMembers,
+  areas,
   devices,
   legacyHandles,
   points,
 } from "@/lib/db/planetscale/schema";
 import { resolveGeneratorIntensity } from "@/lib/battery-provenance/generator-source";
-import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
+import {
+  boundPoints,
+  loadProvenanceInputs,
+  resolveOeRegionPoints,
+} from "@/lib/battery-provenance/load";
 import {
   buildSourceIntensities,
   SOLAR_ACTUAL_COST,
 } from "@/lib/battery-provenance/compute";
-import { readPersistedBatteryBlend } from "@/lib/battery-provenance/persisted-blend";
+import {
+  PERSISTED_BLEND_METRICS,
+  readPersistedBatteryBlend,
+} from "@/lib/battery-provenance/persisted-blend";
+import { nemRegionForLocation } from "@/lib/vendors/openelectricity/region";
+import type { AreaLocation } from "@/lib/areas/types";
+import type { PointId } from "@/lib/ids";
 import {
   sourceWeightsForInterval,
   type FlowSeries,
@@ -65,6 +76,13 @@ const GENERATOR_ROLE: RoleId = "generator";
  * price — the fold already accounts for it, and pricing it here would double-count) and `grid`'s
  * load half (exporting is revenue, not cost). Add a role here only when "what did that device's
  * energy cost the site" is genuinely the question its runs answer.
+ *
+ * 🛑 ADDING A ROLE WHOSE CHANNEL HAS A LINKED SOURCE NEEDS ONE MORE CHANGE. `blendLoadIntensities`
+ * divides by the whole generation pool because a priced load has no `source.<same-channel>` to
+ * exclude — true for `ev`, and the two roles above are the ones for which it is false. The
+ * accounting subtracts that source (`genWForLoad`); the blend would have to as well, which means
+ * telling it which load it is pricing. It is not a hypothetical hazard: it is silent, and it is the
+ * same class of drift the rest of this module is built to prevent.
  */
 const LOAD_PRICED_ROLES: readonly RoleId[] = ["ev"];
 
@@ -171,11 +189,40 @@ export function stepIntensity(
  * (`channelId("load.ev")` is `"ev"` and there is no `source.ev`), so the self-charge exclusion the
  * accounting applies to `load.battery`/`load.grid` does not apply and every source is in the pool.
  *
- * A source whose factor is null for an interval is dropped from BOTH the numerator and the
- * normalising denominator — the unbiased-average rule `*KnownKwh` encodes in the accounting. So a
- * site whose grid emissions are unknown for a step prices that step off the sources it does know,
- * rather than diluting toward zero. When no source has a known factor, the factor is null and the
- * integrator omits that slice entirely.
+ * 🛑 A SOURCE WITH NO KNOWN FACTOR LEAVES THE NUMERATOR BUT STAYS IN THE DENOMINATOR, and getting
+ * that backwards is the defect this comment exists to prevent recurring.
+ *
+ * It previously dropped such a source from both, reasoning that this reproduced the unbiased-average
+ * rule the accounting's `*KnownKwh` denominators encode. The rule was right; the application was not.
+ * `*KnownKwh` is the denominator for reporting an unbiased average INTENSITY — `emissionsG /
+ * emissionsKnownKwh`. What this function feeds is `provenanceFromAllocation`, which multiplies by the
+ * slice's WHOLE kWh to accumulate an ABSOLUTE `cost_c`. Multiplying a known-only average by the total
+ * energy extrapolates the known sources' price onto energy they did not supply. The accounting never
+ * does that: it allocates each source its own edge and simply contributes nothing from an edge it
+ * cannot price (counting that energy in `estimatedKwh` instead).
+ *
+ * So the denominator here is the FULL generation pool, exactly as `computeFlowAccounting` divides by
+ * `genWForLoad`, and the identity is exact rather than approximate:
+ *
+ *     Σ_known(w·p) / W_total  ×  loadKwh   ≡   Σ_known (loadKwh · w/W_total) · p   =   the matrix's costC
+ *
+ * (Equivalently: the unbiased average × the KNOWN share of the energy. Same number, and it is worth
+ * seeing it both ways — the first is what the code computes, the second is why it is honest.)
+ *
+ * WHAT THIS COSTS, stated plainly: when a source's factor is unknown the run's cost is UNDERSTATED,
+ * because that energy contributes nothing. It is understated by exactly as much as the Sankey's is,
+ * which is the point — the two surfaces are now wrong in the same direction and by the same amount,
+ * instead of wrong in opposite directions. The Sankey flags the shortfall in `estimated_kwh`;
+ * `derived_intervals` has no such column, so a run currently cannot say how much of itself was
+ * unpriceable. That gap is real and deliberate (adding a column needs its own decision).
+ *
+ * When NO source has a known factor the factor stays null and the integrator omits the slice
+ * entirely — absent, never $0.00. Unchanged, and the reason the null/zero distinction survives this.
+ *
+ * The weights are `numerW`, not `denomW`, for the same one-arithmetic reason: the accounting's
+ * numerator skips a source whose interval has a mid-interval gap (present in the pool, out of the
+ * allocation) while still counting it in the denominator, and a copy that used `denomW` on both sides
+ * would silently re-admit it.
  */
 export function blendLoadIntensities(
   timeline: number[],
@@ -191,7 +238,7 @@ export function blendLoadIntensities(
     // an empty array and an area whose loads are metered but whose sources are not would blend on
     // the legacy power weights while the Sankey allocated on exact-energy ones. Same inputs, same
     // switch, same weights.
-    const { denomW, totalGenW } = sourceWeightsForInterval(
+    const { numerW, totalGenW } = sourceWeightsForInterval(
       sources,
       loads,
       i,
@@ -201,37 +248,44 @@ export function blendLoadIntensities(
       steps.push({ priceC: null, gPerKwh: null, renewable: null });
       continue;
     }
+    // The accounting's `genWForLoad` — `totalGenW` minus the load's own linked source. A priced load
+    // has no linked source today (see `LOAD_PRICED_ROLES`), so the subtraction is a no-op and the
+    // pool is whole; naming it keeps the correspondence visible if that ever stops being true.
+    const genWForLoad = totalGenW;
     let priceNum = 0;
-    let priceDen = 0;
+    let anyPrice = false;
     let gNum = 0;
-    let gDen = 0;
+    let anyG = false;
     let renNum = 0;
-    let renDen = 0;
+    let anyRen = false;
     for (let s = 0; s < sources.length; s++) {
-      const w = denomW[s];
-      if (w <= 0) continue;
+      // `null` = in the pool but out of the allocation, exactly as the accounting reads it. A
+      // negative weight is NOT filtered, also exactly as the accounting reads it — a guard here that
+      // the matrix does not have is a divergence, whatever it protects against.
+      const w = numerW[s];
+      if (w === null) continue;
       const si = sourceIntensities[s];
       if (!si) continue; // an unknown-intensity source (e.g. source.generator)
       const p = si.price[i];
       if (p !== null && p !== undefined) {
         priceNum += w * p;
-        priceDen += w;
+        anyPrice = true;
       }
       const g = si.emissions[i];
       if (g !== null && g !== undefined) {
         gNum += w * g;
-        gDen += w;
+        anyG = true;
       }
       const r = si.renewable[i];
       if (r !== null && r !== undefined) {
         renNum += w * r;
-        renDen += w;
+        anyRen = true;
       }
     }
     steps.push({
-      priceC: priceDen > 0 ? priceNum / priceDen : null,
-      gPerKwh: gDen > 0 ? gNum / gDen : null,
-      renewable: renDen > 0 ? renNum / renDen : null,
+      priceC: anyPrice ? priceNum / genWForLoad : null,
+      gPerKwh: anyG ? gNum / genWForLoad : null,
+      renewable: anyRen ? renNum / genWForLoad : null,
     });
   }
   return steps;
@@ -255,11 +309,20 @@ async function resolveSiteForDetector(
 ): Promise<{
   config: (typeof devices.$inferSelect)["config"] | null;
   handle: number | null;
+  /** The SITE area's id — what `boundPoints` is keyed by (the fold reaches it via `handle`). */
+  areaId: string;
+  /** The site area's location, for the NEM region the grid signal comes from. */
+  location: AreaLocation | null;
 } | null> {
   const member = alias(areaMembers, "member");
   const sibling = alias(areaMembers, "sibling");
   const [row] = await db
-    .select({ config: devices.config, handle: legacyHandles.handle })
+    .select({
+      config: devices.config,
+      handle: legacyHandles.handle,
+      areaId: sibling.areaId,
+      location: areas.location,
+    })
     .from(member)
     .innerJoin(sibling, eq(sibling.deviceId, member.deviceId))
     .innerJoin(
@@ -281,6 +344,8 @@ async function resolveSiteForDetector(
     // LEFT, so a site area without a `legacy_handles` row still yields its battery config (the
     // generator leg needs only that). Only the load leg, which is handle-keyed, then degrades.
     .leftJoin(legacyHandles, eq(legacyHandles.areaId, sibling.areaId))
+    // INNER, and total: `area_members.area_id` is an FK into `areas`, so this cannot drop a row.
+    .innerJoin(areas, eq(areas.id, sibling.areaId))
     .where(eq(member.areaId, det.areaId))
     // ORDINAL, not priority — this must agree with the fold, which picks the battery device as the
     // first `role=battery, metric=power` of `boundPoints`, ordered by `ordinal`
@@ -297,8 +362,65 @@ async function resolveSiteForDetector(
     .limit(1);
 
   return row
-    ? { config: row.config ?? null, handle: row.handle ?? null }
+    ? {
+        config: row.config ?? null,
+        handle: row.handle ?? null,
+        areaId: row.areaId,
+        location: (row.location ?? null) as AreaLocation | null,
+      }
     : null;
+}
+
+/**
+ * The `agg_5m` points a load-priced run's provenance is READ FROM — the staleness probe's watch set.
+ *
+ * 🛑 THIS MUST NAME EXACTLY WHAT {@link resolveLoadIntensity} READS, and the two are changed
+ * together. A factor that can move without appearing here is a run that silently disagrees with the
+ * Sankey forever, which is the whole defect `rehealStaleRuns` exists to close; a point named here
+ * that nothing reads only costs an occasional no-op re-price.
+ *
+ * Empty (→ the caller skips the detector) for any role the load blend doesn't price: `generator` is
+ * priced from configured constants, which cannot drift, and every other role has no provenance at
+ * all. Empty is "nothing to watch", never "nothing moved".
+ *
+ * The generator-source override is mirrored from `loadProvenanceInputs`: a site whose battery device
+ * declares `generatorSource` prices its "grid" port from constants, so the OE region signal feeds
+ * nothing — and the Amber rate feeds nothing either, but only when the configured triple carries a
+ * price (the loader overrides emissions/renewables unconditionally and price only when non-null).
+ */
+export async function resolveIntensityInputPoints(
+  db: PgDb,
+  det: ResolvedRunDetector,
+): Promise<PointId[]> {
+  if (!(LOAD_PRICED_ROLES as readonly string[]).includes(det.role)) return [];
+  const site = await resolveSiteForDetector(db, det);
+  // No handle ⇒ `resolveLoadIntensity` returns null and the run is never priced — nothing to watch.
+  if (site?.handle == null) return [];
+
+  const gen = resolveGeneratorIntensity(
+    site.config?.batteryProvenance?.generatorSource,
+  );
+  const bound = await boundPoints(db, site.areaId);
+  const watched: PointId[] = [];
+  for (const b of bound) {
+    if (b.stem === "bidi.battery" && PERSISTED_BLEND_METRICS.includes(b.metric))
+      watched.push(b.point);
+    else if (
+      b.role === "grid" &&
+      b.metric === "rate" &&
+      b.stem === "bidi.grid.import" &&
+      !(gen && gen.priceC != null)
+    )
+      watched.push(b.point);
+  }
+  if (!gen) {
+    const oe = await resolveOeRegionPoints(
+      db,
+      nemRegionForLocation(site.location),
+    );
+    for (const p of oe) watched.push(p.point);
+  }
+  return [...new Set(watched)];
 }
 
 /**

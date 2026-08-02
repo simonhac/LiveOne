@@ -644,6 +644,45 @@ async function latestAgg5mUpdatedAtForPoint(
 }
 
 /**
+ * Latest `agg_5m` `updated_at` (epoch-ms UTC) ACROSS several points over one `interval_end` window
+ * (`> afterIntervalEndMs`, `<= throughIntervalEndMs`), or `null` when nothing matches — the
+ * run-provenance staleness probe (`rehealStaleRuns`, lib/run-tracking/recompute.ts).
+ *
+ * The singular {@link latestAgg5mUpdatedAtForPoint} answers the same question one point at a time;
+ * this asks it of a whole watch set in ONE round trip, because the probe's caller only ever needs
+ * "did ANY input move", never which. Batched exactly like `latestAgg5mIntervalMsForPoints` (rid-keyed
+ * `IN`), minus the `GROUP BY` — the max is taken across the set.
+ */
+async function latestAgg5mUpdatedAtForPoints(
+  points: PointId[],
+  opts: { afterIntervalEndMs: number; throughIntervalEndMs: number },
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  if (points.length === 0) return null;
+  const db = exec ?? requirePlanetscaleDb();
+  // SEAM: rid-keyed WHERE. MAX(updated_at) over an interval_end window, across the whole set.
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  if (rids.length === 0) return null;
+  const [row] = await db
+    .select({ m: max(pointReadingsAgg5m.updatedAt) })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        inArray(pointReadingsAgg5m.pointRid, rids),
+        gt(pointReadingsAgg5m.intervalEnd, new Date(opts.afterIntervalEndMs)),
+        lte(
+          pointReadingsAgg5m.intervalEnd,
+          new Date(opts.throughIntervalEndMs),
+        ),
+      ),
+    );
+  return row?.m != null
+    ? new Date(row.m as string | number | Date).getTime()
+    : null;
+}
+
+/**
  * Per-(point, local-day) `agg_5m` row counts within an interval-end window (the coverage gap-finder,
  * `lib/coverage/find-gaps.ts`). `offsetMin` sets the local-day bucket (see {@link localDayExpr}); the
  * window is `[fromMs, toMs)` on `interval_end` (half-open, matching the original scan bounds). Result:
@@ -1545,6 +1584,7 @@ export const ReadingsDao = {
   approximateRowCount,
   latestAgg5mIntervalMsForPoints,
   latestAgg5mUpdatedAtForPoint,
+  latestAgg5mUpdatedAtForPoints,
   countAgg5mByLocalDay,
   countAgg5mForLocalDay,
   insertRaw,

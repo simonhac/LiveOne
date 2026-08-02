@@ -10,9 +10,14 @@
  * data can split/merge runs or move a start earlier), so a plain upsert-on-start would orphan
  * rows. Instead each pass does a **bounded delete-and-reinsert** of an *anchored* window, under a
  * per-derivation advisory lock: find the run straddling the window's left edge, read raw from a
- * `delayOff` margin before it, rebuild from scratch, and delete exactly the [anchor, winEnd] span
- * we reinsert. So whatever the samples now imply is what lands, with no orphans/dupes, and periods
- * outside the window (later, for a historical backfill) are untouched.
+ * `delayOff` margin either side of it, rebuild from scratch, and delete exactly the [anchor, winEnd]
+ * span we reinsert. So whatever the samples now imply is what lands, with no orphans/dupes, and
+ * periods outside the window (later, for a historical backfill) are untouched.
+ *
+ * The margin is on BOTH edges and the reasons differ: the leading one lets a straddling run be
+ * rebuilt from its true start, the trailing one lets the detector tell a run that ENDED at the
+ * window's edge from one that was merely cut off by it. See `readEndMs` — a chunked historical
+ * recompute dropped a run's whole continuation across every chunk boundary without it.
  *
  * Was `run-periods-pg.ts`, keyed by `(system_id, role)`. The key is now the single
  * `derivation_id` — 1:1 with the old pair via `derivations_area_role_unique` — so the source
@@ -107,18 +112,46 @@ export async function recomputeIntervalsForWindow(
     let anchorMs = winStartMs;
     if (straddler) {
       const sEnd = straddler.endTime ? straddler.endTime.getTime() : null;
-      if (sEnd === null || sEnd >= winStartMs) {
+      // TOLERANT BY delayOff, and that tolerance is the repair half of the chunk-boundary fix
+      // below. A stored run that ends just before this window began may have ended because the
+      // SIGNAL stopped, or because the pass that wrote it could not see past its own read edge —
+      // the row cannot tell you which. Anything closer than delayOff to the window start could
+      // still have been continued by this window's first sample, so re-anchor on it and let the
+      // detector decide from the samples. When it really did end there the rebuild is idempotent
+      // and costs one slightly earlier read; when it didn't, this is what stitches the run back
+      // together. Rows already truncated on prod heal through exactly this branch, without needing
+      // the whole range re-run.
+      if (sEnd === null || sEnd >= winStartMs - det.detect.delayOffMs) {
         anchorMs = straddler.startTime.getTime();
       }
     }
 
     const readStartMs = anchorMs - det.detect.delayOffMs; // margin for the straddler's lead-in
+    // ...and its MIRROR, which is not symmetric decoration: without it a chunked historical
+    // recompute LOSES DATA. `detectRunPeriods` closes the final run at its last on-sample whenever
+    // `nowMs − lastOn > delayOff`, so a read that stops dead at `winEndMs` makes a run that is still
+    // going look like a run that ended there. The next chunk then re-detects the continuation from
+    // its own lead-in, that period starts BEFORE the chunk's anchor, and the `p.startMs >= anchorMs`
+    // filter below discards it — the charging after the boundary is dropped entirely. Measured on
+    // prod 2026-08-02: a 10-month re-price of the Kinkora EV detector left four runs ending within
+    // five minutes of a 14-day chunk boundary, and those four days were the top four for "metered
+    // energy attributed to no run" — 21.8 kWh between them.
+    //
+    // Reading delayOff past the window is exactly enough to tell the two apart: if the signal is
+    // still on, the run is stored with an end PAST `winEndMs`, which is what makes the next chunk's
+    // straddler test fire and rebuild the run whole from its true start. (A run continuing beyond
+    // this margin is still cut here — but it is cut past the boundary, so the stitch happens.)
+    //
+    // 🛑 The filter and the DELETE window stay on `winEndMs`. Widening the delete is the one change
+    // that looks equivalent and isn't: the bounded delete is what stops a chunk nuking the periods a
+    // later chunk already wrote.
+    const readEndMs = winEndMs + det.detect.delayOffMs;
 
     const samples = await readPointSeries(
       tx,
       det.signalPoint,
       readStartMs,
-      winEndMs,
+      readEndMs,
     );
 
     const periods = detectRunPeriods(samples, {
@@ -135,11 +168,13 @@ export async function recomputeIntervalsForWindow(
     let energies: (number | null)[] = periods.map(() => null);
     let provenance: PeriodProvenance[] = periods.map(() => NO_PROVENANCE);
     if (det.energyPoint && periods.length > 0) {
+      // `readEndMs`, not `winEndMs`: a period that continues past the window is stored with its true
+      // end, so the counter has to be read that far or its energy is silently understated.
       const readings = await readPointSeries(
         tx,
         det.energyPoint,
         readStartMs,
-        winEndMs,
+        readEndMs,
       );
       const windows = periods.map((p) => ({
         startMs: p.startMs,
