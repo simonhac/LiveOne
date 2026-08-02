@@ -37,7 +37,7 @@ export const ENERGY_TABLE_METRICS: readonly EnergyTableMetric[] = [
 const METRIC_HEADER: Record<EnergyTableMetric, string> = {
   pct: "%",
   cost: "$",
-  rate: "c/kWh",
+  rate: "¢/kWh",
   emissions: "kg",
   ei: "g/kWh",
 };
@@ -366,19 +366,27 @@ export default function EnergyTable({
       : // The load half flips the sign: `bidi.grid.export/rate` is Amber's feedIn `perKwh`, negative
         // when you are PAID, and this line is captioned as a credit. (`revenueC` above arrives already
         // normalised — the engine does that at its own seam — so only the raw hover series needs it.)
-        `${formatCentsPerKwh(mode === "load" ? -rateNow : rateNow)} c/kWh`
+        formatCentsPerKwh(mode === "load" ? -rateNow : rateNow)
     : windowCents === null
       ? "—"
       : formatDollars(windowCents);
+  /**
+   * The unit rides in the NEXT column so `moneyValue` stays a bare number, right-aligned with the
+   * Power/Energy figures directly above it (see the render below). Only the hovered rate has one:
+   * the window total is a `formatDollars` string that carries its own "$", and "—" has nothing to
+   * attach a unit to.
+   */
+  const moneyUnit = isHovering && rateNow !== null ? "¢/kWh" : "";
 
   // Click anywhere in the last column — header, any row, the Total, the SoC row — to cycle.
   const metricCellProps = {
     onClick: onCycleMetric,
     title: "Click to cycle: % · cost · rate · emissions · intensity",
   };
-  const metricCellClass = `font-mono w-16 text-right ${
-    onCycleMetric ? "cursor-pointer select-none" : ""
-  }`;
+  const metricCellInteractive = onCycleMetric
+    ? "cursor-pointer select-none"
+    : "";
+  const metricCellClass = `font-mono w-16 text-right ${metricCellInteractive}`;
 
   // Handle touch and click events for series toggle
   const handlePointerDown = (seriesId: string) => {
@@ -568,14 +576,22 @@ export default function EnergyTable({
                   />
                   <span className="text-gray-300">{moneyLabel}</span>
                 </div>
-                <span className="text-gray-100 font-mono w-20 text-right whitespace-nowrap">
+                <span className="text-gray-100 font-mono w-20 text-right">
                   {moneyValue}
                 </span>
+                {/* The unit, broken off into the metric column and LEFT-aligned, so it reads
+                    immediately after the number while the number itself right-aligns with the
+                    Power/Energy column above. The two columns abut, so "¢" fuses to the number
+                    with no gap — the tight binding docs/architecture/number-typography.md
+                    prescribes for "¢", reached by geometry rather than a space character. That doc
+                    would leave the "¢" head unmuted; here the whole unit mutes, because in this
+                    dense mono table it is secondary chrome next to the value, not a hero glyph.
+                    Still part of the column, so clicking it cycles the metric like anywhere else. */}
                 <span
-                  className={`text-gray-400 ${metricCellClass}`}
+                  className={`text-gray-400 font-mono w-16 text-left whitespace-nowrap ${metricCellInteractive}`}
                   {...metricCellProps}
                 >
-                  {/* Empty, like the SoC line — but still part of the column, so clicking cycles. */}
+                  {moneyUnit}
                 </span>
               </div>
             )}
