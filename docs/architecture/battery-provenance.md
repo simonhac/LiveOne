@@ -514,6 +514,21 @@ area" pattern; see [home-assistant-comparison.md](home-assistant-comparison.md))
   the flow resolver is power-only), so there is no feedback loop. **No schema change** for the helper.
   (The learned params live in `battery_provenance_daily`, not on the helper.)
 
+> **The blend points are the READ-SIDE SOURCE OF TRUTH for `source.battery`'s intensity.** A read path
+> that wants "what was the battery worth at time T" must READ them, never re-derive them by folding.
+> The fold is stateful, so a re-derivation is only correct if its window starts at a checkpoint anchor
+> or a full `WARMUP_MS` lead-in — and a caller that gets that wrong does not fail, it seeds the store
+> from the grid and returns a plausible wrong number. That is exactly what the EV run pricing did
+> until 2026-08-02 (`lib/battery-provenance/persisted-blend.ts` is the reader that replaced it; see
+> `docs/plans/completed/load-side-run-provenance.md` §correction).
+>
+> Note the standing asymmetry this leaves: the **sub-daily (D/W) Sankey still re-folds live** rather
+> than reading these points, so a run and the D/W Sankey can differ slightly on the battery leg even
+> though both are correct by their own lights — measured at ~23 gCO₂/kWh and ~0.44 c/kWh mean absolute
+> deviation over a Kinkora week, which is the largest single residual between the two surfaces. Moving
+> that path onto the persisted blend would remove the fold from the request path entirely; see
+> `docs/plans/live-dashboard-roadmap.md` §1.3b/c.
+
 ### Storage
 
 - **Live blend** — the 5 derived points on the helper (`agg_5m` + KV latest), all written per interval

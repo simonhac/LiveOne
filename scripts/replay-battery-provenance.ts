@@ -41,10 +41,11 @@ import {
 } from "../lib/db/planetscale/schema";
 import { loadProvenanceInputs } from "../lib/battery-provenance/load";
 import { computeBatteryProvenance } from "../lib/battery-provenance/compute";
-import type {
-  ProvenanceConfig,
-  ProvenanceInputs,
-  ProvenanceResult,
+import {
+  certifyWarmInputs,
+  type ProvenanceConfig,
+  type ProvenanceInputs,
+  type ProvenanceResult,
 } from "../lib/battery-provenance/types";
 
 // ---- arg parsing --------------------------------------------------------
@@ -343,7 +344,18 @@ async function runReplay(handle: number) {
     reserveFloorPct: FLOOR ? Number(FLOOR) : undefined,
     efficiency: ETA ? Number(ETA) : "measured",
   };
-  const result = computeBatteryProvenance(inputs, config);
+  // The harness deliberately folds the EXACT window asked for, with no checkpoint seed and no
+  // WARMUP_MS lead-in: its whole job is to sweep configs over one fixed span and compare, and a seed
+  // would pin state the sweep is trying to vary. That makes the first ~day of any replay a warm-up
+  // artefact (the store's blend is seeded from the site fallback until it has cycled) — ask for a
+  // lead-in via --days if the early intervals matter.
+  const result = computeBatteryProvenance(
+    certifyWarmInputs(
+      inputs,
+      "offline harness: sweeps configs over one fixed window; early intervals are warm-up",
+    ),
+    config,
+  );
   report(inputs, result, config);
 }
 

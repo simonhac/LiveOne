@@ -26,9 +26,11 @@ import { Point, type PointId } from "@/lib/ids";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import { buildLoadPrices } from "@/lib/aggregation/flow-node-meta";
 import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
-import type {
-  ProvenanceInputs,
-  ProvenanceResult,
+import {
+  certifyWarmInputs,
+  type ProvenanceInputs,
+  type ProvenanceResult,
+  type WarmProvenanceInputs,
 } from "@/lib/battery-provenance/types";
 import {
   buildSubscriptionRegistry,
@@ -289,10 +291,19 @@ export async function recomputeBatteryProvenanceForWindow(
     nowMs?: number;
   } = {},
 ): Promise<RecomputeResult> {
-  const inputs = await loadProvenanceInputs(handle, {
+  // The TRUSTED long-window path: it applies the full `WARMUP_MS` lead-in itself (one line above) and
+  // is what WRITES the checkpoints every other caller seeds from, so it cannot use
+  // `loadWarmProvenanceInputs` without a cycle — it certifies its own warmth instead.
+  const raw = await loadProvenanceInputs(handle, {
     startMs: winStartMs - WARMUP_MS,
     endMs: winEndMs,
   });
+  const inputs =
+    raw &&
+    certifyWarmInputs(
+      raw,
+      "trusted long-window writer: WARMUP_MS lead-in applied above",
+    );
   const empty = {
     rowsWritten: 0,
     helperSystemId: null,
@@ -543,8 +554,19 @@ export async function recomputeBatteryProvenanceForWindowBestEffort(
  *  local midnight; between midnight and heal completion — or on a failed heal night — yesterday's, or
  *  the day before's, still gives an O(≤2-day) fold). */
 const SEED_LOOKBACK_DAYS = 2;
-/** Hard cap on the seeded span; beyond it the warm-up fallback is the safer path. */
-const MAX_SEED_SPAN_MS = 3.5 * 24 * 3600 * 1000;
+/**
+ * How STALE an anchor may be — the distance from the checkpoint to the START of the window being
+ * folded. Beyond it the warm-up fallback is the safer path.
+ *
+ * 🛑 THIS IS NOT A CAP ON HOW FAR THE FOLD PLAYS FORWARD, and it used to be measured as one. The
+ * read-side guard tested `endMs − anchorMs`, which conflates two unrelated things: how old the seed
+ * is (a staleness risk) and how long the requested window is (not a risk at all — replay from a
+ * checkpoint is EXACT, per the slice-and-chain identity property-tested in fold.test.ts, and the
+ * caller has to read that window's agg_5m either way). The consequence was that the 7-day W dashboard
+ * could NEVER seed: its span tripped a 3.5-day staleness cap purely for being long, so every request
+ * fell back to `startMs − WARMUP_MS` from a zero fold state and read ~14 days instead of ~7.
+ */
+const MAX_SEED_STALENESS_MS = 3.5 * 24 * 3600 * 1000;
 /** The staleness probe looks this far back before the anchor for post-checkpoint agg_5m rewrites. */
 const PROBE_LOOKBACK_MS = 12 * 3600 * 1000;
 
@@ -647,8 +669,10 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
   );
   if (!cp) return { seeded: false, reason: "no-checkpoint" };
   const { env } = cp;
-  if (nowMs - env.anchorMs > MAX_SEED_SPAN_MS)
-    return { seeded: false, reason: "span-too-long" };
+  // This path's window IS [anchor, now], so its staleness and its forward play are the same number —
+  // the conflation the read-side guard suffered from cannot arise here.
+  if (nowMs - env.anchorMs > MAX_SEED_STALENESS_MS)
+    return { seeded: false, reason: "anchor-too-stale" };
 
   // Staleness probe: did anything rewrite the battery input's agg_5m at/just-before the anchor AFTER
   // the checkpoint was written (a backfill/repair of yesterday)? One bounded PK-range read on the
@@ -695,7 +719,7 @@ export async function reconcileBatteryProvenanceFromCheckpoint(
     return { seeded: false, reason: "non-canonical-inputs" };
 
   const result = computeBatteryProvenance(
-    inputs,
+    certifyWarmInputs(inputs, "loaded from the checkpoint's own anchor"),
     {},
     { initialState: env.state, efficiencyFallback: env.etaFallback },
   );
@@ -740,7 +764,9 @@ export async function reconcileFromCheckpointBestEffort(
 export type ProvenanceSeedResult =
   | {
       seeded: true;
-      inputs: ProvenanceInputs;
+      // Branded HERE, where the claim is actually true: these inputs start at the checkpoint's own
+      // anchor. A caller receiving `{seeded:true}` has a warm fold and needs no further ceremony.
+      inputs: WarmProvenanceInputs;
       initialState: FoldState;
       efficiencyFallback: number;
       anchorMs: number;
@@ -788,8 +814,10 @@ export async function tryLoadSeededProvenanceInputs(
   const { env } = cp;
   if (env.anchorMs > targetStartMs)
     return { seeded: false, reason: "anchor-after-window-start" };
-  if (endMs - env.anchorMs > MAX_SEED_SPAN_MS)
-    return { seeded: false, reason: "span-too-long" };
+  // Staleness is measured to the window's START, never its end: a long window is not a stale seed.
+  // `endMs` here would refuse a 7-day Sankey outright — see MAX_SEED_STALENESS_MS.
+  if (targetStartMs - env.anchorMs > MAX_SEED_STALENESS_MS)
+    return { seeded: false, reason: "anchor-too-stale" };
 
   // Staleness probe: did anything rewrite the battery input's agg_5m at/just-before the anchor AFTER
   // the checkpoint was written (a backfill/repair)? Same input-watermark proxy the checkpointed
@@ -833,7 +861,10 @@ export async function tryLoadSeededProvenanceInputs(
 
   return {
     seeded: true,
-    inputs,
+    inputs: certifyWarmInputs(
+      inputs,
+      "loaded from the checkpoint's own anchor",
+    ),
     initialState: env.state,
     efficiencyFallback: env.etaFallback,
     anchorMs: env.anchorMs,

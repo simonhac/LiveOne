@@ -31,8 +31,9 @@ import { ReadingsDao } from "@/lib/readings";
 import type { PointId } from "@/lib/ids";
 import { detectRunPeriods, type Sample } from "@/lib/run-tracking/detect";
 import {
-  assignEnergyToPeriods,
-  assignProvenanceToPeriods,
+  allocateCounterToWindows,
+  energyFromAllocation,
+  provenanceFromAllocation,
   NO_PROVENANCE,
   type PeriodProvenance,
 } from "@/lib/run-tracking/energy";
@@ -144,17 +145,16 @@ export async function recomputeIntervalsForWindow(
         startMs: p.startMs,
         endMs: p.endMs,
       }));
-      energies = assignEnergyToPeriods(windows, readings, nowMs);
-
       // What this device's energy costs/emits, resolved ONCE for the whole batch — never per run.
       //
       // 🛑 LAZY AND RUN-WINDOWED, both deliberately. The generator leg is one small config read, but
-      // the load leg (`ev`) reassembles the battery-provenance fold, which is materially more
-      // expensive. Resolving it HERE rather than at the top of the function means:
+      // the load leg (`ev`) reads the engine's persisted per-interval blend and reassembles the
+      // load-path average from it, which is a real query. Resolving it HERE rather than at the top of
+      // the function means:
       //  - a pass that detected no runs does no work at all (the common case for the minutely cron,
       //    whose 6h trailing window is mostly idle), and
-      //  - the fold spans only the runs being priced, not the whole recompute window.
-      // `winStartMs`/`winEndMs` would fold hours nobody is pricing; the runs' own span is the
+      //  - it spans only the runs being priced, not the whole recompute window.
+      // `winStartMs`/`winEndMs` would cover hours nobody is pricing; the runs' own span is the
       // smallest window that can answer the question.
       //
       // Skipped entirely without an energy point (see the enclosing `if`): provenance is integrated
@@ -170,16 +170,13 @@ export async function recomputeIntervalsForWindow(
         endMs: spanEndMs,
       });
 
-      // Cost/emissions/renewable ride the SAME readings — the energy-weighted integral over the
-      // counter's own slices, so a run's provenance and its energy can never disagree.
-      if (intensity) {
-        provenance = assignProvenanceToPeriods(
-          windows,
-          readings,
-          intensity,
-          nowMs,
-        );
-      }
+      // ONE allocation, two readings of it. `samples` is the SIGNAL series the detector already used
+      // to place these boundaries (no extra query — the same array `detectRunPeriods` consumed), so
+      // the allocator divides a boundary-straddling counter step by how hard the device was actually
+      // working either side of the edge, and models the switch AT the edge the detector chose.
+      const alloc = allocateCounterToWindows(windows, readings, nowMs, samples);
+      energies = energyFromAllocation(alloc);
+      if (intensity) provenance = provenanceFromAllocation(alloc, intensity);
     }
 
     // Delete exactly the span we rebuild: [anchor, winEnd]. Bounded so later periods (relative to

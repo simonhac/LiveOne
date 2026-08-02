@@ -192,6 +192,35 @@ in the dev mirror's own readings for that day, NOT a defect: dev's raw counter a
 say 3.38 kWh and the run says 3.33, while `flow_attr_1d` carries prod's complete 6.89. See
 [dev-mirror-blind-to-prod-backfills].
 
+> 🛑 **CORRECTION (2026-08-02) — the paragraph above read a real defect as noise, and the paragraph
+> above THAT is the reason it existed.**
+>
+> "The expected residual from counter-delta vs trapezoid integration" cannot be right, and the shape
+> of the numbers says so: integration basis moves *energy*, not an *intensity*. A 1.6% energy
+> agreement alongside a 4.8% cost disagreement is not one phenomenon, it is two.
+>
+> What was actually happening: **the one-fold-interval padding is not a warm-up, and this leg needed
+> one.** `computeBatteryProvenance` is stateful — the battery's blend at any instant depends on every
+> interval since the last reset — so a fold started five minutes before a run begins with an empty
+> store and seeds the whole blend from the SITE FALLBACK, which is the grid's instantaneous intensity
+> and price (`fold.ts`). It never washes out, and discharge is provenance-neutral, so the wrong blend
+> rides the entire session. Worst observed case: a Kinkora EV session on 2026-08-01 supplied **100% by
+> a solar-charged battery** (solar 1 W, grid exporting, battery discharging 7.2–7.8 kW) was booked at
+> **33.7 c/kWh and 742 gCO₂/kWh** — the grid import rate of the minute the fold happened to start. The
+> engine's own persisted blend for those very intervals read 0.94 c/kWh and 107 gCO₂/kWh.
+>
+> Fixed by deleting the fold from this leg entirely: `resolveLoadIntensity` now reads the engine's
+> per-interval `bidi.battery/*` points (`lib/battery-provenance/persisted-blend.ts`) and blends them
+> with the same stateless `blendLoadIntensities`. `WarmProvenanceInputs` +
+> `scripts/check-warm-fold-boundary.mjs` make the original mistake unrepresentable rather than merely
+> discouraged. The energy half was separately wrong — see the counter-partition note in
+> `lib/run-tracking/energy.ts`.
+>
+> **Lesson worth keeping:** this cross-check was run, it did show the defect, and it was explained
+> away — because it was a one-off measurement written into a doc rather than a test. The regression
+> guards now live in `lib/run-tracking/__tests__/energy.test.ts` and
+> `lib/battery-provenance/__tests__/persisted-blend.test.ts`.
+
 ## Related
 
 - [run-period-provenance.md](run-period-provenance.md) — the shipped source-role

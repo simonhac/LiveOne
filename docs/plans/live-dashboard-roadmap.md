@@ -99,10 +99,19 @@ precomputed `flow_attr_1d` rollup, **nothing here is materialized yet.** Three l
   own midnight, so a 1-day sankey seeds there and reads **~1 day** of `agg_5m`. The reader keeps a safety
   net for the uncommon miss (today's checkpoint not yet written pre-00:05, a `BATPROV_MODEL_VERSION` bump,
   learn warm-up): it searches back `SEED_LOOKBACK_DAYS = 2` and tolerates a stale anchor up to
-  `MAX_SEED_SPAN_MS = 3.5 days`; past that, or on any seed-miss, it over-reads `startMs − 7 days`
+  `MAX_SEED_STALENESS_MS = 3.5 days`; past that, or on any seed-miss, it over-reads `startMs − 7 days`
   (`WARMUP_MS`) from a zero fold state. Keep the seeded path the norm so a 1-day sankey reads ~1 day, not
   a week — the 1.3b win is making the ~1-day seed the overwhelming common case (and, optionally,
   tightening the rare fallback lead-in itself).
+  **Done for D and W (2026-08-02).** The guard was measuring the wrong thing: it tested
+  `endMs − anchorMs`, which conflates how stale the seed is with how long the requested window is, so
+  the **7-day W view could never seed** — it tripped a 3.5-day staleness cap purely for being 7 days
+  long and fell back to the zero-state lead-in on every request. Now tested against the window's START
+  (`targetStartMs − anchorMs`); forward play is uncapped because replay from a checkpoint is exact
+  (slice-and-chain identity, `fold.test.ts`) and the caller reads that window's `agg_5m` regardless.
+  Measured on the Kinkora W window: **3336 → 1575 intervals loaded**, with `load.ev` energy identical
+  and the metric legs within 0.09%. The seed/fallback choice now lives in one place
+  (`lib/battery-provenance/warm-inputs.ts`) and warns when it falls back.
 - **1.3c — Materialize the sub-daily sankey + attributed series.** The residual after 1.3a/1.3b is in-Node
   CPU (densify/bucket + the stateful fold + flow-accounting) that a faster read can't cut. Precompute it —
   a **new** sub-daily rollup (there is no sub-daily counterpart to `flow_attr_1d` today), not a cache of an

@@ -247,6 +247,15 @@ const ENERGY_PAIR_TARGETS: Record<string, string> = {
 export function classifyEnergyStem(stem: string): EnergyStemClass | null {
   const pair = ENERGY_PAIR_TARGETS[stem];
   if (pair !== undefined) return { kind: "pair", targetPath: pair };
+  // 🛑 `net` REQUIRES A SIGNED REGISTER — one whose delta can be negative — because the overlay
+  // splits that delta by sign onto the channel's two halves (attachEnergyOverlays). A cumulative
+  // ONE-WAY total (`transform='d'` over a monotonic counter, e.g. Mondo's `totalEnergyWh`) never
+  // goes backwards, so every delta is positive and the circuit's whole throughput lands on a single
+  // direction — 174 kWh of "battery discharge" against zero charge, measured on Kinkora. Nothing
+  // here can tell the two apart from the stem alone, so the gate is at the point where a stem gets
+  // ASSIGNED: `scripts/utils/restem-circuit.ts` refuses a bare `bidi.*` on a counter with no
+  // observed negative deltas, and `scripts/utils/check-circuit-stems.ts` reports it fleet-wide. A
+  // bidirectional circuit wants a charge/discharge PAIR of registers, not a net total.
   if (stem === "bidi.battery" || stem === "bidi.grid")
     return { kind: "net", channelStem: stem };
   if (

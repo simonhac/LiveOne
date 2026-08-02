@@ -38,7 +38,11 @@ import {
 } from "@/lib/db/planetscale/schema";
 import { resolveGeneratorIntensity } from "@/lib/battery-provenance/generator-source";
 import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
-import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
+import {
+  buildSourceIntensities,
+  SOLAR_ACTUAL_COST,
+} from "@/lib/battery-provenance/compute";
+import { readPersistedBatteryBlend } from "@/lib/battery-provenance/persisted-blend";
 import {
   sourceWeightsForInterval,
   type FlowSeries,
@@ -117,6 +121,16 @@ export interface IntensityWindow {
  *
  * Outside the loaded timeline every factor is null, so a run reaching past the window it was
  * resolved for loses provenance for those slices rather than being priced at the nearest edge.
+ *
+ * 🛑 DO NOT "IMPROVE" THIS BY SPLITTING A COUNTER STEP AT THE INTERVAL BOUNDARY IT SPANS. It looks
+ * like a refinement — price each part at its own interval's factor — and it is measurably WRONG for
+ * this system, because it breaks an alignment that already exists. `agg_5m.delta` for a
+ * `transform='d'` counter is `last − previousLast`, so a raw step straddling a boundary is booked
+ * WHOLLY to the interval holding its later reading; the right-closed lookup here prices that same
+ * step at that same interval. The two conventions agree exactly, which is why a run's cost and the
+ * flow matrix's cost for the same kWh come out identical to 4 dp. Splitting the step diverges from
+ * the aggregator's own definition of "that interval's metered energy" — measured on a Kinkora week,
+ * it moved the run total $0.042 (0.45%) away from the Sankey it had been matching exactly.
  */
 export function stepIntensity(
   timeline: number[],
@@ -288,18 +302,33 @@ async function resolveSiteForDetector(
 }
 
 /**
- * A CONSUMING device's factor series: the fold's blended load-path intensity, step by step.
+ * A CONSUMING device's factor series: the blended load-path intensity, step by step.
  *
- * There is no per-interval load blend persisted anywhere to read — the persisted `bidi.battery/*`
- * points are the BATTERY's contents (what is in it now), not a load path, and grid/solar
- * intensities live in separately-bound OE/Amber points. So this reassembles one: run the same fold
- * the Sankey runs over the run window, take its per-source intensities, and blend them by the same
- * allocation weights. Expensive relative to the generator leg's single config read, which is why
- * the caller resolves it lazily and windows it to the runs it is actually pricing.
+ * There is no per-interval load blend persisted anywhere to read, so this assembles one — but note
+ * carefully WHICH of the two halves it computes, because the difference is a defect this function
+ * used to have:
  *
- * Every failure is null, never a fallback: no site handle, no fold inputs (a battery-less or
- * data-less window), or a timeline too short to have a step. The columns then stay absent, which is
- * the same answer this function gave for every load role before it existed.
+ *  - The BLEND (`sourceWeightsForInterval` + `blendLoadIntensities`) is STATELESS: interval `i`
+ *    depends only on interval `i`. Computing it here is safe at any window size, and it is the only
+ *    thing genuinely missing from the database.
+ *  - The FOLD (`computeBatteryProvenance`) is STATEFUL: the battery's contents at any instant depend
+ *    on everything since the last reset, so it is correct only when started from a checkpoint or a
+ *    full warm-up. This function used to run one over the run's own span padded by five minutes —
+ *    i.e. always cold — and a cold fold seeds the store's blend from the SITE FALLBACK, which is the
+ *    grid's instantaneous intensity and price (lib/battery-provenance/fold.ts). The observed symptom
+ *    was a Kinkora EV session supplied 100% by a solar-charged battery being billed at 33.7 c/kWh
+ *    and 742 gCO₂/kWh — the grid import rate of the minute the fold happened to start.
+ *
+ * So the fold is gone from here entirely. `readPersistedBatteryBlend` reads the engine's own
+ * per-interval output (`bidi.battery/*`, written from a checkpoint-seeded fold by the minutely
+ * reconcile and re-written by the nightly heal) and `buildSourceIntensities` — the same pure
+ * assembler the Sankey uses — turns it into the per-source array the blend consumes. A run and the
+ * daily attribution now read one number rather than deriving two.
+ *
+ * Every failure is null, never a fallback: no site handle, no inputs (a data-less window), a
+ * timeline too short to have a step, or a battery in the flow series with no persisted blend to
+ * price it. The columns then stay absent, which is the same answer this function gave for every
+ * load role before it existed.
  */
 async function resolveLoadIntensity(
   db: PgDb,
@@ -309,26 +338,51 @@ async function resolveLoadIntensity(
   const site = await resolveSiteForDetector(db, det);
   if (site?.handle == null) return null;
 
-  // Pad so the fold's timeline BRACKETS the runs rather than starting inside them. The timeline is
-  // built from the agg_5m rows in the requested range, so an unpadded window starts at or after the
-  // run's own start — and `stepIntensity` is right-closed, so the run's first counter slice would
-  // end at or before `timeline[0]` and price at null. One interval either side is enough; the fold
-  // itself already reads its own lead-in for learned params.
+  // Pad so the timeline BRACKETS the runs rather than starting inside them: it is built from the
+  // agg_5m rows in the requested range, so an unpadded window starts at or after the run's own
+  // start — and `stepIntensity` is right-closed, so the run's first counter slice would end at or
+  // before `timeline[0]` and price at null. One interval either side is enough. This is the whole
+  // reason for the padding; it was never (and could never have been) a fold warm-up.
   const inputs = await loadProvenanceInputs(site.handle, {
     startMs: window.startMs - FOLD_INTERVAL_MS,
     endMs: window.endMs + FOLD_INTERVAL_MS,
   });
   if (!inputs || inputs.timeline.length < 2) return null;
 
-  // `sourceIntensities` comes back off the fold already assembled (compute.ts builds it to drive
-  // `computeFlowAccounting`), so this does NOT re-derive solar/grid/battery factors — it reads the
-  // very array the Sankey attributed with.
-  const result = computeBatteryProvenance(inputs);
+  const hasBattery = inputs.sources.some((s) => s.path === "source.battery");
+  const blend = await readPersistedBatteryBlend(
+    db,
+    inputs.areaId,
+    inputs.timeline,
+  );
+  // A battery in the flow series that the engine has never written a blend for is ABSENT provenance,
+  // not cheap provenance: `blendLoadIntensities` would quietly drop the battery's share from both
+  // sides of the average and report the run at the intensity of whatever else was running. Refusing
+  // is the same "unknown ≠ zero" rule the energy path applies.
+  //
+  // 🛑 The gate is `present`, NOT `covered`. An EMPTY battery has fully-computed intervals with null
+  // intensities (there is no blend to report) and a real `stored-energy` of 0 — gating on a known
+  // intensity would read a flat battery as a missing engine and refuse to price a run that grid and
+  // solar can price exactly. Measured on prod: that mistake would have dropped provenance from 5 EV
+  // sessions (14.4 kWh, $2.88) whose days `flow_attr_1d` prices without difficulty.
+  if (hasBattery && (blend === null || blend.present === 0)) return null;
+
+  const sourceIntensities = buildSourceIntensities({
+    sources: inputs.sources,
+    timeline: inputs.timeline,
+    gridEmissions: inputs.gridEmissions,
+    gridRenewable: inputs.gridRenewable,
+    gridPrice: inputs.gridPrice,
+    gridEmissionsEstimated: inputs.gridEmissionsEstimated,
+    gridPriceEstimated: inputs.gridPriceEstimated,
+    steps: blend?.steps ?? [],
+    solarCost: SOLAR_ACTUAL_COST,
+  });
   const steps = blendLoadIntensities(
     inputs.timeline,
     inputs.sources,
     inputs.loads,
-    result.sourceIntensities,
+    sourceIntensities,
   );
   return stepIntensity(inputs.timeline, steps);
 }
