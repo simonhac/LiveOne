@@ -2,13 +2,13 @@
 
 /**
  * The runs panel — self-fetches its device's timezone (the runs panel reads the temporal navigator,
- * which needs it), then renders GeneratorRunsCard for whichever role the node's config names.
+ * which needs it), then renders RunsCard for whichever role the node's config names.
  *
  * Device-bound: reads `deviceSystemId ?? handle`, because run periods are keyed by a MEMBER
  * system_id and never by the synthetic area handle. On a multi-device area the fallback to `handle`
  * resolves no detector, so such a card must carry `device: dv_…` — see `runsConfigSchema`.
  */
-import GeneratorRunsCard from "@/components/GeneratorRunsCard";
+import RunsCard from "@/components/RunsCard";
 import {
   runsConfigSchema,
   type RunsCardConfig,
@@ -57,7 +57,7 @@ function AreaRuns({ node, handle, deviceSystemId }: CardRenderProps) {
     return <CardSkeleton height={CARD_FOOTPRINTS.runs} />;
   }
   return (
-    <GeneratorRunsCard
+    <RunsCard
       systemId={systemId}
       timezoneOffsetMin={tz}
       role={role}

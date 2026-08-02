@@ -136,10 +136,10 @@ These are load-bearing; don't violate them without updating
 
 Every point carries **two** addresses, and the distinction is load-bearing.
 
-| Field           | Separator | Set by         | Purpose                                                    | Example               |
-| --------------- | --------- | -------------- | ---------------------------------------------------------- | --------------------- |
-| `physical_path` | `/`       | Vendor adapter | The vendor's own identifier. Collection and dedup only.    | `selectronic/solar_w` |
-| `logical_path`  | `.`       | Vendor adapter | Semantic classification. Nullable if unclassified.         | `source.solar`        |
+| Field           | Separator | Set by         | Purpose                                                 | Example               |
+| --------------- | --------- | -------------- | ------------------------------------------------------- | --------------------- |
+| `physical_path` | `/`       | Vendor adapter | The vendor's own identifier. Collection and dedup only. | `selectronic/solar_w` |
+| `logical_path`  | `.`       | Vendor adapter | Semantic classification. Nullable if unclassified.      | `source.solar`        |
 
 `logical_path` + `/` + `metric_type` gives the **full logical path** — `source.solar/power` — and
 that string is the one the rest of the system is keyed by: KV latest-value hash fields, Sankey node
@@ -261,6 +261,11 @@ rewriter and the adapter were all deleted in config-v4 Phase 14 (migration 0054)
   an unknown card type persists with its opaque `config` intact and renders a labelled placeholder, so
   an older validator cannot destroy a newer client's config. Known types get strict per-type `config`
   schemas, and references are **always** strict.
+- ⚠️ **Rename-proofing covers labels, not `type`.** The bullet above says display names are derived, so
+  renaming one is free — but a card `type` **is** persisted, so renaming _it_ is a document-data
+  change. Old documents keep the old string and (by the warn-not-reject rule) degrade to a visible
+  placeholder rather than erroring. Ship the document rewrite with the rename:
+  [migrations.md § Data & config-document migrations](../migrations.md#data--config-document-migrations).
 - ⚠️ Because node ids are server-assigned within the doc being normalized, **a group produced in
   isolation arrives carrying ids that may already exist in the target doc.** Strip ids when appending a
   subtree, or the `PUT` is rejected for duplicate node ids. (The first append is unaffected, so a

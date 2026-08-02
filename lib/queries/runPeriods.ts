@@ -127,7 +127,7 @@ function modeKey(p: RunPeriodsQueryParams): string {
 /**
  * Bounded, indexed read of a device's persisted device run periods (generator now, pump later).
  * The single shared accessor for `/api/device/{id}/run-periods` — replaces the per-component inline
- * fetches in GeneratorRunsCard and GeneratorClient so both share one key, param style, and
+ * fetches in RunsCard and GeneratorClient so both share one key, param style, and
  * freshness policy. `role` is a query param, so this is a GENERIC resource, not a per-device API.
  *
  * Run periods are bounded tabular history (not live latest values), so a single staleTime with no

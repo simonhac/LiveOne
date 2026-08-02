@@ -32,7 +32,7 @@ import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
  * `<role stem>/running` point) so the badge comes from /api/data like every other live value; it
  * falls back to the run-periods response's open-period flag when that point isn't present.
  */
-export default function GeneratorRunsCard({
+export default function RunsCard({
   systemId,
   timezoneOffsetMin,
   role = "generator",

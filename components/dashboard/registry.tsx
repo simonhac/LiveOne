@@ -49,7 +49,7 @@ import { chartPlugin } from "./cards/chart";
 import { sankeyPlugin } from "./cards/sankey";
 import { amberNowPlugin } from "./cards/amber-now";
 import { amberTimelinePlugin } from "./cards/amber-timeline";
-import { runsPlugin } from "./cards/generator-runs";
+import { runsPlugin } from "./cards/runs";
 import { deviceMetricsPlugin } from "./cards/device-metrics";
 import { batteryContentsPlugin } from "./cards/battery-contents";
 import { evProvenancePlugin } from "./cards/ev-provenance";

@@ -297,7 +297,7 @@
     },
     "leaves": [
       {
-        "component": "GeneratorRunsCard",
+        "component": "RunsCard",
         "props": {
           "activeLabel": "charging",
           "emptyText": "No charge sessions in this period",
@@ -329,7 +329,7 @@
     },
     "leaves": [
       {
-        "component": "GeneratorRunsCard",
+        "component": "RunsCard",
         "props": {
           "activeLabel": "running",
           "emptyText": "No generator runs in this period",
@@ -358,7 +358,7 @@
     },
     "leaves": [
       {
-        "component": "GeneratorRunsCard",
+        "component": "RunsCard",
         "props": {
           "activeLabel": "running",
           "emptyText": "No generator runs in this period",

@@ -89,7 +89,7 @@ const card = (type: string, extra?: Partial<CardNode>): CardNode => ({
 /**
  * One `runs` card per trackable role the area actually tracks, in registry order.
  *
- * Deliberately UNPINNED, exactly as the single `generator-runs` card always was. A detector hangs
+ * Deliberately UNPINNED, exactly as the single generator-only `runs` card always was. A detector hangs
  * off the area-of-one of the device owning its signal point, so a card on a multi-device area needs
  * `device: dv_…` to resolve one — but the strategy has no member→role mapping to pin WITH (it sees
  * a capability set, not which member provided it), and inventing one here would be a second, weaker
