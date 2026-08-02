@@ -25,7 +25,10 @@ import { ReadingsDao, type Agg5mInsert } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
 import { computeFlowAccounting } from "@/lib/aggregation/flow-matrix-core";
 import { buildLoadPrices } from "@/lib/aggregation/flow-node-meta";
-import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
+import {
+  FIVE_MIN_MS,
+  dayToUnixRangeForAggregation,
+} from "@/lib/aggregation/point-aggregates";
 import {
   certifyWarmInputs,
   type ProvenanceInputs,
@@ -107,7 +110,11 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
 // re-materialise to identical values.
 // v5: added the `revenue_c` leg — feed-in income attributed to the source that produced the exported
 // energy. Areas with no export tariff re-materialise to identical values plus a null revenue column.
-export const FLOW_ATTR_VERSION = 5;
+// v6: the day's FIRST interval, (00:00, 00:05] local, is attributed. Every v<=5 row silently excludes
+// it — an interval-END range was passed to a span filter (see the `window:` comment in writeAttrRollup).
+// Re-materialised days gain that interval's energy on every edge; ~0.014 kWh/day typical, but material
+// whenever a large load runs across midnight.
+export const FLOW_ATTR_VERSION = 6;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */
@@ -160,9 +167,13 @@ export function localDaysInRange(
 
 /**
  * Materialise the per-day attribution rollup (`point_readings_flow_attr_1d`) for every local day the
- * window covers — energy + attributed emissions/renewable/cost per source→load edge, keyed exactly like
- * `flow_1d`. Runs the SAME `computeFlowAccounting` the window used, sliced to each local day (the fold ran
- * over the whole window for anchoring). Delete-then-insert per (area, day), idempotent like flow_1d.
+ * window covers — energy + attributed emissions/renewable/cost per source→load edge. Runs the SAME
+ * `computeFlowAccounting` the window used, sliced to each local day (the fold ran over the whole window
+ * for anchoring). Delete-then-insert per (area, day), idempotent.
+ *
+ * The per-day slices TILE: each covers local midnight → next local midnight, so summing a month of days
+ * reproduces the month's matrix exactly (`computeFlowAccounting`'s additivity property). Getting that
+ * bound right is fiddly — see the units warning on the `window:` argument below.
  */
 async function writeAttrRollup(
   db: PgDb,
@@ -191,7 +202,18 @@ async function writeAttrRollup(
       loads: inputs.loads,
       sourceIntensities: result.sourceIntensities,
       loadPrices: buildLoadPrices(inputs.loads, result.exportReceiptPrice),
-      window: { startMs: startUnix * 1000, endMs: endUnix * 1000 },
+      // 🛑 UNITS. `dayToUnixRangeForAggregation` returns interval-ENDs (00:05 … next 00:00);
+      // `computeFlowAccounting`'s window filters interval SPANS. Handing `startUnix` over verbatim
+      // therefore dropped the day's first interval, (00:00, 00:05], from EVERY day (fixed in v6) —
+      // its start, 00:00, sits below a startMs of 00:05. Step back one interval to get that span's
+      // START. Do NOT "fix" this by moving `dayToUnixRangeForAggregation`: it is the contract every
+      // 1d aggregate's day boundary depends on. The END needs no adjustment — the last interval
+      // ends exactly at `endUnix`. The 00:00 sample is on the timeline because the caller loaded
+      // `winStartMs - WARMUP_MS`.
+      window: {
+        startMs: startUnix * 1000 - FIVE_MIN_MS,
+        endMs: endUnix * 1000,
+      },
     });
     const rows: (typeof pointReadingsFlowAttr1d.$inferInsert)[] = [];
     for (let s = 0; s < acc.sources.length; s++) {

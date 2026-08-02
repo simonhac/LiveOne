@@ -260,9 +260,13 @@ export function computeFlowAccounting(input: {
    * window — start `timestamps[i] >= startMs` AND end `timestamps[i+1] <= endMs`. Used to slice a single
    * local DAY out of a longer loaded/folded window for the per-day rollup, while the caller's fold ran
    * over the whole window for anchoring. Requiring the WHOLE interval (not just its end) to fall inside
-   * makes the per-day slice byte-identical to integrating that day's samples in isolation (the legacy
-   * `flow_1d` recompute), so a gap-/midnight-spanning interval is NOT attributed wholly to the later day.
-   * Omit = all intervals.
+   * makes the slice identical to integrating that window's intervals in isolation, so a gap-/midnight-
+   * spanning interval is NOT attributed wholly to the later day. Omit = all intervals.
+   *
+   * 🛑 **These bounds are interval SPANS, not interval-ENDS.** For a local day that means
+   * `[midnight, next midnight]` — NOT `dayToUnixRangeForAggregation`'s `[00:05, next 00:00]`, which is
+   * an interval-END range and whose start would exclude the day's first interval, `(00:00, 00:05]`.
+   * Span bounds are also what make consecutive days TILE, preserving additivity (property 1 above).
    */
   window?: { startMs: number; endMs: number };
 }): FlowAccountingResult {

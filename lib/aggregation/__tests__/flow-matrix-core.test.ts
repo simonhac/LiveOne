@@ -232,17 +232,24 @@ describe("computeInstantFlowMatrix", () => {
 
 /**
  * The per-day `window` slice (used by the flow_attr_1d rollup writer) must integrate a day EXACTLY like
- * the legacy flow_1d recompute integrates that day's own samples in isolation — so the modern metric
- * legs stay byte-identical to the energy Sankey. The regression these guard: a gap-/midnight-spanning
- * interval being attributed WHOLLY to the later day because only its END was checked (Bug B).
+ * integrating that day's own interval set in isolation, and consecutive days must TILE — no hole at the
+ * midnight seam, so a month is the plain sum of its days. Two regressions these guard:
+ *  - a gap-/midnight-spanning interval attributed WHOLLY to the later day because only its END was
+ *    checked (Bug B);
+ *  - the day's FIRST interval, (00:00, 00:05], dropped from every day because an interval-END range
+ *    (`dayToUnixRangeForAggregation`, which starts at 00:05) was passed to this SPAN filter — the
+ *    flow_attr_1d v6 fix.
+ *
+ * The window bounds are therefore SPANS: local midnight → next local midnight.
  */
 describe("computeFlowAccounting per-day window == isolated per-day integration", () => {
   const D1 = Date.parse("2026-01-01T00:00:00Z");
   const DAY = 24 * HOUR;
   const FIVE_MIN = 5 * 60 * 1000;
-  // The aggregation window for the local day starting at `midnightMs`: (00:05, next 00:00].
+  // The attribution window for the local day starting at `midnightMs`, as interval SPANS: an interval
+  // belongs to the day when it starts at/after this midnight and ends at/before the next.
   const dayWindow = (midnightMs: number) => ({
-    startMs: midnightMs + FIVE_MIN,
+    startMs: midnightMs,
     endMs: midnightMs + DAY,
   });
   const grid = (ts: number[], kw: number): FlowSeries[] => [
@@ -251,7 +258,8 @@ describe("computeFlowAccounting per-day window == isolated per-day integration",
   const load = (ts: number[], kw: number): FlowSeries[] => [
     { path: "load", power: ts.map(() => kw) },
   ];
-  // Legacy flow_1d integrates ONLY the day's own samples (interval_end in [00:05, next 00:00]).
+  // The day's own interval set, integrated alone: every sample from its opening midnight (which opens
+  // the first interval) through its closing one.
   const isolate = (ts: number[], w: { startMs: number; endMs: number }) =>
     ts.filter((t) => t >= w.startMs && t <= w.endMs);
 
@@ -271,16 +279,18 @@ describe("computeFlowAccounting per-day window == isolated per-day integration",
       window: win2,
     });
     const isoTs = isolate(fullTs, win2); // [08:00, 09:00]
-    const legacy = computeFlowMatrix({
+    const isolated = computeFlowMatrix({
       timestamps: isoTs,
       sources: grid(isoTs, 2),
       loads: load(isoTs, 2),
     });
     // Only the 08:00→09:00 interval (2 kW × 1 h = 2 kWh) belongs to day 2. The 22:00→08:00 gap interval
     // (2 kW × 10 h = 20 kWh) spans midnight and belongs to NEITHER isolated day — it must not appear.
+    // It still starts BEFORE midnight, so the span bound keeps dropping it: the v6 fix moved the bound,
+    // it did not relax the "entirely inside" rule.
     expect(modern.energyKwh[0][0]).toBeCloseTo(2, 6);
-    expect(legacy.matrix[0][0]).toBeCloseTo(2, 6);
-    expect(modern.energyKwh[0][0]).toBeCloseTo(legacy.matrix[0][0], 6);
+    expect(isolated.matrix[0][0]).toBeCloseTo(2, 6);
+    expect(modern.energyKwh[0][0]).toBeCloseTo(isolated.matrix[0][0], 6);
   });
 
   it("dense day: windowed slice equals isolated integration (no regression)", () => {
@@ -295,13 +305,70 @@ describe("computeFlowAccounting per-day window == isolated per-day integration",
       window: win2,
     });
     const isoTs = isolate(fullTs, win2);
-    const legacy = computeFlowMatrix({
+    const isolated = computeFlowMatrix({
       timestamps: isoTs,
       sources: grid(isoTs, 3),
       loads: load(isoTs, 2),
     });
     expect(modern.energyKwh[0][0]).toBeGreaterThan(0);
-    expect(modern.energyKwh[0][0]).toBeCloseTo(legacy.matrix[0][0], 6);
+    expect(modern.energyKwh[0][0]).toBeCloseTo(isolated.matrix[0][0], 6);
+  });
+
+  it("attributes the day's FIRST interval, (00:00, 00:05] local (flow_attr_1d v6)", () => {
+    const midnight = D1 + DAY; // 2026-01-02 local midnight
+    // Five-minute samples across the seam: 23:55 (day 1), then 00:00, 00:05, 00:10 (day 2).
+    const fullTs = [
+      midnight - FIVE_MIN,
+      midnight,
+      midnight + FIVE_MIN,
+      midnight + 2 * FIVE_MIN,
+    ];
+    // 12 kW for five minutes = exactly 1 kWh per interval, so the count is readable off the total.
+    const modern = computeFlowAccounting({
+      timestamps: fullTs,
+      sources: grid(fullTs, 12),
+      loads: load(fullTs, 12),
+      window: dayWindow(midnight),
+    });
+    // Day 2 owns TWO of these intervals — (00:00, 00:05] and (00:05, 00:10] — so 2 kWh. Under the
+    // pre-v6 bound (00:05) the first was skipped and this read 1 kWh. The day-1 tail interval
+    // (23:55, 00:00] is correctly excluded either way.
+    expect(modern.energyKwh[0][0]).toBeCloseTo(2, 9);
+    expect(modern.intervalsUsed).toBe(2);
+  });
+
+  it("consecutive per-day windows TILE: Σ days == one window over the whole span", () => {
+    // Three days of hourly samples, midnight day 1 → midnight day 4. Power varies on co-prime cycles
+    // so no accidental symmetry can hide a dropped interval.
+    const ts: number[] = [];
+    for (let h = 0; h <= 72; h++) ts.push(D1 + h * HOUR);
+    const sources: FlowSeries[] = [
+      { path: "source.grid", power: ts.map((_, i) => 1 + (i % 7)) },
+    ];
+    const loads: FlowSeries[] = [
+      { path: "load", power: ts.map((_, i) => 1 + (i % 5)) },
+    ];
+
+    const whole = computeFlowAccounting({
+      timestamps: ts,
+      sources,
+      loads,
+      window: { startMs: D1, endMs: D1 + 3 * DAY },
+    });
+    let summed = 0;
+    for (let d = 0; d < 3; d++) {
+      summed += computeFlowAccounting({
+        timestamps: ts,
+        sources,
+        loads,
+        window: dayWindow(D1 + d * DAY),
+      }).energyKwh[0][0];
+    }
+
+    // This is the property the pre-v6 bound broke: each day silently lost its opening interval, so a
+    // month of flow_attr_1d rows summed to LESS than the month's own matrix.
+    expect(whole.energyKwh[0][0]).toBeGreaterThan(0);
+    expect(summed).toBeCloseTo(whole.energyKwh[0][0], 9);
   });
 });
 
