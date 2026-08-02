@@ -77,22 +77,19 @@ async function readAgg5m(
   }));
 }
 
-/** Raw OE emissions-intensity + renewables series for `region` (unprocessed — caller forward-fills).
- *  `null` for a leg that has no OE device/point registered for the region. Three sequential round
- *  trips are inherent (device lookup → point lookup → point reads), but the two point reads (once
- *  point ids are known) run concurrently, and the whole chain runs alongside every other independent
- *  read in the caller's `Promise.all`. */
-async function loadOeRawSeries(
+/**
+ * The OE region's emissions-intensity + renewables POINTS (identity only, no reads). Empty for a
+ * region with no OE device registered, or for a null region (an off-grid / unlocated Area).
+ *
+ * Split out from {@link loadOeRawSeries} so the run-provenance staleness probe can name the same
+ * points this loader reads without also reading their series — one resolution, so a probe cannot
+ * end up watching a different grid signal than the one that priced the run.
+ */
+export async function resolveOeRegionPoints(
   db: PgDb,
   region: string | null,
-  startMs: number,
-  endMs: number,
-  oeFillMs: number,
-): Promise<{
-  emissions: SeriesPoint[] | null;
-  renewable: SeriesPoint[] | null;
-}> {
-  if (!region) return { emissions: null, renewable: null };
+): Promise<{ stem: string | null; point: PointId }[]> {
+  if (!region) return [];
   const [oeSys] = await db
     .select({ id: devices.rid })
     .from(devices)
@@ -103,7 +100,7 @@ async function loadOeRawSeries(
       ),
     )
     .limit(1);
-  if (!oeSys) return { emissions: null, renewable: null };
+  if (!oeSys) return [];
   const oePts = await db
     .select({
       pointUid: points.id,
@@ -120,15 +117,33 @@ async function loadOeRawSeries(
         ),
       ),
     );
+  return oePts.map((op) => ({
+    stem: op.stem,
+    point: Point.encode(op.pointUid),
+  }));
+}
+
+/** Raw OE emissions-intensity + renewables series for `region` (unprocessed — caller forward-fills).
+ *  `null` for a leg that has no OE device/point registered for the region. Three sequential round
+ *  trips are inherent (device lookup → point lookup → point reads), but the two point reads (once
+ *  point ids are known) run concurrently, and the whole chain runs alongside every other independent
+ *  read in the caller's `Promise.all`. */
+async function loadOeRawSeries(
+  db: PgDb,
+  region: string | null,
+  startMs: number,
+  endMs: number,
+  oeFillMs: number,
+): Promise<{
+  emissions: SeriesPoint[] | null;
+  renewable: SeriesPoint[] | null;
+}> {
+  const oePts = await resolveOeRegionPoints(db, region);
+  if (oePts.length === 0) return { emissions: null, renewable: null };
   const results = await Promise.all(
     oePts.map(async (op) => ({
       stem: op.stem,
-      series: await readAgg5m(
-        db,
-        Point.encode(op.pointUid),
-        startMs - oeFillMs,
-        endMs,
-      ),
+      series: await readAgg5m(db, op.point, startMs - oeFillMs, endMs),
     })),
   );
   return {

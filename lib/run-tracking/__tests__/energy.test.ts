@@ -517,21 +517,32 @@ describe("blendLoadIntensities", () => {
     expect(step.renewable).toBeCloseTo(0.75 * 1 + 0.25 * 0.2, 9);
   });
 
-  it("drops an unknown factor from the DENOMINATOR too, not just the numerator", () => {
-    // Grid emissions unknown ⇒ the step is priced off the sources that DO know, at their own
-    // intensity — not diluted toward zero by counting the unknown source's share as 0 g.
+  it("keeps an UNPRICEABLE source in the denominator — its energy is unpriced, not re-rated", () => {
+    // Solar (75% of the pool) has no known price; grid (25%) is 50c. Only a quarter of the load's
+    // energy is priceable, so the factor applied to the WHOLE slice is 0.25 × 50.
+    //
+    // 🛑 The old rule renormalised onto the KNOWN share and returned the full 50 — pricing
+    // solar-supplied energy at the grid tariff. That is what put the runs above the Sankey on prod.
+    // `computeFlowAccounting` gives the unpriceable source its own energy edge and contributes
+    // nothing from it; this must agree. See the parity test in intensity-blend-parity.test.ts.
     const sources = [src("source.solar", 3, N), src("source.grid", 1, N)];
     const [step] = blendLoadIntensities(
       timeline,
       sources,
       [],
-      [si(N, 0, 0, 1), si(N, 50, null, 0.2)],
+      [si(N, null, 0, 1), si(N, 50, 900, 0.2)],
     );
-    expect(step.gPerKwh).toBe(0); // solar's 0 g at 100% of the KNOWN weight
-    expect(step.priceC).toBeCloseTo(0.25 * 50, 9); // price still blends both
+    expect(step.priceC).toBeCloseTo(0.25 * 50, 9);
+    // Note this is the SAME answer a known-zero solar price gives (the test above) — under the
+    // aligned rule "unknown" and "free" both contribute nothing to the cost. They are distinguished
+    // by the accounting's `estimated_kwh`, never by the cost itself.
+    expect(step.gPerKwh).toBeCloseTo(0.25 * 900, 9);
   });
 
-  it("ignores a source with no intensity at all (e.g. source.generator)", () => {
+  it("a source with NO intensity at all (e.g. source.generator) keeps its share of the pool", () => {
+    // The generator supplies 3 of the 4 kW and cannot be priced, so only the solar quarter carries a
+    // cost: 12c × ¼. Previously this reported the full 12c, i.e. it billed generator-supplied energy
+    // at the solar rate.
     const sources = [src("source.solar", 1, N), src("source.generator", 3, N)];
     const [step] = blendLoadIntensities(
       timeline,
@@ -539,7 +550,7 @@ describe("blendLoadIntensities", () => {
       [],
       [si(N, 12, 0, 1), null],
     );
-    expect(step.priceC).toBe(12);
+    expect(step.priceC).toBeCloseTo(0.25 * 12, 9);
   });
 
   it("is null when nothing generated, and when no source knows the factor", () => {

@@ -6,7 +6,7 @@
  * Decoupling invariant: this reads only the serving store (`point_readings`) and writes only
  * `derived_intervals`. It is never wired into the queue receiver / hot ingest path.
  */
-import { and, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { derivedIntervals } from "@/lib/db/planetscale/schema";
 import {
@@ -18,6 +18,9 @@ import {
   listEnabledRunDetectors,
   type RunDetectorFilter,
 } from "@/lib/derivations/resolve";
+import { resolveIntensityInputPoints } from "@/lib/run-tracking/intensity";
+import { REHEAL_TRAILING_MS } from "@/lib/battery-provenance/recompute";
+import { ReadingsDao } from "@/lib/readings";
 
 export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // 6h trailing window for the minutely cron
 
@@ -25,6 +28,22 @@ export const DEFAULT_TRAILING_MS = 6 * 60 * 60 * 1000; // 6h trailing window for
 // multi-month backfill never loads the whole history at once. Must comfortably exceed the longest
 // expected single run (a run that spans a chunk boundary is stitched by the next chunk's anchor).
 const CHUNK_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+/**
+ * How far back a run must be to be a re-price candidate. Reuses the battery-provenance reheal's own
+ * settlement window so the two agree on what "past settlement" means: everything newer is still
+ * being rewritten by a contiguous pass (the minutely trailing reconcile, the daily heal over the
+ * aggregation range, the nightly blend recompute), so re-pricing it here would only fight them.
+ */
+const REPRICE_FLOOR_MS = REHEAL_TRAILING_MS;
+/** Per-pass cap on re-prices — a big backlog (a fleet-wide input rewrite) drains over nights. */
+const REPRICE_MAX_RUNS_PER_PASS = 25;
+/** Per-pass cap on staleness PROBES. Far higher than the re-price cap: a probe is one indexed
+ *  MAX(updated_at), a re-price is a detect + energy + blend rebuild. */
+const PROBE_MAX_RUNS_PER_PASS = 500;
+/** The ±1-interval pad `resolveLoadIntensity` puts around a run's span, so the probe covers the
+ *  same rows the pricing did (an edge interval rewritten at the boundary still counts as movement). */
+const INTENSITY_PAD_MS = 5 * 60 * 1000;
 
 export interface RecomputeSummary {
   trackersProcessed: number;
@@ -131,6 +150,187 @@ export async function reconcileTrailingWindow(
     console.log(line);
   }
   return summary;
+}
+
+export interface RehealSummary {
+  /** Detectors that had something to watch (a priced role with a resolvable input set). */
+  detectorsProcessed: number;
+  /** Runs whose inputs were probed individually (the coarse bucket gate skips the rest). */
+  probed: number;
+  /** Runs re-priced this pass. */
+  repriced: number;
+  /** A cap bit — more work was outstanding than this pass was allowed to do. */
+  capped: boolean;
+}
+
+/** One candidate run: the identity (`derivation_id` + `start_time`) plus its pricing watermark. */
+interface CandidateRun {
+  startMs: number;
+  endMs: number;
+  /** When this row was last priced — `updated_at`, stamped by the delete-and-reinsert. */
+  pricedAtMs: number;
+}
+
+/**
+ * Bounded, oldest-first re-price of runs whose PRICING INPUTS have moved since they were priced.
+ *
+ * The problem this closes: `recomputeIntervalsForWindow` accumulates `cost_c` / `emissions_g` /
+ * `renewable_kwh` ONCE and stores them, but their inputs keep moving — Amber settles over ~72h,
+ * OpenElectricity revises, and the nightly heal re-materialises the `bidi.battery/*` blend. The
+ * Sankey recomputes live and follows all of it; a stored run older than the contiguous passes' reach
+ * does not, so the two surfaces disagree by however far the inputs drifted, permanently, per row.
+ *
+ * There is no version column and none is needed — both halves of the watermark already exist:
+ * `derived_intervals.updated_at` IS "when was this priced" (every re-price is a delete-and-reinsert,
+ * so it takes the column default), and `point_readings_agg_5m.updated_at` is bumped on every upsert.
+ * So staleness is a QUERY:
+ *
+ * > A run is stale if any intensity point feeding it has an `agg_5m` row inside the run's span whose
+ * > `updated_at` is later than the run's own.
+ *
+ * Shaped on `rehealStaleAttrDays` (lib/battery-provenance/recompute.ts) — bounded per invocation,
+ * oldest-first, self-draining, best-effort per detector — and it runs LAST in the daily pass for the
+ * same reason that one does: a hiccup here must never roll back the committed work above it, and
+ * re-pricing before the day's blend has been rewritten would just re-stale every row it touched.
+ *
+ * COARSE GATE, THEN DRILL. Probing every candidate every night is O(all runs, forever) and the
+ * backlog is normally empty, so the runs are bucketed by month and each bucket gets ONE probe over
+ * its whole span first: if nothing in the bucket moved since its OLDEST row was priced, no run in it
+ * can be stale and the whole month is skipped without a single per-run query.
+ */
+export async function rehealStaleRuns(
+  nowMs: number,
+  opts: { limit?: number; probeLimit?: number } = {},
+): Promise<RehealSummary> {
+  const db = requirePlanetscaleDb();
+  const limit = opts.limit ?? REPRICE_MAX_RUNS_PER_PASS;
+  const probeLimit = opts.probeLimit ?? PROBE_MAX_RUNS_PER_PASS;
+  const floorMs = nowMs - REPRICE_FLOOR_MS;
+
+  const detectors = await withTransientPostgresRetry(() =>
+    listEnabledRunDetectors(),
+  );
+  const summary: RehealSummary = {
+    detectorsProcessed: 0,
+    probed: 0,
+    repriced: 0,
+    capped: false,
+  };
+
+  for (const det of detectors) {
+    // No energy point ⇒ no counter to integrate provenance over ⇒ the columns were never written.
+    if (!det.energyPoint) continue;
+    try {
+      const inputs = await resolveIntensityInputPoints(db, det);
+      // Empty is "this role's price cannot drift" (the generator's configured constants) or "it was
+      // never priced at all" — not "nothing moved". Either way there is nothing to watch.
+      if (inputs.length === 0) continue;
+      summary.detectorsProcessed += 1;
+
+      // Closed runs only, and only past the settlement floor. An open run is by definition inside
+      // the trailing reconcile's window, which re-prices it every minute.
+      const rows = await withTransientPostgresRetry(() =>
+        db
+          .select({
+            startTime: derivedIntervals.startTime,
+            endTime: derivedIntervals.endTime,
+            updatedAt: derivedIntervals.updatedAt,
+          })
+          .from(derivedIntervals)
+          .where(
+            and(
+              eq(derivedIntervals.derivationId, det.id),
+              isNotNull(derivedIntervals.endTime),
+              lte(derivedIntervals.endTime, new Date(floorMs)),
+            ),
+          )
+          .orderBy(asc(derivedIntervals.startTime)),
+      );
+      if (rows.length === 0) continue;
+
+      const candidates: CandidateRun[] = rows.map((r) => ({
+        startMs: r.startTime.getTime(),
+        endMs: r.endTime!.getTime(),
+        pricedAtMs: r.updatedAt.getTime(),
+      }));
+
+      const stale: CandidateRun[] = [];
+      for (const bucket of bucketByMonth(candidates)) {
+        if (summary.probed >= probeLimit) {
+          summary.capped = true;
+          break;
+        }
+        const spanStartMs = bucket[0].startMs;
+        const spanEndMs = Math.max(...bucket.map((c) => c.endMs));
+        const oldestPricedAtMs = Math.min(...bucket.map((c) => c.pricedAtMs));
+        const bucketMax = await ReadingsDao.latestAgg5mUpdatedAtForPoints(
+          inputs,
+          {
+            afterIntervalEndMs: spanStartMs - INTENSITY_PAD_MS,
+            throughIntervalEndMs: spanEndMs + INTENSITY_PAD_MS,
+          },
+          db,
+        );
+        // Nothing in the month moved after its oldest row was priced ⇒ no row in it can be stale.
+        if (bucketMax === null || bucketMax <= oldestPricedAtMs) continue;
+
+        for (const run of bucket) {
+          if (summary.probed >= probeLimit) {
+            summary.capped = true;
+            break;
+          }
+          summary.probed += 1;
+          const movedAtMs = await ReadingsDao.latestAgg5mUpdatedAtForPoints(
+            inputs,
+            {
+              afterIntervalEndMs: run.startMs - INTENSITY_PAD_MS,
+              throughIntervalEndMs: run.endMs + INTENSITY_PAD_MS,
+            },
+            db,
+          );
+          if (movedAtMs !== null && movedAtMs > run.pricedAtMs) stale.push(run);
+        }
+      }
+
+      if (stale.length > limit - summary.repriced) summary.capped = true;
+      for (const run of stale) {
+        if (summary.repriced >= limit) break;
+        // The window is EXACTLY the run's own span, so the bounded delete-and-reinsert touches this
+        // one row and nothing else. Never widen it to bracket neighbours: a window that ends
+        // mid-run truncates that run and drops its continuation.
+        await withTransientPostgresRetry(() =>
+          recomputeIntervalsForWindow(db, det, run.startMs, run.endMs, nowMs),
+        );
+        summary.repriced += 1;
+      }
+    } catch (err) {
+      console.error(
+        `[RunTracking] reheal failed for derivation ${det.id} (handle=${det.legacyHandle} role=${det.role}):`,
+        err,
+      );
+    }
+  }
+
+  if (summary.repriced > 0 || summary.capped) {
+    console.log(
+      `[RunTracking] reheal: ${summary.repriced} run(s) re-priced from ` +
+        `${summary.probed} probe(s) across ${summary.detectorsProcessed} detector(s)` +
+        `${summary.capped ? " — CAPPED, more outstanding (drains next pass)" : ""}`,
+    );
+  }
+  return summary;
+}
+
+/** Split runs (already ordered oldest-first) into UTC-month buckets, preserving that order. */
+function bucketByMonth(runs: CandidateRun[]): CandidateRun[][] {
+  const byMonth = new Map<string, CandidateRun[]>();
+  for (const run of runs) {
+    const key = new Date(run.startMs).toISOString().slice(0, 7);
+    const bucket = byMonth.get(key);
+    if (bucket) bucket.push(run);
+    else byMonth.set(key, [run]);
+  }
+  return [...byMonth.values()];
 }
 
 /**

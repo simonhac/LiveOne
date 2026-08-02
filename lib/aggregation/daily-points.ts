@@ -12,7 +12,10 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
 import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
-import { recomputeRange as recomputeRunPeriodsRange } from "@/lib/run-tracking/recompute";
+import {
+  recomputeRange as recomputeRunPeriodsRange,
+  rehealStaleRuns,
+} from "@/lib/run-tracking/recompute";
 import { recomputeRange as recomputeHwsTemperatureRange } from "@/lib/hws/recompute";
 import {
   recomputeRange as recomputeBatteryProvenanceRange,
@@ -216,15 +219,6 @@ export async function aggregateRange(
   // grid/solar attribution for battery-less Areas, plus the blend for battery Areas). The legacy
   // `point_readings_flow_1d` writer was retired, so there is no separate flow-matrix pass here.
 
-  // Daily heal of device run periods over the aggregated range (best-effort).
-  // The minutely cron keeps the trailing window fresh; this catches late data across the range.
-  try {
-    const nowMs = Date.now();
-    await recomputeRunPeriodsRange(rangeStartMs, nowMs, nowMs);
-  } catch (error) {
-    console.error("[Daily Points] Run-period heal pass failed:", error);
-  }
-
   // Daily heal of the derived hot-water temperature over the aggregated range (best-effort).
   // Runs AFTER the 5m aggregation above, since it reads point_readings_agg_5m. No-op when no
   // device has a load.hws/temperature point.
@@ -254,6 +248,22 @@ export async function aggregateRange(
     console.error("[Daily Points] battery-provenance heal pass failed:", error);
   }
 
+  // Daily heal of device run periods over the aggregated range (best-effort).
+  // The minutely cron keeps the trailing window fresh; this catches late data across the range.
+  //
+  // 🛑 ORDER IS LOAD-BEARING: this runs AFTER the blend heal above, not before. A run's cost /
+  // emissions / renewable columns are integrated against the persisted `bidi.battery/*` blend, so
+  // rebuilding runs first prices them off a blend the pass above then rewrites — every row it wrote
+  // would be stale the instant it landed (and would come back through `rehealStaleRuns` below, four
+  // days later, to be re-priced from the numbers that were already available here). Nothing in the
+  // provenance heal reads `derived_intervals`, so there is no cycle to trade against.
+  try {
+    const nowMs = Date.now();
+    await recomputeRunPeriodsRange(rangeStartMs, nowMs, nowMs);
+  } catch (error) {
+    console.error("[Daily Points] Run-period heal pass failed:", error);
+  }
+
   // Scattered-backlog reheal (days older than the settlement window that are still unfinalized or carry a
   // stale attribution version). Runs LAST in its OWN best-effort try/catch so a hiccup/timeout here can
   // never roll back the already-committed contiguous pass above. Bounded per run.
@@ -265,6 +275,21 @@ export async function aggregateRange(
       );
   } catch (error) {
     console.error("[Daily Points] flow_attr scattered reheal failed:", error);
+  }
+
+  // Re-price run periods whose provenance inputs have moved since they were priced (Amber
+  // settlement, an OE revision, a blend rewrite) — the run-side analogue of the reheal above, and
+  // the only pass that reaches a run older than the contiguous windows. Runs LAST for both reasons
+  // the flow_attr reheal does: everything it reads has now been healed, and its own best-effort
+  // try/catch means a hiccup here can never roll back the committed work above. Bounded per run.
+  try {
+    const r = await rehealStaleRuns(Date.now());
+    if (r.repriced > 0)
+      console.log(
+        `[Daily Points] run reheal: ${r.repriced} stale run(s) re-priced across ${r.detectorsProcessed} detector(s)`,
+      );
+  } catch (error) {
+    console.error("[Daily Points] stale-run reheal failed:", error);
   }
 
   console.log(
