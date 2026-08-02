@@ -171,6 +171,9 @@ describe("allocateCounterToWindows", () => {
         priceC: tMs <= boundary ? 10 : 50,
         gPerKwh: null,
         renewable: null,
+        // Priced but with emissions and renewable unknown — the matrix's condition fires on any one
+        // of the three, so this energy is estimated even though it has a cost.
+        estimatedFraction: 1,
       }),
     };
     // One 1 kWh step from T0+4min to T0+6min — half either side of the boundary, at a flat signal.
@@ -254,7 +257,7 @@ describe("allocateCounterToWindows", () => {
     const inside = [{ startMs: T0 + 2 * MIN, endMs: T0 + 3 * MIN }];
     expect(assignEnergyToPeriods(inside, flat, T0)).toEqual([0]);
     expect(assignProvenanceToPeriods(inside, flat, DIESEL, T0)).toEqual([
-      { costC: 0, emissionsG: 0, renewableKwh: 0 },
+      { costC: 0, emissionsG: 0, renewableKwh: 0, estimatedKwh: 0 },
     ]);
   });
 
@@ -263,7 +266,9 @@ describe("allocateCounterToWindows", () => {
     const elsewhere = [{ startMs: T0 + 5 * MIN, endMs: T0 + 6 * MIN }];
     expect(assignEnergyToPeriods(elsewhere, readings, T0)).toEqual([null]);
     expect(assignProvenanceToPeriods(elsewhere, readings, DIESEL, T0)).toEqual([
-      { costC: null, emissionsG: null, renewableKwh: null },
+      // estimatedKwh is null here too — not 0. The counter says nothing about this window, so there
+      // is no energy to have an opinion about, exactly as for the three factors.
+      { costC: null, emissionsG: null, renewableKwh: null, estimatedKwh: null },
     ]);
   });
 
@@ -284,7 +289,14 @@ describe("allocateCounterToWindows", () => {
 });
 
 /** Daylesford's prod device-1 constants (config.batteryProvenance.generatorSource). */
-const DIESEL = constantIntensity({ priceC: 70, gPerKwh: 1000, renewable: 0 });
+const DIESEL = constantIntensity({
+  priceC: 70,
+  gPerKwh: 1000,
+  renewable: 0,
+  // Fully configured: price, emissions and renewable fraction all known, so none of a diesel run's
+  // energy is estimated. (`resolveIntensitySeries` sets this to 1 when `pricePerKwh` is absent.)
+  estimatedFraction: 0,
+});
 
 describe("assignProvenanceToPeriods", () => {
   it("prices a run at the constant factors (the degenerate integral)", () => {
@@ -292,7 +304,12 @@ describe("assignProvenanceToPeriods", () => {
     // 100 Wh → 130 Wh = 0.03 kWh.
     const readings = [r(T0, 100), r(T0 + MIN, 110), r(T0 + 2 * MIN, 130)];
     expect(assignProvenanceToPeriods(windows, readings, DIESEL, T0)).toEqual([
-      { costC: 0.03 * 70, emissionsG: 0.03 * 1000, renewableKwh: 0 },
+      {
+        costC: 0.03 * 70,
+        emissionsG: 0.03 * 1000,
+        renewableKwh: 0,
+        estimatedKwh: 0,
+      },
     ]);
   });
 
@@ -320,6 +337,7 @@ describe("assignProvenanceToPeriods", () => {
         priceC: tMs < T0 + 3 * MIN ? 40 : 90,
         gPerKwh: 1000,
         renewable: 0.25,
+        estimatedFraction: 0,
       }),
     };
     // Deliberately UNEVEN steps (the counter's own cadence is not uniform).
@@ -375,12 +393,37 @@ describe("assignProvenanceToPeriods", () => {
       priceC: null,
       gPerKwh: 800,
       renewable: null,
+      // Price and renewable unknown ⇒ the matrix's condition fires on every contribution, so all of
+      // this run's energy is estimated. The cost is ABSENT and the confidence figure says why.
+      estimatedFraction: 1,
     });
     const windows: EnergyWindow[] = [{ startMs: T0, endMs: T0 + MIN }];
     const readings = [r(T0, 0), r(T0 + MIN, 1000)];
     expect(
       assignProvenanceToPeriods(windows, readings, emissionsOnly, T0),
-    ).toEqual([{ costC: null, emissionsG: 800, renewableKwh: null }]);
+    ).toEqual([
+      { costC: null, emissionsG: 800, renewableKwh: null, estimatedKwh: 1 },
+    ]);
+  });
+
+  it("reports a fully-unpriceable run's WHOLE energy as estimated, never 0", () => {
+    // 🛑 THE READING THIS COLUMN EXISTS TO PREVENT. Under the aligned blend, energy from a source
+    // with no known intensity contributes nothing to the cost — so a run like this has no cost at
+    // all, and a 0 here would state that none of it was estimated: a claim of perfect confidence
+    // about a run nothing could price. `estimatedKwh` must equal the run's energy instead.
+    const unknown = constantIntensity({
+      priceC: null,
+      gPerKwh: null,
+      renewable: null,
+      estimatedFraction: 1,
+    });
+    const windows: EnergyWindow[] = [{ startMs: T0, endMs: T0 + 2 * MIN }];
+    const readings = [r(T0, 100), r(T0 + MIN, 600), r(T0 + 2 * MIN, 1100)];
+    const [energyKwh] = assignEnergyToPeriods(windows, readings, T0);
+    const [prov] = assignProvenanceToPeriods(windows, readings, unknown, T0);
+    expect(energyKwh).toBeCloseTo(1.0, 9);
+    expect(prov.costC).toBeNull();
+    expect(prov.estimatedKwh).toBeCloseTo(energyKwh!, 9);
   });
 
   it("reports a known $0.00 for a run whose counter never advances", () => {
@@ -391,7 +434,7 @@ describe("assignProvenanceToPeriods", () => {
     const readings = [r(T0, 128_450), r(T0 + MIN, 128_450)];
     expect(assignEnergyToPeriods(windows, readings, T0)).toEqual([0]);
     expect(assignProvenanceToPeriods(windows, readings, DIESEL, T0)).toEqual([
-      { costC: 0, emissionsG: 0, renewableKwh: 0 },
+      { costC: 0, emissionsG: 0, renewableKwh: 0, estimatedKwh: 0 },
     ]);
   });
 
@@ -399,7 +442,9 @@ describe("assignProvenanceToPeriods", () => {
     const windows: EnergyWindow[] = [{ startMs: T0, endMs: T0 + MIN }];
     expect(
       assignProvenanceToPeriods(windows, [r(T0, 100)], DIESEL, T0),
-    ).toEqual([{ costC: null, emissionsG: null, renewableKwh: null }]);
+    ).toEqual([
+      { costC: null, emissionsG: null, renewableKwh: null, estimatedKwh: null },
+    ]);
   });
 
   it("bounds an open run at nowMs, so a partial figure tracks energy-so-far", () => {
@@ -448,8 +493,8 @@ describe("stepIntensity", () => {
   // timeline boundaries → 2 steps: [T0,T0+5) and [T0+5,T0+10]
   const timeline = [T0, T0 + 5 * MIN, T0 + 10 * MIN];
   const samples = [
-    { priceC: 10, gPerKwh: 100, renewable: 0.1 },
-    { priceC: 20, gPerKwh: 200, renewable: 0.2 },
+    { priceC: 10, gPerKwh: 100, renewable: 0.1, estimatedFraction: 0 },
+    { priceC: 20, gPerKwh: 200, renewable: 0.2, estimatedFraction: 0 },
   ];
   const s = stepIntensity(timeline, samples);
 
@@ -477,21 +522,18 @@ describe("stepIntensity", () => {
   it("is null outside the loaded window — never the nearest edge", () => {
     // A run reaching past the window the series was resolved for loses provenance for those slices.
     // Clamping instead would price them at a factor from a different time, silently.
-    expect(s.at(T0 - 1)).toEqual({
+    //
+    // …and `estimatedFraction` is 1 there, not 0: those slices are not merely unpriced, they are
+    // energy nothing is known about, which is precisely what the confidence figure reports.
+    const OUTSIDE = {
       priceC: null,
       gPerKwh: null,
       renewable: null,
-    });
-    expect(s.at(T0 - MIN)).toEqual({
-      priceC: null,
-      gPerKwh: null,
-      renewable: null,
-    });
-    expect(s.at(T0 + 10 * MIN + 1)).toEqual({
-      priceC: null,
-      gPerKwh: null,
-      renewable: null,
-    });
+      estimatedFraction: 1,
+    };
+    expect(s.at(T0 - 1)).toEqual(OUTSIDE);
+    expect(s.at(T0 - MIN)).toEqual(OUTSIDE);
+    expect(s.at(T0 + 10 * MIN + 1)).toEqual(OUTSIDE);
   });
 
   it("is null for a timeline too short to have a step", () => {
@@ -554,14 +596,26 @@ describe("blendLoadIntensities", () => {
   });
 
   it("is null when nothing generated, and when no source knows the factor", () => {
+    // Both are 100% estimated: an empty pool has nothing to attribute the load's energy to, and the
+    // blind source supplies all of it with no factor known. Absent cost, and a reason for it.
     const idle = [src("source.solar", 0, N)];
     expect(
       blendLoadIntensities(timeline, idle, [], [si(N, 10, 10, 1)])[0],
-    ).toEqual({ priceC: null, gPerKwh: null, renewable: null });
+    ).toEqual({
+      priceC: null,
+      gPerKwh: null,
+      renewable: null,
+      estimatedFraction: 1,
+    });
     const blind = [src("source.solar", 2, N)];
     expect(
       blendLoadIntensities(timeline, blind, [], [si(N, null, null, null)])[0],
-    ).toEqual({ priceC: null, gPerKwh: null, renewable: null });
+    ).toEqual({
+      priceC: null,
+      gPerKwh: null,
+      renewable: null,
+      estimatedFraction: 1,
+    });
   });
 
   it("emits one step per INTERVAL, not per timeline boundary", () => {

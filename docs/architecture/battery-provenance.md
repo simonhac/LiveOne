@@ -591,7 +591,10 @@ grid). The fold then prices generator charge and direct use exactly like grid; *
 Opt-in: absent config → generator energy stays `estimated` (no regression).
 
 **Second consumer — run-period provenance.** The same triple prices each generator RUN
-(`derived_intervals.cost_c` / `emissions_g` / `renewable_kwh`, accumulated by the recompute). Both
+(`derived_intervals.cost_c` / `emissions_g` / `renewable_kwh`, accumulated by the recompute; plus
+`estimated_kwh` alongside them, migration 0057 — the same confidence quantity `flow_attr_1d` carries,
+by the same definition, so an unpriceable share reads as low confidence rather than as a cheap run).
+Both
 paths resolve it through the ONE gate, `resolveGeneratorIntensity` in
 `lib/battery-provenance/generator-source.ts` — do not re-inline the checks, or the runs table will
 silently disagree with the Sankey the first time the gating changes. Two behaviours differ by design

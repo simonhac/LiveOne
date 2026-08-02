@@ -97,6 +97,22 @@ export interface IntensitySample {
   gPerKwh: number | null;
   /** Renewable fraction of the run's energy, 0..1. */
   renewable: number | null;
+  /**
+   * Share of this instant's load-path energy that `computeFlowAccounting` would count in
+   * `estimated_kwh` (0..1) — the CONFIDENCE leg, and the reason it is one number rather than three:
+   * the matrix's condition (`est || ei === null || rf === null || pr === null`,
+   * lib/aggregation/flow-matrix-core.ts) is a single verdict per contribution, "not fully known",
+   * not a per-metric shortfall. `selfRenewable` is deliberately outside it, there and here.
+   *
+   * NOT nullable, unlike the three factors above. A confidence denominator has no "unknown" state
+   * that is not itself a reason for low confidence: where nothing at all is known this is 1, not
+   * null. That is what lets `provenanceFromAllocation` sum it unconditionally.
+   *
+   * ⚠️ Same word, different subject to `FoldStep.estimatedFraction` (lib/battery-provenance/fold.ts),
+   * which is the estimated share of the battery's STORED energy. This is the estimated share of the
+   * LOAD PATH flowing at this instant.
+   */
+  estimatedFraction: number;
 }
 
 /**
@@ -158,6 +174,11 @@ export function stepIntensity(
     priceC: null,
     gPerKwh: null,
     renewable: null,
+    // Outside the loaded timeline nothing is known — which IS the estimated condition, not an
+    // exemption from it. The matrix has no opinion here (it books no energy outside its own
+    // timeline at all, so there is no parity constraint), but the run's counter books kWh
+    // regardless, and 0 would claim full confidence about exactly that energy.
+    estimatedFraction: 1,
   };
   return {
     at(tMs: number): IntensitySample {
@@ -212,9 +233,10 @@ export function stepIntensity(
  * WHAT THIS COSTS, stated plainly: when a source's factor is unknown the run's cost is UNDERSTATED,
  * because that energy contributes nothing. It is understated by exactly as much as the Sankey's is,
  * which is the point — the two surfaces are now wrong in the same direction and by the same amount,
- * instead of wrong in opposite directions. The Sankey flags the shortfall in `estimated_kwh`;
- * `derived_intervals` has no such column, so a run currently cannot say how much of itself was
- * unpriceable. That gap is real and deliberate (adding a column needs its own decision).
+ * instead of wrong in opposite directions. The Sankey flags the shortfall in `estimated_kwh`, and so
+ * now does a run: `estimatedFraction` is the fourth leg computed below, off the SAME weights and the
+ * SAME denominator, and `derived_intervals.estimated_kwh` is its integral (migration 0057). A run
+ * that reads cheap because part of it was unpriceable now says so.
  *
  * When NO source has a known factor the factor stays null and the integrator omits the slice
  * entirely — absent, never $0.00. Unchanged, and the reason the null/zero distinction survives this.
@@ -245,7 +267,15 @@ export function blendLoadIntensities(
       deltaHours,
     );
     if (totalGenW <= 0) {
-      steps.push({ priceC: null, gPerKwh: null, renewable: null });
+      // The matrix `continue`s here too, so it books neither energy nor estimated energy and there
+      // is no parity constraint. The run's counter books energy regardless, and none of it can be
+      // attributed to anything: all of it is estimated. See `UNKNOWN` above for the same reasoning.
+      steps.push({
+        priceC: null,
+        gPerKwh: null,
+        renewable: null,
+        estimatedFraction: 1,
+      });
       continue;
     }
     // The accounting's `genWForLoad` — `totalGenW` minus the load's own linked source. A priced load
@@ -258,6 +288,12 @@ export function blendLoadIntensities(
     let anyG = false;
     let renNum = 0;
     let anyRen = false;
+    // The CONFIDENCE numerator — the same weights and the same `genWForLoad` denominator as the
+    // three above, which is the whole parity claim. A source with `numerW === null` is skipped here
+    // for the same reason the matrix skips it (it gets no edge, so none of its energy can be
+    // estimated) while its `denomW` stays in the pool — so an interval's fractions do NOT sum to 1
+    // when a source is out of the allocation. The matrix leaks that energy identically.
+    let estimatedW = 0;
     for (let s = 0; s < sources.length; s++) {
       // `null` = in the pool but out of the allocation, exactly as the accounting reads it. A
       // negative weight is NOT filtered, also exactly as the accounting reads it — a guard here that
@@ -265,7 +301,13 @@ export function blendLoadIntensities(
       const w = numerW[s];
       if (w === null) continue;
       const si = sourceIntensities[s];
-      if (!si) continue; // an unknown-intensity source (e.g. source.generator)
+      if (!si) {
+        // An unknown-intensity source (e.g. source.generator). The matrix's `est = si ? … : true`:
+        // no intensity object at all is its STRONGEST estimated case, not an exemption. Recorded
+        // before the `continue` that leaves the three numerators untouched.
+        estimatedW += w;
+        continue;
+      }
       const p = si.price[i];
       if (p !== null && p !== undefined) {
         priceNum += w * p;
@@ -281,11 +323,21 @@ export function blendLoadIntensities(
         renNum += w * r;
         anyRen = true;
       }
+      // 🛑 LITERALLY the matrix's test — `=== null`, not the numerators' looser `!== null &&
+      // !== undefined` above. The looser guard is defensive padding this function grew; copying it
+      // here would be a guard the matrix does not have, which is a divergence whatever it protects
+      // against. Moot in practice: `buildSourceIntensities` fills every array to `timeline.length`
+      // while this loop only reaches `timeline.length - 2`, so `undefined` is unreachable.
+      // `selfRenewable` is deliberately NOT in the condition — the matrix's `sr` leg does not feed
+      // `estimatedKwh`, and adding it here would move every number relative to the Sankey.
+      if (si.estimated[i] === true || p === null || g === null || r === null)
+        estimatedW += w;
     }
     steps.push({
       priceC: anyPrice ? priceNum / genWForLoad : null,
       gPerKwh: anyG ? gNum / genWForLoad : null,
       renewable: anyRen ? renNum / genWForLoad : null,
+      estimatedFraction: estimatedW / genWForLoad,
     });
   }
   return steps;
@@ -532,6 +584,12 @@ export async function resolveIntensitySeries(
       priceC: gen.priceC,
       gPerKwh: gen.gPerKwh,
       renewable: gen.renewable,
+      // The matrix's `pr === null` clause, applied to configured constants. `resolveGeneratorIntensity`
+      // gates `pricePerKwh` INDEPENDENTLY of the emissions master gate, so a site can configure
+      // emissions and no price — and that run's energy is exactly as unpriceable as a grid interval
+      // with a null tariff. `gPerKwh` and `renewable` are always finite when `gen` is non-null, so
+      // price is the only clause that can fire; a fully-configured generator is never estimated.
+      estimatedFraction: gen.priceC === null ? 1 : 0,
     });
   }
   if ((LOAD_PRICED_ROLES as readonly string[]).includes(det.role)) {

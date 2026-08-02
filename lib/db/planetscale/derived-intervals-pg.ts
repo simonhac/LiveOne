@@ -250,6 +250,7 @@ export async function recomputeIntervalsForWindow(
         costC: provenance[i].costC,
         emissionsG: provenance[i].emissionsG,
         renewableKwh: provenance[i].renewableKwh,
+        estimatedKwh: provenance[i].estimatedKwh,
         maxSignal: labelled ? p.maxW : null,
         minSignal: labelled ? p.minW : null,
         avgSignal: labelled ? p.avgW : null,

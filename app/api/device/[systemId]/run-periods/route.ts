@@ -156,6 +156,12 @@ function toEvent(r: DerivedInterval, s: EventShape) {
     costC: r.costC,
     emissionsG: r.emissionsG,
     renewableKwh: r.renewableKwh,
+    /**
+     * How much of this run's energy the three figures above could NOT fully account for — the same
+     * `estimated_kwh` the Sankey reports for a day. Served, not rendered as a column: it is a
+     * confidence annotation on figures already shown, not a fifth quantity.
+     */
+    estimatedKwh: r.estimatedKwh,
     // Richer fields for cards / future generalisation:
     startTimeISO: r.startTime.toISOString(),
     endTimeISO: r.endTime ? r.endTime.toISOString() : null,
@@ -394,6 +400,10 @@ export async function GET(
     const cost = knownSum();
     const emissions = knownSum();
     const renewable = knownSum();
+    // Summed the same way, and its `knownKwh` matters for the same reason: a window can straddle the
+    // recompute that first wrote the column, and Σ estimated over a partial window would otherwise
+    // read as a confident figure for the whole one.
+    const estimated = knownSum();
     const events = rows.map((r) => {
       const ev = toEvent(r, shape);
       if (ev.running) runningNow = true;
@@ -402,6 +412,7 @@ export async function GET(
       cost.add(ev.costC, ev.energyKwh);
       emissions.add(ev.emissionsG, ev.energyKwh);
       renewable.add(ev.renewableKwh, ev.energyKwh);
+      estimated.add(ev.estimatedKwh, ev.energyKwh);
       return ev;
     });
 
@@ -418,6 +429,8 @@ export async function GET(
       emissionsKnownKwh: emissions.knownKwh(),
       totalRenewableKwh: renewable.total(),
       renewableKnownKwh: renewable.knownKwh(),
+      totalEstimatedKwh: estimated.total(),
+      estimatedKnownKwh: estimated.knownKwh(),
       running: runningNow,
     });
   } catch (error) {

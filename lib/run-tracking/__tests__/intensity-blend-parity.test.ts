@@ -74,6 +74,7 @@ function matrixTotals() {
     costC: col(acc.costC),
     emissionsG: col(acc.emissionsG),
     renewableKwh: col(acc.renewableKwh),
+    estimatedKwh: col(acc.estimatedKwh),
   };
 }
 
@@ -83,12 +84,33 @@ function runTotals() {
   let costC = 0;
   let emissionsG = 0;
   let renewableKwh = 0;
+  // Unconditional, exactly as `provenanceFromAllocation` sums it — `estimatedFraction` is never null.
+  let estimatedKwh = 0;
   steps.forEach((f, i) => {
     if (f.priceC !== null) costC += EV_KWH[i] * f.priceC;
     if (f.gPerKwh !== null) emissionsG += EV_KWH[i] * f.gPerKwh;
     if (f.renewable !== null) renewableKwh += EV_KWH[i] * f.renewable;
+    estimatedKwh += EV_KWH[i] * f.estimatedFraction;
   });
-  return { costC, emissionsG, renewableKwh };
+  return { costC, emissionsG, renewableKwh, estimatedKwh };
+}
+
+/** Σ over `load.ev` of the matrix's estimated column, and the run blend's integral of the same. */
+function estimatedBothWays(intensities: (SourceIntensity | null)[]) {
+  const acc = computeFlowAccounting({
+    timestamps: TIMELINE,
+    sources: SOURCES,
+    loads: LOADS,
+    sourceIntensities: intensities,
+  });
+  return {
+    matrix: acc.estimatedKwh.reduce((sum, row) => sum + row[EV], 0),
+    run: blendLoadIntensities(TIMELINE, SOURCES, LOADS, intensities).reduce(
+      (sum, f, i) => sum + EV_KWH[i] * f.estimatedFraction,
+      0,
+    ),
+    costC: acc.costC.reduce((sum, row) => sum + row[EV], 0),
+  };
 }
 
 describe("run blend ↔ flow accounting parity", () => {
@@ -104,6 +126,58 @@ describe("run blend ↔ flow accounting parity", () => {
     // And the accounting really did see all 1.5 kWh of it — the parity above is not two matching
     // zeroes, and the battery's unpriceable energy IS in the energy leg.
     expect(matrix.energyKwh).toBeCloseTo(1.5, 10);
+  });
+
+  it("counts the same kWh as ESTIMATED as the Sankey does", () => {
+    const matrix = matrixTotals();
+    const run = runTotals();
+
+    // The metered EV load sets `anyExact`, so the weights are kWh: grid 2 kW × 1/12 h = 0.1667,
+    // battery 6 kW × 1/12 h = 0.5, pool 0.6667 — the battery is 75% of it. Unpriceable in intervals
+    // 1-2 ⇒ 2 × (0.5 kWh × 0.75) = 0.75 kWh of the 1.5 kWh the EV drew.
+    expect(matrix.estimatedKwh).toBeCloseTo(0.75, 10);
+    expect(run.estimatedKwh).toBeCloseTo(matrix.estimatedKwh, 10);
+
+    // ANTI-VACUITY. Strictly partial, and it MOVES across the window — an implementation that
+    // flagged everything, or nothing, would pass a bare equality against a degenerate fixture.
+    expect(matrix.estimatedKwh).toBeGreaterThan(0);
+    expect(matrix.estimatedKwh).toBeLessThan(matrix.energyKwh);
+    const fractions = blendLoadIntensities(
+      TIMELINE,
+      SOURCES,
+      LOADS,
+      INTENSITIES,
+    ).map((f) => f.estimatedFraction);
+    expect(new Set(fractions).size).toBeGreaterThan(1);
+  });
+
+  it("flags an `estimated: true` source whose factors are all KNOWN", () => {
+    // 🛑 THE CASE THE FIXTURE ABOVE CANNOT MAKE. There "estimated" and "unpriceable" coincide, so an
+    // implementation that inferred estimation from `priceC == null` would pass it. Here the battery
+    // is fully priced and merely PROVISIONAL — the matrix flags it, and so must the blend.
+    const provisional: (SourceIntensity | null)[] = [
+      INTENSITIES[0]!,
+      {
+        price: [5, 5, 5],
+        emissions: [100, 100, 100],
+        renewable: [0.9, 0.9, 0.9],
+        selfRenewable: [0.9, 0.9, 0.9],
+        estimated: [true, true, true],
+      },
+    ];
+    const { matrix, run, costC } = estimatedBothWays(provisional);
+    expect(matrix).toBeCloseTo(1.125, 10); // the battery's 75% share of all 1.5 kWh
+    expect(run).toBeCloseTo(matrix, 10);
+    // Fully priced (11.25 c/kWh × 1.5 kWh) and still 75% estimated — the two are independent.
+    expect(costC).toBeCloseTo(16.875, 10);
+  });
+
+  it("calls a wholly unpriceable pool 100% estimated, on both sides", () => {
+    // The `sourceIntensities[s] === null` limb — the matrix's `est = si ? … : true`. Not exercised
+    // above, where both entries are non-null objects with null contents.
+    const { matrix, run } = estimatedBothWays([null, null]);
+    expect(matrix).toBeCloseTo(1.5, 10); // all of it
+    expect(run).toBeCloseTo(matrix, 10);
   });
 
   it("would catch the regression it was written for", () => {

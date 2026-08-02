@@ -1,0 +1,22 @@
+-- Per-run CONFIDENCE, accumulated by the recompute alongside cost_c/emissions_g/renewable_kwh
+-- (migration 0042): Σ sliceKwh × estimatedFraction — the same quantity
+-- point_readings_flow_attr_1d.estimated_kwh holds for a day, by the same definition (a contribution
+-- counts when the source's intensity is flagged estimated OR any of its price/emissions/renewable is
+-- unknown). ONE number, not one per metric.
+--
+-- Why now: the run blend was aligned with computeFlowAccounting so that energy from a source with no
+-- known intensity contributes NOTHING to cost_c, instead of being re-priced at the known sources'
+-- rate. Correct, and it matches the Sankey — but it leaves a run whose battery share was unpriceable
+-- simply reading as cheaper, with nothing to say so. This column is that "so".
+--
+-- NULLABLE, and NOT `NOT NULL DEFAULT 0` like its flow_attr_1d counterpart. The provenance columns on
+-- this table mean NULL = UNKNOWN, never zero, and 0 here is a positive claim ("none of this run leaned
+-- on an estimated or missing intensity"). A DEFAULT 0 would state that claim about every run written
+-- before this column existed, and about every device whose energy cannot be priced at all — the exact
+-- over-confidence the column exists to expose. Backfill is a scoped recompute, not an UPDATE.
+--
+-- Expand-only, so it is safe to apply BEFORE the code that reads it ships (and it must be: PG
+-- migrations here are manual, and drizzle's bare .select() enumerates every schema column, so
+-- deploying first would 500 the run-periods route and getOpenRun).
+-- IF NOT EXISTS so a re-run after a partial apply is a no-op (cf. 0027, 0042).
+ALTER TABLE "derived_intervals" ADD COLUMN IF NOT EXISTS "estimated_kwh" double precision;
