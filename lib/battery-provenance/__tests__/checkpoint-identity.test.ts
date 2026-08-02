@@ -16,6 +16,10 @@ import {
   type FoldCheckpointEnvelope,
 } from "../checkpoint";
 import type { ProvenanceInputs, ProvenanceResult } from "../types";
+
+import { certifyWarmInputs } from "../types";
+/** Fixtures are hand-built to start at a fold anchor; the brand asks that we say so. */
+const warm = (i: ProvenanceInputs) => certifyWarmInputs(i, "test fixture");
 import type { FlowSeries } from "../../aggregation/flow-matrix-core";
 
 const SLOT_MS = 300_000;
@@ -195,7 +199,7 @@ function runIdentity(inputs: ProvenanceInputs) {
   expect(midnights.length).toBeGreaterThan(0);
 
   const long: ProvenanceResult = computeBatteryProvenance(
-    inputs,
+    warm(inputs),
     {},
     { snapshotAtMs: midnights.map((mm) => mm.midnightMs) },
   );
@@ -221,7 +225,7 @@ function runIdentity(inputs: ProvenanceInputs) {
     // tailInputs.reserveFloorPctSeries (like C).
     const tailInputs = sliceInputsAt(inputs, env!.anchorMs);
     const seeded = computeBatteryProvenance(
-      tailInputs,
+      warm(tailInputs),
       {},
       { initialState: env!.state, efficiencyFallback: env!.etaFallback },
     );
@@ -260,7 +264,7 @@ describe("checkpoint-seeded fold ≡ long fold tail (exact)", () => {
   it("late intra-day data self-heals: seeded fold over MUTATED today == long fold over mutated history", () => {
     const pristine = scenario();
     const long = computeBatteryProvenance(
-      pristine,
+      warm(pristine),
       {},
       {
         snapshotAtMs: localMidnightsInWindow(
@@ -279,9 +283,9 @@ describe("checkpoint-seeded fold ≡ long fold tail (exact)", () => {
       return { ...inputs, gridPrice: gp };
     };
     const mutated = mutate(pristine);
-    const fullMutated = computeBatteryProvenance(mutated, {});
+    const fullMutated = computeBatteryProvenance(warm(mutated), {});
     const seeded = computeBatteryProvenance(
-      sliceInputsAt(mutated, snap.anchorMs),
+      warm(sliceInputsAt(mutated, snap.anchorMs)),
       {},
       { initialState: snap.state, efficiencyFallback: long.etaUsed },
     );
@@ -294,7 +298,7 @@ describe("validateFoldCheckpointEnvelope", () => {
   const goodEnv = (): FoldCheckpointEnvelope => {
     const inputs = scenario({ days: 2 });
     const r = computeBatteryProvenance(
-      inputs,
+      warm(inputs),
       {},
       {
         snapshotAtMs: localMidnightsInWindow(

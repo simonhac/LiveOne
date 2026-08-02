@@ -3,7 +3,7 @@ import {
   renewablePct,
   runBandsForSeries,
   seriesForRole,
-  snapToSamples,
+  snapToBandEdges,
 } from "../run-bands";
 import type { SeriesData } from "../types";
 import type { RunPeriodEvent } from "@/lib/queries/runPeriods";
@@ -82,47 +82,99 @@ describe("runBandsForSeries", () => {
   });
 });
 
-describe("snapToSamples", () => {
+describe("snapToBandEdges", () => {
   // A 5-minute grid, as the D-period chart draws.
-  const grid = [0, 5, 10, 15, 20].map(
+  const grid = [0, 5, 10, 15, 20, 25, 30, 35].map(
     (m) =>
       new Date(Date.parse(`2026-07-28T00:${String(m).padStart(2, "0")}:00Z`)),
   );
   const at = (m: number) =>
     Date.parse(`2026-07-28T00:${String(m).padStart(2, "0")}:00Z`);
+  /** A band that is flat everywhere: nothing to walk down, so only the sample snap applies. */
+  const flat = grid.map(() => 7.2);
 
   it("widens outward to the enclosing samples", () => {
     // 🛑 The bug this fixes: a boundary part-way down the band's falling edge puts the overlay's
     // vertical through the middle of the shape, leaving an un-outlined sliver beside it.
-    expect(snapToSamples(at(6), at(12), grid)).toEqual({
+    expect(snapToBandEdges(at(6), at(12), grid, flat)).toEqual({
       startMs: at(5),
       endMs: at(15),
     });
   });
 
+  it("walks on down the band's ramp to its foot", () => {
+    // 🛑 The second half of the same bug. The enclosing sample is the band's SHOULDER; the descent
+    // to zero happens over the intervals BEYOND it, so snapping alone still drops the outline to the
+    // axis before the fill gets there. A real session's last interval is a partial average, which is
+    // why the tail is 7.2 → 3.6 → 0 rather than a single step to zero.
+    const values = [0, 3.6, 7.2, 7.2, 7.2, 3.6, 0, 0];
+    expect(snapToBandEdges(at(12), at(22), grid, values)).toEqual({
+      startMs: at(0),
+      endMs: at(30),
+    });
+  });
+
+  it("stops where the band stops falling — back-to-back runs do not swallow each other", () => {
+    // The band dips between two sessions but never reaches the axis. The boundary belongs at the
+    // trough, not one sample into the next run's rise.
+    const values = [7.2, 7.2, 4.1, 6.8, 7.2, 7.2, 7.2, 7.2];
+    expect(snapToBandEdges(at(5), at(6), grid, values)).toEqual({
+      startMs: at(5),
+      endMs: at(10),
+    });
+  });
+
+  it("stops at a gap — a break in the drawn band is not a ramp", () => {
+    // Extending onto a null puts the vertical where there is nothing to clip against, which leaves
+    // the outline open on that side.
+    const values = [7.2, null, 7.2, 7.2, 5.0, null, 0, 0];
+    expect(snapToBandEdges(at(12), at(17), grid, values)).toEqual({
+      startMs: at(10),
+      endMs: at(20),
+    });
+  });
+
+  it("caps the walk on a long monotone decline", () => {
+    // MAX_RAMP_SAMPLES = 4. Without a cap a slowly-decaying band would drag the boundary arbitrarily
+    // far from the run it is meant to bracket.
+    const values = [1, 2, 3, 4, 5, 6, 7, 8].reverse();
+    expect(snapToBandEdges(at(0), at(0), grid, values)).toEqual({
+      startMs: at(0),
+      endMs: at(20),
+    });
+  });
+
   it("leaves a span already on the grid alone", () => {
-    expect(snapToSamples(at(5), at(15), grid)).toEqual({
+    expect(snapToBandEdges(at(5), at(15), grid, flat)).toEqual({
       startMs: at(5),
       endMs: at(15),
     });
   });
 
   it("never shrinks a run", () => {
-    const { startMs, endMs } = snapToSamples(at(6), at(12), grid);
+    const { startMs, endMs } = snapToBandEdges(at(6), at(12), grid, flat);
     expect(startMs).toBeLessThanOrEqual(at(6));
     expect(endMs).toBeGreaterThanOrEqual(at(12));
   });
 
   it("leaves a boundary outside the grid where it is", () => {
-    // Already window-clamped by `runBandsForSeries`, so there is no sample to snap to.
-    expect(snapToSamples(at(0), at(20), grid)).toEqual({
-      startMs: at(0),
-      endMs: at(20),
+    // Already window-clamped by `runBandsForSeries`, so there is no sample to snap to — and no
+    // vertex to walk a ramp from either.
+    expect(snapToBandEdges(at(0) - 60_000, at(40), grid, flat)).toEqual({
+      startMs: at(0) - 60_000,
+      endMs: at(40),
+    });
+  });
+
+  it("snaps without walking when the band's values are unknown", () => {
+    expect(snapToBandEdges(at(6), at(12), grid)).toEqual({
+      startMs: at(5),
+      endMs: at(15),
     });
   });
 
   it("is a no-op with no samples", () => {
-    expect(snapToSamples(at(6), at(12), [])).toEqual({
+    expect(snapToBandEdges(at(6), at(12), [], [])).toEqual({
       startMs: at(6),
       endMs: at(12),
     });

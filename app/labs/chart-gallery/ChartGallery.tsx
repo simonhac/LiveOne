@@ -124,7 +124,9 @@ function LinesCase({ c }: { c: Extract<ChartCase, { kind: "lines" }> }) {
 }
 
 function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
-  const fixture = stackedFixture(c);
+  // Only the run cases taper the EV band, so the other stacked baselines keep the square wave they
+  // were drawn with — see `StackedCaseOpts.evRamp`.
+  const fixture = stackedFixture({ ...c, evRamp: c.withRuns });
   const { chartData, visibleSeries, windowStart, windowEnd } = fixture;
   const focus = focusInstant(chartData.timestamps, c.focusAt);
   const runBands = c.withRuns ? runBandsFixture(fixture) : undefined;

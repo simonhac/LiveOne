@@ -14,8 +14,8 @@ import {
   type RunBand,
 } from "@/lib/charts/run-bands";
 import { runProvenancePanels } from "@/lib/charts/tooltip-metrics";
-import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
-import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
+import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
+import { ROLES, TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import NodeTooltip, { PANEL_WIDTH } from "@/components/NodeTooltip";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import DashboardChart, {
@@ -386,22 +386,41 @@ function StackedChart({
       );
     }
 
+    // The run tooltip is an ABSOLUTE child of a box that exactly covers the chart, so `at`'s
+    // chart-relative coordinates need no translation and the panel travels with the chart on scroll
+    // without anyone listening for it. `relative` here rather than on the card's outer div because
+    // that one also holds the legend, and the panel's origin has to be the plot's.
+    const series = hoveredRun
+      ? data.series.find((s) => s.id === hoveredRun.band.seriesId)
+      : undefined;
     return (
-      <DashboardChart
-        variant="stacked-areas"
-        chartData={data}
-        effectiveVisibleSeries={effectiveVisibleSeries}
-        mode={mode}
-        hoveredTimestamp={hoveredTimestamp}
-        timeRange={period}
-        windowEnd={windowEnd}
-        windowStart={windowStart}
-        onHoverIndex={handleHover}
-        runBands={runBands}
-        hoveredRunId={hoveredRun?.band.id ?? null}
-        onHoverRun={handleHoverRun}
-        className="flex-1 min-h-0 w-full overflow-hidden"
-      />
+      <div className="relative flex-1 min-h-0 w-full">
+        <DashboardChart
+          variant="stacked-areas"
+          chartData={data}
+          effectiveVisibleSeries={effectiveVisibleSeries}
+          mode={mode}
+          hoveredTimestamp={hoveredTimestamp}
+          timeRange={period}
+          windowEnd={windowEnd}
+          windowStart={windowStart}
+          onHoverIndex={handleHover}
+          runBands={runBands}
+          hoveredRunId={hoveredRun?.band.id ?? null}
+          onHoverRun={handleHoverRun}
+          className="h-full w-full overflow-hidden"
+        />
+        {hoveredRun && (
+          <RunTooltip
+            band={hoveredRun.band}
+            at={hoveredRun.at}
+            // Name and colour both come from the band's OWN series, so the panel is titled with the
+            // same word the legend uses for the shape it is pointing at.
+            name={series?.description ?? ROLES[hoveredRun.band.role].label}
+            colour={series?.color ?? CHART_COLORS.ev}
+          />
+        )}
+      </div>
     );
   };
 
@@ -411,16 +430,6 @@ function StackedChart({
       onMouseLeave={handleMouseLeave}
     >
       {renderChartContent()}
-      {hoveredRun && (
-        <RunTooltip
-          band={hoveredRun.band}
-          at={hoveredRun.at}
-          colour={
-            data?.series.find((s) => s.id === hoveredRun.band.seriesId)
-              ?.color ?? CHART_COLORS.ev
-          }
-        />
-      )}
     </div>
   );
 }
@@ -437,18 +446,29 @@ const RUN_TOOLTIP_GAP = 10;
  * it lives inside the chart's own box, so it scrolls and unmounts with it, and clamping it is a
  * comparison against that box's width rather than the viewport's. `beakVariant: "none"` because
  * there is no node edge to point at — the outlined run below it is its own anchor.
+ *
+ * The Sankey's panels are `fixed` instead, because it measures its nodes and so only ever has them
+ * in viewport coordinates. A run's anchor is `geo`, not a measurement, so it can be expressed in the
+ * chart's own box — and then scrolling is the browser's problem, not ours.
  */
 function RunTooltip({
   band,
   at,
+  name,
   colour,
 }: {
   band: RunBand;
   at: RunTooltipAnchor;
+  /** The band's own series name ("EV") — the panel's subject, exactly as the Sankey titles a node. */
+  name: string;
   colour: string;
 }) {
+  // Headings in the Sankey's own order: WHAT this is, then WHEN it ran. The name was missing while
+  // the time range stood alone at the top, which read as a label for the whole chart rather than for
+  // the one band the panel is pointing at.
   const data: SankeyNodeTooltip = {
-    name: formatRunWhen(band.event),
+    name,
+    subheading: formatRunWhenLines(band.event),
     variant: "full",
     ...runProvenancePanels(band.event, renewablePct(band.event)),
   };
@@ -492,6 +512,7 @@ function RunTooltip({
         nodeColor={colour}
         beakVariant="none"
         showHeading
+        positioning="absolute"
         left={left}
         top={top}
         panelRef={measure}

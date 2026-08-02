@@ -53,7 +53,16 @@ export interface SankeyMetric {
  * views: energy/emissions/cost/renewable integrated over the exact period shown) or the LIMITED
  * instantaneous-power-only variant (a focused 1D/7D chart sample, which has no integrals to show).
  */
-export type SankeyNodeTooltip = { name: string } & (
+export type SankeyNodeTooltip = {
+  name: string;
+  /**
+   * Further heading lines beneath the name — the chart's run tooltip puts the session's date and
+   * time range here. An ARRAY because the break between them is deliberate, not a wrap (see
+   * `formatRunWhenLines`). The Sankey itself never sets it: a node is a whole period, so it has no
+   * "when" to qualify its name with.
+   */
+  subheading?: readonly string[];
+} & (
   | {
       variant: "full";
       energy: SankeyMetric;

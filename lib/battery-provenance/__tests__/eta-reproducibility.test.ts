@@ -2,6 +2,10 @@ import { describe, it, expect } from "@jest/globals";
 import { foldBatteryProvenance, type FoldInterval } from "../fold";
 import { computeBatteryProvenance } from "../compute";
 import type { ProvenanceInputs } from "../types";
+
+import { certifyWarmInputs } from "../types";
+/** Fixtures are hand-built to start at a fold anchor; the brand asks that we say so. */
+const warm = (i: ProvenanceInputs) => certifyWarmInputs(i, "test fixture");
 import type { FlowSeries } from "../../aggregation/flow-matrix-core";
 
 const HOUR = 60 * 60 * 1000;
@@ -96,14 +100,16 @@ describe("η reproducibility (learn-in-shell / read-in-fold)", () => {
       etaSeries: new Array<number | null>(n).fill(0.8),
       coverage: { soc: 1, emissions: 1, price: 1 },
     };
-    const withEta = computeBatteryProvenance(inputs);
+    const withEta = computeBatteryProvenance(warm(inputs));
     // etaUsed is the throughput-weighted mean of the PROVIDED series (0.8) — not a re-learned value.
     expect(withEta.etaUsed).toBeCloseTo(0.8, 6);
     // the in-window learn diagnostic is absent on the persisted path.
     expect(withEta.etaByDay).toBeUndefined();
 
     // Without the persisted series, compute falls back to in-window learning → a different η + a byDay trend.
-    const noEta = computeBatteryProvenance({ ...inputs, etaSeries: undefined });
+    const noEta = computeBatteryProvenance(
+      warm({ ...inputs, etaSeries: undefined }),
+    );
     expect(noEta.etaByDay).toBeDefined();
     expect(Math.abs(noEta.etaUsed - withEta.etaUsed)).toBeGreaterThan(1e-6);
   });

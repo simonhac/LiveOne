@@ -4,6 +4,7 @@ import {
   assignProvenanceToPeriods,
   type EnergyReading,
   type EnergyWindow,
+  type SignalSample,
 } from "@/lib/run-tracking/energy";
 import {
   blendLoadIntensities,
@@ -80,6 +81,205 @@ describe("assignEnergyToPeriods", () => {
       r(T0 + 3 * MIN, 260),
     ];
     expect(assignEnergyToPeriods(windows, readings, T0)).toEqual([0.02, 0.06]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Partitioning the counter across the run boundary. These are the tests for the defect that had the
+// EV run totals sitting ~1.0 kWh under the Sankey's `load.ev` for the same week.
+// ---------------------------------------------------------------------------------------------
+
+/** A signal that is off until `onMs` and flat at `watts` after — the EV charger's actual shape. */
+function chargerSignal(
+  onMs: number,
+  offMs: number,
+  watts: number,
+): SignalSample[] {
+  const out: SignalSample[] = [];
+  for (let t = T0 - MIN; t <= T0 + 10 * MIN; t += 30_000)
+    out.push({ tMs: t, value: t >= onMs && t < offMs ? watts : 0 });
+  return out;
+}
+
+describe("allocateCounterToWindows", () => {
+  // The Kinkora shape, minimised: a counter that only ticks every ~2 minutes in fixed quanta, and a
+  // run that starts BETWEEN two of those ticks. The first tick after the start reports energy that
+  // accrued after the charger came on — clipping to "readings inside the window" discarded it.
+  const QUANTUM = 400; // Wh, ~ the real charger's tick
+  const chunky = [
+    r(T0, 0), // charger off
+    r(T0 + 2 * MIN, QUANTUM), // first tick: accrued AFTER the run started
+    r(T0 + 4 * MIN, 2 * QUANTUM),
+    r(T0 + 6 * MIN, 3 * QUANTUM),
+  ];
+  const runFrom1 = [{ startMs: T0 + MIN, endMs: T0 + 6 * MIN }];
+  const signal = chargerSignal(T0 + MIN, T0 + 6 * MIN, 5000);
+
+  it("recovers the WHOLE counter step that straddles the run's start", () => {
+    // The old clip rule took the first reading INSIDE the window as its baseline and returned
+    // 1200−400 = 800 Wh, discarding a quantum that had accrued after the charger came on. All 1200
+    // belong to the run: the charger drew nothing before it, and the allocator reconstructs the
+    // 0→5 kW switch as a STEP at the boundary the detector chose rather than a ramp through it.
+    expect(assignEnergyToPeriods(runFrom1, chunky, T0, signal)).toEqual([1.2]);
+  });
+
+  it("leaves nothing in the gap ahead of the run", () => {
+    // The counterpart of the above, and the reason it is safe: interpolating across the boundary
+    // would book part of the run's first quantum to a period this very system says the device was
+    // off. Energy still conserves — the gap's share is zero, not discarded.
+    const [before, during] = assignEnergyToPeriods(
+      [
+        { startMs: T0, endMs: T0 + MIN }, // the gap ahead of the run
+        { startMs: T0 + MIN, endMs: T0 + 6 * MIN }, // the run
+      ],
+      chunky,
+      T0,
+      signal,
+    );
+    expect(before).toBeCloseTo(0, 9);
+    expect(before! + during!).toBeCloseTo(1.2, 9); // every metered Wh landed somewhere
+  });
+
+  it("splits a straddling step by the signal, not by the clock", () => {
+    // One long counter step whose energy all flowed in a short burst at the end: a two-minute charge
+    // inside a ten-minute reporting gap. The clock says the run's 2 of 10 minutes earn 20% of the
+    // step; the signal knows the other 8 minutes drew nothing.
+    const sparse = [r(T0, 0), r(T0 + 10 * MIN, 1000)];
+    const burst = chargerSignal(T0 + 8 * MIN, T0 + 10 * MIN, 5000);
+    const window = [{ startMs: T0 + 8 * MIN, endMs: T0 + 10 * MIN }];
+
+    const [bySignal] = assignEnergyToPeriods(window, sparse, T0, burst);
+    expect(bySignal).toBeCloseTo(1.0, 9); // all of it — nothing flowed in the idle 8 minutes
+
+    const [byClock] = assignEnergyToPeriods(window, sparse, T0);
+    expect(byClock).toBeCloseTo(0.2, 9); // what a signal-blind split would have booked
+  });
+
+  it("prices a step spanning two factor intervals WHOLLY at the later one", () => {
+    // 🛑 THE ALIGNMENT WITH `agg_5m.delta`, and it is deliberately NOT the intuitive answer.
+    //
+    // Splitting this step at the 5-minute boundary and pricing each half at its own factor looks
+    // strictly more accurate. It is measurably wrong for this system: `agg_5m.delta` for a
+    // `transform='d'` counter is `last − previousLast`, so a raw step straddling a boundary is booked
+    // WHOLLY to the interval holding its later reading — and the flow matrix prices that interval's
+    // energy at that interval's blend. The right-closed rule here reproduces exactly that. Measured
+    // on a Kinkora week, splitting moved the run total $0.042 (0.45%) AWAY from a Sankey it had been
+    // matching to 4 decimal places.
+    const boundary = T0 + 5 * MIN;
+    const stepped: IntensitySeries = {
+      at: (tMs) => ({
+        priceC: tMs <= boundary ? 10 : 50,
+        gPerKwh: null,
+        renewable: null,
+      }),
+    };
+    // One 1 kWh step from T0+4min to T0+6min — half either side of the boundary, at a flat signal.
+    const readings = [r(T0 + 4 * MIN, 0), r(T0 + 6 * MIN, 1000)];
+    const flat = Array.from({ length: 30 }, (_, i) => ({
+      tMs: T0 + i * 30_000,
+      value: 5000,
+    }));
+    const windows = [{ startMs: T0, endMs: T0 + 10 * MIN }];
+
+    const [prov] = assignProvenanceToPeriods(
+      windows,
+      readings,
+      stepped,
+      T0,
+      flat,
+    );
+    expect(prov.costC).toBeCloseTo(50, 6); // 1 kWh @ the interval it lands in — not 30c
+    expect(assignEnergyToPeriods(windows, readings, T0, flat)).toEqual([1]);
+  });
+
+  it("conserves energy: a partition of a span sums to the whole span", () => {
+    // THE property that makes this complete rather than merely less wrong. Deterministic LCG so a
+    // failure is reproducible.
+    let seed = 0x2f6e2b1;
+    const rnd = () =>
+      (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+    for (let trial = 0; trial < 200; trial++) {
+      // A ragged counter: uneven gaps, an occasional flat stretch, an occasional reset.
+      const readings: EnergyReading[] = [];
+      let t = T0;
+      let v = 1000;
+      for (let i = 0; i < 25; i++) {
+        readings.push(r(t, v));
+        t += Math.floor(20_000 + rnd() * 200_000);
+        const roll = rnd();
+        if (roll < 0.1)
+          v = Math.floor(rnd() * 100); // counter reset
+        else if (roll < 0.25)
+          v += 0; // flat
+        else v += Math.floor(rnd() * 900);
+      }
+      const lo = T0;
+      const hi = t;
+      const sig = Array.from({ length: 40 }, (_, i) => ({
+        tMs: lo + ((hi - lo) * i) / 39,
+        value: rnd() < 0.3 ? 0 : rnd() * 5000,
+      }));
+
+      const [whole] = assignEnergyToPeriods(
+        [{ startMs: lo, endMs: hi }],
+        readings,
+        hi,
+        sig,
+      );
+
+      // Cut [lo, hi] into 5 adjacent sub-windows at arbitrary interior points.
+      const cuts = Array.from(
+        { length: 4 },
+        () => lo + Math.floor(rnd() * (hi - lo)),
+      ).sort((a, b) => a - b);
+      const edges = [lo, ...cuts, hi];
+      const parts = edges
+        .slice(0, -1)
+        .map((s, i) => ({ startMs: s, endMs: edges[i + 1] }))
+        .filter((w) => w.endMs > w.startMs);
+      const sum = assignEnergyToPeriods(parts, readings, hi, sig).reduce(
+        (a: number, b) => a + (b ?? 0),
+        0,
+      );
+      // 3dp rounding happens per window, so the tolerance is the rounding, not the maths.
+      expect(sum).toBeCloseTo(whole!, 2);
+    }
+  });
+
+  it("still reports a KNOWN zero for a window a flat counter spans", () => {
+    // Coverage is decided before the reset/no-delta guard, so "the meter says nothing happened" and
+    // "the meter said nothing" stay distinct even when the window sits inside one flat step.
+    const flat = [r(T0, 5000), r(T0 + 10 * MIN, 5000)];
+    const inside = [{ startMs: T0 + 2 * MIN, endMs: T0 + 3 * MIN }];
+    expect(assignEnergyToPeriods(inside, flat, T0)).toEqual([0]);
+    expect(assignProvenanceToPeriods(inside, flat, DIESEL, T0)).toEqual([
+      { costC: 0, emissionsG: 0, renewableKwh: 0 },
+    ]);
+  });
+
+  it("still reports null for a window no counter step spans", () => {
+    const readings = [r(T0, 100), r(T0 + MIN, 200)];
+    const elsewhere = [{ startMs: T0 + 5 * MIN, endMs: T0 + 6 * MIN }];
+    expect(assignEnergyToPeriods(elsewhere, readings, T0)).toEqual([null]);
+    expect(assignProvenanceToPeriods(elsewhere, readings, DIESEL, T0)).toEqual([
+      { costC: null, emissionsG: null, renewableKwh: null },
+    ]);
+  });
+
+  it("prices the recovered straddle at the factor in force when it accrued", () => {
+    // Energy and provenance must move together: the quantum the old rule dropped has to arrive with
+    // its own price, not be back-filled at the run's average.
+    const [kwh] = assignEnergyToPeriods(runFrom1, chunky, T0, signal);
+    const [prov] = assignProvenanceToPeriods(
+      runFrom1,
+      chunky,
+      DIESEL,
+      T0,
+      signal,
+    );
+    expect(prov.costC).toBeCloseTo(kwh! * 70, 6);
+    expect(prov.emissionsG).toBeCloseTo(kwh! * 1000, 6);
   });
 });
 

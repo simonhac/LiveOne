@@ -72,6 +72,32 @@ function solarShape(d: Date): number {
   return Math.sin(((hour - SUNRISE) / (SUNSET - SUNRISE)) * Math.PI) ** 1.4;
 }
 
+/** Peak EV charge power, kW — the plateau `runBandsFixture` finds the run's own boundaries by. */
+const EV_PEAK = 7.2;
+/** Minutes the tapered EV band takes to reach the axis at each edge — see `StackedCaseOpts.evRamp`. */
+const EV_RAMP_MINUTES = 15;
+
+/**
+ * An overnight EV charge session, 22:00 → 02:00.
+ *
+ * `ramped` tapers both edges over `EV_RAMP_MINUTES` instead of stepping them; the plateau is
+ * unchanged either way, so `runBandsFixture` derives the same run from both.
+ */
+function evShape(ramped?: boolean): (d: Date) => number {
+  const ON_FROM = 22 * 60;
+  const ON_TO = 2 * 60;
+  return (d) => {
+    const t = d.getHours() * 60 + d.getMinutes();
+    const on = t >= ON_FROM || t < ON_TO;
+    if (!ramped) return on ? EV_PEAK : 0;
+    if (t >= ON_FROM - EV_RAMP_MINUTES && t < ON_FROM)
+      return EV_PEAK * ((t - (ON_FROM - EV_RAMP_MINUTES)) / EV_RAMP_MINUTES);
+    if (t >= ON_TO && t < ON_TO + EV_RAMP_MINUTES)
+      return EV_PEAK * (1 - (t - ON_TO) / EV_RAMP_MINUTES);
+    return on ? EV_PEAK : 0;
+  };
+}
+
 /** A domestic load shape: overnight base, a morning bump, an evening peak. */
 function loadShape(d: Date): number {
   const hour = d.getHours() + d.getMinutes() / 60;
@@ -178,6 +204,16 @@ export type StackedCaseOpts = {
   range: ChartTimeRange;
   mode: "load" | "generation";
   withGap?: boolean;
+  /**
+   * Taper the EV band's edges instead of stepping them.
+   *
+   * A real charge session's first and last intervals are PARTIAL AVERAGES, so the band walks to the
+   * axis over a few samples rather than in one step. That taper is the geometry the run overlay has
+   * to trace to its FOOT — snapping only as far as the enclosing sample lands the outline on the
+   * band's shoulder and drops it to the axis before the fill gets there. Opt-in, and only the run
+   * cases take it, so the rest of the stacked baselines keep the square wave they were drawn with.
+   */
+  evRamp?: boolean;
 };
 
 export type StackedFixture = {
@@ -189,7 +225,7 @@ export type StackedFixture = {
 
 /** The `stacked-areas` variant's data: N stacked power series + a SoC overlay. */
 export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
-  const { range, mode, withGap } = opts;
+  const { range, mode, withGap, evRamp } = opts;
   const { timestamps, windowStart, windowEnd } = buildTimestamps(range);
   const isEnergy = range === "M" || range === "Y";
   const scale = isEnergy ? 24 * 0.6 : 1;
@@ -249,9 +285,7 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
           {
             // `flowPath` is what maps a trackable role to its band (`seriesForRole`), so the run
             // overlay cases below need it here rather than only in the real processor.
-            ...build("load.ev", "EV", CHART_COLORS.ev, (d) =>
-              d.getHours() >= 22 || d.getHours() < 2 ? 7.2 : 0,
-            ),
+            ...build("load.ev", "EV", CHART_COLORS.ev, evShape(evRamp)),
             flowPath: "load.ev",
           },
           build("bidi.grid.out", "Export", CHART_COLORS.grid.main, (d) =>
@@ -286,16 +320,22 @@ export function stackedFixture(opts: StackedCaseOpts): StackedFixture {
 /**
  * A run period over the fixture's EV band — an outlined charge session.
  *
- * Derived FROM the fixture's own data (the first contiguous block where `load.ev` is on) rather than
- * from hardcoded times, so the overlay is guaranteed to sit on the shape it is outlining no matter
- * what window `buildTimestamps` produced. Its boundaries are deliberately pulled INSIDE that block by
- * a fraction of an interval, which is what a real detector's `midpoint` boundary does — and is
- * exactly the case `snapToSamples` exists to render correctly.
+ * Derived FROM the fixture's own data (the first contiguous block where `load.ev` is at its PLATEAU)
+ * rather than from hardcoded times, so the overlay is guaranteed to sit on the shape it is outlining
+ * no matter what window `buildTimestamps` produced. Its boundaries are deliberately pulled INSIDE
+ * that block by a fraction of an interval, which is what a real detector's `midpoint` boundary does
+ * — and is exactly the case `snapToBandEdges` exists to render correctly.
+ *
+ * 🛑 The plateau, not the whole non-zero block: under `evRamp` the block begins at the FOOT of the
+ * band's ramp, and a run starting there would already be where the overlay is supposed to snap to —
+ * pre-answering the question and hiding a regression in the snapping.
  */
 export function runBandsFixture(f: StackedFixture): RunBand[] {
   const ev = f.chartData.series.find((s) => s.flowPath === "load.ev");
   if (!ev) return [];
-  const on = ev.data.map((v) => v != null && v > 0);
+  const peak = Math.max(...ev.data.map((v) => v ?? 0));
+  if (!(peak > 0)) return [];
+  const on = ev.data.map((v) => v != null && v >= peak * 0.9);
   const start = on.indexOf(true);
   if (start < 0) return [];
   let end = start;
@@ -317,8 +357,8 @@ export function runBandsFixture(f: StackedFixture): RunBand[] {
       role: "ev",
       event: {
         date: "Sat 1 Aug",
-        startTime: "22:04",
-        endTime: "01:39",
+        startTime: "10:04pm",
+        endTime: "1:39am",
         endDate: "Sun 2 Aug",
         running: false,
         startTimeISO: startISO,

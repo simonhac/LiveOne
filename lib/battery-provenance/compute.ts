@@ -30,8 +30,8 @@ import { buildLoadPrices } from "@/lib/aggregation/flow-node-meta";
 import { resolveExportPriceSeries, resolveExportReceiptSeries } from "./tariff";
 import type {
   ProvenanceConfig,
-  ProvenanceInputs,
   ProvenanceResult,
+  WarmProvenanceInputs,
 } from "./types";
 
 const DEFAULT_MAX_SEGMENT_INTERVALS = 6 * 288; // 6-day staleness backstop
@@ -52,6 +52,18 @@ export interface ProvenanceComputeOptions {
    *  it only makes the fallback window-independent so a seeded fold matches the long fold. */
   efficiencyFallback?: number;
 }
+
+/**
+ * Solar's ACTUAL (out-of-pocket) cost per kWh — zero, because self-consumed solar costs nothing to
+ * spend. The FORGONE feed-in revenue of storing it instead is a separate, first-class signal that
+ * lives in the fold's `forgoneC` accumulator (→ the `price-opportunity` point), never here.
+ *
+ * Exported so every path that assembles source intensities prices solar identically. It used to be a
+ * local const, which made it invisible to `buildSourceIntensities`' `solarCost = 0` default and to
+ * the run-tracking blend — three copies of one number that a change to any would have silently
+ * desynchronised.
+ */
+export const SOLAR_ACTUAL_COST = 0;
 
 /** The per-interval fold outputs `buildSourceIntensities` reads for the `source.battery` node. */
 export type BatterySourceStep = Pick<
@@ -142,8 +154,14 @@ export function buildSourceIntensities({
   });
 }
 
+/**
+ * 🛑 `inputs` is {@link WarmProvenanceInputs}, not plain `ProvenanceInputs`, and that is the whole
+ * guardrail: this fold is stateful, so a caller who assembles a window without a checkpoint seed or a
+ * `WARMUP_MS` lead-in gets a store seeded from the site fallback and a silently wrong answer. Get
+ * them from `loadWarmProvenanceInputs`, or justify yourself to `certifyWarmInputs`.
+ */
 export function computeBatteryProvenance(
-  inputs: ProvenanceInputs,
+  inputs: WarmProvenanceInputs,
   config: ProvenanceConfig = {},
   options: ProvenanceComputeOptions = {},
 ): ProvenanceResult {
@@ -283,7 +301,6 @@ export function computeBatteryProvenance(
   //               `price-opportunity` point carries directly (see blendValue). The tariff SOURCE
   //               (none/amber/schedule) is resolved here into a single exportPrice[] series; the fold
   //               never sees modes/schedules.
-  const SOLAR_ACTUAL_COST = 0;
   const exportPrice = resolveExportPriceSeries(
     inputs.exportTariff,
     timeline,

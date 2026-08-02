@@ -277,6 +277,33 @@ export function formatSecondsSince(seconds: number): string {
 }
 
 /**
+ * The house 12-hour clock spelling: lowercase am/pm, no space, no leading zero — "4:16pm", "12:00am".
+ *
+ * Takes a bare `{ hour, minute }` rather than a `Date` or a `ZonedDateTime` so it carries NO timezone
+ * opinion: the caller has already decided which clock it is reading (a `ZonedDateTime` in the
+ * device's timezone, or a `Date`'s local `getHours()`), and this only spells the result. That is also
+ * what lets it be shared by the server-side `formatInTimezone` and the browser-local chart axis
+ * without either taking a dependency on the other's timezone machinery — and what keeps this module
+ * import-free.
+ *
+ * `omitZeroMinutes` renders "4pm" instead of "4:00pm"; use it where every value is on the hour (the
+ * chart's hourly axis) or where a caller applies its own rule across a pair (see
+ * {@link formatDateTimeRange}). Off by default: a lone time reads as a truncation without minutes.
+ */
+export function formatTime12h(
+  t: { hour: number; minute: number },
+  opts?: { omitZeroMinutes?: boolean },
+): string {
+  const period = t.hour >= 12 ? "pm" : "am";
+  const displayHour = t.hour === 0 ? 12 : t.hour > 12 ? t.hour - 12 : t.hour;
+  const minuteStr =
+    opts?.omitZeroMinutes && t.minute === 0
+      ? ""
+      : `:${String(t.minute).padStart(2, "0")}`;
+  return `${displayHour}${minuteStr}${period}`;
+}
+
+/**
  * Format a date/time range for display
  * Intelligently handles same day, same month, same year cases
  *
@@ -300,22 +327,12 @@ export function formatDateTimeRange(
   // Determine if we need to show minutes (if either time has non-zero minutes)
   const needMinutes = includeTime && (start.minute !== 0 || end.minute !== 0);
 
-  // Helper to format time in 12-hour format (e.g., "4:30pm" or "4:00pm" if needMinutes)
+  // Helper to format time in 12-hour format (e.g., "4:30pm" or "4:00pm" if needMinutes).
+  // `needMinutes` is a PAIRWISE rule — one endpoint's minutes force the other to show ":00" so the
+  // two ends of a range are spelled alike — which is why it inverts into `omitZeroMinutes`.
   const formatTimeInner = (
     zdt: import("@internationalized/date").ZonedDateTime,
-  ): string => {
-    const hour = zdt.hour;
-    const minute = zdt.minute;
-    const period = hour >= 12 ? "pm" : "am";
-    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-    // Include minutes if needed (either time has non-zero minutes)
-    const minuteStr = needMinutes
-      ? `:${String(minute).padStart(2, "0")}`
-      : minute === 0
-        ? ""
-        : `:${String(minute).padStart(2, "0")}`;
-    return `${displayHour}${minuteStr}${period}`;
-  };
+  ): string => formatTime12h(zdt, { omitZeroMinutes: !needMinutes });
 
   // Short month via the shared 3-letter table (deterministic; not ICU-dependent). 1-indexed month.
   const formatMonth = (month: number): string => SHORT_MONTHS[month - 1];

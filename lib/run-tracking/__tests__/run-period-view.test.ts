@@ -3,6 +3,7 @@ import {
   avgPowerWFromEnergy,
   formatRunSignal,
   formatRunWhen,
+  formatRunWhenLines,
   planRunPeriodColumns,
 } from "../run-period-view";
 
@@ -403,71 +404,134 @@ describe("planRunPeriodColumns", () => {
 });
 
 describe("formatRunWhen", () => {
+  // The times arrive already spelled by the server in the UI's 12-hour house style ("h:mma") — this
+  // function only joins them, so the fixtures below are what `/api/device/{id}/run-periods` serves.
   it("renders a same-day closed run as one range", () => {
     expect(
       formatRunWhen({
         date: "Tue 28 Jul",
-        startTime: "14:32",
-        endTime: "16:05",
+        startTime: "2:32pm",
+        endTime: "4:05pm",
       }),
-    ).toBe("Tue 28 Jul, 14:32–16:05");
+    ).toBe("Tue 28 Jul, 2:32pm–4:05pm");
   });
 
   it("spells out a run that crosses midnight", () => {
-    // The whole reason `endDate` exists: without it this reads as a Monday 23:40→01:15 range.
+    // The whole reason `endDate` exists: without it this reads as a Monday 11:40pm→1:15am range.
     expect(
       formatRunWhen({
         date: "Mon 27 Jul",
-        startTime: "23:40",
+        startTime: "11:40pm",
         endDate: "Tue 28 Jul",
-        endTime: "01:15",
+        endTime: "1:15am",
       }),
-    ).toBe("Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15");
+    ).toBe("Mon 27 Jul, 11:40pm – Tue 28 Jul, 1:15am");
   });
 
   it("renders an open run as running to now", () => {
     expect(
       formatRunWhen({
         date: "Tue 28 Jul",
-        startTime: "14:32",
+        startTime: "2:32pm",
         endTime: null,
         running: true,
       }),
-    ).toBe("Tue 28 Jul, 14:32–now");
+    ).toBe("Tue 28 Jul, 2:32pm–now");
   });
 
   it("renders a degenerate run as a single instant, not an empty range", () => {
     expect(
-      formatRunWhen({ date: "Tue 28 Jul", startTime: "14:32", endTime: null }),
-    ).toBe("Tue 28 Jul, 14:32");
+      formatRunWhen({ date: "Tue 28 Jul", startTime: "2:32pm", endTime: null }),
+    ).toBe("Tue 28 Jul, 2:32pm");
     expect(
       formatRunWhen({
         date: "Tue 28 Jul",
-        startTime: "14:32",
-        endTime: "14:32",
+        startTime: "2:32pm",
+        endTime: "2:32pm",
       }),
-    ).toBe("Tue 28 Jul, 14:32");
+    ).toBe("Tue 28 Jul, 2:32pm");
   });
 
   it("keeps a midnight-crossing run that starts and ends at the same clock time", () => {
-    // Same HH:mm but a different day is a 24h run, NOT an instant — the endDate must win.
+    // Same clock time but a different day is a 24h run, NOT an instant — the endDate must win.
     expect(
       formatRunWhen({
         date: "Mon 27 Jul",
-        startTime: "14:32",
+        startTime: "2:32pm",
         endDate: "Tue 28 Jul",
-        endTime: "14:32",
+        endTime: "2:32pm",
       }),
-    ).toBe("Mon 27 Jul, 14:32 – Tue 28 Jul, 14:32");
+    ).toBe("Mon 27 Jul, 2:32pm – Tue 28 Jul, 2:32pm");
   });
 
   it("uses an en dash, never a hyphen", () => {
     const s = formatRunWhen({
       date: "Tue 28 Jul",
-      startTime: "14:32",
-      endTime: "16:05",
+      startTime: "2:32pm",
+      endTime: "4:05pm",
     });
     expect(s).toContain("–");
     expect(s).not.toContain("-");
+  });
+});
+
+describe("formatRunWhenLines", () => {
+  it("breaks a same-day run between its date and its times", () => {
+    // 🛑 The point of the split: the chart's 140px run tooltip otherwise wraps mid-range, severing
+    // "8:55pm–" from "9:39pm".
+    expect(
+      formatRunWhenLines({
+        date: "Tue 28 Jul",
+        startTime: "2:32pm",
+        endTime: "4:05pm",
+      }),
+    ).toEqual(["Tue 28 Jul", "2:32pm–4:05pm"]);
+  });
+
+  it("keeps a midnight-crossing run on ONE line", () => {
+    // Each side of the dash already carries its own date; breaking between them would strand a date
+    // from its time.
+    expect(
+      formatRunWhenLines({
+        date: "Mon 27 Jul",
+        startTime: "11:40pm",
+        endDate: "Tue 28 Jul",
+        endTime: "1:15am",
+      }),
+    ).toEqual(["Mon 27 Jul, 11:40pm – Tue 28 Jul, 1:15am"]);
+  });
+
+  it("breaks an open run and a degenerate one the same way", () => {
+    expect(
+      formatRunWhenLines({
+        date: "Tue 28 Jul",
+        startTime: "2:32pm",
+        endTime: null,
+        running: true,
+      }),
+    ).toEqual(["Tue 28 Jul", "2:32pm–now"]);
+    expect(
+      formatRunWhenLines({
+        date: "Tue 28 Jul",
+        startTime: "2:32pm",
+        endTime: null,
+      }),
+    ).toEqual(["Tue 28 Jul", "2:32pm"]);
+  });
+
+  it("is what formatRunWhen is built from — the two can never disagree", () => {
+    for (const e of [
+      { date: "Tue 28 Jul", startTime: "2:32pm", endTime: "4:05pm" },
+      {
+        date: "Mon 27 Jul",
+        startTime: "11:40pm",
+        endDate: "Tue 28 Jul",
+        endTime: "1:15am",
+      },
+      { date: "Tue 28 Jul", startTime: "2:32pm", endTime: null, running: true },
+      { date: "Tue 28 Jul", startTime: "2:32pm", endTime: null },
+    ]) {
+      expect(formatRunWhenLines(e).join(", ")).toBe(formatRunWhen(e));
+    }
   });
 });

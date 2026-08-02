@@ -6,6 +6,10 @@ import {
 import { computeBatteryProvenance } from "../compute";
 import type { ProvenanceInputs } from "../types";
 
+import { certifyWarmInputs } from "../types";
+/** Fixtures are hand-built to start at a fold anchor; the brand asks that we say so. */
+const warm = (i: ProvenanceInputs) => certifyWarmInputs(i, "test fixture");
+
 const HOUR = 60 * 60 * 1000;
 
 /** A small charge-then-discharge scenario: solar+grid charge the battery, then it discharges to the EV. */
@@ -48,7 +52,7 @@ function scenario(): ProvenanceInputs {
 describe("computeBatteryProvenance", () => {
   it("its energy leg equals computeFlowMatrix (intensities don't change energy)", () => {
     const inputs = scenario();
-    const result = computeBatteryProvenance(inputs, { efficiency: 0.9 });
+    const result = computeBatteryProvenance(warm(inputs), { efficiency: 0.9 });
     const energy = computeFlowMatrix({
       timestamps: inputs.timeline,
       sources: inputs.sources,
@@ -64,7 +68,7 @@ describe("computeBatteryProvenance", () => {
 
   it("self-renewable leg: solar full, grid zero, battery ≤ renewable (joint attribute wired)", () => {
     const inputs = scenario();
-    const result = computeBatteryProvenance(inputs, { efficiency: 1 });
+    const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
     const acc = result.accounting;
     const si = (p: string) => inputs.sources.findIndex((s) => s.path === p);
     const solar = si("source.solar");
@@ -93,7 +97,9 @@ describe("computeBatteryProvenance", () => {
   });
 
   it("battery renewable fraction stays in [0,1] under η<1 (golden guard)", () => {
-    const result = computeBatteryProvenance(scenario(), { efficiency: 0.9 });
+    const result = computeBatteryProvenance(warm(scenario()), {
+      efficiency: 0.9,
+    });
     for (const s of result.steps) {
       if (s.batteryRenewableFraction !== null) {
         expect(s.batteryRenewableFraction).toBeGreaterThanOrEqual(0);
@@ -103,7 +109,9 @@ describe("computeBatteryProvenance", () => {
   });
 
   it("carbon conservation identity holds (charged + sync = vended + unattributed + stored)", () => {
-    const result = computeBatteryProvenance(scenario(), { efficiency: 0.9 });
+    const result = computeBatteryProvenance(warm(scenario()), {
+      efficiency: 0.9,
+    });
     let foldVendedG = 0;
     for (const s of result.steps)
       foldVendedG += s.dischargedKwh * (s.batteryEmissionsIntensity ?? 0);
@@ -127,7 +135,7 @@ describe("computeBatteryProvenance", () => {
     const n = inputs.timeline.length;
     inputs.gridExportPrice = new Array<number | null>(n).fill(-3);
     inputs.gridPrice = new Array<number | null>(n).fill(-10);
-    const result = computeBatteryProvenance(inputs, { efficiency: 1 });
+    const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
     expect(result.finalState.forgoneC).toBeCloseTo(0, 9);
     expect(result.finalState.costC).toBeLessThan(0);
   });
@@ -135,7 +143,7 @@ describe("computeBatteryProvenance", () => {
   it("a POSITIVE feed-in price accrues forgone export revenue", () => {
     const inputs = scenario(); // gridExportPrice = 5 c/kWh, solar in the charge mix
     inputs.exportTariff = { mode: "amber" };
-    const result = computeBatteryProvenance(inputs, { efficiency: 1 });
+    const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
     expect(result.finalState.forgoneC).toBeGreaterThan(0);
   });
 
@@ -146,7 +154,7 @@ describe("computeBatteryProvenance", () => {
     // zeros elsewhere. extractBatteryFlows must take these over the trapezoid.
     const batteryLoad = inputs.loads.find((l) => l.path === "load.battery")!;
     batteryLoad.energyKwh = [10, 0, 0, 0];
-    const result = computeBatteryProvenance(inputs, { efficiency: 1 });
+    const result = computeBatteryProvenance(warm(inputs), { efficiency: 1 });
     // With 10 kWh charged (η=1) and ~6 kWh discharged, the store never empties → capacity ~10.
     expect(result.chargeKwh).toBeGreaterThan(9);
   });

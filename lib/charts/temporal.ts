@@ -15,6 +15,7 @@
  *    today's partial day. They are date-only and ALWAYS carry an explicit window (see below).
  */
 import { format } from "date-fns";
+import { formatTime12h } from "@/lib/fe-date-format";
 import { parseDate } from "@internationalized/date";
 import {
   getTodayInTimezone,
@@ -50,18 +51,23 @@ export function formatHoverTimestamp(
 ): string {
   if (!date) return "";
 
+  // The clock time goes through the shared 12-hour spelling rather than date-fns' `h:mma`, which
+  // renders an uppercase "11:58PM" — the one place in the UI that shouted its am/pm, directly above
+  // an axis that now reads "12am"/"2am".
+  const time = formatTime12h({
+    hour: date.getHours(),
+    minute: date.getMinutes(),
+  });
+
   if (timeRange === "M" || timeRange === "Y") {
     // Mobile: "Fri, 22 Aug" / Desktop: "Fri, 22 Aug 2024"
     return format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy");
   } else if (timeRange === "W") {
-    // Mobile: "Fri, 22 Aug 11:58PM" / Desktop: "Fri, 22 Aug 2024 11:58PM"
-    return format(
-      date,
-      isMobile ? "EEE, d MMM h:mma" : "EEE, d MMM yyyy h:mma",
-    );
+    // Mobile: "Fri, 22 Aug 11:58pm" / Desktop: "Fri, 22 Aug 2024 11:58pm"
+    return `${format(date, isMobile ? "EEE, d MMM" : "EEE, d MMM yyyy")} ${time}`;
   } else {
-    // For D view, show time only (e.g., "11:58PM")
-    return format(date, "h:mma");
+    // For D view, show time only (e.g., "11:58pm")
+    return time;
   }
 }
 

@@ -18,18 +18,21 @@
  */
 
 import { CalendarDate } from "@internationalized/date";
-import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
-import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
-import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
-  WARMUP_MS,
-  tryLoadSeededProvenanceInputs,
-  type ProvenanceSeedResult,
-} from "@/lib/db/planetscale/battery-provenance-pg";
+  buildSourceIntensities,
+  computeBatteryProvenance,
+  SOLAR_ACTUAL_COST,
+} from "@/lib/battery-provenance/compute";
+import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
+import { readPersistedBatteryBlend } from "@/lib/battery-provenance/persisted-blend";
+import { resolveExportReceiptSeries } from "@/lib/battery-provenance/tariff";
+import { loadWarmProvenanceInputs } from "@/lib/battery-provenance/warm-inputs";
+import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import {
   computeFlowAccounting,
   type FlowAccountingResult,
+  type SourceIntensity,
 } from "@/lib/aggregation/flow-matrix-core";
 import {
   buildLoadPrices,
@@ -115,15 +118,27 @@ export function shapeAttributedFlowMatrix(
 }
 
 /**
- * Build the attributed flow matrix for logical-system `handle` over `[startMs, endMs]`. First tries to
- * seed the battery fold from the freshest persisted checkpoint (`tryLoadSeededProvenanceInputs` —
- * loads from the checkpoint's anchor instead of a full lead-in, typically O(today) instead of O(7
- * days)); on any guard failure (no checkpoint, span too long, stale, non-canonical inputs) falls back
- * to the unseeded `WARMUP_MS` lead-in (same warm-up the prod driver uses when it can't seed either).
- * Either way runs the SAME `computeBatteryProvenance` fold the write path does (safe — and already
- * exercised — for battery-less Areas too: with no `source.battery` in `inputs.sources` the fold simply
- * produces no battery source-intensity entry), then re-runs `computeFlowAccounting` clipped to the exact
- * requested window (mirrors `writeAttrRollup`'s per-day re-slice).
+ * Build the attributed flow matrix for logical-system `handle` over `[startMs, endMs]`.
+ *
+ * 🛑 THIS PATH NO LONGER FOLDS. The battery's per-interval blend is READ from the `bidi.battery/*`
+ * points the engine already writes (`readPersistedBatteryBlend`); everything else in a source
+ * intensity — solar's constants, grid's OE/Amber series — was always pure. Three things follow:
+ *
+ *  - **One number, two readers.** A run period and this Sankey now price `source.battery` from the
+ *    same series, so they cannot disagree about it. Re-folding here was the largest remaining
+ *    divergence between the two surfaces (~23 gCO₂/kWh and ~0.44 c/kWh mean absolute deviation over a
+ *    Kinkora week): same fold code, but a different seed over a different window, so late-arriving
+ *    `agg_5m` moved them apart.
+ *  - **D/W now agrees with M/Y** (`flow_attr_1d`), which is materialised from the same engine fold
+ *    that wrote those points — rather than from a second, independently-seeded one.
+ *  - **The window is read EXACTLY**, with no `WARMUP_MS` lead-in and no checkpoint seed, because
+ *    nothing stateful runs here. That is the §1.3b/c read-amplification win: a 7-day Sankey reads 7
+ *    days instead of 14.
+ *
+ * The fold survives only as a fallback for an Area that has a `source.battery` but NO persisted blend
+ * at all (a brand-new Area, or one whose engine has never run). Partial coverage is NOT a fallback:
+ * intervals without a row keep a null battery intensity and drop out of `computeFlowAccounting`'s
+ * unbiased average, which is strictly better than re-deriving the whole window from a different basis.
  *
  * Returns `null` when the Area/logical system can't be resolved or has no usable timeline — the caller
  * treats that as "nothing to serve" (distinct from a thrown error, which the caller catches for P3
@@ -142,48 +157,74 @@ export async function buildAttributedFlowMatrix(
   avgCache?: Agg5mAvgCache,
 ): Promise<DailyFlowMatrices | null> {
   const db = requirePlanetscaleDb();
-  // Best-effort: any failure here (including a thrown error, not just a guard's {seeded:false})
-  // must degrade to the unseeded WARMUP_MS load below — seeding must never be LESS safe than the
-  // path that predates it.
-  let seed: ProvenanceSeedResult;
-  try {
-    seed = await tryLoadSeededProvenanceInputs(
+
+  let inputs = await loadProvenanceInputs(
+    handle,
+    { startMs, endMs },
+    { logicalSystem, avgCache },
+  );
+  if (!inputs || inputs.timeline.length < 2) return null;
+
+  const hasBattery = inputs.sources.some((s) => s.path === "source.battery");
+  const blend = hasBattery
+    ? await readPersistedBatteryBlend(db, inputs.areaId, inputs.timeline)
+    : null;
+
+  let sourceIntensities: (SourceIntensity | null)[];
+  let exportReceiptPrice: (number | null)[];
+
+  // `present`, not `covered` — an empty battery is a computed interval with null intensities, not a
+  // missing engine. See `readPersistedBatteryBlend`.
+  if (!hasBattery || (blend && blend.present > 0)) {
+    sourceIntensities = buildSourceIntensities({
+      sources: inputs.sources,
+      timeline: inputs.timeline,
+      gridEmissions: inputs.gridEmissions,
+      gridRenewable: inputs.gridRenewable,
+      gridPrice: inputs.gridPrice,
+      gridEmissionsEstimated: inputs.gridEmissionsEstimated,
+      gridPriceEstimated: inputs.gridPriceEstimated,
+      steps: blend?.steps ?? [],
+      solarCost: SOLAR_ACTUAL_COST,
+    });
+    exportReceiptPrice = resolveExportReceiptSeries(
+      inputs.exportTariff,
+      inputs.timeline,
+      inputs.timezoneOffsetMin,
+      inputs.gridExportPrice,
+    );
+  } else {
+    // No blend has ever been written for this battery Area — fold it, warmly, exactly as this
+    // function used to. Loud, because it costs a lead-in read and reintroduces the divergence above.
+    console.warn(
+      `[history] no persisted battery blend for handle=${handle} — falling back to a live fold`,
+    );
+    const warm = await loadWarmProvenanceInputs(
       db,
       handle,
-      startMs,
-      endMs,
-      logicalSystem,
-      avgCache,
+      { startMs, endMs },
+      { logicalSystem, avgCache },
     );
-  } catch (err) {
-    console.error("[history] checkpoint seed lookup failed:", err);
-    seed = { seeded: false, reason: "seed-lookup-threw" };
+    if (!warm) return null;
+    inputs = warm.inputs;
+    const result = computeBatteryProvenance(
+      warm.inputs,
+      {},
+      {
+        initialState: warm.initialState,
+        efficiencyFallback: warm.efficiencyFallback,
+      },
+    );
+    sourceIntensities = result.sourceIntensities;
+    exportReceiptPrice = result.exportReceiptPrice;
   }
-  const inputs = seed.seeded
-    ? seed.inputs
-    : await loadProvenanceInputs(
-        handle,
-        { startMs: startMs - WARMUP_MS, endMs },
-        { logicalSystem, avgCache },
-      );
-  if (!inputs) return null;
 
-  const result = computeBatteryProvenance(
-    inputs,
-    {},
-    seed.seeded
-      ? {
-          initialState: seed.initialState,
-          efficiencyFallback: seed.efficiencyFallback,
-        }
-      : {},
-  );
   const acc = computeFlowAccounting({
     timestamps: inputs.timeline,
     sources: inputs.sources,
     loads: inputs.loads,
-    sourceIntensities: result.sourceIntensities,
-    loadPrices: buildLoadPrices(inputs.loads, result.exportReceiptPrice),
+    sourceIntensities,
+    loadPrices: buildLoadPrices(inputs.loads, exportReceiptPrice),
     window: { startMs, endMs },
   });
 

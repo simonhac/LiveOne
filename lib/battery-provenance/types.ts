@@ -1,6 +1,6 @@
 /**
  * Shared types for the battery-provenance engine. The pipeline is:
- *   loadProvenanceInputs(handle, window)  →  ProvenanceInputs   (I/O: bindings + agg_5m + resample)
+ *   loadWarmProvenanceInputs(db, handle, window)  →  WarmProvenanceInputs  (I/O: seed + agg_5m)
  *   computeBatteryProvenance(inputs, config)  →  ProvenanceResult   (pure: fold + flow accounting)
  * Both the prod driver and the offline harness call the SAME two functions — they differ only at the
  * edges (which window / write-vs-print). See docs plan (Phase 2).
@@ -19,6 +19,50 @@ import type { ExportTariffConfig } from "@/lib/capabilities/config";
 export interface ProvenanceWindow {
   startMs: number;
   endMs: number;
+}
+
+declare const WARM_FOLD: unique symbol;
+
+/**
+ * {@link ProvenanceInputs} certified to START AT A FOLD ANCHOR — a persisted checkpoint, or a full
+ * `WARMUP_MS` lead-in from a zero state.
+ *
+ * 🛑 THIS BRAND EXISTS BECAUSE A CONVENTION WAS NOT ENOUGH. The fold is stateful: the battery's blend
+ * at any instant depends on every interval since the last reset, so a fold started inside the window
+ * of interest seeds the store from the SITE FALLBACK — the grid's instantaneous intensity and price —
+ * and never washes it out. Warming the window used to be the CALLER's job, applied by hand at each
+ * call site, expressed nowhere in a type. A third caller (the EV run pricing) did not know to do it
+ * and folded over the run's own span padded by five minutes, which priced a charge session supplied
+ * 100% by a solar-charged battery at 33.7 c/kWh and 742 gCO₂/kWh — the grid tariff of the minute the
+ * fold happened to begin. Nothing failed; the numbers were simply wrong, on prod, for months.
+ *
+ * `WARM_FOLD` is a `declare`d unique symbol that is never exported as a VALUE, so this type cannot be
+ * produced by structural typing — only by `certifyWarmInputs`, or by an explicit
+ * `as WarmProvenanceInputs`, which ESLint bans outside this file. A caller who wants a fold must go
+ * through the place that thinks about warmth.
+ *
+ * The brand certifies HOW a value was constructed, not that the window is genuinely warm: if every
+ * seed guard fails and there is no lead-in data, the loader still returns something thin. That is
+ * what `loadWarmProvenanceInputs`' `seeded` flag and its warning are for.
+ */
+export type WarmProvenanceInputs = ProvenanceInputs & {
+  readonly [WARM_FOLD]: true;
+};
+
+/**
+ * Mint a {@link WarmProvenanceInputs} — the ONE escape hatch, deliberately awkward to type.
+ *
+ * `why` is not decoration: every use of this is a claim that the caller has warmed the window some
+ * other way, and the string is where that claim is recorded for the next reader. The legitimate ones
+ * are the trusted long-window writer (it applies `WARMUP_MS` itself and is what WRITES the
+ * checkpoints), the already-seeded reconcile paths, the offline harness, and test fixtures.
+ */
+export function certifyWarmInputs(
+  inputs: ProvenanceInputs,
+  why: string,
+): WarmProvenanceInputs {
+  if (!why) throw new Error("certifyWarmInputs requires a reason");
+  return inputs as WarmProvenanceInputs;
 }
 
 /**
