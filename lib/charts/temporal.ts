@@ -65,7 +65,6 @@ export function formatHoverTimestamp(
   }
 }
 
-
 /** The navigator's period set. Identical to {@link ChartTimeRange} — every period is URL-shared now. */
 export type NavigatorPeriod = "D" | "W" | "M" | "Y";
 
@@ -96,7 +95,7 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Period window length in milliseconds — a FIXED nominal duration (M=30d, Y=365d), NOT a calendar
- * length. Used only for the D/W live-label/window fallbacks and the generator-runs `Nd` string; the
+ * length. Used only for the D/W live-label/window fallbacks and the `runs` card's `Nd` string; the
  * navigator never uses it to build an M/Y window (M/Y always carry an explicit calendar window).
  */
 export function getPeriodDuration(period: ChartTimeRange): number {

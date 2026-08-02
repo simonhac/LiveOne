@@ -271,6 +271,8 @@ LIMIT 20;
 
 > 🛑 **Always ask before modifying the schema.** Never add/alter/drop a column, table, or index — or generate/apply a migration — without explicit approval first. Propose the change and wait for a "yes".
 
+> 🛑 **A rename is only half a change when documents persist the old name.** Card `type` strings, tile ids — anything stored inside `dashboards.doc` — are **data**, not just code. Renaming one in code without rewriting the stored documents leaves prod rendering `Unknown card type …` (the doc still parses; the card just stops rendering). Before merging a rename: sweep `dashboards.doc` for the old name and ship the rewrite (`scripts/utils/migrate-card-type.ts`, dry-run by default) in the same PR. Apply to **prod** — dev is refreshed from prod by the 2-hourly sync, so a dev-only fix reverts. Full procedure: `docs/migrations.md` § "Data & config-document migrations".
+
 ### PostgreSQL (primary)
 
 PG schema changes are versioned drizzle-kit migrations generated from `lib/db/planetscale/schema.ts`:

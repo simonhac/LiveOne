@@ -140,7 +140,7 @@ const LEAF_MODULES: Record<string, string> = {
     "BatteryProvenancePanel",
   "@/components/DeviceMetricsCard": "DeviceMetricsCard",
   "@/components/LoadProvenanceCard": "LoadProvenanceCard",
-  "@/components/GeneratorRunsCard": "GeneratorRunsCard",
+  "@/components/RunsCard": "RunsCard",
   "@/components/Tile": "Tile",
   "@/components/TeslaSmallCard": "TeslaSmallCard",
   "@/components/HwsSmallCard": "HwsSmallCard",

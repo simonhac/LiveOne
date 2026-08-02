@@ -1,11 +1,13 @@
-# Database Migrations
+# Migrations
 
-> **Status:** current — last verified 2026-06-11. PostgreSQL (PlanetScale) is the only store;
-> migrations are versioned Drizzle migrations in `/drizzle-planetscale/`. The old plain-SQL
-> SQLite migration system (`/migrations/`, tracked in a `migrations` table) was retired and
-> removed when the legacy SQLite store was decommissioned — this doc documents the Postgres
-> path only. See also `CLAUDE.md` for the migration checklist and the PlanetScale-specific
-> traps (branches, `pscale role`, table-ownership), and `drizzle-planetscale/README.md`.
+> **Status:** current — last verified 2026-08-02. Covers both kinds: **schema** migrations (DDL) and
+> **config-document** migrations (rewriting JSON we persist, e.g. `dashboards.doc`). PostgreSQL
+> (PlanetScale) is the only store; schema migrations are versioned Drizzle migrations in
+> `/drizzle-planetscale/`. The old plain-SQL SQLite migration system (`/migrations/`, tracked in a
+> `migrations` table) was retired and removed when the legacy SQLite store was decommissioned — this
+> doc documents the Postgres path only. See also `CLAUDE.md` for the migration checklist and the
+> PlanetScale-specific traps (branches, `pscale role`, table-ownership), and
+> `drizzle-planetscale/README.md`.
 
 ## How migrations work
 
@@ -87,6 +89,68 @@ of "apply the migration" vs. "merge the code" matters — and it **inverts** bet
 
 (Rehomed here from `architecture/areas-and-dashboards.md`, whose v3 roadmap section was retired in the
 config-v4 rewrite. The rule is general, not specific to that doc's phases.)
+
+## Data & config-document migrations
+
+Not every migration is DDL. We persist **JSON documents** — principally `dashboards.doc`, the v4 node
+tree — and those documents embed identifiers that also exist in code: card `type` strings, tile ids.
+
+> 🛑 **A rename is only half a change when documents persist the old name.** Renaming a card type in
+> code without rewriting the stored documents leaves prod rendering `Unknown card type …`. Sweep, then
+> ship the rewrite in the same PR as the rename.
+
+**Why this is visible rather than silent, and why that is deliberate.** A card `type` is an
+[open string, warn-not-reject](architecture/data-model.md#the-v4-dashboard-document): an unknown type
+persists with its `config` intact and renders a labelled placeholder, so an older validator can never
+destroy a newer client's config. The cost of that choice is that a missed rename degrades a card to a
+grey box instead of failing a build. Nothing detects it for you — so sweep before merging.
+
+**Sweep** — every card type present in every stored document (run against prod, and against dev):
+
+```sql
+with nodes as (
+  select d.name, jsonb_path_query(d.doc, '$.** ? (@.kind == "card")') as node from dashboards d
+)
+select name, node->>'type' as card_type, count(*) from nodes group by 1,2 order by 1,2;
+```
+
+Anything in that list that is not in `V4_CARD_TYPES` (`lib/dashboard/card-types.ts`) is currently a
+grey box on somebody's dashboard.
+
+**Rewrite** — `scripts/utils/migrate-card-type.ts`, dry-run by default:
+
+```bash
+pscale role create liveone sydney cardtype-migrate --inherited-roles postgres --ttl 1h --format json
+MIGRATE_DATABASE_URL="<that url>" npx tsx scripts/utils/migrate-card-type.ts <old> <new>
+MIGRATE_DATABASE_URL="<that url>" npx tsx scripts/utils/migrate-card-type.ts <old> <new> --apply
+pscale role delete liveone sydney <role-id> --force
+```
+
+The connection is taken **only** from `MIGRATE_DATABASE_URL`, never the ambient
+`PLANETSCALE_DATABASE_URL`: the usual target is prod, and "which database am I pointed at" must not be
+answered by whatever is in `.env.local`. The rewrite itself is `rewriteCardType`
+(`lib/dashboard/migrate-card-type.ts`) — pure, idempotent, and unit-tested; each write is a
+transaction that locks the row and bumps `revision`, mirroring `updateDashboardDoc`, so a concurrent
+editor's `If-Match` conflicts instead of being clobbered.
+
+Ordering and scope:
+
+- **Apply to prod, not to dev.** `dashboards` is a config table the 2-hourly prod→dev sync refreshes,
+  so a dev-only edit reverts within the hour. Dry-run against dev freely; apply to prod and let the
+  sync carry it down.
+- **It renames the `type` and nothing else.** `config` passes through verbatim, so this is the right
+  tool only when the new type accepts the old type's config — either both are bare, or every added key
+  has a schema default. (`generator-runs` → `runs`: `runsConfigSchema.role` defaults to `"generator"`,
+  which is exactly what a pre-rename document meant.) A rename that reshapes `config` needs a bespoke
+  transform.
+- **Prefer it in the same PR as the rename**, so the code and the data never disagree across a deploy.
+  There is no read-time upgrade ladder and no legacy-alias map — by design, so the two never drift.
+
+**Precedent.** `generator-runs` → `runs` (PR #338, Aug 2026) shipped the code, catalog, seed strategy
+and fixtures, but no document rewrite: one prod dashboard (Daylesford) rendered `Unknown card type
+generator-runs` until it was swept and migrated. Earlier renames got away with it by luck —
+`battery-blend` → `battery-contents` was verified safe only because no persisted document happened to
+contain either name.
 
 ## Deployment Verification
 

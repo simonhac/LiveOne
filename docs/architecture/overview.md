@@ -104,7 +104,7 @@ adapter. Anything that used to be a composite system is now an Area with members
 | What config-v4 cost and the traps it taught                 | [../plans/completed/config-v4-execution-plan.md](../plans/completed/config-v4-execution-plan.md) |
 | Historical: the completed Turso→Postgres migration          | [../turso-pg-migration.md](../turso-pg-migration.md)                     |
 | Queue payload formats                                       | [../observations-qstash-payloads.md](../observations-qstash-payloads.md) |
-| Migration safety practices                                  | [../migrations.md](../migrations.md)                                     |
+| Migration safety practices (schema + config documents)      | [../migrations.md](../migrations.md)                                     |
 
 ## Glossary
 

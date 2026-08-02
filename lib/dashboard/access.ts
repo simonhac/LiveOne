@@ -9,7 +9,7 @@
  * (§8.3) maps to its addressable systemId (`legacy_system_id`), and `PointManager.getActivePointsForDevice`
  * resolves each to a composite's CHILD points or a single device's own points. The authorized set is BOTH
  * the area handles (whole-area cards address `/api/data?systemId=<handle>`) AND those child/member devices
- * (member-scoped cards — generator-runs, device-metrics — address them directly), so the exposed set
+ * (member-scoped cards — runs, device-metrics — address them directly), so the exposed set
  * matches what the dashboard renders by construction. (P6 dropped the legacy `dashboards.system_id`/
  * `area_id` seed: scope is now purely document-derived.) Point-level narrowing within an Area is a
  * future tightening — `points[]` already carries the exact refs.
@@ -98,7 +98,7 @@ async function resolveScope(input: DashboardScopeInput): Promise<{
  * The distinct systemIds a shared dashboard authorizes: for each Area its document references,
  * BOTH the area HANDLE (whole-area cards fetch `/api/data?systemId=<handle>`) AND the child/member
  * devices whose points the area actually shows. The member expansion is essential: member-scoped cards
- * (generator-runs → `/api/device/<member>/run-periods`, device-metrics → `/api/data?systemId=<member>`)
+ * (runs → `/api/device/<member>/run-periods`, device-metrics → `/api/data?systemId=<member>`)
  * would otherwise 401 for an anonymous share viewer even though the dashboard renders their data.
  * Unresolvable Area uuids are dropped (no escalation). Empty/unresolvable document → empty scope.
  */
