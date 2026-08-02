@@ -14,8 +14,11 @@ export type { RunPeriodColumns, RunSignalMeta };
  * read the subset they need.
  */
 export interface RunPeriodEvent {
+  /** Start date ("EEE d MMM"), in the device's display timezone. */
   date: string;
+  /** Start time ("h:mma", e.g. "4:16pm") — a DISPLAY string; read `startTimeISO` for the instant. */
   startTime: string;
+  /** End time ("h:mma"); null for an open run. */
   endTime: string | null;
   /**
    * End date ("EEE d MMM"), present ONLY when the run ends on a different local day than it

@@ -38,11 +38,14 @@ describe("buildTimeTicks — D", () => {
     }
   });
 
-  it("labels are single-line HH:mm", () => {
+  it("labels are single-line 12-hour times, with no ':00' on the hour", () => {
     for (const t of labelled(ticks)) {
       expect(t.label).toHaveLength(1);
-      expect(t.label![0]).toMatch(/^\d{2}:\d{2}$/);
+      expect(t.label![0]).toMatch(/^([1-9]|1[0-2])(am|pm)$/);
     }
+    // Midnight is "12am", not "0am" — the case a naive hour % 12 gets wrong.
+    const midnight = labelled(ticks).find((t) => t.value.getHours() === 0);
+    if (midnight) expect(midnight.label![0]).toBe("12am");
   });
 
   it("unlabelled ticks are null, not blank strings", () => {
@@ -208,8 +211,13 @@ describe("tick density fits the plot width", () => {
   const slotPx = (lines: string[]) =>
     Math.max(...lines.map((l) => l.length)) * 6 + 30 * lines.length;
 
-  const labelledCount = (w: number, range: "D" | "W" | "M" | "Y", days: number) =>
-    buildTimeTicks(range, back(days), END, w).filter((t) => t.label !== null).length;
+  const labelledCount = (
+    w: number,
+    range: "D" | "W" | "M" | "Y",
+    days: number,
+  ) =>
+    buildTimeTicks(range, back(days), END, w).filter((t) => t.label !== null)
+      .length;
 
   it("thins M further on a narrow plot than a wide one", () => {
     expect(labelledCount(NARROW, "M", 30)).toBeLessThan(
@@ -218,16 +226,21 @@ describe("tick density fits the plot width", () => {
   });
 
   it.each([
-    ["D", 1, ["00:00"]],
+    ["D", 1, ["12am"]],
     ["W", 7, ["Wed", "30 Jun"]],
     ["M", 30, ["Wed", "30 Jun"]],
     ["Y", 365, ["MMM"]],
-  ] as const)("%s labels always fit the width they were given", (range, days, sample) => {
-    for (const w of [NARROW, 500, WIDE, 1400]) {
-      const n = labelledCount(w, range, days);
-      expect(n * slotPx([...sample])).toBeLessThanOrEqual(w + slotPx([...sample]));
-    }
-  });
+  ] as const)(
+    "%s labels always fit the width they were given",
+    (range, days, sample) => {
+      for (const w of [NARROW, 500, WIDE, 1400]) {
+        const n = labelledCount(w, range, days);
+        expect(n * slotPx([...sample])).toBeLessThanOrEqual(
+          w + slotPx([...sample]),
+        );
+      }
+    },
+  );
 
   it("keeps D's unlabelled gridlines while thinning its labels", () => {
     // D is the exception: the canvas drew hourly gridlines with 2-hourly labels, so narrowing must

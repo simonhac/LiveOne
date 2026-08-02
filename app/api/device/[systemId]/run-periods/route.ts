@@ -141,8 +141,10 @@ function toEvent(r: DerivedInterval, s: EventShape) {
   return {
     // Legacy generator-events contract:
     date: formatInTimezone(r.startTime, s.tz, "EEE d MMM"),
-    startTime: formatInTimezone(r.startTime, s.tz, "HH:mm"),
-    endTime: r.endTime ? formatInTimezone(r.endTime, s.tz, "HH:mm") : null,
+    // 12-hour ("4:16pm"), the UI's house clock — these fields are DISPLAY strings, already in the
+    // device's timezone; `startTimeISO`/`endTimeISO` below are what a machine reads.
+    startTime: formatInTimezone(r.startTime, s.tz, "h:mma"),
+    endTime: r.endTime ? formatInTimezone(r.endTime, s.tz, "h:mma") : null,
     /** Set only when the run ends on a different local day — see `endDateIfDifferentDay`. */
     endDate: endDateIfDifferentDay(r, s.tz),
     running: r.endTime === null,

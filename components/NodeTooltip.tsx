@@ -17,6 +17,59 @@ import type {
 export const PANEL_WIDTH = 140;
 
 /**
+ * A heading string with any 12-hour meridiem rendered at two-thirds size — synthetic small caps.
+ *
+ * The heading chip is `text-transform: uppercase`, which is right for a node label but turns a run's
+ * "8:55pm" into a shouted "8:55PM". Real small caps can't do this job: the uppercase transform lands
+ * first, so `font-variant-caps` has no lowercase left to shrink. Hence an explicit scale.
+ *
+ * The match REQUIRES a preceding digit, so ONLY a clock time is ever touched — a node or series
+ * named "Amber" keeps its letters at full size.
+ */
+function HeadingText({ text }: { text: string }) {
+  // Capturing split: even indices are the surrounding text, odd ones the matched meridiems.
+  const parts = text.split(/(?<=\d)(am|pm)/gi);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <span key={i} className="text-[0.67em]">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+/**
+ * One heading line. `chip` gives it the node's translucent-white label chip; without it the text
+ * sits bare on the panel.
+ *
+ * Its own component because the panel can carry TWO headings (name, then the run tooltip's time
+ * range) and everything except the chip is shared — type scale, uppercase, tracking, and the
+ * `HeadingText` meridiem shrink. Two copies of that class list would drift.
+ *
+ * The BARE variant carries a little more weight than the chipped one, not less: with no plate behind
+ * it, the only thing left to hold it up against the panel's fill is the stroke of the letters. One
+ * step, not two — at 11px on a saturated fill, bold stops reading as emphasis and starts reading as
+ * a smudge.
+ */
+function Heading({ text, chip = false }: { text: string; chip?: boolean }) {
+  return (
+    <span
+      className={`text-[11px] uppercase tracking-wide text-black ${
+        chip ? "rounded bg-white/25 px-2 py-0.5 font-medium" : "font-semibold"
+      }`}
+    >
+      <HeadingText text={text} />
+    </span>
+  );
+}
+
+/**
  * Beak geometry — declared HERE, beside the markup that renders it, and (where the maths needs them)
  * exported to `EnergyFlowSankey`, which decides where — and whether — a beak fits. One home, so the
  * two can't drift.
@@ -96,6 +149,16 @@ interface NodeTooltipProps {
   /** Hide (but keep mounted, for measurement) during the first "measure" pass — avoids a flash at the
    *  wrong position before the real height is known. */
   hidden?: boolean;
+  /**
+   * CSS positioning for `left`/`top`.
+   *
+   * `"fixed"` (the default) takes VIEWPORT coordinates — the Sankey measures its nodes with
+   * `getBoundingClientRect`, so that is the space it already has them in. `"absolute"` takes
+   * coordinates in the nearest positioned ancestor's box, for a caller that can express the anchor
+   * as geometry instead of a measurement: the panel then scrolls with the thing it points at,
+   * because the browser moves them together, rather than because something listened for a scroll.
+   */
+  positioning?: "fixed" | "absolute";
   panelRef?: React.Ref<HTMLDivElement>;
 }
 
@@ -181,6 +244,7 @@ export default function NodeTooltip({
   showHeading = true,
   beakVariant = "diamond",
   hidden = false,
+  positioning = "fixed",
   panelRef,
 }: NodeTooltipProps) {
   const isFull = data.variant === "full";
@@ -201,7 +265,11 @@ export default function NodeTooltip({
   return (
     <div
       ref={panelRef}
-      className={`node-tooltip ${ttInterphases.className} fixed z-[100] pointer-events-none rounded p-3 shadow-lg`}
+      // Spelled out rather than interpolated: Tailwind generates utilities by finding the class name
+      // as a literal in the source, and `${positioning}` is not one.
+      className={`node-tooltip ${ttInterphases.className} ${
+        positioning === "absolute" ? "absolute" : "fixed"
+      } z-[100] pointer-events-none rounded p-3 shadow-lg`}
       style={{
         left,
         top,
@@ -264,10 +332,22 @@ export default function NodeTooltip({
             Placed like the node's label: centred, a fixed distance from the top (the card's padding).
             Mirrors the node box's translucent-white label chip. */}
         {showHeading && (
-          <div className="mb-2 flex justify-center">
-            <span className="rounded bg-white/25 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-black">
-              {data.name}
-            </span>
+          <div className="mb-2 flex flex-col items-center gap-1">
+            <Heading text={data.name} chip />
+            {/* The run tooltip's date and time range, under the name, so the name reads as the
+                subject and the window as what qualifies it. NO chip — two plates stacked read as two
+                equal titles, and the name is the one being qualified.
+
+                Their own container, set SOLID (`leading-none` + no gap): they are two halves of one
+                sentence broken by hand, so the space between them must be smaller than the `gap-1`
+                separating the whole thing from the name — otherwise they read as three peers. */}
+            {data.subheading && (
+              <div className="flex flex-col items-center gap-0.5 leading-none">
+                {data.subheading.map((line) => (
+                  <Heading key={line} text={line} />
+                ))}
+              </div>
+            )}
           </div>
         )}
 

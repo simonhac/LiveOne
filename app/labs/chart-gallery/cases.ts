@@ -219,7 +219,7 @@ export const CHART_CASES: ChartCase[] = [
     range: "D",
     mode: "load",
     withRuns: true,
-    note: "a run period outlined on the EV band at rest — the outline must trace the band's own silhouette, which is why the overlay snaps to the sample grid (snapToSamples)",
+    note: "a run period marked on the EV band at rest — diagonal stripes plus an outline. The EV edges are TAPERED here (a real session's first and last intervals are partial averages): the outline must follow that taper all the way to the axis, which is what snapToBandEdges walks out to. Reaching the axis before the fill does is the bug it fixes",
     width: W,
     height: H,
   },

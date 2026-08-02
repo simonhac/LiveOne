@@ -207,6 +207,47 @@ export function formatRunSignal(
 /** An en dash with no surrounding spaces reads as a range; a hyphen reads as a subtraction. */
 const RANGE_DASH = "–";
 
+/** The fields a run's "when" is spelled from — see {@link formatRunWhen}. */
+interface RunWhen {
+  /** Start date, "EEE d MMM". */
+  date: string;
+  /** Start time, "h:mma" (e.g. "4:16pm"). */
+  startTime: string;
+  /** End date, "EEE d MMM" — only when it differs from `date`; else null/undefined. */
+  endDate?: string | null;
+  /** End time, "h:mma"; null for an open run. */
+  endTime: string | null;
+  /** True while the run is still going. */
+  running?: boolean;
+}
+
+/**
+ * A run's "when", split at the point a narrow panel should break it.
+ *
+ * A run inside ONE day is two separate facts — which day, and which part of it — so it returns them
+ * as two lines: `["Sat 1 Aug", "8:55pm–9:39pm"]`. Left as a single string, a 140px tooltip breaks it
+ * wherever the text happens to run out ("…, 8:55pm–" / "9:39pm"), which reads as a severed value
+ * rather than a wrapped one. A MIDNIGHT-CROSSING run has no such split — each side of the dash
+ * carries its own date, and separating them would strand a date from its time — so it stays one line
+ * and wraps as it always did.
+ *
+ * `formatRunWhen` is this joined back up, for the callers (the run tables) with a whole row to play
+ * with. One source of truth for the wording; the caller picks the shape.
+ */
+export function formatRunWhenLines(e: RunWhen): string[] {
+  if (e.running) return [e.date, `${e.startTime}${RANGE_DASH}now`];
+  // A run with no end, or one whose end rounds to the same minute, is a point in time not a range.
+  if (e.endTime == null || (e.endTime === e.startTime && !e.endDate)) {
+    return [e.date, e.startTime];
+  }
+  if (e.endDate) {
+    return [
+      `${e.date}, ${e.startTime} ${RANGE_DASH} ${e.endDate}, ${e.endTime}`,
+    ];
+  }
+  return [e.date, `${e.startTime}${RANGE_DASH}${e.endTime}`];
+}
+
 /**
  * One human-readable "when" for a run — the merged replacement for the old Date / Start / End
  * columns. Operates on the strings the server already formatted in the device's display timezone
@@ -214,29 +255,10 @@ const RANGE_DASH = "–";
  *
  * `endDate` is set by the server ONLY when the run ends on a different local day than it started;
  * printing it then is the point of this function. Without it a midnight-crossing run reads
- * "Mon 27 Jul, 23:40–01:15", which quietly implies both times are on the Monday.
+ * "Mon 27 Jul, 11:40pm–1:15am", which quietly implies both times are on the Monday.
  */
-export function formatRunWhen(e: {
-  /** Start date, "EEE d MMM". */
-  date: string;
-  /** Start time, "HH:mm". */
-  startTime: string;
-  /** End date, "EEE d MMM" — only when it differs from `date`; else null/undefined. */
-  endDate?: string | null;
-  /** End time, "HH:mm"; null for an open run. */
-  endTime: string | null;
-  /** True while the run is still going. */
-  running?: boolean;
-}): string {
-  if (e.running) return `${e.date}, ${e.startTime}${RANGE_DASH}now`;
-  // A run with no end, or one whose end rounds to the same minute, is a point in time not a range.
-  if (e.endTime == null || (e.endTime === e.startTime && !e.endDate)) {
-    return `${e.date}, ${e.startTime}`;
-  }
-  if (e.endDate) {
-    return `${e.date}, ${e.startTime} ${RANGE_DASH} ${e.endDate}, ${e.endTime}`;
-  }
-  return `${e.date}, ${e.startTime}${RANGE_DASH}${e.endTime}`;
+export function formatRunWhen(e: RunWhen): string {
+  return formatRunWhenLines(e).join(", ");
 }
 
 /**

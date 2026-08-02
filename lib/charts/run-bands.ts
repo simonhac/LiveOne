@@ -101,7 +101,43 @@ export function runBandsForSeries(
 }
 
 /**
- * Widen `[startMs, endMs]` outward to the chart's own sample instants.
+ * How far past the enclosing sample a boundary may walk to reach the foot of the band's ramp.
+ * A bound on a long slow decline, not a tuning knob — the walk terminates on its own the moment the
+ * band stops falling. Four samples is 20 minutes on the D chart.
+ */
+const MAX_RAMP_SAMPLES = 4;
+
+/**
+ * Step outward from `from` while the band is still descending — i.e. to the foot of its ramp.
+ *
+ * `step` is -1 at the run's start (walking earlier, down the rising edge) and +1 at its end.
+ * "Strictly smaller" rather than "is zero" because the band rarely reaches zero in one interval: the
+ * last interval of a real session is a PARTIAL AVERAGE, so the descent is 7.2 → 1.5 → 0 and an
+ * exact-zero test would never fire on the 1.5. The monotone test needs no threshold and stops by
+ * itself — on the flat (0 → 0) and equally on a genuine continuation into a second session, which is
+ * what keeps back-to-back runs from swallowing each other.
+ *
+ * An undefined value stops the walk: a gap BREAKS the drawn band, so a vertical placed there would
+ * have nothing to clip against and would leave the outline open on that side.
+ */
+function walkRamp(
+  from: number,
+  step: -1 | 1,
+  values: readonly (number | null | undefined)[],
+): number {
+  let i = from;
+  for (let n = 0; n < MAX_RAMP_SAMPLES; n++) {
+    const here = values[i];
+    const next = values[i + step];
+    if (here == null || next == null) break;
+    if (!(next < here)) break;
+    i += step;
+  }
+  return i;
+}
+
+/**
+ * Widen `[startMs, endMs]` outward to the foot of the band's own ramp at each end.
  *
  * 🛑 Without this the outline does not trace the band it is outlining. A detector closes a run at
  * its last on-sample (offset by half an interval under `midpoint` boundaries), which lands PART WAY
@@ -109,30 +145,48 @@ export function runBandsForSeries(
  * shape, leaving a sliver of un-outlined band beside it and reading as a misalignment rather than as
  * the (real) few minutes of difference it is.
  *
- * Snapping outward to the enclosing samples puts each vertical edge exactly on a VERTEX of the
- * drawn band, where the silhouette's own rise and fall are, so the outline closes on the shape.
- * The cost is at most one sample interval of visual width at each end — smaller than the detector's
- * own boundary uncertainty, and it never shrinks the run below what actually happened.
+ * Two steps. Snapping outward to the enclosing SAMPLES puts each vertical edge on a VERTEX of the
+ * drawn band. That is necessary but not sufficient: the vertex it lands on is the band's SHOULDER,
+ * and the descent to zero happens over the interval beyond it — so the outline still drops to the
+ * axis before the fill does. Walking on down the ramp (`walkRamp`) puts the vertical where the band
+ * itself ends, and the top-edge stroke then traces the fall instead of cutting across it.
+ *
+ * The cost is a few sample intervals of visual width at each end — smaller than the detector's own
+ * boundary uncertainty, and it never shrinks the run below what actually happened.
  *
  * Geometry only: the tooltip still reports the run's own figures.
  */
-export function snapToSamples(
+export function snapToBandEdges(
   startMs: number,
   endMs: number,
   timestamps: readonly Date[],
+  values?: readonly (number | null | undefined)[],
 ): { startMs: number; endMs: number } {
   if (timestamps.length === 0) return { startMs, endMs };
-  let lo = startMs;
-  let hi = endMs;
-  for (const t of timestamps) {
-    const ms = t.getTime();
-    if (ms <= startMs) lo = ms;
+
+  // The last sample at or before the start, and the first at or after the end. -1 means the boundary
+  // is outside the grid entirely, and there is no vertex to snap — or to walk — from.
+  let lo = -1;
+  let hi = -1;
+  for (let i = 0; i < timestamps.length; i++) {
+    const ms = timestamps[i].getTime();
+    if (ms <= startMs) lo = i;
     if (ms >= endMs) {
-      hi = ms;
+      hi = i;
       break;
     }
   }
-  return { startMs: lo, endMs: hi };
+
+  return {
+    startMs:
+      lo < 0
+        ? startMs
+        : timestamps[values ? walkRamp(lo, -1, values) : lo].getTime(),
+    endMs:
+      hi < 0
+        ? endMs
+        : timestamps[values ? walkRamp(hi, 1, values) : hi].getTime(),
+  };
 }
 
 /** The run's renewable share, or null when it can't be stated honestly. */

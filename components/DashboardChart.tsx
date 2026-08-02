@@ -18,7 +18,7 @@ import {
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
-import { snapToSamples, type RunBand } from "@/lib/charts/run-bands";
+import { snapToBandEdges, type RunBand } from "@/lib/charts/run-bands";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
 import type {
   ChartData,
@@ -45,7 +45,15 @@ import type {
 const SOC_DOMAIN: [number, number] = [0, 100];
 
 /**
- * Where a hovered run is, and what to place its panel against — all in viewport coordinates.
+ * Where a hovered run is, and what to place its panel against — all in the CHART'S OWN coordinates
+ * (origin at the top-left of this component's box, which is also the svg's).
+ *
+ * 🛑 Not viewport coordinates, and not measured with `getBoundingClientRect`. These come straight
+ * out of the same `geo` that drew the band, so they are geometry rather than a snapshot of where the
+ * page happened to be scrolled to — which is what lets the caller anchor the panel with a plain
+ * `position: absolute` and have it travel with the chart for free. Measured viewport coords went
+ * stale the moment anything scrolled, and chasing that with a scroll listener is a JS answer to a
+ * question CSS already answers.
  *
  * `plot` is the PLOT BOX, not the SVG's: centring on the svg would pull the panel down by half the
  * time-axis gutter, so it would sit visibly low against the data it describes.
@@ -70,11 +78,19 @@ export interface RunTooltipAnchor {
  *
  * The darkening is black rather than a tint of the series colour: it has to read the same way over
  * every band the stack might give it, and it must not become a colour a legend could be looked up by.
+ *
+ * It is applied as DIAGONAL STRIPES, not a flat wash — half the tile carries the darkening and half
+ * is fully transparent. A wash dims the band, which reads as "this data is lesser"; a texture reads
+ * as "this region is marked", which is what a run is. Averaged over the tile it is half the ink a
+ * flat wash of the same colour would lay down, which is what keeps it subtle.
  */
 const RUN_FILL = "rgba(0, 0, 0, 0.14)";
 const RUN_FILL_HOVER = "rgba(0, 0, 0, 0.26)";
 const RUN_EDGE = "rgba(255, 255, 255, 0.45)";
 const RUN_EDGE_HOVER = "rgba(255, 255, 255, 0.95)";
+/** Stripe pitch and duty, in px — see `patternUnits` on the pattern for why these are not fractions. */
+const RUN_STRIPE_TILE = 8;
+const RUN_STRIPE_WIDTH = 4;
 
 /**
  * Stroke width for a stacked band's upper edge — a hairline.
@@ -117,11 +133,10 @@ type StackedProps = CommonProps & {
   runBands?: readonly RunBand[];
   hoveredRunId?: string | null;
   /**
-   * `at` is the anchor for the card's tooltip, in VIEWPORT coordinates: the run's own left and right
-   * edges (so the panel can sit beside the region rather than covering the thing it describes) plus
-   * this chart's box to place and clamp against. Viewport rather than chart-relative because
-   * `NodeTooltip` — the panel both this and the Sankey render — is `position: fixed`. Absent when
-   * the hover ends.
+   * `at` is the anchor for the card's tooltip, in this chart's own coordinates: the run's left and
+   * right edges (so the panel can sit beside the region rather than covering the thing it describes)
+   * plus the plot box to place and clamp against. Absent when the hover ends. See
+   * {@link RunTooltipAnchor} for why these are not viewport coordinates.
    */
   onHoverRun?: (band: RunBand | null, at?: RunTooltipAnchor) => void;
 };
@@ -411,18 +426,57 @@ export default function DashboardChart(props: DashboardChartProps) {
           props.variant === "stacked-areas" &&
           props.runBands?.length
             ? (() => {
-                const byKey = new Map(stacked.map((b) => [b.key, b]));
+                // `stacked` and `series` are index-aligned, so the band's own VALUES come along with
+                // its path — `snapToBandEdges` needs them to find the foot of the band's ramp.
+                const byKey = new Map(
+                  stacked.map((b, i) => [
+                    b.key,
+                    { ...b, values: series[i].values },
+                  ]),
+                );
+                const stripeId = `${clipPrefix}-stripe`;
+                const stripeHoverId = `${clipPrefix}-stripe-hover`;
                 return (
                   <g data-testid="run-bands">
+                    {/* One pair of patterns for the whole chart, not one per run, so the texture is
+                        continuous across every run drawn on it.
+
+                        `patternUnits="userSpaceOnUse"` rather than the `objectBoundingBox` default:
+                        the pitch has to be a fixed number of PIXELS. As a fraction of each run's own
+                        box, a three-hour session and a ten-minute one would carry visibly different
+                        textures. The tile is painted only where the rect is, so the other half is
+                        fully transparent rather than a lighter wash. */}
+                    <defs>
+                      {[
+                        [stripeId, RUN_FILL],
+                        [stripeHoverId, RUN_FILL_HOVER],
+                      ].map(([id, fill]) => (
+                        <pattern
+                          key={id}
+                          id={id}
+                          width={RUN_STRIPE_TILE}
+                          height={RUN_STRIPE_TILE}
+                          patternUnits="userSpaceOnUse"
+                          patternTransform="rotate(45)"
+                        >
+                          <rect
+                            width={RUN_STRIPE_WIDTH}
+                            height={RUN_STRIPE_TILE}
+                            fill={fill}
+                          />
+                        </pattern>
+                      ))}
+                    </defs>
                     {props.runBands.map((run, i) => {
                       const band = byKey.get(run.seriesId);
                       if (!band?.d) return null;
-                      // Snap to the drawn sample grid so the outline lands on the band's own
-                      // vertices — see `snapToSamples`.
-                      const span = snapToSamples(
+                      // Snap out to the foot of the band's own ramp so the outline traces the rise
+                      // and fall rather than cutting across them — see `snapToBandEdges`.
+                      const span = snapToBandEdges(
                         run.startMs,
                         run.endMs,
                         timestamps,
+                        band.values,
                       );
                       const x0 = geo.x(new Date(span.startMs));
                       const x1 = geo.x(new Date(span.endMs));
@@ -440,16 +494,16 @@ export default function DashboardChart(props: DashboardChartProps) {
                           key={run.id}
                           data-run={run.id}
                           style={{ cursor: "pointer" }}
-                          onPointerEnter={(e) => {
-                            const box =
-                              e.currentTarget.ownerSVGElement?.getBoundingClientRect();
-                            if (!box) return;
+                          onPointerEnter={() => {
+                            // `x0`/`x1` are plot-relative (they come from the translated group), so
+                            // adding the plot's own offset puts them in the chart's box — the box
+                            // the panel is positioned inside. No measurement, nothing to go stale.
                             props.onHoverRun?.(run, {
-                              x0: box.left + geo.plot.left + x0,
-                              x1: box.left + geo.plot.left + x1,
+                              x0: geo.plot.left + x0,
+                              x1: geo.plot.left + x1,
                               plot: {
-                                left: box.left + geo.plot.left,
-                                top: box.top + geo.plot.top,
+                                left: geo.plot.left,
+                                top: geo.plot.top,
                                 width: geo.plot.width,
                                 height: geo.plot.height,
                               },
@@ -473,7 +527,7 @@ export default function DashboardChart(props: DashboardChartProps) {
                           <path
                             d={band.d}
                             clipPath={`url(#${rectId})`}
-                            fill={hovered ? RUN_FILL_HOVER : RUN_FILL}
+                            fill={`url(#${hovered ? stripeHoverId : stripeId})`}
                             stroke="none"
                           />
                           <path

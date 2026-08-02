@@ -27,6 +27,7 @@ import {
   type CountableTimeInterval,
 } from "d3-time";
 import { format } from "date-fns";
+import { formatTime12h } from "@/lib/fe-date-format";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
 
 export interface TimeTick {
@@ -49,8 +50,8 @@ const CHAR_PX = 6;
 /**
  * Breathing room **per line of label**, not a flat gap.
  *
- * A two-line `[weekday, date]` label is visually heavier than a one-line `HH:mm` of similar width and
- * needs more horizontal separation to stay readable. Calibrated against the densities the canvas
+ * A two-line `[weekday, date]` label is visually heavier than a one-line clock time of similar width
+ * and needs more horizontal separation to stay readable. Calibrated against the densities the canvas
  * charts actually shipped — at an 812 px plot this reproduces D≈13 labels (canvas: 12), W 8 (8),
  * M 8 (8) and Y 13 (13) — while thinning properly on a phone, which the old count-based ladder never
  * did.
@@ -59,8 +60,10 @@ const GAP_PER_LINE_PX = 30;
 
 /** Space one labelled tick needs, text plus breathing room. */
 function slotPx(lines: string[]): number {
-  return Math.max(...lines.map((l) => l.length)) * CHAR_PX +
-    GAP_PER_LINE_PX * lines.length;
+  return (
+    Math.max(...lines.map((l) => l.length)) * CHAR_PX +
+    GAP_PER_LINE_PX * lines.length
+  );
 }
 
 /**
@@ -71,11 +74,7 @@ function slotPx(lines: string[]): number {
  * desktop and a 360 px phone, where those two-line `[weekday, date]` labels overlap. Density is a
  * property of the space available, not of how many days happen to be in the window.
  */
-function fitSkip(
-  candidates: number,
-  slot: number,
-  plotWidth: number,
-): number {
+function fitSkip(candidates: number, slot: number, plotWidth: number): number {
   if (candidates <= 1 || plotWidth <= 0) return 1;
   const maxLabels = Math.max(1, Math.floor(plotWidth / slot));
   return Math.max(1, Math.ceil(candidates / maxLabels));
@@ -92,7 +91,7 @@ function intervalFor(range: ChartTimeRange): CountableTimeInterval {
  * Ticks for `[windowStart, windowEnd]`, gridlines and labels together.
  *
  * Per period, matching what the Chart.js axis renders today:
- *  - **D** — hourly gridlines, `HH:mm` on every second one (so labels read 2-hourly).
+ *  - **D** — hourly gridlines, `h:mma` ("12am", "2am") on every second one (so labels read 2-hourly).
  *  - **W** — daily gridlines, every one labelled `[EEE, d MMM]` across two lines.
  *  - **M** — gridlines every 2nd/3rd/4th day by count, each labelled `[EEE, d MMM]`. Unlike D, the
  *    skipped days get no gridline at all (see the note at the call site).
@@ -117,10 +116,23 @@ export function buildTimeTicks(
   if (range === "D") {
     // D is the one period that keeps its UNLABELLED gridlines: the canvas genuinely drew them
     // (24 gridlines to 12 labels), so thinning here removes labels, never lines.
-    const skip = Math.max(2, fitSkip(values.length, slotPx(["00:00"]), plotWidth));
+    // Sized on "12am" — the widest label this axis actually draws, now that it reads 12-hour. Every
+    // D tick is on the hour, so the minutes are always ":00" and are dropped.
+    const skip = Math.max(
+      2,
+      fitSkip(values.length, slotPx(["12am"]), plotWidth),
+    );
     return values.map((value, i) => ({
       value,
-      label: i % skip === 0 ? [format(value, "HH:mm")] : null,
+      label:
+        i % skip === 0
+          ? [
+              formatTime12h(
+                { hour: value.getHours(), minute: value.getMinutes() },
+                { omitZeroMinutes: true },
+              ),
+            ]
+          : null,
     }));
   }
 
