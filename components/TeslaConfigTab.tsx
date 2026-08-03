@@ -2,59 +2,19 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/queries";
 import { Moon } from "lucide-react";
+import {
+  TESLA_POLL_DEFAULTS,
+  MONTHLY_CREDIT,
+  CHARGING_HOURS,
+  estimatePolls,
+  type TeslaPollConfig,
+} from "@/lib/vendors/tesla/poll-config";
 
-interface TeslaConfig {
-  wakeToPoll: boolean;
-  idlePollMinutes: number;
-  chargingPollMinutes: number;
-}
+type TeslaConfig = TeslaPollConfig;
+const DEFAULTS = TESLA_POLL_DEFAULTS;
 
-// Mirrors the adapter defaults in lib/vendors/tesla/adapter.ts (legacy behaviour).
-const DEFAULTS: TeslaConfig = {
-  wakeToPoll: true,
-  idlePollMinutes: 15,
-  chargingPollMinutes: 5,
-};
 const MIN_MINUTES = 1;
 const MAX_MINUTES = 24 * 60;
-
-// --- Fleet API cost model (rough, for the live estimate on the card) ---
-// Tesla pay-per-use rates and the per-account monthly credit.
-const DATA_REQUEST_COST = 0.002; // getVehicles + getVehicleData each cost this
-const WAKE_COST = 0.02; // wake_up command
-const MONTHLY_CREDIT = 10;
-const DAYS_PER_MONTH = 30;
-// Assumption baked into the estimate: 2 h/day charging (car online), 22 h/day idle. We
-// further assume the car is asleep when idle (the costly case), so the wake toggle matters.
-const CHARGING_HOURS = 2;
-const IDLE_HOURS = 24 - CHARGING_HOURS;
-
-interface PollEstimate {
-  pollsPerDay: number;
-  monthlyCost: number;
-  monthlyAfterCredit: number;
-}
-
-function estimatePolls(config: TeslaConfig): PollEstimate {
-  const idlePolls = (IDLE_HOURS * 60) / config.idlePollMinutes;
-  const chargingPolls = (CHARGING_HOURS * 60) / config.chargingPollMinutes;
-  const pollsPerDay = idlePolls + chargingPolls;
-
-  // Charging: car is online -> getVehicles + getVehicleData, no wake.
-  const chargingCost = chargingPolls * 2 * DATA_REQUEST_COST;
-  // Idle (assume asleep): wake-to-poll adds a wake + the vehicle_data read; otherwise we
-  // only spend the getVehicles call that checks the sleep state.
-  const idleCost = config.wakeToPoll
-    ? idlePolls * (2 * DATA_REQUEST_COST + WAKE_COST)
-    : idlePolls * DATA_REQUEST_COST;
-
-  const monthlyCost = (chargingCost + idleCost) * DAYS_PER_MONTH;
-  return {
-    pollsPerDay,
-    monthlyCost,
-    monthlyAfterCredit: Math.max(0, monthlyCost - MONTHLY_CREDIT),
-  };
-}
 
 const formatCost = (n: number): string =>
   n >= 10 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`;
