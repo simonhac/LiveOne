@@ -61,10 +61,13 @@ export async function GET(request: NextRequest) {
               authResult.subject,
               wantsReadings,
             );
+            // Same viewer-relative field as the single-subject leg, and it must ride INSIDE each
+            // per-id entry (they are `queryKeys.data(id)` cache-seed values) rather than on the
+            // envelope, so a batch entry and a single fetch have the identical shape.
             return [
               id,
               transformDates(
-                payload,
+                { ...payload, canWrite: viewerCanWrite(authResult) },
                 subjectTimezoneOffsetMin(authResult.subject),
               ),
             ] as const;
@@ -104,10 +107,16 @@ export async function GET(request: NextRequest) {
       buildDevicePayload(subject, wantsReadings, t),
     );
     // Return with automatic date formatting and field renaming
-    // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime)
-    return jsonResponse(payload, subjectTimezoneOffsetMin(subject), {
-      headers: serverTimingHeaders(t),
-    });
+    // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime).
+    // `canWrite` is VIEWER-relative, so it attaches here and NOT inside `buildDevicePayload`, which
+    // is shared with the viewer-less SSR seed (`getDeviceDataForCache` — "access is the CALLER's
+    // responsibility"). It is the display-layer input for the EV charge-control cog; the action
+    // route re-authorizes with `requireWrite`, so this is courtesy, never authority.
+    return jsonResponse(
+      { ...payload, canWrite: viewerCanWrite(authResult) },
+      subjectTimezoneOffsetMin(subject),
+      { headers: serverTimingHeaders(t) },
+    );
   } catch (error) {
     console.error("API Error:", error);
     return NextResponse.json(
@@ -118,6 +127,25 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+/**
+ * The single emission point for the viewer's write access, shared by both legs.
+ *
+ * 🛑 The `userId != null` term is a MASK over a pre-existing quirk in `requireDashboardAccess`:
+ * `isOwner` is `ctx.userId === ownerUserId`, so on an OWNERLESS (public) subject an anonymous
+ * caller compares `null === null` and comes back `canWrite: true` while owning nothing (pinned in
+ * `lib/__tests__/api-auth.test.ts`). A caller with no identity is never shown controls. No
+ * privilege is actually at stake — the action route re-authorizes and the Clerk middleware 404s
+ * anonymous POSTs — but without the mask we would render a cog for a command the server refuses.
+ *
+ * A share-token viewer arrives with `canWrite: false, userId: null` and stays false on both terms.
+ */
+function viewerCanWrite(auth: {
+  canWrite: boolean;
+  userId: string | null;
+}): boolean {
+  return auth.canWrite === true && auth.userId != null;
 }
 
 /**
