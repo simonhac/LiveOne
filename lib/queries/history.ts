@@ -89,7 +89,9 @@ export function historyQuery(p: HistoryQueryParams) {
         : undefined;
     },
     refetchInterval: p.paused ? false : refetchInterval,
-    refetchOnWindowFocus: false,
+    // Live windows catch up on focus — see the note in lib/queries/siteData.ts. A settled window
+    // is immutable (`staleTime: Infinity`), so focus never refetches it regardless.
+    refetchOnWindowFocus: isLive,
     enabled: p.enabled ?? true,
   });
 }

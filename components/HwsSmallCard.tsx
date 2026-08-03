@@ -4,6 +4,7 @@ import { Thermometer } from "lucide-react";
 import Tile from "@/components/Tile";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { ROLE_CHROME } from "@/lib/role-chrome";
+import { sparklineGeometry } from "@/lib/charts/sparkline";
 
 /**
  * Compact "Hot Water" mini-card: the current modelled faucet temperature (°C, orange) from the
@@ -11,6 +12,10 @@ import { ROLE_CHROME } from "@/lib/role-chrome";
  * value/measurement time and the `sparkValues` (the 24h history series) are passed in from the
  * hot-water tile plugin (components/dashboard/tiles/hot-water.tsx), which orchestrates the generic
  * /api/history fetch. No data fetching here.
+ *
+ * `sparkValues` is POSITIONAL: one slot per interval of the requested window, null where there is no
+ * reading. Do not compact it before passing it in — see `lib/charts/sparkline.ts` for why a
+ * null-stripped array renders as a lie.
  */
 export default function HwsSmallCard({
   faucetC,
@@ -20,7 +25,7 @@ export default function HwsSmallCard({
   staleThresholdSeconds,
 }: {
   faucetC: number | null;
-  sparkValues: number[];
+  sparkValues: (number | null)[];
   measurementTime?: Date;
   heating: boolean;
   staleThresholdSeconds: number;
@@ -40,7 +45,7 @@ export default function HwsSmallCard({
       measurementTime={measurementTime}
       extra={
         <div className="space-y-0.5">
-          {sparkValues.length >= 2 && <Sparkline values={sparkValues} />}
+          <Sparkline values={sparkValues} />
           {heating && <div className="text-xs text-orange-300">Heating</div>}
         </div>
       }
@@ -48,36 +53,35 @@ export default function HwsSmallCard({
   );
 }
 
-/** Minimal inline SVG sparkline (no charting dep), scaled to the value range over the window. */
-function Sparkline({ values }: { values: number[] }) {
-  const W = 100;
-  const H = 24;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const pts = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * W;
-      const y = H - ((v - min) / span) * H;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
+const SPARK_W = 100;
+const SPARK_H = 24;
+
+/**
+ * Minimal inline SVG sparkline (no charting dep). Geometry — including where the line breaks and how
+ * far right it reaches — lives in `sparklineGeometry`; this only paints it.
+ */
+function Sparkline({ values }: { values: (number | null)[] }) {
+  const { segments } = sparklineGeometry(values, SPARK_W, SPARK_H);
+  if (segments.length === 0) return null;
   return (
     <svg
-      viewBox={`0 0 ${W} ${H}`}
+      viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
       preserveAspectRatio="none"
       className="w-full h-5"
       aria-hidden
     >
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={CHART_COLORS.hotWater}
-        strokeWidth={1.5}
-        vectorEffect="non-scaling-stroke"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
+      {segments.map((points, i) => (
+        <polyline
+          key={i}
+          points={points}
+          fill="none"
+          stroke={CHART_COLORS.hotWater}
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      ))}
     </svg>
   );
 }
