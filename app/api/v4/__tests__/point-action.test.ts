@@ -7,10 +7,13 @@
  *  1. 🛑 **A benign vendor decline is a 200, not an error.** Tesla answers `not_charging` when
  *     you stop an already-idle charge. Every layer below returns that as data; the route must
  *     not "helpfully" upgrade it to a 4xx/5xx.
- *  2. 🛑 **`requireDeviceAccess(..., {requireWrite:true})` is the ONLY gate, and it runs before
- *     anything dispatches.** A `NextResponse` from it is passed straight through. Combined with
- *     this route's deliberate absence from `shareableRoutes`/`publicRoutes`, that is what makes
- *     "a share token never authorizes a write" true.
+ *  2. 🛑 **`requireDeviceAccess(..., {requireWrite:true, requireOwner:true})` is the ONLY gate,
+ *     and it runs before anything dispatches.** A `NextResponse` from it is passed straight
+ *     through. `requireOwner` is the owner-only control rule — enforcement lives in the helper and
+ *     is proved end to end (helper + both routes, real auth) in
+ *     `app/api/__tests__/control-owner-only.test.ts`; what this suite pins is that the route ASKS
+ *     for it. Combined with this route's deliberate absence from `shareableRoutes`/`publicRoutes`,
+ *     that is what makes "a share token never authorizes a write" true.
  *  3. **The confirmation re-poll fires on success and ONLY on success** — a decline changed
  *     nothing, so paying for a vendor read would be pure waste. (The web tier must never write
  *     KV itself; the re-poll is the sanctioned freshness path.)
@@ -108,10 +111,16 @@ describe("resolution and authorization", () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it("authorizes the point's DEVICE, requiring write", async () => {
+  it("🛑 authorizes the point's DEVICE, requiring write AND ownership", async () => {
+    // `requireOwner` is the whole control rule at this call site: only the device's owner may
+    // command it, so a non-owner ADMIN is refused. Dropping it here would silently re-open the
+    // control plane to every admin.
     await call({ action: "turn_on" });
     expect(mockAuth.mock.calls[0][1]).toBe(10);
-    expect(mockAuth.mock.calls[0][2]).toEqual({ requireWrite: true });
+    expect(mockAuth.mock.calls[0][2]).toEqual({
+      requireWrite: true,
+      requireOwner: true,
+    });
   });
 });
 

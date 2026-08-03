@@ -34,10 +34,16 @@ import { Point } from "@/lib/ids";
  * 🛑 A BENIGN vendor decline is a **200 with `ok:false`** plus a `reason` (Tesla answers
  * `not_charging` when you stop an idle charge). It is not an error and must never 500.
  *
- * 🛑 Auth is `requireDeviceAccess(..., {requireWrite:true})` and nothing else. This route is
- * deliberately absent from BOTH `publicRoutes` and `shareableRoutes` (`lib/route-matchers.ts`),
- * so the Clerk middleware rejects it before the handler runs for anyone holding only a share
- * token: a share token never authorizes a write.
+ * 🛑 Auth is `requireDeviceAccess(..., {requireWrite:true, requireOwner:true})`. `requireOwner`
+ * is the CONTROL rule and is strictly narrower than write access: **only the device's owner may
+ * command it** — a non-owner ADMIN is refused 403, and an ownerless device is commandable by
+ * nobody (`ownsSubject` refuses two nulls). Admins keep their config write access everywhere
+ * else; this is about actuating hardware, and the vendor command runs on the OWNER's stored
+ * credentials. See `lib/control/ownership.ts`.
+ *
+ * This route is also deliberately absent from BOTH `publicRoutes` and `shareableRoutes`
+ * (`lib/route-matchers.ts`), so the Clerk middleware rejects it before the handler runs for
+ * anyone holding only a share token: a share token never authorizes a write.
  */
 export async function POST(
   request: NextRequest,
@@ -62,6 +68,7 @@ export async function POST(
 
     const auth = await requireDeviceAccess(request, resolved.deviceRid, {
       requireWrite: true,
+      requireOwner: true,
     });
     if (auth instanceof NextResponse) return auth;
 
@@ -70,10 +77,7 @@ export async function POST(
       value?: unknown;
     } | null;
     if (!body || typeof body !== "object") {
-      return NextResponse.json(
-        { error: "Invalid JSON body" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
     if (!isPointActionName(body.action)) {
       return NextResponse.json(

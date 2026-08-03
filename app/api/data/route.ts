@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
             return [
               id,
               transformDates(
-                { ...payload, canWrite: viewerCanWrite(authResult) },
+                { ...payload, canControl: viewerCanControl(authResult) },
                 subjectTimezoneOffsetMin(authResult.subject),
               ),
             ] as const;
@@ -108,12 +108,12 @@ export async function GET(request: NextRequest) {
     );
     // Return with automatic date formatting and field renaming
     // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime).
-    // `canWrite` is VIEWER-relative, so it attaches here and NOT inside `buildDevicePayload`, which
+    // `canControl` is VIEWER-relative, so it attaches here and NOT inside `buildDevicePayload`, which
     // is shared with the viewer-less SSR seed (`getDeviceDataForCache` — "access is the CALLER's
     // responsibility"). It is the display-layer input for the EV charge-control cog; the action
-    // route re-authorizes with `requireWrite`, so this is courtesy, never authority.
+    // route re-authorizes with `requireOwner`, so this is courtesy, never authority.
     return jsonResponse(
-      { ...payload, canWrite: viewerCanWrite(authResult) },
+      { ...payload, canControl: viewerCanControl(authResult) },
       subjectTimezoneOffsetMin(subject),
       { headers: serverTimingHeaders(t) },
     );
@@ -130,22 +130,20 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * The single emission point for the viewer's write access, shared by both legs.
+ * The single emission point for the viewer's CONTROL access, shared by both legs.
  *
- * 🛑 The `userId != null` term is a MASK over a pre-existing quirk in `requireDashboardAccess`:
- * `isOwner` is `ctx.userId === ownerUserId`, so on an OWNERLESS (public) subject an anonymous
- * caller compares `null === null` and comes back `canWrite: true` while owning nothing (pinned in
- * `lib/__tests__/api-auth.test.ts`). A caller with no identity is never shown controls. No
- * privilege is actually at stake — the action route re-authorizes and the Clerk middleware 404s
- * anonymous POSTs — but without the mask we would render a cog for a command the server refuses.
+ * 🛑 This is `isOwner`, NOT `canWrite`. The control plane is owner-only — a non-owner admin is
+ * refused by `requireDeviceAccess({requireOwner:true})` — so emitting `canWrite` (owner OR admin)
+ * would render a cog that 403s on press, which is worse than no cog. It is derived from the SAME
+ * auth result the read was authorized with; there is no second authorization path here.
  *
- * A share-token viewer arrives with `canWrite: false, userId: null` and stays false on both terms.
+ * `DashboardAuthContext.isOwner` is already strict (`ownsSubject`), so the old anonymous mask is
+ * subsumed: an anonymous caller on an OWNERLESS subject compares `null === null` on the raw
+ * `canWrite` quirk (still pinned in `lib/__tests__/api-auth.test.ts`) but owns nothing, and a
+ * share-token viewer arrives `isOwner: false`.
  */
-function viewerCanWrite(auth: {
-  canWrite: boolean;
-  userId: string | null;
-}): boolean {
-  return auth.canWrite === true && auth.userId != null;
+function viewerCanControl(auth: { isOwner: boolean }): boolean {
+  return auth.isOwner === true;
 }
 
 /**
