@@ -254,10 +254,13 @@ describe("requireDashboardAccess — `prefer` selects the entity that gets autho
     // ⚠️ PRE-EXISTING QUIRK, pinned here rather than blessed. `isOwner` is `ctx.userId === ownerUserId`,
     // so on an OWNERLESS (public) area an anonymous caller compares `null === null` and is treated as
     // the owner — hence `canWrite: true` for a caller who owns nothing. Identical on `main` at
-    // `18083af2` (`lib/api-auth.ts:265`), so PR 2 neither introduced nor widened it, and it is currently
-    // LATENT: no route reads `DashboardAuthContext.canWrite` (the dashboard data routes are read-only,
-    // and `requireDeviceAccess` has its own separate `requireWrite` gate). Asserted so that the day
-    // someone DOES read this field, this test fails loudly instead of handing them a false grant.
+    // `18083af2` (`lib/api-auth.ts:265`), so PR 2 neither introduced nor widened it. It is no longer
+    // LATENT: `/api/data` now emits `canWrite` on the wire (it drives the EV charge-control cog), and
+    // it MASKS this exact case at the emission point — `canWrite === true && userId != null`, so an
+    // anonymous caller on an ownerless subject is never shown controls (see
+    // `app/api/__tests__/data-canwrite.test.ts`, case c). The assertion below deliberately still pins
+    // the HELPER's raw behaviour, unmasked, so the quirk cannot drift unnoticed; fixing it inside
+    // `requireDashboardAccess` is a separate change.
     expect(res.canWrite).toBe(true);
   });
 

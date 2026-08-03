@@ -38,6 +38,14 @@ export interface AreaDatum {
     displayTimezone: string | null;
   };
   latest?: LatestPointValues;
+  /**
+   * Viewer write access to THIS subject (owner or admin), emitted by `/api/data` from
+   * `requireDashboardAccess` and masked false for anonymous callers and share-token viewers.
+   *
+   * ABSENT on SSR-seeded payloads (`getDeviceDataForCache` knows no viewer) — treat absent as
+   * false; the first client refetch (≤30 s, `refetchInterval`) fills it in.
+   */
+  canWrite?: boolean;
 }
 
 /** The subject fields common to both legs — the drop-in replacement for the old `datum?.device`. */

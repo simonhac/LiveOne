@@ -135,7 +135,11 @@ function V4TileCell({
         datum?.device?.config?.updateCadenceSeconds,
       )}
       showGrid={showGrid}
-      canControl={false}
+      // The viewer's write access to the subject this tile FETCHED with — for an ev tile inside a
+      // multi-device area section that is the AREA, not the car. Acceptable: the action route
+      // re-authorizes against the device with `requireWrite`, so a mismatch fails safe (the cog
+      // shows, the command 403s). Absent (SSR seed) or a share-token viewer → false.
+      canControl={datum?.canWrite === true}
     />
   );
 }

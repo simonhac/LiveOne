@@ -14,15 +14,23 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, AlertCircle, Play, Square } from "lucide-react";
 import { queryKeys } from "@/lib/queries/keys";
+import { teslaChargeControlTargets } from "@/lib/control/point-ref";
 
 interface LatestValue {
   value: number | string | boolean;
+  /** The source point's `pt_` TypeID — what the v4 action route is addressed by. */
+  pointReference?: string;
 }
 
-type Command =
-  | { command: "charge_start" | "charge_stop" }
-  | { command: "set_charge_limit"; percent: number }
-  | { command: "set_charging_amps"; amps: number };
+/** One button press, resolved to a point action. */
+type ChargeAction = {
+  /** Pending-state discriminator (was the legacy command string). */
+  key: "start" | "stop" | "limit" | "amps";
+  /** The target point's `pt_` TypeID. */
+  pt: string;
+  action: "turn_on" | "turn_off" | "set_value";
+  value?: number;
+};
 
 interface TeslaControlDialogProps {
   systemId: number;
@@ -58,7 +66,17 @@ const AMPS_MAX = 48;
 /**
  * Compact Tesla charge-control dialog (opened from the cog on the Tesla card).
  * Start/stop charging, set the charge limit (50–100%), and set the charging amps.
- * Each action posts to /api/devices/{id}/tesla/command and refetches the dashboard.
+ *
+ * Each action posts to the generic command plane, `POST /api/v4/points/{pt_}/action`
+ * `{action, value?}`, and then refetches the dashboard. The target `pt_` ids come from the
+ * `pointReference` the latest-values map already carries — nothing is hardcoded.
+ *
+ * Two expected degradations, neither of which gets a bypass or a legacy-route fallback:
+ * - a MISSING KV entry (the new `ev.charge/active` point before the device's first poll on the
+ *   post-deploy code) leaves its target null, which disables Start/Stop;
+ * - a PRESENT entry whose server-side `points.control` is still NULL gets the route's 400
+ *   "Point is not controllable", surfaced inline by the error Alert below. Both self-heal on the
+ *   next poll (≤12 min idle / 2 min charging) via the mint drift-heal.
  */
 export default function TeslaControlDialog({
   systemId,
@@ -67,6 +85,9 @@ export default function TeslaControlDialog({
   latest,
 }: TeslaControlDialogProps) {
   const queryClient = useQueryClient();
+
+  // The three controllable points, resolved from the payload's own point identity.
+  const targets = teslaChargeControlTargets(latest);
 
   const chargingState = str(latest, "ev.charge/state");
   const isCharging = chargingState === "Charging";
@@ -83,25 +104,28 @@ export default function TeslaControlDialog({
   const [pending, setPending] = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: async (cmd: Command) => {
-      const response = await fetch(`/api/devices/${systemId}/tesla/command`, {
+    mutationFn: async ({ pt, action, value }: ChargeAction) => {
+      const response = await fetch(`/api/v4/points/${pt}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cmd),
+        body: JSON.stringify(
+          value !== undefined ? { action, value } : { action },
+        ),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || "Command failed");
       }
-      return data as { success: boolean; reason: string | null };
+      return data as { ok: boolean; reason: string | null };
     },
-    onMutate: (cmd) => {
+    onMutate: ({ key }) => {
       setError(null);
-      setPending(cmd.command);
+      setPending(key);
     },
     onSuccess: async (data) => {
-      // Tesla can return success:false with a benign reason (e.g. "not_charging").
-      if (!data.success && data.reason) {
+      // A benign vendor decline is a 200 with ok:false plus a reason (Tesla answers
+      // "not_charging" when you stop an idle charge) — inline, never an error.
+      if (!data.ok && data.reason) {
         setError(`Tesla declined: ${data.reason}`);
       }
       await queryClient.invalidateQueries({
@@ -131,10 +155,16 @@ export default function TeslaControlDialog({
             <Button
               variant="outline"
               className="flex-1"
-              disabled={busy || isCharging}
-              onClick={() => mutation.mutate({ command: "charge_start" })}
+              disabled={busy || isCharging || !targets.active}
+              onClick={() =>
+                mutation.mutate({
+                  key: "start",
+                  pt: targets.active as string,
+                  action: "turn_on",
+                })
+              }
             >
-              {pending === "charge_start" ? (
+              {pending === "start" ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Play className="mr-2 h-4 w-4" />
@@ -144,10 +174,16 @@ export default function TeslaControlDialog({
             <Button
               variant="outline"
               className="flex-1"
-              disabled={busy || !isCharging}
-              onClick={() => mutation.mutate({ command: "charge_stop" })}
+              disabled={busy || !isCharging || !targets.active}
+              onClick={() =>
+                mutation.mutate({
+                  key: "stop",
+                  pt: targets.active as string,
+                  action: "turn_off",
+                })
+              }
             >
-              {pending === "charge_stop" ? (
+              {pending === "stop" ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Square className="mr-2 h-4 w-4" />
@@ -173,15 +209,21 @@ export default function TeslaControlDialog({
               />
               <Button
                 size="sm"
-                disabled={busy || limit === Math.round(currentLimit ?? -1)}
+                disabled={
+                  busy ||
+                  limit === Math.round(currentLimit ?? -1) ||
+                  !targets.limitSoc
+                }
                 onClick={() =>
                   mutation.mutate({
-                    command: "set_charge_limit",
-                    percent: limit,
+                    key: "limit",
+                    pt: targets.limitSoc as string,
+                    action: "set_value",
+                    value: limit,
                   })
                 }
               >
-                {pending === "set_charge_limit" ? (
+                {pending === "limit" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   "Set"
@@ -207,12 +249,21 @@ export default function TeslaControlDialog({
               />
               <Button
                 size="sm"
-                disabled={busy || amps === Math.round(currentAmps ?? -1)}
+                disabled={
+                  busy ||
+                  amps === Math.round(currentAmps ?? -1) ||
+                  !targets.limitAmps
+                }
                 onClick={() =>
-                  mutation.mutate({ command: "set_charging_amps", amps })
+                  mutation.mutate({
+                    key: "amps",
+                    pt: targets.limitAmps as string,
+                    action: "set_value",
+                    value: amps,
+                  })
                 }
               >
-                {pending === "set_charging_amps" ? (
+                {pending === "amps" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   "Set"

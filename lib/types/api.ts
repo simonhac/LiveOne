@@ -24,6 +24,13 @@ export interface LatestPointValue {
   measurementTime: Date; // Auto-deserialized from ISO8601 string by JSON revivor
   metricUnit: string; // Unit of measurement (e.g., "W", "kWh", "%")
   displayName: string; // Display name from point_info
+  /**
+   * The source point's `pt_` TypeID — see `lib/latest-values-store.ts` (`LatestValue.pointReference`).
+   * ⚠️ Optional AND possibly the pre-config-v4 `"{systemId}.{pointIndex}"` grammar in stale KV
+   * entries: validate with `Point.parse` (`lib/control/point-ref.ts`) and treat anything
+   * unrecognised as absent.
+   */
+  pointReference?: string;
 }
 
 /**
