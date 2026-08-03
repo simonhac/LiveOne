@@ -39,3 +39,55 @@ export function datumCanControl(
 ): boolean {
   return datum?.canControl === true;
 }
+
+/** The shape `datumCanControlPoint` reads — a `/api/data` payload, however it was fetched. */
+export interface ControlAwareDatum {
+  canControl?: boolean;
+  /** `devices.rid`s in this payload the viewer OWNS (`/api/data`'s `viewerControllableDevices`). */
+  canControlDevices?: number[];
+  latest?: Record<string, { sourceSystemId?: number } | null | undefined>;
+  /**
+   * The payload's discriminated subject block: exactly one of these is present
+   * (`lib/dashboard/serve-data.ts`). `device` present means subject and target are the same thing
+   * by construction, which is the only case the stale-entry fallback below may trust.
+   */
+  device?: unknown;
+  area?: unknown;
+}
+
+/**
+ * The client-side control gate for a control that commands a SPECIFIC point — the one the EV tile's
+ * cog needs.
+ *
+ * 🛑 `datumCanControl` answers about the payload's SUBJECT, and for a tile filed inside a
+ * multi-device AREA that is the area, not the car. An area owner who does not own the car would get
+ * a cog that 403s on press: it fails safe, but a control that visibly exists and then refuses is a
+ * defect. So gate on ownership of the device that would ACTUALLY be commanded, which the payload
+ * already tells us: each latest entry carries its producing device (`sourceSystemId`), and
+ * `canControlDevices` lists the ones this viewer owns. Same server-side ownership rule, no second
+ * authorization path, no extra request.
+ *
+ * `paths` is tried in order — the caller's command targets, most specific first. The first one
+ * PRESENT in `latest` names the device; if none are present there is nothing to command anyway.
+ *
+ * Fallbacks, all fail-safe:
+ * - an SSR-seeded payload (no viewer, so neither field) → false, as before;
+ * - an entry from a stale KV write with no `sourceSystemId` → the subject-level flag, but ONLY on a
+ *   DEVICE subject, where subject and target are the same thing by construction. On an area subject
+ *   that is exactly the case this function exists to refuse, so it stays false.
+ */
+export function datumCanControlPoint(
+  datum: ControlAwareDatum | null | undefined,
+  paths: readonly string[],
+): boolean {
+  if (!datum) return false;
+  for (const path of paths) {
+    const entry = datum.latest?.[path];
+    if (!entry) continue;
+    const handle = entry.sourceSystemId;
+    if (typeof handle !== "number")
+      return datum.device != null && datumCanControl(datum);
+    return datum.canControlDevices?.includes(handle) === true;
+  }
+  return false;
+}

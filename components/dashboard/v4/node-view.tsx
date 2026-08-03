@@ -22,7 +22,10 @@ import type React from "react";
 import type { ReactNode } from "react";
 import { Layers, AlertTriangle } from "lucide-react";
 import { Area } from "@/lib/ids";
-import { datumCanControl } from "@/lib/control/ownership";
+import {
+  datumCanControl,
+  datumCanControlPoint,
+} from "@/lib/control/ownership";
 import type { AreaId } from "@/lib/ids";
 import {
   type DashboardV4,
@@ -136,12 +139,18 @@ function V4TileCell({
         datum?.device?.config?.updateCadenceSeconds,
       )}
       showGrid={showGrid}
-      // Does the viewer OWN the subject this tile FETCHED with — for an ev tile inside a
-      // multi-device area section that is the AREA, not the car. Acceptable: the action route
-      // re-authorizes against the device with `requireOwner`, so a mismatch fails safe (the cog
-      // shows, the command 403s). Absent (SSR seed), a share-token viewer, or an ADMIN who does
-      // not own the device → false; the server would refuse that admin, so we must not offer it.
-      canControl={datumCanControl(datum)}
+      // Does the viewer own the DEVICE THIS TILE WOULD COMMAND — not the subject it fetched
+      // under. For an ev tile inside a multi-device area section those differ (the subject is the
+      // AREA, whose owner need not own the car), and the old subject-level answer rendered a cog
+      // that 403ed on press. `datumCanControlPoint` reads the producing device off the payload's
+      // own latest entries, so client and server now agree without a second authorization path.
+      // A tile that declares no control paths keeps the subject-level answer. Absent (SSR seed), a
+      // share-token viewer, or an ADMIN who does not own the device → false.
+      canControl={
+        plugin.controlPaths
+          ? datumCanControlPoint(datum, plugin.controlPaths)
+          : datumCanControl(datum)
+      }
     />
   );
 }

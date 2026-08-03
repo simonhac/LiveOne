@@ -103,7 +103,7 @@ const pointRow = {
 const AU = Automation.generate();
 
 /** An automation the OWNER authored, on the owner's own car. `enabled` is the variable. */
-function storedRow(enabled: boolean) {
+function storedRow(enabled: boolean): Record<string, unknown> {
   return {
     id: Automation.toUuid(AU),
     areaId: Area.toUuid(AREA),
@@ -126,7 +126,7 @@ function storedRow(enabled: boolean) {
     armedContext: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
-  } as never;
+  };
 }
 
 /** `POST /api/v4/points/{pt_}/action` — the control plane's entry point. */
@@ -179,7 +179,9 @@ beforeEach(() => {
     id: Area.toUuid(AREA),
     ownerClerkUserId: "user_owner",
   } as never);
-  jest.mocked(automationStore.getById).mockResolvedValue(storedRow(false));
+  jest
+    .mocked(automationStore.getById)
+    .mockResolvedValue(storedRow(false) as never);
   jest
     .mocked(automationStore.patch)
     .mockImplementation(async (_id, fields) =>

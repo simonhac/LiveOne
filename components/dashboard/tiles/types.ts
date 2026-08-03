@@ -46,6 +46,16 @@ export interface TilePlugin {
     props: Pick<TileRenderProps, "latest" | "data" | "showGrid">,
   ): boolean;
   /**
+   * The logical paths of the points this tile's controls would COMMAND, most specific first.
+   *
+   * 🛑 Declaring them is what lets the host gate the control on ownership of the device that would
+   * actually be commanded, rather than on the subject the tile happened to FETCH under — an EV tile
+   * inside a multi-device area fetches the AREA, and the area's owner need not own the car. Omit it
+   * and the tile's `canControl` falls back to the subject-level flag (correct for every tile that
+   * renders no control at all).
+   */
+  controlPaths?: readonly string[];
+  /**
    * Extra classes for this tile's loading placeholder, when the tile does not have the standard
    * `Tile` box model. The tile grid is `auto-rows-fr`, so a placeholder that measures differently
    * from the tile it stands in for resizes the ENTIRE row when the swap happens — the two

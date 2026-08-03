@@ -26,12 +26,20 @@ jest.mock("@/lib/dashboard/subject", () => ({
   subjectForHandle: jest.fn(),
   subjectTimezoneOffsetMin: () => 600,
 }));
+jest.mock("@/lib/registry/device-config", () => ({
+  DeviceConfigRegistry: { deviceByHandle: jest.fn() },
+}));
 
 import { GET } from "@/app/api/data/route";
 import { requireDashboardAccess } from "@/lib/api-auth";
 import { buildDevicePayload } from "@/lib/dashboard/serve-data";
 import { resolveWireAddress } from "@/lib/dashboard/subject";
-import { datumCanControl } from "@/lib/control/ownership";
+import {
+  datumCanControl,
+  datumCanControlPoint,
+} from "@/lib/control/ownership";
+import { TESLA_CHARGE_CONTROL_PATHS } from "@/lib/control/point-ref";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const mockAuth = requireDashboardAccess as jest.MockedFunction<
   typeof requireDashboardAccess
@@ -45,6 +53,18 @@ const mockAddress = resolveWireAddress as jest.MockedFunction<
 
 const SUBJECT = { kind: "device", handle: 10 };
 
+/**
+ * Who owns what, for `viewerControllableDevices`. Device 10 is the CAR (owned by `user_owner`);
+ * device 11 is the house inverter, owned by `user_area_owner` — who also owns the AREA that files
+ * both. That split is the whole point of the per-device leg.
+ */
+const DEVICE_OWNERS: Record<number, string | null> = {
+  10: "user_owner",
+  11: "user_area_owner",
+  12: null,
+};
+const mockDeviceByHandle = jest.mocked(DeviceConfigRegistry.deviceByHandle);
+
 const PAYLOAD = {
   device: { id: 10, deviceId: "dv_test", vendorType: "tesla" },
   latest: {
@@ -54,6 +74,41 @@ const PAYLOAD = {
       metricUnit: "%",
       displayName: "Battery",
       pointReference: "pt_01k9abcdefghjkmnpqrstvwxyz",
+      sourceSystemId: 10,
+    },
+  },
+};
+
+/**
+ * An AREA payload: the car's control points (device 10) and the house inverter's (device 11) in one
+ * `latest` map, exactly as an area's fan-out produces. `sourceSystemId` is the field that tells them
+ * apart — it is already on every entry (`lib/latest-values-store.ts`), which is why the per-device
+ * ownership leg needs no second authorization path.
+ */
+const AREA_PAYLOAD = {
+  area: { id: 1000002, areaId: "ar_test" },
+  latest: {
+    "ev.battery/soc": {
+      value: 62,
+      logicalPath: "ev.battery/soc",
+      metricUnit: "%",
+      displayName: "Battery",
+      sourceSystemId: 10,
+    },
+    "ev.charge/active": {
+      value: false,
+      logicalPath: "ev.charge/active",
+      metricUnit: "bool",
+      displayName: "Charging",
+      pointReference: "pt_01k9abcdefghjkmnpqrstvwxyz",
+      sourceSystemId: 10,
+    },
+    "bidi.grid/power": {
+      value: 1200,
+      logicalPath: "bidi.grid/power",
+      metricUnit: "W",
+      displayName: "Grid",
+      sourceSystemId: 11,
     },
   },
 };
@@ -85,6 +140,13 @@ beforeEach(() => {
   mockAddress.mockResolvedValue({ ok: true, handle: 10, prefer: "device" });
   mockBuild.mockResolvedValue(
     PAYLOAD as unknown as Awaited<ReturnType<typeof buildDevicePayload>>,
+  );
+  mockDeviceByHandle.mockImplementation(
+    async (handle: number) =>
+      ({
+        id: handle,
+        ownerClerkUserId: DEVICE_OWNERS[handle] ?? null,
+      }) as never,
   );
 });
 
@@ -211,5 +273,135 @@ describe("GET /api/data — canControl on the wire", () => {
     );
     const ownerDatum = await (await GET(req("systemId=10"))).json();
     expect(datumCanControl(ownerDatum)).toBe(true);
+  });
+});
+
+/**
+ * 🛑 The per-DEVICE control leg — `canControlDevices`, and the client gate it feeds.
+ *
+ * The seam this closes: an EV tile filed inside a multi-device AREA fetches the AREA, so the
+ * subject-level `canControl` answers about the area. An area owner who does not own the car would
+ * therefore be shown a cog that 403s on press — client and server disagreeing, which is a defect
+ * even though it fails safe. The fix keeps ONE authorization rule (`ownsSubject`, the same one
+ * `requireDeviceAccess({requireOwner:true})` applies) and simply reports it per device, off the
+ * `sourceSystemId` every latest entry already carries.
+ *
+ * `components/` is not a jest root, so the rendered cog cannot be asserted directly; but
+ * `node-view.tsx` gates it on exactly `datumCanControlPoint(datum, plugin.controlPaths)`, called
+ * here against the ACTUAL emitted body. Server and client are proved to agree.
+ */
+describe("GET /api/data — canControlDevices (the tile commands a DEVICE, not the subject)", () => {
+  function areaCtx(userId: string | null, isOwner: boolean) {
+    return {
+      subject: { kind: "area", handle: 1000002 },
+      userId,
+      canRead: true,
+      canWrite: isOwner,
+      isOwner,
+      viaShareToken: false,
+    } as unknown as Awaited<ReturnType<typeof requireDashboardAccess>>;
+  }
+
+  beforeEach(() => {
+    mockAddress.mockResolvedValue({
+      ok: true,
+      handle: 1000002,
+      prefer: "area",
+    });
+    mockBuild.mockResolvedValue(
+      AREA_PAYLOAD as unknown as Awaited<ReturnType<typeof buildDevicePayload>>,
+    );
+  });
+
+  it("🛑 the AREA owner who does NOT own the car: canControl:true, but the cog does NOT render", async () => {
+    mockAuth.mockResolvedValue(areaCtx("user_area_owner", true));
+    const body = await (await GET(req("areaId=ar_test"))).json();
+
+    // The subject-level flag is honestly true — they DO own the area.
+    expect(body.canControl).toBe(true);
+    // …but only the inverter is theirs to command. The car is not in the list.
+    expect(body.canControlDevices).toEqual([11]);
+    // The client gate, on the real body: no cog. Previously this was `true` and 403ed on press.
+    expect(datumCanControlPoint(body, TESLA_CHARGE_CONTROL_PATHS)).toBe(false);
+  });
+
+  it("the CAR's owner, viewing the same area, does get the cog", async () => {
+    mockAuth.mockResolvedValue(areaCtx("user_owner", false));
+    const body = await (await GET(req("areaId=ar_test"))).json();
+
+    // Not the area's owner — the subject-level flag is false — yet the car IS theirs.
+    expect(body.canControl).toBe(false);
+    expect(body.canControlDevices).toEqual([10]);
+    expect(datumCanControlPoint(body, TESLA_CHARGE_CONTROL_PATHS)).toBe(true);
+  });
+
+  it("🛑 a non-owner ADMIN owns nothing in the area, so commands nothing", async () => {
+    mockAuth.mockResolvedValue(areaCtx("user_admin", false));
+    const body = await (await GET(req("areaId=ar_test"))).json();
+    expect(body.canControlDevices).toEqual([]);
+    expect(datumCanControlPoint(body, TESLA_CHARGE_CONTROL_PATHS)).toBe(false);
+  });
+
+  it("🛑 an anonymous / share-token viewer never reaches the registry at all", async () => {
+    mockAuth.mockResolvedValue(areaCtx(null, false));
+    const body = await (await GET(req("areaId=ar_test"))).json();
+    expect(body.canControlDevices).toEqual([]);
+    expect(datumCanControlPoint(body, TESLA_CHARGE_CONTROL_PATHS)).toBe(false);
+    expect(mockDeviceByHandle).not.toHaveBeenCalled();
+  });
+
+  it("🛑 an OWNERLESS device in the area is commandable by nobody (null === null)", async () => {
+    mockBuild.mockResolvedValue({
+      ...AREA_PAYLOAD,
+      latest: {
+        "ev.charge/active": {
+          ...AREA_PAYLOAD.latest["ev.charge/active"],
+          sourceSystemId: 12,
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof buildDevicePayload>>);
+    mockAuth.mockResolvedValue(areaCtx("user_area_owner", true));
+    const body = await (await GET(req("areaId=ar_test"))).json();
+    expect(body.canControlDevices).toEqual([]);
+    expect(datumCanControlPoint(body, TESLA_CHARGE_CONTROL_PATHS)).toBe(false);
+  });
+
+  it("the DEVICE leg is unchanged: the car's owner on the car's own page still gets the cog", async () => {
+    mockAddress.mockResolvedValue({ ok: true, handle: 10, prefer: "device" });
+    mockBuild.mockResolvedValue({
+      ...PAYLOAD,
+      latest: {
+        ...PAYLOAD.latest,
+        "ev.charge/active": {
+          value: false,
+          logicalPath: "ev.charge/active",
+          metricUnit: "bool",
+          displayName: "Charging",
+          sourceSystemId: 10,
+        },
+      },
+    } as unknown as Awaited<ReturnType<typeof buildDevicePayload>>);
+    mockAuth.mockResolvedValue(
+      ctx({ userId: "user_owner", canWrite: true, isOwner: true }),
+    );
+    const body = await (await GET(req("systemId=10"))).json();
+    expect(body.canControl).toBe(true);
+    expect(body.canControlDevices).toEqual([10]);
+    expect(datumCanControlPoint(body, TESLA_CHARGE_CONTROL_PATHS)).toBe(true);
+  });
+
+  it("the batch leg carries canControlDevices inside each entry too", async () => {
+    mockAddress.mockResolvedValue({ ok: true, handle: 10, prefer: "device" });
+    mockBuild.mockResolvedValue(
+      AREA_PAYLOAD as unknown as Awaited<ReturnType<typeof buildDevicePayload>>,
+    );
+    mockAuth.mockImplementation(async (_request, systemId) =>
+      systemId === 10
+        ? ctx({ userId: "user_owner", canWrite: true, isOwner: true })
+        : ctx({ userId: null, canWrite: false, via: true }),
+    );
+    const body = await (await GET(req("systemId=10,11"))).json();
+    expect(body.data["10"].canControlDevices).toEqual([10]);
+    expect(body.data["11"].canControlDevices).toEqual([]);
   });
 });
