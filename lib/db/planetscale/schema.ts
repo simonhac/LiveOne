@@ -1110,9 +1110,46 @@ export const deviceState = pgTable("device_state", {
 // automations is the HA-automation-shaped limit store: mode='once' (this-session timer that
 // self-disarms) vs 'standing'. trigger/action are a CLOSED v1 vocabulary
 // (trigger: {kind:'charge-session', source, afterMinutes?, afterKwh?}; action:
-// {kind:'point-action', pointId, action:'turn_off'}), typed as bare jsonb HERE and given
-// .$type<> by the automations PR (PR-F) once lib/automations/ exists.
+// {kind:'point-action', pointId, action:'turn_off'}) — typed below (PR-F) and applied with
+// .$type<>. `PointControl`'s precedent applies: the vocabulary's home is this file, never
+// re-homed, and `lib/automations/types.ts` imports it from here (type-only).
 // ============================================================================
+
+/**
+ * Closed v1 automation trigger source. Stored forms hold RAW uuids; the wire speaks TypeIDs
+ * (`lib/automations/wire.ts` translates, per field).
+ */
+export type AutomationTriggerSource =
+  | { kind: "derivation"; derivationId: string } // raw derivations.id uuid
+  | { kind: "point"; pointId: string }; // raw points.id uuid (the per-cable-session counter)
+
+/** Closed v1 trigger vocabulary. At least one of afterMinutes/afterKwh is present, each > 0. */
+export interface AutomationTrigger {
+  kind: "charge-session";
+  source: AutomationTriggerSource;
+  afterMinutes?: number;
+  afterKwh?: number;
+}
+
+/** Closed v1 action vocabulary — the WHOLE set. */
+export interface AutomationAction {
+  kind: "point-action";
+  pointId: string; // raw points.id uuid of the writable point
+  action: "turn_off";
+}
+
+/**
+ * Per-arming STATE (not config), snapshotted at arm time. Times are epoch-ms.
+ *
+ * `baselineKwh` exists because `charge_energy_added` is energy-above-plug-in-baseline: see the
+ * `armed_context` column comment below. Absent for a derivation source (the run carries its own
+ * energy) and for a minutes-only rule.
+ */
+export interface AutomationArmedContext {
+  baselineKwh?: number; // point-source only: counter value at arm
+  baselineAt?: number; // epoch-ms of that counter reading
+}
+
 export const pointCommands = pgTable(
   "point_commands",
   {
@@ -1164,8 +1201,11 @@ export const automations = pgTable(
     name: text("name").notNull(),
     enabled: boolean("enabled").notNull().default(true),
     mode: text("mode").notNull(), // CHECK below: 'once' self-disarms after firing; 'standing' re-arms
-    trigger: jsonb("trigger").notNull(), // v1 closed vocabulary; $type<> lands with PR-F
-    action: jsonb("action").notNull(), // v1 closed vocabulary; $type<> lands with PR-F
+    // 🛑 `$type<>` is a WRITER convenience only — it is a TypeScript annotation over untrusted
+    // jsonb and changes no SQL. Readers still parse (`lib/automations/types.ts`); a hand-edited
+    // row must degrade to a logged error, not a crash.
+    trigger: jsonb("trigger").notNull().$type<AutomationTrigger>(), // v1 closed vocabulary
+    action: jsonb("action").notNull().$type<AutomationAction>(), // v1 closed vocabulary
     armedAt: timestamp("armed_at"), // set while the trigger source is live (charging); cleared when not
     lastTriggeredAt: timestamp("last_triggered_at"),
     // Idempotence anchor: the derived run's start_time when this automation last fired. Compared
@@ -1178,10 +1218,7 @@ export const automations = pgTable(
     // re-entering `Charging` on an overnight top-up already reads ~42 kWh, so an absolute kWh
     // threshold would fire instantly. PR-F snapshots {baselineKwh, baselineAt} here at arm time and
     // compares the delta; `armed_at` is a timestamp and `trigger` is config, so neither can hold it.
-    armedContext: jsonb("armed_context").$type<Record<
-      string,
-      unknown
-    > | null>(),
+    armedContext: jsonb("armed_context").$type<AutomationArmedContext | null>(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
