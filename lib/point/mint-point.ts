@@ -29,8 +29,13 @@
  *   resolve device uuid → upsert `points` (allocates id + rid) → project onto the returned row
  *
  * The upsert deliberately does NOT overwrite `name` (the user-customisable display name), `rid`,
- * `device_id` or `id`. It DOES refresh `default_name` + `transform`, exactly as the pre-terminal
- * `point_info` upsert did, so re-minting an existing point still tracks a vendor rename.
+ * `device_id` or `id`. It DOES refresh `default_name`, `transform` + `control`, exactly as the
+ * pre-terminal `point_info` upsert did for the first two, so re-minting an existing point still
+ * tracks a vendor rename — and, since the command plane landed, a vendor GAINING or LOSING a
+ * control descriptor. `control` is in the refreshed set precisely because every point that needs
+ * one was already minted before `points.control` existed: without it those rows would sit at NULL
+ * forever and every command against them would be rejected. See `PointManager.ensurePointInfo`,
+ * which re-invokes this mint on control drift so the heal actually fires.
  *
  * ## Collision
  *
@@ -44,7 +49,11 @@ import { and, eq } from "drizzle-orm";
 import { uuidv7 } from "uuidv7";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
-import { devices, points } from "@/lib/db/planetscale/schema";
+import {
+  devices,
+  points,
+  type PointControl,
+} from "@/lib/db/planetscale/schema";
 import { derivePointUid } from "@/lib/identifiers/point-uid";
 import { DeviceRegistry } from "@/lib/registry/device-registry";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
@@ -70,6 +79,8 @@ export interface MintedPointRow {
   displayName: string;
   subsystem: string | null;
   transform: string | null;
+  /** Control descriptor; null = a read-only sensor. */
+  control: PointControl | null;
   active: boolean;
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -89,6 +100,14 @@ export interface MintPointSpec {
   displayName?: string;
   subsystem?: string | null;
   transform?: string | null;
+  /**
+   * Control descriptor; null/absent = a read-only sensor.
+   *
+   * Absent CLEARS an existing control (it is in the upsert's SET clause), which is deliberate:
+   * vendor metadata is the single source of truth, so dropping a control there must heal the row
+   * back to read-only rather than stranding a stale writable surface forever.
+   */
+  control?: PointControl | null;
   /** Defaults to true. */
   active?: boolean;
 }
@@ -111,6 +130,7 @@ function toMintedRow(
     displayName: row.name,
     subsystem: row.subsystem,
     transform: row.transform,
+    control: row.control ?? null,
     active: row.active,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -160,6 +180,7 @@ export async function mintPoint(
   const displayName = spec.displayName ?? spec.defaultName;
   const subsystem = spec.subsystem ?? null;
   const transform = spec.transform ?? null;
+  const control = spec.control ?? null;
   const active = spec.active ?? true;
   const now = new Date();
 
@@ -184,12 +205,13 @@ export async function mintPoint(
         defaultName: spec.defaultName,
         subsystem,
         transform,
+        control,
         active,
         createdAt: now,
       })
       .onConflictDoUpdate({
         target: [points.deviceId, points.physicalPath],
-        set: { defaultName: spec.defaultName, transform, updatedAt: now },
+        set: { defaultName: spec.defaultName, transform, control, updatedAt: now },
       })
       .returning();
 

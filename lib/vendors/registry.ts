@@ -1,4 +1,4 @@
-import type { VendorAdapter } from "./types";
+import type { ControlCapability, VendorAdapter } from "./types";
 import { SelectronicAdapter } from "./selectronic/adapter";
 import { EnphaseAdapter } from "./enphase/adapter";
 import { FusherAdapter } from "./fusher/adapter";
@@ -56,6 +56,15 @@ export class VendorRegistry {
   static getAdapter(vendorType: string): VendorAdapter | null {
     this.initialize();
     return this.adapters.get(vendorType.toLowerCase()) || null;
+  }
+
+  /**
+   * The vendor's command capability, or null — most vendors are sensors-only and simply
+   * omit `control`, which is what makes the command plane additive.
+   */
+  static getControlCapability(vendorType: string): ControlCapability | null {
+    this.initialize();
+    return this.adapters.get(vendorType.toLowerCase())?.control ?? null;
   }
 
   /**
