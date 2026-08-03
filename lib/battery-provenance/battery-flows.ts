@@ -108,24 +108,19 @@ export function extractBatteryFlows(
             break;
           }
 
-      // Weight helpers mirroring the core: the DENOMINATOR takes a source's best-known magnitude
-      // (exact, else left endpoint — even when the right endpoint is null); the NUMERATOR
-      // additionally requires both power endpoints when falling back (a mid-interval gap keeps a
-      // source in the pool but out of the allocation → its share falls to `otherChargeKwh`,
-      // unknown provenance, never mis-credited as clean solar).
-      const denomW = (s: FlowSeries): number => {
+      // ONE weight helper, mirroring the core's `sourceWeightsForInterval`: a source's best-known
+      // magnitude — exact energy, else the LEFT endpoint, even when the right endpoint is null.
+      // Numerator and denominator read the same number, so the shares sum to 1 and `otherChargeKwh`
+      // is only ever a genuinely-unattributable source's share. This used to be two helpers, the
+      // numerator additionally demanding both power endpoints; a source with a right-endpoint
+      // dropout then stayed in the pool but out of the allocation, and its share was relabelled
+      // `otherChargeKwh` — energy conserved here, but solar the fold could account for was booked as
+      // unknown provenance. The core leaked the same share outright; both are symmetric now.
+      const weightW = (s: FlowSeries): number => {
         const e = anyExact ? exactAt(s, i) : null;
         if (e !== null) return e;
         const p1 = s.power[i];
         if (p1 === null) return 0;
-        return anyExact ? p1 * dtHours : p1;
-      };
-      const numerW = (s: FlowSeries): number => {
-        const e = anyExact ? exactAt(s, i) : null;
-        if (e !== null) return e;
-        const p1 = s.power[i];
-        const p2 = s.power[i + 1];
-        if (p1 === null || p2 === null) return 0;
         return anyExact ? p1 * dtHours : p1;
       };
 
@@ -133,13 +128,13 @@ export function extractBatteryFlows(
       let totalGen = 0;
       for (const s of sources) {
         if (s === batterySource) continue;
-        totalGen += denomW(s);
+        totalGen += weightW(s);
       }
 
       if (totalGen > 0) {
         let solarW = 0;
-        for (const s of solarSources) solarW += numerW(s);
-        const gridW = gridSource ? numerW(gridSource) : 0;
+        for (const s of solarSources) solarW += weightW(s);
+        const gridW = gridSource ? weightW(gridSource) : 0;
         solarChargeKwh = chargeTotal * (solarW / totalGen);
         gridChargeKwh = chargeTotal * (gridW / totalGen);
         otherChargeKwh = Math.max(

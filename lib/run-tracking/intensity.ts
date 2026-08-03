@@ -241,10 +241,11 @@ export function stepIntensity(
  * When NO source has a known factor the factor stays null and the integrator omits the slice
  * entirely — absent, never $0.00. Unchanged, and the reason the null/zero distinction survives this.
  *
- * The weights are `numerW`, not `denomW`, for the same one-arithmetic reason: the accounting's
- * numerator skips a source whose interval has a mid-interval gap (present in the pool, out of the
- * allocation) while still counting it in the denominator, and a copy that used `denomW` on both sides
- * would silently re-admit it.
+ * The weights are `numerW`, not `denomW`, for the same one-arithmetic reason: read the accounting's
+ * own numerator, never a local re-derivation of it. The two now carry the same magnitudes — `numerW`
+ * is `denomW` with "no datum" spelled `null` — so the choice no longer changes any number; it stays
+ * `numerW` so that if the allocation ever narrows again, this blend narrows with it rather than
+ * silently re-admitting what the matrix dropped.
  */
 export function blendLoadIntensities(
   timeline: number[],
@@ -289,13 +290,14 @@ export function blendLoadIntensities(
     let renNum = 0;
     let anyRen = false;
     // The CONFIDENCE numerator — the same weights and the same `genWForLoad` denominator as the
-    // three above, which is the whole parity claim. A source with `numerW === null` is skipped here
-    // for the same reason the matrix skips it (it gets no edge, so none of its energy can be
-    // estimated) while its `denomW` stays in the pool — so an interval's fractions do NOT sum to 1
-    // when a source is out of the allocation. The matrix leaks that energy identically.
+    // three above, which is the whole parity claim. `Σ numerW == totalGenW`, so an interval's
+    // fractions sum to 1 and every kWh lands in exactly one of priced / estimated. (They did NOT
+    // before the numerator was made symmetric with the denominator: a source with a right-endpoint
+    // dropout used to be skipped here and dropped from the matrix's allocation too, so both leaked
+    // the same energy in the same place. Neither leaks it now.)
     let estimatedW = 0;
     for (let s = 0; s < sources.length; s++) {
-      // `null` = in the pool but out of the allocation, exactly as the accounting reads it. A
+      // `null` = this source has no datum this interval, exactly as the accounting reads it. A
       // negative weight is NOT filtered, also exactly as the accounting reads it — a guard here that
       // the matrix does not have is a divergence, whatever it protects against.
       const w = numerW[s];
