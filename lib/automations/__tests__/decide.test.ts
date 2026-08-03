@@ -523,6 +523,21 @@ describe("pointSourceState", () => {
     ).toBe("active");
   });
 
+  it("🛑 a fresh value that is neither 0 nor 1 is unknown, not active", () => {
+    // The point carries a boolean transform, so nothing else should ever arrive — but `unknown`
+    // is the deliberately SAFE state ("do not act"), and a corrupt reading must fail into it
+    // rather than being read as a live charge and firing a limit.
+    for (const value of [2, -1, 0.5, NaN]) {
+      expect(
+        pointSourceState(
+          { valueKwh: 3, atMs: T0 - MIN },
+          { value, atMs: T0 - MIN },
+          T0,
+        ).status,
+      ).toBe("unknown");
+    }
+  });
+
   it("no sample in the lookback is unknown", () => {
     expect(pointSourceState(null, null, T0).status).toBe("unknown");
   });

@@ -86,6 +86,11 @@ export const RESET_EPSILON_KWH = 5;
  * nor kill one. A `0` at any age inside the lookback is `inactive` — the dangerous direction is
  * stale-1 (which would fire on a car that may have stopped hours ago), not stale-0 (which fails
  * safe by disarming).
+ *
+ * The boolean is read STRICTLY: only `1` is active, only `0` is inactive, anything else is
+ * `unknown`. `ev.charge/active` carries a boolean transform so nothing else should ever arrive,
+ * but `unknown` is the deliberately safe state ("do not act") and a corrupt reading must land
+ * there rather than being treated as a live charge.
  */
 export function pointSourceState(
   counter: { valueKwh: number; atMs: number } | null,
@@ -95,7 +100,8 @@ export function pointSourceState(
   let status: SourceStatus = "unknown";
   if (active) {
     if (active.value === 0) status = "inactive";
-    else if (nowMs - active.atMs <= ACTIVE_FRESH_MS) status = "active";
+    else if (active.value === 1 && nowMs - active.atMs <= ACTIVE_FRESH_MS)
+      status = "active";
   }
   return {
     status,
