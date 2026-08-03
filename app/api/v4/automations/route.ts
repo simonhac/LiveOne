@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireDeviceAccess } from "@/lib/api-auth";
 import { loadAreaForOwner } from "@/lib/areas/http";
-import {
-  loadPointByStemMetric,
-  loadPointByUuid,
-} from "@/lib/control/point-actions";
 import type { AutomationMode } from "@/lib/db/planetscale/schema";
+import { checkReferences } from "@/lib/automations/references";
 import * as store from "@/lib/automations/store";
 import { actionFromWire, automationWire, triggerFromWire } from "@/lib/automations/wire";
 
@@ -92,58 +88,4 @@ export async function POST(request: NextRequest) {
     enabled: body.enabled as boolean | undefined,
   });
   return NextResponse.json({ automation: automationWire(row) }, { status: 201 });
-}
-
-/**
- * Referential + authorization checks for a trigger/action pair. Returns a response to send, or
- * null when everything clears. Shared with the PATCH route, which re-runs the whole set whenever
- * either object is replaced.
- */
-export async function checkReferences(
-  request: NextRequest,
-  areaUuid: string,
-  trigger: { source: { kind: "derivation"; derivationId: string } | { kind: "point"; pointId: string }; afterKwh?: number },
-  action: { pointId: string },
-): Promise<NextResponse | null> {
-  if (trigger.source.kind === "derivation") {
-    // Same-area scoping is what makes the area-owner check above cover the trigger — without it,
-    // owning any area would let a caller follow any derivation by id.
-    const ok = await store.derivationBelongsToArea(
-      trigger.source.derivationId,
-      areaUuid,
-    );
-    if (!ok)
-      return unprocessable("trigger derivation must belong to this area");
-  } else {
-    const loaded = await loadPointByUuid(trigger.source.pointId);
-    if (!loaded) return unprocessable("trigger source point not found");
-    const access = await requireDeviceAccess(request, loaded.deviceRid);
-    if (access instanceof NextResponse) return access;
-    const stem = loaded.point.logicalPath;
-    if (!stem)
-      return unprocessable("trigger source point has no logical path");
-    const sibling = await loadPointByStemMetric(loaded.deviceRid, stem, "active");
-    if (!sibling)
-      return unprocessable(
-        `trigger source point has no ${stem}/active sibling to signal the charge session`,
-      );
-    // The unit trap (a detector's `upperW` in watts against a kW point) must not get a second
-    // life here: a kWh threshold against a non-kWh counter is off by whatever factor.
-    if (trigger.afterKwh !== undefined && loaded.point.unit !== "kWh")
-      return unprocessable(
-        `afterKwh requires a kWh trigger point (this one is in '${loaded.point.unit ?? "?"}')`,
-      );
-  }
-
-  const actionPoint = await loadPointByUuid(action.pointId);
-  if (!actionPoint) return unprocessable("action point not found");
-  // 🛑 WRITE access, not read. See the header.
-  const write = await requireDeviceAccess(request, actionPoint.deviceRid, {
-    requireWrite: true,
-  });
-  if (write instanceof NextResponse) return write;
-  // `points.control` is deliberately NOT checked here: it self-heals on the next poll after a
-  // deploy, and blocking creation during that window would be a confusing dead end. Dispatch-time
-  // validation owns it.
-  return null;
 }
