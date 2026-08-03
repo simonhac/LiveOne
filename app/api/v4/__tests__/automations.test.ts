@@ -6,8 +6,10 @@
  *  1. 🛑 **An automation is a DEFERRED action call.** At fire time the evaluator dispatches with
  *     the DEVICE OWNER's credentials and no session user at all, so creation must clear the same
  *     firewalls the synchronous action route does. Without the
- *     `requireDeviceAccess(..., {requireWrite:true})` on the ACTION point, owning any area at all
- *     would let a caller aim a `turn_off` at someone else's car and have us execute it for them.
+ *     `requireDeviceAccess(..., {requireOwner:true})` on the ACTION point, owning — or merely
+ *     ADMINISTERING — any area at all would let a caller aim a `turn_off` at someone else's car and
+ *     have us execute it for them, on that owner's vendor credentials. Ownership, not write access:
+ *     the area gate and `requireWrite` both admit admins, and the control plane does not.
  *  2. 🛑 **PATCH `{enabled:true}` on a disabled row resets the arming state.** A standing
  *     point-source rule disabled mid-session and re-enabled during a LATER session would otherwise
  *     evaluate armed+active against a weeks-old `armed_at` — the minutes leg fires instantly, a
@@ -74,6 +76,36 @@ const mockSibling = jest.mocked(loadPointByStemMetric);
 const mockStore = jest.mocked(store);
 
 const OWNER = "user_owner";
+
+type AccessOpts = { requireWrite?: boolean; requireOwner?: boolean };
+
+/** Stands in for `requireDeviceAccess` when the caller can read but owns nothing. */
+const refuseUnlessOwner = (async (
+  _req: unknown,
+  _rid: number,
+  opts?: AccessOpts,
+) =>
+  opts?.requireOwner
+    ? NextResponse.json(
+        { error: "Only the device owner can control this device" },
+        { status: 403 },
+      )
+    : opts?.requireWrite
+      ? NextResponse.json({ error: "Write access required" }, { status: 403 })
+      : ({ canWrite: false } as never)) as never;
+
+/**
+ * A non-owner ADMIN: passes every config-write gate (`requireWrite`), fails the control gate.
+ * If the action-point check ever slips back to `requireWrite`, this mock lets it through and the
+ * tests using it go red.
+ */
+const adminNotOwner = (async (_req: unknown, _rid: number, opts?: AccessOpts) =>
+  opts?.requireOwner
+    ? NextResponse.json(
+        { error: "Only the device owner can control this device" },
+        { status: 403 },
+      )
+    : ({ canWrite: true, isAdmin: true } as never)) as never;
 
 function row(over: Partial<AutomationRow> = {}): AutomationRow {
   return {
@@ -331,18 +363,36 @@ describe("POST /api/v4/automations", () => {
     expect((await res.json()).error).toContain("afterKwh requires a kWh");
   });
 
-  it("🛑 403s when the caller lacks WRITE access to the action point's device", async () => {
-    mockDeviceAccess.mockImplementation((async (
-      _req: unknown,
-      _rid: number,
-      opts?: { requireWrite?: boolean },
-    ) =>
-      opts?.requireWrite
-        ? NextResponse.json({ error: "Write access required" }, { status: 403 })
-        : ({ canWrite: false } as never)) as never);
+  it("🛑 403s when the caller does not OWN the action point's device", async () => {
+    mockDeviceAccess.mockImplementation(refuseUnlessOwner);
     const res = await post(good);
     expect(res.status).toBe(403);
     expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 403s a non-owner ADMIN — a deferred command is still a command", async () => {
+    // The gap this closes: `loadAreaForOwner` admits an admin, and `requireWrite` (owner OR admin)
+    // admitted one too — so an admin could park a `turn_off` on someone else's car and have the
+    // cron dispatch it on THAT OWNER's Tesla tokens. The action point must be gated on ownership.
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+    const res = await post(good);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("gates the ACTION point on ownership and the TRIGGER point on read only", async () => {
+    // Discriminates the fix from "requireWrite everywhere": the trigger source may be a point on a
+    // device you merely read (the EV cross-device case); only the thing being COMMANDED needs you
+    // to own it.
+    const res = await post(good);
+    expect(res.status).toBe(201);
+    expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10, {
+      requireOwner: true,
+    });
+    expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10);
   });
 });
 
@@ -401,17 +451,20 @@ describe("PATCH /api/v4/automations/{id}", () => {
     });
   });
 
-  it("an action replace re-checks WRITE access", async () => {
-    mockDeviceAccess.mockImplementation((async (
-      _req: unknown,
-      _rid: number,
-      opts?: { requireWrite?: boolean },
-    ) =>
-      opts?.requireWrite
-        ? NextResponse.json({ error: "Write access required" }, { status: 403 })
-        : ({ canWrite: false } as never)) as never);
+  it("an action replace re-checks OWNERSHIP", async () => {
+    mockDeviceAccess.mockImplementation(refuseUnlessOwner);
     const res = await patch({ action });
     expect(res.status).toBe(403);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 a non-owner ADMIN cannot re-point an automation at a device they don't own", async () => {
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+    const res = await patch({ action });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
     expect(mockStore.patch).not.toHaveBeenCalled();
   });
 

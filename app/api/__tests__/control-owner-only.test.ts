@@ -1,5 +1,7 @@
 /**
- * 🛑 **Only the device OWNER may command a device** — proved at the WIRE, on BOTH control routes.
+ * 🛑 **Only the device OWNER may command a device** — proved at the WIRE, on EVERY route that can
+ * reach `dispatchPointAction`: the v4 action route, the legacy Tesla shim, and automation creation
+ * (a command with a delay).
  *
  * Unlike the per-route suites (`app/api/v4/__tests__/point-action.test.ts`,
  * `app/api/devices/[systemId]/tesla/command/__tests__/route.test.ts`), `@/lib/api-auth` is NOT
@@ -11,9 +13,11 @@
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { NextRequest } from "next/server";
-import { Point } from "@/lib/ids";
+import { Area, Automation, Derivation, Point } from "@/lib/ids";
 
 const POINT = Point.generate();
+const AREA = Area.generate();
+const DX = Derivation.generate();
 
 jest.mock("@clerk/nextjs/server", () => ({
   auth: jest.fn(async () => ({ userId: null as string | null })),
@@ -34,6 +38,13 @@ jest.mock("@/lib/control/point-actions", () => ({
   dispatchPointAction: jest.fn(),
 }));
 jest.mock("@/lib/control/repoll", () => ({ scheduleRepoll: jest.fn() }));
+// The AUTOMATIONS path: a deferred command. Everything except the ownership gate is stubbed, so
+// what these cases exercise is the real `requireDeviceAccess` inside `checkReferences`.
+jest.mock("@/lib/areas/http", () => ({ loadAreaForOwner: jest.fn() }));
+jest.mock("@/lib/automations/store", () => ({
+  create: jest.fn(),
+  derivationBelongsToArea: jest.fn(async () => true),
+}));
 
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "@/lib/auth-utils";
@@ -43,8 +54,11 @@ import {
   loadPointByStemMetric,
   loadPointByUuid,
 } from "@/lib/control/point-actions";
+import { loadAreaForOwner } from "@/lib/areas/http";
+import * as automationStore from "@/lib/automations/store";
 import { POST as pointAction } from "@/app/api/v4/points/[id]/action/route";
 import { POST as teslaCommand } from "@/app/api/devices/[systemId]/tesla/command/route";
+import { POST as createAutomation } from "@/app/api/v4/automations/route";
 
 const mockClerk = jest.mocked(auth) as unknown as jest.Mock;
 const mockIsAdmin = jest.mocked(isUserAdmin);
@@ -114,6 +128,26 @@ beforeEach(() => {
     reason: null,
     commandId: "cmd-1",
   });
+  // The area gate the automations routes use is owner-OR-ADMIN; pass it, so what the cases below
+  // discriminate is purely the device-ownership gate on the ACTION point.
+  jest.mocked(loadAreaForOwner).mockResolvedValue({
+    area: { id: Area.toUuid(AREA) },
+  } as never);
+  jest.mocked(automationStore.derivationBelongsToArea).mockResolvedValue(true);
+  jest.mocked(automationStore.create).mockImplementation(
+    async (values) =>
+      ({
+        ...values,
+        id: Automation.toUuid(Automation.generate()),
+        enabled: true,
+        armedAt: null,
+        lastTriggeredAt: null,
+        lastTriggeredRunStart: null,
+        armedContext: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      }) as never,
+  );
 });
 
 describe.each(ROUTES)("%s — owner-only", (_name, call) => {
@@ -154,6 +188,66 @@ describe.each(ROUTES)("%s — owner-only", (_name, call) => {
     signIn("user_stranger");
     expect((await call()).status).toBe(403);
     expect(mockDispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("automations — the DEFERRED command path", () => {
+  // 🛑 The third way to reach `dispatchPointAction`. An automation is a command with a delay: the
+  // cron evaluator fires it later with NO session and on the DEVICE OWNER's vendor credentials.
+  // The area gate (`loadAreaForOwner`) admits admins, so if the action point were merely
+  // write-gated a non-owner admin could park a `turn_off` on someone else's car and have us
+  // execute it — the owner-only rule undone by a route it never guarded.
+  function createLimit() {
+    return createAutomation(
+      new NextRequest("http://localhost/api/v4/automations", {
+        method: "POST",
+        body: JSON.stringify({
+          areaId: AREA,
+          mode: "once",
+          trigger: {
+            kind: "charge-session",
+            source: { kind: "derivation", derivationId: DX },
+            afterMinutes: 60,
+          },
+          action: { kind: "point-action", pointId: POINT, action: "turn_off" },
+        }),
+      }),
+    );
+  }
+
+  it("the OWNER can create one (the happy path still works)", async () => {
+    signIn("user_owner");
+    expect((await createLimit()).status).toBe(201);
+    expect(automationStore.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("🛑 a non-owner ADMIN is refused 403 and NOTHING is stored", async () => {
+    signIn("user_admin", true);
+    const res = await createLimit();
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
+    expect(automationStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 nobody can aim one at an OWNERLESS device — not an admin, not an anonymous caller", async () => {
+    device(null);
+    for (const who of [
+      () => signIn("user_admin", true),
+      () => signIn(null),
+    ] as const) {
+      jest.mocked(automationStore.create).mockClear();
+      who();
+      expect((await createLimit()).status).toBe(403);
+      expect(automationStore.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a signed-in stranger is refused", async () => {
+    signIn("user_stranger");
+    expect((await createLimit()).status).toBe(403);
+    expect(automationStore.create).not.toHaveBeenCalled();
   });
 });
 

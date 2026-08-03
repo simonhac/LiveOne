@@ -3,8 +3,11 @@
  *
  * 🛑 An automation is a DEFERRED action call: at fire time the evaluator dispatches with the DEVICE
  * OWNER's credentials and no session user at all. So whoever CREATES (or re-points) one must clear
- * the same firewalls the synchronous action route does — otherwise owning any area would let a
- * caller aim a `turn_off` at someone else's car and have us execute it on their behalf.
+ * the same firewalls the synchronous action route does — otherwise owning (or administering) any
+ * area would let a caller aim a `turn_off` at someone else's car and have us execute it on their
+ * behalf. That firewall is OWNERSHIP of the action point's device (`requireOwner`), which is
+ * strictly narrower than the area gate above it: `loadAreaForOwner` admits admins, and the control
+ * plane does not.
  *
  * Lives here rather than in the route module because both `POST /api/v4/automations` and
  * `PATCH /api/v4/automations/[id]` need it, and a Next.js `route.ts` may only export HTTP verbs and
@@ -64,11 +67,16 @@ export async function checkReferences(
 
   const actionPoint = await loadPointByUuid(action.pointId);
   if (!actionPoint) return unprocessable("action point not found");
-  // 🛑 WRITE access, not read. See the header.
-  const write = await requireDeviceAccess(request, actionPoint.deviceRid, {
-    requireWrite: true,
+  // 🛑 OWNERSHIP, not write access. See the header: this is a deferred command, so it must clear
+  // the CONTROL gate the synchronous action route clears, not the config-write gate. `requireWrite`
+  // (owner OR admin) would let a non-owner admin park a `turn_off` on someone else's car and have
+  // the cron dispatch it on that owner's vendor credentials — the exact thing
+  // `lib/control/ownership.ts` exists to refuse. `requireOwner` is strictly narrower (an owner
+  // always has write), and it refuses the `null === null` match on an ownerless device too.
+  const owned = await requireDeviceAccess(request, actionPoint.deviceRid, {
+    requireOwner: true,
   });
-  if (write instanceof NextResponse) return write;
+  if (owned instanceof NextResponse) return owned;
   // `points.control` is deliberately NOT checked here: it self-heals on the next poll after a
   // deploy, and blocking creation during that window would be a confusing dead end. Dispatch-time
   // validation owns it.
