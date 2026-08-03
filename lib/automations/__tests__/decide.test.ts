@@ -441,10 +441,11 @@ describe("decideAutomation — lifecycle and inertness", () => {
   });
 
   it("🛑 a derivation kWh leg fires off the RUN's own energy", () => {
-    // The only path by which `derived_intervals.energy_kwh` reaches a decision. Nothing else in
-    // either suite exercises a non-null `runKwh`, so without this a resolver that dropped the
-    // run's energy (`runKwh: null`) would leave every energy-based derivation limit silently
-    // dead and the suite green.
+    // The only path by which `derived_intervals.energy_kwh` reaches a decision, pinned here in the
+    // pure layer; its wiring twin lives in evaluate.test.ts ("a kWh leg fires off the OPEN RUN's
+    // own energy"). Before the pair existed, no test anywhere exercised a non-null `runKwh`, so a
+    // resolver that dropped the run's energy (`runKwh: null`) left every energy-based derivation
+    // limit silently dead with the whole suite green. Keep both halves.
     const a = inputs({
       sourceKind: "derivation",
       afterKwh: 20,
