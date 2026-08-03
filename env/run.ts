@@ -1,8 +1,11 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env npx --yes tsx
 
 /**
  * Start the dev server with pre-flight checks.
  * Auto-picks a free port if 3000 is in use (Conductor-friendly).
+ *
+ * `--yes` for the same reason as `setup.ts` — see the note there. This one runs `concurrent` with
+ * setup (`.conductor/settings.local.toml`), so it cannot assume setup has finished installing.
  */
 
 import { execSync } from "child_process";

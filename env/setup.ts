@@ -1,7 +1,15 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env npx --yes tsx
 
 /**
  * Workspace setup for Conductor worktrees.
+ *
+ * 🛑 `--yes` is load-bearing, not tidiness. `tsx` is a devDependency, so in a FRESH worktree — the
+ * only kind this script runs in — `node_modules` does not exist yet and `npx` cannot resolve it
+ * locally. Without `--yes` it stops on an interactive "Ok to proceed? (y)" and setup hangs before
+ * phase 2, which is the phase that would have installed `tsx` in the first place. The symptom is a
+ * worktree with no `node_modules` AND no `.env.local` (phase 3 never ran), which reads like a
+ * 1Password failure rather than a bootstrap deadlock. It only reproduces on a machine whose
+ * `~/.npm/_npx` cache has no `tsx` — answering the prompt once hides it locally forever.
  *
  * Phases:
  * 1. Vercel project link    - ensures .vercel/project.json exists (for `vercel` deploys)
