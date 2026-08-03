@@ -1,5 +1,14 @@
 import { describe, it, expect } from "@jest/globals";
-import { Device, Point, type DeviceId, type PointId } from "@/lib/ids";
+import {
+  Area,
+  Automation,
+  Device,
+  Point,
+  type AreaId,
+  type AutomationId,
+  type DeviceId,
+  type PointId,
+} from "@/lib/ids";
 
 /**
  * Compile-time guarantees. ts-jest type-checks this file, so a `@ts-expect-error` that does NOT error
@@ -26,6 +35,17 @@ describe("branded id types (compile-time)", () => {
     // @ts-expect-error a DeviceId cannot be assigned to a PointId
     const pt: PointId = dv;
     expect(typeof pt).toBe("string");
+  });
+
+  it("keeps the confusable ar_/au_ brands distinct", () => {
+    const ar = Area.generate();
+    // @ts-expect-error an AreaId cannot be assigned to an AutomationId
+    const au: AutomationId = ar;
+    expect(typeof au).toBe("string");
+    const au2 = Automation.generate();
+    // @ts-expect-error an AutomationId cannot be assigned to an AreaId
+    const ar2: AreaId = au2;
+    expect(typeof ar2).toBe("string");
   });
 
   it("rejects a raw string where a branded id is expected", () => {

@@ -3,7 +3,7 @@
  *
  * A `TypeId<P>` is the wire/URL form of a config row's identity: `"<prefix>_<26-char base32 uuidv7>"`
  * (e.g. `dv_01j9xz…`). The DB stores the raw uuid; the prefix is presentation only. The brand makes
- * the six entity IDs NOMINALLY distinct at compile time — passing a `DeviceId` where a `PointId` is
+ * the seven entity IDs NOMINALLY distinct at compile time — passing a `DeviceId` where a `PointId` is
  * expected is a type error, which is the whole point of the scheme (it turns the old integer-handle
  * confusion into a parse/compile error). See the config-v4 clean-sheet design §5.
  */
@@ -19,6 +19,7 @@ export type AreaId = TypeId<"ar">;
 export type DashboardId = TypeId<"db">;
 export type DerivationId = TypeId<"dx">;
 export type BindingId = TypeId<"bn">;
+export type AutomationId = TypeId<"au">;
 
 /** Canonical entity -> 2-letter prefix map (the single source of truth for the prefixes). */
 export const ID_PREFIX = {
@@ -28,6 +29,7 @@ export const ID_PREFIX = {
   dashboard: "db",
   derivation: "dx",
   binding: "bn",
+  automation: "au",
 } as const satisfies Record<string, string>;
 
 export type ParseErrorCode =

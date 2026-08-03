@@ -18,6 +18,7 @@ export {
   type DashboardId,
   type DerivationId,
   type BindingId,
+  type AutomationId,
   type ParseError,
   type ParseOk,
   type ParseResult,
@@ -49,3 +50,4 @@ export const Area: EntityCodec<"ar"> = makeEntityCodec("ar");
 export const Dashboard: EntityCodec<"db"> = makeEntityCodec("db");
 export const Derivation: EntityCodec<"dx"> = makeEntityCodec("dx");
 export const Binding: EntityCodec<"bn"> = makeEntityCodec("bn");
+export const Automation: EntityCodec<"au"> = makeEntityCodec("au");

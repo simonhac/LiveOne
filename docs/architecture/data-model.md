@@ -26,21 +26,22 @@ truth for every column; these are roles, not schemas.
 
 **Physical — the device/point registry**
 
-| Table          | One-liner                                                                                             |
-| -------------- | ----------------------------------------------------------------------------------------------------- |
-| `devices`      | One row per monitored device (a vendor connection). Owner, vendor, status, `primary_area_id`, config. |
-| `points`       | Point registry: identity, physical/logical paths, metric type/unit, display name.                     |
-| `device_state` | Per-device collection health (last poll/success/error, streaks, counters). State, never config.       |
+| Table          | One-liner                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devices`      | One row per monitored device (a vendor connection). Owner, vendor, status, `primary_area_id`, config.                                                                                             |
+| `points`       | Point registry: identity, physical/logical paths, metric type/unit, display name. `control` jsonb: NULL = read-only sensor (almost every row), non-NULL = a writable point that accepts commands. |
+| `device_state` | Per-device collection health (last poll/success/error, streaks, counters). State, never config.                                                                                                   |
 
 **Semantic — grouping and derivation**
 
-| Table               | One-liner                                                                                                |
-| ------------------- | -------------------------------------------------------------------------------------------------------- |
-| `areas`             | A site/grouping. Owns timezone, day offset and location. Every device has exactly one.                   |
-| `area_members`      | An area's 1..N member devices, `(area_id, device_id, ordinal)`.                                          |
-| `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.      |
-| `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.  |
-| `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval statistics and provenance. |
+| Table               | One-liner                                                                                                                                           |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `areas`             | A site/grouping. Owns timezone, day offset and location. Every device has exactly one.                                                              |
+| `area_members`      | An area's 1..N member devices, `(area_id, device_id, ordinal)`.                                                                                     |
+| `area_bindings`     | Typed role→point **overrides**; absent means the area defaults to the union of its members' points.                                                 |
+| `derivations`       | Persisted derived series (run tracking, HWS model), generalizing the former per-feature tracker tables.                                             |
+| `derived_intervals` | Materialized run/interval records produced by a derivation, with per-interval statistics and provenance.                                            |
+| `automations`       | Charge/limit rules scoped to an area: `mode='once'` (self-disarming, this session) or `'standing'`, with a jsonb trigger/action pair. TypeID `au_`. |
 
 **Presentation**
 
@@ -53,24 +54,26 @@ truth for every column; these are roles, not schemas.
 
 **Time series and plumbing**
 
-| Table                         | One-liner                                                                                              |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `point_readings`              | Raw time-series, one row per point per measurement time.                                               |
-| `point_readings_agg_5m`       | 5-minute aggregates (avg/min/max/last/delta).                                                          |
-| `point_readings_agg_1d`       | Daily aggregates, keyed by local-time `day` (YYYY-MM-DD).                                              |
-| `point_readings_flow_attr_1d` | Per local-day directional flow matrix (the Sankey/attribution store). Area-keyed by uuid.              |
-| `battery_provenance_daily`    | Daily blended battery inventory + attribution. Area-keyed by uuid.                                     |
-| `sessions`                    | One row per vendor communication session, archiving the raw payload.                                   |
-| `observations_outbox`         | Transactional outbox: durable copy of each poll's `QueueMessage`, drained to QStash by the relay cron. |
-| `users`                       | Per-user preferences. Identity itself lives in Clerk.                                                  |
-| `legacy_handles`              | The permanent integer-handle → `device_id`/`area_id` map. A sanctioned shim — see below.               |
+| Table                         | One-liner                                                                                                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `point_readings`              | Raw time-series, one row per point per measurement time.                                                                                                    |
+| `point_readings_agg_5m`       | 5-minute aggregates (avg/min/max/last/delta).                                                                                                               |
+| `point_readings_agg_1d`       | Daily aggregates, keyed by local-time `day` (YYYY-MM-DD).                                                                                                   |
+| `point_readings_flow_attr_1d` | Per local-day directional flow matrix (the Sankey/attribution store). Area-keyed by uuid.                                                                   |
+| `battery_provenance_daily`    | Daily blended battery inventory + attribution. Area-keyed by uuid.                                                                                          |
+| `sessions`                    | One row per vendor communication session, archiving the raw payload.                                                                                        |
+| `point_commands`              | Audit trail of every command dispatched at a writable point: who asked, what was sent, the vendor outcome. Append-only in practice; rows complete in place. |
+| `observations_outbox`         | Transactional outbox: durable copy of each poll's `QueueMessage`, drained to QStash by the relay cron.                                                      |
+| `users`                       | Per-user preferences. Identity itself lives in Clerk.                                                                                                       |
+| `legacy_handles`              | The permanent integer-handle → `device_id`/`area_id` map. A sanctioned shim — see below.                                                                    |
 
 ## Identity: TypeIDs above, rids below
 
 - **Every config row has a UUID `id`.** The wire/URL form is a **TypeID** — `prefix_` +
   Crockford-base32 of that uuid, 26 chars. **The database never stores the prefix.** Prefixes are
-  locked: `dv` device, `pt` point, `ar` area, `db` dashboard, `dx` derivation, `bn` binding.
-  `lib/ids/` is the single source of truth, and its six codecs are branded so that passing a `dv_` where
+  locked: `dv` device, `pt` point, `ar` area, `db` dashboard, `dx` derivation, `bn` binding,
+  `au` automation.
+  `lib/ids/` is the single source of truth, and its seven codecs are branded so that passing a `dv_` where
   an `ar_` is expected is a **compile error**.
 - **Points are the exception to "v7": their id is _deterministic_.** `points.id` is
   `uuidv5(vendorType : vendorSiteId : physicalPath)` (`lib/identifiers/point-uid.ts`), with a v7

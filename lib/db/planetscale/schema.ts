@@ -991,6 +991,18 @@ export const devices = pgTable(
   }),
 );
 
+/**
+ * Control descriptor for a WRITABLE point — the HA entity-platform analogue (switch / number /
+ * button vs plain sensor). NULL (the column default, and every point minted before migration 0058)
+ * = read-only sensor. Non-NULL describes the writable surface the /api/v4/points/{pt}/action route
+ * validates against before dispatching to the vendor adapter's ControlCapability. Set at mint time
+ * from vendor point metadata, the same way metricType/unit are — not a user-editable config surface.
+ */
+export type PointControl =
+  | { kind: "switch" } // turn_on | turn_off
+  | { kind: "number"; min: number; max: number; step?: number } // set_value
+  | { kind: "button" }; // press
+
 // points ← point_info. `id` = point_info.point_uid and `rid` = point_info.rid, BOTH verbatim — the
 // seam invariant the hot-table rid rewrite depends on.
 export const points = pgTable(
@@ -1016,6 +1028,9 @@ export const points = pgTable(
     defaultName: text("default_name").notNull(), // ← point_info.point_name
     subsystem: text("subsystem"),
     transform: text("transform"),
+    // Control descriptor: non-NULL makes this point WRITABLE (see PointControl above). Purely
+    // additive — NULL means what the absence of the column meant: a read-only sensor.
+    control: jsonb("control").$type<PointControl>(),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at"),
@@ -1084,6 +1099,107 @@ export const deviceState = pgTable("device_state", {
 });
 
 // ============================================================================
+// Control plane (EV charge control, 2026-08): point_commands + automations.
+//
+// point_commands is the command AUDIT TRAIL — one row per action dispatched at a writable point
+// (points.control non-NULL), written 'pending' by the /api/v4/points/{pt}/action route (or the
+// automation evaluator, requested_by='automation:au_…') and completed in place with the vendor
+// outcome. HA keeps no command history; we do, so "why did my car stop charging at 2am" is
+// answerable from SQL a month later.
+//
+// automations is the HA-automation-shaped limit store: mode='once' (this-session timer that
+// self-disarms) vs 'standing'. trigger/action are a CLOSED v1 vocabulary
+// (trigger: {kind:'charge-session', source, afterMinutes?, afterKwh?}; action:
+// {kind:'point-action', pointId, action:'turn_off'}), typed as bare jsonb HERE and given
+// .$type<> by the automations PR (PR-F) once lib/automations/ exists.
+// ============================================================================
+export const pointCommands = pgTable(
+  "point_commands",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Plain NO ACTION on both FKs, like area_bindings.point_uid: deleting a points/devices row is
+    // BLOCKED while audit rows reference it (devices rows are orphaned by deleteDevice, never
+    // deleted, so in practice this never bites).
+    pointId: uuid("point_id")
+      .notNull()
+      .references(() => points.id),
+    deviceId: uuid("device_id")
+      .notNull()
+      .references(() => devices.id),
+    // 'turn_on' | 'turn_off' | 'set_value' | 'press' — deliberately NOT CHECK-constrained (the
+    // action vocabulary grows with PointControl kinds; status below is the closed lifecycle).
+    action: text("action").notNull(),
+    value: doublePrecision("value"), // set_value payload; NULL for switch/button actions
+    // A clerk user id, or the literal form 'automation:au_…' for evaluator-issued commands.
+    requestedBy: text("requested_by").notNull(),
+    status: text("status").notNull().default("pending"),
+    vendorResult: jsonb("vendor_result"), // raw vendor response envelope (benign result:false lands here)
+    error: text("error"),
+    requestedAt: timestamp("requested_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"), // NULL while pending
+  },
+  (table) => ({
+    statusCheck: check(
+      "point_commands_status_check",
+      sql`${table.status} IN ('pending','ok','rejected','failed')`,
+    ),
+    // Per-device command timeline ("what happened to Tez last night") + FK support.
+    deviceRequestedIdx: index("point_commands_device_requested_idx").on(
+      table.deviceId,
+      table.requestedAt,
+    ),
+    pointIdx: index("point_commands_point_idx").on(table.pointId),
+  }),
+);
+
+export const automations = pgTable(
+  "automations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(), // wire form au_…
+    // Ownership/scope, exactly as derivations does: NO ACTION — deleting an area with automations
+    // is blocked, same as deleting one with derivations.
+    areaId: uuid("area_id")
+      .notNull()
+      .references(() => areas.id),
+    name: text("name").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    mode: text("mode").notNull(), // CHECK below: 'once' self-disarms after firing; 'standing' re-arms
+    trigger: jsonb("trigger").notNull(), // v1 closed vocabulary; $type<> lands with PR-F
+    action: jsonb("action").notNull(), // v1 closed vocabulary; $type<> lands with PR-F
+    armedAt: timestamp("armed_at"), // set while the trigger source is live (charging); cleared when not
+    lastTriggeredAt: timestamp("last_triggered_at"),
+    // Idempotence anchor: the derived run's start_time when this automation last fired. Compared
+    // with TOLERANCE (>= the detector's delayOffSeconds) — an open run's start_time can move
+    // between ticks (recomputeIntervalsForWindow is delete-and-reinsert with boundaryMode
+    // 'midpoint'), so exact equality is NOT a stable key.
+    lastTriggeredRunStart: timestamp("last_triggered_run_start"),
+    // Per-arming STATE, not config. `charge_energy_added` (the Tesla counter a kWh limit follows)
+    // is energy-above-plug-in-baseline and resets per CABLE session, not per charge leg — a car
+    // re-entering `Charging` on an overnight top-up already reads ~42 kWh, so an absolute kWh
+    // threshold would fire instantly. PR-F snapshots {baselineKwh, baselineAt} here at arm time and
+    // compares the delta; `armed_at` is a timestamp and `trigger` is config, so neither can hold it.
+    armedContext: jsonb("armed_context").$type<Record<
+      string,
+      unknown
+    > | null>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    modeCheck: check(
+      "automations_mode_check",
+      sql`${table.mode} IN ('once','standing')`,
+    ),
+    areaIdx: index("automations_area_idx").on(table.areaId),
+  }),
+);
+
+/** Closed lifecycle vocabulary for point_commands.status — kept in step with the CHECK by hand. */
+export type PointCommandStatus = "pending" | "ok" | "rejected" | "failed";
+/** Closed vocabulary for automations.mode — kept in step with the CHECK by hand. */
+export type AutomationMode = "once" | "standing";
+
+// ============================================================================
 // Type exports
 // ============================================================================
 // NB `DeviceRow`/`PointRow`, not `Device`/`Point`: `lib/ids` already exports `Device` and `Point` as
@@ -1128,3 +1244,8 @@ export type DashboardRevision = typeof dashboardRevisions.$inferSelect;
 export type NewDashboardRevision = typeof dashboardRevisions.$inferInsert;
 export type LegacyHandle = typeof legacyHandles.$inferSelect;
 export type NewLegacyHandle = typeof legacyHandles.$inferInsert;
+// NB `AutomationRow`, not `Automation`: `lib/ids` exports `Automation` as the TypeID codec.
+export type PointCommandRow = typeof pointCommands.$inferSelect;
+export type NewPointCommandRow = typeof pointCommands.$inferInsert;
+export type AutomationRow = typeof automations.$inferSelect;
+export type NewAutomationRow = typeof automations.$inferInsert;
