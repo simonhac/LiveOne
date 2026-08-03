@@ -87,9 +87,12 @@ export interface TeslaDeviceMetadata {
   // skipped poll (0 readings) instead of issuing a Wake command. Saves the $0.02 wake
   // charge and lets the car sleep (less phantom drain). Default true (legacy behaviour).
   wakeToPoll?: boolean;
-  // Override the idle (not-charging) poll interval, in minutes. Default 15. Floored at 1.
+  // Override the idle (not-charging) poll interval, in minutes. Floored at 1.
+  // Default is TESLA_POLL_DEFAULTS.idlePollMinutes (./poll-config) — deliberately not
+  // repeated here, so this comment cannot go stale when the default moves.
   idlePollMinutes?: number;
-  // Override the charging poll interval, in minutes. Default 5. Floored at 1.
+  // Override the charging poll interval, in minutes. Floored at 1.
+  // Default is TESLA_POLL_DEFAULTS.chargingPollMinutes (./poll-config).
   chargingPollMinutes?: number;
 }
 
