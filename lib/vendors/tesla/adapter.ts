@@ -3,7 +3,12 @@
  *
  * Polls Tesla vehicles for charging and location data.
  * - Default: Poll every 15 minutes
- * - When charging: Poll every 5 minutes
+ * - When charging: Poll every 2 minutes (default; per-device override wins)
+ *
+ * When the previous poll reported charging, the getVehicles sleep-state check is skipped —
+ * a charging car is online by definition — and vehicle data is read directly. If that
+ * assumption turns out to be wrong the read throws and we fall back to the presence-check
+ * (wake-or-skip) path rather than recording a failed poll.
  */
 
 import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
@@ -13,15 +18,12 @@ import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { getTeslaClient } from "./tesla-client";
 import { getValidTeslaToken } from "./tesla-auth";
 import { TESLA_POINTS } from "./point-metadata";
+import { TESLA_POLL_DEFAULTS } from "./poll-config";
 import type {
   TeslaCredentials,
   TeslaDeviceMetadata,
   TeslaVehicleData,
 } from "./types";
-
-// Polling intervals in minutes
-const DEFAULT_POLL_INTERVAL = 15;
-const CHARGING_POLL_INTERVAL = 5;
 
 // Resolved per-device Tesla polling config (defaults applied).
 interface ResolvedTeslaConfig {
@@ -32,7 +34,9 @@ interface ResolvedTeslaConfig {
 
 // Read the per-device overrides from `systems.metadata.tesla`, applying defaults and a
 // 1-minute floor on the intervals. Absent/garbage metadata yields the legacy defaults.
-function resolveTeslaConfig(device: DeviceConfigView): ResolvedTeslaConfig {
+export function resolveTeslaConfig(
+  device: DeviceConfigView,
+): ResolvedTeslaConfig {
   const meta =
     ((device.metadata as { tesla?: TeslaDeviceMetadata } | null) ?? {}).tesla ??
     {};
@@ -45,10 +49,13 @@ function resolveTeslaConfig(device: DeviceConfigView): ResolvedTeslaConfig {
       : fallback;
   return {
     wakeToPoll: meta.wakeToPoll !== false, // default true (legacy behaviour)
-    idleInterval: clampInterval(meta.idlePollMinutes, DEFAULT_POLL_INTERVAL),
+    idleInterval: clampInterval(
+      meta.idlePollMinutes,
+      TESLA_POLL_DEFAULTS.idlePollMinutes,
+    ),
     chargingInterval: clampInterval(
       meta.chargingPollMinutes,
-      CHARGING_POLL_INTERVAL,
+      TESLA_POLL_DEFAULTS.chargingPollMinutes,
     ),
   };
 }
@@ -61,7 +68,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
   readonly supportsAddDevice = true;
   readonly addDeviceFlow = "oauth-redirect" as const;
 
-  protected pollIntervalMinutes = DEFAULT_POLL_INTERVAL;
+  protected pollIntervalMinutes = TESLA_POLL_DEFAULTS.idlePollMinutes;
   protected toleranceSeconds = 60;
 
   // Track last known charging state per device (in-memory cache)
@@ -70,7 +77,7 @@ export class TeslaAdapter extends BaseVendorAdapter {
   /**
    * Override evaluateSchedule for Tesla-specific logic:
    * - 15 min default
-   * - 5 min when charging (from previous poll)
+   * - 2 min (default) when charging (from previous poll)
    */
   protected evaluateSchedule(
     device: DeviceConfigView,
@@ -151,64 +158,91 @@ export class TeslaAdapter extends BaseVendorAdapter {
         (teslaCredentials as TeslaCredentials).fleet_api_base_url,
       );
 
-      // Check vehicle state and wake if needed
-      const vehicles = await client.getVehicles(accessToken);
-      const vehicle = vehicles.find((v) => String(v.id) === vehicleId);
-
-      if (!vehicle) {
-        return { success: false, error: `Vehicle ${vehicleId} not found` };
-      }
-
       // Per-device polling config (wake behaviour + intervals).
       const cfg = resolveTeslaConfig(device);
 
-      // Wake up vehicle if asleep
-      if (vehicle.state !== "online") {
-        // When wakeToPoll is disabled, never issue a Wake command: record a skipped poll
-        // so the car can sleep (avoids the $0.02 wake charge + phantom drain).
-        if (!cfg.wakeToPoll) {
+      // A charging car is online by definition, so when the previous poll reported
+      // charging the getVehicles sleep-state check is a wasted $0.002 — read vehicle
+      // data directly. If the assumption is wrong (car asleep after all, vehicle gone,
+      // transient API error) the read throws and we fall back to the presence-check
+      // path below instead of recording a failed poll.
+      let vehicleData: TeslaVehicleData | null = null;
+      if (this.chargingStates.get(device.id) === true) {
+        try {
+          vehicleData = await client.getVehicleData(accessToken, vehicleId);
+        } catch (e) {
           console.log(
-            `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}; wakeToPoll disabled, skipping poll (no wake)`,
+            `[Tesla] Direct read failed for ${vehicleId} (assumed charging); falling back to presence check:`,
+            e instanceof Error ? e.message : e,
           );
-          const nextPollTime = getNextMinuteBoundary(
-            cfg.idleInterval,
-            device.timezoneOffsetMin,
-          );
-          return {
-            success: true,
-            readings: [],
-            nextPollTime,
-            rawResponse: {
-              skipped: true,
-              reason: `Vehicle ${vehicle.state}, wakeToPoll disabled`,
-            },
-          };
-        }
-
-        console.log(
-          `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}, waking up...`,
-        );
-        const awoke = await client.wakeUp(accessToken, vehicleId);
-        if (!awoke) {
-          // Vehicle didn't wake - return success with 0 readings
-          console.log(
-            `[Tesla] Vehicle ${vehicleId} did not wake, skipping poll`,
-          );
-          const nextPollTime = getNextMinuteBoundary(
-            cfg.idleInterval,
-            device.timezoneOffsetMin,
-          );
-          return {
-            success: true,
-            readings: [],
-            nextPollTime,
-            rawResponse: { skipped: true, reason: "Vehicle did not wake up" },
-          };
         }
       }
 
-      // Fetch vehicle data
-      const vehicleData = await client.getVehicleData(accessToken, vehicleId);
+      if (!vehicleData) {
+        // Presence-check path (the pre-skip flow): getVehicles → wake-or-skip → read.
+        const vehicles = await client.getVehicles(accessToken);
+        const vehicle = vehicles.find((v) => String(v.id) === vehicleId);
+
+        if (!vehicle) {
+          // Any charging assumption is certainly wrong now.
+          this.chargingStates.set(device.id, false);
+          return { success: false, error: `Vehicle ${vehicleId} not found` };
+        }
+
+        // Wake up vehicle if asleep
+        if (vehicle.state !== "online") {
+          // Not online ⇒ not charging. Clear the flag so the next poll goes straight to
+          // this path (no doomed direct read) and evaluateSchedule drops back to the
+          // idle cadence. If we wake it below and it IS charging, the read at the end
+          // of fetchData overwrites this with the truth.
+          this.chargingStates.set(device.id, false);
+
+          // When wakeToPoll is disabled, never issue a Wake command: record a skipped poll
+          // so the car can sleep (avoids the $0.02 wake charge + phantom drain).
+          if (!cfg.wakeToPoll) {
+            console.log(
+              `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}; wakeToPoll disabled, skipping poll (no wake)`,
+            );
+            const nextPollTime = getNextMinuteBoundary(
+              cfg.idleInterval,
+              device.timezoneOffsetMin,
+            );
+            return {
+              success: true,
+              readings: [],
+              nextPollTime,
+              rawResponse: {
+                skipped: true,
+                reason: `Vehicle ${vehicle.state}, wakeToPoll disabled`,
+              },
+            };
+          }
+
+          console.log(
+            `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}, waking up...`,
+          );
+          const awoke = await client.wakeUp(accessToken, vehicleId);
+          if (!awoke) {
+            // Vehicle didn't wake - return success with 0 readings
+            console.log(
+              `[Tesla] Vehicle ${vehicleId} did not wake, skipping poll`,
+            );
+            const nextPollTime = getNextMinuteBoundary(
+              cfg.idleInterval,
+              device.timezoneOffsetMin,
+            );
+            return {
+              success: true,
+              readings: [],
+              nextPollTime,
+              rawResponse: { skipped: true, reason: "Vehicle did not wake up" },
+            };
+          }
+        }
+
+        // Fetch vehicle data
+        vehicleData = await client.getVehicleData(accessToken, vehicleId);
+      }
 
       // Update charging state for next poll interval decision
       const isCharging = vehicleData.charge_state.charging_state === "Charging";
