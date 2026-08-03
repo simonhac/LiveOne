@@ -247,6 +247,17 @@ describe("POST /api/v4/automations", () => {
     expect(mockStore.create).not.toHaveBeenCalled();
   });
 
+  it("422s a non-boolean `enabled` before paying for the reference lookups", async () => {
+    // Every shape check runs before `checkReferences`, so a malformed body costs no point or
+    // device reads on its way to the 422.
+    const res = await post({ ...good, enabled: "yes" });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("enabled must be a boolean");
+    expect(mockLoadPoint).not.toHaveBeenCalled();
+    expect(mockDeviceAccess).not.toHaveBeenCalled();
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
   it("surfaces the vocabulary parse error verbatim", async () => {
     const res = await post({
       ...good,

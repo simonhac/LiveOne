@@ -64,6 +64,11 @@ export async function POST(request: NextRequest) {
   const action = actionFromWire(body.action);
   if (!action.ok) return unprocessable(action.error);
 
+  if (body.enabled !== undefined && typeof body.enabled !== "boolean")
+    return unprocessable("enabled must be a boolean");
+
+  // Every shape check is above this line: a malformed body must not pay for the point and device
+  // lookups `checkReferences` performs before earning its 422.
   const checked = await checkReferences(
     request,
     areaUuid,
@@ -72,8 +77,6 @@ export async function POST(request: NextRequest) {
   );
   if (checked) return checked;
 
-  if (body.enabled !== undefined && typeof body.enabled !== "boolean")
-    return unprocessable("enabled must be a boolean");
   const name =
     typeof body.name === "string" && body.name.trim() !== ""
       ? body.name
