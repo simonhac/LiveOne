@@ -35,6 +35,7 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
     defaultName: "p.default_name",
     subsystem: "p.subsystem",
     transform: "p.transform",
+    control: "p.control",
     active: "p.active",
     createdAt: "p.created_at",
     updatedAt: "p.updated_at",

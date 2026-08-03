@@ -12,7 +12,13 @@
  */
 
 import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
-import type { FetchContext, FetchResult, TestConnectionResult } from "../types";
+import type {
+  ControlCapability,
+  FetchContext,
+  FetchResult,
+  TestConnectionResult,
+} from "../types";
+import { TeslaControlCapability } from "./control";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { getTeslaClient } from "./tesla-client";
@@ -67,6 +73,8 @@ export class TeslaAdapter extends BaseVendorAdapter {
   // Onboarded via an in-dialog Fleet API OAuth redirect (no credential fields).
   readonly supportsAddDevice = true;
   readonly addDeviceFlow = "oauth-redirect" as const;
+  // The write half: Tesla is (currently) the only vendor that can actuate a point.
+  readonly control: ControlCapability = new TeslaControlCapability();
 
   protected pollIntervalMinutes = TESLA_POLL_DEFAULTS.idlePollMinutes;
   protected toleranceSeconds = 60;

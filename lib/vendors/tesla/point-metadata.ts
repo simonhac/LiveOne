@@ -53,6 +53,8 @@ export const TESLA_POINTS: TeslaPointConfig[] = [
       defaultName: "Charge Limit SoC",
       subsystem: "ev",
       transform: null,
+      // Writable: Tesla accepts 50–100 for set_charge_limit (TeslaClient clamps + rounds).
+      control: { kind: "number", min: 50, max: 100, step: 1 },
     },
   },
 
@@ -98,6 +100,8 @@ export const TESLA_POINTS: TeslaPointConfig[] = [
       defaultName: "Charging",
       subsystem: "ev",
       transform: null,
+      // Writable: turn_on → charge_start, turn_off → charge_stop.
+      control: { kind: "switch" },
     },
   },
 
@@ -114,6 +118,9 @@ export const TESLA_POINTS: TeslaPointConfig[] = [
       defaultName: "Charge Limit Current",
       subsystem: "ev",
       transform: null,
+      // Writable: set_charging_amps. 48 A is the Model X on-board-charger ceiling and matches
+      // the dialog's own cap; TeslaClient clamps at >= 0 regardless.
+      control: { kind: "number", min: 0, max: 48, step: 1 },
     },
   },
   {

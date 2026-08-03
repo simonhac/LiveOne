@@ -165,3 +165,52 @@ describe("TESLA_POINTS identity", () => {
     expect(new Set(pairs).size).toBe(pairs.length);
   });
 });
+
+/**
+ * The WRITABLE surface.
+ *
+ * `points.control` is what the command plane validates every request against, and it is written
+ * from exactly these three declarations — so this file is the whole allow-list of things that
+ * can be commanded on a Tesla. An accidental `control` on a fourth point would silently make a
+ * read-only sensor look actuable to the action route (which would then fail at the vendor with
+ * a config-bug error), so the closed-set assertion matters as much as the three positive ones.
+ */
+describe("TESLA_POINTS control descriptors", () => {
+  function controlFor(tail: string) {
+    return TESLA_POINTS.find((p) => p.metadata.physicalPathTail === tail)
+      ?.metadata.control;
+  }
+
+  it("makes the charge switch a switch", () => {
+    expect(controlFor("charging_active")).toEqual({ kind: "switch" });
+  });
+
+  it("bounds the charge limit at Tesla's own 50–100 %", () => {
+    expect(controlFor("charge_limit_soc")).toEqual({
+      kind: "number",
+      min: 50,
+      max: 100,
+      step: 1,
+    });
+  });
+
+  it("bounds the charge current at the 48 A on-board-charger ceiling", () => {
+    expect(controlFor("charge_amps")).toEqual({
+      kind: "number",
+      min: 0,
+      max: 48,
+      step: 1,
+    });
+  });
+
+  it("leaves EVERY other point read-only", () => {
+    const writable = TESLA_POINTS.filter(
+      (p) => p.metadata.control != null,
+    ).map((p) => p.metadata.physicalPathTail);
+    expect(writable.sort()).toEqual([
+      "charge_amps",
+      "charge_limit_soc",
+      "charging_active",
+    ]);
+  });
+});

@@ -13,6 +13,7 @@ import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   devices as pgDevices,
   points as pgPoints,
+  type PointControl,
 } from "@/lib/db/planetscale/schema";
 import { isFiveMinuteNativeVendor } from "@/lib/vendors/native-intervals";
 import { PointInfo } from "@/lib/point/point-info";
@@ -23,6 +24,7 @@ import {
 } from "@/lib/point/series-info";
 import { SystemIdentifier } from "@/lib/identifiers";
 import { mintPoint } from "@/lib/point/mint-point";
+import { pointControlEquals } from "@/lib/control/point-control";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import micromatch from "micromatch";
 import { updateLatestPointValue } from "../kv-cache-manager";
@@ -59,6 +61,8 @@ export interface PointInfoRow {
   displayName: string;
   subsystem: string | null;
   transform: string | null;
+  /** `points.control` — non-NULL makes this point writable (see PointControl). */
+  control: PointControl | null;
   active: boolean;
   createdAtMs: number;
   updatedAtMs: number | null;
@@ -76,6 +80,13 @@ export interface PointMetadata {
   defaultName: string;
   subsystem?: string | null;
   transform: string | null;
+  /**
+   * Control descriptor for a WRITABLE point; absent/null = a read-only sensor (the case for
+   * every point of every other vendor, which is why this is optional). Flows
+   * vendor metadata → `mintPoint` → `points.control`, and `ensurePointInfo` heals an existing
+   * row when the two disagree.
+   */
+  control?: PointControl | null;
 }
 
 /**
@@ -145,6 +156,7 @@ function servedPointColumns() {
     displayName: pgPoints.name,
     subsystem: pgPoints.subsystem,
     transform: pgPoints.transform,
+    control: pgPoints.control,
     active: pgPoints.active,
     createdAt: pgPoints.createdAt,
     updatedAt: pgPoints.updatedAt,
@@ -164,6 +176,7 @@ type ServedPointDbRow = {
   displayName: string;
   subsystem: string | null;
   transform: string | null;
+  control: PointControl | null;
   active: boolean;
   createdAt: Date | null;
   updatedAt: Date | null;
@@ -204,6 +217,7 @@ function pgPointInfoToServed(pgRow: ServedPointDbRow): PointInfoRow {
     displayName: pgRow.displayName,
     subsystem: pgRow.subsystem,
     transform: pgRow.transform,
+    control: pgRow.control ?? null,
     active: pgRow.active,
     createdAtMs: pgRow.createdAt ? pgRow.createdAt.getTime() : 0,
     updatedAtMs: pgRow.updatedAt ? pgRow.updatedAt.getTime() : null,
@@ -613,15 +627,36 @@ export class PointManager {
   ): Promise<PointInfoRow> {
     // Use physicalPathTail as the key - must match loadPointInfoMap
     const key = metadata.physicalPathTail;
+    const desiredControl = metadata.control ?? null;
 
-    // Return existing if found
-    if (pointMap[key]) {
-      return pointMap[key];
+    // Return existing if found — UNLESS its control descriptor has drifted from the vendor
+    // metadata's, in which case fall through and re-mint so the upsert's SET clause heals it.
+    //
+    // 🛑 This drift check is what makes `control` reach an ALREADY-MINTED point. Adding
+    // `control` to `mintPoint`'s SET clause is necessary but not sufficient: `mintPoint` is
+    // never re-invoked for an existing point, because this short-circuit used to return
+    // unconditionally. Every point that needs a control (Tesla's charge limit / charge amps /
+    // charging-active) was minted long before `points.control` existed, so without this they
+    // would sit at NULL forever and the action route would reject every command.
+    //
+    // The comparison is in-memory and field-wise (`pointControlEquals`, NOT JSON.stringify —
+    // jsonb does not preserve key order), so the hot ingest path — one call per reading per
+    // poll per vendor — stays a pure map lookup with zero extra DB work. The heal fires once;
+    // afterwards the values match and it never fires again.
+    const existing = pointMap[key];
+    if (existing) {
+      if (pointControlEquals(existing.control, desiredControl)) {
+        return existing;
+      }
+      console.log(
+        `[PointManager] Healing control for ${metadata.physicalPathTail} on system ${systemId}: ` +
+          `${JSON.stringify(existing.control ?? null)} → ${JSON.stringify(desiredControl)}`,
+      );
+    } else {
+      console.log(
+        `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPathTail}`,
+      );
     }
-
-    console.log(
-      `[PointManager] Creating point_info for ${metadata.defaultName} (${metadata.metricType}) at ${metadata.physicalPathTail}`,
-    );
 
     // config-v4 slice M: `points` is PRIMARY. `mintPoint` allocates identity from `points.rid`'s own
     // sequence DEFAULT and writes `point_info` behind it with index == rid — so the old max(index)+1
@@ -636,6 +671,7 @@ export class PointManager {
       displayName: metadata.defaultName, // Initially same as defaultName
       subsystem: metadata.subsystem || null,
       transform: metadata.transform,
+      control: desiredControl,
     });
 
     // Map the PG-shaped row back to the legacy row shape this method returns
@@ -652,6 +688,7 @@ export class PointManager {
       displayName: pgRow.displayName,
       subsystem: pgRow.subsystem,
       transform: pgRow.transform,
+      control: pgRow.control,
       active: pgRow.active,
       createdAtMs: pgRow.createdAt ? pgRow.createdAt.getTime() : 0,
       updatedAtMs: pgRow.updatedAt ? pgRow.updatedAt.getTime() : null,

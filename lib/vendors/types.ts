@@ -4,6 +4,8 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { PointMetadata } from "@/lib/point/point-manager";
 import type { SessionCause } from "@/lib/session-manager";
 import type { CommonPollingData } from "@/lib/types/common";
+import type { PointRow } from "@/lib/db/planetscale/schema";
+import type { PointActionName } from "@/lib/control/point-control";
 
 /**
  * Field definition for credential requirements
@@ -87,6 +89,41 @@ export interface PointReadingAgg5mInput {
   error?: string | null;
 }
 
+// ============================================================================
+// Control (command) capability — the write half of a vendor adapter
+// ============================================================================
+
+/**
+ * One command, addressed at a POINT rather than at a vendor-specific verb. The point's
+ * `control` descriptor (`points.control`) has already been validated against the action by
+ * the time a capability sees this.
+ *
+ * There is deliberately NO session/user here: credentials are always resolved from
+ * `device.ownerClerkUserId`, so an automation with no session user can dispatch the same way
+ * a request can.
+ */
+export interface ControlInvokeContext {
+  device: DeviceConfigView;
+  point: PointRow;
+  action: PointActionName; // 'turn_on' | 'turn_off' | 'set_value' | 'press'
+  value?: number;
+}
+
+/**
+ * Benign vendor declines are RETURNED (`ok:false` + `reason`, e.g. Tesla's `not_charging`
+ * when stopping an idle charge — a 200, never a 500). Infra failures are THROWN
+ * (`ControlDispatchError` / `ControlRejectedError` from `lib/control/errors`, or anything
+ * else, which the plane treats as unexpected).
+ */
+export interface ControlInvokeResult {
+  ok: boolean;
+  reason?: string;
+}
+
+export interface ControlCapability {
+  invoke(ctx: ControlInvokeContext): Promise<ControlInvokeResult>;
+}
+
 /**
  * Vendor adapter interface for all energy device vendors
  */
@@ -130,6 +167,11 @@ export interface VendorAdapter {
     device: DeviceConfigView,
     credentials: any,
   ): Promise<TestConnectionResult>;
+
+  // Optional command capability — present only on vendors that can actuate a writable point
+  // (one whose `points.control` is non-NULL). Nine of the ten adapters omit it entirely and
+  // are untouched by the command plane; that optionality is the whole design.
+  readonly control?: ControlCapability;
 }
 
 /**
