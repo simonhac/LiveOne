@@ -126,6 +126,13 @@ rollup in tens of ms, while the sub‑daily path recomputes everything per reque
 - Split bidirectional points **before** averaging; integrate from ≤ 5‑minute signed data, never `agg_1d.avg`.
 - `range_matrix == Σ day_matrices` element‑wise (monthly = Σ daily).
 - Allocate at the 5‑minute grain, then sum energy — never re‑derive allocation from coarse totals.
+- **A load's row total equals its own interval energy — the matrix never allocates energy to nothing.**
+  The allocation numerator and the generation‑pool denominator must read the SAME per‑source weight
+  (`sourceWeightsForInterval`: exact energy, else the LEFT endpoint). They were asymmetric until v7 —
+  the numerator additionally demanded a non‑null RIGHT endpoint — so a source that dropped one sample
+  stayed in the pool a load's energy was divided by while receiving no edge, and that fraction of every
+  load's energy in the interval silently vanished. Any future narrowing of the numerator must narrow
+  the denominator with it.
 - One day boundary (`dayToUnixRangeForAggregation`), identical to `agg_1d`.
 - `Σ(source energy) − Σ(load energy) ≥ 0` (losses are non‑negative, within a plausible efficiency band).
 - A master `load` and its children are **never both** sinks: sinks are the children plus the one complement. Emitting both double‑counts the metered subsets against the total.

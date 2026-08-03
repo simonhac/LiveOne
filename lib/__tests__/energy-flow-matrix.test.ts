@@ -241,7 +241,7 @@ describe("calculateEnergyFlowMatrix", () => {
     expect(result!.matrix[0][0]).toBeCloseTo(0.0, 2);
   });
 
-  it("should skip intervals with null values", () => {
+  it("should allocate on a source's left endpoint and skip only where it has no datum", () => {
     const timestamps = [
       new Date("2025-01-01T12:00:00Z"),
       new Date("2025-01-01T13:00:00Z"),
@@ -279,9 +279,11 @@ describe("calculateEnergyFlowMatrix", () => {
 
     expect(result).not.toBeNull();
 
-    // First interval has null at end, second interval has null at start
-    // Both should be skipped, so total should be 0
-    expect(result!.matrix[0][0]).toBeCloseTo(0.0, 2);
+    // First interval: solar's right endpoint is null but its LEFT one is not, so the load's 1 kWh is
+    // attributed to it in full — the same datum that puts solar in the denominator earns it the edge.
+    // Second interval: solar has no datum at the left endpoint, so there is nothing to attribute to
+    // and it is skipped.
+    expect(result!.matrix[0][0]).toBeCloseTo(1.0, 2);
   });
 
   it("should handle complex multi-source multi-load scenario", () => {

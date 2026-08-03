@@ -114,7 +114,12 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
 // it — an interval-END range was passed to a span filter (see the `window:` comment in writeAttrRollup).
 // Re-materialised days gain that interval's energy on every edge; ~0.014 kWh/day typical, but material
 // whenever a large load runs across midnight.
-export const FLOW_ATTR_VERSION = 6;
+// v7: the allocation numerator is symmetric with its denominator (`sourceWeightsForInterval`). A
+// source with a right-endpoint dropout used to stay in the pool a load's energy was divided by while
+// receiving no edge, so that fraction of EVERY load's energy in the interval was allocated to nothing
+// and vanished. Re-materialised days gain it back — nothing for a day with no dropout, 0.378 kWh on
+// Kinkora's EV alone for 2026-01-27.
+export const FLOW_ATTR_VERSION = 7;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */

@@ -141,14 +141,60 @@ describe("computeFlowMatrix", () => {
     expect(result.intervalsUsed).toBe(0);
   });
 
-  it("skips an interval when a series endpoint is null (no integration across a gap)", () => {
+  it("allocates on the LEFT endpoint when a source's right endpoint is null, and drops only the interval where it has no datum", () => {
     const result = computeFlowMatrix({
       timestamps: hours(3),
       sources: [{ path: "source.solar", power: [1, null, 1] }],
       loads: [{ path: "load", power: [1, 1, 1] }],
     });
-    // Interval 0 has a null right endpoint; interval 1 has a null left endpoint → both skip.
-    expect(result.totalEnergy).toBeCloseTo(0, 6);
+    // Interval 0: solar's right endpoint is missing but its LEFT one is not — the same datum that
+    // puts it in the pool the load's energy is divided by — so the load's 1 kWh is attributed to it
+    // in full. Requiring both endpoints here (and only here) would have deleted that kWh outright.
+    expect(cell(result, "source.solar", "load")).toBeCloseTo(1, 6);
+    // Interval 1: solar has NO datum at the left endpoint, so the pool is empty and there is nothing
+    // to attribute to — dropped by the totalGen<=0 guard, unchanged.
+    expect(result.totalEnergy).toBeCloseTo(1, 6);
+    expect(result.intervalsUsed).toBe(1);
+  });
+
+  it("conserves a load's energy when only SOME sources have a right endpoint (regression: Kinkora 2026-01-27)", () => {
+    // The real interval, 2026-01-27 11:10–11:15 local: both solar points dropped their 11:15 sample
+    // while the grid kept both, and the EV metered 0.598 kWh. The numerator used to require BOTH
+    // endpoints while the denominator required only the left one, so solar stayed in the 19.250064 kW
+    // pool but received no edge — and 1 − 7.081758/19.250064 = 63.2% of the EV's energy, 0.378 kWh,
+    // was allocated to nothing at all and vanished from the day's matrix.
+    const local = 6.290488;
+    const remote = 5.877818;
+    const grid = 7.081758;
+    const pool = local + remote + grid;
+    const evKwh = 0.598;
+    const result = computeFlowMatrix({
+      timestamps: hours(2),
+      sources: [
+        { path: "source.solar.local", power: [local, null] },
+        { path: "source.solar.remote", power: [remote, null] },
+        { path: "source.grid", power: [grid, grid] },
+      ],
+      loads: [{ path: "load.ev", power: [7.176, 7.176], energyKwh: [evKwh] }],
+    });
+    // The whole metered energy is allocated — the invariant the asymmetry broke.
+    expect(result.loadTotals[idx(result, "load.ev", "loads")]).toBeCloseTo(
+      evKwh,
+      9,
+    );
+    // ...split on the left-endpoint shares, solar included.
+    expect(cell(result, "source.grid", "load.ev")).toBeCloseTo(
+      evKwh * (grid / pool),
+      9,
+    );
+    expect(cell(result, "source.solar.local", "load.ev")).toBeCloseTo(
+      evKwh * (local / pool),
+      9,
+    );
+    expect(cell(result, "source.solar.remote", "load.ev")).toBeCloseTo(
+      evKwh * (remote / pool),
+      9,
+    );
   });
 
   it("never allocates a source to its own linked load — mid-interval discharge→charge flip, redistributed to another source", () => {

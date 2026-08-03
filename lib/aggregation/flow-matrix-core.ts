@@ -130,7 +130,12 @@ function channelId(path: string): string {
 export interface SourceWeights {
   /** The generation pool: every source's best-known magnitude. Index-aligned to `sources`. */
   denomW: number[];
-  /** Allocation eligibility: null where this source is in the pool but out of the allocation. */
+  /**
+   * The allocation weights — the SAME magnitudes as `denomW`, as a nullable view: null exactly where
+   * the source has no datum this interval (and so contributes 0 to the pool). `Σ numerW == totalGenW`
+   * by construction, which is what makes a load's row total equal its own interval energy. Kept as a
+   * separate array because callers branch on "no datum" rather than on a zero weight.
+   */
   numerW: (number | null)[];
   /** Σ denomW. `<= 0` means nothing generated this interval and it contributes nothing. */
   totalGenW: number;
@@ -155,14 +160,22 @@ export interface SourceWeights {
  * Exact-energy overlay (`FlowSeries.energyKwh`): when ANY series carries a metered interval energy
  * here, magnitudes and weights switch to kWh — exact where present, left-endpoint power × dt where
  * not — one coherent weight pool, no renormalisation. When NONE does, the legacy power arithmetic
- * runs with the SAME code (weights are kW and dt never enters), so power-only inputs are
- * bit-for-bit identical to the pre-overlay implementation.
+ * runs with the SAME code (weights are kW and dt never enters), so the two modes differ only in
+ * their unit.
  *
- *  - `denomW` (the generation pool): every source's best-known magnitude — exact energy, else the
- *    LEFT endpoint, matching the legacy denominator (which counts a left endpoint even when the
- *    right endpoint is null);
- *  - `numerW` (allocation eligibility): exact energy, else BOTH endpoints non-null (the legacy gate
- *    — a mid-interval gap keeps a source in the pool but out of the allocation).
+ * Both weights use ONE rule: exact energy where metered, else the LEFT endpoint. So `Σ numerW ==
+ * totalGenW`, and a load's row total is exactly its own interval energy.
+ *
+ * 🛑 This symmetry is the invariant, not an implementation detail. The numerator used to require BOTH
+ * endpoints while the denominator required only the left one, so a source with a right-endpoint
+ * dropout stayed in the pool it divided by but received no edge — and `1 − Σ numerW / totalGenW` of
+ * EVERY load's energy in that interval was allocated to nothing at all and silently vanished from the
+ * matrix. Measured on Kinkora, 2026-01-27: both solar points dropped their 11:15 sample, leaving grid
+ * as the only eligible source at 7081.758 of a 19250.064 W pool, and 63.2% of the EV's 0.598 kWh in
+ * that interval — 0.378 kWh — disappeared. Whatever the asymmetry was meant to guard against, it can
+ * only ever be paid for in deleted energy: a source whose right endpoint is missing is still the
+ * best estimate we have of where the load's metered energy came from, which is precisely what its
+ * presence in the denominator already asserts.
  */
 export function sourceWeightsForInterval(
   sources: FlowSeries[],
@@ -194,21 +207,19 @@ export function sourceWeightsForInterval(
   for (let s = 0; s < S; s++) {
     const exact = sources[s].energyKwh?.[i];
     const p1 = sources[s].power[i];
-    const p2 = sources[s].power[i + 1];
     if (anyExact) {
       const d = exact ?? (p1 !== null ? p1 * deltaHours : null);
       if (d !== null && d !== undefined) {
         denomW[s] = d;
         totalGenW += d;
+        numerW[s] = d;
       }
-      numerW[s] =
-        exact ?? (p1 !== null && p2 !== null ? p1 * deltaHours : null);
     } else {
       if (p1 !== null) {
         denomW[s] = p1;
         totalGenW += p1;
+        numerW[s] = p1;
       }
-      numerW[s] = p1 !== null && p2 !== null ? p1 : null;
     }
   }
   return { denomW, numerW, totalGenW, anyExact };
@@ -345,6 +356,9 @@ export function computeFlowAccounting(input: {
       if (excludeIdx >= 0) genWForLoad -= denomW[excludeIdx];
       if (genWForLoad <= 0) continue; // nothing valid left to attribute this load's energy to
 
+      // `Σ numerW == totalGenW` and the excluded source is subtracted from both sides, so the
+      // proportions below sum to exactly 1 and this load's row total IS `loadIntervalEnergy`.
+      // Nothing is allocated to nothing. Break that and the matrix quietly deletes energy.
       for (let s = 0; s < S; s++) {
         if (s === excludeIdx) continue;
         const w = numerW[s];

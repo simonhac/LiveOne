@@ -70,9 +70,10 @@ describe("extractBatteryFlows", () => {
     ).toBeCloseTo(0, 9);
   });
 
-  it("does NOT over-credit solar into the battery when solar has a data gap (null right endpoint)", () => {
+  it("credits solar's LEFT-endpoint share into the battery when its right endpoint is missing, in step with the matrix", () => {
     const timestamps = ts(2);
-    // Solar reads at t0 but its t1 sample is missing → computeFlowMatrix drops solar from allocation.
+    // Solar reads at t0 but its t1 sample is missing. Its left endpoint is the datum that puts it in
+    // the pool, so it is also the datum that earns it the edge — the same rule the core applies.
     const sources: FlowSeries[] = [
       { path: "source.solar", power: [4, null] },
       { path: "source.grid", power: [4, 4] },
@@ -83,8 +84,11 @@ describe("extractBatteryFlows", () => {
       { path: "load.battery", power: [2, 2] },
     ];
     const [bf] = extractBatteryFlows(timestamps, sources, loads);
-    // Solar is gated out (matches flow_1d's source.solar→load.battery == 0); its share is not clean solar.
-    expect(bf.solarChargeKwh).toBeCloseTo(0, 9);
+    // An even 4/4 kW pool → the 2 kWh of charge splits in half.
+    expect(bf.solarChargeKwh).toBeCloseTo(1, 9);
+    expect(bf.gridChargeKwh).toBeCloseTo(1, 9);
+    // The claim that matters: this fold and the Sankey agree edge-for-edge. Previously both dropped
+    // solar here — the matrix deleted the share outright, the fold relabelled it `otherChargeKwh`.
     expect(bf.solarChargeKwh).toBeCloseTo(
       chargeCell(timestamps, sources, loads, "source.solar"),
       9,
@@ -93,10 +97,11 @@ describe("extractBatteryFlows", () => {
       chargeCell(timestamps, sources, loads, "source.grid"),
       9,
     );
-    // The dropped share falls through to otherChargeKwh so the fold's inventory E stays whole.
+    // Every source is accounted for, so nothing falls through to unknown provenance...
+    expect(bf.otherChargeKwh).toBeCloseTo(0, 9);
+    // ...and the fold's inventory E stays whole either way.
     expect(
       bf.solarChargeKwh + bf.gridChargeKwh + bf.otherChargeKwh,
     ).toBeCloseTo(2, 9);
-    expect(bf.otherChargeKwh).toBeGreaterThan(0);
   });
 });
