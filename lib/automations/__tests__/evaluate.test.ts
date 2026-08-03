@@ -371,13 +371,18 @@ describe("resolveDerivationSource", () => {
         },
       }),
     ]);
-    mockDetectors.mockResolvedValue([detector({ id: OTHER_DX_UUID })]);
+    // Deliberately DIFFERENT ids: the trigger names OTHER_DX_UUID, the resolved detector reports
+    // DX_UUID. In production the two coincide, so only a fixture that separates them can show
+    // which one each call actually uses.
+    mockDetectors.mockResolvedValue([detector({ id: DX_UUID })]);
 
     await evaluateAutomations(T0);
 
+    // The lookup is keyed by the TRIGGER's derivationId…
     expect(mockDetectors).toHaveBeenCalledWith({ derivationId: OTHER_DX_UUID });
-    // 🛑 The run is fetched by the DETECTOR's own id, not the automation's or the area's.
-    expect(mockOpenRun).toHaveBeenCalledWith(OTHER_DX_UUID);
+    // …and the run is then fetched by the resolved DETECTOR's own id.
+    expect(mockOpenRun).toHaveBeenCalledWith(DX_UUID);
+    expect(mockOpenRun).not.toHaveBeenCalledWith(OTHER_DX_UUID);
   });
 
   it("no open run ⇒ inactive (not an error): an unarmed standing rule just waits", async () => {
@@ -437,7 +442,57 @@ describe("resolveDerivationSource", () => {
     });
   });
 
-  it("fires a kWh leg off the run's own energy, and the anchor tolerance off the detector's delayOff", async () => {
+  it("🛑 a kWh leg fires off the OPEN RUN's own energy (`energyKwh` ⇒ the decision's `runKwh`)", async () => {
+    // The only test in either suite that drives a derivation kWh limit all the way to a dispatch.
+    // Drop the run's energy on the way through (`runKwh: null`) and the whole energy-based
+    // derivation limit silently stops existing — this is the assertion that notices.
+    const runStart = T0 - 10 * MIN;
+    mockOpenRun.mockResolvedValue(openRun(runStart, 22));
+    mockStore.listEnabled.mockResolvedValue([
+      firingRow({
+        armedAt: new Date(runStart),
+        trigger: {
+          kind: "charge-session",
+          source: { kind: "derivation", derivationId: DX_UUID },
+          afterKwh: 20, // no minutes leg: only the energy comparison can fire this
+        },
+        // Nothing to short-circuit on: never fired, so no already-fired suppression.
+        lastTriggeredRunStart: null,
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(T0);
+
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
+    // A derivation source anchors on the RUN START, not on arm time.
+    expect(mockStore.recordFired.mock.calls[0][1]).toMatchObject({
+      anchorMs: runStart,
+    });
+    expect(summary).toMatchObject({ fired: 1, errors: 0 });
+  });
+
+  it("an unpriceable open run (null energyKwh) leaves a kWh-only limit inert", async () => {
+    const runStart = T0 - 10 * MIN;
+    mockOpenRun.mockResolvedValue(openRun(runStart, null));
+    mockStore.listEnabled.mockResolvedValue([
+      firingRow({
+        armedAt: new Date(runStart),
+        trigger: {
+          kind: "charge-session",
+          source: { kind: "derivation", derivationId: DX_UUID },
+          afterKwh: 20,
+        },
+        lastTriggeredRunStart: null,
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(T0);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ fired: 0, errors: 0 });
+  });
+
+  it("takes the anchor tolerance from the detector's own delayOffMs", async () => {
     mockOpenRun.mockResolvedValue(openRun(T0 - 10 * MIN, 22));
     mockDetectors.mockResolvedValue([
       detector({ detect: { delayOffMs: 900_000 } }),
@@ -580,7 +635,29 @@ describe("resolvePointSource", () => {
     expect(summary).toMatchObject({ disarmed: 1 });
   });
 
-  it("fires on the counter DELTA above the armed baseline, not its absolute value", async () => {
+  it("🛑 measures the counter DELTA above the armed baseline, not its absolute value", async () => {
+    // The measured overnight-top-up shape, end to end through the shell: baseline 42.5, counter
+    // now 52.5, limit 20 kWh. Delta 10 ⇒ no fire. Absolute logic (`counter >= afterKwh`) would
+    // fire here, and would fire on the very first tick of every overnight top-up.
+    mockReadRaw.mockResolvedValue(
+      series([{ v: 42.5 + 10, at: T0 - MIN }], [{ v: 1, at: T0 - MIN }]),
+    );
+    const armedAt = T0 - 30 * MIN;
+    mockStore.listEnabled.mockResolvedValue([
+      pointTriggerRow({
+        armedAt: new Date(armedAt),
+        armedContext: { baselineKwh: 42.5, baselineAt: armedAt },
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(T0);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockStore.recordFired).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ fired: 0, errors: 0 });
+  });
+
+  it("fires once the delta crosses, with the stored armed context read back and ARM time as the anchor", async () => {
     mockReadRaw.mockResolvedValue(
       series([{ v: 42.5 + 20, at: T0 - MIN }], [{ v: 1, at: T0 - MIN }]),
     );

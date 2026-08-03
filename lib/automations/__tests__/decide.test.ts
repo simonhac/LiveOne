@@ -440,6 +440,24 @@ describe("decideAutomation — lifecycle and inertness", () => {
     ).toEqual({ kind: "none" });
   });
 
+  it("🛑 a derivation kWh leg fires off the RUN's own energy", () => {
+    // The only path by which `derived_intervals.energy_kwh` reaches a decision. Nothing else in
+    // either suite exercises a non-null `runKwh`, so without this a resolver that dropped the
+    // run's energy (`runKwh: null`) would leave every energy-based derivation limit silently
+    // dead and the suite green.
+    const a = inputs({
+      sourceKind: "derivation",
+      afterKwh: 20,
+      armedAtMs: T0, // armed; no lastTriggeredRunStart, so nothing suppresses the fire
+    });
+    expect(
+      decideAutomation(a, derivSrc("active", T0, 19.9), T0 + 30 * MIN),
+    ).toEqual({ kind: "none" });
+    expect(
+      decideAutomation(a, derivSrc("active", T0, 20), T0 + 30 * MIN),
+    ).toEqual({ kind: "fire", anchorMs: T0 });
+  });
+
   it("an unpriceable derivation run leaves only the minutes leg live", () => {
     const a = inputs({
       sourceKind: "derivation",
