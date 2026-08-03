@@ -21,6 +21,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
+    "typecheck": "npm run type-check",
     "type-check:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "test": "jest",
     "test:all": "jest --config jest.config.all.js",
