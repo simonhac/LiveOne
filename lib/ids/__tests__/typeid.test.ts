@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   Area,
+  Automation,
   Binding,
   Dashboard,
   Derivation,
@@ -60,7 +61,8 @@ describe("ID_PREFIX matches the codecs", () => {
       Dashboard.prefix,
       Derivation.prefix,
       Binding.prefix,
-    ]).toEqual(["dv", "pt", "ar", "db", "dx", "bn"]);
+      Automation.prefix,
+    ]).toEqual(["dv", "pt", "ar", "db", "dx", "bn", "au"]);
     expect(ID_PREFIX).toEqual({
       device: "dv",
       point: "pt",
@@ -68,6 +70,7 @@ describe("ID_PREFIX matches the codecs", () => {
       dashboard: "db",
       derivation: "dx",
       binding: "bn",
+      automation: "au",
     });
   });
 });
@@ -119,6 +122,30 @@ describe("EntityCodec", () => {
     expect(Area.toUuidOrNull(Area.toUuid(ar))).toBeNull();
     expect(Area.toUuidOrNull(Device.generate())).toBeNull();
     expect(Area.toUuidOrNull("garbage")).toBeNull();
+  });
+
+  it("Automation.generate() round-trips like every other codec", () => {
+    const au = Automation.generate();
+    expect(au.startsWith("au_")).toBe(true);
+    expect(au).toHaveLength(3 + 26);
+    const parsed = Automation.parse(au);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.id).toBe(au);
+    expect(isCanonicalUuid(Automation.toUuid(au))).toBe(true);
+  });
+
+  // `ar_` and `au_` are the first prefix pair differing only in the SECOND letter — pin the
+  // cross-parse rejection so nobody ever "helpfully" loosens prefix matching to a first-letter test.
+  it("does not confuse the ar_/au_ pair", () => {
+    expect(Area.parse(Automation.generate())).toMatchObject({
+      ok: false,
+      code: "wrong-prefix",
+    });
+    expect(Automation.parse(Area.generate())).toMatchObject({
+      ok: false,
+      code: "wrong-prefix",
+    });
+    expect(Automation.toUuidOrNull(Device.generate())).toBeNull();
   });
 
   describe("parse — malformed inputs map to typed codes", () => {
