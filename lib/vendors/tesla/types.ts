@@ -37,6 +37,10 @@ export interface TeslaChargeState {
   time_to_full_charge: number; // hours
   charger_voltage: number;
   charge_limit_soc: number;
+  // kWh added since this charge session began. Present in every real vehicle_data payload
+  // (3871/3871 over 30 days on device rid 10). NOT a monotonic dispensed-energy counter —
+  // see lib/vendors/tesla/point-metadata.ts (ev.charge/added) for the measured semantics.
+  charge_energy_added: number;
 }
 
 // Drive state from vehicle_data
