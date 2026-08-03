@@ -49,18 +49,23 @@ function HotWaterTile({
       enabled: !wantShared && wantData,
     }),
   );
-  const hwsSparkValues = useMemo<number[]>(() => {
+  // POSITIONAL: one slot per 5-minute interval of the window, null where there is no reading. The
+  // series is a dense grid (lib/history/readings-pg.ts densifies it), and its newest intervals are
+  // routinely null while the producer catches up — compacting those away would let the sparkline
+  // stretch the remaining points across the full width and claim to be current. See
+  // lib/charts/sparkline.ts.
+  const hwsSparkValues = useMemo<(number | null)[]>(() => {
+    const toSlot = (v: unknown): number | null =>
+      typeof v === "number" && Number.isFinite(v) ? v : null;
     if (wantShared) {
       const values = sharedSite.data?.hwsTemperature?.values;
-      return Array.isArray(values)
-        ? values.filter((v): v is number => typeof v === "number")
-        : [];
+      return Array.isArray(values) ? values.map(toSlot) : [];
     }
     const series = (
       hwsHistory.data as { data?: Array<{ history?: { data?: unknown[] } }> }
     )?.data?.[0]?.history?.data;
     if (!Array.isArray(series)) return [];
-    return series.filter((v: unknown): v is number => typeof v === "number");
+    return series.map(toSlot);
   }, [wantShared, sharedSite.data, hwsHistory.data]);
 
   return (

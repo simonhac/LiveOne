@@ -500,7 +500,8 @@ export const HOME_ENERGY_SCENARIOS: Record<string, RenewablesSummary | null> = {
 // ---------------------------------------------------------------------------
 export interface HwsScenario {
   faucetC: number | null;
-  sparkValues: number[];
+  /** Positional — one slot per interval, null where there is no reading. See lib/charts/sparkline.ts. */
+  sparkValues: (number | null)[];
   measurementTime?: Date;
   heating: boolean;
 }
@@ -512,6 +513,12 @@ function hwsSpark(endC: number): number[] {
     0.94, 0.9, 0.88, 0.86, 0.84, 0.82, 0.8, 0.78, 0.75, 0.72, 0.7,
   ];
   return shape.map((f) => Math.round(endC * f * 10) / 10);
+}
+
+/** The same curve with its newest `n` intervals not yet produced — the line must stop short. */
+function hwsSparkLaggingTail(endC: number, n: number): (number | null)[] {
+  const full = hwsSpark(endC);
+  return full.map((v, i) => (i >= full.length - n ? null : v));
 }
 
 export const HWS_SCENARIOS: Record<string, HwsScenario> = {
@@ -537,6 +544,21 @@ export const HWS_SCENARIOS: Record<string, HwsScenario> = {
     faucetC: 40.0,
     sparkValues: hwsSpark(40),
     measurementTime: new Date(Date.now() - STALE * 1000),
+    heating: false,
+  },
+  // The live value is current but the history series has not caught up. The line MUST stop short of
+  // the right-hand edge — if it reaches it, the sparkline is claiming data it does not have.
+  "lagging tail": {
+    faucetC: 35.6,
+    sparkValues: hwsSparkLaggingTail(40, 5),
+    measurementTime: new Date(Date.now() - FRESH * 1000),
+    heating: false,
+  },
+  // A mid-window outage: the line breaks rather than bridging readings nobody took.
+  "gap mid-window": {
+    faucetC: 52.0,
+    sparkValues: hwsSpark(52).map((v, i) => (i >= 9 && i <= 12 ? null : v)),
+    measurementTime: new Date(Date.now() - FRESH * 1000),
     heating: false,
   },
 };

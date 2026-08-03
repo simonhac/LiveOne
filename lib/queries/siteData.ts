@@ -72,7 +72,13 @@ export function siteDataQuery(p: SiteDataQueryParams) {
         : undefined;
     },
     refetchInterval: p.paused ? false : refetchInterval,
-    refetchOnWindowFocus: false,
+    // A LIVE window must catch up the moment you look at it. React Query suspends
+    // `refetchInterval` while the document is hidden, so without this a backgrounded tab comes
+    // back with the chart frozen at whatever it last fetched while the tiles — which DO refetch on
+    // focus (lib/queries/data.ts) — jump to now. The two then disagree on screen, for up to a
+    // whole boundary interval. A settled window keeps `staleTime: SETTLED_STALE`, so focus is a
+    // no-op there either way; `isLive` just says so out loud.
+    refetchOnWindowFocus: isLive,
     enabled: p.enabled ?? true,
   });
 }
