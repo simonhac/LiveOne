@@ -27,6 +27,10 @@ import {
 } from "@/lib/derivations/resolve";
 import { publishRunningLatest } from "@/lib/run-tracking/running-latest";
 import { reconcileTrailingWindow as reconcileHwsTemperature } from "@/lib/hws/recompute";
+import {
+  evaluateAutomations,
+  type AutomationsSummary,
+} from "@/lib/automations/evaluate";
 
 // Earliest data (when point data collection began) — clamps backfill ranges.
 const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
@@ -199,6 +203,16 @@ async function handle(request: NextRequest) {
       } catch (err) {
         console.error("[Cron] HWS temperature reconcile failed:", err);
       }
+      // Charge-limit automations: evaluate against the intervals the reconcile above just
+      // refreshed, so a derivation-sourced limit reads an open run that is as of THIS minute.
+      // Best-effort like the two steps before it — and `null` rather than zeros when the step
+      // itself failed, so a broken evaluator is distinguishable from an idle one.
+      let automations: AutomationsSummary | null = null;
+      try {
+        automations = await evaluateAutomations(nowMs);
+      } catch (err) {
+        console.error("[Cron] automation evaluation failed:", err);
+      }
       return NextResponse.json({
         success: true,
         action: "reconcile",
@@ -206,6 +220,7 @@ async function handle(request: NextRequest) {
         runningPublished,
         hwsPairs,
         hwsRows,
+        automations,
         durationMs: Date.now() - startTime,
         executedAt: getNowFormattedAEST(),
       });

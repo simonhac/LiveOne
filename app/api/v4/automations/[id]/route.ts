@@ -1,0 +1,187 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/api-auth";
+import { loadAreaForAuth } from "@/lib/areas/http";
+import { Automation } from "@/lib/ids";
+import type {
+  AutomationMode,
+  AutomationRow,
+} from "@/lib/db/planetscale/schema";
+import * as store from "@/lib/automations/store";
+import { actionFromWire, automationWire, triggerFromWire } from "@/lib/automations/wire";
+import { checkReferences } from "@/lib/automations/references";
+
+/**
+ * One charge-limit automation.
+ *
+ *   PATCH  /api/v4/automations/au_… { name?, enabled?, mode?, trigger?, action? } → 200 { automation }
+ *   DELETE /api/v4/automations/au_…                                              → 200 { success }
+ *
+ * ## Why an unauthorized id 404s rather than 403s
+ *
+ * There is no area in this URL, so "unknown automation" and "not your automation" must be
+ * indistinguishable — otherwise the route is an oracle for which `au_` ids exist. That is the same
+ * no-escalation collapse `findReadableArea` documents. `loadAreaForOwner` can 403 because the
+ * caller named the area themselves.
+ *
+ * ## Why `trigger` and `action` are whole-object replaces
+ *
+ * Both are CLOSED vocabularies, not sparse config: a merge would let a caller drop `afterKwh` from
+ * a stored trigger only by... not being able to. Send the object you want.
+ */
+
+const MODES: AutomationMode[] = ["once", "standing"];
+
+function unprocessable(error: string): NextResponse {
+  return NextResponse.json({ error }, { status: 422 });
+}
+
+function notFound(): NextResponse {
+  return NextResponse.json({ error: "Automation not found" }, { status: 404 });
+}
+
+/** Authenticate + resolve + authorize. Returns the row, or the response to send. */
+async function loadOwnedAutomation(
+  request: NextRequest,
+  id: string,
+): Promise<{ row: AutomationRow } | { error: NextResponse }> {
+  const auth = await requireAuth(request);
+  if (auth instanceof NextResponse) return { error: auth };
+
+  const uuid = Automation.toUuidOrNull(id);
+  if (!uuid)
+    return {
+      error: NextResponse.json(
+        { error: `Invalid automation id: ${id}` },
+        { status: 400 },
+      ),
+    };
+
+  const row = await store.getById(uuid);
+  if (!row) return { error: notFound() };
+
+  const area = await loadAreaForAuth(row.areaId);
+  // Same owner-or-admin predicate `loadAreaForOwner` applies — but collapsed to 404 (see header).
+  if (!area || !(auth.isAdmin || area.ownerClerkUserId === auth.userId))
+    return { error: notFound() };
+
+  return { row };
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const loaded = await loadOwnedAutomation(request, id);
+  if ("error" in loaded) return loaded.error;
+  const row = loaded.row;
+
+  const body = (await request.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  if (!body) return unprocessable("Body must be JSON");
+
+  // Identity: an automation belongs to the area that authorizes it. Moving one is delete+recreate,
+  // so the area-owner check above can never be evaluated against the wrong area.
+  if (body.areaId !== undefined)
+    return unprocessable("areaId is not patchable — delete and recreate instead");
+
+  const patch: store.AutomationPatch = {};
+
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || body.name.trim() === "")
+      return unprocessable("name must be a non-empty string");
+    patch.name = body.name;
+  }
+
+  if (body.mode !== undefined) {
+    if (
+      typeof body.mode !== "string" ||
+      !MODES.includes(body.mode as AutomationMode)
+    )
+      return unprocessable(`mode must be one of: ${MODES.join(", ")}`);
+    patch.mode = body.mode as AutomationMode;
+  }
+
+  // A replaced trigger/action must clear the SAME firewalls creation did — an automation is a
+  // deferred action call, dispatched later with the device owner's credentials.
+  let nextTrigger = row.trigger;
+  let nextAction = row.action;
+
+  if (body.trigger !== undefined) {
+    const parsed = triggerFromWire(body.trigger);
+    if (!parsed.ok) return unprocessable(parsed.error);
+    patch.trigger = parsed.value;
+    nextTrigger = parsed.value;
+  }
+  if (body.action !== undefined) {
+    const parsed = actionFromWire(body.action);
+    if (!parsed.ok) return unprocessable(parsed.error);
+    patch.action = parsed.value;
+    nextAction = parsed.value;
+  }
+  if (body.trigger !== undefined || body.action !== undefined) {
+    const refused = await checkReferences(
+      request,
+      row.areaId,
+      nextTrigger,
+      nextAction,
+    );
+    if (refused) return refused;
+  }
+  if (body.trigger !== undefined) {
+    // A baseline snapshotted against the OLD source is meaningless against the new one, and a
+    // stale anchor could suppress the first fire outright.
+    patch.armedAt = null;
+    patch.armedContext = null;
+    patch.lastTriggeredRunStart = null;
+  }
+
+  if (body.enabled !== undefined) {
+    if (typeof body.enabled !== "boolean")
+      return unprocessable("enabled must be a boolean");
+    patch.enabled = body.enabled;
+    // 🛑 A CHANGE of `enabled` (false→true is the load-bearing direction) resets the arming state.
+    // Without it, a standing point-source rule disabled mid-session and re-enabled during a LATER
+    // session evaluates armed+active against a weeks-old `armedAt` — the minutes leg fires
+    // instantly, a spurious `turn_off` at the start of the new session — with a `baselineKwh` from
+    // a different cable session. `lastTriggeredRunStart` is KEPT: it preserves same-run
+    // suppression for a derivation source re-enabled mid-run (the tolerance check), while the
+    // fresh `armedAt` on re-arm deliberately re-qualifies a point source. Re-enabling is an
+    // explicit user action: "start over".
+    //
+    // A SAME-VALUE write resets nothing — PR-G's enable toggle re-sending the current value must
+    // not wipe a live baseline mid-session.
+    if (body.enabled !== row.enabled && body.trigger === undefined) {
+      patch.armedAt = null;
+      patch.armedContext = null;
+    }
+  }
+
+  if (Object.keys(patch).length === 0)
+    return unprocessable("Nothing to patch (name | enabled | mode | trigger | action)");
+
+  const updated = await store.patch(row.id, patch);
+  if (!updated) return notFound();
+  return NextResponse.json({ automation: automationWire(updated) });
+}
+
+/**
+ * Hard delete. Deliberately unlike derivations (which has no DELETE at all, because
+ * `derived_intervals` CASCADE would destroy years of output): an automation owns no derived rows,
+ * and `point_commands.requested_by` is a plain string with no FK, so the audit trail of everything
+ * this rule ever did survives the rule itself.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const loaded = await loadOwnedAutomation(request, id);
+  if ("error" in loaded) return loaded.error;
+
+  const removed = await store.remove(loaded.row.id);
+  if (!removed) return notFound();
+  return NextResponse.json({ success: true });
+}
