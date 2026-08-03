@@ -40,9 +40,15 @@ jest.mock("@/lib/control/point-actions", () => ({
 jest.mock("@/lib/control/repoll", () => ({ scheduleRepoll: jest.fn() }));
 // The AUTOMATIONS path: a deferred command. Everything except the ownership gate is stubbed, so
 // what these cases exercise is the real `requireDeviceAccess` inside `checkReferences`.
-jest.mock("@/lib/areas/http", () => ({ loadAreaForOwner: jest.fn() }));
+jest.mock("@/lib/areas/http", () => ({
+  loadAreaForOwner: jest.fn(),
+  loadAreaForAuth: jest.fn(),
+}));
 jest.mock("@/lib/automations/store", () => ({
   create: jest.fn(),
+  getById: jest.fn(),
+  patch: jest.fn(),
+  remove: jest.fn(async () => true),
   derivationBelongsToArea: jest.fn(async () => true),
 }));
 
@@ -54,11 +60,15 @@ import {
   loadPointByStemMetric,
   loadPointByUuid,
 } from "@/lib/control/point-actions";
-import { loadAreaForOwner } from "@/lib/areas/http";
+import { loadAreaForAuth, loadAreaForOwner } from "@/lib/areas/http";
 import * as automationStore from "@/lib/automations/store";
 import { POST as pointAction } from "@/app/api/v4/points/[id]/action/route";
 import { POST as teslaCommand } from "@/app/api/devices/[systemId]/tesla/command/route";
 import { POST as createAutomation } from "@/app/api/v4/automations/route";
+import {
+  DELETE as deleteAutomation,
+  PATCH as patchAutomation,
+} from "@/app/api/v4/automations/[id]/route";
 
 const mockClerk = jest.mocked(auth) as unknown as jest.Mock;
 const mockIsAdmin = jest.mocked(isUserAdmin);
@@ -89,6 +99,35 @@ const pointRow = {
   metricType: "active",
   control: { kind: "switch" },
 };
+
+const AU = Automation.generate();
+
+/** An automation the OWNER authored, on the owner's own car. `enabled` is the variable. */
+function storedRow(enabled: boolean) {
+  return {
+    id: Automation.toUuid(AU),
+    areaId: Area.toUuid(AREA),
+    name: "Charge limit",
+    enabled,
+    mode: "once",
+    trigger: {
+      kind: "charge-session",
+      source: { kind: "derivation", derivationId: Derivation.toUuid(DX) },
+      afterMinutes: 60,
+    },
+    action: {
+      kind: "point-action",
+      pointId: Point.toUuid(POINT),
+      action: "turn_off",
+    },
+    armedAt: null,
+    lastTriggeredAt: null,
+    lastTriggeredRunStart: null,
+    armedContext: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  } as never;
+}
 
 /** `POST /api/v4/points/{pt_}/action` — the control plane's entry point. */
 function callV4() {
@@ -134,6 +173,19 @@ beforeEach(() => {
     area: { id: Area.toUuid(AREA) },
   } as never);
   jest.mocked(automationStore.derivationBelongsToArea).mockResolvedValue(true);
+  // The PATCH path: the area gate there is owner-OR-ADMIN too (collapsed to 404), so again the
+  // only thing left to discriminate is the device-ownership gate on the action point.
+  jest.mocked(loadAreaForAuth).mockResolvedValue({
+    id: Area.toUuid(AREA),
+    ownerClerkUserId: "user_owner",
+  } as never);
+  jest.mocked(automationStore.getById).mockResolvedValue(storedRow(false));
+  jest
+    .mocked(automationStore.patch)
+    .mockImplementation(async (_id, fields) =>
+      ({ ...storedRow(false), ...(fields as object) }) as never,
+    );
+  jest.mocked(automationStore.remove).mockResolvedValue(true);
   jest.mocked(automationStore.create).mockImplementation(
     async (values) =>
       ({
@@ -248,6 +300,77 @@ describe("automations — the DEFERRED command path", () => {
     signIn("user_stranger");
     expect((await createLimit()).status).toBe(403);
     expect(automationStore.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("automations — RE-ENABLING is causing a command too", () => {
+  // 🛑 The fourth way to reach `dispatchPointAction`, and the one that was open: an automation the
+  // OWNER wrote and then DISABLED is a parked command. Flipping `enabled` back to true (or widening
+  // `mode`) hands it back to the cron evaluator, which fires it with no session, on the device
+  // OWNER's vendor credentials. The area gate collapses to 404 for a stranger but ADMITS a non-owner
+  // admin, so the ownership gate on the action point is the only thing between an admin and a
+  // `turn_off` at someone else's car. Here the REAL `requireDeviceAccess` decides.
+  function callPatch(body: unknown) {
+    return patchAutomation(
+      new NextRequest(`http://localhost/api/v4/automations/${AU}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id: AU }) },
+    );
+  }
+
+  it("the OWNER can re-enable their own automation (the happy path still works)", async () => {
+    signIn("user_owner");
+    expect((await callPatch({ enabled: true })).status).toBe(200);
+    expect(automationStore.patch).toHaveBeenCalledTimes(1);
+  });
+
+  it("🛑 a non-owner ADMIN cannot re-enable it — 403 and NOTHING is stored", async () => {
+    signIn("user_admin", true);
+    const res = await callPatch({ enabled: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
+    expect(automationStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 …nor change its mode, nor rename it", async () => {
+    signIn("user_admin", true);
+    for (const body of [{ mode: "standing" }, { name: "Renamed" }]) {
+      jest.mocked(automationStore.patch).mockClear();
+      expect((await callPatch(body)).status).toBe(403);
+      expect(automationStore.patch).not.toHaveBeenCalled();
+    }
+  });
+
+  it("🛑 nobody can re-enable one aimed at an OWNERLESS device", async () => {
+    // An ownerless device is commandable by NOBODY, so even an admin gets the control 403. An
+    // anonymous caller never reaches the control gate at all — `requireAuth` 401s the route first.
+    device(null);
+    for (const [who, status] of [
+      [() => signIn("user_admin", true), 403],
+      [() => signIn(null), 401],
+    ] as const) {
+      jest.mocked(automationStore.patch).mockClear();
+      who();
+      expect((await callPatch({ enabled: true })).status).toBe(status);
+      expect(automationStore.patch).not.toHaveBeenCalled();
+    }
+  });
+
+  it("DELETE is administration: a non-owner ADMIN may remove one (pinned decision)", async () => {
+    // Deleting can only cause FEWER commands. See the DELETE note in the route.
+    signIn("user_admin", true);
+    const res = await deleteAutomation(
+      new NextRequest(`http://localhost/api/v4/automations/${AU}`, {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: AU }) },
+    );
+    expect(res.status).toBe(200);
+    expect(automationStore.remove).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -513,6 +513,120 @@ describe("PATCH /api/v4/automations/{id}", () => {
   });
 });
 
+/**
+ * 🛑 The RE-ENABLE gap. `checkReferences` used to run only when `trigger`/`action` were present, so
+ * a non-owner admin could PATCH `{enabled:true}` on a rule the OWNER wrote and disabled — the cron
+ * evaluator then dispatches that `turn_off` at the owner's car, on the owner's vendor credentials,
+ * with no session at all. It cannot be re-aimed, which makes it narrower than the create/re-point
+ * bypass, but it still ends in a command the device's owner did not cause.
+ *
+ * The gate is now unconditional, so these cases also pin the FUTURE: a new patchable column cannot
+ * quietly re-open the hole, because there is no "dangerous fields" list to forget to update.
+ */
+describe("PATCH — every patch clears the control gate (the re-enable gap)", () => {
+  /** An admin who owns neither the area nor the device: passes the 404-collapse, fails control. */
+  function signInAdminNotOwner() {
+    mockAuth.mockResolvedValue({
+      userId: "user_admin",
+      isAdmin: true,
+    } as never);
+    mockAreaAuth.mockResolvedValue({
+      id: AREA_UUID,
+      ownerClerkUserId: OWNER,
+    } as never);
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+  }
+
+  const DISABLED = () => row({ enabled: false });
+
+  it("🛑 a non-owner ADMIN cannot RE-ENABLE the owner's disabled automation", async () => {
+    signInAdminNotOwner();
+    mockStore.getById.mockResolvedValue(DISABLED());
+    const res = await patch({ enabled: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
+    // The real proof: nothing was stored, so the evaluator has nothing to fire.
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 a non-owner ADMIN cannot change MODE (once → standing re-arms a spent rule)", async () => {
+    signInAdminNotOwner();
+    mockStore.getById.mockResolvedValue(row({ mode: "once" }));
+    const res = await patch({ mode: "standing" });
+    expect(res.status).toBe(403);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 …and cannot even RENAME it — the gate is unconditional, not a danger list", async () => {
+    signInAdminNotOwner();
+    const res = await patch({ name: "Renamed" });
+    expect(res.status).toBe(403);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("the OWNER can still re-enable (the happy path must not regress)", async () => {
+    mockStore.getById.mockResolvedValue(DISABLED());
+    const res = await patch({ enabled: true });
+    expect(res.status).toBe(200);
+    expect(mockStore.patch).toHaveBeenCalledWith(AU_UUID, {
+      enabled: true,
+      armedAt: null,
+      armedContext: null,
+    });
+  });
+
+  it("the OWNER can still change mode, and pays exactly one control check", async () => {
+    mockStore.getById.mockResolvedValue(row({ mode: "once" }));
+    const res = await patch({ mode: "standing" });
+    expect(res.status).toBe(200);
+    expect(mockStore.patch).toHaveBeenCalledWith(AU_UUID, { mode: "standing" });
+    // The STORED action point is what gets checked when the body replaces neither.
+    expect(mockLoadPoint).toHaveBeenCalledWith(ACT_PT_UUID);
+    expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10, {
+      requireOwner: true,
+    });
+  });
+
+  it("a malformed body still 422s before the control check (shape errors need no ownership)", async () => {
+    signInAdminNotOwner();
+    const res = await patch({ enabled: "yes" });
+    expect(res.status).toBe(422);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE — administration, deliberately NOT owner-gated", () => {
+  it("a non-owner ADMIN may delete an owner's automation", async () => {
+    // Pinned decision: deleting can only cause FEWER commands — it removes a deferred action and
+    // cannot arm, re-aim or re-time one. The owner-only rule is about CAUSING a command.
+    mockAuth.mockResolvedValue({
+      userId: "user_admin",
+      isAdmin: true,
+    } as never);
+    mockAreaAuth.mockResolvedValue({
+      id: AREA_UUID,
+      ownerClerkUserId: OWNER,
+    } as never);
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect(mockStore.remove).toHaveBeenCalledWith(AU_UUID);
+    // …and it does it WITHOUT consulting the control plane at all.
+    expect(mockDeviceAccess).not.toHaveBeenCalled();
+  });
+
+  it("a stranger (neither owner nor admin) still 404s", async () => {
+    mockAuth.mockResolvedValue({
+      userId: "user_stranger",
+      isAdmin: false,
+    } as never);
+    expect((await del()).status).toBe(404);
+    expect(mockStore.remove).not.toHaveBeenCalled();
+  });
+});
+
 describe("DELETE /api/v4/automations/{id}", () => {
   it("hard-deletes", async () => {
     const res = await del();

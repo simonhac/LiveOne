@@ -121,15 +121,6 @@ export async function PATCH(
     patch.action = parsed.value;
     nextAction = parsed.value;
   }
-  if (body.trigger !== undefined || body.action !== undefined) {
-    const refused = await checkReferences(
-      request,
-      row.areaId,
-      nextTrigger,
-      nextAction,
-    );
-    if (refused) return refused;
-  }
   if (body.trigger !== undefined) {
     // A baseline snapshotted against the OLD source is meaningless against the new one, and a
     // stale anchor could suppress the first fire outright.
@@ -159,6 +150,31 @@ export async function PATCH(
     }
   }
 
+  // 🛑 EVERY patch clears the ownership firewall, not just one that replaces trigger/action.
+  //
+  // The narrow version of this check (run it only when `trigger`/`action` change) guarded the wrong
+  // thing: re-AIMING a rule. But an automation is a deferred command, and `enabled: false → true`
+  // re-arms one that the owner had deliberately parked — the cron evaluator then dispatches it on
+  // the owner's vendor credentials, with no session at all. `mode: once → standing` likewise turns
+  // a spent rule into a repeating one. The area gate above admits a non-owner ADMIN, so without
+  // this a non-owner admin could re-activate someone else's `turn_off` against their car.
+  //
+  // So the rule is the one that cannot rot: if a field can be patched, it must have cleared the
+  // control gate — no per-field danger analysis, and a column added to this table later cannot
+  // silently re-open the hole. The price is one extra point/device lookup on a name-only patch,
+  // which is nothing next to having to re-derive "which fields can arm a command" on every change.
+  // Validation-shaped 422s are deliberately answered FIRST (above): the caller already cleared the
+  // area gate, so ordering leaks nothing, and a malformed body should not depend on ownership.
+  //
+  // DELETE is deliberately NOT gated this way — see its own note.
+  const refused = await checkReferences(
+    request,
+    row.areaId,
+    nextTrigger,
+    nextAction,
+  );
+  if (refused) return refused;
+
   if (Object.keys(patch).length === 0)
     return unprocessable("Nothing to patch (name | enabled | mode | trigger | action)");
 
@@ -172,6 +188,16 @@ export async function PATCH(
  * `derived_intervals` CASCADE would destroy years of output): an automation owns no derived rows,
  * and `point_commands.requested_by` is a plain string with no FK, so the audit trail of everything
  * this rule ever did survives the rule itself.
+ *
+ * 🛑 **DELETE is ADMINISTRATION, not a command — so it stays area-owner-OR-ADMIN and does NOT run
+ * `checkReferences`.** The owner-only rule is "only the device owner may cause a command to be
+ * SENT". Deleting an automation can only ever cause FEWER commands: it removes a deferred action,
+ * it cannot arm, re-aim or re-time one. The failure mode is a rule that stops firing (a charge that
+ * runs past its limit) — an availability loss, not an action taken on someone else's car with that
+ * owner's credentials, and one an admin can already cause a dozen other ways (disabling a device,
+ * revoking a token). Gating it on device ownership would also mean an admin could not clear an
+ * automation belonging to a device whose owner has left, which is a real administrative need.
+ * PATCH cannot be argued the same way precisely because PATCH can arm.
  */
 export async function DELETE(
   request: NextRequest,
