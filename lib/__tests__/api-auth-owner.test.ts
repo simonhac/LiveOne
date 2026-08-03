@@ -142,6 +142,54 @@ describe("requireOwner — the control gate", () => {
   });
 });
 
+/**
+ * 🛑 The two control routes pass `{requireOwner: true}` ALONE. This block is the proof that this
+ * loses nothing versus the `{requireWrite: true, requireOwner: true}` they used to pass: for EVERY
+ * caller shape, the two option sets produce the identical verdict — including the 401-vs-403
+ * distinction (an anonymous caller on an OWNED device cannot even read it, and is refused
+ * unauthenticated by a check that runs before either flag is consulted).
+ *
+ * Why it holds, structurally: `ownsSubject(userId, ownerId)` ⇒ `isOwner` ⇒ `canWrite`, so the write
+ * branch can only ever refuse a request the owner branch is also about to refuse. The `canRead` and
+ * unauthenticated branches are unconditional — neither flag gates them.
+ */
+describe("requireWrite is REDUNDANT beside requireOwner (same verdict, every shape)", () => {
+  const SHAPES: [string, string | null, () => void][] = [
+    ["the owner", "user_owner", () => signIn("user_owner")],
+    ["a non-owner admin", "user_owner", () => signIn("user_admin", true)],
+    ["an owner who is also admin", "user_owner", () => signIn("user_owner", true)],
+    ["a signed-in stranger", "user_owner", () => signIn("user_stranger")],
+    ["an anonymous caller", "user_owner", () => signIn(null)],
+    ["an anonymous caller, ownerless device", null, () => signIn(null)],
+    ["a stranger, ownerless device", null, () => signIn("user_someone")],
+    ["an admin, ownerless device", null, () => signIn("user_admin", true)],
+  ];
+
+  it.each(SHAPES)("%s gets the same answer either way", async (_name, owner, who) => {
+    device(owner);
+    who();
+    const both = await status({ requireWrite: true, requireOwner: true });
+    device(owner);
+    who();
+    const ownerOnly = await status({ requireOwner: true });
+    expect(ownerOnly).toBe(both);
+  });
+
+  it("🛑 the UNAUTHENTICATED distinction survives: anonymous on an OWNED device is 401, not 403", async () => {
+    device("user_owner");
+    signIn(null);
+    // Not the control 403 — this caller cannot READ the device, and `canRead`/`!userId` is decided
+    // before either flag. Dropping `requireWrite` did not move that boundary.
+    expect(await status({ requireOwner: true })).toBe(401);
+  });
+
+  it("🛑 the read gate still runs: a stranger on an OWNED device is 403 before ownership matters", async () => {
+    device("user_owner");
+    signIn("user_stranger");
+    expect(await status({ requireOwner: true })).toBe(403);
+  });
+});
+
 describe("the CONFIG write gate is unchanged (the narrowing did not leak)", () => {
   it("a non-owner ADMIN still passes {requireWrite:true} — device settings/credentials/metadata", async () => {
     signIn("user_admin", true);

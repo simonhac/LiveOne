@@ -73,8 +73,11 @@ export async function POST(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
+    // `requireOwner` ALONE, exactly as the v4 route and `lib/automations/references.ts` pass it:
+    // ownership implies write, so a `requireWrite` beside it could never refuse anything the owner
+    // check admits, and `requireDeviceAccess` runs its read / unauthenticated checks regardless of
+    // either flag. One flag, one rule.
     const authResult = await requireDeviceAccess(request, systemId, {
-      requireWrite: true,
       requireOwner: true,
     });
     if (authResult instanceof NextResponse) return authResult;

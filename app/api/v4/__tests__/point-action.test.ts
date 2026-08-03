@@ -111,16 +111,18 @@ describe("resolution and authorization", () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it("🛑 authorizes the point's DEVICE, requiring write AND ownership", async () => {
+  it("🛑 authorizes the point's DEVICE on OWNERSHIP — `requireOwner` alone", async () => {
     // `requireOwner` is the whole control rule at this call site: only the device's owner may
     // command it, so a non-owner ADMIN is refused. Dropping it here would silently re-open the
     // control plane to every admin.
+    //
+    // And it is the ONLY flag: ownership implies write access (`ownsSubject` ⇒ `isOwner` ⇒
+    // `canWrite`), so a `requireWrite` beside it is dead — it could only ever refuse a request the
+    // owner branch is about to refuse anyway. The `toEqual` is exact on purpose: it pins the lone
+    // flag, so re-adding the redundant one is a deliberate act, not a drift.
     await call({ action: "turn_on" });
     expect(mockAuth.mock.calls[0][1]).toBe(10);
-    expect(mockAuth.mock.calls[0][2]).toEqual({
-      requireWrite: true,
-      requireOwner: true,
-    });
+    expect(mockAuth.mock.calls[0][2]).toEqual({ requireOwner: true });
   });
 });
 
