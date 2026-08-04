@@ -117,16 +117,34 @@ Areas that actually want it.
   it back off), so PR 3 dropped it. A ref left by an older build fails `Area.is()` and is ignored, so a
   stale entry degrades to "no subscribers" rather than mis-routing a value.
 
-**Written by:** `buildSubscriptionRegistry()` — a full rebuild from `area_bindings` (curated
-multi-device Areas) unioned with `getBindinglessAreaMemberPoints()` (union-default Areas).
+**Written by:** `buildSubscriptionRegistry()` — a full rebuild from two legs, unioned per Area:
+every `area_bindings` row (curated roles), plus every member device's points whose
+`logicalPath/metricType` **nothing else in that Area claims** (`getAreaMemberPointsForServing()`).
+
+The second leg used to fire only for Areas with ZERO bindings, which quietly made bindings a
+_visibility filter frozen at authoring time_: a point minted later on an already-member device joined
+nothing and never reached the Area's `latest` hash. That shipped an EV charge control to the live
+dashboard with Start/Stop permanently disabled (2026-08-04). Bindings are now role resolution and
+collision curation only.
+
+A path claimed by two or more of an Area's points is **excluded** — the hash is keyed by
+`logicalPath/metricType`, so serving both would make the Area's value flap last-write-wins between
+two physical devices. Exclusion is never silent: every rebuild warns one line per contested path
+(area, path, contending point rids) and `?action=build` returns them.
+
 **Read by:** `getPointSubscribers()` (inside `updateLatestPointValue`) and `getSubscriberAreaIds()`
 (`lib/system-summary-store.ts`).
-**Rebuild triggers:** automatically via `refreshAreaServing` on every area/binding mutation; by hand
+**Rebuild triggers:** `refreshAreaServing` on every area/binding mutation; `refreshServingForMintedPoints`
+whenever an ingest batch or a derived-point writer mints a point (best-effort, with a module-level retry
+flag consumed by the next batch); the `/api/cron/daily` aggregate run, as a ≤ 24 h backstop; by hand
 with `npx tsx scripts/build-subscription-registry.ts`, or `GET /api/devices/subscriptions?action=build`
 (admin).
 **TTL:** none. Stale entries are garbage-collected by the next rebuild, which deletes any key matching
 the family pattern that it did not itself write (a whole-key-string comparison — the old code parsed the
-id back out with a `(\d+)` regex, which cannot match a TypeID).
+id back out with a `(\d+)` regex, which cannot match a TypeID). The same rebuild also sweeps each
+subscriber Area's `latest` hash, `hdel`-ing fields the Area no longer serves — without that, a value
+leaving the serving set would freeze at its last reading forever (the hash is only ever `hset`), which
+for a control point means Start/Stop staying enabled against arbitrarily stale state.
 
 ### `system-summaries` — one hash for the whole environment
 

@@ -170,6 +170,15 @@ async function derivedUidFor(
 /**
  * Mint (or return) the point for `(systemId, spec.physicalPathTail)`. Idempotent.
  *
+ * 🛑 **Serving note.** Minting does NOT rebuild the KV area-serving registry, and the registry is
+ * what fans a reading out to the Areas its device belongs to. A brand-new point therefore reaches
+ * its own `latest:device:{dv_…}` hash but NO `latest:area:{ar_…}` hash until a rebuild happens.
+ * Callers on a mint path batch a `refreshServingForMintedPoints` call after their mint loop (see
+ * `point-manager.ts`, `run-tracking/running-latest.ts`, `hws/register.ts`,
+ * `battery-provenance/register.ts`); a new call site that can mint must do the same, or its points
+ * stay invisible to area dashboards until the daily backstop rebuild. The hook lives in the callers
+ * deliberately — it is batch-level, so putting it here would rebuild once per point.
+ *
  * @returns the point row, in the shape every existing caller already consumes.
  */
 export async function mintPoint(
@@ -211,7 +220,12 @@ export async function mintPoint(
       })
       .onConflictDoUpdate({
         target: [points.deviceId, points.physicalPath],
-        set: { defaultName: spec.defaultName, transform, control, updatedAt: now },
+        set: {
+          defaultName: spec.defaultName,
+          transform,
+          control,
+          updatedAt: now,
+        },
       })
       .returning();
 

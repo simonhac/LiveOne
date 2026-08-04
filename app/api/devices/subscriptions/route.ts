@@ -47,11 +47,17 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const action = searchParams.get("action");
 
+    // Paths an Area could not auto-serve because two of its points claim the same
+    // `logicalPath/metricType` — the ONE way a point can legitimately stay out of an area's latest
+    // map. Surfaced here (and warned at every rebuild) so exclusion is never silent.
+    let contested: Awaited<
+      ReturnType<typeof buildSubscriptionRegistry>
+    >["contested"] = [];
     if (action === "build") {
       console.log(
         "Building subscription registry (requested via ?action=build)",
       );
-      await buildSubscriptionRegistry();
+      ({ contested } = await buildSubscriptionRegistry());
     }
 
     // Scan KV for all subscription keys
@@ -85,6 +91,7 @@ export async function GET(request: NextRequest) {
     return jsonResponse({
       namespace: getEnvironment(),
       subscriptions,
+      ...(action === "build" && { contested }),
       note: "Use ?action=build to force rebuild the registry from database",
     });
   } catch (error) {

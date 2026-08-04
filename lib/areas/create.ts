@@ -559,8 +559,11 @@ export async function replaceBindings(
 
 /**
  * Refresh live serving after a membership/binding change: drop the in-memory point-series cache for
- * the handle and rebuild the KV subscription registry (which is derived from `area_bindings` +
- * binding-less members) so latest values propagate to the area. Best-effort — a missing/unconfigured
+ * the handle and rebuild the KV subscription registry (derived from `area_bindings` plus every
+ * member point whose path nothing else in the area claims) so latest values propagate to the area.
+ * No longer the ONLY trigger: a rebuild also fires when a point is minted, and daily as a backstop —
+ * membership/binding mutations used to be the only ones, which is why a point minted later on an
+ * already-member device stayed invisible. Best-effort — a missing/unconfigured
  * KV (dev) logs a warning rather than failing the mutation.
  */
 export async function refreshAreaServing(areaId: string): Promise<void> {

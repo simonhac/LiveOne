@@ -12,7 +12,10 @@
  * under the detector's `legacyHandle` — byte-identical to the pre-derivations behaviour.
  */
 import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
-import { updateLatestPointValue } from "@/lib/kv-cache-manager";
+import {
+  refreshServingForMintedPoints,
+  updateLatestPointValue,
+} from "@/lib/kv-cache-manager";
 import { ROLES } from "@/lib/roles/registry";
 import { listEnabledRunDetectors } from "@/lib/derivations/resolve";
 import { isRunningNow } from "./live";
@@ -38,13 +41,18 @@ async function ensureRunningPoint(
   // config-v4 slice M: `mintPoint` owns identity + index (`points` is the only point table since the
   // terminal window). The max(index)+1 scan this replaced never mirrored into `points`, so it was a
   // live C7 hole.
-  return mintPoint(systemId, {
+  const row = await mintPoint(systemId, {
     physicalPathTail: `derived/${stem}/${RUNNING_METRIC}`,
     logicalPathStem: stem,
     metricType: RUNNING_METRIC,
     metricUnit: RUNNING_UNIT,
     defaultName: displayName,
   });
+  // A fresh mint is invisible to the KV serving registry until it is rebuilt — which is why
+  // `ev/running` never reached the Kinkora Unified area map after the run-tracking feature landed.
+  // Before the caller's `updateLatestPointValue`, so the first published state already fans out.
+  await refreshServingForMintedPoints("run-tracking/ensureRunningPoint");
+  return row;
 }
 
 /**

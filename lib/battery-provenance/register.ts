@@ -16,6 +16,7 @@ import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areaBindings, devices, points } from "@/lib/db/planetscale/schema";
 import { mintPoint } from "@/lib/point/mint-point";
+import { refreshServingForMintedPoints } from "@/lib/kv-cache-manager";
 
 const BATTERY_STEM = "bidi.battery";
 
@@ -218,6 +219,9 @@ export async function ensureBatteryProvenancePoints(
     pointIds[p.metricType] = row.rid;
     pointUids[p.metricType] = row.pointUid;
   }
+  // Once for the whole batch: fresh mints are absent from the KV serving registry until it is
+  // rebuilt, so their values would reach the device hash but no Area hash.
+  await refreshServingForMintedPoints("battery-provenance/ensureBlendPoints");
 
   return { status: "created", systemId, pointIds, pointUids };
 }
