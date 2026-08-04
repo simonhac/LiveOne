@@ -21,6 +21,8 @@ import {
   formatChargeLimitCompact,
   formatChargeLimitLine,
   selectChargeLimits,
+  summaryWords,
+  targetWords,
   type ChargeLimitJson,
 } from "@/lib/automations/progress";
 import {
@@ -341,6 +343,33 @@ describe("formatChargeLimitLine", () => {
     expect(formatChargeLimitLine(desc)).toBe(
       "Stopping at 20.0 kWh (3.5 so far)",
     );
+  });
+});
+
+describe("targetWords / summaryWords", () => {
+  it.each([
+    [30, undefined, "30 min"],
+    [undefined, 20, "20 kWh"],
+    [30, 20, "30 min or 20 kWh"],
+    [undefined, undefined, ""],
+  ] as const)("targetWords(%p, %p) → %p", (min, k, expected) => {
+    expect(targetWords(min, k)).toBe(expected);
+  });
+
+  it("summaryWords promises this charge for a once rule", () => {
+    expect(summaryWords("once", 15, 6)).toBe(
+      "Will stop this charge after 15 min or 6 kWh.",
+    );
+  });
+
+  it("summaryWords promises every charge for a standing rule", () => {
+    expect(summaryWords("standing", 30, undefined)).toBe(
+      "Will stop every charge after 30 min.",
+    );
+  });
+
+  it("summaryWords is null with no target — nothing to promise", () => {
+    expect(summaryWords("once", undefined, undefined)).toBeNull();
   });
 });
 

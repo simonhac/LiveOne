@@ -1,9 +1,9 @@
 /**
  * Tesla's `ControlCapability` — the one place a point action becomes a Fleet command.
  *
- * This is a straight lift of the old bespoke route (`app/api/devices/[systemId]/tesla/command`),
- * which is now a thin shim over the generic plane. Every user-visible string is preserved
- * verbatim so that route's external contract is byte-compatible.
+ * This is a straight lift of the old bespoke route (`app/api/devices/[systemId]/tesla/command`,
+ * since deleted — the v4 action route is the only caller). Every user-visible string was
+ * preserved verbatim from that route.
  *
  * 🛑 The signer seam is UNTOUCHED. `TeslaClient`'s command methods and
  * `TeslaCommandSigner`/`DirectCommandSigner` are called exactly as they were; when a 2021+ car
@@ -18,7 +18,10 @@ import type {
   ControlInvokeContext,
   ControlInvokeResult,
 } from "../types";
-import { ControlDispatchError, ControlRejectedError } from "@/lib/control/errors";
+import {
+  ControlDispatchError,
+  ControlRejectedError,
+} from "@/lib/control/errors";
 import { TeslaCommandProtocolError } from "./command-signer";
 import { getValidTeslaToken } from "./tesla-auth";
 import { getTeslaClient } from "./tesla-client";
@@ -43,10 +46,12 @@ function resolveDispatch(ctx: ControlInvokeContext): Dispatch | null {
   switch (address) {
     case "ev.charge/active":
       if (ctx.action === "turn_on") {
-        return (client, token, vehicleId) => client.chargeStart(token, vehicleId);
+        return (client, token, vehicleId) =>
+          client.chargeStart(token, vehicleId);
       }
       if (ctx.action === "turn_off") {
-        return (client, token, vehicleId) => client.chargeStop(token, vehicleId);
+        return (client, token, vehicleId) =>
+          client.chargeStop(token, vehicleId);
       }
       return null;
     case "ev.charge.limit/soc":

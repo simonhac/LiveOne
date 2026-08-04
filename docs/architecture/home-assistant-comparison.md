@@ -48,10 +48,9 @@ from the **runtime/storage architecture** (where we diverge because the _problem
   full at every tier; KV is a derived fast-read.
 
 The actuator caveat is narrower than it used to be: Tesla charge control ships as a real command path
-(`POST /api/devices/[systemId]/tesla/command` — `charge_start` / `charge_stop` / `set_charge_limit`, through
-the Fleet client's signer seam). But it is _one route in the web tier_, not a command plane — no
-service registry, no uniform invocation contract, and the engine Control API in
-`engine-web-separation.md` is still unbuilt.
+(`POST /api/v4/points/{pt}/action` — `turn_on` / `turn_off` / `set_value`, through the generic
+control plane and the Fleet client's signer seam). But it is _one plane in the web tier_ — the
+engine Control API in `engine-web-separation.md` is still unbuilt.
 
 Almost every difference below falls out of that asymmetry. Keep it in mind so the comparison stays
 fair: HA "wins" on generality, identity, semantic vocabulary and control because it must tame

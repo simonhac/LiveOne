@@ -1,7 +1,7 @@
 /**
  * The ONE dispatch path of the command plane.
  *
- * Every command — from the v4 action route, from the legacy Tesla shim, and (PR-F) from the
+ * Every command — from the v4 action route and from the
  * automation evaluator — goes through `dispatchPointAction`. It validates against the point's
  * own `control` descriptor, writes a `point_commands` audit row, dispatches through the
  * vendor's `ControlCapability`, and completes that row in place with the outcome.
@@ -73,8 +73,8 @@ export async function loadPointByUuid(
 }
 
 /**
- * Resolve a device's point row by `(rid, logicalPathStem, metricType)` — the legacy shim's
- * resolver, since a legacy command names a capability rather than a point id.
+ * Resolve a device's point row by `(rid, logicalPathStem, metricType)` — the evaluator's and
+ * `checkReferences`' resolver, for callers that name a capability rather than a point id.
  */
 export async function loadPointByStemMetric(
   deviceRid: number,

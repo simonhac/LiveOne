@@ -80,6 +80,23 @@ export type ChartCase = {
     }
   | {
       /**
+       * The stacked chart inside the DASHBOARD's own height chain — `flex-1` column → `h-full
+       * min-h-[N]` → `relative flex-1 min-h-0` → the chart — with NO explicit height anywhere.
+       *
+       * Every other case hands its chart a fixed pixel box, which is precisely the hop this one
+       * exists to cover: the chart measures its own root and draws nothing at zero height, so a
+       * height that fails to resolve is a blank box, not a broken-looking chart. It renders as a
+       * COLUMN under the mobile project's viewport (`md:` is a viewport query) and as a ROW under
+       * desktop's, so the pair covers both branches of the dashboard's layout switch.
+       *
+       * `height` here is the chain's `min-height`, not a box — nothing in this case sets a height.
+       */
+      kind: "site-layout";
+      range: ChartTimeRange;
+      mode: "load" | "generation";
+    }
+  | {
+      /**
        * Both charts stacked vertically over the SAME window — the arrangement the dashboard actually
        * uses. Exists to pin DEFECT #6: the lines chart paints Battery orange-400 and Grid red-500,
        * while the stacked chart paints Battery green-400 and Grid pink-500 (and orange-400 is Hot
@@ -271,6 +288,17 @@ export const CHART_CASES: ChartCase[] = [
     note: "stacked crosshair at the shared focus instant",
     width: W,
     height: H,
+  },
+
+  // --- the dashboard's own height chain, unsized ---------------------------------------------
+  {
+    id: "site-layout-load-d",
+    kind: "site-layout",
+    range: "D",
+    mode: "load",
+    note: "the stacked chart sized only by the dashboard's flex chain, beside its legend. The mobile project renders the COLUMN branch, where a percentage height resolves to auto: that collapsed the chart to zero and drew nothing (fixed 2026-08-04). No fixed box — that is the point",
+    width: W,
+    height: 375,
   },
 
   // --- IngestionChart (/admin/observations), ported to SVG in Stage 5 -------------------------
