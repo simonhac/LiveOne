@@ -20,6 +20,7 @@ import {
 } from "./latest-values-store";
 import { getAreaBindings } from "@/lib/areas/bindings";
 import { getAreaMemberPointsForServing } from "@/lib/areas/members";
+import { isDisplayDerivedHere } from "@/lib/areas/derived-display-paths";
 
 // Re-export canonical types for backwards compatibility
 export type { LatestValue, LatestValuesMap };
@@ -197,6 +198,8 @@ export interface SubscriptionRegistrySummary {
   edges: number;
   contested: ContestedServingPath[];
   gcDeletedFields: number;
+  /** Unbound member points withheld because the display layer derives their path. */
+  suppressed: SuppressedServingPath[];
   servedPathsByArea: Record<string, string[]>;
 }
 
@@ -228,6 +231,19 @@ function addSubscription(
 }
 
 /** An unbound member point excluded from serving because another point claims the same path. */
+/**
+ * An unbound member point withheld because {@link DISPLAY_DERIVED_PATHS} covers its path — the
+ * display layer computes that value, so serving a raw one would retire the computation silently.
+ * Reported, never merely dropped: a deliberately excluded point is fine, an invisible one is not.
+ */
+export interface SuppressedServingPath {
+  areaId: AreaId;
+  /** The latest-hash field name the display layer derives: `stem/metricType`. */
+  path: string;
+  /** `points.rid` of the point that was withheld. */
+  pointRid: number;
+}
+
 export interface ContestedServingPath {
   areaId: AreaId;
   /** The latest-hash field name the contenders would have fought over: `stem/metricType`. */
@@ -240,6 +256,8 @@ export interface ContestedServingPath {
 export interface SubscriptionRegistryBuild {
   subscriptions: Map<DeviceId, Map<string, Set<AreaId>>>;
   contested: ContestedServingPath[];
+  /** Unbound candidates withheld because the display layer derives the path. */
+  suppressed: SuppressedServingPath[];
   /** Per subscriber Area, the latest-hash field names its serving set legitimately covers. */
   servedPathsByArea: Map<AreaId, Set<string>>;
 }
@@ -310,12 +328,22 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
 
   const subscriptions = new Map<DeviceId, Map<string, Set<AreaId>>>();
   const contested: ContestedServingPath[] = [];
+  const suppressed: SuppressedServingPath[] = [];
   const servedPathsByArea = new Map<AreaId, Set<string>>();
 
   for (const [areaUuid, candidates] of byArea) {
     const areaId = Area.encode(areaUuid);
     const served = new Set<string>();
     servedPathsByArea.set(areaId, served);
+
+    // The Area's BOUND paths — the inputs the display layer would derive FROM. A derived path is
+    // withheld from the unbound leg only when at least one of its inputs is bound here, i.e. only
+    // when the computation is genuinely happening (see isDisplayDerivedHere). A binding-less Area,
+    // or one whose bindings are unrelated, derives nothing and keeps its member's own points.
+    const boundPaths = new Set<string>();
+    for (const c of candidates.values()) {
+      if (c.bound && c.path !== null) boundPaths.add(c.path);
+    }
 
     // Claimants per path. A stemless point claims nothing (`path === null`).
     const claimants = new Map<string, ServingCandidate[]>();
@@ -329,6 +357,19 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
     for (const c of candidates.values()) {
       if (!c.bound && c.path !== null && claimants.get(c.path)!.length > 1) {
         continue; // contested — reported below, once per path
+      }
+      // The display layer computes this path for itself, and prefers a real point over its own
+      // fallback — so serving one here would silently RETIRE a computation rather than add a
+      // signal. Suppressed for the mechanical leg only: a binding still wins (it never reaches
+      // this branch), which is what makes moving a headline onto another device a decision rather
+      // than a drift. See lib/areas/derived-display-paths.ts for the measured rationale.
+      if (
+        !c.bound &&
+        c.path !== null &&
+        isDisplayDerivedHere(c.path, boundPaths)
+      ) {
+        suppressed.push({ areaId, path: c.path, pointRid: c.pointRid });
+        continue;
       }
       addSubscription(
         subscriptions,
@@ -350,7 +391,7 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
     }
   }
 
-  return { subscriptions, contested, servedPathsByArea };
+  return { subscriptions, contested, suppressed, servedPathsByArea };
 }
 
 /**
@@ -403,7 +444,7 @@ async function gcAreaLatestFields(
  */
 export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistrySummary> {
   // Example: { "dv_01k9…": { "0199a1…": ["ar_01ka…", "ar_01kb…"] } }
-  const { subscriptions, contested, servedPathsByArea } =
+  const { subscriptions, contested, suppressed, servedPathsByArea } =
     await buildSubscriptionsFromBindings();
 
   // Write subscriptions to KV with timestamp
@@ -449,6 +490,12 @@ export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistryS
   // be re-added by a fan-out still reading the old snapshot in the same instant.
   const gcDeletedFields = await gcAreaLatestFields(servedPathsByArea);
 
+  for (const sp of suppressed) {
+    console.warn(
+      `[SubscriptionRegistry] area ${sp.areaId}: "${sp.path}" (rid ${sp.pointRid}) is DERIVED by the display layer — not auto-served, so a raw point cannot silently retire the computation; bind it to override`,
+    );
+  }
+
   for (const c of contested) {
     console.warn(
       `[SubscriptionRegistry] area ${c.areaId}: "${c.path}" is claimed by ${c.pointRids.length} points (rids ${c.pointRids.join(", ")}) — not auto-served; bind one of them to pick a winner`,
@@ -456,13 +503,14 @@ export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistryS
   }
 
   console.log(
-    `Built subscription registry for ${subscriptions.size} source device(s), ${edges} edge(s) (deleted ${deletions.length} stale entries, ${contested.length} contested path(s), GC'd ${gcDeletedFields} area field(s))`,
+    `Built subscription registry for ${subscriptions.size} source device(s), ${edges} edge(s) (deleted ${deletions.length} stale entries, ${contested.length} contested path(s), ${suppressed.length} display-derived path(s) withheld, GC'd ${gcDeletedFields} area field(s))`,
   );
 
   return {
     sourceDevices: subscriptions.size,
     edges,
     contested,
+    suppressed,
     gcDeletedFields,
     servedPathsByArea: Object.fromEntries(
       Array.from(servedPathsByArea, ([areaId, paths]) => [

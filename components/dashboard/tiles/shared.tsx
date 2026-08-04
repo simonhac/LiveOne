@@ -14,6 +14,11 @@ import {
 import Value from "@/components/ui/value";
 import { stemSplit, getMetricType } from "@/lib/identifiers/logical-path";
 import type { LatestPointValues, LatestPointValue } from "@/lib/types/api";
+import {
+  MASTER_LOAD_PATH,
+  REST_OF_HOUSE_PATH,
+  SOLAR_TOTAL_PATH,
+} from "@/lib/areas/derived-display-paths";
 
 export interface LoadPoint {
   path: string;
@@ -186,7 +191,7 @@ export function synthesizeMasterLoad(
   latest: LatestPointValues,
 ): LatestPointValue | null {
   // Only synthesize if master load doesn't already exist
-  if (latest["load/power"]) {
+  if (latest[MASTER_LOAD_PATH]) {
     return null;
   }
 
@@ -203,7 +208,7 @@ export function synthesizeMasterLoad(
   };
 
   // Get generation (try source.solar/power first, fallback to sum of local+remote)
-  let generation = getValue("source.solar/power");
+  let generation = getValue(SOLAR_TOTAL_PATH);
   if (generation === 0) {
     generation =
       getValue("source.solar.local/power") +
@@ -264,7 +269,7 @@ export function enrichLatest(latest: LatestPointValues): LatestPointValues {
   if (synthesizedLoad) {
     enriched = {
       ...enriched,
-      "load/power": synthesizedLoad,
+      [MASTER_LOAD_PATH]: synthesizedLoad,
     };
   }
 
@@ -272,7 +277,7 @@ export function enrichLatest(latest: LatestPointValues): LatestPointValues {
   if (synthesizedRestOfHouse) {
     enriched = {
       ...enriched,
-      "load.rest-of-house/power": synthesizedRestOfHouse,
+      [REST_OF_HOUSE_PATH]: synthesizedRestOfHouse,
     };
   }
 

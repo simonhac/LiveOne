@@ -11,6 +11,7 @@ import {
   getPointValue,
   getMeasurementTime,
 } from "./shared";
+import { SOLAR_TOTAL_PATH } from "@/lib/areas/derived-display-paths";
 
 /** Solar can be a single total, local+remote children, or one lone child — resolve the shown value. */
 function solarValueFrom(latest: LatestPointValues): {
@@ -19,7 +20,7 @@ function solarValueFrom(latest: LatestPointValues): {
   solarRemote: number | null;
   showBreakdown: boolean;
 } {
-  const solarTotal = getPointValue(latest, "source.solar/power");
+  const solarTotal = getPointValue(latest, SOLAR_TOTAL_PATH);
   const solarLocal = getPointValue(latest, "source.solar.local/power");
   const solarRemote = getPointValue(latest, "source.solar.remote/power");
 

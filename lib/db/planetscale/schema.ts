@@ -988,6 +988,26 @@ export const devices = pgTable(
       table.ownerUserId,
       table.slug,
     ),
+    // ONE helper device per Area. `helperSiteId(areaId)` (lib/areas/helper-site-id.ts) mints
+    // `helper:area:ar_…`, so uniqueness on that string IS "one helper per Area" — the invariant
+    // `lib/areas/helper.ts` states in prose ("A helper is a MEMBER of exactly one Area") and then
+    // enforces only by a lookup, which is why it called this index out as the thing that "would make
+    // it fully race-safe" and deferred it as not-required-for-the-MVP.
+    //
+    // Why it matters: `ensureHelperDevice` dedupes by "is there a helper that is a MEMBER of this
+    // Area", not by site id. If that membership row is ever missing or points elsewhere the lookup
+    // misses and it mints a SECOND helper for the same Area — and nothing in the database stopped
+    // it, because `vendor_site_id` carries no constraint. liveone-dev accumulated exactly that:
+    // two `Craig Unified · derived` and two `Daylesford · derived`, sharing a site id (cleaned up
+    // 2026-08-04). Prod was never affected.
+    //
+    // ⚠️ This enforces STRING uniqueness, which equals Area uniqueness only while every helper
+    // stores the post-0053 `ar_` form. A row still holding the legacy `helper:area:<raw uuid>` form
+    // would name the same Area with a different string and slip past. Both environments are on the
+    // `ar_` form today; `parentAreaIdFromHelperSiteId` stays dual-accept for reads.
+    helperAreaUnique: uniqueIndex("devices_helper_area_unique")
+      .on(table.vendorSiteId)
+      .where(sql`vendor = 'helper'`),
   }),
 );
 
