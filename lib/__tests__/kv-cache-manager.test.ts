@@ -488,6 +488,54 @@ describe("kv-cache-manager", () => {
       ]);
     });
 
+    it("🛑 withholds — and reports — an unbound point on a path the DISPLAY layer derives", async () => {
+      const { kv } = await import("../kv");
+
+      // The Kinkora shape, measured 2026-08-04: Mondo is bound for solar/battery/grid and the load
+      // submeters; Fronius is a member and uniquely publishes `load/power` and `source.solar/power`,
+      // which Mondo has no counterpart for. Uncontested, so the widening WOULD serve them — and the
+      // tile layer prefers a real point over its own fallback, so the Load and Solar headlines would
+      // silently move onto Fronius while the Sankey and every chart stayed on Mondo (they resolve
+      // through `area_bindings`, which this classifier does not touch). Withheld, not dropped.
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(6), "uid-mondo-sol-l", "source.solar.local", 65),
+      ];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39),
+        member(AREA_A_UUID, d(5), "uid-fronius-sol", "source.solar", 36),
+        // a genuinely new signal on the same device still gets served — the rule is narrow
+        member(AREA_A_UUID, d(5), "uid-fronius-ok", "load", 44, "energy"),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(summary.suppressed).toEqual([
+        { areaId: AREA_A, path: "load/power", pointRid: 39 },
+        { areaId: AREA_A, path: "source.solar/power", pointRid: 36 },
+      ]);
+      // the uncontested, non-derived sibling is unaffected
+      const entry = entryFor(kv, d(5));
+      expect(entry?.pointSubscribers["uid-fronius-ok"]).toEqual([AREA_A]);
+      expect(entry?.pointSubscribers["uid-fronius-load"]).toBeUndefined();
+      expect(entry?.pointSubscribers["uid-fronius-sol"]).toBeUndefined();
+    });
+
+    it("🛑 a BINDING still wins a display-derived path — suppression is mechanical-leg only", async () => {
+      const { kv } = await import("../kv");
+
+      // The escape hatch that makes this a decision rather than a prohibition: bind Fronius's
+      // `load/power` deliberately and it is served, carrying the charts and Sankey with it.
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39)];
+      mockMemberRows = [member(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39)];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(summary.suppressed).toEqual([]);
+      expect(entryFor(kv, d(5))?.pointSubscribers["uid-fronius-load"]).toEqual([
+        AREA_A,
+      ]);
+    });
+
     it("counts a point that is both bound and a member exactly once", async () => {
       const { kv } = await import("../kv");
 
