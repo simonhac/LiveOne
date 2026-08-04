@@ -414,6 +414,13 @@
       "when": 1785756796567,
       "tag": "0058_control_plane_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1785845324497,
+      "tag": "0059_helper_area_unique",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,24 @@
+-- ONE helper device per Area.
+--
+-- `helperSiteId(areaId)` (lib/areas/helper-site-id.ts) mints `helper:area:ar_…`, so uniqueness on
+-- that string IS "one helper per Area" — the invariant lib/areas/helper.ts states in prose ("A
+-- helper is a MEMBER of exactly one Area") and then enforces only with a lookup. That file named
+-- this index as the thing that "would make it fully race-safe" and deferred it as not required for
+-- the MVP; this is that index, renamed from the docstring's `systems_helper_area_unique` because
+-- `systems` was dropped by 0051.
+--
+-- The gap it closes: `ensureHelperDevice` dedupes by "is there a helper that is a MEMBER of this
+-- Area", NOT by site id. If that membership row is missing or points elsewhere, the lookup misses
+-- and a SECOND helper is minted for the same Area — with nothing in the database to stop it.
+-- liveone-dev had accumulated exactly that (two `Craig Unified · derived`, two `Daylesford ·
+-- derived`, each pair sharing a vendor_site_id), cleaned up 2026-08-04 before this was applied.
+-- Production was never affected and needed no cleanup.
+--
+-- Enforces STRING uniqueness, which equals Area uniqueness only while every helper stores the
+-- post-0053 `ar_` form; a legacy `helper:area:<raw uuid>` row would name the same Area with a
+-- different string and slip past. Both environments are on the `ar_` form.
+--
+-- IF NOT EXISTS so a re-run after a partial apply is a no-op (cf. 0027, 0042, 0057). `devices` is a
+-- small config table, so a plain (non-CONCURRENT) build is fine.
+
+CREATE UNIQUE INDEX IF NOT EXISTS "devices_helper_area_unique" ON "devices" USING btree ("vendor_site_id") WHERE vendor = 'helper';
