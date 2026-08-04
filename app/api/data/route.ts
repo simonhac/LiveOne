@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
+import { ownsSubject } from "@/lib/control/ownership";
+import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { jsonResponse, transformDates } from "@/lib/json";
 import { buildDevicePayload } from "@/lib/dashboard/serve-data";
 import {
@@ -67,7 +69,14 @@ export async function GET(request: NextRequest) {
             return [
               id,
               transformDates(
-                { ...payload, canWrite: viewerCanWrite(authResult) },
+                {
+                  ...payload,
+                  canControl: viewerCanControl(authResult),
+                  canControlDevices: await viewerControllableDevices(
+                    authResult,
+                    payload,
+                  ),
+                },
                 subjectTimezoneOffsetMin(authResult.subject),
               ),
             ] as const;
@@ -108,12 +117,18 @@ export async function GET(request: NextRequest) {
     );
     // Return with automatic date formatting and field renaming
     // (measurementTimeMs -> measurementTime, receivedTimeMs -> receivedTime).
-    // `canWrite` is VIEWER-relative, so it attaches here and NOT inside `buildDevicePayload`, which
+    // `canControl` is VIEWER-relative, so it attaches here and NOT inside `buildDevicePayload`, which
     // is shared with the viewer-less SSR seed (`getDeviceDataForCache` — "access is the CALLER's
     // responsibility"). It is the display-layer input for the EV charge-control cog; the action
-    // route re-authorizes with `requireWrite`, so this is courtesy, never authority.
+    // route re-authorizes with `requireOwner`, so this is courtesy, never authority.
     return jsonResponse(
-      { ...payload, canWrite: viewerCanWrite(authResult) },
+      {
+        ...payload,
+        canControl: viewerCanControl(authResult),
+        // Per-DEVICE ownership, for a tile whose commanded device is not the subject it fetched
+        // under (an EV tile filed inside a multi-device area). See the helper's note.
+        canControlDevices: await viewerControllableDevices(authResult, payload),
+      },
       subjectTimezoneOffsetMin(subject),
       { headers: serverTimingHeaders(t) },
     );
@@ -130,22 +145,56 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * The single emission point for the viewer's write access, shared by both legs.
+ * The single emission point for the viewer's CONTROL access, shared by both legs.
  *
- * 🛑 The `userId != null` term is a MASK over a pre-existing quirk in `requireDashboardAccess`:
- * `isOwner` is `ctx.userId === ownerUserId`, so on an OWNERLESS (public) subject an anonymous
- * caller compares `null === null` and comes back `canWrite: true` while owning nothing (pinned in
- * `lib/__tests__/api-auth.test.ts`). A caller with no identity is never shown controls. No
- * privilege is actually at stake — the action route re-authorizes and the Clerk middleware 404s
- * anonymous POSTs — but without the mask we would render a cog for a command the server refuses.
+ * 🛑 This is `isOwner`, NOT `canWrite`. The control plane is owner-only — a non-owner admin is
+ * refused by `requireDeviceAccess({requireOwner:true})` — so emitting `canWrite` (owner OR admin)
+ * would render a cog that 403s on press, which is worse than no cog. It is derived from the SAME
+ * auth result the read was authorized with; there is no second authorization path here.
  *
- * A share-token viewer arrives with `canWrite: false, userId: null` and stays false on both terms.
+ * `DashboardAuthContext.isOwner` is already strict (`ownsSubject`), so the old anonymous mask is
+ * subsumed: an anonymous caller on an OWNERLESS subject compares `null === null` on the raw
+ * `canWrite` quirk (still pinned in `lib/__tests__/api-auth.test.ts`) but owns nothing, and a
+ * share-token viewer arrives `isOwner: false`.
  */
-function viewerCanWrite(auth: {
-  canWrite: boolean;
-  userId: string | null;
-}): boolean {
-  return auth.canWrite === true && auth.userId != null;
+function viewerCanControl(auth: { isOwner: boolean }): boolean {
+  return auth.isOwner === true;
+}
+
+/**
+ * The DEVICES inside this payload that the viewer strictly owns — i.e. the ones they may command.
+ *
+ * 🛑 Why this exists next to `canControl`. `canControl` is about the SUBJECT the payload was
+ * fetched under, and for an AREA that is the area, not the car: an area owner who does not own a
+ * member device would see the EV cog and get a 403 on press. A control that visibly exists and then
+ * refuses is a defect, so the client must gate on the device that would ACTUALLY be commanded.
+ *
+ * There is deliberately no second authorization path here. Every latest-map entry already carries
+ * `sourceSystemId` (the producing `devices.rid` — see `lib/latest-values-store.ts`), so the set of
+ * devices in play is read off the payload we just built; ownership is then the SAME predicate the
+ * server gate itself uses, `ownsSubject`, against the same registry row `requireDeviceAccess`
+ * resolves. It is still courtesy, never authority — `POST /api/v4/points/{pt_}/action`
+ * re-authorizes with `requireOwner` regardless of what this said.
+ *
+ * A share-token viewer arrives `userId: null` and so owns nothing, exactly as `canControl` does.
+ */
+async function viewerControllableDevices(
+  auth: { userId: string | null },
+  payload: { latest?: Record<string, { sourceSystemId?: number }> },
+): Promise<number[]> {
+  if (auth.userId == null) return [];
+  const handles = new Set<number>();
+  for (const entry of Object.values(payload.latest ?? {})) {
+    if (typeof entry?.sourceSystemId === "number")
+      handles.add(entry.sourceSystemId);
+  }
+  const owned = await Promise.all(
+    [...handles].map(async (handle) => {
+      const device = await DeviceConfigRegistry.deviceByHandle(handle);
+      return ownsSubject(auth.userId, device?.ownerClerkUserId) ? handle : null;
+    }),
+  );
+  return owned.filter((h): h is number => h !== null);
 }
 
 /**

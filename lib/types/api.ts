@@ -31,6 +31,12 @@ export interface LatestPointValue {
    * unrecognised as absent.
    */
   pointReference?: string;
+  /**
+   * The producing device's integer handle (`devices.rid`) — see `LatestValue.sourceSystemId`. On an
+   * AREA payload the entries come from DIFFERENT devices, and this is how a consumer tells which;
+   * `datumCanControlPoint` gates the EV cog on ownership of exactly this device.
+   */
+  sourceSystemId?: number;
 }
 
 /**

@@ -39,13 +39,15 @@ export interface AreaDatum {
   };
   latest?: LatestPointValues;
   /**
-   * Viewer write access to THIS subject (owner or admin), emitted by `/api/data` from
-   * `requireDashboardAccess` and masked false for anonymous callers and share-token viewers.
+   * Does this viewer OWN this subject? Emitted by `/api/data` from `requireDashboardAccess.isOwner`
+   * — the same rule the control routes enforce (`requireDeviceAccess({requireOwner:true})`), so a
+   * non-owner ADMIN gets `false` here and is never shown a control it would be refused. False for
+   * anonymous callers, share-token viewers and ownerless subjects.
    *
    * ABSENT on SSR-seeded payloads (`getDeviceDataForCache` knows no viewer) — treat absent as
-   * false; the first client refetch (≤30 s, `refetchInterval`) fills it in.
+   * false (`datumCanControl`); the first client refetch (≤30 s, `refetchInterval`) fills it in.
    */
-  canWrite?: boolean;
+  canControl?: boolean;
 }
 
 /** The subject fields common to both legs — the drop-in replacement for the old `datum?.device`. */

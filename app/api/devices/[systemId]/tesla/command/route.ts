@@ -50,11 +50,13 @@ const COMMAND_MAP: Record<
  * frozen — `components/TeslaControlDialog.tsx` still calls it, and a later PR repoints that
  * dialog at `POST /api/v4/points/{pt_}/action`, after which this route can go.
  *
- * Auth: caller must own the device or be an admin (requireWrite). Credentials are always
- * loaded under the device OWNER (admins act on the owner's stored tokens) — that now happens
- * inside the capability, from the device alone, with no session user involved. Waking a
- * sleeping vehicle, the 501-without-Fleet-env check and the 422 signed-command refusal all
- * moved there too, with their messages preserved verbatim.
+ * 🛑 Auth: the caller must BE the device's owner (`requireOwner`), exactly as on the v4 route —
+ * this shim must not be a way around the control-plane rule. A non-owner admin gets 403, and an
+ * ownerless device is commandable by nobody. That matters here more than anywhere: credentials
+ * are always loaded under the device OWNER (so a non-owner admin would have been driving someone
+ * else's car on that owner's stored tokens) — that happens inside the capability, from the device
+ * alone, with no session user involved. Waking a sleeping vehicle, the 501-without-Fleet-env check
+ * and the 422 signed-command refusal all moved there too, with their messages preserved verbatim.
  *
  * One deliberate narrowing versus the old implementation: `set_charging_amps` above 48 A now
  * 400s here (the point's control descriptor caps at the vehicle's on-board-charger ceiling)
@@ -71,8 +73,12 @@ export async function POST(
       return NextResponse.json({ error: "Invalid system ID" }, { status: 400 });
     }
 
+    // `requireOwner` ALONE, exactly as the v4 route and `lib/automations/references.ts` pass it:
+    // ownership implies write, so a `requireWrite` beside it could never refuse anything the owner
+    // check admits, and `requireDeviceAccess` runs its read / unauthenticated checks regardless of
+    // either flag. One flag, one rule.
     const authResult = await requireDeviceAccess(request, systemId, {
-      requireWrite: true,
+      requireOwner: true,
     });
     if (authResult instanceof NextResponse) return authResult;
     const { device } = authResult;

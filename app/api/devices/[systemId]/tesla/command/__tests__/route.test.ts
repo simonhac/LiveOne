@@ -84,6 +84,16 @@ describe("guards (unchanged from the pre-shim route)", () => {
     expect(await res.json()).toEqual({ error: "Invalid system ID" });
   });
 
+  it("🛑 authorizes the device on OWNERSHIP alone — the same rule as the v4 route", async () => {
+    // The shim must not be a way around the owner-only control rule. End-to-end proof (real
+    // `requireDeviceAccess`, non-owner admin → 403) lives in
+    // `app/api/__tests__/control-owner-only.test.ts`. Exact-matched so the two control routes and
+    // `lib/automations/references.ts` cannot drift into three spellings of one rule.
+    await call({ command: "charge_start" });
+    expect(mockAuth.mock.calls[0][1]).toBe(10);
+    expect(mockAuth.mock.calls[0][2]).toEqual({ requireOwner: true });
+  });
+
   it("passes an authorization response through", async () => {
     mockAuth.mockResolvedValue(
       NextResponse.json({ error: "Write access required" }, { status: 403 }),

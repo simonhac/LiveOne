@@ -6,8 +6,10 @@
  *  1. 🛑 **An automation is a DEFERRED action call.** At fire time the evaluator dispatches with
  *     the DEVICE OWNER's credentials and no session user at all, so creation must clear the same
  *     firewalls the synchronous action route does. Without the
- *     `requireDeviceAccess(..., {requireWrite:true})` on the ACTION point, owning any area at all
- *     would let a caller aim a `turn_off` at someone else's car and have us execute it for them.
+ *     `requireDeviceAccess(..., {requireOwner:true})` on the ACTION point, owning — or merely
+ *     ADMINISTERING — any area at all would let a caller aim a `turn_off` at someone else's car and
+ *     have us execute it for them, on that owner's vendor credentials. Ownership, not write access:
+ *     the area gate and `requireWrite` both admit admins, and the control plane does not.
  *  2. 🛑 **PATCH `{enabled:true}` on a disabled row resets the arming state.** A standing
  *     point-source rule disabled mid-session and re-enabled during a LATER session would otherwise
  *     evaluate armed+active against a weeks-old `armed_at` — the minutes leg fires instantly, a
@@ -74,6 +76,36 @@ const mockSibling = jest.mocked(loadPointByStemMetric);
 const mockStore = jest.mocked(store);
 
 const OWNER = "user_owner";
+
+type AccessOpts = { requireWrite?: boolean; requireOwner?: boolean };
+
+/** Stands in for `requireDeviceAccess` when the caller can read but owns nothing. */
+const refuseUnlessOwner = (async (
+  _req: unknown,
+  _rid: number,
+  opts?: AccessOpts,
+) =>
+  opts?.requireOwner
+    ? NextResponse.json(
+        { error: "Only the device owner can control this device" },
+        { status: 403 },
+      )
+    : opts?.requireWrite
+      ? NextResponse.json({ error: "Write access required" }, { status: 403 })
+      : ({ canWrite: false } as never)) as never;
+
+/**
+ * A non-owner ADMIN: passes every config-write gate (`requireWrite`), fails the control gate.
+ * If the action-point check ever slips back to `requireWrite`, this mock lets it through and the
+ * tests using it go red.
+ */
+const adminNotOwner = (async (_req: unknown, _rid: number, opts?: AccessOpts) =>
+  opts?.requireOwner
+    ? NextResponse.json(
+        { error: "Only the device owner can control this device" },
+        { status: 403 },
+      )
+    : ({ canWrite: true, isAdmin: true } as never)) as never;
 
 function row(over: Partial<AutomationRow> = {}): AutomationRow {
   return {
@@ -331,18 +363,36 @@ describe("POST /api/v4/automations", () => {
     expect((await res.json()).error).toContain("afterKwh requires a kWh");
   });
 
-  it("🛑 403s when the caller lacks WRITE access to the action point's device", async () => {
-    mockDeviceAccess.mockImplementation((async (
-      _req: unknown,
-      _rid: number,
-      opts?: { requireWrite?: boolean },
-    ) =>
-      opts?.requireWrite
-        ? NextResponse.json({ error: "Write access required" }, { status: 403 })
-        : ({ canWrite: false } as never)) as never);
+  it("🛑 403s when the caller does not OWN the action point's device", async () => {
+    mockDeviceAccess.mockImplementation(refuseUnlessOwner);
     const res = await post(good);
     expect(res.status).toBe(403);
     expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 403s a non-owner ADMIN — a deferred command is still a command", async () => {
+    // The gap this closes: `loadAreaForOwner` admits an admin, and `requireWrite` (owner OR admin)
+    // admitted one too — so an admin could park a `turn_off` on someone else's car and have the
+    // cron dispatch it on THAT OWNER's Tesla tokens. The action point must be gated on ownership.
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+    const res = await post(good);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("gates the ACTION point on ownership and the TRIGGER point on read only", async () => {
+    // Discriminates the fix from "requireWrite everywhere": the trigger source may be a point on a
+    // device you merely read (the EV cross-device case); only the thing being COMMANDED needs you
+    // to own it.
+    const res = await post(good);
+    expect(res.status).toBe(201);
+    expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10, {
+      requireOwner: true,
+    });
+    expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10);
   });
 });
 
@@ -401,17 +451,20 @@ describe("PATCH /api/v4/automations/{id}", () => {
     });
   });
 
-  it("an action replace re-checks WRITE access", async () => {
-    mockDeviceAccess.mockImplementation((async (
-      _req: unknown,
-      _rid: number,
-      opts?: { requireWrite?: boolean },
-    ) =>
-      opts?.requireWrite
-        ? NextResponse.json({ error: "Write access required" }, { status: 403 })
-        : ({ canWrite: false } as never)) as never);
+  it("an action replace re-checks OWNERSHIP", async () => {
+    mockDeviceAccess.mockImplementation(refuseUnlessOwner);
     const res = await patch({ action });
     expect(res.status).toBe(403);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 a non-owner ADMIN cannot re-point an automation at a device they don't own", async () => {
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+    const res = await patch({ action });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
     expect(mockStore.patch).not.toHaveBeenCalled();
   });
 
@@ -457,6 +510,120 @@ describe("PATCH /api/v4/automations/{id}", () => {
       armedAt: null,
       armedContext: null,
     });
+  });
+});
+
+/**
+ * 🛑 The RE-ENABLE gap. `checkReferences` used to run only when `trigger`/`action` were present, so
+ * a non-owner admin could PATCH `{enabled:true}` on a rule the OWNER wrote and disabled — the cron
+ * evaluator then dispatches that `turn_off` at the owner's car, on the owner's vendor credentials,
+ * with no session at all. It cannot be re-aimed, which makes it narrower than the create/re-point
+ * bypass, but it still ends in a command the device's owner did not cause.
+ *
+ * The gate is now unconditional, so these cases also pin the FUTURE: a new patchable column cannot
+ * quietly re-open the hole, because there is no "dangerous fields" list to forget to update.
+ */
+describe("PATCH — every patch clears the control gate (the re-enable gap)", () => {
+  /** An admin who owns neither the area nor the device: passes the 404-collapse, fails control. */
+  function signInAdminNotOwner() {
+    mockAuth.mockResolvedValue({
+      userId: "user_admin",
+      isAdmin: true,
+    } as never);
+    mockAreaAuth.mockResolvedValue({
+      id: AREA_UUID,
+      ownerClerkUserId: OWNER,
+    } as never);
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+  }
+
+  const DISABLED = () => row({ enabled: false });
+
+  it("🛑 a non-owner ADMIN cannot RE-ENABLE the owner's disabled automation", async () => {
+    signInAdminNotOwner();
+    mockStore.getById.mockResolvedValue(DISABLED());
+    const res = await patch({ enabled: true });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(
+      "Only the device owner can control this device",
+    );
+    // The real proof: nothing was stored, so the evaluator has nothing to fire.
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 a non-owner ADMIN cannot change MODE (once → standing re-arms a spent rule)", async () => {
+    signInAdminNotOwner();
+    mockStore.getById.mockResolvedValue(row({ mode: "once" }));
+    const res = await patch({ mode: "standing" });
+    expect(res.status).toBe(403);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("🛑 …and cannot even RENAME it — the gate is unconditional, not a danger list", async () => {
+    signInAdminNotOwner();
+    const res = await patch({ name: "Renamed" });
+    expect(res.status).toBe(403);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+
+  it("the OWNER can still re-enable (the happy path must not regress)", async () => {
+    mockStore.getById.mockResolvedValue(DISABLED());
+    const res = await patch({ enabled: true });
+    expect(res.status).toBe(200);
+    expect(mockStore.patch).toHaveBeenCalledWith(AU_UUID, {
+      enabled: true,
+      armedAt: null,
+      armedContext: null,
+    });
+  });
+
+  it("the OWNER can still change mode, and pays exactly one control check", async () => {
+    mockStore.getById.mockResolvedValue(row({ mode: "once" }));
+    const res = await patch({ mode: "standing" });
+    expect(res.status).toBe(200);
+    expect(mockStore.patch).toHaveBeenCalledWith(AU_UUID, { mode: "standing" });
+    // The STORED action point is what gets checked when the body replaces neither.
+    expect(mockLoadPoint).toHaveBeenCalledWith(ACT_PT_UUID);
+    expect(mockDeviceAccess).toHaveBeenCalledWith(expect.anything(), 10, {
+      requireOwner: true,
+    });
+  });
+
+  it("a malformed body still 422s before the control check (shape errors need no ownership)", async () => {
+    signInAdminNotOwner();
+    const res = await patch({ enabled: "yes" });
+    expect(res.status).toBe(422);
+    expect(mockStore.patch).not.toHaveBeenCalled();
+  });
+});
+
+describe("DELETE — administration, deliberately NOT owner-gated", () => {
+  it("a non-owner ADMIN may delete an owner's automation", async () => {
+    // Pinned decision: deleting can only cause FEWER commands — it removes a deferred action and
+    // cannot arm, re-aim or re-time one. The owner-only rule is about CAUSING a command.
+    mockAuth.mockResolvedValue({
+      userId: "user_admin",
+      isAdmin: true,
+    } as never);
+    mockAreaAuth.mockResolvedValue({
+      id: AREA_UUID,
+      ownerClerkUserId: OWNER,
+    } as never);
+    mockDeviceAccess.mockImplementation(adminNotOwner);
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect(mockStore.remove).toHaveBeenCalledWith(AU_UUID);
+    // …and it does it WITHOUT consulting the control plane at all.
+    expect(mockDeviceAccess).not.toHaveBeenCalled();
+  });
+
+  it("a stranger (neither owner nor admin) still 404s", async () => {
+    mockAuth.mockResolvedValue({
+      userId: "user_stranger",
+      isAdmin: false,
+    } as never);
+    expect((await del()).status).toBe(404);
+    expect(mockStore.remove).not.toHaveBeenCalled();
   });
 });
 

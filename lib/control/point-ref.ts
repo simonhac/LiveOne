@@ -45,6 +45,17 @@ export interface TeslaChargeControlTargets {
  * Any target may be null: `ev.charge/active` is a new point and has no KV entry until the device's
  * first poll on the new code. A null target disables its button rather than posting a guess.
  */
+/**
+ * The same three paths as a plain list, most-specific-first: the switch the cog's Start/Stop
+ * commands, then the two setpoints. `datumCanControlPoint` uses it to identify WHICH DEVICE the
+ * tile's controls would command — which is not necessarily the subject the tile fetched under.
+ */
+export const TESLA_CHARGE_CONTROL_PATHS = [
+  "ev.charge/active",
+  "ev.charge.limit/soc",
+  "ev.charge.limit/current",
+] as const;
+
 export function teslaChargeControlTargets(
   latest: Record<string, LatestEntryLike> | null | undefined,
 ): TeslaChargeControlTargets {

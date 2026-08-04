@@ -5,6 +5,7 @@ import {
   DeviceConfigRegistry,
   type DeviceConfigView,
 } from "@/lib/registry/device-config";
+import { ownsSubject } from "@/lib/control/ownership";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import { allowedSystemIds } from "@/lib/dashboard/access";
@@ -134,11 +135,21 @@ export async function requireCronOrAdmin(
   return forbidden("Cron or admin access required");
 }
 
-// Require device access (owner, viewer, or admin)
+/**
+ * Require device access (owner, viewer, or admin).
+ *
+ * `options.requireWrite` is the CONFIG write gate: owner **or** admin. Admins administer other
+ * people's devices — settings, credentials, metadata — and that is unchanged.
+ *
+ * 🛑 `options.requireOwner` is the CONTROL gate and is strictly narrower: the caller must BE the
+ * device's owner. An admin who does not own the device is refused, and an ownerless device is
+ * commandable by nobody. See `lib/control/ownership.ts` for why (commands run on the owner's
+ * vendor credentials). Every route that actuates hardware must set it; nothing else should.
+ */
 export async function requireDeviceAccess(
   request: NextRequest,
   systemId: number,
-  options: { requireWrite?: boolean } = {},
+  options: { requireWrite?: boolean; requireOwner?: boolean } = {},
   timer?: ServerTimer,
 ): Promise<DeviceAuthContext | NextResponse> {
   const ctx = await getAuthContext(request, timer);
@@ -170,6 +181,15 @@ export async function requireDeviceAccess(
   if (options.requireWrite && !canWrite) {
     return forbidden("Write access required");
   }
+  // 🛑 The control gate. Strictly narrower than `canWrite`: `ownsSubject` refuses a non-owner
+  // admin AND refuses the `null === null` match an anonymous caller would otherwise get on an
+  // ownerless device.
+  if (
+    options.requireOwner &&
+    !ownsSubject(ctx.userId, device.ownerClerkUserId)
+  ) {
+    return forbidden("Only the device owner can control this device");
+  }
 
   return {
     ...ctx,
@@ -191,6 +211,13 @@ export interface DashboardAuthContext {
   userId: string | null;
   canRead: boolean;
   canWrite: boolean;
+  /**
+   * Does this viewer OWN the subject? Strictly `ownsSubject` — an admin who does not own it is
+   * false, and two nulls (anonymous caller, ownerless subject) are false. This is the field the
+   * control gate is expressed against, on both sides of the wire; `canWrite` (owner OR admin)
+   * remains the config-write field and is untouched.
+   */
+  isOwner: boolean;
   viaShareToken: boolean;
 }
 
@@ -260,6 +287,8 @@ export async function requireDashboardAccess(
               userId: null,
               canRead: true,
               canWrite: false,
+              // A share token is a read grant to an anonymous viewer. It owns nothing.
+              isOwner: false,
               viaShareToken: true,
             };
           }
@@ -296,6 +325,9 @@ export async function requireDashboardAccess(
       userId: ctx.userId ?? null,
       canRead: true,
       canWrite: ctx.isAdmin || isOwner,
+      // Not `isOwner` above: that one is the loose `userId === ownerUserId`, which is `true` for an
+      // anonymous caller on an ownerless area. Ownership must be strict.
+      isOwner: ownsSubject(ctx.userId, area.ownerUserId),
       viaShareToken: false,
     };
   }
@@ -317,6 +349,8 @@ export async function requireDashboardAccess(
           userId: ctx.userId,
           canRead: true,
           canWrite: false,
+          // A dashboard grantee is a read-only guest, never the owner.
+          isOwner: false,
           viaShareToken: false,
         };
       }
@@ -331,6 +365,7 @@ export async function requireDashboardAccess(
     userId: result.userId,
     canRead: result.canRead,
     canWrite: result.canWrite,
+    isOwner: ownsSubject(result.userId, result.device.ownerClerkUserId),
     viaShareToken: false,
   };
 }

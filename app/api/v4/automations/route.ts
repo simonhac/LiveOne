@@ -19,8 +19,9 @@ import { actionFromWire, automationWire, triggerFromWire } from "@/lib/automatio
  * 🛑 An automation is a DEFERRED action call — at fire time the evaluator dispatches with the
  * DEVICE OWNER's credentials and no session user at all. So creation must clear the same firewalls
  * the synchronous action route does, or owning any area would let a caller aim a `turn_off` at
- * someone else's car. Hence `requireDeviceAccess(..., {requireWrite:true})` on the action point
- * (and a read check on the source point) BELOW, in addition to the area check.
+ * someone else's car. The area gate above is owner-OR-ADMIN and is therefore NOT enough on its own;
+ * `checkReferences` additionally requires the caller to OWN the action point's device
+ * (`requireDeviceAccess(..., {requireOwner:true})`), plus a read check on the source point.
  */
 
 const MODES: AutomationMode[] = ["once", "standing"];
