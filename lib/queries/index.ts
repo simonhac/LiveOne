@@ -21,6 +21,10 @@ export {
 } from "./runPeriods";
 export { readableAreasQuery, type ReadableAreasResponse } from "./areas";
 export {
+  chargeAutomationsQuery,
+  type ChargeAutomationsResponse,
+} from "./automations";
+export {
   provenanceDailyQuery,
   type ProvenanceDailyQueryParams,
 } from "./provenanceDaily";

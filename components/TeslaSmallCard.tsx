@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Value from "@/components/ui/value";
 import ProgressRing from "@/components/ui/progress-ring";
 import {
@@ -14,12 +15,22 @@ import { ttInterphases } from "@/lib/fonts/amber";
 import { TeslaMark } from "@/lib/tesla-icons";
 import { getEvStatus, getEvStatusWords } from "@/lib/vendors/tesla/status";
 import TeslaControlDialog from "@/components/TeslaControlDialog";
+import { chargeAutomationsQuery } from "@/lib/queries/automations";
+import { pointIdOf } from "@/lib/control/point-ref";
+import {
+  describeChargeLimit,
+  formatChargeLimitCompact,
+  formatChargeLimitLine,
+  selectChargeLimits,
+} from "@/lib/automations/progress";
 
 interface LatestValue {
   value: number | string | boolean;
   measurementTime?: Date;
   metricUnit?: string;
   displayName?: string;
+  /** The source point's `pt_` TypeID — what a charge limit is addressed by. */
+  pointReference?: string;
 }
 
 interface TeslaSmallCardProps {
@@ -31,6 +42,12 @@ interface TeslaSmallCardProps {
   systemId?: number;
   /** Whether the current user may issue charge commands (owner or admin). */
   canControl?: boolean;
+  /**
+   * The `ar_` TypeID of the area subject this tile was served as. Optional: absent for a
+   * device-subject tile and for the prop-only card gallery, and its absence simply means no
+   * charge-limit indicator.
+   */
+  areaId?: string | null;
 }
 
 /**
@@ -127,6 +144,7 @@ export default function TeslaSmallCard({
   latest,
   systemId,
   canControl,
+  areaId,
 }: TeslaSmallCardProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState<{
@@ -137,6 +155,14 @@ export default function TeslaSmallCard({
   const [controlsOpen, setControlsOpen] = useState(false);
 
   const showControls = canControl && systemId != null;
+
+  // Armed charge limits for this area. Gated on `showControls` twice over: it spares viewers a
+  // pointless request, and the route is area-OWNER gated, so firing it for a non-owner would earn
+  // a guaranteed 403 that React Query would then retry.
+  const limitsQuery = useQuery({
+    ...chargeAutomationsQuery(areaId),
+    enabled: !!areaId && !!showControls,
+  });
 
   // Show debug indicator only when ?debug is in URL
   useEffect(() => {
@@ -182,6 +208,7 @@ export default function TeslaSmallCard({
   const chargeLimit = getNumericValue(latest, "ev.charge.limit/soc");
   const shift = getStringValue(latest, "ev/shift");
   const pluggedIn = getBooleanValue(latest, "ev.charge/engaged");
+  const chargeAdded = getNumericValue(latest, "ev.charge/added");
 
   // Don't render if no data available
   if (batterySoc === null) {
@@ -200,6 +227,37 @@ export default function TeslaSmallCard({
     isCharging && timeToFull
       ? `${formatTimeRemaining(timeToFull)} to ${chargeLimit ? `${Math.round(chargeLimit)}%` : "full"}`
       : null;
+
+  // Armed charge limit, if any: "Stopping at 20 kWh (12.4 so far)".
+  //
+  // 🛑 The "so far" figure is the DELTA above the automation's armed baseline, computed by the
+  // evaluator's own `pointProgressKwh` — `ev.charge/added` is energy-above-PLUG-IN-baseline, so an
+  // overnight top-up re-enters `Charging` already reading ~42 kWh and the raw counter would render
+  // a freshly armed 20 kWh limit as long since blown.
+  //
+  // Shown only while the tile itself says charging: an armed rule on a car that has stopped is a
+  // ≤1-tick transient the cron is about to disarm, and announcing it would be the fault it exists
+  // to prevent. Without this line an automatic stop reads as a failure, so it is the core of the
+  // feature rather than decoration.
+  const armedLimit = isCharging
+    ? (selectChargeLimits(
+        limitsQuery.data?.automations ?? [],
+        pointIdOf(latest, "ev.charge/active"),
+      )
+        .map((row) =>
+          describeChargeLimit(
+            row,
+            chargeAdded != null ? { valueKwh: chargeAdded } : null,
+            pointIdOf(latest, "ev.charge/added"),
+            // Re-read on each 30 s refetch — deliberately no ticking timer for a minute-grained
+            // number the cron only re-evaluates every 60 s anyway.
+            Date.now(),
+          ),
+        )
+        .find((d) => d.state === "armed") ?? null)
+    : null;
+  const limitText = armedLimit ? formatChargeLimitLine(armedLimit) : null;
+  const limitCompact = armedLimit ? formatChargeLimitCompact(armedLimit) : null;
 
   // Determine if we should show double chevrons (high power charging)
   const isHighPower = chargePower !== null && chargePower > 10;
@@ -234,6 +292,7 @@ export default function TeslaSmallCard({
           open={controlsOpen}
           onOpenChange={setControlsOpen}
           latest={latest}
+          areaId={areaId}
         />
       )}
 
@@ -298,6 +357,17 @@ export default function TeslaSmallCard({
         {etaText && (
           <div className="hidden @[260px]:block text-[10px] text-gray-500">
             {etaText}
+          </div>
+        )}
+        {/* The armed limit: compact from 180px, the full sentence from 260px like `etaText`. */}
+        {limitCompact && (
+          <div className="hidden @[180px]:block @[260px]:hidden text-[10px] text-amber-400/80">
+            {limitCompact}
+          </div>
+        )}
+        {limitText && (
+          <div className="hidden @[260px]:block text-[10px] text-amber-400/80">
+            {limitText}
           </div>
         )}
       </div>

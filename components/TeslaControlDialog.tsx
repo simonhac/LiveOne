@@ -14,7 +14,9 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, AlertCircle, Play, Square } from "lucide-react";
 import { queryKeys } from "@/lib/queries/keys";
-import { teslaChargeControlTargets } from "@/lib/control/point-ref";
+import { pointIdOf, teslaChargeControlTargets } from "@/lib/control/point-ref";
+import { getEvStatus } from "@/lib/vendors/tesla/status";
+import TeslaChargeLimits from "@/components/TeslaChargeLimits";
 
 interface LatestValue {
   value: number | string | boolean;
@@ -37,6 +39,11 @@ interface TeslaControlDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   latest: Record<string, LatestValue | null> | null;
+  /**
+   * The `ar_` TypeID of the area this tile was served as — the automations resource is
+   * area-scoped. Absent (a device-subject tile, or the prop-only card gallery) ⇒ no limits block.
+   */
+  areaId?: string | null;
 }
 
 function num(
@@ -83,6 +90,7 @@ export default function TeslaControlDialog({
   open,
   onOpenChange,
   latest,
+  areaId,
 }: TeslaControlDialogProps) {
   const queryClient = useQueryClient();
 
@@ -271,6 +279,28 @@ export default function TeslaControlDialog({
               </Button>
             </div>
           </div>
+
+          {/* Stop after… — the charge-limit block. `getEvStatus` (not the Start/Stop button's
+              `Charging`-only check) is what gates a "this session" limit, because `Starting` is a
+              real state the evaluator will arm on. */}
+          <TeslaChargeLimits
+            areaId={areaId ?? null}
+            activePt={targets.active}
+            addedPt={pointIdOf(latest, "ev.charge/added")}
+            counterKwh={num(latest, "ev.charge/added")}
+            isCharging={
+              getEvStatus({
+                shift: str(latest, "ev/shift"),
+                chargingState,
+                // Only decides unplugged-vs-idle, neither of which is "charging" — read it
+                // anyway so this call means the same thing as the tile's.
+                pluggedIn:
+                  num(latest, "ev.charge/engaged") == null
+                    ? null
+                    : num(latest, "ev.charge/engaged") !== 0,
+              }) === "charging"
+            }
+          />
 
           {error && (
             <Alert variant="destructive">

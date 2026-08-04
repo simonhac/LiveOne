@@ -657,6 +657,7 @@
       {
         "component": "TeslaSmallCard",
         "props": {
+          "areaId": null,
           "canControl": false,
           "latest": "<fixture latest>",
           "systemId": 1
