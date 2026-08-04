@@ -248,7 +248,11 @@ export default function DashboardChart(props: DashboardChartProps) {
     onChange: onHoverIndex,
   });
 
-  if (!geo || geo.empty) return <div ref={ref} className={className} />;
+  // `data-unmeasured` so "the container measured zero, so the chart drew nothing" is visible in
+  // devtools. Without it this is an anonymous empty div, which is what made the mobile stacked-chart
+  // collapse (a `h-full` box whose parent height came from flex growth) read as missing data.
+  if (!geo || geo.empty)
+    return <div ref={ref} className={className} data-unmeasured="" />;
 
   const socSeries =
     props.variant === "stacked-areas"

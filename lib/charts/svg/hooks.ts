@@ -21,6 +21,16 @@ export interface Size {
  * Charts must render nothing at `{0,0}` rather than guessing a size: a chart drawn at a placeholder
  * width and then re-drawn is a visible flash, and under the screenshot harness it is a race.
  *
+ * 🛑 The flip side is the CALLER's: because zero measures as "draw nothing", a container whose
+ * height fails to resolve is a silent blank box, not a visibly broken chart. Do not give a chart
+ * root a percentage height (`h-full`) unless every ancestor up to the nearest definite height is
+ * itself definite — a box sized by flex growth keeps `height: auto` as its *specified* value, so
+ * `height: 100%` inside it resolves to auto, i.e. to the content, i.e. to zero. That is a real bug
+ * that shipped (#350: the stacked chart was blank on mobile for two days, and only on mobile,
+ * because the desktop `md:flex-row` branch stretches the column and makes the chain definite).
+ * `absolute inset-0` inside a `relative` box resolves against the USED height and is immune.
+ * The `site-layout-*` gallery case exists to keep that chain covered.
+ *
  * 🛑 **A callback ref, not a ref object with a mount effect.** The obvious implementation —
  * `useRef` plus `useLayoutEffect(..., [])` — silently never measures when the element attaches on a
  * LATER render than the first. That is not a corner case: any chart that returns a spinner while its

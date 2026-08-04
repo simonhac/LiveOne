@@ -153,6 +153,57 @@ function StackedCase({ c }: { c: Extract<ChartCase, { kind: "stacked" }> }) {
   );
 }
 
+/**
+ * The stacked chart in the dashboard's real height chain — the classes are copied verbatim from
+ * `SiteChartsCard`'s load block, and the only thing asserted is that a chart comes out of it.
+ *
+ * 🛑 Nothing here may set a height. The chain is the subject: the chart's box is derived from
+ * `min-h-[375px]` several levels up, and `DashboardChart` draws NOTHING when its own root measures
+ * zero — so a height that fails to resolve is a silent blank, which is exactly how it shipped
+ * (#350, mobile only, two days live). The harness's "a canvas or svg acquired a size" poll is what
+ * turns that into a test failure, so this case needs no assertion of its own.
+ */
+function SiteLayoutCase({
+  c,
+}: {
+  c: Extract<ChartCase, { kind: "site-layout" }>;
+}) {
+  const fixture = stackedFixture({ range: c.range, mode: c.mode });
+  const { chartData, visibleSeries, windowStart, windowEnd } = fixture;
+
+  return (
+    <div style={{ width: c.width }}>
+      <div className="flex flex-col md:flex-row md:gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-col h-full" style={{ minHeight: c.height }}>
+            <div className="relative flex-1 min-h-0 w-full">
+              <DashboardChart
+                variant="stacked-areas"
+                chartData={chartData}
+                effectiveVisibleSeries={visibleSeries}
+                mode={c.mode}
+                timeRange={c.range}
+                windowEnd={windowEnd}
+                windowStart={windowStart}
+                hoveredTimestamp={null}
+                onHoverIndex={noop}
+                className="absolute inset-0 overflow-hidden"
+              />
+            </div>
+          </div>
+        </div>
+        {/* Stands in for the EnergyTable: same box, no data — it is here because it is what makes
+            the row branch's cross size definite, which is why desktop never saw the bug. */}
+        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+          <div className="h-[260px] rounded border border-gray-700 bg-gray-800/40 p-2 text-xs text-gray-500">
+            legend
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Both charts over one window — the dashboard arrangement, so the palettes can be compared. */
 function ColoursCase({ c }: { c: Extract<ChartCase, { kind: "colours" }> }) {
   return (
@@ -299,6 +350,7 @@ function CaseBody({ c }: { c: ChartCase }) {
   if (c.kind === "heatmap") return <HeatmapCase c={c} />;
   if (c.kind === "primitives") return <PrimitivesCase c={c} />;
   if (c.kind === "ingestion") return <IngestionCase c={c} />;
+  if (c.kind === "site-layout") return <SiteLayoutCase c={c} />;
   return <ColoursCase c={c} />;
 }
 

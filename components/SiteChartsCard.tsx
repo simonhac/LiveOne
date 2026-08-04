@@ -408,7 +408,14 @@ function StackedChart({
           runBands={runBands}
           hoveredRunId={hoveredRun?.band.id ?? null}
           onHoverRun={handleHoverRun}
-          className="h-full w-full overflow-hidden"
+          // 🛑 `absolute inset-0`, NOT `h-full w-full`. The chart measures its own root and draws
+          // nothing at zero height, and a percentage height here resolves to `auto` on MOBILE: this
+          // box's parent gets its 375px from flex growth, so its *specified* height stays `auto`
+          // and `h-full` collapses to the content height — zero, since the svg is what fills it.
+          // Desktop escapes only because `md:flex-row` stretches the column to the flex line's
+          // cross size, which makes the whole chain definite. `inset-0` resolves against the
+          // containing block's USED height, so it holds in both directions.
+          className="absolute inset-0 overflow-hidden"
         />
         {hoveredRun && (
           <RunTooltip
