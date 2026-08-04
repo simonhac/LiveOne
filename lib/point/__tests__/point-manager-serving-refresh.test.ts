@@ -236,8 +236,11 @@ describe("insertPointReadingsRaw — serving refresh", () => {
   });
 
   it("still ingests when the rebuild throws", async () => {
-    // `refreshServingForMintedPoints` swallows its own errors; this pins that ingestion does not
-    // depend on that politeness.
+    // `refreshServingForMintedPoints` swallows its own errors, but ingestion must not DEPEND on that
+    // politeness — the call site guards too. This mock deliberately breaks the callee's contract to
+    // prove the guard is real: a serving refresh that throws must cost a stale area-hash entry, never
+    // a lost reading. (Before the call-site try/catch this test asserted `.rejects.toThrow` — i.e. it
+    // documented the fragility while its name claimed the opposite.)
     mockMint.mockResolvedValue(mintedRow("charging_active", 78) as never);
     mockRefresh.mockImplementation(async () => {
       throw new Error("kv down");
@@ -247,7 +250,7 @@ describe("insertPointReadingsRaw — serving refresh", () => {
       manager.insertPointReadingsRaw(SYSTEM, session, [
         rawReading("charging_active"),
       ]),
-    ).rejects.toThrow("kv down");
+    ).resolves.not.toThrow();
   });
 });
 
