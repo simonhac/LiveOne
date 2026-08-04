@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
 import { Device, Point } from "@/lib/ids";
-import { pointIdOf, teslaChargeControlTargets } from "@/lib/control/point-ref";
+import {
+  measurementMsOf,
+  pointIdOf,
+  teslaChargeControlTargets,
+} from "@/lib/control/point-ref";
 
 const PT = Point.generate();
 const PT_SOC = Point.generate();
@@ -63,6 +67,44 @@ describe("pointIdOf", () => {
 
   it("an undefined map is absent", () => {
     expect(pointIdOf(undefined, "ev.charge/active")).toBeNull();
+  });
+});
+
+describe("measurementMsOf", () => {
+  const ISO = "2026-08-04T09:08:00.000Z";
+  const MS = Date.parse(ISO);
+
+  it("parses the ISO string the wire actually delivers", () => {
+    expect(
+      measurementMsOf(
+        { "ev.charge/state": { measurementTime: ISO } },
+        "ev.charge/state",
+      ),
+    ).toBe(MS);
+  });
+
+  it("accepts a server-side Date", () => {
+    expect(
+      measurementMsOf(
+        { "ev.charge/state": { measurementTime: new Date(MS) } },
+        "ev.charge/state",
+      ),
+    ).toBe(MS);
+  });
+
+  it.each([
+    ["an unparseable string", { measurementTime: "yesterday-ish" }],
+    ["a number (not part of the contract)", { measurementTime: MS }],
+    ["a missing field", {}],
+    ["a null entry", null],
+  ] as const)("%s is absent", (_name, entry) => {
+    expect(
+      measurementMsOf({ "ev.charge/state": entry }, "ev.charge/state"),
+    ).toBeNull();
+  });
+
+  it("a null map is absent", () => {
+    expect(measurementMsOf(null, "ev.charge/state")).toBeNull();
   });
 });
 

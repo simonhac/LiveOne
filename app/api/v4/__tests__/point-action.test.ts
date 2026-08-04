@@ -14,9 +14,10 @@
  *     `app/api/__tests__/control-owner-only.test.ts`; what this suite pins is that the route ASKS
  *     for it. Combined with this route's deliberate absence from `shareableRoutes`/`publicRoutes`,
  *     that is what makes "a share token never authorizes a write" true.
- *  3. **The confirmation re-poll fires on success and ONLY on success** — a decline changed
- *     nothing, so paying for a vendor read would be pure waste. (The web tier must never write
- *     KV itself; the re-poll is the sanctioned freshness path.)
+ *  3. **The confirmation re-poll fires on every `completed` outcome, ok or declined** — a
+ *     decline proves the caller's view of the car was stale, and the re-poll is what re-syncs
+ *     it. It does NOT fire on rejected/unavailable/failed. (The web tier must never write KV
+ *     itself; the re-poll is the sanctioned freshness path.)
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { NextRequest, NextResponse } from "next/server";
@@ -218,7 +219,7 @@ describe("outcome mapping", () => {
     expect(mockRepoll).toHaveBeenCalledWith(device);
   });
 
-  it("🛑 a benign decline → 200 {ok:false, reason} and NO re-poll", async () => {
+  it("🛑 a benign decline → 200 {ok:false, reason} AND a re-poll (the caller's view was stale)", async () => {
     mockDispatch.mockResolvedValue({
       kind: "completed",
       ok: false,
@@ -228,6 +229,17 @@ describe("outcome mapping", () => {
     const res = await call({ action: "turn_off" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: false, reason: "not_charging" });
+    expect(mockRepoll).toHaveBeenCalledWith(device);
+  });
+
+  it("a 422 rejection schedules no re-poll", async () => {
+    mockDispatch.mockResolvedValue({
+      kind: "rejected",
+      error: "This vehicle requires signed commands …",
+      code: "vehicle_command_protocol_required",
+      commandId: "cmd-1",
+    });
+    await call({ action: "turn_on" });
     expect(mockRepoll).not.toHaveBeenCalled();
   });
 });

@@ -5,15 +5,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { queryKeys } from "@/lib/queries/keys";
 import { chargeAutomationsQuery } from "@/lib/queries/automations";
+import ControlNotice, {
+  type ControlNoticeValue,
+} from "@/components/ControlNotice";
 import {
   compareChargeLimits,
   describeChargeLimit,
   formatChargeLimitLine,
   selectChargeLimits,
+  summaryWords,
+  targetWords,
   type ChargeLimitDescription,
   type ChargeLimitJson,
 } from "@/lib/automations/progress";
@@ -27,7 +31,11 @@ interface TeslaChargeLimitsProps {
   addedPt: string | null;
   /** The counter's latest value, for the "so far" figure. */
   counterKwh: number | null;
-  /** Is the car charging right now (`getEvStatus`, so `Starting` counts)? Gates "this session". */
+  /**
+   * Is the car charging right now (`getEvStatus`, so `Starting` counts)? Advisory only — it
+   * drives the honest warning under "just this charge", never a disabled control: the picture
+   * can be stale, and the evaluator judges against the real car.
+   */
   isCharging: boolean;
 }
 
@@ -38,13 +46,6 @@ function parseField(raw: string): { ok: true; value?: number } | { ok: false } {
   const n = Number(t);
   if (!Number.isFinite(n) || n <= 0) return { ok: false };
   return { ok: true, value: n };
-}
-
-function targetWords(minutes?: number, kwh?: number): string {
-  const parts: string[] = [];
-  if (minutes != null) parts.push(`${minutes} min`);
-  if (kwh != null) parts.push(`${kwh} kWh`);
-  return parts.join(" or ");
 }
 
 function timeWords(iso: string | null): string {
@@ -92,8 +93,10 @@ function stateWords(
  * Three evaluator behaviours the copy has to be honest about, rather than paper over:
  *  - **arming is asynchronous** — a new rule reads "Arming…" until the next cron tick sees the car
  *    charging. We never fake progress before there is a baseline to measure from;
- *  - **a `once` with no live session self-disables** on the next tick, so "this session" is
- *    offered only while the car is actually charging;
+ *  - **a `once` with no live session self-disables** on the next tick. The UI still lets the user
+ *    CHOOSE "just this charge" while its (possibly stale) picture says idle — the evaluator sees
+ *    the truth, and the plugged-in-and-auto-started car is exactly the case where the picture is
+ *    wrong — but it says out loud what happens if no charge is actually running;
  *  - **editing thresholds re-baselines** (the PATCH route nulls `armed_at`/`armed_context`), so
  *    "so far" restarts from zero — said out loud in the edit affordance.
  */
@@ -111,7 +114,7 @@ export default function TeslaChargeLimits({
   const [editing, setEditing] = useState<string | null>(null);
   const [editMinutes, setEditMinutes] = useState("");
   const [editKwh, setEditKwh] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ControlNoticeValue | null>(null);
   const [pending, setPending] = useState<string | null>(null);
 
   const list = useQuery({
@@ -126,7 +129,7 @@ export default function TeslaChargeLimits({
 
   /**
    * One mutation for all four verbs. `key` is the pending-state discriminator (the dialog's
-   * idiom); a 422/403 body's `error` string lands in the inline Alert rather than being thrown
+   * idiom); a 422/403 body's `error` string lands in the inline notice rather than being thrown
    * past it.
    */
   const mutation = useMutation({
@@ -150,14 +153,17 @@ export default function TeslaChargeLimits({
       return data;
     },
     onMutate: ({ key }) => {
-      setError(null);
+      setNotice(null);
       setPending(key);
     },
     onSuccess: async () => {
       await invalidate();
     },
     onError: (err) =>
-      setError(err instanceof Error ? err.message : "Request failed"),
+      setNotice({
+        tone: "error",
+        text: err instanceof Error ? err.message : "Request failed",
+      }),
     onSettled: () => setPending(null),
   });
 
@@ -192,11 +198,6 @@ export default function TeslaChargeLimits({
       (r.trigger === null && r.action.pointId === activePt),
   );
 
-  // "This session" is a promise the evaluator only keeps while a session exists — a `once` armed
-  // against an idle car self-disables on the next tick. So an idle car falls back to a standing
-  // rule rather than offering a control that quietly evaporates.
-  const effectiveMode = mode === "once" && !isCharging ? "standing" : mode;
-
   const parsedMinutes = parseField(minutes);
   const parsedKwh = parseField(kwh);
   const canCreate =
@@ -222,7 +223,7 @@ export default function TeslaChargeLimits({
         method: "POST",
         body: {
           areaId,
-          mode: effectiveMode,
+          mode,
           trigger,
           action: {
             kind: "point-action",
@@ -437,7 +438,10 @@ export default function TeslaChargeLimits({
         </ul>
       )}
 
-      {/* Create */}
+      {/* Create — reads top-to-bottom as the sentence it makes: thresholds, then scope, then
+          one promise line above one primary button. No silent mode coercion anywhere: the
+          user's choice is what gets submitted, and the evaluator judges against the real car,
+          not this dialog's possibly-stale picture of it. */}
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <Input
@@ -449,6 +453,7 @@ export default function TeslaChargeLimits({
             onChange={(e) => setMinutes(e.target.value)}
             className="h-8"
           />
+          <span className="text-xs text-gray-500">or</span>
           <Input
             type="number"
             min={0.1}
@@ -459,27 +464,20 @@ export default function TeslaChargeLimits({
             onChange={(e) => setKwh(e.target.value)}
             className="h-8"
           />
-          <Button size="sm" disabled={busy || !canCreate} onClick={createLimit}>
-            {pending === "create" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              "Add"
-            )}
-          </Button>
         </div>
         <div className="flex gap-2">
           <Button
             size="sm"
-            variant={effectiveMode === "once" ? "default" : "outline"}
-            disabled={busy || !isCharging}
+            variant={mode === "once" ? "default" : "outline"}
+            disabled={busy}
             onClick={() => setMode("once")}
             className="flex-1"
           >
-            This session
+            Just this charge
           </Button>
           <Button
             size="sm"
-            variant={effectiveMode === "standing" ? "default" : "outline"}
+            variant={mode === "standing" ? "default" : "outline"}
             disabled={busy}
             onClick={() => setMode("standing")}
             className="flex-1"
@@ -487,12 +485,30 @@ export default function TeslaChargeLimits({
             Every charge
           </Button>
         </div>
-        {!isCharging && (
-          <p className="text-xs text-gray-500">
-            The car isn’t charging — a this-session limit would cancel itself,
-            so only a standing rule can be set now.
+        {canCreate && parsedMinutes.ok && parsedKwh.ok && (
+          <p className="text-xs text-gray-400">
+            {summaryWords(mode, parsedMinutes.value, parsedKwh.value)}
           </p>
         )}
+        {mode === "once" && !isCharging && (
+          <p className="text-xs text-amber-400/80">
+            The car doesn’t look like it’s charging right now — a this-charge
+            limit only takes hold if a charge is actually running; otherwise it
+            cancels itself.
+          </p>
+        )}
+        <Button
+          size="sm"
+          className="w-full"
+          disabled={busy || !canCreate}
+          onClick={createLimit}
+        >
+          {pending === "create" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            "Set limit"
+          )}
+        </Button>
         {(!addedPt || !activePt) && (
           <p className="text-xs text-gray-500">
             Waiting for the car’s charge points to report before a limit can be
@@ -501,12 +517,7 @@ export default function TeslaChargeLimits({
         )}
       </div>
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <ControlNotice notice={notice} onDismiss={() => setNotice(null)} />
     </div>
   );
 }

@@ -210,6 +210,33 @@ export function formatChargeLimitCompact(
 }
 
 /**
+ * A rule's configured targets as words: "30 min", "20 kWh", or "30 min or 20 kWh".
+ * (The create form and the rule list share this so a rule reads back exactly as it was typed.)
+ */
+export function targetWords(minutes?: number, kwhTarget?: number): string {
+  const parts: string[] = [];
+  if (minutes != null) parts.push(`${minutes} min`);
+  if (kwhTarget != null) parts.push(`${kwhTarget} kWh`);
+  return parts.join(" or ");
+}
+
+/**
+ * The create form's live promise, above its one Set-limit button — a complete sentence in the
+ * user's own numbers, so the button never needs explaining: "Will stop this charge after 15 min
+ * or 6 kWh." / "Will stop every charge after 30 min." Null while there is nothing to promise.
+ */
+export function summaryWords(
+  mode: "once" | "standing",
+  minutes?: number,
+  kwhTarget?: number,
+): string | null {
+  const target = targetWords(minutes, kwhTarget);
+  if (!target) return null;
+  const scope = mode === "once" ? "this charge" : "every charge";
+  return `Will stop ${scope} after ${target}.`;
+}
+
+/**
  * Display order: armed first (the live one), then waiting, then spent/off, then by name.
  *
  * `au_` ids are uuid**v4** and the wire carries no `createdAt`, so there is no recency to sort by

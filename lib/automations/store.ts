@@ -5,7 +5,7 @@
  * bare drizzle chains (a route test that asserts on a chain is asserting on drizzle, not on us).
  * Every write stamps `updatedAt`, like the derivations PATCH does.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   automations,
@@ -31,6 +31,18 @@ export async function getById(uuid: string): Promise<AutomationRow | null> {
     .where(eq(automations.id, uuid))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Batch lookup for the command log's `automation:au_…` requesters. Rows for deleted rules are
+ * simply absent — the caller falls back to anonymous wording, so this never throws on a miss.
+ */
+export async function getByIds(uuids: string[]): Promise<AutomationRow[]> {
+  if (uuids.length === 0) return [];
+  return requirePlanetscaleDb()
+    .select()
+    .from(automations)
+    .where(inArray(automations.id, uuids));
 }
 
 export async function create(values: {

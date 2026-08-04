@@ -24,6 +24,7 @@ export {
   chargeAutomationsQuery,
   type ChargeAutomationsResponse,
 } from "./automations";
+export { commandLogQuery, type CommandLogResponse } from "./commands";
 export {
   provenanceDailyQuery,
   type ProvenanceDailyQueryParams,

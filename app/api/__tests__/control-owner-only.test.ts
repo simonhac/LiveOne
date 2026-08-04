@@ -1,15 +1,12 @@
 /**
  * 🛑 **Only the device OWNER may command a device** — proved at the WIRE, on EVERY route that can
- * reach `dispatchPointAction`: the v4 action route, the legacy Tesla shim, and automation creation
- * (a command with a delay).
+ * reach `dispatchPointAction`: the v4 action route and automation creation (a command with a
+ * delay).
  *
- * Unlike the per-route suites (`app/api/v4/__tests__/point-action.test.ts`,
- * `app/api/devices/[systemId]/tesla/command/__tests__/route.test.ts`), `@/lib/api-auth` is NOT
+ * Unlike the per-route suite (`app/api/v4/__tests__/point-action.test.ts`), `@/lib/api-auth` is NOT
  * mocked here: Clerk, the admin check and the device registry are, and the real
  * `requireDeviceAccess` runs. That is what makes these cases discriminate — a route that forgot
  * `requireOwner`, or a helper that stopped enforcing it, goes red here and nowhere else.
- *
- * The legacy shim is tested identically and deliberately: it must not be a way around the rule.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { NextRequest } from "next/server";
@@ -63,7 +60,6 @@ import {
 import { loadAreaForAuth, loadAreaForOwner } from "@/lib/areas/http";
 import * as automationStore from "@/lib/automations/store";
 import { POST as pointAction } from "@/app/api/v4/points/[id]/action/route";
-import { POST as teslaCommand } from "@/app/api/devices/[systemId]/tesla/command/route";
 import { POST as createAutomation } from "@/app/api/v4/automations/route";
 import {
   DELETE as deleteAutomation,
@@ -138,19 +134,7 @@ function callV4() {
   return pointAction(request, { params: Promise.resolve({ id: POINT }) });
 }
 
-/** `POST /api/devices/{id}/tesla/command` — the legacy shim over the same plane. */
-function callLegacy() {
-  const request = new NextRequest(
-    "http://localhost/api/devices/10/tesla/command",
-    { method: "POST", body: JSON.stringify({ command: "charge_start" }) },
-  );
-  return teslaCommand(request, { params: Promise.resolve({ systemId: "10" }) });
-}
-
-const ROUTES = [
-  ["v4 point action", callV4],
-  ["legacy tesla command shim", callLegacy],
-] as const;
+const ROUTES = [["v4 point action", callV4]] as const;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -184,8 +168,9 @@ beforeEach(() => {
     .mockResolvedValue(storedRow(false) as never);
   jest
     .mocked(automationStore.patch)
-    .mockImplementation(async (_id, fields) =>
-      ({ ...storedRow(false), ...(fields as object) }) as never,
+    .mockImplementation(
+      async (_id, fields) =>
+        ({ ...storedRow(false), ...(fields as object) }) as never,
     );
   jest.mocked(automationStore.remove).mockResolvedValue(true);
   jest.mocked(automationStore.create).mockImplementation(

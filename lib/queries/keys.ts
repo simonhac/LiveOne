@@ -78,6 +78,13 @@ export const queryKeys = {
    */
   automations: (areaId: string) => ["automations", areaId] as const,
 
+  /**
+   * Command history for one point's DEVICE (`/api/v4/points/{pt_}/commands`), keyed by the `pt_`
+   * TypeID the request itself uses. Like `automations`: not handle-keyed, so it is deliberately
+   * NOT in `SYSTEM_RESOURCES` and `invalidateDevice` must not sweep it.
+   */
+  commands: (pointId: string) => ["commands", pointId] as const,
+
   /** Keyed by AREA uuid (not systemId) — battery-provenance daily history for the panel. */
   provenanceDaily: (areaId: string, rangeKey: string) =>
     ["provenanceDaily", areaId, rangeKey] as const,

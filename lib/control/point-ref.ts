@@ -8,8 +8,11 @@
  */
 import { Point } from "@/lib/ids";
 
-/** The one field this module reads off a latest-map entry. */
-type LatestEntryLike = { pointReference?: unknown } | null | undefined;
+/** The two fields this module reads off a latest-map entry. */
+type LatestEntryLike =
+  | { pointReference?: unknown; measurementTime?: unknown }
+  | null
+  | undefined;
 
 /**
  * The validated `pt_…` id of a latest-map entry, or null.
@@ -26,6 +29,27 @@ export function pointIdOf(
   const ref = latest?.[logicalPath]?.pointReference;
   if (typeof ref !== "string") return null;
   return Point.parse(ref).ok ? ref : null;
+}
+
+/**
+ * The measurement time of a latest-map entry as epoch-ms, or null.
+ *
+ * On the server the entry carries a `Date`; through `NextResponse.json` + `fetchJson` it arrives
+ * as an ISO string (nothing revives it — the `ChargeLimitJson` lesson). Anything unparseable is
+ * ABSENT, same rule as `pointIdOf`.
+ */
+export function measurementMsOf(
+  latest: Record<string, LatestEntryLike> | null | undefined,
+  logicalPath: string,
+): number | null {
+  const t = latest?.[logicalPath]?.measurementTime;
+  const ms =
+    t instanceof Date
+      ? t.getTime()
+      : typeof t === "string"
+        ? Date.parse(t)
+        : NaN;
+  return Number.isFinite(ms) ? ms : null;
 }
 
 /**

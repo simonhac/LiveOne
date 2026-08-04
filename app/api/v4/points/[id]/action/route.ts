@@ -120,9 +120,10 @@ export async function POST(
       case "failed":
         return NextResponse.json({ error: outcome.error }, { status: 500 });
       case "completed":
-        // Confirm the new state via the real ingest path (the engine owns KV, not us). A
-        // benign decline changed nothing, so it needs no confirmation read.
-        if (outcome.ok) scheduleRepoll(auth.device);
+        // Confirm the state via the real ingest path (the engine owns KV, not us). On a benign
+        // decline too: "not_charging" back from a Stop proves the caller's view of the car was
+        // stale, and the confirmation read is exactly what re-syncs it.
+        scheduleRepoll(auth.device);
         return NextResponse.json({ ok: outcome.ok, reason: outcome.reason });
     }
   } catch (error) {
