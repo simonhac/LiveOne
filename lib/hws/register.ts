@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { derivations, devices, points } from "@/lib/db/planetscale/schema";
 import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
+import { refreshServingForMintedPoints } from "@/lib/kv-cache-manager";
 import { deriveDerivationId } from "@/lib/derivations/ids";
 import {
   HWS_MODEL_KIND,
@@ -86,6 +87,9 @@ export async function ensureHwsTemperaturePoint(
     metricUnit: TEMP_UNIT,
     defaultName: TEMP_DISPLAY_NAME,
   });
+  // A fresh mint is absent from the KV serving registry, so its value would reach the device hash
+  // but no Area hash until an unrelated area mutation rebuilt the registry.
+  await refreshServingForMintedPoints("hws/ensureHwsTemperaturePoint");
 
   return {
     status: "created",

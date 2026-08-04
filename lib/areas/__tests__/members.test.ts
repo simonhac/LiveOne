@@ -29,7 +29,7 @@ import {
   getAreaMemberDeviceIds,
   ensureAreaMember,
   listFlowEligibleAreaHandles,
-  getBindinglessAreaMemberPoints,
+  getAreaMemberPointsForServing,
 } from "../members";
 
 const dialect = new PgDialect();
@@ -109,8 +109,8 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     expect(sql).toContain("parent.status = 'active'");
   });
 
-  it("getBindinglessAreaMemberPoints reaches member points through the points.device_id FK", async () => {
-    await getBindinglessAreaMemberPoints();
+  it("getAreaMemberPointsForServing reaches member points through the points.device_id FK", async () => {
+    await getAreaMemberPointsForServing();
     const [sql] = captured;
     expect(sql).toContain(
       'inner join "area_members" on "area_members"."area_id" = "areas"."id"',
@@ -123,6 +123,26 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     expect(sql).toContain(
       'inner join "points" on "points"."device_id" = "devices"."id"',
     );
+  });
+
+  it("getAreaMemberPointsForServing keeps the trap-D-l guard and drops the binding-less filter", async () => {
+    await getAreaMemberPointsForServing();
+    const [sql] = captured;
+    // 🛑 Regression pin. This NOT EXISTS is the SQL twin of `_resolvePointsForHandle`'s device-first
+    // dispatch: without it a colliding handle (a device AND an area sharing an int) fans out points
+    // the serving path resolves to the device. Raw `sql`, invisible to tsc.
+    expect(sql).toContain(
+      'NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = "legacy_handles"."handle")',
+    );
+    // The defect: this predicate made bindings a VISIBILITY FILTER, so an area with bindings served
+    // none of its member points and a point minted after the bindings were authored joined nothing.
+    expect(sql).not.toContain("area_bindings");
+    // A stemless point has no latest-hash field name, so its edge was always inert.
+    expect(sql).toContain('"points"."logical_path" is not null');
+    // The classifier needs the path, the metric and a human-recognisable id.
+    expect(sql).toContain('"points"."logical_path"');
+    expect(sql).toContain('"points"."metric_type"');
+    expect(sql).toContain('"points"."rid"');
   });
 
   it("ensureAreaMember writes area_members with the raw device uuid", async () => {
@@ -141,7 +161,7 @@ describe("membership DAO reads `area_members`, never `area_devices`", () => {
     // rather than relying on the ones above.
     await getAreaMemberDeviceIds("area-a");
     await listFlowEligibleAreaHandles();
-    await getBindinglessAreaMemberPoints();
+    await getAreaMemberPointsForServing();
     expect(captured).toHaveLength(3);
     for (const sql of captured) expect(sql).not.toContain("area_devices");
   });

@@ -59,6 +59,16 @@ export interface AreaBindingRow {
   sourceDeviceId: string;
   /** The bound point's uuid — the subscription map's inner key since slice E PR 2b. */
   pointUid: string;
+  /** `points.rid` — diagnostics only (the id a human recognises in a contested-path warning). */
+  pointRid: number;
+  /**
+   * `points.logical_path`. **Nullable on purpose, unlike the member leg.** A bound stemless point
+   * keeps its (inert) subscription edge exactly as before — but the classifier must not count it as
+   * claiming a path, or it would claim the pseudo-path `null/metricType` and mask a member twin that
+   * has a real stem.
+   */
+  logicalPath: string | null;
+  metricType: string;
   ordinal: number;
 }
 
@@ -92,6 +102,9 @@ export async function getAreaBindings(): Promise<AreaBindingRow[]> {
         areaId: areas.id,
         sourceDeviceId: devices.id,
         pointUid: areaBindings.pointUid,
+        pointRid: points.rid,
+        logicalPath: points.logicalPath,
+        metricType: points.metricType,
         ordinal: areaBindings.ordinal,
       })
       .from(areaBindings)

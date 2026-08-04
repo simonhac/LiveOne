@@ -5,6 +5,7 @@ import { cronSkipReason } from "@/lib/cron/guard";
 import { parseDate, CalendarDate } from "@internationalized/date";
 import { getNowFormattedAEST, getYesterdayInTimezone } from "@/lib/date-utils";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { refreshServingForMintedPoints } from "@/lib/kv-cache-manager";
 
 // Headroom for the daily heal: the flow_attr settlement-window recompute + the bounded scattered-backlog
 // reheal run here (matches repair-coverage). Without this the route falls back to the platform default.
@@ -216,6 +217,18 @@ async function handleAggregation(request: NextRequest) {
         parsedDates.startDate,
         parsedDates.endDate,
       );
+
+      // Serving backstop. The KV area-serving registry is normally refreshed the moment a point is
+      // minted, but that refresh is best-effort and lives in the ingest path: a transient failure
+      // plus a lambda recycle (which loses the retry flag) would otherwise leave the new point
+      // invisible to every area dashboard indefinitely — the exact defect this bounds. Once a day
+      // caps that window at 24 h, and covers any future mint call site that forgets the hook.
+      // `refreshServingForMintedPoints` swallows its own errors; the `catch` is belt-and-braces so
+      // that contract can never become this cron's problem.
+      await refreshServingForMintedPoints("cron/daily").catch((err) =>
+        console.warn("[cron/daily] area-serving backstop failed:", err),
+      );
+
       const durationMs = Date.now() - startTime;
 
       return NextResponse.json({

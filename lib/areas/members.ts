@@ -14,7 +14,7 @@
  * The `sql` fragments below are invisible to `tsc`; `__tests__/members.test.ts` asserts their rendered
  * SQL so a stale table or column name fails CI rather than at runtime.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   areaMembers,
@@ -107,28 +107,49 @@ export async function listFlowEligibleAreaHandles(): Promise<number[]> {
   return rows.map((r) => r.handle).filter((h): h is number => h != null);
 }
 
+/** One member-device point, as the KV serving classifier consumes it. */
+export interface AreaMemberPointRow {
+  /** The SUBSCRIBER Area's uuid — the `latest:area:{ar_…}` KV key. */
+  areaId: string;
+  /** The point's owning device uuid — the `subscriptions:device:{dv_…}` KV key. */
+  sourceDeviceId: string;
+  /** `points.id` — the subscription map's inner key. */
+  pointUid: string;
+  /** `points.rid` — diagnostics only (the id a human recognises in a contested-path warning). */
+  pointRid: number;
+  /** `points.logical_path` — the stem half of the latest hash's field name. Never null here. */
+  logicalPath: string;
+  metricType: string;
+}
+
 /**
- * The member-device points to fan out for **binding-less** areas-backed handles — i.e. multi-device
- * areas that resolve under union-default (no `area_bindings` to select). For each such area, every
- * member device's `points` point, as `(areaId, sourceDeviceId, pointUid)`. Multi-device areas WITH
- * bindings are covered by `getAreaBindings` instead, so this is empty for today's data (both
- * prod multi-device areas have bindings) — it only lights up when a binding-less multi-device area
- * appears. SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
+ * Every areas-backed handle's member-device points — the **member leg** of an Area's serving set.
  *
- * config-v4 Phase 13 PR 3: both ids are now uuids — the KV subscriber key is the Area's own `ar_` TypeID
- * (`latest:area:{ar_…}`) and the source key is the device's `dv_` TypeID
- * (`subscriptions:device:{dv_…}`), so the vestigial `{handle}.{ordinal}` ref grammar is gone with them.
- * The map's SOURCE-point key moved to `point_uid` in slice E PR 2b. The `legacy_handles` join REMAINS,
- * but only for the areas-backed predicate below — nothing is projected from it.
+ * Was `getBindinglessAreaMemberPoints`, which returned rows only for areas with ZERO
+ * `area_bindings`. That restriction is the defect this module's callers now fix: for an Area WITH
+ * bindings, the bindings were simultaneously the role table AND the visibility filter, so a point
+ * minted on an already-member device after the bindings were authored joined nothing and stayed
+ * invisible to that Area's dashboards forever (an EV charge control rendered permanently disabled,
+ * 2026-08-04). The binding-less predicate is gone; every areas-backed handle now yields its member
+ * points, and `buildSubscriptionsFromBindings` decides which of them are safe to serve (a member
+ * point serves only when nothing else in the Area claims its `logicalPath/metricType`).
+ *
+ * `logical_path IS NOT NULL` is a pure narrowing: a stemless point has no latest-hash field name
+ * (`updateLatestReadingsCache` skips it — `point-manager.ts`), so its edge was always inert.
+ *
+ * SQL-only (no resolver dependency) so the KV registry can consume it without an import cycle.
  */
-export async function getBindinglessAreaMemberPoints(): Promise<
-  { areaId: string; sourceDeviceId: string; pointUid: string }[]
+export async function getAreaMemberPointsForServing(): Promise<
+  AreaMemberPointRow[]
 > {
   const rows = await requirePlanetscaleDb()
     .select({
       areaId: areas.id,
       sourceDeviceId: devices.id,
       pointUid: points.id,
+      pointRid: points.rid,
+      logicalPath: points.logicalPath,
+      metricType: points.metricType,
     })
     .from(areas)
     // config-v4 Phase 13 PR 5: handle from `legacy_handles`, not the dropped column. INNER, so it
@@ -164,10 +185,13 @@ export async function getBindinglessAreaMemberPoints(): Promise<
         // The probed value is PR 5's `legacy_handles.handle`, not the dropped `areas.legacy_system_id`
         // — same integer handle, read from the table that survives Phase 13.
         sql`NOT EXISTS (SELECT 1 FROM devices d WHERE d.rid = ${legacyHandles.handle})`,
-        // binding-less: no area_bindings (those are covered by getAllCompositeBindings)
-        sql`NOT EXISTS (SELECT 1 FROM area_bindings ab WHERE ab.area_id = ${areas.id})`,
+        // A stemless point has no latest-hash field, so it can never be served. Filtering here keeps
+        // the classifier from having to reason about a `null/metricType` pseudo-path.
+        isNotNull(points.logicalPath),
       ),
     )
     .orderBy(areas.id, devices.rid, points.rid);
-  return rows;
+  // `logicalPath` is `text | null` in the schema; the `isNotNull` above makes it non-null in fact,
+  // and the row type says so for the classifier.
+  return rows as AreaMemberPointRow[];
 }

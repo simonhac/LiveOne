@@ -19,7 +19,7 @@ import {
   LatestValuesMap,
 } from "./latest-values-store";
 import { getAreaBindings } from "@/lib/areas/bindings";
-import { getBindinglessAreaMemberPoints } from "@/lib/areas/members";
+import { getAreaMemberPointsForServing } from "@/lib/areas/members";
 
 // Re-export canonical types for backwards compatibility
 export type { LatestValue, LatestValuesMap };
@@ -185,11 +185,27 @@ async function getPointSubscribers(
  * Build the subscription registry for all subscriber systems
  * This creates a reverse mapping: source point → subscriber points that subscribe to it
  *
- * Should be called:
- * - On application startup
- * - When subscriber system metadata changes
- * - Periodically (e.g., daily) as a safety net
+ * Is called:
+ * - When subscriber area membership / bindings / metadata change (`refreshAreaServing`)
+ * - When an ingest batch or a derived-point writer mints a point
+ *   (`refreshServingForMintedPoints`)
+ * - Daily, as a safety net, from `/api/cron/daily`'s aggregate path
  */
+/** What a rebuild derived — returned to callers that want to report it (the admin route does). */
+export interface SubscriptionRegistrySummary {
+  sourceDevices: number;
+  edges: number;
+  contested: ContestedServingPath[];
+  gcDeletedFields: number;
+  servedPathsByArea: Record<string, string[]>;
+}
+
+/**
+ * Set when a mint-triggered rebuild threw; cleared by the next successful one. Module-level, so it
+ * survives across ingest batches within a warm lambda — see `refreshServingForMintedPoints`.
+ */
+let servingRebuildPending = false;
+
 /**
  * Insert one (source point → subscriber Area) edge into the reverse-subscription map. The map is
  * `sourceDeviceId → sourcePointUid → subscriberAreaIds` — all three uuid/TypeID since config-v4
@@ -211,39 +227,163 @@ function addSubscription(
   sourceDeviceMap.get(sourcePointUid)!.add(subscriberAreaId);
 }
 
+/** An unbound member point excluded from serving because another point claims the same path. */
+export interface ContestedServingPath {
+  areaId: AreaId;
+  /** The latest-hash field name the contenders would have fought over: `stem/metricType`. */
+  path: string;
+  /** `points.rid` of every contender (bound and unbound), ascending. */
+  pointRids: number[];
+}
+
+/** What one registry rebuild derived, for logging, the admin route, and the area-hash GC. */
+export interface SubscriptionRegistryBuild {
+  subscriptions: Map<DeviceId, Map<string, Set<AreaId>>>;
+  contested: ContestedServingPath[];
+  /** Per subscriber Area, the latest-hash field names its serving set legitimately covers. */
+  servedPathsByArea: Map<AreaId, Set<string>>;
+}
+
+/** One candidate point for one Area, from either leg, normalised for classification. */
+interface ServingCandidate {
+  sourceDeviceId: string;
+  pointUid: string;
+  pointRid: number;
+  /** `null` for a stemless point: it has no latest-hash field, so it claims no path. */
+  path: string | null;
+  bound: boolean;
+}
+
 /**
- * Reverse-subscription map (source point → subscribing Areas). Two sources, unioned:
- * (1) typed `area_bindings` for curated multi-device Areas (every existing subscriber); (2) the member
- * devices' own points for **binding-less** multi-device Areas (union-default — empty for today's data,
- * since both prod subscribers have bindings). Together this is "the area's resolved point set", in SQL.
+ * Reverse-subscription map (source point → subscribing Areas), plus the diagnostics a rebuild
+ * produces. Two legs, unioned per Area:
  *
- * PR 3 dropped the per-binding ordinal that used to ride along in the ref string: it was never read
- * (the subscriber's latest hash is keyed by logicalPath) and both consumers immediately split it back
- * off. Without it the `Set` dedupes per (source point, Area) — one edge, which is what the fan-out
- * writes anyway.
+ * 1. **bound** — every `area_bindings` row yields an edge, unconditionally and exactly as before.
+ *    Bindings are role resolution; their fan-out behaviour is untouched.
+ * 2. **member** — every member device's own points, served only when the point's
+ *    `logicalPath/metricType` is claimed by nothing else in that Area.
+ *
+ * Leg 2 used to fire only for Areas with ZERO bindings, which made bindings a *visibility filter*
+ * frozen at authoring time: a point minted later on an already-member device joined nothing and never
+ * reached the Area's latest map (the 2026-08-04 EV-control incident). Serving the uniquely-pathed
+ * remainder fixes that class mechanically.
+ *
+ * The uniqueness test is not conservatism for its own sake — the latest hash is keyed by
+ * `logicalPath/metricType`, so two member points sharing a path would make the Area's value for it
+ * flap last-write-wins between two physical devices. That ambiguity is exactly what bindings exist to
+ * curate, so a contested path is excluded — but **loudly**: it is returned here and warned by the
+ * caller, never dropped in silence.
  */
-async function buildSubscriptionsFromBindings(): Promise<
-  Map<DeviceId, Map<string, Set<AreaId>>>
-> {
-  const subscriptions = new Map<DeviceId, Map<string, Set<AreaId>>>();
+async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBuild> {
+  // Gather both legs per Area first: classification is a whole-Area decision, not a per-row one.
+  const byArea = new Map<string, Map<string, ServingCandidate>>();
+  const candidatesFor = (areaId: string) => {
+    let m = byArea.get(areaId);
+    if (!m) byArea.set(areaId, (m = new Map()));
+    return m;
+  };
+
   for (const b of await getAreaBindings()) {
-    addSubscription(
-      subscriptions,
-      Device.encode(b.sourceDeviceId),
-      b.pointUid,
-      Area.encode(b.areaId),
+    // A bound point wins the dedupe: it is served regardless of contention, so `bound` must not be
+    // downgraded if the same point also arrives via the member leg.
+    candidatesFor(b.areaId).set(b.pointUid, {
+      sourceDeviceId: b.sourceDeviceId,
+      pointUid: b.pointUid,
+      pointRid: b.pointRid,
+      path: b.logicalPath ? `${b.logicalPath}/${b.metricType}` : null,
+      bound: true,
+    });
+  }
+  for (const m of await getAreaMemberPointsForServing()) {
+    const c = candidatesFor(m.areaId);
+    // The same point being BOTH bound and a member is the normal case; it must stay one candidate,
+    // or it would look like two claimants of its own path and contest itself out of existence.
+    if (c.has(m.pointUid)) continue;
+    c.set(m.pointUid, {
+      sourceDeviceId: m.sourceDeviceId,
+      pointUid: m.pointUid,
+      pointRid: m.pointRid,
+      path: `${m.logicalPath}/${m.metricType}`,
+      bound: false,
+    });
+  }
+
+  const subscriptions = new Map<DeviceId, Map<string, Set<AreaId>>>();
+  const contested: ContestedServingPath[] = [];
+  const servedPathsByArea = new Map<AreaId, Set<string>>();
+
+  for (const [areaUuid, candidates] of byArea) {
+    const areaId = Area.encode(areaUuid);
+    const served = new Set<string>();
+    servedPathsByArea.set(areaId, served);
+
+    // Claimants per path. A stemless point claims nothing (`path === null`).
+    const claimants = new Map<string, ServingCandidate[]>();
+    for (const c of candidates.values()) {
+      if (c.path === null) continue;
+      const list = claimants.get(c.path);
+      if (list) list.push(c);
+      else claimants.set(c.path, [c]);
+    }
+
+    for (const c of candidates.values()) {
+      if (!c.bound && c.path !== null && claimants.get(c.path)!.length > 1) {
+        continue; // contested — reported below, once per path
+      }
+      addSubscription(
+        subscriptions,
+        Device.encode(c.sourceDeviceId),
+        c.pointUid,
+        areaId,
+      );
+      if (c.path !== null) served.add(c.path);
+    }
+
+    for (const [path, list] of claimants) {
+      if (list.length > 1 && list.some((c) => !c.bound)) {
+        contested.push({
+          areaId,
+          path,
+          pointRids: list.map((c) => c.pointRid).sort((a, b) => a - b),
+        });
+      }
+    }
+  }
+
+  return { subscriptions, contested, servedPathsByArea };
+}
+
+/**
+ * Delete latest-hash fields an Area no longer serves.
+ *
+ * Without this a value that LEAVES the serving set (a unique path turning contested when a second
+ * member device starts posting it; a binding removed) freezes at its last written value forever —
+ * the hash is only ever `hset`. That is worse than absence for a control point: `pointReference`
+ * stays valid and reads no `measurementTime`, so Start/Stop would keep rendering enabled against
+ * arbitrarily stale state. Removing the field makes the exit visible: the tile hides, the control
+ * disables.
+ *
+ * Scope, deliberately narrow: only Areas present in this rebuild are swept (an Area with no
+ * candidates at all keeps whatever its hash holds), and a fan-out write racing the rebuild on the old
+ * snapshot can re-add a field until the next rebuild — the registry has always been
+ * snapshot-consistent rather than transactional.
+ */
+async function gcAreaLatestFields(
+  servedPathsByArea: Map<AreaId, Set<string>>,
+): Promise<number> {
+  let deleted = 0;
+  for (const [areaId, served] of servedPathsByArea) {
+    const key = latestValuesKey(areaSubject(areaId));
+    const fields: string[] = (await kv.hkeys(key)) ?? [];
+    const stale = fields.filter((f) => !served.has(f));
+    if (stale.length === 0) continue;
+    await kv.hdel(key, ...stale);
+    deleted += stale.length;
+    console.log(
+      `[SubscriptionRegistry] GC ${areaId}: dropped ${stale.length} unserved latest field(s): ${stale.join(", ")}`,
     );
   }
-  // Binding-less multi-device Areas: fan out each member device's own points to the Area.
-  for (const m of await getBindinglessAreaMemberPoints()) {
-    addSubscription(
-      subscriptions,
-      Device.encode(m.sourceDeviceId),
-      m.pointUid,
-      Area.encode(m.areaId),
-    );
-  }
-  return subscriptions;
+  return deleted;
 }
 
 /**
@@ -256,17 +396,21 @@ async function buildSubscriptionsFromBindings(): Promise<
  * map goes stale. (It has been a required step once before, for slice E PR 2b, which re-keyed the map's
  * inner key from the integer point index to the point uuid.)
  *
- * Called automatically by `refreshAreaServing` on every area/binding mutation; run by hand with
- * `npx tsx scripts/build-subscription-registry.ts`, or via `GET /api/devices/subscriptions?action=build`.
+ * Called automatically by `refreshAreaServing` on every area/binding mutation, by
+ * `refreshServingForMintedPoints` whenever an ingest batch mints a point, and by the daily cron as a
+ * backstop; run by hand with `npx tsx scripts/build-subscription-registry.ts`, or via
+ * `GET /api/devices/subscriptions?action=build`.
  */
-export async function buildSubscriptionRegistry(): Promise<void> {
+export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistrySummary> {
   // Example: { "dv_01k9…": { "0199a1…": ["ar_01ka…", "ar_01kb…"] } }
-  const subscriptions = await buildSubscriptionsFromBindings();
+  const { subscriptions, contested, servedPathsByArea } =
+    await buildSubscriptionsFromBindings();
 
   // Write subscriptions to KV with timestamp
   const now = Date.now();
   const validKeys = new Set<string>();
   const updates: Promise<unknown>[] = [];
+  let edges = 0;
 
   for (const [sourceDeviceId, pointMap] of subscriptions.entries()) {
     const key = subscriptionsKey(sourceDeviceId);
@@ -276,6 +420,7 @@ export async function buildSubscriptionRegistry(): Promise<void> {
     const pointSubscribers: Record<string, string[]> = {};
     for (const [pointUid, subscriberAreaIds] of pointMap.entries()) {
       pointSubscribers[pointUid] = Array.from(subscriberAreaIds);
+      edges += subscriberAreaIds.size;
     }
 
     const entry: SubscriptionRegistryEntry = {
@@ -300,9 +445,65 @@ export async function buildSubscriptionRegistry(): Promise<void> {
 
   await Promise.all([...updates, ...deletions]);
 
+  // Sweep area hashes AFTER the registry is written, so a value that just left the serving set cannot
+  // be re-added by a fan-out still reading the old snapshot in the same instant.
+  const gcDeletedFields = await gcAreaLatestFields(servedPathsByArea);
+
+  for (const c of contested) {
+    console.warn(
+      `[SubscriptionRegistry] area ${c.areaId}: "${c.path}" is claimed by ${c.pointRids.length} points (rids ${c.pointRids.join(", ")}) — not auto-served; bind one of them to pick a winner`,
+    );
+  }
+
   console.log(
-    `Built subscription registry for ${subscriptions.size} source device(s) (deleted ${deletions.length} stale entries)`,
+    `Built subscription registry for ${subscriptions.size} source device(s), ${edges} edge(s) (deleted ${deletions.length} stale entries, ${contested.length} contested path(s), GC'd ${gcDeletedFields} area field(s))`,
   );
+
+  return {
+    sourceDevices: subscriptions.size,
+    edges,
+    contested,
+    gcDeletedFields,
+    servedPathsByArea: Object.fromEntries(
+      Array.from(servedPathsByArea, ([areaId, paths]) => [
+        areaId,
+        Array.from(paths).sort(),
+      ]),
+    ),
+  };
+}
+
+/**
+ * Rebuild the serving registry because an ingest batch minted at least one point.
+ *
+ * Best-effort by construction — the same never-break-ingest stance as `refreshAreaServing`. But a
+ * swallowed failure here would re-create exactly the defect this closes (the point stays invisible),
+ * so a failure raises a module-level dirty flag: the next batch rebuilds even if it minted nothing.
+ * A lambda recycle can still lose that flag, which is what the daily-cron backstop bounds at ≤ 24 h.
+ */
+export async function refreshServingForMintedPoints(
+  context: string,
+): Promise<void> {
+  try {
+    await buildSubscriptionRegistry();
+    servingRebuildPending = false;
+  } catch (err) {
+    servingRebuildPending = true;
+    console.warn(
+      `[KV] refreshServingForMintedPoints(${context}) failed — newly minted points may be missing from area serving; will retry on the next batch:`,
+      err,
+    );
+  }
+}
+
+/** True when a `refreshServingForMintedPoints` call failed and no later one has succeeded. */
+export function isServingRebuildPending(): boolean {
+  return servingRebuildPending;
+}
+
+/** Test-only: reset the retry flag between cases. */
+export function __resetServingRebuildPending(): void {
+  servingRebuildPending = false;
 }
 
 /**

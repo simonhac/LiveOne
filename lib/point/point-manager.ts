@@ -27,7 +27,11 @@ import { mintPoint } from "@/lib/point/mint-point";
 import { pointControlEquals } from "@/lib/control/point-control";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import micromatch from "micromatch";
-import { updateLatestPointValue } from "../kv-cache-manager";
+import {
+  isServingRebuildPending,
+  refreshServingForMintedPoints,
+  updateLatestPointValue,
+} from "../kv-cache-manager";
 import { getAreaBindingRefs } from "@/lib/areas/bindings";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
@@ -737,7 +741,12 @@ export class PointManager {
 
     // Process each reading
     const valuesToInsert = [];
+    // Did this batch bring a point into existence? Checked BEFORE `ensurePointInfo`, which populates
+    // `pointMap` as a side effect. A control-drift heal re-mints an already-present key, so it leaves
+    // this false and triggers no rebuild.
+    let mintedNew = false;
     for (const reading of readings) {
+      mintedNew ||= !pointMap[reading.pointMetadata.physicalPathTail];
       // Ensure the point exists
       const point = await this.ensurePointInfo(
         systemId,
@@ -780,6 +789,28 @@ export class PointManager {
         collector.add(inputs);
       } else {
         await publishObservationBatch(device, inputs);
+      }
+    }
+
+    // A newly minted point is absent from the KV subscription registry, and the registry is what
+    // fans a value out to the Areas the device belongs to — so without this the point's value reaches
+    // its device hash and NO area hash, invisibly, until some unrelated area mutation happens to
+    // rebuild. Once per batch, and BEFORE the fan-out below, so the point's very first reading is
+    // already served.
+    // Guarded HERE as well as inside the callee: this is the hot ingest path, and losing a reading
+    // is a data-integrity bug where a missing area-hash entry is only a stale dashboard. The callee
+    // swallows its own errors today, but that politeness is one refactor away from being removed —
+    // ingestion must not depend on it. Same rationale as the derivations cron's best-effort steps.
+    if (mintedNew || isServingRebuildPending()) {
+      try {
+        await refreshServingForMintedPoints(
+          `insertPointReadingsRaw:system-${systemId}`,
+        );
+      } catch (err) {
+        console.warn(
+          "[PointManager] serving refresh failed; ingesting anyway:",
+          err,
+        );
       }
     }
 
@@ -833,7 +864,9 @@ export class PointManager {
 
     // Process each reading
     const aggregatesToInsert = [];
+    let mintedNew = false;
     for (const reading of readings) {
+      mintedNew ||= !pointMap[reading.pointMetadata.physicalPathTail];
       // Ensure the point exists
       const point = await this.ensurePointInfo(
         systemId,
@@ -877,6 +910,23 @@ export class PointManager {
         errorCount: isError ? 1 : 0,
         dataQuality: reading.dataQuality ?? null,
       });
+    }
+
+    // Same serving refresh as the raw path. This method writes no KV itself, but the 5m-native
+    // vendors do it themselves right after it returns (e.g. Amber's adapter), so the ordering that
+    // makes a new point's first value reach its Areas still holds.
+    // Guarded here too — see the raw path for why ingestion must not depend on the callee swallowing.
+    if (mintedNew || isServingRebuildPending()) {
+      try {
+        await refreshServingForMintedPoints(
+          `insertPointReadingsAgg5m:system-${systemId}`,
+        );
+      } catch (err) {
+        console.warn(
+          "[PointManager] serving refresh failed; ingesting anyway:",
+          err,
+        );
+      }
     }
 
     // Publish observations to queue (before database insert)

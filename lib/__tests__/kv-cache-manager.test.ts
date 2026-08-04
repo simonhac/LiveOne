@@ -4,7 +4,12 @@ import {
   updateLatestPointValue,
   getLatestValues,
   buildSubscriptionRegistry,
+  refreshServingForMintedPoints,
+  isServingRebuildPending,
+  __resetServingRebuildPending,
 } from "../kv-cache-manager";
+import type { AreaBindingRow } from "@/lib/areas/bindings";
+import type { AreaMemberPointRow } from "@/lib/areas/members";
 
 // config-v4 Phase 13 PR 3: the KV keyspace is TypeID-native. Fixtures are real TypeIDs (minted once)
 // plus the raw uuids the SQL rows carry, so the key strings asserted below are the real thing rather
@@ -30,18 +35,15 @@ jest.mock("../kv", () => ({
     set: jest.fn<() => Promise<string>>().mockResolvedValue("OK"),
     del: jest.fn<() => Promise<number>>().mockResolvedValue(1),
     keys: jest.fn<() => Promise<string[]>>().mockResolvedValue([]),
+    hkeys: jest.fn<() => Promise<string[]>>().mockResolvedValue([]),
+    hdel: jest.fn<() => Promise<number>>().mockResolvedValue(1),
   },
   kvKey: jest.fn((pattern: string) => `test:${pattern}`),
 }));
 
-// Mock the database (Postgres). Two query shapes hit this:
-//  - getAreaBindings: select→from→innerJoin→leftJoin→innerJoin×2→orderBy (areas + legacy_handles +
-//    points + devices)
-//  - getBindinglessAreaMemberPoints: select→from→innerJoin×4→where→orderBy (slice H added the
-//    `devices` hop that bridges area_members.device_id back to the owning device's rid)
-// config-v4 Phase 13 PR 5 added the `legacy_handles` hop to both — that is where the area's integer
-// handle now comes from, instead of the dropped `areas.legacy_system_id`.
-// A recursive chain node (innerJoin/leftJoin/where return itself; orderBy resolves) covers both → [].
+// Mock the database (Postgres). Nothing under test reaches it any more — both serving legs are mocked
+// at the DAO boundary below — but the import chain still resolves it. A recursive chain node
+// (innerJoin/leftJoin/where return itself; orderBy resolves) answers any query shape with [].
 const chainNode = (): any => {
   const node: any = {
     innerJoin: jest.fn(() => node),
@@ -80,6 +82,23 @@ jest.mock("@/lib/db/planetscale/schema", () => ({
   areaMembers: { areaId: "areaId", deviceId: "deviceId", ordinal: "ordinal" },
   devices: { id: "id", rid: "rid" },
   points: { id: "id", deviceId: "deviceId" },
+}));
+
+// The two serving legs are mocked at the DAO boundary, not at the db-chain level: the classifier under
+// test is pure TypeScript over these rows, and the SQL of each leg is pinned separately by
+// `lib/areas/__tests__/members.test.ts` (rendered-SQL assertions). Row arrays are swapped per test.
+let mockBindingRows: AreaBindingRow[] = [];
+let mockMemberRows: AreaMemberPointRow[] = [];
+/** Set to make the bindings read blow up, so a rebuild failure can be driven end to end. */
+let mockBindingsThrow = false;
+jest.mock("@/lib/areas/bindings", () => ({
+  getAreaBindings: jest.fn(async () => {
+    if (mockBindingsThrow) throw new Error("db down");
+    return mockBindingRows;
+  }),
+}));
+jest.mock("@/lib/areas/members", () => ({
+  getAreaMemberPointsForServing: jest.fn(async () => mockMemberRows),
 }));
 
 // Mock drizzle-orm
@@ -301,64 +320,74 @@ describe("kv-cache-manager", () => {
   });
 
   describe("buildSubscriptionRegistry", () => {
-    // Mock getAreaBindings's query. PR 3 dropped the `legacy_handles` LEFT JOIN (the subscriber is now
-    // named by `areas.id`, not its integer handle), so the chain is select→from→innerJoin×3→orderBy.
-    const mockBindings = (rows: unknown[]) => {
-      (mockDb.select as jest.MockedFunction<any>).mockReturnValueOnce({
-        from: () => ({
-          innerJoin: () => ({
-            innerJoin: () => ({
-              innerJoin: () => ({ orderBy: () => Promise.resolve(rows) }),
-            }),
-          }),
-        }),
-      });
-    };
+    const d = (n: number) => `0199f00${n}-0000-7000-8000-00000000000a`;
+
+    const bound = (
+      areaId: string,
+      deviceUuid: string,
+      pointUid: string,
+      logicalPath: string | null,
+      pointRid: number,
+      metricType = "power",
+    ): AreaBindingRow => ({
+      areaId,
+      sourceDeviceId: deviceUuid,
+      pointUid,
+      pointRid,
+      logicalPath,
+      metricType,
+      ordinal: 0,
+    });
+
+    const member = (
+      areaId: string,
+      deviceUuid: string,
+      pointUid: string,
+      logicalPath: string,
+      pointRid: number,
+      metricType = "power",
+    ): AreaMemberPointRow => ({
+      areaId,
+      sourceDeviceId: deviceUuid,
+      pointUid,
+      pointRid,
+      logicalPath,
+      metricType,
+    });
+
+    /** The registry entry this rebuild wrote for one source device, as the fan-out would read it. */
+    const entryFor = (kv: any, deviceUuid: string) =>
+      (kv.set as jest.MockedFunction<any>).mock.calls.find(
+        (c: any[]) =>
+          c[0] === `test:subscriptions:device:${Device.encode(deviceUuid)}`,
+      )?.[1];
+
+    let warn: any;
+
+    beforeEach(async () => {
+      const { kv } = await import("../kv");
+      mockBindingRows = [];
+      mockMemberRows = [];
+      (kv.hkeys as jest.MockedFunction<any>).mockResolvedValue([]);
+      (kv.keys as jest.MockedFunction<any>).mockResolvedValue([]);
+      warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => warn.mockRestore());
 
     it("builds the reverse source-device→subscriber-Area map from area_bindings", async () => {
       const { kv } = await import("../kv");
 
       // Area A: solar from device D6 (2 pts) + battery from device D5 (2 pts);
       // Area B: solar from D6 (1) + load from D7 (1). → three SOURCE DEVICE keys.
-      const d = (n: number) => `0199f00${n}-0000-7000-8000-00000000000a`;
-      mockBindings([
-        {
-          areaId: AREA_A_UUID,
-          sourceDeviceId: d(6),
-          pointUid: "uid-6-17",
-          ordinal: 0,
-        },
-        {
-          areaId: AREA_A_UUID,
-          sourceDeviceId: d(6),
-          pointUid: "uid-6-7",
-          ordinal: 1,
-        },
-        {
-          areaId: AREA_A_UUID,
-          sourceDeviceId: d(5),
-          pointUid: "uid-5-7",
-          ordinal: 2,
-        },
-        {
-          areaId: AREA_A_UUID,
-          sourceDeviceId: d(5),
-          pointUid: "uid-5-10",
-          ordinal: 3,
-        },
-        {
-          areaId: AREA_B_UUID,
-          sourceDeviceId: d(6),
-          pointUid: "uid-6-17",
-          ordinal: 0,
-        },
-        {
-          areaId: AREA_B_UUID,
-          sourceDeviceId: d(7),
-          pointUid: "uid-7-3",
-          ordinal: 1,
-        },
-      ]);
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(6), "uid-6-17", "source.solar", 617),
+        bound(AREA_A_UUID, d(6), "uid-6-7", "source.solar.local", 607),
+        bound(AREA_A_UUID, d(5), "uid-5-7", "bidi.battery", 507),
+        bound(AREA_A_UUID, d(5), "uid-5-10", "bidi.battery", 510, "soc"),
+        bound(AREA_B_UUID, d(6), "uid-6-17", "source.solar", 617),
+        bound(AREA_B_UUID, d(7), "uid-7-3", "load", 703),
+      ];
 
       await buildSubscriptionRegistry();
 
@@ -373,19 +402,13 @@ describe("kv-cache-manager", () => {
       }
 
       // The shared source point fans out to BOTH Areas, as `ar_` TypeIDs with no ordinal half.
-      const d6Call = (kv.set as jest.MockedFunction<any>).mock.calls.find(
-        (c: any[]) =>
-          c[0] === `test:subscriptions:device:${Device.encode(d(6))}`,
-      )!;
-      expect(d6Call[1].pointSubscribers["uid-6-17"].sort()).toEqual(
+      expect(entryFor(kv, d(6)).pointSubscribers["uid-6-17"].sort()).toEqual(
         [AREA_A, AREA_B].sort(),
       );
     });
 
-    it("writes no subscriptions when there are no area bindings", async () => {
+    it("writes no subscriptions when an area has neither bindings nor member points", async () => {
       const { kv } = await import("../kv");
-
-      mockBindings([]); // no bindings (e.g. no multi-device areas)
 
       await buildSubscriptionRegistry();
 
@@ -395,8 +418,7 @@ describe("kv-cache-manager", () => {
     it("deletes a stale entry the rebuild did not write, comparing WHOLE keys", async () => {
       const { kv } = await import("../kv");
 
-      mockBindings([]);
-      (kv.keys as jest.MockedFunction<any>).mockResolvedValueOnce([
+      (kv.keys as jest.MockedFunction<any>).mockResolvedValue([
         "test:subscriptions:device:dv_0000000000000000000000000",
       ]);
 
@@ -405,6 +427,304 @@ describe("kv-cache-manager", () => {
       expect(kv.del).toHaveBeenCalledWith(
         "test:subscriptions:device:dv_0000000000000000000000000",
       );
+    });
+
+    // ── the member leg: bindings are role resolution, not a visibility filter ────────────────────
+
+    it("serves an unbound member point whose path nothing else in the area claims", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-bound", "load", 5)];
+      // A capability minted on a member device long after the bindings were authored.
+      mockMemberRows = [
+        member(AREA_A_UUID, d(6), "uid-new", "ev.charge", 169, "active"),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(entryFor(kv, d(5)).pointSubscribers).toEqual({
+        "uid-bound": [AREA_A],
+      });
+      // The unbound edge exists, and points at the right (source device, subscriber area) pair.
+      expect(entryFor(kv, d(6)).pointSubscribers).toEqual({
+        "uid-new": [AREA_A],
+      });
+      expect(summary.contested).toEqual([]);
+    });
+
+    it("excludes — and reports — an unbound member point whose path a BOUND point claims", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-bound", "bidi.grid", 5)];
+      mockMemberRows = [member(AREA_A_UUID, d(6), "uid-rival", "bidi.grid", 6)];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(entryFor(kv, d(5))).toBeDefined();
+      expect(entryFor(kv, d(6))).toBeUndefined();
+      expect(summary.contested).toEqual([
+        { areaId: AREA_A, path: "bidi.grid/power", pointRids: [5, 6] },
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('"bidi.grid/power" is claimed by 2 points'),
+      );
+    });
+
+    it("serves neither of two unbound member points that share a path", async () => {
+      const { kv } = await import("../kv");
+
+      // Two live devices both publishing `bidi.grid/power`: serving either would make the area's
+      // headline grid number flap last-write-wins between two physical meters.
+      mockMemberRows = [
+        member(AREA_A_UUID, d(6), "uid-a", "bidi.grid", 6),
+        member(AREA_A_UUID, d(7), "uid-b", "bidi.grid", 7),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(kv.set).not.toHaveBeenCalled();
+      expect(summary.contested).toEqual([
+        { areaId: AREA_A, path: "bidi.grid/power", pointRids: [6, 7] },
+      ]);
+    });
+
+    it("counts a point that is both bound and a member exactly once", async () => {
+      const { kv } = await import("../kv");
+
+      // The normal case for every bound point on a member device. If the classifier counted the two
+      // rows as two claimants, every bound point would contest itself out of its own path.
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid", "load", 5)];
+      mockMemberRows = [member(AREA_A_UUID, d(5), "uid", "load", 5)];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(entryFor(kv, d(5)).pointSubscribers).toEqual({ uid: [AREA_A] });
+      expect(summary.contested).toEqual([]);
+      expect(summary.edges).toBe(1);
+    });
+
+    it("serves every uniquely-pathed member point of a binding-less area (leg-2 parity)", async () => {
+      const { kv } = await import("../kv");
+
+      mockMemberRows = [
+        member(AREA_A_UUID, d(6), "uid-1", "source.solar", 1),
+        member(AREA_A_UUID, d(6), "uid-2", "bidi.battery", 2),
+        member(AREA_A_UUID, d(6), "uid-3", "bidi.battery", 3, "soc"),
+      ];
+
+      await buildSubscriptionRegistry();
+
+      expect(entryFor(kv, d(6)).pointSubscribers).toEqual({
+        "uid-1": [AREA_A],
+        "uid-2": [AREA_A],
+        "uid-3": [AREA_A],
+      });
+    });
+
+    it("keeps a bound stemless point's edge without letting it claim a pseudo-path", async () => {
+      const { kv } = await import("../kv");
+
+      // `logicalPath` null → no latest-hash field at all. Keyed naively as `null/power` it would
+      // collide with nothing today, but it would enter the served-path set and so protect a field
+      // literally named "null/power" from GC — and mask a same-metric member twin if the member leg
+      // ever stopped filtering nulls.
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-stemless", null, 5)];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(6), "uid-real", "source.solar", 6),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(entryFor(kv, d(5)).pointSubscribers).toEqual({
+        "uid-stemless": [AREA_A],
+      });
+      expect(entryFor(kv, d(6)).pointSubscribers).toEqual({
+        "uid-real": [AREA_A],
+      });
+      expect(summary.contested).toEqual([]);
+      expect(summary.servedPathsByArea[AREA_A]).toEqual(["source.solar/power"]);
+    });
+
+    // ── area-hash GC: a value that LEAVES the serving set must disappear, not freeze ─────────────
+
+    it("deletes area-hash fields outside the serving set and keeps the served ones", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-bound", "load", 5)];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(6), "uid-new", "ev.charge", 169, "active"),
+      ];
+      (kv.hkeys as jest.MockedFunction<any>).mockResolvedValue([
+        "load/power",
+        "ev.charge/active",
+        "bidi.grid/power", // residue from an old binding — nothing serves it any more
+      ]);
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(kv.hdel).toHaveBeenCalledTimes(1);
+      expect(kv.hdel).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        "bidi.grid/power",
+      );
+      expect(summary.gcDeletedFields).toBe(1);
+    });
+
+    it("does not read or sweep the hash of an area absent from the registry", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid", "load", 5)];
+
+      await buildSubscriptionRegistry();
+
+      expect(kv.hkeys).toHaveBeenCalledTimes(1);
+      expect(kv.hkeys).toHaveBeenCalledWith(`test:latest:area:${AREA_A}`);
+      expect(kv.hkeys).not.toHaveBeenCalledWith(`test:latest:area:${AREA_B}`);
+    });
+
+    it("removes a served field once its path turns contested on a later rebuild", async () => {
+      const { kv } = await import("../kv");
+
+      // Rebuild 1: one member device owns the path → served, nothing GC'd.
+      mockMemberRows = [member(AREA_A_UUID, d(6), "uid-a", "bidi.grid", 6)];
+      await buildSubscriptionRegistry();
+      expect(entryFor(kv, d(6))).toBeDefined();
+      expect(kv.hdel).not.toHaveBeenCalled();
+
+      // Rebuild 2: a second device starts publishing the same path. Neither is served now, and the
+      // value already in the hash must be REMOVED rather than left frozen at its last reading.
+      jest.clearAllMocks();
+      mockMemberRows.push(member(AREA_A_UUID, d(7), "uid-b", "bidi.grid", 7));
+      (kv.hkeys as jest.MockedFunction<any>).mockResolvedValue([
+        "bidi.grid/power",
+      ]);
+
+      await buildSubscriptionRegistry();
+
+      expect(kv.set).not.toHaveBeenCalled();
+      expect(kv.hdel).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        "bidi.grid/power",
+      );
+    });
+
+    // ── the incident, replayed end to end ────────────────────────────────────────────────────────
+
+    it("a point minted on a device ALREADY in a bound area reaches that area's latest map", async () => {
+      const { kv } = await import("../kv");
+
+      // Kinkora Unified's shape: the area has bindings (authored before the Tesla charge points
+      // existed) and handle 10's device is already a member. Before this fix the member leg fired
+      // only for areas with ZERO bindings, so `ev.charge/active` fanned out to the DEVICE hash and no
+      // area hash — and the dashboard's Start/Stop buttons rendered permanently disabled.
+      const OLD_POINT = "0199aaaa-0000-7000-8000-000000000076";
+      const MINTED_POINT = "0199aaaa-0000-7000-8000-000000000169";
+      mockBindingRows = [
+        bound(
+          AREA_A_UUID,
+          SOURCE_DEVICE_UUID,
+          OLD_POINT,
+          "ev.charge.limit",
+          76,
+          "soc",
+        ),
+      ];
+      mockMemberRows = [
+        // Both points live on the same already-member device; only the older one is bound.
+        member(
+          AREA_A_UUID,
+          SOURCE_DEVICE_UUID,
+          OLD_POINT,
+          "ev.charge.limit",
+          76,
+          "soc",
+        ),
+        member(
+          AREA_A_UUID,
+          SOURCE_DEVICE_UUID,
+          MINTED_POINT,
+          "ev.charge",
+          169,
+          "active",
+        ),
+      ];
+
+      await buildSubscriptionRegistry();
+
+      // Hand the registry this rebuild wrote to the fan-out, exactly as KV would.
+      const entry = entryFor(kv, SOURCE_DEVICE_UUID);
+      expect(entry.pointSubscribers[MINTED_POINT]).toEqual([AREA_A]);
+      jest.clearAllMocks();
+      (kv.get as jest.MockedFunction<any>).mockResolvedValue(entry);
+
+      await updateLatestPointValue(
+        SOURCE_HANDLE,
+        MINTED_POINT,
+        "ev.charge/active",
+        1,
+        1731627600000,
+        1731627605000,
+        "bool",
+        "Charging",
+      );
+
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        expect.objectContaining({
+          "ev.charge/active": expect.objectContaining({ value: 1 }),
+        }),
+      );
+    });
+  });
+
+  describe("refreshServingForMintedPoints — the retry flag", () => {
+    let warn: any;
+
+    beforeEach(() => {
+      mockBindingRows = [];
+      mockMemberRows = [];
+      mockBindingsThrow = false;
+      __resetServingRebuildPending();
+      warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      mockBindingsThrow = false;
+      __resetServingRebuildPending();
+      warn.mockRestore();
+    });
+
+    it("never throws, and raises the retry flag when the rebuild fails", async () => {
+      mockBindingsThrow = true;
+
+      // Must not propagate: a KV/DB hiccup may not break reading insertion.
+      await expect(
+        refreshServingForMintedPoints("test"),
+      ).resolves.toBeUndefined();
+
+      // ...but it must not be forgotten either. Swallowing this silently would re-create the exact
+      // defect being fixed: the minted point stays invisible with nothing logged.
+      expect(isServingRebuildPending()).toBe(true);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("refreshServingForMintedPoints(test) failed"),
+        expect.anything(),
+      );
+    });
+
+    it("clears the flag on the next successful rebuild", async () => {
+      mockBindingsThrow = true;
+      await refreshServingForMintedPoints("failing-batch");
+      expect(isServingRebuildPending()).toBe(true);
+
+      mockBindingsThrow = false;
+      await refreshServingForMintedPoints("next-batch");
+
+      expect(isServingRebuildPending()).toBe(false);
+    });
+
+    it("stays clear after a successful rebuild", async () => {
+      await refreshServingForMintedPoints("steady-state");
+      expect(isServingRebuildPending()).toBe(false);
     });
   });
 });
