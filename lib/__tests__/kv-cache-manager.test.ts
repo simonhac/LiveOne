@@ -520,6 +520,39 @@ describe("kv-cache-manager", () => {
       expect(entry?.pointSubscribers["uid-fronius-sol"]).toBeUndefined();
     });
 
+    it("🛑 serves a VENDOR-MEASURED rest-of-house where no master load is bound", async () => {
+      const { kv } = await import("../kv");
+
+      // Kutis genuinely publishes `load.rest-of-house/power` (rid 99) — a measured point,
+      // not our synthesis. Withholding it deleted a live dashboard field on 2026-08-04, because the
+      // rule treated the path as unconditionally synthetic and so skipped the curation check the
+      // other derived paths use. A vendor that MEASURES a quantity outranks our computation of it.
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(6), "uid-solar", "source.solar.local", 65),
+      ];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(8), "uid-roh", "load.rest-of-house", 99),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(summary.suppressed).toEqual([]);
+      expect(entryFor(kv, d(8))?.pointSubscribers["uid-roh"]).toEqual([AREA_A]);
+    });
+
+    it("withholds rest-of-house only where a master load IS bound", async () => {
+      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-master", "load", 39)];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(8), "uid-roh", "load.rest-of-house", 99),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(summary.suppressed).toEqual([
+        { areaId: AREA_A, path: "load.rest-of-house/power", pointRid: 99 },
+      ]);
+    });
+
     it("🛑 a BINDING still wins a display-derived path — suppression is mechanical-leg only", async () => {
       const { kv } = await import("../kv");
 
