@@ -60,7 +60,11 @@ function limit(over: Partial<ChargeLimitJson> = {}): ChargeLimitJson {
 describe("areaIdOfDatum", () => {
   const cases: Array<{ name: string; data: unknown; expected: string | null }> =
     [
-      { name: "an area-shaped datum yields its ar_ id", data: { area: { areaId: AR } }, expected: AR },
+      {
+        name: "an area-shaped datum yields its ar_ id",
+        data: { area: { areaId: AR } },
+        expected: AR,
+      },
       {
         name: "a device-shaped datum has no area leg",
         data: { device: { id: 1, deviceId: "dv_x" } },
@@ -71,8 +75,16 @@ describe("areaIdOfDatum", () => {
         data: { area: { areaId: Device.generate() } },
         expected: null,
       },
-      { name: "a malformed id is rejected", data: { area: { areaId: "ar_!!" } }, expected: null },
-      { name: "a non-string id is rejected", data: { area: { areaId: 7 } }, expected: null },
+      {
+        name: "a malformed id is rejected",
+        data: { area: { areaId: "ar_!!" } },
+        expected: null,
+      },
+      {
+        name: "a non-string id is rejected",
+        data: { area: { areaId: 7 } },
+        expected: null,
+      },
       { name: "null is null", data: null, expected: null },
       { name: "a non-object is null", data: "ar_whatever", expected: null },
       { name: "undefined is null", data: undefined, expected: null },
@@ -92,7 +104,9 @@ describe("selectChargeLimits", () => {
   });
 
   it("excludes rows whose action failed to parse server-side", () => {
-    expect(selectChargeLimits([limit({ action: null })], ACTIVE_PT)).toEqual([]);
+    expect(selectChargeLimits([limit({ action: null })], ACTIVE_PT)).toEqual(
+      [],
+    );
   });
 
   it("returns nothing when the switch point is unknown", () => {
@@ -146,7 +160,9 @@ describe("🛑 the kWh figure is the DELTA above the armed baseline", () => {
   });
 
   it("shows the target ONLY when the counter is missing from the latest map", () => {
-    expect(describeChargeLimit(limit(), null, ADDED_PT, T0 + MIN).soFarKwh).toBeNull();
+    expect(
+      describeChargeLimit(limit(), null, ADDED_PT, T0 + MIN).soFarKwh,
+    ).toBeNull();
   });
 
   it("refuses to measure against a counter that is not the trigger's source", () => {
@@ -223,9 +239,17 @@ describe("remainingMinutes", () => {
 });
 
 describe("state machine", () => {
-  const cases: Array<{ name: string; row: Partial<ChargeLimitJson>; expected: string }> = [
+  const cases: Array<{
+    name: string;
+    row: Partial<ChargeLimitJson>;
+    expected: string;
+  }> = [
     { name: "enabled and armed → armed", row: {}, expected: "armed" },
-    { name: "enabled, not yet armed → waiting", row: { armedAt: null }, expected: "waiting" },
+    {
+      name: "enabled, not yet armed → waiting",
+      row: { armedAt: null },
+      expected: "waiting",
+    },
     {
       name: "an unparseable armedAt is not arming",
       row: { armedAt: "not-a-date" },
@@ -258,7 +282,12 @@ describe("state machine", () => {
       { enabled: false, lastTriggeredAt: new Date(T0).toISOString() },
       { enabled: false },
     ]) {
-      const desc = describeChargeLimit(limit(row), { valueKwh: 50 }, ADDED_PT, T0);
+      const desc = describeChargeLimit(
+        limit(row),
+        { valueKwh: 50 },
+        ADDED_PT,
+        T0,
+      );
       expect(formatChargeLimitLine(desc)).toBeNull();
       expect(formatChargeLimitCompact(desc)).toBeNull();
     }
@@ -324,13 +353,9 @@ describe("compareChargeLimits", () => {
       { state: "armed" as const, name: "q" },
       { state: "waiting" as const, name: "a" },
     ];
-    expect([...rows].sort(compareChargeLimits).map((r) => `${r.state}/${r.name}`)).toEqual([
-      "armed/q",
-      "waiting/a",
-      "waiting/z",
-      "stopped/a",
-      "off/b",
-    ]);
+    expect(
+      [...rows].sort(compareChargeLimits).map((r) => `${r.state}/${r.name}`),
+    ).toEqual(["armed/q", "waiting/a", "waiting/z", "stopped/a", "off/b"]);
   });
 });
 
@@ -360,7 +385,8 @@ describe("cross-check against decideAutomation", () => {
       status: "active",
       runStartMs: null,
       runKwh: null,
-      counter: counterKwh == null ? null : { valueKwh: counterKwh, atMs: nowMs },
+      counter:
+        counterKwh == null ? null : { valueKwh: counterKwh, atMs: nowMs },
       anchorToleranceMs: 0,
     };
     return decideAutomation(inputs, src, nowMs);
@@ -373,9 +399,16 @@ describe("cross-check against decideAutomation", () => {
     (counter) => {
       const row = limit();
       const nowMs = T0 + 10 * MIN;
-      const desc = describeChargeLimit(row, { valueKwh: counter }, ADDED_PT, nowMs);
+      const desc = describeChargeLimit(
+        row,
+        { valueKwh: counter },
+        ADDED_PT,
+        nowMs,
+      );
       const fired = decisionFor(row, counter, nowMs).kind === "fire";
-      expect(desc.soFarKwh != null && desc.soFarKwh >= desc.targetKwh!).toBe(fired);
+      expect(desc.soFarKwh != null && desc.soFarKwh >= desc.targetKwh!).toBe(
+        fired,
+      );
     },
   );
 
