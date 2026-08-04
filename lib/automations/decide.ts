@@ -112,6 +112,22 @@ export function pointSourceState(
   };
 }
 
+/**
+ * Energy added since ARM: the counter's delta above the armed baseline, clamped at 0.
+ *
+ * 🛑 This one expression is the whole point of `armed_context` (see the header's item 1), and it is
+ * exported so the UI can SHOW the same number the evaluator FIRES on. `lib/automations/progress.ts`
+ * imports it; if you find yourself writing `counter - baseline` anywhere else, call this instead.
+ * The clamp absorbs vampire sag — a counter drifting below its baseline is drain, not negative
+ * dispensed energy.
+ */
+export function pointProgressKwh(
+  counterKwh: number,
+  baselineKwh: number,
+): number {
+  return Math.max(0, counterKwh - baselineKwh);
+}
+
 export function decideAutomation(
   a: DecisionInputs,
   src: SourceState,
@@ -196,9 +212,7 @@ export function decideAutomation(
     const delta =
       a.sourceKind === "point"
         ? src.counter && a.armedContext?.baselineKwh != null
-          ? // Clamp the vampire sag: a counter drifting below its baseline is drain, not
-            // negative dispensed energy.
-            Math.max(0, src.counter.valueKwh - a.armedContext.baselineKwh)
+          ? pointProgressKwh(src.counter.valueKwh, a.armedContext.baselineKwh)
           : null
         : src.runKwh;
     if (delta != null && delta >= a.afterKwh) return { kind: "fire", anchorMs };

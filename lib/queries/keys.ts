@@ -71,6 +71,13 @@ export const queryKeys = {
   runPeriods: (systemId: SystemIdLike, role: string, modeKey: string) =>
     ["runPeriods", sid(systemId), role, modeKey] as const,
 
+  /**
+   * Charge-limit automations for one AREA (`/api/v4/automations?area=ar_…`), keyed by the `ar_`
+   * TypeID the request itself uses. Deliberately NOT in `SYSTEM_RESOURCES` below: it is not
+   * handle-keyed, so `invalidateDevice` must not sweep it.
+   */
+  automations: (areaId: string) => ["automations", areaId] as const,
+
   /** Keyed by AREA uuid (not systemId) — battery-provenance daily history for the panel. */
   provenanceDaily: (areaId: string, rangeKey: string) =>
     ["provenanceDaily", areaId, rangeKey] as const,
