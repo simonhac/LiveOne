@@ -29,6 +29,23 @@ export const SKELETON_CLASS =
   "animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30";
 
 /**
+ * The shimmer treatment — a sweeping highlight, on trial against `SKELETON_CLASS`'s breathing
+ * `animate-pulse`. Currently worn by the two site-chart halves (the chart body and its legend
+ * table) and nothing else, so both treatments are visible on one screen for comparison.
+ *
+ * The `.shimmer` class lives in app/globals.css and already stands still under
+ * `prefers-reduced-motion: reduce`. Unlike `SKELETON_CLASS` this carries NO border and no
+ * fixed radius beyond `rounded` — it is for BARS standing in for text/values, not for boxes
+ * standing in for cards.
+ */
+export const SHIMMER_CLASS = "shimmer rounded";
+
+/** One shimmering bar. Size it with `className` to match the thing it replaces. */
+export function ShimmerBar({ className }: { className?: string }) {
+  return <div aria-hidden className={`${SHIMMER_CLASS} ${className ?? ""}`} />;
+}
+
+/**
  * A tile-shaped placeholder, shown while a tile cell's `/api/data` is in flight.
  *
  * The sizing MIRRORS the real tiles rather than picking a round number: `Tile` is
