@@ -15,6 +15,7 @@ import {
   formatGramsPerKwh,
   formatKgCo2,
 } from "@/lib/provenance-format";
+import { ShimmerBar } from "@/components/ui/skeleton";
 
 /**
  * What the table's last column shows. `pct` is each row's share of the total (the original, and the
@@ -91,6 +92,13 @@ interface EnergyTableProps {
     series: SeriesData[];
     mode: "power" | "energy";
   } | null;
+  /**
+   * The parent's history query is in flight (and its mirror of that fetch hasn't landed yet), so an
+   * absent `chartData` means "not here YET" rather than "not here". Drives the shimmering
+   * placeholder; without it the table can't tell the two apart and flashes "No data" on every cold
+   * load.
+   */
+  isLoading?: boolean;
   mode: "load" | "generation";
   hoveredIndex?: number | null; // Index of the hovered data point
   className?: string;
@@ -116,8 +124,99 @@ interface EnergyTableProps {
   gridRate?: (number | null)[] | null;
 }
 
+/** The label-column bar widths, cycled down the rows so the block reads as a list of differing
+ *  names rather than a solid slab. Kept inside the `w-64` table's ~92px label slot. */
+const SKELETON_LABEL_WIDTHS = ["w-16", "w-20", "w-12", "w-20"];
+
+/** One placeholder row: swatch + label, the `w-20` value column, the `w-16` metric column. The
+ *  `h-4` slots stand in for the 16px line box `text-xs` gives the settled rows — an empty div
+ *  establishes no line box, so without them the rows would measure 12px and the block would
+ *  grow on arrival. */
+function SkeletonRow({
+  labelWidth,
+  swatch = true,
+}: {
+  labelWidth: string;
+  swatch?: boolean;
+}) {
+  return (
+    <div className="flex items-center text-xs">
+      <div className="flex flex-1 h-4 items-center gap-2">
+        {swatch && <ShimmerBar className="h-3 w-3 flex-shrink-0" />}
+        <ShimmerBar className={`h-3 ${labelWidth}`} />
+      </div>
+      <div className="flex h-4 w-20 items-center justify-end">
+        <ShimmerBar className="h-3 w-12" />
+      </div>
+      <div className="flex h-4 w-16 items-center justify-end">
+        <ShimmerBar className="h-3 w-8" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The table's stand-in while the site history is in flight.
+ *
+ * Structural, not a fixed height: it wears the SAME wrapper, spacers, borders and column widths as
+ * the settled table below, so it measures the same at every breakpoint — which matters on mobile,
+ * where the table stacks under the chart and its height is nobody else's problem to reserve.
+ *
+ * The row count is fixed at 4 because the real count isn't knowable on a cold load (no query
+ * cache, so no previous window to count). The footer block follows the settled table's: the
+ * generation half carries the Battery SoC line as well as the money line.
+ */
+function EnergyTableSkeleton({
+  mode,
+  className = "",
+}: {
+  mode: "load" | "generation";
+  className?: string;
+}) {
+  return (
+    <div className={className} data-skeleton="" aria-hidden>
+      <div className="space-y-4" style={{ paddingTop: "44px" }}>
+        {/* Column headers */}
+        <div className="flex items-center text-xs border-b border-gray-700 pb-1">
+          <div className="flex h-4 flex-1 items-center">
+            <ShimmerBar className="h-3 w-12" />
+          </div>
+          <div className="flex h-4 w-20 items-center justify-end">
+            <ShimmerBar className="h-3 w-14" />
+          </div>
+          <div className="flex h-4 w-16 items-center justify-end">
+            <ShimmerBar className="h-3 w-8" />
+          </div>
+        </div>
+
+        {/* Items */}
+        <div className="space-y-1">
+          {SKELETON_LABEL_WIDTHS.map((w, i) => (
+            <SkeletonRow key={i} labelWidth={w} />
+          ))}
+        </div>
+
+        {/* Total */}
+        <div className="border-t border-gray-700 pt-1">
+          <SkeletonRow labelWidth="w-10" swatch={false} />
+        </div>
+
+        {/* Footer: Battery SoC (generation only) + the grid money line */}
+        <div
+          className="space-y-1"
+          style={{ paddingTop: "20px", paddingBottom: "20px" }}
+        >
+          {mode === "generation" && <SkeletonRow labelWidth="w-20" />}
+          <SkeletonRow labelWidth="w-16" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function EnergyTable({
   chartData,
+  isLoading,
   mode,
   hoveredIndex,
   className = "",
@@ -164,6 +263,11 @@ export default function EnergyTable({
   }, [chartData, attributedFlow, mode]);
 
   if (!chartData || chartData.series.length === 0) {
+    // Still coming: a placeholder shaped like the table. "No data" is reserved for the SETTLED
+    // empty case below — it is a statement about the data, and saying it while the fetch is in
+    // flight is a lie the reader sees on every refresh.
+    if (isLoading)
+      return <EnergyTableSkeleton mode={mode} className={className} />;
     return (
       <div className={`${className}`}>
         <div className="text-gray-500 text-center">No data</div>

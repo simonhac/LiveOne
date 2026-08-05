@@ -164,6 +164,8 @@ export function maxPowerHintFromDeviceInfo(deviceInfo?: {
  */
 export {
   SKELETON_CLASS,
+  SHIMMER_CLASS,
+  ShimmerBar,
   TileSkeleton,
   CardSkeleton,
   StatGridSkeleton,

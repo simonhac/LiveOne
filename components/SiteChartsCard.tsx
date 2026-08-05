@@ -66,6 +66,7 @@ import type { ChartTimeRange } from "@/lib/charts/temporal";
 import { isDateOnlyPeriod } from "@/lib/charts/temporal";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { CalendarX2 } from "lucide-react";
+import { ShimmerBar } from "@/components/ui/skeleton";
 
 interface SiteChartsCardProps {
   systemId: string;
@@ -173,8 +174,11 @@ function StackedChart({
   visibleSeries,
   className = "",
 }: StackedChartProps) {
-  const [loading, setLoading] = useState(true);
-  const [showSpinner, setShowSpinner] = useState(false);
+  // Derived, not mirrored: the chart is "loading" exactly when the parent has nothing for it yet
+  // and says more is coming. This used to be a state pair kept in sync by two effects — the second
+  // of which held the spinner back for 1000ms to avoid a flash on quick loads. The shimmer
+  // placeholder is what that delay was working around, so both are gone.
+  const loading = data === null && !!isLoading;
   const [hoveredTimestamp, setHoveredTimestamp] = useState<Date | null>(null);
 
   // Compute effective visibility - if empty/undefined, show all series
@@ -244,44 +248,6 @@ function StackedChart({
     const windowStart = new Date(now.getTime() - windowHours * 60 * 60 * 1000);
     return { windowEnd: now, windowStart };
   }, [period, data]);
-
-  // Track loading state from the parent-provided data/isLoading props
-  useEffect(() => {
-    if (data === null) {
-      // If data is null, check if parent is still loading
-      if (isLoading) {
-        // Parent is still loading, keep spinner
-        setLoading(true);
-      } else {
-        // Parent finished loading but data is null (no data available)
-        setLoading(false);
-      }
-    } else {
-      // We have actual data
-      setLoading(false);
-    }
-  }, [data, isLoading]);
-
-  // Delay showing spinner to avoid flash on quick loads
-  useEffect(() => {
-    let timerId: NodeJS.Timeout;
-
-    if (loading) {
-      // Start a timer when loading becomes true
-      timerId = setTimeout(() => {
-        setShowSpinner(true);
-      }, 1000);
-    } else {
-      // Immediately hide spinner when loading is done
-      setShowSpinner(false);
-    }
-
-    return () => {
-      if (timerId) {
-        clearTimeout(timerId);
-      }
-    };
-  }, [loading]);
 
   /**
    * Run periods to bracket on this chart's bands.
@@ -362,17 +328,15 @@ function StackedChart({
   }, [onHoverIndexChange]);
 
   const renderChartContent = () => {
-    if (loading && showSpinner) {
+    if (loading) {
+      // A block of the plot's own size (the parent supplies min-h-[375px]), shimmering — shown
+      // immediately, so a cold load reads as "arriving" from the first frame instead of a blank
+      // rectangle that turns into a spinner a second later.
       return (
-        <div className="flex-1 flex items-center justify-center min-h-0">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
+        <div data-skeleton="" className="flex flex-1 min-h-0 flex-col">
+          <ShimmerBar className="flex-1 min-h-0 rounded-lg" />
         </div>
       );
-    }
-
-    if (loading && !showSpinner) {
-      // Still loading but spinner delay hasn't elapsed - show nothing
-      return <div className="flex-1 min-h-0" />;
     }
 
     if (!data) {
@@ -580,6 +544,11 @@ export default function SiteChartsCard({
   // same reason as `tableAttributedFlow`: a row's price and its energy must come from ONE fetch.
   const [tableGridRates, setTableGridRates] =
     useState<ProcessedSiteData["gridRates"]>(null);
+  // Which fetch the four mirrors above currently hold — the only way to tell "the mirror effect
+  // hasn't run yet" from "this fetch genuinely has no load/generation half". Without it the tables
+  // would flash "No data" for the one frame between the query settling and the mirror landing.
+  const [mirroredSource, setMirroredSource] =
+    useState<ProcessedSiteData | null>(null);
   // Which metric the legend tables' last column shows. Shared by both tables so they cycle together;
   // session-only by design (no localStorage) — it resets to "%" on reload.
   const [energyMetric, setEnergyMetric] = useState<EnergyTableMetric>("pct");
@@ -685,8 +654,15 @@ export default function SiteChartsCard({
       setGenerationChartData(siteData.generation);
       setTableAttributedFlow(siteData.attributedFlow ?? null);
       setTableGridRates(siteData.gridRates ?? null);
+      setMirroredSource(siteData);
     }
   }, [siteData]);
+
+  // What the legend tables are told: in flight, OR settled but not yet mirrored (identity compare —
+  // `loadChartData === null` can't stand in for this, since an area with no loads legitimately
+  // mirrors a null half).
+  const tablesLoading =
+    historyLoading || (!!siteData && mirroredSource !== siteData);
 
   // The Sankey's attributed payload (energy + emissions/renewable/cost legs) now rides the same
   // site-history fetch for every period (see `lib/site-data-processor.ts`) — no separate 30D query.
@@ -882,6 +858,7 @@ export default function SiteChartsCard({
                 <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
                   <EnergyTable
                     chartData={loadChartData}
+                    isLoading={tablesLoading}
                     mode="load"
                     hoveredIndex={hoveredIndex}
                     className="h-full"
@@ -923,6 +900,7 @@ export default function SiteChartsCard({
                 <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
                   <EnergyTable
                     chartData={generationChartData}
+                    isLoading={tablesLoading}
                     mode="generation"
                     hoveredIndex={hoveredIndex}
                     className="h-full"
