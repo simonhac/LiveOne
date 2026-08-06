@@ -81,7 +81,7 @@ It works with any hardware because every metric is stored as a generic "point" r
 
 Polling adapts to the source: Enphase skips overnight, Tesla speeds up while a vehicle is charging, and OpenElectricity tracks the NEM's actual publication timing.
 
-**Push vendors** are hardware that is not reachable from the cloud. A local reader (**usher**, in `packages/usher`) polls the device over its LAN protocol — Modbus TCP for the Deep Sea generator controller, the local API for Fronius — and pushes self-describing readings to the `/api/gush` receiver, journalling and spooling to disk so a network or server outage cannot lose a batch.
+**Push vendors** are hardware that is not reachable from the cloud. A local reader (**[usher](packages/usher/README.md)**, in `packages/usher`) polls the device over its LAN protocol — Modbus TCP for the Deep Sea generator controller, the local API for Fronius — and pushes self-describing readings to the `/api/gush` receiver, journalling and spooling to disk so a network or server outage cannot lose a batch. It runs either on a Fly WireGuard hub or on a Raspberry Pi on the site LAN, from the same build.
 
 `helper` is not a vendor at all: it is a derived, never-polled device that lives inside an area and owns that area's computed points (battery-provenance blends, learned battery parameters).
 

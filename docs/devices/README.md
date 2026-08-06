@@ -57,6 +57,12 @@ Each `docs/devices/<vendor>.md` should have, in order:
 
 ## Adding a new device — checklist
 
+> **First, check the device is actually pollable from the cloud.** If it is LAN-only — no public
+> address, no vendor cloud — none of this applies: the integration is a **push** source in the
+> on-site collector instead, and the server side needs no per-vendor code at all (the readings are
+> self-describing). See [`packages/usher`](../../packages/usher/README.md), and
+> [adding a source](../../packages/usher/docs/architecture.md#the-source-contract-is-deliberately-tiny).
+
 - [ ] `lib/vendors/<v>/{adapter,client,types,point-metadata}.ts` (blocks 1–4)
 - [ ] Register in `registry.ts`; classify in `native-intervals.ts` (blocks 5–6)
 - [ ] Credentials path + cron gate (block 7)

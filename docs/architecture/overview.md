@@ -27,8 +27,9 @@ product reasons about.
 - **Cron:** Vercel Cron, 8 jobs (`vercel.json` is the schedule of record): minutely poll,
   outbox relay, derivations, daily aggregation, Sigenergy backfill, DB stats, queue monitor,
   and the weekly coverage repair.
-- **On-site:** a Fly.io hub (`packages/usher`) fronts LAN-only push devices (DeepSea), which
-  reach the app through `POST /api/gush`.
+- **On-site:** a Fly.io hub ([`packages/usher`](../../packages/usher/README.md)) fronts LAN-only
+  push devices (DeepSea), which reach the app through `POST /api/gush`. The same collector also
+  runs on a Raspberry Pi on the site LAN; the tunnel is a deployment choice, not app logic.
 
 ## The data path
 
@@ -66,17 +67,17 @@ Adapters live in `lib/vendors/<vendor>/`, registered in `lib/vendors/registry.ts
 `base-adapter.ts` / `types.ts`. Each adapter owns auth, fetching, mapping to point metadata,
 and error normalisation.
 
-| Vendor          | Mode                               | Notes                                                                                                                   |
-| --------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| selectronic     | poll (minutely)                    | select.live; [../vendors/selectronic.md](../vendors/selectronic.md)                                                     |
-| enphase         | poll (OAuth, 5m-native)            | [../vendors/enphase-integration.md](../vendors/enphase-integration.md)                                                  |
-| fusher          | push webhook                       | Fronius pusher, renamed from `fronius` (alias kept); [../vendors/fronius-push-spec.md](../vendors/fronius-push-spec.md) |
-| amber           | poll (5m-native)                   | Electricity market data; [../amber-sync-plan.md](../amber-sync-plan.md)                                                 |
-| openelectricity | poll (5m-native, dynamic cadence)  | NEM regional emissions intensity/price/renewables; [../devices/open-electricity.md](../devices/open-electricity.md)     |
-| sigenergy       | poll (5m-native)                   | Inverter/battery/EV charger; has a range-backfill primitive                                                             |
-| deepsea         | push (LAN)                         | DSE7410 genset controller over Modbus, via the Fly hub → `/api/gush`                                                    |
-| tesla           | poll (OAuth, charge-aware cadence) | EVs, plus the one command path (charge start/stop/limit); [../tesla.md](../tesla.md)                                    |
-| mondo           | poll                               |                                                                                                                         |
+| Vendor          | Mode                               | Notes                                                                                                                    |
+| --------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| selectronic     | poll (minutely)                    | select.live; [../vendors/selectronic.md](../vendors/selectronic.md)                                                      |
+| enphase         | poll (OAuth, 5m-native)            | [../vendors/enphase-integration.md](../vendors/enphase-integration.md)                                                   |
+| fusher          | push webhook                       | Fronius pusher, renamed from `fronius` (alias kept); [../vendors/fronius-push-spec.md](../vendors/fronius-push-spec.md)  |
+| amber           | poll (5m-native)                   | Electricity market data; [../amber-sync-plan.md](../amber-sync-plan.md)                                                  |
+| openelectricity | poll (5m-native, dynamic cadence)  | NEM regional emissions intensity/price/renewables; [../devices/open-electricity.md](../devices/open-electricity.md)      |
+| sigenergy       | poll (5m-native)                   | Inverter/battery/EV charger; has a range-backfill primitive                                                              |
+| deepsea         | push (LAN)                         | DSE7410 genset controller over Modbus, via the Fly hub → `/api/gush`                                                     |
+| tesla           | poll (OAuth, charge-aware cadence) | EVs, plus the one command path (charge start/stop/limit); [../tesla.md](../tesla.md)                                     |
+| mondo           | poll                               |                                                                                                                          |
 | helper          | never polled                       | A derived, non-physical device inside an Area that owns computed points ([battery-provenance.md](battery-provenance.md)) |
 
 The `composite` vendor was **retired**: a multi-device Area is not a vendor connection, so it has no
@@ -86,25 +87,25 @@ adapter. Anything that used to be a composite system is now an Area with members
 
 ("Topic", not "Area" — an Area is a domain object here, see the glossary.)
 
-| Topic                                                       | Doc                                                                      |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Direction of travel, ingest durability, engine/web split    | [engine-web-separation.md](engine-web-separation.md)                     |
-| Data model semantics & invariants; point paths and metrics  | [data-model.md](data-model.md)                                           |
-| Schema (columns/indexes)                                    | `lib/db/planetscale/schema.ts` (source of truth)                         |
-| The three-layer split: devices → areas → dashboards         | [areas-and-dashboards.md](areas-and-dashboards.md)                       |
-| API conventions & external contracts                        | [api.md](api.md)                                                         |
-| Authorization model (ownership, access levels, share scope) | [authentication.md](authentication.md)                                   |
-| KV cache keys & subscription registry                       | [kv-store.md](kv-store.md)                                               |
-| Energy-flow (Sankey) matrix                                 | [energy-flow-matrix.md](energy-flow-matrix.md)                           |
-| Metric-attributed flows (emissions/renewable/cost)          | [battery-provenance.md](battery-provenance.md)                           |
-| Weekly gap self-heal for re-fetchable vendors               | [coverage-repair.md](coverage-repair.md)                                 |
-| "Rest of house" load calculations                           | [load-calcs.md](load-calcs.md)                                           |
-| Hero-number and unit typography on cards                    | [number-typography.md](number-typography.md)                             |
-| Why the config layer looks like this (config-v4)            | [../plans/completed/config-v4-clean-sheet.md](../plans/completed/config-v4-clean-sheet.md) |
+| Topic                                                       | Doc                                                                                              |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Direction of travel, ingest durability, engine/web split    | [engine-web-separation.md](engine-web-separation.md)                                             |
+| Data model semantics & invariants; point paths and metrics  | [data-model.md](data-model.md)                                                                   |
+| Schema (columns/indexes)                                    | `lib/db/planetscale/schema.ts` (source of truth)                                                 |
+| The three-layer split: devices → areas → dashboards         | [areas-and-dashboards.md](areas-and-dashboards.md)                                               |
+| API conventions & external contracts                        | [api.md](api.md)                                                                                 |
+| Authorization model (ownership, access levels, share scope) | [authentication.md](authentication.md)                                                           |
+| KV cache keys & subscription registry                       | [kv-store.md](kv-store.md)                                                                       |
+| Energy-flow (Sankey) matrix                                 | [energy-flow-matrix.md](energy-flow-matrix.md)                                                   |
+| Metric-attributed flows (emissions/renewable/cost)          | [battery-provenance.md](battery-provenance.md)                                                   |
+| Weekly gap self-heal for re-fetchable vendors               | [coverage-repair.md](coverage-repair.md)                                                         |
+| "Rest of house" load calculations                           | [load-calcs.md](load-calcs.md)                                                                   |
+| Hero-number and unit typography on cards                    | [number-typography.md](number-typography.md)                                                     |
+| Why the config layer looks like this (config-v4)            | [../plans/completed/config-v4-clean-sheet.md](../plans/completed/config-v4-clean-sheet.md)       |
 | What config-v4 cost and the traps it taught                 | [../plans/completed/config-v4-execution-plan.md](../plans/completed/config-v4-execution-plan.md) |
-| Historical: the completed Turso→Postgres migration          | [../turso-pg-migration.md](../turso-pg-migration.md)                     |
-| Queue payload formats                                       | [../observations-qstash-payloads.md](../observations-qstash-payloads.md) |
-| Migration safety practices (schema + config documents)      | [../migrations.md](../migrations.md)                                     |
+| Historical: the completed Turso→Postgres migration          | [../turso-pg-migration.md](../turso-pg-migration.md)                                             |
+| Queue payload formats                                       | [../observations-qstash-payloads.md](../observations-qstash-payloads.md)                         |
+| Migration safety practices (schema + config documents)      | [../migrations.md](../migrations.md)                                                             |
 
 ## Glossary
 
