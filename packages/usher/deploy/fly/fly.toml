@@ -1,5 +1,7 @@
 # usher hub — permanent Fly.io WireGuard hub (app "liveone-flyhub").
 #
+# DOCS: ../../docs/deploy-fly.md (procedure) · ../../docs/operations.md (triage) · ../../README.md
+#
 # One usher manages both sites over WireGuard:
 #   • sheephouse UDM (primary site, Starlink CGNAT) → DeepSea generator (musher)
 #   • kinkora UDM (standard DSL) → two Fronius inverters (fusher)

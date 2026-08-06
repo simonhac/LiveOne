@@ -6,10 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Deploy the Next.js standalone output to /opt/usher (see README) so server.js is at:
+# Deploy the Next.js standalone output to /opt/usher (see ../../docs/deploy-pi.md) so server.js is at:
 #   /opt/usher/packages/usher/server.js
 WorkingDirectory=/opt/usher
-# Secrets + config path live here (chmod 600): SHEEPHOUSE_API_KEY / KINKORA_API_KEY / USHER_CONFIG / PORT
+# Secrets + config path live here (chmod 600): USHER_CONFIG / USHER_DATA_DIR / PORT, plus the gusher
+# key(s) under the env-var names this site's usher.yaml declares in `apiKeyEnv` (e.g. KINKORA_API_KEY).
 EnvironmentFile=/etc/usher/usher.env
 ExecStart=/usr/bin/node /opt/usher/packages/usher/server.js
 Restart=always
