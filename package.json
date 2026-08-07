@@ -117,6 +117,7 @@
   "devDependencies": {
     "@next/bundle-analyzer": "^15.5.22",
     "@playwright/test": "^1.62.1",
+    "@simon/workspace-env": "github:simonhac/workspace-env#v0.1.0",
     "@tanstack/react-query-devtools": "^5.101.0",
     "@types/d3-array": "^3.2.2",
     "@types/d3-sankey": "^0.12.4",
