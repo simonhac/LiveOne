@@ -1,0 +1,12 @@
+# liveone workspace setup/run — driven by @simon/workspace-env.
+# Secrets: op inject of the committed .env.tpl (op:// refs into liveone-dev)
+# via the Keychain SA token op-sa-liveone-dev.
+project: liveone
+setup:
+  - vercelLink            # ensure .vercel/project.json (project defaults to "liveone")
+  - opInjectEnv           # op inject .env.tpl -> .env.local from 1Password
+  - validateEnv           # runs the project's @t3-oss/env schema if configured; else info-skips
+  - verify                # node_modules present
+run:
+  command: npm run dev
+  port: { from: 3000, span: 5 }   # liveone's range 3000–3004
