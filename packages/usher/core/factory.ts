@@ -97,14 +97,16 @@ export function buildEntries(
       apiKey: resolveApiKey(sc.apiKeyEnv),
       log: (m) => log(`[${sc.siteId}] ${m}`),
     });
-    const { intervalMs, activeIntervalMs } = cadenceFor(sc);
+    // Spread, don't destructure: naming the fields here means every cadence added to `cadenceFor`
+    // has to be repeated in a second place, and forgetting drops it SILENTLY — the loop just falls
+    // back to its default and nothing errors. That is exactly how the push cadences were lost on
+    // their first deploy.
     return {
       source,
       pusher,
       blackbox: store?.blackbox ?? null,
       spool: store?.spool ?? null,
-      intervalMs,
-      activeIntervalMs,
+      ...cadenceFor(sc),
       alignToBoundary: true,
     };
   });
