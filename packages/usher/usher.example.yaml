@@ -9,15 +9,23 @@ gushEndpoint: https://www.liveone.energy/api/gush
 
 sources:
   # DeepSea generator at the primary site (musher). Reached over the sheephouse WireGuard tunnel on Fly,
-  # or directly on the LAN from a Pi. Poll==push: 5 min idle, 1 min while the genset is running.
+  # or directly on the LAN from a Pi. Poll==push: 15 s, running or idle.
+  #
+  # ⚠️ TEMPORARY high-resolution cadence (2026-08-10). It was 300 s idle / 60 s running. The open
+  # question is WHICH digital input the SP-PRO closes to command a start (see the Daylesford
+  # generator-run-accounting write-up), and that is a transition we need bracketed tightly — at 300 s
+  # the pre-start snapshot is up to five minutes stale and useless for attributing the edge. Costs
+  # ~52 MB/day of diag journal (~0.5 MB/day once rolled — see diag-journal.ts on why gzip gets
+  # ~106:1), which is why the journal now has a 100 MB cap. Put this back to 300/60 once the start
+  # trigger is identified.
   - type: deepsea
     siteId: sheephouse
     apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)
     host: 10.0.1.244
     port: 502
     unitId: 10
-    pollSec: 300
-    activeSec: 60
+    pollSec: 15
+    activeSec: 15
 
   # Fronius at Kinkora (fusher) — one site, two inverters (master + slave), aggregated. The Site
   # self-polls each inverter every 2 s; the run-loop pushes the minutely report once per minute.

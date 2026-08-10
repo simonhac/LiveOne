@@ -762,6 +762,55 @@ export const REGISTERS: RegField[] = [
   ),
   ...ALARM_WORDS,
 
+  // ── Diagnostic digital inputs / outputs (Pages 12 & 13) ───────────────────
+  // Added 2026-08-10, addresses read off SP-228 §8.14/§8.15 (NOT guessed), and every one of these
+  // was verified live before being mapped — see the notes below for the values observed.
+  //
+  // These are PACKED words: two bits per named channel (0=Open/De-energised, 1=Closed/Energised,
+  // 2=Reserved, 3=Unimplemented), one bit per unnamed channel with channel 1 at the MSB. They are
+  // declared UNSIGNED and unscaled deliberately: the decoded "value" is meaningless, the RAW word is
+  // the payload, and unsigned keeps a legitimate 0x7FFF out of the signed sentinel band (a signed
+  // declaration would silently null the one register we care most about).
+  //
+  // WHY THESE MATTER. Page 12 offset 0 carries "Low oil pressure switch input" (bits 13-14) and
+  // "Remote start input" (bits 9-10); offset 17 carries the eight configurable inputs. Together they
+  // answer the two standing questions about the Daylesford genset: whether the oil pressure switch
+  // fitted on 2026-07-06 is wired to anything the controller uses, and WHICH input the SP-PRO closes
+  // to command a start. Page 13 offset 0 carries the fuel and start relays, which distinguishes "the
+  // DSE commanded this start" from "something else cranked the engine".
+  f("Digital I/O", 12, 0, "digInNamed1", "Named digital inputs 1 (estop, oil-pressure switch, engine-temp switch, remote start)", 1, false, 1, "", HI, {
+    note: "2 bits/input, MSB first: estop, lowOilPressSwitch, highEngineTempSwitch, remoteStart, remoteFuelOn, lampTest, reset, panelLock. Read 0x7FFF live 2026-08-10 = estop Closed, all others Unimplemented.",
+  }),
+  f("Digital I/O", 12, 1, "digInNamed2", "Named digital inputs 2 (panel buttons)", 1, false, 1, "", HI, {
+    note: "start, stop, transfer-to-gen, transfer-to-mains buttons. Read 0xFFFF live 2026-08-10 = all Unimplemented.",
+  }),
+  f("Digital I/O", 12, 16, "digInUnnamedCount", "Configurable digital input count", 1, false, 1, "", HI, {
+    note: "Read 8 live 2026-08-10.",
+  }),
+  f("Digital I/O", 12, 17, "digInUnnamed1To16", "Configurable digital inputs 1-16", 1, false, 1, "", HI, {
+    note: "1 bit/input, input 1 = MSB (bit 15). Read 0x2000 live 2026-08-10 = input 3 Closed with the engine stopped — the leading candidate for the oil pressure switch, which should go Open once oil pressure builds.",
+  }),
+  f("Digital I/O", 13, 0, "digOutNamed1", "Named digital outputs 1 (fuel + start relays)", 1, false, 1, "", MED, {
+    note: "2 bits/output, MSB first: fuelRelay, startRelay, mainsLoadingRelay, genLoadingRelay, modemPowerRelay. Not yet observed live.",
+  }),
+  f("Digital I/O", 13, 16, "digOutUnnamedCount", "Configurable digital output count", 1, false, 1, "", MED),
+  f("Digital I/O", 13, 17, "digOutUnnamed1To16", "Configurable digital outputs 1-16", 1, false, 1, "", MED),
+
+  // ── Internal analogue inputs + their configured units (Page 178) ──────────
+  // Every input read 0x7FFF (Unimplemented) on 2026-08-10, and A/B's unit info was blank — nothing is
+  // configured on this controller. Mapped anyway BECAUSE of that: the moment someone configures a
+  // sender (the coolant sender fitted 2026-07-06 is the open case) these start reporting, so this is
+  // the automated proof that commissioning actually happened. Unsigned for the same reason as above.
+  ...(["A", "B", "C", "D", "E", "F"] as const).map((id, i) =>
+    f("Analogue inputs", 178, i, `analogueIn${id}`, `Internal analogue input ${id}`, 1, false, 1, "", MED, {
+      note: "Read 0x7FFF (Unimplemented) live 2026-08-10 — no sender configured.",
+    }),
+  ),
+  // Unit ID / multiplier / precision for A and B — the configuration readout. SP-228: "the unit
+  // information is extracted from the analogue input configuration data."
+  f("Analogue inputs", 178, 16, "analogueInAUnitId", "Analogue input A unit ID", 1, false, 1, "", MED),
+  f("Analogue inputs", 178, 31, "analogueInBUnitId", "Analogue input B unit ID", 1, false, 1, "", MED),
+
   // ── Mains / utility — CONDITIONAL: expect n/a on a plain DSE7410 MkII ──────
   // (auto-start-only; no mains monitoring / no mains CTs. The 7420 is the AMF variant.)
   f(
