@@ -47,9 +47,11 @@ primary_region = "syd"
   # OLDEST first; the live day file dominates it, leaving roughly three months of history. To turn
   # off: set MUSHER_DIAGNOSTICS = "0" and redeploy, then prune /data/usher/diag.
   MUSHER_DIAGNOSTICS = "1"
-  # Polls to hold the fast cadence after a run ends — a fine-resolution cool-down baseline. Does NOT
-  # gate capture (that is unconditional). At the 15 s cadence, 60 ticks ≈ 15 minutes.
-  MUSHER_DIAG_POSTRUN_TICKS = "60"
+  # How long to hold the source "active" after a run ends — a fine-resolution cool-down baseline.
+  # Does NOT gate capture (that is unconditional). Expressed in SECONDS; it replaced
+  # MUSHER_DIAG_POSTRUN_TICKS, which was a tick COUNT and therefore silently rescaled whenever the
+  # poll cadence changed — 60 ticks was an hour at 60 s polling and became fifteen minutes at 15 s.
+  MUSHER_DIAG_POSTRUN_SECONDS = "3600"
 
 # Persistent volume for the usher store — survives deploys/restarts, so an outage backlog is never
 # lost to a redeploy. CREATE THE VOLUME BEFORE THE FIRST DEPLOY WITH THIS BLOCK (the deploy fails
