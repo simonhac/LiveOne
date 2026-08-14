@@ -444,9 +444,14 @@ export type NewBatteryProvenanceDailyRow =
 // intervals per channel. The main sync upserts those into
 // point_readings_agg_5m, overwriting the previous forecast — this table is the
 // history that upsert destroys. One row is appended per (device, channel,
-// target interval) ONLY when a tracked value differs from the last stored row
-// for that key (first sighting counts as a change), so a steady forecast costs
-// ~1 row and a volatile one a handful — never poll_count × horizon.
+// target interval) ONLY when a tracked value moves materially from the last
+// stored row for that key (first sighting counts as a change), so a steady
+// forecast costs ~1 row and a volatile one a handful — never
+// poll_count × horizon. "Materially" is a threshold, not an exact compare:
+// Amber re-publishes the advancedPrice band on every interval every poll, so
+// exact matching stored the whole horizon each time. See PRICE_EPSILON /
+// RENEWABLES_EPSILON in lib/vendors/amber/forecast-history.ts — the stored
+// series is therefore within one threshold of the published forecast, always.
 //
 // Row kinds, discriminated by `channel`:
 //   'general' | 'feedIn' | 'controlledLoad' — channel-scoped values: per_kwh,
@@ -467,7 +472,8 @@ export type NewBatteryProvenanceDailyRow =
 // Reconstruction ("the forecast as of T") is a step function:
 //   SELECT DISTINCT ON (channel, interval_end) … WHERE observed_at <= T
 //   ORDER BY channel, interval_end, observed_at DESC
-// Append-only, no updated_at; retention: keep forever (~5–15k rows/day/site).
+// Append-only, no updated_at; retention: keep forever (measured ~19k
+// rows/day/site at the thresholds above; ~29k with exact matching).
 // Synced prod→dev incrementally on created_at (prod-dev-sync manifest).
 // ============================================================================
 export const amberForecastHistory = pgTable(
