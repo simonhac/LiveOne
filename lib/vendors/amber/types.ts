@@ -49,6 +49,18 @@ export interface AmberUsageRecord {
   descriptor: string; // "extremelyLow", "low", "neutral", "high", "extremelyHigh"
 }
 
+/** Amber's own forecast confidence band (c/kWh, incl. network/market fees). */
+export interface AmberAdvancedPrice {
+  low: number;
+  predicted: number;
+  high: number;
+}
+
+export interface AmberPriceRange {
+  min: number;
+  max: number;
+}
+
 export interface AmberPriceRecord {
   type: "ActualInterval" | "CurrentInterval" | "ForecastInterval";
   date: string; // Australian date (YYYY-MM-DD)
@@ -67,6 +79,8 @@ export interface AmberPriceRecord {
   };
   descriptor: string; // "extremelyLow", "low", "neutral", "high", "extremelyHigh"
   estimate?: boolean; // Present on forecast records
+  range?: AmberPriceRange | null; // Forecast/Current intervals only
+  advancedPrice?: AmberAdvancedPrice | null; // Forecast/Current intervals only
 }
 
 /**
@@ -134,6 +148,9 @@ export interface StageResult {
   stage: string; // e.g., "stage 1: load local usage"
   info: BatchInfo; // Summary views of the batch
   records?: Map<string, Map<string, PointReading>>;
+  // Raw Amber price records (forecast-history capture seam) — stripped, like
+  // `records`, before the result lands in sessions.response.
+  rawRecords?: AmberPriceRecord[];
   error?: string;
   request?: string; // Debug info about the API request made
   discovery?: string; // Optional text description of what was discovered/learned
@@ -168,7 +185,9 @@ export interface AmberSyncResult {
   firstDay: CalendarDate;
   numberOfDays: number;
   stages: Array<
-    Omit<StageResult, "records"> & { info: Omit<BatchInfo, "sampleRecords"> }
+    Omit<StageResult, "records" | "rawRecords"> & {
+      info: Omit<BatchInfo, "sampleRecords">;
+    }
   >; // Omit large data structures
   summary: {
     totalStages: number;
