@@ -6,7 +6,8 @@
  * overwriting the previous forecast. This module side-writes that horizon into
  * `amber_forecast_history` so forecast revisions survive: one row per
  * (device, channel, target interval) is appended ONLY when a tracked value
- * differs from the last stored row for that key (first sighting counts).
+ * moves materially from the last stored row for that key (first sighting
+ * counts) — "materially" being PRICE_EPSILON / RENEWABLES_EPSILON below.
  *
  * Row kinds (see the schema doc-comment): per-channel rows carry perKwh +
  * advancedPrice + descriptor/spikeStatus/estimate; a synthetic 'site' row
@@ -39,7 +40,24 @@ export interface ForecastCandidate {
   renewables: number | null;
 }
 
-const EPSILON = 1e-9;
+/**
+ * Change thresholds — a revision earns a row only if it is big enough to matter.
+ *
+ * Measured over the first prod polls (2026-08-14, Kinkora): Amber re-publishes
+ * the advancedPrice band on EVERY interval on EVERY 5-min poll — the |Δ| is
+ * literally never zero, median ~0.05 c/kWh — so an exact comparison stored ~102
+ * rows/poll, i.e. the whole horizon, which is what change-only was meant to
+ * avoid. perKwh itself is flat 76% of the time and costs almost nothing.
+ * 0.1 c/kWh sits just above that noise floor (~p75 of the band's step) and drops
+ * ~36% of the steady-state rows; the saving curve is flat below ~0.02.
+ *
+ * Because a candidate is compared against the last STORED row, not the last
+ * OBSERVED one, sub-threshold creep still trips once it accumulates past the
+ * threshold. So the stored series stays within one threshold of the published
+ * forecast at all times — the error is bounded, never compounding.
+ */
+const PRICE_EPSILON = 0.1; // c/kWh — perKwh, the adv* band, spotPerKwh
+const RENEWABLES_EPSILON = 0.1; // percentage points — renewables
 
 function candidateKey(channel: string, intervalEndMs: number): string {
   return `${channel}|${intervalEndMs}`;
@@ -100,10 +118,18 @@ export function projectPriceRecords(
   return candidates;
 }
 
-function numberChanged(a: number | null, b: number | null): boolean {
+/** A null↔value transition always counts; otherwise the move must clear `epsilon`. */
+function numberChanged(
+  a: number | null,
+  b: number | null,
+  epsilon: number,
+): boolean {
   if (a === null || b === null) return a !== b;
-  return Math.abs(a - b) > EPSILON;
+  return Math.abs(a - b) > epsilon;
 }
+
+const priceChanged = (a: number | null, b: number | null) =>
+  numberChanged(a, b, PRICE_EPSILON);
 
 /** True when any tracked field differs between candidate and baseline. */
 export function candidateChanged(
@@ -112,12 +138,16 @@ export function candidateChanged(
 ): boolean {
   if (!baseline) return true; // first sighting
   return (
-    numberChanged(candidate.perKwh, baseline.perKwh) ||
-    numberChanged(candidate.advLow, baseline.advLow) ||
-    numberChanged(candidate.advPredicted, baseline.advPredicted) ||
-    numberChanged(candidate.advHigh, baseline.advHigh) ||
-    numberChanged(candidate.spotPerKwh, baseline.spotPerKwh) ||
-    numberChanged(candidate.renewables, baseline.renewables) ||
+    priceChanged(candidate.perKwh, baseline.perKwh) ||
+    priceChanged(candidate.advLow, baseline.advLow) ||
+    priceChanged(candidate.advPredicted, baseline.advPredicted) ||
+    priceChanged(candidate.advHigh, baseline.advHigh) ||
+    priceChanged(candidate.spotPerKwh, baseline.spotPerKwh) ||
+    numberChanged(
+      candidate.renewables,
+      baseline.renewables,
+      RENEWABLES_EPSILON,
+    ) ||
     candidate.descriptor !== baseline.descriptor ||
     candidate.spikeStatus !== baseline.spikeStatus ||
     candidate.estimate !== baseline.estimate ||

@@ -123,14 +123,51 @@ describe("diffAgainstBaseline / candidateChanged", () => {
     expect(diffAgainstBaseline(candidates, baselineOf(candidates))).toEqual([]);
   });
 
-  it("ignores float noise within epsilon but catches real moves", () => {
-    const [base] = projectPriceRecords([forecastRecord({ perKwh: 0.3 })]);
-    const [noisy] = projectPriceRecords([
-      forecastRecord({ perKwh: 0.1 + 0.2 }), // 0.30000000000000004
-    ]);
-    const [moved] = projectPriceRecords([forecastRecord({ perKwh: 0.31 })]);
+  it("ignores price moves under 0.1 c/kWh but catches real ones", () => {
+    const [base] = projectPriceRecords([forecastRecord({ perKwh: 32.5 })]);
+    const [noisy] = projectPriceRecords([forecastRecord({ perKwh: 32.55 })]);
+    const [moved] = projectPriceRecords([forecastRecord({ perKwh: 32.65 })]);
     expect(candidateChanged(noisy, base)).toBe(false);
     expect(candidateChanged(moved, base)).toBe(true);
+    // Deliberately not asserted at exactly 0.1: float makes 32.6 - 32.5 land
+    // fractionally over, and which side of the boundary that falls on is not
+    // behaviour worth pinning.
+  });
+
+  it("applies the same 0.1 threshold to the advancedPrice band", () => {
+    const band = (low: number, predicted: number, high: number) =>
+      projectPriceRecords([
+        forecastRecord({ advancedPrice: { low, predicted, high } }),
+      ])[0];
+    const base = band(30, 32, 40);
+    // The band twitches every poll — this is the churn the threshold exists for.
+    expect(candidateChanged(band(30.02, 32.04, 40.06), base)).toBe(false);
+    // A move on any ONE leg is still a change.
+    expect(candidateChanged(band(30, 32, 40.2), base)).toBe(true);
+  });
+
+  it("applies a 0.1 percentage-point threshold to renewables", () => {
+    const site = (renewables: number) =>
+      projectPriceRecords([forecastRecord({ renewables })])[1];
+    expect(candidateChanged(site(41.25), site(41.2))).toBe(false);
+    expect(candidateChanged(site(41.35), site(41.2))).toBe(true);
+  });
+
+  it("trips on accumulated creep, because the baseline is the last STORED row", () => {
+    // Four polls each drifting 0.04 c/kWh: none clears the threshold on its own,
+    // but the total does — so the stored series never lags reality by > epsilon.
+    const at = (perKwh: number) =>
+      projectPriceRecords([forecastRecord({ perKwh })])[0];
+    let stored = at(32.5);
+    const kept: number[] = [];
+    for (const perKwh of [32.54, 32.58, 32.62, 32.66]) {
+      const candidate = at(perKwh);
+      if (candidateChanged(candidate, stored)) {
+        kept.push(perKwh);
+        stored = candidate;
+      }
+    }
+    expect(kept).toEqual([32.62]); // 32.62 - 32.5 = 0.12 > 0.1; then the clock resets
   });
 
   it("treats null↔value transitions on advancedPrice as changes", () => {
