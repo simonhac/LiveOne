@@ -80,8 +80,8 @@ class StageTracker {
  */
 function stripLargeFieldsFromStages(
   stages: StageResult[],
-): Omit<StageResult, "records">[] {
-  return stages.map(({ records, ...stage }) => ({
+): Omit<StageResult, "records" | "rawRecords">[] {
+  return stages.map(({ records, rawRecords, ...stage }) => ({
     ...stage,
     info: INCLUDE_SAMPLE_RECORDS
       ? stage.info
@@ -844,6 +844,9 @@ async function loadRemotePrices(
       stage: stageName,
       info,
       records: group.getRecords(),
+      // Raw records for the forecast-history capture seam; stripped (like
+      // `records`) before the result lands in sessions.response.
+      rawRecords: priceRecords,
       request,
     };
   } catch (error) {
@@ -1151,71 +1154,126 @@ export async function updateForecasts(
 
         if (pricesResult.error) {
           error = `Forecast stage 2 failed: ${pricesResult.error}`;
-        } else if (pricesResult.info.numRecords === 0) {
-          // EARLY EXIT: No price data available
-          pricesResult.discovery = "no price data available yet";
         } else {
-          // Set discovery based on what we found
-          if (pricesResult.info.uniformQuality === undefined) {
-            pricesResult.discovery = "remote has price forecasts available";
-          } else if (pricesResult.info.uniformQuality === "b") {
-            pricesResult.discovery = "remote has all actual prices";
+          // FORECAST HISTORY (change-only side-write to amber_forecast_history).
+          // Runs on every successful remote fetch — deliberately BEFORE the
+          // stage-3 "nothing superior" outcome, which must not starve capture.
+          // Non-fatal by design: a capture failure never fails the sync.
+          const captureStageName =
+            "forecast stage 2b: capture forecast history";
+          const emptyInfo: BatchInfo = {
+            overviews: {},
+            numRecords: 0,
+            uniformQuality: null,
+            canonical: [],
+          };
+          try {
+            if (dryRun) {
+              stages.push({
+                stage: captureStageName,
+                discovery: "dry run, capture skipped",
+                info: emptyInfo,
+              });
+            } else {
+              const { captureForecastHistory } = await import(
+                "./forecast-history"
+              );
+              const capture = await captureForecastHistory(
+                systemId,
+                pricesResult.rawRecords ?? [],
+                new Date(),
+              );
+              stages.push({
+                stage: captureStageName,
+                discovery: `recorded ${capture.rowsInserted} forecast changes`,
+                info: emptyInfo,
+              });
+            }
+          } catch (captureError) {
+            console.error(
+              `[Amber] forecast-history capture failed (non-fatal) for system ${systemId}:`,
+              captureError,
+            );
+            stages.push({
+              stage: captureStageName,
+              info: emptyInfo,
+              error:
+                captureError instanceof Error
+                  ? captureError.message
+                  : String(captureError),
+            });
+            // Deliberately no `error =` here — the sync must stay successful.
           }
 
-          // STAGE 3: Compare prices
-          const compareResult = createComparisonStage(
-            localResult,
-            pricesResult,
-            firstDay,
-            numberOfDays,
-            "forecast stage 3: compare local vs remote prices",
-          );
-          stages.push(compareResult);
-
-          if (compareResult.error) {
-            error = `Forecast stage 3 failed: ${compareResult.error}`;
+          if (pricesResult.info.numRecords === 0) {
+            // EARLY EXIT: No price data available
+            pricesResult.discovery = "no price data available yet";
           } else {
-            if (compareResult.info.numRecords === 0) {
-              // No superior records - local is already equal to or better than remote
-              compareResult.discovery =
-                "local prices are already equal to or better than remote";
+            // Set discovery based on what we found
+            if (pricesResult.info.uniformQuality === undefined) {
+              pricesResult.discovery = "remote has price forecasts available";
+            } else if (pricesResult.info.uniformQuality === "b") {
+              pricesResult.discovery = "remote has all actual prices";
+            }
+
+            // STAGE 3: Compare prices
+            const compareResult = createComparisonStage(
+              localResult,
+              pricesResult,
+              firstDay,
+              numberOfDays,
+              "forecast stage 3: compare local vs remote prices",
+            );
+            stages.push(compareResult);
+
+            if (compareResult.error) {
+              error = `Forecast stage 3 failed: ${compareResult.error}`;
             } else {
-              compareResult.discovery = `found ${compareResult.info.numRecords} superior remote price records to update/insert`;
+              if (compareResult.info.numRecords === 0) {
+                // No superior records - local is already equal to or better than remote
+                compareResult.discovery =
+                  "local prices are already equal to or better than remote";
+              } else {
+                compareResult.discovery = `found ${compareResult.info.numRecords} superior remote price records to update/insert`;
 
-              // STAGE 4: Store superior records to database
-              if (compareResult.records && compareResult.info.numRecords > 0) {
-                const batch = new AmberReadingsBatch(firstDay, numberOfDays);
-                for (const [
-                  intervalMsStr,
-                  pointMap,
-                ] of compareResult.records.entries()) {
-                  for (const reading of pointMap.values()) {
-                    batch.add(reading);
+                // STAGE 4: Store superior records to database
+                if (
+                  compareResult.records &&
+                  compareResult.info.numRecords > 0
+                ) {
+                  const batch = new AmberReadingsBatch(firstDay, numberOfDays);
+                  for (const [
+                    intervalMsStr,
+                    pointMap,
+                  ] of compareResult.records.entries()) {
+                    for (const reading of pointMap.values()) {
+                      batch.add(reading);
+                    }
                   }
-                }
 
-                if (!dryRun) {
-                  const storeResult = await storeRecordsLocally(
-                    systemId,
-                    session,
-                    batch,
-                    "forecast stage 4: store superior price records",
-                    collector,
-                  );
-                  stages.push(storeResult);
+                  if (!dryRun) {
+                    const storeResult = await storeRecordsLocally(
+                      systemId,
+                      session,
+                      batch,
+                      "forecast stage 4: store superior price records",
+                      collector,
+                    );
+                    stages.push(storeResult);
 
-                  if (storeResult.error) {
-                    error = `Forecast stage 4 failed: ${storeResult.error}`;
+                    if (storeResult.error) {
+                      error = `Forecast stage 4 failed: ${storeResult.error}`;
+                    }
+                  } else {
+                    // Dry run: create a stage result without actually storing
+                    stages.push({
+                      stage:
+                        "forecast stage 4: store superior price records (DRY RUN)",
+                      discovery: `would insert ${compareResult.info.numRecords} readings (dry run, skipped)`,
+                      info: batch.getInfo(),
+                      numRowsInserted: 0,
+                    });
                   }
-                } else {
-                  // Dry run: create a stage result without actually storing
-                  stages.push({
-                    stage:
-                      "forecast stage 4: store superior price records (DRY RUN)",
-                    discovery: `would insert ${compareResult.info.numRecords} readings (dry run, skipped)`,
-                    info: batch.getInfo(),
-                    numRowsInserted: 0,
-                  });
                 }
               }
             }

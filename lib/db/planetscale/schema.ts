@@ -438,6 +438,108 @@ export type NewBatteryProvenanceDailyRow =
   typeof batteryProvenanceDaily.$inferInsert;
 
 // ============================================================================
+// amber_forecast_history — CHANGE-ONLY log of Amber price forecasts.
+//
+// Every 5-min Amber poll returns a ~48h horizon of 30-min Forecast/Current
+// intervals per channel. The main sync upserts those into
+// point_readings_agg_5m, overwriting the previous forecast — this table is the
+// history that upsert destroys. One row is appended per (device, channel,
+// target interval) ONLY when a tracked value differs from the last stored row
+// for that key (first sighting counts as a change), so a steady forecast costs
+// ~1 row and a volatile one a handful — never poll_count × horizon.
+//
+// Row kinds, discriminated by `channel`:
+//   'general' | 'feedIn' | 'controlledLoad' — channel-scoped values: per_kwh,
+//     Amber's advancedPrice band (adv_* — null when Amber omits it),
+//     descriptor, spike_status, estimate. Site-scoped columns are NULL.
+//   'site' — site-scoped values Amber duplicates onto every channel record:
+//     spot_per_kwh + renewables, taken from the 'general' record once.
+//     Channel-scoped columns are NULL.
+//
+// interval_end is the target interval's nemTime (NEM time, fixed +10) as a
+// naive-UTC timestamp — the SAME key as point_readings_agg_5m.interval_end, so
+// forecast-vs-actual joins are plain equality. observed_at is the capture
+// time, shared by every row of one poll ("the forecast curve as published at
+// poll P"). interval_type: 'f' = ForecastInterval, 'c' = CurrentInterval (the
+// ~0-lead-time final estimate); the flip to ActualInterval is not recorded —
+// actuals live in agg_5m.
+//
+// Reconstruction ("the forecast as of T") is a step function:
+//   SELECT DISTINCT ON (channel, interval_end) … WHERE observed_at <= T
+//   ORDER BY channel, interval_end, observed_at DESC
+// Append-only, no updated_at; retention: keep forever (~5–15k rows/day/site).
+// Synced prod→dev incrementally on created_at (prod-dev-sync manifest).
+// ============================================================================
+export const amberForecastHistory = pgTable(
+  "amber_forecast_history",
+  {
+    deviceRid: integer("device_rid")
+      .notNull()
+      .references(() => devices.rid),
+    // 'site' for the spot/renewables row kind; else the Amber channelType.
+    channel: text("channel").notNull(),
+    // Target interval end (nemTime), naive UTC — joins agg_5m.interval_end.
+    intervalEnd: timestamp("interval_end").notNull(),
+    // When this forecast revision was observed (one value per poll).
+    observedAt: timestamp("observed_at").notNull(),
+
+    // 'f' ForecastInterval | 'c' CurrentInterval (the interval now underway).
+    intervalType: text("interval_type").notNull(),
+    durationMin: integer("duration_min").notNull().default(30),
+
+    // Channel-scoped (NULL on 'site' rows). c/kWh incl. GST.
+    perKwh: doublePrecision("per_kwh"),
+    // Amber advancedPrice confidence band — NULL when Amber omits it.
+    advLow: doublePrecision("adv_low"),
+    advPredicted: doublePrecision("adv_predicted"),
+    advHigh: doublePrecision("adv_high"),
+    descriptor: text("descriptor"), // extremelyLow … extremelyHigh
+    spikeStatus: text("spike_status"), // none | potential | spike
+    estimate: boolean("estimate"), // CurrentInterval's not-yet-locked-in flag
+
+    // Site-scoped (NULL on channel rows).
+    spotPerKwh: doublePrecision("spot_per_kwh"), // wholesale spot, c/kWh
+    renewables: doublePrecision("renewables"), // grid renewables, %
+
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    // Column ORDER is load-bearing, uniqueness is not: the hot path is the
+    // per-poll baseline read (device + horizon window, all channels), so
+    // interval_end must precede the unconstrained `channel` — a btree can only
+    // bound a range on a column whose predecessors are all constrained, and PG
+    // 17 has no skip scan. Channel-major ordering made the planner seq-scan the
+    // whole table (measured on 300k synthetic rows: 3506 buffers / 21 ms vs 9
+    // buffers / 0.5 ms), degrading with total retained history on every poll.
+    pk: primaryKey({
+      name: "afh_pkey",
+      columns: [
+        table.deviceRid,
+        table.intervalEnd,
+        table.channel,
+        table.observedAt,
+      ],
+    }),
+    // "What did poll P publish" access + ad-hoc curve queries.
+    observedAtIdx: index("afh_observed_at_idx").on(table.observedAt),
+    // prod→dev incremental-sync watermark.
+    createdAtIdx: index("afh_created_at_idx").on(table.createdAt),
+    channelCheck: check(
+      "afh_channel_check",
+      sql`${table.channel} IN ('general', 'feedIn', 'controlledLoad', 'site')`,
+    ),
+    intervalTypeCheck: check(
+      "afh_interval_type_check",
+      sql`${table.intervalType} IN ('f', 'c')`,
+    ),
+  }),
+);
+
+export type AmberForecastHistoryRow = typeof amberForecastHistory.$inferSelect;
+export type NewAmberForecastHistoryRow =
+  typeof amberForecastHistory.$inferInsert;
+
+// ============================================================================
 // Share tokens - view-only access links scoped to devices owned by the token's owner
 // (mirrors the legacy `share_tokens`). Epoch-ms columns use bigint(mode:"number") so
 // share-tokens.ts's `Date.now()` comparisons work unchanged against Postgres.

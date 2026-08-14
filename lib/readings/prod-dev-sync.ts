@@ -434,6 +434,16 @@ const INCREMENTAL: IncrementalTable[] = [
     onConflict: "update",
     filter: "area_id IN (SELECT id FROM public.areas)", // FK safety — see the comment above
   },
+  // Change-only log of Amber price forecasts (see the schema doc-comment). Append-only with
+  // created_at defaultNow, so created_at is a valid watermark (same choice as `sessions`).
+  // FK parent `devices` is a FULL table copied earlier in the run.
+  {
+    name: "amber_forecast_history",
+    mode: "incremental",
+    watermark: "created_at",
+    overlap: "1 hour",
+    onConflict: "nothing",
+  },
 ];
 
 const MANIFEST: Table[] = [...FULL, ...INCREMENTAL];

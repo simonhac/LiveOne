@@ -113,7 +113,12 @@ describe("prod→dev readings transfer", () => {
       "point_readings_agg_1d",
       "point_readings_flow_attr_1d",
       "battery_provenance_daily",
+      "amber_forecast_history",
     ]);
+    // amber_forecast_history.device_rid FKs devices.rid, so devices must land first.
+    expect(names.indexOf("devices")).toBeLessThan(
+      names.indexOf("amber_forecast_history"),
+    );
     // dashboards' uuid PK is minted independently per environment (only legacy_id is stable), so it
     // must sync BEFORE any table with an FK to dashboards.id — otherwise users.default_dashboard_id /
     // share_tokens.dashboard_id copy a prod uuid that doesn't yet exist in dev.

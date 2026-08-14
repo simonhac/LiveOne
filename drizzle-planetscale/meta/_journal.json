@@ -421,6 +421,20 @@
       "when": 1785845324497,
       "tag": "0059_helper_area_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1786690093675,
+      "tag": "0060_woozy_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1786703498058,
+      "tag": "0061_nasty_starfox",
+      "breakpoints": true
     }
   ]
 }
