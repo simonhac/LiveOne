@@ -158,6 +158,65 @@ describe("applyObservation", () => {
       expect(next.delaySec).toBe(165); // 0.3*200 + 0.7*150
     });
   });
+
+  /**
+   * A poll's response reaches PAST the wall clock: the fetch window runs to `baseMs + 5min`,
+   * intervals are labelled by END, and NEM publishes an interval's dispatch price at its START — so
+   * the newest row a poll comes away with is normally the interval that is still open. Measured on
+   * prod 2026-08-18: a poll at 03:31:28 recorded `lastSeenIntervalEndMs = 03:35:00`, every tick from
+   * 03:36 to 03:40 was vetoed as "up to date", and the next poll was 03:41 — one poll per two
+   * intervals (8.08/h against 12/h).
+   */
+  describe("never claims an interval that is still open", () => {
+    it("records the just-CLOSED interval, not the open one in the response", () => {
+      const next = applyObservation(
+        baseState({ lastSeenIntervalEndMs: endMs(3, 25) }),
+        endMs(3, 35), // the open interval (03:30→03:35), present in the response
+        at(3, 31, 28).getTime(),
+      );
+      expect(next.lastSeenIntervalEndMs).toBe(endMs(3, 30));
+      // …and the delay is the real one (03:31:28 − 03:30 = 88s): 0.3*88 + 0.7*150 = 131.4.
+      // Unclamped this was 03:31:28 − 03:35 = −212s, floored by `clamp` to MIN_DELAY_SEC, which is
+      // what pinned prod's estimate at ~60s against NEM's 1-3 min publication lag.
+      expect(next.delaySec).toBe(131);
+    });
+
+    it("leaves the next window pollable instead of vetoing it", () => {
+      const captured = applyObservation(
+        baseState({ lastSeenIntervalEndMs: endMs(3, 25) }),
+        endMs(3, 35),
+        at(3, 31, 28).getTime(),
+      );
+      // 03:35 has closed and we do not have it; expected arrival = 03:35 + 131s - 30s = 03:36:41.
+      const d = decidePoll({ now: at(3, 37), state: captured });
+      expect(d.shouldPoll).toBe(true);
+
+      // The unclamped state is what produced the 10-minute gap.
+      const vetoed = decidePoll({
+        now: at(3, 37),
+        state: baseState({ lastSeenIntervalEndMs: endMs(3, 35) }),
+      });
+      expect(vetoed.shouldPoll).toBe(false);
+      expect(vetoed.reason).toMatch(/up to date/);
+    });
+
+    it("cannot leave lastSeen ahead of the wall clock", () => {
+      const observedAtMs = at(3, 31, 28).getTime();
+      const next = applyObservation(baseState(), endMs(9, 0), observedAtMs);
+      expect(next.lastSeenIntervalEndMs).toBeLessThanOrEqual(endMs(3, 30));
+    });
+
+    it("is a no-op when only the open interval is new", () => {
+      // Already have 03:30; the poll adds nothing but the open 03:35 → nothing to record.
+      const state = baseState({ lastSeenIntervalEndMs: endMs(3, 30) });
+      const next = applyObservation(
+        state,
+        endMs(3, 35),
+        at(3, 31, 28).getTime(),
+      );
+      expect(next).toBe(state);
+    });
+  });
 });
 
 describe("adaptiveLookbackStartMs", () => {

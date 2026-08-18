@@ -69,6 +69,22 @@ function isoOf(ms: number): string {
 }
 
 /**
+ * The newest interval-END we may claim to have "seen" at `nowMs` — never one that is still open.
+ *
+ * A poll's response routinely reaches past the wall clock: `fetchData` requests through
+ * `baseMs + 5min`, intervals are labelled by END, and NEM publishes an interval's dispatch price at
+ * its START — so a poll at 03:31 comes back with a row labelled 03:35, an interval that has not
+ * happened yet. Taking that as "captured" puts `lastSeenIntervalEndMs` in the future, which
+ * `decidePoll` reads as "up to date" for the whole of the next window. Pure/testable.
+ */
+export function newestClosedIntervalEndMs(
+  intervalEndMs: number,
+  nowMs: number,
+): number {
+  return Math.min(intervalEndMs, floor5(nowMs));
+}
+
+/**
  * Start of the window a live poll should request. Normally `DEFAULT_LOOKBACK_MS` before
  * `baseMs`, but if we're behind (a gap after an outage) it reaches back to the last interval
  * we captured — capped at `MAX_AUTOHEAL_MS` so one poll can't pull an unbounded backlog.
@@ -173,20 +189,35 @@ export function decidePoll(args: {
  *  - we only caught an older one ⇒ the target had NOT published by now, which is a LOWER BOUND on
  *    the delay. Feeding the stale interval's age in as if it were the delay is what dragged the
  *    estimate down; nudging toward the bound is what the evidence actually supports.
+ *
+ * ⚠️ The caller's "newest interval in the response" is not necessarily an interval that has HAPPENED
+ * — see {@link newestClosedIntervalEndMs}. Measured on prod 2026-08-18: every poll came away with the
+ * interval that was still OPEN, so `lastSeenIntervalEndMs` sat 5 min in the future and `decidePoll`
+ * vetoed the whole of the next window (one poll per two intervals: 8.08/h against 12/h, p50 gap
+ * 9 min). The same input made `observedAt − capturedEnd` NEGATIVE, which `clamp` floored to
+ * `MIN_DELAY_SEC` — so the learner was also told, on every single poll, that NEM publishes in 60 s.
+ * Clamping the captured interval fixes both. Note what is NOT the fix: narrowing the fetch window.
+ * The receiver UPSERTs, so pulling the open interval is how late revisions heal. Only what we RECORD
+ * as seen is clamped.
  */
 export function applyObservation(
   state: OeSchedState,
   capturedIntervalEndMs: number,
   observedAtMs: number,
 ): OeSchedState {
-  if (capturedIntervalEndMs <= state.lastSeenIntervalEndMs) return state;
-
   const justClosedEndMs = floor5(observedAtMs);
-  const caughtTheTarget = capturedIntervalEndMs >= justClosedEndMs;
-  const observedSec = caughtTheTarget
-    ? (observedAtMs - capturedIntervalEndMs) / 1000
-    : // Lower bound: the just-closed interval still hadn't published at `observedAtMs`.
-      (observedAtMs - justClosedEndMs) / 1000;
+  const capturedEndMs = newestClosedIntervalEndMs(
+    capturedIntervalEndMs,
+    observedAtMs,
+  );
+  if (capturedEndMs <= state.lastSeenIntervalEndMs) return state;
+
+  // After the clamp `capturedEndMs <= justClosedEndMs`, so "caught the target" means we came away
+  // with exactly the interval that had just closed — and the two cases share one expression.
+  const caughtTheTarget = capturedEndMs >= justClosedEndMs;
+  // Either the delay itself, or (when we only caught an older interval) a lower bound on it: the
+  // just-closed interval still hadn't published at `observedAtMs`.
+  const observedSec = (observedAtMs - justClosedEndMs) / 1000;
 
   const observed = clamp(observedSec, MIN_DELAY_SEC, MAX_DELAY_SEC);
   // A lower bound may only push the estimate UP — it is evidence that the delay is at least this
@@ -198,7 +229,7 @@ export function applyObservation(
   const delaySec = Math.round(
     EWMA_ALPHA * target + (1 - EWMA_ALPHA) * state.delaySec,
   );
-  return { ...state, delaySec, lastSeenIntervalEndMs: capturedIntervalEndMs };
+  return { ...state, delaySec, lastSeenIntervalEndMs: capturedEndMs };
 }
 
 /**
@@ -221,7 +252,11 @@ export async function loadState(systemId: number): Promise<OeSchedState> {
     const ms = await ReadingsDao.latestAgg5mIntervalMsForDevice(
       device.deviceId,
     );
-    if (ms != null) lastSeenIntervalEndMs = ms;
+    // The stored 5m aggregate CONTAINS the open interval (its price publishes at the interval's
+    // start), so the seed needs the same clamp as a live observation or a KV miss re-creates the
+    // future-`lastSeen` veto.
+    if (ms != null)
+      lastSeenIntervalEndMs = newestClosedIntervalEndMs(ms, Date.now());
   } catch {
     // Best-effort seed; default delay still drives a sane first poll.
   }
