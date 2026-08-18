@@ -5,6 +5,7 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   cutoffMsFor,
+  parseLeads,
   forecastInForceAt,
   pairForecastsWithActuals,
   persistenceSkill,
@@ -50,6 +51,36 @@ const truthOf = (
       quality,
     })),
   );
+
+describe("parseLeads", () => {
+  it("takes a comma list", () => {
+    expect(parseLeads("1,2,6,12")).toEqual([1, 2, 6, 12]);
+  });
+
+  it("expands an inclusive range", () => {
+    expect(parseLeads("1-12")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it("mixes ranges and singles, deduping and sorting", () => {
+    expect(parseLeads("6,1-3,2,12")).toEqual([1, 2, 3, 6, 12]);
+  });
+
+  it("accepts a fractional lead as an explicit entry", () => {
+    expect(parseLeads("0.5,1")).toEqual([0.5, 1]);
+  });
+
+  it("tolerates whitespace and trailing separators", () => {
+    expect(parseLeads(" 1 , 2 ,")).toEqual([1, 2]);
+  });
+
+  /** A silently-wrong lead set would score the wrong cutoffs and look entirely plausible. */
+  it("rejects garbage rather than dropping it", () => {
+    expect(() => parseLeads("1,abc")).toThrow(/bad lead/);
+    expect(() => parseLeads("0")).toThrow(/bad lead/);
+    expect(() => parseLeads("-3")).toThrow(/bad lead/);
+    expect(() => parseLeads("12-1")).toThrow(/bad lead range/);
+  });
+});
 
 describe("cutoffMsFor", () => {
   it("anchors the lead to the interval END", () => {

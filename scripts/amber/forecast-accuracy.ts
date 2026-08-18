@@ -21,10 +21,15 @@
  *     settled truth. An interval with no forecast at that lead was outside Amber's horizon (or
  *     predates the capture); it lowers coverage rather than being scored as a hit or a miss.
  *   - `--start`/`--end` are AEST calendar days (fixed +10, no DST), inclusive.
+ *   - `--leads` (default `1-12`) is what gets COMPUTED; `--summary-leads` (default `1,2,6,12`) is
+ *     only what reaches the console table. Every computed lead lands in the CSV, the JSON and the
+ *     chart, because the shape of error against lead is the interesting output and a 12-row grid
+ *     per channel is not how anyone reads a shape.
  *
  * Usage:
  *   npm run amber:forecast-accuracy
- *   npm run amber:forecast-accuracy -- --days=7 --leads=1,2,6,12
+ *   npm run amber:forecast-accuracy -- --days=7 --leads=1-12
+ *   npm run amber:forecast-accuracy -- --leads=1-24 --summary-leads=1,6,12,24
  *   npm run amber:forecast-accuracy -- --start=2026-08-15 --end=2026-08-21 --csv=.context/afa.csv
  *   npm run amber:forecast-accuracy -- --health-only
  *   npm run amber:forecast-accuracy -- --no-chart --json
@@ -53,6 +58,7 @@ import type {
   SettledActual,
   SkillScore,
 } from "@/lib/vendors/amber/forecast-accuracy";
+import { parseLeads } from "@/lib/vendors/amber/forecast-accuracy";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -68,6 +74,8 @@ const CHANNEL_POINTS: Record<string, { path: string; label: string }> = {
 interface Args {
   deviceRid?: number;
   leads: number[];
+  /** Subset of `leads` shown in the console table; the CSV/JSON/chart always carry all of them. */
+  summaryLeads: number[];
   days: number;
   start?: string;
   end?: string;
@@ -87,12 +95,16 @@ function parseArgs(argv: string[]): Args {
   };
   const has = (name: string) => argv.includes(`--${name}`);
 
-  const leads = (get("leads") ?? "1,2,6,12")
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0)
-    .sort((a, b) => a - b);
+  const leads = parseLeads(get("leads") ?? "1-12");
   if (leads.length === 0) throw new Error("--leads must list positive hours");
+
+  // Which leads reach the CONSOLE table. Every computed lead still lands in the CSV, the JSON and
+  // the chart — the table is a reading aid, and a 12-row grid per channel is one to skim past
+  // rather than read. Leads not in the computed set are silently ignored, so narrowing `--leads`
+  // does not require also narrowing this.
+  const summaryLeads = parseLeads(get("summary-leads") ?? "1,2,6,12").filter(
+    (l) => leads.includes(l),
+  );
 
   const channels = (get("channels") ?? "general,feedIn")
     .split(",")
@@ -112,6 +124,7 @@ function parseArgs(argv: string[]): Args {
   return {
     deviceRid,
     leads,
+    summaryLeads,
     days: Number(get("days") ?? 7),
     start: get("start"),
     end: get("end"),
@@ -318,6 +331,10 @@ async function main() {
     }
 
     console.log(
+      `\n  ${args.leads.length} leads computed; showing ${args.summaryLeads.join("/")}h ` +
+        `(all of them are in the CSV, the JSON and the chart)`,
+    );
+    console.log(
       "\n  lead  paired  cover     MAE    bias    RMSE     p50     p90     max  band%  advMAE  skill  staleP90",
     );
 
@@ -359,14 +376,16 @@ async function main() {
       const skill = persistenceSkill(pairs, truth);
       summaries.push({ channel, lead, summary, skill });
 
-      console.log(
-        `  ${String(lead).padStart(3)}h  ${String(summary.paired).padStart(6)}  ` +
-          `${pct(summary.coverage)}  ${num(summary.mae, 2, 6)}  ${num(summary.bias, 2, 6)}  ` +
-          `${num(summary.rmse, 2, 6)}  ${num(summary.p50AbsError, 2, 6)}  ` +
-          `${num(summary.p90AbsError, 2, 6)}  ${num(summary.maxAbsError, 2, 6)}  ` +
-          `${pct(summary.bandCoverage)}  ${num(summary.advPredictedMae, 2, 6)}  ` +
-          `${num(skill?.skill ?? NaN, 2, 5)}  ${num(summary.p90StalenessMin, 1, 8)}`,
-      );
+      if (args.summaryLeads.includes(lead)) {
+        console.log(
+          `  ${String(lead).padStart(3)}h  ${String(summary.paired).padStart(6)}  ` +
+            `${pct(summary.coverage)}  ${num(summary.mae, 2, 6)}  ${num(summary.bias, 2, 6)}  ` +
+            `${num(summary.rmse, 2, 6)}  ${num(summary.p50AbsError, 2, 6)}  ` +
+            `${num(summary.p90AbsError, 2, 6)}  ${num(summary.maxAbsError, 2, 6)}  ` +
+            `${pct(summary.bandCoverage)}  ${num(summary.advPredictedMae, 2, 6)}  ` +
+            `${num(skill?.skill ?? NaN, 2, 5)}  ${num(summary.p90StalenessMin, 1, 8)}`,
+        );
+      }
 
       for (const p of pairs) {
         pairRows.push(

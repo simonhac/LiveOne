@@ -96,6 +96,31 @@ export interface SkillScore {
 }
 
 /**
+ * Lead hours from a comma list, an inclusive `a-b` range, or a mix: `1-12`, `1,2,6,12`, `1-6,12`.
+ * Ranges exist because the interesting question is the SHAPE of error against lead, and typing
+ * twelve numbers to get it is friction that discourages asking.
+ */
+export function parseLeads(spec: string): number[] {
+  const out = new Set<number>();
+  for (const part of spec.split(",").map((s) => s.trim())) {
+    if (!part) continue;
+    const range = /^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/.exec(part);
+    if (range) {
+      const [lo, hi] = [Number(range[1]), Number(range[2])];
+      if (!(lo > 0) || hi < lo) throw new Error(`bad lead range '${part}'`);
+      // Whole-hour steps: the cron decides once a minute, so sub-hour resolution here would be
+      // spurious precision. Fractional leads are still accepted as explicit list entries.
+      for (let l = lo; l <= hi; l++) out.add(l);
+      continue;
+    }
+    const n = Number(part);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`bad lead '${part}'`);
+    out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
  * The instant a forecast must have been published by, to count as being "leadHours out".
  * Anchored to the interval END (see the module doc-comment).
  */
