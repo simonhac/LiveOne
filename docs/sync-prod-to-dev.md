@@ -1,6 +1,6 @@
 # Keeping `liveone-dev` in sync (DB + KV)
 
-> **Status:** current — last verified 2026-07-20.
+> **Status:** current — last verified 2026-08-18.
 
 `liveone-dev` is the single datastore shared by **local dev and Vercel preview** (see
 `CLAUDE.md` → "`liveone-dev` — the shared dev/preview database"). It is never prod. Because
@@ -30,8 +30,8 @@ all three stay consistent. The run-period step exists because dev crons are off 
 runs organically) and `derived_intervals` can't be copied by the DB sync — it has a composite PK
 (so no `mirror`) and its rows shift/merge under recompute, which a row-copy would orphan. The
 `derivations` config table _is_ copied by the DB sync; the runs are then recomputed from the
-synced `point_readings` via the same delete-and-reinsert the prod cron uses. Any step failing trips the `Alert on failure` step
-(`OBSERVATIONS_ALERT_WEBHOOK_URL`).
+synced `point_readings` via the same delete-and-reinsert the prod cron uses. Whatever the outcome,
+the run records one tick on the day's Slack row (below).
 
 > The schedule runs from the workflow file on the **default branch** — changing the cron only
 > takes effect once merged to `main`.
@@ -44,6 +44,44 @@ gh workflow run sync-prod-to-dev.yml         # CLI
 ```
 
 No local credentials needed — the runner holds the GitHub Actions secrets.
+
+## Alerting — one Slack row per day
+
+**One message per Sydney day, edited in place, one tick per run** — the same pattern the 2-hourly
+PG backups use ([the-gitfather](https://github.com/simonhac/the-gitfather)), in the same channel,
+with the same `SLACK_BOT_TOKEN` + `SLACK_CHANNEL` pair `pg-backup.yml` already passes:
+
+```
+*sync prod→dev — Tue 18 Aug 2026 (AEST)*
+✅ 00:20 (1m 21s)  ·  ✅ 02:20 (58s)  ·  ⚠️ 04:20 (1m 21s, 2 recovered)  ·  ❌ 06:20 (5m 33s, prod→dev DB sync: database connection dropout)  ·  ⬜ 08:00
+```
+
+| Glyph | Means                                                                        |
+| ----- | ---------------------------------------------------------------------------- |
+| ✅    | clean run                                                                    |
+| ⚠️    | completed, but notable — recovered connection dropouts, or over the 5-min target |
+| ❌    | failed, or timed out (`timeout-minutes: 15` surfaces as `cancelled`)          |
+| ⬜    | an elapsed-but-empty 2-hourly bucket — i.e. **a run that never happened**     |
+| 🖐️    | prefix: a manual `workflow_dispatch` run                                     |
+
+Each `HH:MM` links to that run's job log. The `⬜` placeholder has a +1h grace, so a merely-late run
+isn't called missing. A failure additionally posts a loud `<!here>` message **threaded under the day
+row** (stage / mode / detail from the classifier), so the channel still keeps one message per day.
+
+Why it looks like this: the workflow used to fire a separate incoming-webhook post per event
+(over-target, recovered dropouts, failure, timeout, first-success-after-unhealthy) — at 12 runs/day,
+a wall of near-identical messages. Those are all folded into the row now; a ❌ followed by a ✅ _is_
+the recovery notice. `OBSERVATIONS_ALERT_WEBHOOK_URL` is deliberately **not** used here: the bot
+already posts to that channel, so the webhook would duplicate every alert (same call as
+`pg-backup.yml`).
+
+Mechanics: `scripts/utils/report-sync-run-to-slack.ts` runs once at the end of the job
+(`if: always()`, `continue-on-error: true` — Slack never decides the sync's fate) and folds the
+`SYNC_*` env the step wrapper already exports into one tick. The day's state (message `ts` +
+entries) lives in KV at `dev:sync-status:<YYYY-MM-DD>` with a 7-day TTL; the pure renderer is
+`scripts/utils/slack-daily-row.ts` (table-tested in `scripts/__tests__/slack-daily-row.test.ts`).
+Runs are serialised by the workflow's `concurrency` group, so the read-modify-write can't race. If
+the bot token, channel or KV credentials are missing, the step logs and no-ops.
 
 ## DB sync — incremental top-up
 
@@ -157,13 +195,16 @@ from prod"). Then run the KV rebuild to repopulate `dev:` KV from the restored D
 
 ## Required secrets / env
 
-| Name                                    | DB sync |            KV rebuild             | Notes                |
-| --------------------------------------- | :-----: | :-------------------------------: | -------------------- |
-| `PG_PROD_RO_DATABASE_URL`               |    ✓    |                                   | read-only prod role  |
-| `LIVEONE_DEV_DATABASE_URL`              |    ✓    | ✓ (as `PLANETSCALE_DATABASE_URL`) | dev write role       |
-| `PLANETSCALE_PROD_BRANCH_ID`            |    ✓    |                 ✓                 | arms the prod guards |
-| `KV_REST_API_URL` / `KV_REST_API_TOKEN` |         |                 ✓                 | the shared KV store  |
-| `OBSERVATIONS_ALERT_WEBHOOK_URL`        | (alert) |              (alert)              | failure notification |
+| Name                                    | DB sync |            KV rebuild             | Slack row | Notes                                        |
+| --------------------------------------- | :-----: | :-------------------------------: | :-------: | -------------------------------------------- |
+| `PG_PROD_RO_DATABASE_URL`               |    ✓    |                                   |           | read-only prod role                          |
+| `LIVEONE_DEV_DATABASE_URL`              |    ✓    | ✓ (as `PLANETSCALE_DATABASE_URL`) |           | dev write role                               |
+| `PLANETSCALE_PROD_BRANCH_ID`            |    ✓    |                 ✓                 |           | arms the prod guards                         |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` |         |                 ✓                 |     ✓     | the shared KV store; also holds the day-state |
+| `SLACK_BOT_TOKEN`                       |         |                                   |     ✓     | secret — the same bot `pg-backup.yml` uses   |
+| `SLACK_CHANNEL`                         |         |                                   |     ✓     | repo **var** (not a secret) — channel id     |
+
+Every Slack input is optional: unset any of them and the daily-row step logs and no-ops.
 
 ## Related
 
