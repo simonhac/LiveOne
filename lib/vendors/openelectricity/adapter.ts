@@ -56,6 +56,8 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
 
   /** The slot IS the NEM dispatch interval. The learner only chooses when within it. */
   protected pollIntervalMinutes = 5;
+  /** …and because it chooses, this vendor's polls never land on the boundary. See the base field. */
+  readonly slotAlignment = "within-slot" as const;
 
   /**
    * OpenElectricity's scheduling contribution: NEM data publishes 1-3 minutes after the interval it

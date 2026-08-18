@@ -65,6 +65,21 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    */
   protected pollOffsetMinutes = 0;
 
+  /**
+   * WHERE in its slot this vendor is expected to poll. `boundary` — the default, and what the slot
+   * rule produces on its own — means slot start + `pollOffsetMinutes`, so how often a poll lands
+   * there measures phase drift. `within-slot` means the vendor's `isEligible` gate picks a moment
+   * inside the slot that is not a fixed phase (OpenElectricity's learned NEM publish delay), so a
+   * boundary hit is neither expected nor possible and measuring one yields a permanent 0%.
+   *
+   * Nothing in the scheduler reads this — `shouldPoll` is unchanged either way. It exists so a
+   * report can tell "drifting" apart from "deliberately not aligned"
+   * (`scripts/utils/poll-cadence.ts`). A gate that only decides WHETHER to poll rather than when —
+   * Enphase's daylight/repair window — stays `boundary`: inside its window it still polls on the
+   * boundary, so the number means something.
+   */
+  readonly slotAlignment: "boundary" | "within-slot" = "boundary";
+
   /** Slot width for one device. Override when the cadence depends on device state (see Tesla). */
   protected intervalFor(_device: DeviceConfigView): number {
     return this.pollIntervalMinutes;
