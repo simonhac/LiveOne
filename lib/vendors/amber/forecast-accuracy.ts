@@ -74,6 +74,15 @@ export interface AccuracySummary {
   /** Mean error. Positive = Amber forecasts HIGH on average. */
   bias: number;
   rmse: number;
+  /**
+   * Spread of the ABSOLUTE errors — the width of the error distribution, not the precision of the
+   * mean. Deliberately the population s.d. and not the standard error (s.d./√n): with ~200 pairs
+   * the standard error is ~1/14th of this, so a band drawn from it would say "we know the mean
+   * accurately" when the question being asked is "how variable is any given interval's error".
+   */
+  sdAbsError: number;
+  /** Spread of the SIGNED errors, for a band around bias. Note rmse² = bias² + sdError². */
+  sdError: number;
   p50AbsError: number;
   p90AbsError: number;
   maxAbsError: number;
@@ -283,6 +292,8 @@ export function summarisePairs(
       mae: NaN,
       bias: NaN,
       rmse: NaN,
+      sdAbsError: NaN,
+      sdError: NaN,
       p50AbsError: NaN,
       p90AbsError: NaN,
       maxAbsError: NaN,
@@ -303,11 +314,18 @@ export function summarisePairs(
   const banded = pairs.filter((p) => p.inBand !== null);
   const withAdv = pairs.filter((p) => p.advPredicted !== null);
 
+  const mae = sumAbs / n;
+  const bias = sumSigned / n;
+  const varAbs = absErrors.reduce((s, v) => s + (v - mae) ** 2, 0) / n;
+  const varSigned = pairs.reduce((s, p) => s + (p.error - bias) ** 2, 0) / n;
+
   return {
     ...empty,
-    mae: sumAbs / n,
-    bias: sumSigned / n,
+    mae,
+    bias,
     rmse: Math.sqrt(sumSquares / n),
+    sdAbsError: Math.sqrt(varAbs),
+    sdError: Math.sqrt(varSigned),
     p50AbsError: quantile(absErrors, 0.5),
     p90AbsError: quantile(absErrors, 0.9),
     maxAbsError: absErrors[absErrors.length - 1],

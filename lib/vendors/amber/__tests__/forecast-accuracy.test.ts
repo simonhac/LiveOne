@@ -304,6 +304,25 @@ describe("summarisePairs", () => {
     expect(s.maxAbsError).toBe(3);
   });
 
+  it("reports the SPREAD of the errors, not the precision of the mean", () => {
+    // errors +1, −3, +2, −2 ⇒ |e| 1,2,2,3 (mean 2, population var 0.5) and signed mean −0.5
+    // (population var 4.25). The chart's ±1 s.d. band is drawn from these.
+    const s = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
+    expect(s.sdAbsError).toBeCloseTo(Math.sqrt(0.5), 10);
+    expect(s.sdError).toBeCloseTo(Math.sqrt(4.25), 10);
+  });
+
+  it("keeps the identity rmse² = bias² + sdError²", () => {
+    const s = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
+    expect(s.rmse ** 2).toBeCloseTo(s.bias ** 2 + s.sdError ** 2, 10);
+  });
+
+  it("reports zero spread for identical errors", () => {
+    const s = summarisePairs([pair(2), pair(2), pair(2)], 3);
+    expect(s.sdAbsError).toBe(0);
+    expect(s.sdError).toBe(0);
+  });
+
   it("scores band coverage over only the pairs that had a band", () => {
     const s = summarisePairs(
       [pair(1, 0, true), pair(2, 0, false), pair(3, 0, null)],
@@ -317,6 +336,8 @@ describe("summarisePairs", () => {
     expect(s.paired).toBe(0);
     expect(s.coverage).toBe(0);
     expect(s.mae).toBeNaN();
+    expect(s.sdAbsError).toBeNaN();
+    expect(s.sdError).toBeNaN();
     expect(s.bandCoverage).toBeNaN();
   });
 

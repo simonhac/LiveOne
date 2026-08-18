@@ -419,8 +419,8 @@ async function main() {
   if (args.csv) {
     const header =
       "channel,lead_hours,targets,paired,coverage,mae,bias,rmse,p50_abs_error,p90_abs_error," +
-      "max_abs_error,band_coverage,adv_predicted_mae,skill,persistence_mae,p50_staleness_min," +
-      "p90_staleness_min,max_staleness_min";
+      "max_abs_error,sd_abs_error,sd_error,band_coverage,adv_predicted_mae,skill," +
+      "persistence_mae,p50_staleness_min,p90_staleness_min,max_staleness_min";
     const body = summaries.map(({ channel, lead, summary: s, skill }) =>
       [
         channel,
@@ -434,6 +434,8 @@ async function main() {
         s.p50AbsError,
         s.p90AbsError,
         s.maxAbsError,
+        s.sdAbsError,
+        s.sdError,
         s.bandCoverage,
         s.advPredictedMae,
         skill?.skill ?? "",
@@ -466,6 +468,8 @@ async function main() {
             mae: s.summary.mae,
             p90: s.summary.p90AbsError,
             bias: s.summary.bias,
+            maeSd: s.summary.sdAbsError,
+            biasSd: s.summary.sdError,
           })),
       })),
     });
