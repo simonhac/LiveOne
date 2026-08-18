@@ -419,7 +419,7 @@ async function main() {
   if (args.csv) {
     const header =
       "channel,lead_hours,targets,paired,coverage,mae,bias,rmse,p50_abs_error,p90_abs_error," +
-      "max_abs_error,sd_abs_error,sd_error,band_coverage,adv_predicted_mae,skill," +
+      "max_abs_error,sd_abs_error,sd_error,se_error,band_coverage,adv_predicted_mae,skill," +
       "persistence_mae,p50_staleness_min,p90_staleness_min,max_staleness_min";
     const body = summaries.map(({ channel, lead, summary: s, skill }) =>
       [
@@ -436,6 +436,7 @@ async function main() {
         s.maxAbsError,
         s.sdAbsError,
         s.sdError,
+        s.seError,
         s.bandCoverage,
         s.advPredictedMae,
         skill?.skill ?? "",
@@ -455,7 +456,7 @@ async function main() {
   if (args.chart) {
     const { renderAccuracyChart } = await import("./forecast-accuracy-chart");
     const written = await renderAccuracyChart(args.chart, {
-      title: `Amber forecast error vs lead — device ${device.rid} (${device.name})`,
+      title: `Amber forecast error vs lead — ${device.name}`,
       subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST`,
       series: args.channels.map((channel) => ({
         channel,
@@ -469,7 +470,7 @@ async function main() {
             p90: s.summary.p90AbsError,
             bias: s.summary.bias,
             maeSd: s.summary.sdAbsError,
-            biasSd: s.summary.sdError,
+            biasSe: s.summary.seError,
           })),
       })),
     });

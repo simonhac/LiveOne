@@ -26,8 +26,8 @@ export interface ChartPoint {
   bias: number;
   /** s.d. of the absolute errors — half-width of the band around `mae`. */
   maeSd: number;
-  /** s.d. of the signed errors — half-width of the band around `bias`. */
-  biasSd: number;
+  /** STANDARD ERROR of the mean signed error — half-width of the band around `bias`. */
+  biasSe: number;
 }
 
 export interface ChartSeries {
@@ -49,17 +49,26 @@ const TEXT_MUTED = "#83817c";
 const GRID = "#e6e5e1";
 
 const WIDTH = 960;
-const HEIGHT = 400;
-const FACET_TOP = 116;
+const HEIGHT = 412;
+const FACET_TOP = 128;
 const FACET_HEIGHT = 210;
 const FACET_GAP = 44;
 const MARGIN_LEFT = 56;
 const MARGIN_RIGHT = 24;
 
 /**
- * `sd` draws a ±1 s.d. tint around the line. `p90` has none deliberately: it is a QUANTILE, and a
- * standard deviation about a quantile is not a quantity — banding it would put a plausible-looking
- * ribbon around a number it does not describe.
+ * The two banded panels shade DIFFERENT quantities, which is why each carries its own caption
+ * rather than the chart carrying one global note:
+ *
+ *  - MAE is tinted with ±1 s.d. of the individual interval errors — how variable any one interval
+ *    is. At ~±1.4 c/kWh that is genuinely as wide as the mean itself.
+ *  - Bias is tinted with ±1 STANDARD ERROR of the mean (s.d./√n ≈ ±0.14) — how precisely the bias
+ *    is known. A spread band here would be ±2 c/kWh, wider than the panel, and would bury the very
+ *    thing the wide axis exists to show: that bias is reliably zero, not merely noisily zero.
+ *
+ * `p90` is unbanded deliberately: it is a QUANTILE, and a standard deviation about a quantile is
+ * not a quantity — banding it would put a plausible-looking ribbon around a number it does not
+ * describe.
  *
  * `share` gives the two absolute-error panels one y domain so their heights are directly
  * comparable; without it each autoscales and a reader compares two differently-stretched pictures.
@@ -68,32 +77,43 @@ const MARGIN_RIGHT = 24;
  * every lead, and a domain of ±0.25 rendered pure noise as a strong-looking pattern.
  */
 const FACETS: {
-  key: keyof Omit<ChartPoint, "lead" | "maeSd" | "biasSd">;
+  key: keyof Omit<ChartPoint, "lead" | "maeSd" | "biasSe">;
   title: string;
+  caption: string;
   zeroRule: boolean;
-  sd?: keyof Pick<ChartPoint, "maeSd" | "biasSd">;
+  sd?: keyof Pick<ChartPoint, "maeSd" | "biasSe">;
   share?: "abs";
   fixed?: [number, number];
 }[] = [
   {
     key: "mae",
     title: "Mean absolute error",
+    caption: "shaded: ±1 s.d. of interval errors",
     zeroRule: false,
     sd: "maeSd",
     share: "abs",
   },
-  { key: "p90", title: "p90 absolute error", zeroRule: false, share: "abs" },
+  {
+    key: "p90",
+    title: "p90 absolute error",
+    caption: "no band — a quantile, not a mean",
+    zeroRule: false,
+    share: "abs",
+  },
   {
     key: "bias",
     title: "Bias (forecast − actual)",
+    caption: "shaded: ±1 standard error of the mean",
     zeroRule: true,
-    sd: "biasSd",
+    sd: "biasSe",
     fixed: [-2, 2],
   },
 ];
 
-/** Tint opacity for the ±1 s.d. band. Low enough that two overlapping bands stay readable. */
+/** Tint opacity for the uncertainty band. Low enough that two overlapping bands stay readable. */
 const BAND_OPACITY = 0.16;
+/** Minimum vertical separation between two direct labels in the same panel, in px. */
+const LABEL_MIN_GAP = 14;
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -174,7 +194,8 @@ function buildSvg(spec: ChartSpec): string {
       .range([y0 + FACET_HEIGHT, y0]);
 
     parts.push(
-      `<text x="${x0}" y="${y0 - 12}" font-size="12.5" font-weight="600" fill="${TEXT_PRIMARY}">${esc(facet.title)}</text>`,
+      `<text x="${x0}" y="${y0 - 26}" font-size="12.5" font-weight="600" fill="${TEXT_PRIMARY}">${esc(facet.title)}</text>`,
+      `<text x="${x0}" y="${y0 - 10}" font-size="11" fill="${TEXT_MUTED}">${esc(facet.caption)}</text>`,
     );
 
     // Recessive gridlines + y labels.
@@ -209,6 +230,8 @@ function buildSvg(spec: ChartSpec): string {
           .y1((p) => y(Math.min(domain[1], p[facet.key] + p[sdKey])))
       : null;
 
+    const placedLabelY: number[] = [];
+
     for (const [i, s] of live.entries()) {
       const color = SERIES_COLORS[i % SERIES_COLORS.length];
       const pts = [...s.points].sort((a, b) => a.lead - b.lead);
@@ -232,10 +255,17 @@ function buildSvg(spec: ChartSpec): string {
           `<circle cx="${x(p.lead).toFixed(1)}" cy="${y(p[facet.key]).toFixed(1)}" r="4.5" fill="${color}" stroke="${SURFACE}" stroke-width="2"/>`,
         );
       }
-      // Direct label on the last point only — never a number on every point.
+      // Direct label on the last point only — never a number on every point. Stacked away from any
+      // label already placed in this panel: on the bias facet the two series converge to within
+      // 0.04 c/kWh, which put two labels on the same pixels and rendered both unreadable.
       const last = pts[pts.length - 1];
+      let ly = y(last[facet.key]) - 12;
+      while (placedLabelY.some((py) => Math.abs(py - ly) < LABEL_MIN_GAP)) {
+        ly -= LABEL_MIN_GAP;
+      }
+      placedLabelY.push(ly);
       parts.push(
-        `<text x="${(x(last.lead) - 8).toFixed(1)}" y="${(y(last[facet.key]) - 12).toFixed(1)}" font-size="11.5" text-anchor="end" fill="${TEXT_SECONDARY}">${last[facet.key].toFixed(2)}</text>`,
+        `<text x="${(x(last.lead) - 8).toFixed(1)}" y="${ly.toFixed(1)}" font-size="11.5" text-anchor="end" fill="${TEXT_SECONDARY}">${last[facet.key].toFixed(2)}</text>`,
       );
     }
   }

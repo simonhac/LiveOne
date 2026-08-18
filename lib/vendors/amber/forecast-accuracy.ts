@@ -81,8 +81,14 @@ export interface AccuracySummary {
    * accurately" when the question being asked is "how variable is any given interval's error".
    */
   sdAbsError: number;
-  /** Spread of the SIGNED errors, for a band around bias. Note rmse² = bias² + sdError². */
+  /** Spread of the SIGNED errors. Note rmse² = bias² + sdError². */
   sdError: number;
+  /**
+   * Standard error of the mean signed error, `sdError / √n` — how precisely BIAS itself is known,
+   * as distinct from how variable a single interval is. This is the honest band for the claim
+   * "bias is negligible": a spread band answers a different question and, at ~±2 c/kWh, buries it.
+   */
+  seError: number;
   p50AbsError: number;
   p90AbsError: number;
   maxAbsError: number;
@@ -294,6 +300,7 @@ export function summarisePairs(
       rmse: NaN,
       sdAbsError: NaN,
       sdError: NaN,
+      seError: NaN,
       p50AbsError: NaN,
       p90AbsError: NaN,
       maxAbsError: NaN,
@@ -326,6 +333,7 @@ export function summarisePairs(
     rmse: Math.sqrt(sumSquares / n),
     sdAbsError: Math.sqrt(varAbs),
     sdError: Math.sqrt(varSigned),
+    seError: Math.sqrt(varSigned / n),
     p50AbsError: quantile(absErrors, 0.5),
     p90AbsError: quantile(absErrors, 0.9),
     maxAbsError: absErrors[absErrors.length - 1],

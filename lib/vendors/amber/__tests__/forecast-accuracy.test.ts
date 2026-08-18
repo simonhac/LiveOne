@@ -312,6 +312,19 @@ describe("summarisePairs", () => {
     expect(s.sdError).toBeCloseTo(Math.sqrt(4.25), 10);
   });
 
+  it("reports the standard ERROR of the mean separately from the spread", () => {
+    // The bias band is drawn from this, and it must shrink with n while the spread does not.
+    const four = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
+    expect(four.seError).toBeCloseTo(four.sdError / Math.sqrt(4), 10);
+
+    const sixteen = summarisePairs(
+      [pair(1), pair(-3), pair(2), pair(-2)].flatMap((p) => [p, p, p, p]),
+      16,
+    );
+    expect(sixteen.sdError).toBeCloseTo(four.sdError, 10); // spread unchanged
+    expect(sixteen.seError).toBeCloseTo(four.seError / 2, 10); // precision doubles
+  });
+
   it("keeps the identity rmse² = bias² + sdError²", () => {
     const s = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
     expect(s.rmse ** 2).toBeCloseTo(s.bias ** 2 + s.sdError ** 2, 10);
@@ -338,6 +351,7 @@ describe("summarisePairs", () => {
     expect(s.mae).toBeNaN();
     expect(s.sdAbsError).toBeNaN();
     expect(s.sdError).toBeNaN();
+    expect(s.seError).toBeNaN();
     expect(s.bandCoverage).toBeNaN();
   });
 
