@@ -62,7 +62,10 @@ export interface FetchResult {
   readingsAgg5m?: PointReadingAgg5mInput[]; // Pre-aggregated (Enphase, Amber)
   recordsProcessed?: number; // For dry-run count
   rawResponse?: any; // For session storage
-  nextPollTime?: ZonedDateTime;
+  // NO `nextPollTime`. It is a display value derived purely from the schedule, and letting vendors
+  // supply it meant 17 `getNextMinuteBoundary` calls across 6 adapters — plus the
+  // `timezoneOffsetMin` plumbing each carried — to restate what the scheduler already knows.
+  // `BaseVendorAdapter.nextPollFor` computes it once.
   error?: string;
   errorCode?: string;
 }
@@ -140,6 +143,14 @@ export interface VendorAdapter {
   // credentialFields + Test Connection; "oauth-redirect" runs an in-dialog OAuth
   // redirect (Tesla Fleet API) with no credential fields.
   readonly addDeviceFlow?: "credentials" | "oauth-redirect";
+
+  /**
+   * How long one poll of this vendor may take before the cron loop abandons it and moves on.
+   * Per-vendor because the honest ceilings differ by an order of magnitude: Tesla may legitimately
+   * spend ~30 s waking a sleeping car, while Sigenergy's 502 retry ladder measured a flat 32 s of
+   * pure waste. See `lib/cron/concurrency.ts`.
+   */
+  readonly pollDeadlineMs: number;
 
   // Check if device should be polled based on schedule
   shouldPoll(

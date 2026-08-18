@@ -1,4 +1,4 @@
-import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
+import { BaseVendorAdapter } from "../base-adapter";
 import type { TestConnectionResult, FetchContext, FetchResult } from "../types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
@@ -9,21 +9,67 @@ import {
   checkAndFetchYesterdayIfNeeded,
   fetchEnphaseDay,
 } from "@/lib/vendors/enphase/enphase-history";
-import {
-  getZonedNow,
-  formatJustTime_fromJSDate,
-  getNextMinuteBoundary,
-} from "@/lib/date-utils";
-import type { ZonedDateTime } from "@internationalized/date";
 import { sessionManager } from "@/lib/session-manager";
 import * as SunCalc from "suncalc";
 
+/** Fallback location for the sun times when a device has none recorded (Melbourne). */
+const DEFAULT_LAT = -37.8136;
+const DEFAULT_LON = 144.9631;
+/** Local hours during which we re-pull yesterday, once Enphase has settled it. */
+const REPAIR_START_HOUR = 1;
+const REPAIR_END_HOUR = 5;
+
 /**
- * Vendor adapter for Enphase devices
- * Polls every 30 minutes during daylight hours due to API rate limits
+ * The daylight / overnight-repair windows, in device-local minutes-since-midnight.
+ *
+ * Shared by the schedule gate and `fetchData` — they used to compute the same clock twice, from
+ * different expressions, so "am I allowed to poll" and "what do I fetch" could in principle
+ * disagree about which window it was.
  */
-// Configuration constants
-const ENPHASE_POLLING_INTERVAL_MINUTES = 60; // How often to poll during daylight hours
+function enphaseWindow(device: DeviceConfigView, now: Date) {
+  let lat = DEFAULT_LAT;
+  let lon = DEFAULT_LON;
+  if (device.location) {
+    try {
+      const loc =
+        typeof device.location === "string"
+          ? JSON.parse(device.location)
+          : device.location;
+      if (loc.lat && loc.lon) {
+        lat = loc.lat;
+        lon = loc.lon;
+      }
+    } catch {
+      // Malformed location — the Melbourne default still yields a sane window.
+    }
+  }
+
+  const offsetMs = device.timezoneOffsetMin * 60 * 1000;
+  const localMinutesOf = (d: Date) => {
+    const local = new Date(d.getTime() + offsetMs);
+    return local.getUTCHours() * 60 + local.getUTCMinutes();
+  };
+
+  const localMinutes = localMinutesOf(now);
+  const sun = SunCalc.getTimes(now, lat, lon);
+  const dawnMinutes = localMinutesOf(sun.dawn);
+  let duskMinutes = localMinutesOf(sun.dusk);
+  if (duskMinutes < dawnMinutes) duskMinutes += 24 * 60;
+
+  // First 30-min boundary at/after dawn, through 30 min past dusk.
+  const activeStart = Math.ceil(dawnMinutes / 30) * 30;
+  const activeEnd = duskMinutes + 30;
+  const localHour = Math.floor(localMinutes / 60);
+
+  return {
+    localMinutes,
+    activeStart,
+    activeEnd,
+    inDaylight: localMinutes >= activeStart && localMinutes <= activeEnd,
+    inRepairWindow:
+      localHour >= REPAIR_START_HOUR && localHour <= REPAIR_END_HOUR,
+  };
+}
 
 export class EnphaseAdapter extends BaseVendorAdapter {
   readonly vendorType = "enphase";
@@ -31,9 +77,7 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   readonly dataSource = "poll" as const;
   readonly supportsAddDevice = false; // Enphase uses OAuth flow, not supported in Add Device dialog yet
 
-  // Enphase has custom schedule logic - polls every 60 minutes during daylight hours
   protected pollIntervalMinutes = 60;
-  protected toleranceSeconds = 60;
 
   /**
    * Override getLastReading to read from point_readings_agg_5m table
@@ -97,180 +141,35 @@ export class EnphaseAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Override evaluateSchedule for Enphase-specific solar-aware logic
-   * Poll every 60 minutes from 30 mins after dawn to 30 mins after dusk,
-   * then hourly from 01:00-05:00 for yesterday's data
+   * Enphase's only scheduling input: WHEN there is any point calling the API. The cadence itself is
+   * the ordinary 60-minute slot rule.
+   *
+   * Enphase is 5-minute-native but heavily rate limited — 288 calls/day is impossible — so each
+   * call pulls a whole day at once and we only make that call when it can return something new:
+   * during daylight, plus an overnight window to repair yesterday once it has settled.
    */
-  protected evaluateSchedule(
+  protected async isEligible(
     device: DeviceConfigView,
-    lastPollTime: Date | null,
     now: Date,
-  ): ScheduleEvaluation {
-    // Always poll if never polled before
-    if (!lastPollTime) {
-      console.log(`[Enphase] Never polled, polling now`);
-      const nextPollTime = getNextMinuteBoundary(60, device.timezoneOffsetMin); // Next hour boundary
-      return {
-        shouldPoll: true,
-        reason: "Never polled",
-        nextPollTime,
-      };
-    }
+  ): Promise<true | { eligible: false; reason: string }> {
+    const w = enphaseWindow(device, now);
+    if (w.inDaylight || w.inRepairWindow) return true;
 
-    // Get location for sunrise/sunset calculation
-    let lat = -37.8136; // Melbourne default
-    let lon = 144.9631;
-
-    if (device.location) {
-      try {
-        const loc =
-          typeof device.location === "string"
-            ? JSON.parse(device.location)
-            : device.location;
-        if (loc.lat && loc.lon) {
-          lat = loc.lat;
-          lon = loc.lon;
-        }
-      } catch (e) {
-        console.log(`[Enphase] Using default location`);
-      }
-    }
-
-    // Calculate local time for the device
-    const utcTime = now.getTime();
-    const localOffset = device.timezoneOffsetMin * 60 * 1000;
-    const localTime = new Date(utcTime + localOffset);
-    const localHour = localTime.getUTCHours();
-    const localMinutes = localTime.getUTCMinutes();
-    const localTimeMinutes = localHour * 60 + localMinutes;
-
-    // Calculate sun times for today
-    const sunTimes = SunCalc.getTimes(now, lat, lon);
-    const dawnUTC = sunTimes.dawn;
-    const duskUTC = sunTimes.dusk;
-
-    // Convert to local time
-    const dawnLocalTime = new Date(dawnUTC.getTime() + localOffset);
-    const duskLocalTime = new Date(duskUTC.getTime() + localOffset);
-
-    let dawnMinutes =
-      dawnLocalTime.getUTCHours() * 60 + dawnLocalTime.getUTCMinutes();
-    let duskMinutes =
-      duskLocalTime.getUTCHours() * 60 + duskLocalTime.getUTCMinutes();
-
-    if (duskMinutes < dawnMinutes) {
-      duskMinutes += 24 * 60;
-    }
-
-    // Active hours: first 30-min boundary after dawn to 30 mins after dusk
-    const activeStart = Math.ceil(dawnMinutes / 30) * 30;
-    const activeEnd = duskMinutes + 30;
-
-    // Check if we're in active solar hours
-    if (localTimeMinutes >= activeStart && localTimeMinutes <= activeEnd) {
-      const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
-      const targetIntervalMs = ENPHASE_POLLING_INTERVAL_MINUTES * 60 * 1000;
-      const toleranceMs = this.toleranceSeconds * 1000;
-
-      if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
-        const nextPollTime = getNextMinuteBoundary(
-          ENPHASE_POLLING_INTERVAL_MINUTES,
-          device.timezoneOffsetMin,
-        );
-        return {
-          shouldPoll: true,
-          reason: "Solar hours polling interval reached",
-          nextPollTime,
-        };
-      }
-
-      const nextPollTime = getNextMinuteBoundary(
-        ENPHASE_POLLING_INTERVAL_MINUTES,
-        device.timezoneOffsetMin,
-      );
-      return {
-        shouldPoll: false,
-        reason: `Active solar hours (next poll at ${formatJustTime_fromJSDate(nextPollTime.toDate(), device.timezoneOffsetMin)})`,
-        nextPollTime,
-      };
-    }
-
-    // Night-time hourly check (01:00-05:00)
-    if (localHour >= 1 && localHour <= 5) {
-      const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
-      const targetIntervalMs = 60 * 60 * 1000; // Hourly
-      const toleranceMs = this.toleranceSeconds * 1000;
-
-      if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
-        const nextPollTime = getNextMinuteBoundary(
-          60,
-          device.timezoneOffsetMin,
-        ); // Hourly
-        return {
-          shouldPoll: true,
-          reason: "Night-time hourly check",
-          nextPollTime,
-        };
-      }
-
-      const nextPollTime = getNextMinuteBoundary(60, device.timezoneOffsetMin); // Hourly
-      return {
-        shouldPoll: false,
-        reason: `Night-time check period (next at ${formatJustTime_fromJSDate(nextPollTime.toDate(), device.timezoneOffsetMin)})`,
-        nextPollTime,
-      };
-    }
-
-    // Outside active hours - calculate next poll time
-    let nextPollTime: ZonedDateTime;
-    let reason: string;
-
-    if (localTimeMinutes < activeStart) {
-      // Before dawn - poll at dawn (rounded to next hour boundary)
-      const minutesUntilDawn = activeStart - localTimeMinutes;
-      const dawnTime = new Date(now.getTime() + minutesUntilDawn * 60 * 1000);
-
-      // Get next hour boundary after dawn time
-      nextPollTime = getNextMinuteBoundary(
-        60,
-        device.timezoneOffsetMin,
-        dawnTime,
-      );
-
-      const hoursUntil = Math.floor(minutesUntilDawn / 60);
-      const minsUntil = minutesUntilDawn % 60;
-      reason =
-        hoursUntil > 0
-          ? `Before dawn (next poll in ${hoursUntil}h ${minsUntil}m)`
-          : `Before dawn (next poll in ${minsUntil}m)`;
-    } else {
-      // After dusk - next poll is tomorrow at 01:00 or dawn, whichever is earlier
-      const tomorrow1AM = 25 * 60; // 01:00 tomorrow
-      const tomorrowDawn = activeStart + 24 * 60;
-      const nextPollMinutes = Math.min(tomorrow1AM, tomorrowDawn);
-      const minutesUntilNext = nextPollMinutes - localTimeMinutes;
-      const targetTime = new Date(now.getTime() + minutesUntilNext * 60 * 1000);
-
-      // Get next hour boundary after target time
-      nextPollTime = getNextMinuteBoundary(
-        60,
-        device.timezoneOffsetMin,
-        targetTime,
-      );
-
-      const hoursUntil = Math.floor(minutesUntilNext / 60);
-      const minsUntil = minutesUntilNext % 60;
-      reason =
-        hoursUntil > 0
-          ? `After dusk (next poll in ${hoursUntil}h ${minsUntil}m)`
-          : `After dusk (next poll in ${minsUntil}m)`;
-    }
-
-    return {
-      shouldPoll: false,
-      reason,
-      nextPollTime,
+    const until = (mins: number) => {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
     };
+    return w.localMinutes < w.activeStart
+      ? {
+          eligible: false,
+          reason: `before dawn (daylight in ${until(w.activeStart - w.localMinutes)})`,
+        }
+      : {
+          eligible: false,
+          // After dusk the next useful call is the overnight repair pass, or tomorrow's dawn.
+          reason: `after dusk (next window in ${until(Math.min(REPAIR_START_HOUR * 60 + 24 * 60, w.activeStart + 24 * 60) - w.localMinutes)})`,
+        };
   }
 
   /**
@@ -289,13 +188,10 @@ export class EnphaseAdapter extends BaseVendorAdapter {
         `[Enphase] Polling system ${device.id} (${device.displayName})`,
       );
 
-      // Determine what to fetch based on time of day
+      // Same window computation the schedule gate used to decide we could run at all.
       let result;
-      const localTime = getZonedNow(device.timezoneOffsetMin);
-      const localHour = localTime.hour;
-
-      if (localHour >= 1 && localHour <= 5) {
-        // During 01:00-05:00, check and fetch yesterday's data if incomplete
+      if (enphaseWindow(device, new Date()).inRepairWindow) {
+        // Overnight: re-pull yesterday if it is still incomplete.
         console.log(
           `[Enphase] Checking yesterday's data completeness for system ${device.id}`,
         );
@@ -334,21 +230,12 @@ export class EnphaseAdapter extends BaseVendorAdapter {
       const rawResponse =
         "rawResponse" in result ? result.rawResponse : undefined;
 
-      // Calculate next poll time
-      const now = new Date();
-      const evaluation = this.evaluateSchedule(
-        device,
-        device.pollingStatus?.lastPollTime || null,
-        now,
-      );
-
       // Note: Enphase uses its own functions that handle insertion internally
       // Return empty readings array but set recordsProcessed for count tracking
       return {
         success: true,
         readings: [], // Data already stored by fetchEnphaseDay
         recordsProcessed,
-        nextPollTime: evaluation.nextPollTime,
         rawResponse,
       };
     } catch (error) {

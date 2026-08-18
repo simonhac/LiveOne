@@ -22,7 +22,6 @@ import type { LatestReadingData } from "@/lib/types/readings";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import { PointManager } from "@/lib/point/point-manager";
 import { updateLatestPointValue } from "@/lib/kv-cache-manager";
-import { fromUnixTimestamp } from "@/lib/date-utils";
 import {
   OpenElectricityApiError,
   fetchMarketData,
@@ -55,36 +54,28 @@ export class OpenElectricityAdapter extends BaseVendorAdapter {
   readonly supportsAddDevice = false; // single shared key; region devices are seeded
   // No credentialFields — the key is read from the environment.
 
-  // Floor cadence; shouldPoll() overrides with the dynamic arrival-window scheduler.
+  /** The slot IS the NEM dispatch interval. The learner only chooses when within it. */
   protected pollIntervalMinutes = 5;
-  protected toleranceSeconds = 60;
 
   /**
-   * Dynamic schedule: poll only inside each interval's learned arrival window.
+   * OpenElectricity's scheduling contribution: NEM data publishes 1-3 minutes after the interval it
+   * describes, and the lag varies, so a fixed offset would either poll too early (and capture
+   * nothing) or too late (and add avoidable latency). The learner tracks each region's publish
+   * delay and vetoes any tick outside the expected arrival window.
+   *
+   * This used to override `shouldPoll` outright, which meant re-answering "has this slot already
+   * been recorded" itself — and bypassing the base class's push-only guard on the way past.
    */
-  async shouldPoll(
+  protected async isEligible(
     device: DeviceConfigView,
-    forcePollAll: boolean,
     now: Date,
-  ): Promise<{
-    shouldPoll: boolean;
-    reason?: string;
-    nextPoll?: import("@internationalized/date").ZonedDateTime;
-  }> {
-    if (forcePollAll) return { shouldPoll: true };
-
+  ): Promise<true | { eligible: false; reason: string }> {
     const state = await loadState(device.id);
     const decision = decidePoll({ now, state });
     await saveState(device.id, decision.newState);
-
-    return {
-      shouldPoll: decision.shouldPoll,
-      reason: decision.reason,
-      nextPoll: fromUnixTimestamp(
-        Math.floor(decision.nextPollMs / 1000),
-        device.timezoneOffsetMin,
-      ),
-    };
+    return decision.shouldPoll
+      ? true
+      : { eligible: false, reason: decision.reason };
   }
 
   protected async fetchData(

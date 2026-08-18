@@ -7,7 +7,6 @@ import type {
 } from "../types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
-import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { SigenergyClient, SigenergyError } from "./sigenergy-client";
 import { buildSigenergyReadings, sigenergyFlowToData } from "./point-metadata";
 import type { SigenergyCredentials, SigenergyData } from "./types";
@@ -26,9 +25,6 @@ export class SigenergyAdapter extends BaseVendorAdapter {
   readonly supportsAddDevice = true;
 
   protected pollIntervalMinutes = 5;
-  protected toleranceSeconds = 30;
-  // Poll on absolute 5-min boundaries (:00, :05 …) and retry each minute until a reading lands.
-  protected alignToBoundary = true;
 
   readonly credentialFields: CredentialField[] = [
     {
@@ -117,10 +113,6 @@ export class SigenergyAdapter extends BaseVendorAdapter {
         readings,
         recordsProcessed: readings.length,
         rawResponse: flow.raw,
-        nextPollTime: getNextMinuteBoundary(
-          this.pollIntervalMinutes,
-          device.timezoneOffsetMin,
-        ),
       };
     } catch (error) {
       const e = error instanceof SigenergyError ? error : null;

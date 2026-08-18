@@ -13,6 +13,9 @@
  *      Live polls always capture one, so a low fraction means the mirror pipeline is degraded.
  *   2. Raw-landing — most recent `point_readings.created_at`, and whether raw landed in the last hour
  *      despite successful CRON sessions existing (sessions but ~no raw ⇒ the queue is dropping readings).
+ *   2b. PER-DEVICE poll staleness — each active polled device against its OWN slot. Signal 2 is a
+ *      fleet-wide max(), so a single healthy device masks every other one going dark; this is the
+ *      check that notices one vendor failing silently.
  *   3. Queue health — QStash queue lag + DLQ depth (+ paused state).
  *   4. Outbox relay — unpublished backlog + oldest-unpublished age.
  *   5. Battery-provenance — live-blend freshness (minutely), rollup freshness (daily heal), and the
@@ -29,7 +32,7 @@
  * Returns a JSON status (configured:false when PG isn't wired) for manual checks + dashboards.
  *
  * Tuning via env (all optional): MONITOR_RESPONSE_PRESENCE_MIN, MONITOR_MIN_SESSIONS,
- * MONITOR_RAW_STALE_MINUTES, MONITOR_QUEUE_LAG_MAX, MONITOR_DLQ_ALERT, MONITOR_OUTBOX_BACKLOG_MAX,
+ * MONITOR_RAW_STALE_MINUTES, MONITOR_DEVICE_STALE_SLOTS, MONITOR_QUEUE_LAG_MAX, MONITOR_DLQ_ALERT, MONITOR_OUTBOX_BACKLOG_MAX,
  * MONITOR_OUTBOX_STALE_MINUTES, MONITOR_BATPROV_BLEND_STALE_MINUTES, MONITOR_BATPROV_ROLLUP_STALE_HOURS,
  * MONITOR_BATPROV_ESTIMATED_FRAC_MAX, MONITOR_BATPROV_SOC_METER_TOL_KWH.
  */
@@ -67,6 +70,11 @@ const RESPONSE_PRESENCE_MIN = num(
 );
 const MIN_SESSIONS = num(process.env.MONITOR_MIN_SESSIONS, 5); // don't judge on tiny samples
 const RAW_STALE_MINUTES = num(process.env.MONITOR_RAW_STALE_MINUTES, 15);
+// A device is stale when it has missed this many of its OWN slots in a row. 3 tolerates a vendor
+// blip plus the ~3% of Vercel cron ticks that never fire, without tolerating a real outage: the
+// 30-minute Amber vendor outage (6 slots) and the 25-minute Sigenergy 502 run would both have
+// tripped it, while the ordinary 1-2 slot misses in the same 24 h would not.
+const DEVICE_STALE_SLOTS = num(process.env.MONITOR_DEVICE_STALE_SLOTS, 3);
 const QUEUE_LAG_MAX = num(process.env.MONITOR_QUEUE_LAG_MAX, 1000);
 const DLQ_ALERT = num(process.env.MONITOR_DLQ_ALERT, 50); // DLQ ≥ this ⇒ alert (any DLQ ⇒ warn)
 // Outbox relay (Phase 4): a healthy relay keeps the unpublished backlog ≈ 0 and
@@ -209,6 +217,75 @@ export async function GET(request: NextRequest) {
       severity: "warn",
       code: "pg_check_failed",
       message: `Could not query PG health: ${String(err)}`,
+    });
+  }
+
+  // ── 3b: PER-DEVICE poll staleness ──
+  //
+  // `raw_landing_stale` above is a fleet-wide `max(created_at)`, so ONE healthy device masks every
+  // other device going dark — a vendor could fail silently for weeks and never trip an alert. This
+  // check is per device, against its own declared slot, so "Enphase is hourly" and "Selectronic is
+  // minutely" are held to their own standards rather than a single global threshold.
+  //
+  // Separate try: a failure here must not suppress the checks above.
+  try {
+    const { VendorRegistry } = await import("@/lib/vendors/registry");
+    const rows =
+      (
+        (await db.execute(sql`
+        SELECT d.rid, d.name, d.vendor,
+               (extract(epoch FROM (now() - ds.last_success_time)) / 60) AS stale_min
+        FROM devices d
+        LEFT JOIN device_state ds ON ds.device_id = d.id
+        WHERE d.status = 'active'
+        ORDER BY d.rid`)) as unknown as {
+          rows?: {
+            rid: number;
+            name: string;
+            vendor: string;
+            stale_min: string | null;
+          }[];
+        }
+      ).rows ?? [];
+
+    for (const row of rows) {
+      const adapter = VendorRegistry.getAdapter(row.vendor) as unknown as {
+        dataSource?: string;
+        pollIntervalMinutes?: number;
+      } | null;
+      // Push vendors have no schedule to be late against; their freshness is the pusher's problem.
+      if (!adapter || adapter.dataSource === "push") continue;
+
+      const slot = adapter.pollIntervalMinutes ?? 5;
+      const budget = slot * DEVICE_STALE_SLOTS;
+      const staleMin =
+        row.stale_min === null ? null : Math.round(Number(row.stale_min));
+
+      if (staleMin === null) {
+        issues.push({
+          severity: "warn",
+          code: "device_never_polled",
+          message: `${row.vendor} device ${row.rid} (${row.name}) has never recorded a successful poll.`,
+        });
+      } else if (staleMin > budget) {
+        issues.push({
+          severity: "alert",
+          code: "device_poll_stale",
+          message:
+            `${row.vendor} device ${row.rid} (${row.name}) last succeeded ${staleMin} min ago ` +
+            `— over ${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budget} min).`,
+        });
+      }
+    }
+  } catch (err) {
+    console.error(
+      "[MonitorObservations] per-device staleness check failed:",
+      err,
+    );
+    issues.push({
+      severity: "warn",
+      code: "device_staleness_check_failed",
+      message: `Could not evaluate per-device poll staleness: ${String(err)}`,
     });
   }
 

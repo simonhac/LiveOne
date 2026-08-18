@@ -8,11 +8,7 @@ import type {
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { SessionInfo } from "@/lib/point/point-manager";
-import {
-  getNextMinuteBoundary,
-  getYesterdayInTimezone,
-  getTodayInTimezone,
-} from "@/lib/date-utils";
+import { getYesterdayInTimezone, getTodayInTimezone } from "@/lib/date-utils";
 import type {
   AmberCredentials,
   AmberSite,
@@ -32,10 +28,6 @@ export class AmberAdapter extends BaseVendorAdapter {
 
   // Amber usage data: poll every 5 minutes
   protected pollIntervalMinutes = 5;
-  protected toleranceSeconds = 60;
-
-  // Price forecasts: poll every 5 minutes (separate from usage)
-  private readonly priceForecastIntervalMinutes = 5;
 
   readonly credentialFields: CredentialField[] = [
     {
@@ -275,10 +267,15 @@ export class AmberAdapter extends BaseVendorAdapter {
   }
 
   /**
-   * Fetch data from Amber API
-   * Uses audit-based syncing with time-based logic:
-   * - Usage: hourly at :10 past or when force poll
-   * - Forecasts: every 5 minutes (always)
+   * Fetch data from Amber API. Two legs on different cadences:
+   *  - Forecasts (`/prices`, today + tomorrow): every 5-minute slot.
+   *  - Usage (`/usage`, yesterday): hourly. Yesterday's billable data settles over hours, not
+   *    minutes, so re-pulling it twelve times an hour buys nothing.
+   *
+   * The hourly gate was previously written as `isForcePoll || currentMinute === 10`, with
+   * `isForcePoll` hardcoded to `true` — so it was unreachable and every 5-minute poll ran a full
+   * yesterday-usage sync. Keyed off the hour rather than a magic minute so a slot boundary that
+   * drifts by a minute can't skip the leg entirely for a whole day.
    *
    * Note: Amber uses its own client functions (updateUsage, updateForecasts) that
    * handle data insertion internally. This fetchData returns empty readings array
@@ -291,8 +288,6 @@ export class AmberAdapter extends BaseVendorAdapter {
   ): Promise<FetchResult> {
     try {
       const { dryRun, session, collector } = context;
-      // Determine if this is a force poll based on the cause
-      const isForcePoll = true; // We always run usage+forecasts since base adapter checks shouldPoll
       console.log(`[Amber] Fetching data for system ${device.id}`);
 
       const audits = [];
@@ -300,10 +295,9 @@ export class AmberAdapter extends BaseVendorAdapter {
       let hasError = false;
       let errorMessage: string | undefined;
 
-      // Determine if we should run usage update
-      const now = new Date();
-      const currentMinute = now.getMinutes();
-      const shouldRunUsage = isForcePoll || currentMinute === 10;
+      // First slot of each hour — see the cadence note above.
+      const shouldRunUsage =
+        context.startedAt.getUTCMinutes() < this.pollIntervalMinutes;
 
       if (shouldRunUsage) {
         // Run usage sync for yesterday (billable data becomes available)
@@ -405,12 +399,6 @@ export class AmberAdapter extends BaseVendorAdapter {
         console.log(`[Amber] Skipping forecast sync because usage sync failed`);
       }
 
-      // Calculate next poll time (5 minutes for forecasts)
-      const nextPollTime = getNextMinuteBoundary(
-        this.priceForecastIntervalMinutes,
-        device.timezoneOffsetMin,
-      );
-
       // Return error if any sync failed
       if (hasError) {
         return {
@@ -426,7 +414,6 @@ export class AmberAdapter extends BaseVendorAdapter {
         success: true,
         readings: [], // Empty - Amber client handles insertion
         recordsProcessed: totalRecords,
-        nextPollTime,
         rawResponse: audits,
       };
     } catch (error) {

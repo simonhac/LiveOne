@@ -11,7 +11,6 @@ import {
   SelectronicFetchClient,
   type SelectronicData,
 } from "./selectronic-client";
-import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { SELECTRONIC_POINTS } from "./point-metadata";
 
 /**
@@ -25,7 +24,6 @@ export class SelectronicAdapter extends BaseVendorAdapter {
 
   // Selectronic polls every minute
   protected pollIntervalMinutes = 1;
-  protected toleranceSeconds = 30;
 
   readonly credentialFields: CredentialField[] = [
     {
@@ -153,15 +151,11 @@ export class SelectronicAdapter extends BaseVendorAdapter {
         `- ${readings.length} points`,
       );
 
-      // Calculate next poll time at the beginning of the next minute
-      const nextPollTime = getNextMinuteBoundary(1, device.timezoneOffsetMin);
-
       return {
         success: true,
         readings,
         recordsProcessed: readings.length,
         rawResponse: response.rawResponse,
-        nextPollTime,
       };
     } catch (error) {
       console.error(
