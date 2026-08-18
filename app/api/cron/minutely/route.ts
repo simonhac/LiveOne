@@ -12,6 +12,23 @@ import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import { jsonResponse, transformForStorage } from "@/lib/json";
 import { reconcileTrailingWindow as reconcileBatteryProvenance } from "@/lib/battery-provenance/recompute";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import {
+  POLL_CONCURRENCY,
+  mapWithConcurrency,
+  withDeadline,
+} from "@/lib/cron/concurrency";
+import { acquireCronLease } from "@/lib/cron/run-lock";
+
+/**
+ * The device's slot width, used only to order dispatch. Read off the adapter rather than plumbed
+ * through the device row, so it can't drift from the schedule the adapter actually applies.
+ */
+function pollSlotMinutes(device: { vendorType: string }): number | null {
+  const adapter = VendorRegistry.getAdapter(device.vendorType) as unknown as {
+    pollIntervalMinutes?: number;
+  } | null;
+  return adapter?.pollIntervalMinutes ?? null;
+}
 
 /**
  * Helper function to poll all devices with optional progress callbacks.
@@ -48,16 +65,47 @@ async function pollAllDevices(params: {
     onProgress,
   } = params;
 
-  const results: PollingResult[] = [];
-  let subSequence = 0;
+  // Dispatch tightest-slot-first. Truncation is not uniformly harmless: a 5-minute vendor that
+  // misses a tick just retries on the next one, but Selectronic is on a 1-minute slot with no
+  // re-fetch path, so a dropped tick loses that minute permanently. Nine such truncations were
+  // measured in 24 h, all because the sequential loop reached it last (device order was Postgres
+  // heap order — unowned, and free to change under a VACUUM).
+  const ordered = [...activeDevices].sort(
+    (a, b) =>
+      (pollSlotMinutes(a) ?? 99) - (pollSlotMinutes(b) ?? 99) || a.id - b.id,
+  );
 
-  // Poll each device using the vendor adapter architecture
-  for (const device of activeDevices) {
+  const settled = await mapWithConcurrency(
+    ordered,
+    POLL_CONCURRENCY,
+    (device, index) =>
+      // `pollOneDevice` already turns its own failures into ERROR results; this catch is the
+      // backstop that preserves what the old sequential loop guaranteed — one device can never
+      // abort the tick for the others.
+      pollOneDevice(
+        device,
+        formatSessionId(sessionLabelPrefix, index + 1),
+      ).catch((error): PollingResult => {
+        console.error(`[Cron] Unhandled error polling ${device.id}:`, error);
+        return {
+          action: "ERROR",
+          systemId: device.id,
+          displayName: device.displayName || undefined,
+          vendorType: device.vendorType,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+      }),
+  );
+  return settled.filter((r): r is PollingResult => r !== null);
+
+  /** Poll one device. Returns `null` for push-only devices, which are not part of the loop. */
+  async function pollOneDevice(
+    device: any,
+    sessionLabel: string,
+  ): Promise<PollingResult | null> {
     const pollStartTime = Date.now();
     const loginStages: PollStage[] = [];
     let capturedSessionId: string | undefined;
-    subSequence++;
-    const sessionLabel = formatSessionId(sessionLabelPrefix, subSequence);
 
     // Get the vendor adapter first to check if it supports polling
     const adapter = VendorRegistry.getAdapter(device.vendorType);
@@ -79,13 +127,12 @@ async function pollAllDevices(params: {
             )
           : null,
       };
-      results.push(errorResult);
-      continue;
+      return errorResult;
     }
 
     // Skip push-only devices (they don't need polling)
     if (adapter.dataSource === "push") {
-      continue;
+      return null;
     }
 
     console.log(
@@ -113,8 +160,7 @@ async function pollAllDevices(params: {
             )
           : null,
       };
-      results.push(errorResult);
-      continue;
+      return errorResult;
     }
 
     try {
@@ -199,45 +245,48 @@ async function pollAllDevices(params: {
               )
             : null,
         };
-        results.push(errorResult);
-        continue;
+        return errorResult;
       }
 
-      // Call adapter.poll() with new PollOptions - adapter handles session, fetch, insert
-      const result = await adapter.poll(device, credentials, {
-        forcePollAll,
-        pollReason,
-        sessionLabel,
-        sessionCause,
-        dryRun,
-        onSessionStart: (data) => {
-          // Capture sessionId for final result
-          capturedSessionId = data.sessionId;
-          // Forward session-start with device metadata if callback provided
-          if (onSessionStart) {
-            onSessionStart({
-              systemId: data.systemId,
-              sessionLabel: data.sessionLabel,
-              sessionId: data.sessionId,
-            });
-          }
-        },
-        onProgress: onProgress
-          ? (partial) => {
-              // Merge login stage with adapter's stages for progress updates
-              onProgress({
-                ...partial,
-                systemId: device.id,
-                displayName: device.displayName || undefined,
-                vendorType: device.vendorType,
-                durationMs: Date.now() - pollStartTime,
-                startMs: pollStartTime,
-                endMs: Date.now(),
-                stages: [...loginStages, ...(partial.stages || [])],
+      // Call adapter.poll() with new PollOptions - adapter handles session, fetch, insert.
+      // Bounded: a vendor that hangs must not spend the other devices' share of the 60 s budget.
+      const result = await withDeadline(
+        adapter.poll(device, credentials, {
+          forcePollAll,
+          pollReason,
+          sessionLabel,
+          sessionCause,
+          dryRun,
+          onSessionStart: (data) => {
+            // Capture sessionId for final result
+            capturedSessionId = data.sessionId;
+            // Forward session-start with device metadata if callback provided
+            if (onSessionStart) {
+              onSessionStart({
+                systemId: data.systemId,
+                sessionLabel: data.sessionLabel,
+                sessionId: data.sessionId,
               });
             }
-          : undefined,
-      });
+          },
+          onProgress: onProgress
+            ? (partial) => {
+                // Merge login stage with adapter's stages for progress updates
+                onProgress({
+                  ...partial,
+                  systemId: device.id,
+                  displayName: device.displayName || undefined,
+                  vendorType: device.vendorType,
+                  durationMs: Date.now() - pollStartTime,
+                  startMs: pollStartTime,
+                  endMs: Date.now(),
+                  stages: [...loginStages, ...(partial.stages || [])],
+                });
+              }
+            : undefined,
+        }),
+        adapter.pollDeadlineMs,
+      );
 
       // Merge login stage with adapter's fetch + process stages
       const allStages = [...loginStages, ...(result.stages || [])];
@@ -271,8 +320,6 @@ async function pollAllDevices(params: {
               : null,
       };
 
-      results.push(finalResult);
-
       // Send final progress
       if (onProgress) {
         onProgress(finalResult);
@@ -296,7 +343,12 @@ async function pollAllDevices(params: {
           );
           break;
       }
+
+      return finalResult;
     } catch (error) {
+      // Includes DeadlineExceededError. Note the abandoned poll keeps running to completion in the
+      // background and may still record its session and `device_state` — so the data is not
+      // necessarily lost, but this tick stops waiting for it and reports the timeout honestly.
       console.error(`[Cron] Error polling ${device.id}:`, error);
       const errorResult: PollingResult = {
         action: "ERROR",
@@ -314,16 +366,15 @@ async function pollAllDevices(params: {
             )
           : null,
       };
-      results.push(errorResult);
+      return errorResult;
     }
   }
-
-  return results;
 }
 
 export async function GET(request: NextRequest) {
   const apiStartTime = Date.now();
   const sessionId = getNextSessionId();
+  let releaseLease: (() => Promise<void>) | null = null;
 
   try {
     const authResult = await requireCronOrAdmin(request);
@@ -331,6 +382,25 @@ export async function GET(request: NextRequest) {
 
     const skip = cronSkipReason(request, authResult);
     if (skip) return NextResponse.json(skip);
+
+    // Only the SCHEDULED run takes the lease. An operator hitting this route deliberately (admin /
+    // ?force=true / the SSE view) is allowed to overlap a cron tick — the lease exists to stop the
+    // platform double-firing, not to lock a human out of their own fleet.
+    if (authResult.isCron) {
+      const lease = await acquireCronLease("minutely", sessionId);
+      if (!lease) {
+        // 200, not 429: `cronSkipReason` already established that a skip is a normal outcome here,
+        // and a non-2xx would make Vercel retry into exactly the overlap being prevented.
+        console.warn(
+          "[Cron] previous run still in flight — skipping this tick",
+        );
+        return NextResponse.json({
+          skipped: true,
+          reason: "previous minutely run still in flight",
+        });
+      }
+      releaseLease = lease.release;
+    }
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams;
@@ -554,8 +624,12 @@ export async function GET(request: NextRequest) {
 
     const durationMs = Date.now() - apiStartTime;
 
+    // Wall time is the leading indicator for truncation — the tick that dropped devices measured
+    // 72.9 s against a 60 s budget, and nothing recorded it at the time.
+    const budgetWarn =
+      durationMs > 30_000 ? " ⚠ SLOW (>30s of a 60s budget)" : "";
     console.log(
-      `[Cron] Polling complete in ${durationMs} ms. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`,
+      `[Cron] Polling complete in ${durationMs} ms${budgetWarn}. success: ${successCount}, failed: ${failureCount}, skipped: ${skippedCount}`,
       resultsForLogging,
     );
 
@@ -592,5 +666,9 @@ export async function GET(request: NextRequest) {
       },
       { status: 500 },
     );
+  } finally {
+    // Always, including the fatal path — a lease held past a crash would silently skip every
+    // subsequent tick until its TTL expired.
+    if (releaseLease) await releaseLease();
   }
 }

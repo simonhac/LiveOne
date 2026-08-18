@@ -18,8 +18,7 @@ jest.mock("@/lib/db/planetscale", () => ({
 const mockClient = {
   getVehicles: jest.fn<(token: string) => Promise<any[]>>(),
   wakeUp: jest.fn<(token: string, vehicleId: string) => Promise<boolean>>(),
-  getVehicleData:
-    jest.fn<(token: string, vehicleId: string) => Promise<any>>(),
+  getVehicleData: jest.fn<(token: string, vehicleId: string) => Promise<any>>(),
 };
 
 jest.mock("@/lib/vendors/tesla/tesla-client", () => ({
@@ -43,8 +42,8 @@ class TestableTeslaAdapter extends TeslaAdapter {
   fetch(device: DeviceConfigView, ctx: FetchContext): Promise<FetchResult> {
     return this.fetchData(device, {}, ctx);
   }
-  schedule(device: DeviceConfigView, last: Date | null, now: Date) {
-    return this.evaluateSchedule(device, last, now);
+  interval(device: DeviceConfigView): number {
+    return this.intervalFor(device);
   }
   setChargingFlag(deviceId: number, value: boolean): void {
     (
@@ -107,9 +106,9 @@ describe("TeslaAdapter.fetchData", () => {
     expect(result.readings?.length).toBeGreaterThan(0);
     expect(mockClient.getVehicles).toHaveBeenCalledTimes(1);
     expect(mockClient.getVehicleData).toHaveBeenCalledTimes(1);
-    expect(
-      mockClient.getVehicles.mock.invocationCallOrder[0],
-    ).toBeLessThan(mockClient.getVehicleData.mock.invocationCallOrder[0]);
+    expect(mockClient.getVehicles.mock.invocationCallOrder[0]).toBeLessThan(
+      mockClient.getVehicleData.mock.invocationCallOrder[0],
+    );
     expect(adapter.getChargingFlag(10)).toBe(true);
   });
 
@@ -151,13 +150,7 @@ describe("TeslaAdapter.fetchData", () => {
     expect(adapter.getChargingFlag(10)).toBe(false);
 
     // The cadence drops back to idle.
-    const evaluation = adapter.schedule(
-      device,
-      new Date("2026-08-03T00:00:00Z"),
-      new Date("2026-08-03T01:00:00Z"),
-    );
-    expect(evaluation.shouldPoll).toBe(true);
-    expect(evaluation.reason).toBe("Default interval (15 min)");
+    expect(adapter.interval(device)).toBe(15);
   });
 
   it("4. falls back to the wake path and succeeds when the car wakes", async () => {
@@ -235,50 +228,68 @@ describe("TeslaAdapter.fetchData", () => {
   });
 });
 
-describe("TeslaAdapter.evaluateSchedule", () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2026-08-03T00:03:30Z"));
-  });
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
-  const now = new Date("2026-08-03T00:03:30Z");
-  const longAgo = new Date("2026-08-02T23:00:00Z");
-
+/**
+ * Tesla's whole scheduling contribution is now the interval selector — the slot rule itself is
+ * verified once, for every vendor, in `lib/vendors/__tests__/schedule.test.ts`.
+ */
+describe("TeslaAdapter.intervalFor", () => {
   it("uses the idle default when not charging", () => {
-    const e = adapter.schedule(makeDevice(), longAgo, now);
-    expect(e.shouldPoll).toBe(true);
-    expect(e.reason).toBe("Default interval (15 min)");
+    expect(adapter.interval(makeDevice())).toBe(15);
   });
 
   it("uses the 2-minute charging default when charging", () => {
     adapter.setChargingFlag(10, true);
-    const e = adapter.schedule(makeDevice(), longAgo, now);
-    expect(e.shouldPoll).toBe(true);
-    expect(e.reason).toBe("Charging interval (2 min)");
+    expect(adapter.interval(makeDevice())).toBe(2);
   });
 
   it("honours a stored charging override", () => {
     adapter.setChargingFlag(10, true);
-    const e = adapter.schedule(
-      makeDevice({ tesla: { chargingPollMinutes: 5 } }),
-      longAgo,
-      now,
-    );
-    expect(e.reason).toBe("Charging interval (5 min)");
+    expect(
+      adapter.interval(makeDevice({ tesla: { chargingPollMinutes: 5 } })),
+    ).toBe(5);
   });
 
-  it("is not due 30 s after a charging poll", () => {
+  it("honours a stored idle override", () => {
+    expect(
+      adapter.interval(makeDevice({ tesla: { idlePollMinutes: 12 } })),
+    ).toBe(12);
+  });
+});
+
+describe("TeslaAdapter scheduling, end to end", () => {
+  const withLastSuccess = (iso: string, metadata: unknown = null) =>
+    ({
+      ...makeDevice(metadata),
+      pollingStatus: { lastSuccessTime: new Date(iso) },
+    }) as unknown as DeviceConfigView;
+
+  it("polls once per charging slot and not again inside it", async () => {
     adapter.setChargingFlag(10, true);
-    const e = adapter.schedule(
-      makeDevice(),
-      new Date("2026-08-03T00:03:00Z"),
-      now,
+    // 2-min slots: 00:02–00:04. A success at 00:02:10 closes the 00:02 slot…
+    const inSlot = await adapter.shouldPoll(
+      withLastSuccess("2026-08-03T00:02:10Z"),
+      false,
+      new Date("2026-08-03T00:03:30Z"),
+    );
+    expect(inSlot.shouldPoll).toBe(false);
+
+    // …and the 00:04 slot reopens it.
+    const nextSlot = await adapter.shouldPoll(
+      withLastSuccess("2026-08-03T00:02:10Z"),
+      false,
+      new Date("2026-08-03T00:04:05Z"),
+    );
+    expect(nextSlot.shouldPoll).toBe(true);
+  });
+
+  it("holds an idle car for its full 15-minute slot", async () => {
+    const e = await adapter.shouldPoll(
+      withLastSuccess("2026-08-03T00:00:10Z"),
+      false,
+      new Date("2026-08-03T00:14:00Z"),
     );
     expect(e.shouldPoll).toBe(false);
-    expect(e.reason).toBe("Not due yet (polls every 2 min, charging)");
+    expect(e.reason).toContain("15 min");
   });
 });
 

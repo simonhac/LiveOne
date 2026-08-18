@@ -103,20 +103,60 @@ describe("applyObservation", () => {
     expect(next.delaySec).toBe(132);
   });
 
-  it("clamps an extreme observed delay before updating the EWMA", () => {
-    const next = applyObservation(
-      baseState(),
-      endMs(10, 5),
-      endMs(10, 5) + 1_000_000, // clamped to 300
-    );
-    // 0.3*300 + 0.7*150 = 195
-    expect(next.delaySec).toBe(195);
-  });
-
   it("ignores a re-pull / revision of an already-seen interval", () => {
     const state = baseState({ lastSeenIntervalEndMs: endMs(10, 5) });
     const next = applyObservation(state, endMs(10, 5), endMs(10, 5) + 120_000);
     expect(next).toBe(state); // unchanged reference → delay not skewed
+  });
+
+  /**
+   * The bug that pinned prod's `delaySec` at the 60 s floor (measured 2026-08-15), opening the
+   * arrival window ~31 s after each interval closed — long before NEM's 1-3 min publication lag —
+   * and halving the effective capture rate to ~7 polls/h against a 12/h target.
+   */
+  describe("only measures a delay it can actually observe", () => {
+    it("does not read our OWN downtime as a slow vendor", () => {
+      // Captured 10:05 at 10:21:40 — but 10:20 had also closed and we did not get it, so the only
+      // thing this proves is that we were not polling. The old code recorded a 16-minute "delay".
+      const next = applyObservation(
+        baseState(),
+        endMs(10, 5),
+        endMs(10, 5) + 1_000_000,
+      );
+      expect(next.delaySec).toBe(150); // unmoved
+      expect(next.lastSeenIntervalEndMs).toBe(endMs(10, 5)); // but progress is still recorded
+    });
+
+    it("treats a missed target as a LOWER BOUND that can only push the estimate up", () => {
+      // At 10:14:00 the 10:10 interval has closed and we only came away with 10:05: 10:10 had not
+      // published in 240 s. That is evidence the delay is ≥240 s, so the estimate rises.
+      const next = applyObservation(
+        baseState({ delaySec: 150 }),
+        endMs(10, 5),
+        endMs(10, 10) + 240_000,
+      );
+      // 0.3*240 + 0.7*150 = 177
+      expect(next.delaySec).toBe(177);
+    });
+
+    it("never lets a lower bound drag the estimate down", () => {
+      // Same shape, but the bound (60 s) is below the current estimate — it says nothing new.
+      const next = applyObservation(
+        baseState({ delaySec: 200 }),
+        endMs(10, 5),
+        endMs(10, 10) + 30_000,
+      );
+      expect(next.delaySec).toBe(200);
+    });
+
+    it("still learns normally when it catches the interval that just closed", () => {
+      const next = applyObservation(
+        baseState(),
+        endMs(10, 5),
+        endMs(10, 5) + 200_000,
+      );
+      expect(next.delaySec).toBe(165); // 0.3*200 + 0.7*150
+    });
   });
 });
 

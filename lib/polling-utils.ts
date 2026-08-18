@@ -25,12 +25,20 @@ export async function getPollingStatus(systemId: number) {
 
 /**
  * Update polling status after a successful poll.
+ *
+ * ⚠️ `pollStartedAt` is the instant the poll BEGAN, not the instant it finished. The slot scheduler
+ * (`lib/vendors/schedule.ts`) asks which slot a poll belongs to, and a poll that starts at 10:04:58
+ * and finishes at 10:05:02 belongs to the 10:00 slot — stamping the completion time recorded it
+ * into 10:05 and silently suppressed that slot's poll. It also makes `device_state.last_poll_time`
+ * agree with `sessions.created_at`, which it previously did not (they differed by the poll's
+ * duration, ~1-3s normally and 32s for a Sigenergy 502).
  */
 export async function updatePollingStatusSuccess(
   systemId: number,
-  responseData?: any,
+  responseData: any,
+  pollStartedAt: Date,
 ) {
-  const now = new Date();
+  const now = pollStartedAt;
 
   // ⚠️  CRITICAL: Transform response data before storage
   //
@@ -57,9 +65,10 @@ export async function updatePollingStatusSuccess(
 export async function updatePollingStatusError(
   systemId: number,
   error: Error | string,
-  responseData?: any,
+  responseData: any,
+  pollStartedAt: Date,
 ) {
-  const now = new Date();
+  const now = pollStartedAt;
   const errorMessage = error instanceof Error ? error.message : error;
 
   // Transform response data if provided (same as success case)

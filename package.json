@@ -39,6 +39,7 @@
     "db:rebuild-dev-kv": "tsx scripts/utils/rebuild-dev-kv-from-db.ts",
     "db:recompute-dev-runs": "tsx scripts/utils/recompute-dev-runs-from-db.ts",
     "amber:forecast-accuracy": "tsx --env-file=.env.local scripts/amber/forecast-accuracy.ts",
+    "poll-cadence": "tsx --env-file=.env.local scripts/utils/poll-cadence.ts",
     "sigen:poll": "tsx --env-file=.env.local scripts/sigenergy/poll.ts",
     "deepsea:poll": "npm run --workspace @liveone/usher deepsea:poll",
     "usher": "npm run --workspace @liveone/usher usher",

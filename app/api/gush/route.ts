@@ -238,10 +238,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      await updatePollingStatusSuccess(device.id, {
-        sessionLabel: data.sessionLabel,
-        readings: readingsToInsert.length,
-      });
+      await updatePollingStatusSuccess(
+        device.id,
+        {
+          sessionLabel: data.sessionLabel,
+          readings: readingsToInsert.length,
+        },
+        sessionStart,
+      );
 
       await sessionManager.updateSessionResult(
         session.id,
@@ -273,6 +277,8 @@ export async function POST(request: NextRequest) {
         await updatePollingStatusError(
           device.id,
           dbError instanceof Error ? dbError : "Database error",
+          null,
+          sessionStart,
         );
         await sessionManager.updateSessionResult(
           session.id,

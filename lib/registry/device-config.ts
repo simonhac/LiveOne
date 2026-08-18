@@ -257,9 +257,18 @@ async function deviceByUsernameAndSlug(
   return deviceByOwnerSlug(ownerUserId, slug);
 }
 
-/** All active devices. Inherently fleet-wide (poll-all cron / flow recompute). ← `getActiveDevices`. */
+/**
+ * All active devices. Inherently fleet-wide (poll-all cron / flow recompute). ← `getActiveDevices`.
+ *
+ * Ordered by `rid`. Without it the order is Postgres heap order, which is stable only until a row
+ * is updated — so which device the minutely cron reaches last (and therefore starves when a tick
+ * runs long) was unowned and free to change silently. The cron re-sorts by slot width on top of
+ * this; the point here is that the input order is reproducible at all.
+ */
 async function activeDevices(): Promise<DeviceRecord[]> {
-  const rows = await baseSelect().where(eq(pgDevices.status, "active"));
+  const rows = await baseSelect()
+    .where(eq(pgDevices.status, "active"))
+    .orderBy(pgDevices.rid);
   return rows.map(toRecord);
 }
 

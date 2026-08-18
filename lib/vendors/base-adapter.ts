@@ -11,6 +11,7 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { LatestReadingData } from "@/lib/types/readings";
 import type { ZonedDateTime } from "@internationalized/date";
 import { getNextMinuteBoundary } from "@/lib/date-utils";
+import { evaluateSlot } from "./schedule";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
 import { sessionManager } from "@/lib/session-manager";
 import {
@@ -40,136 +41,69 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   abstract readonly displayName: string;
   abstract readonly dataSource: "poll" | "push" | "combined";
 
-  // Polling schedule configuration
-  protected pollIntervalMinutes = 1; // Default to 1 minute
-  protected toleranceSeconds = 30; // Default to 30 seconds tolerance
+  // ── The entire scheduling surface a vendor may touch ─────────────────────────────────────────
+  //
+  // Timing lives in `lib/vendors/schedule.ts` and NOWHERE else. Adapters used to override
+  // `evaluateSchedule` and re-derive the cadence themselves; every one of those overrides turned
+  // out to be a gate or an interval selector rather than a different algorithm, and between them
+  // they carried three copies of the same drift arithmetic and 17 calls to `getNextMinuteBoundary`
+  // purely to build a display string. A vendor now declares at most the three things below.
+
+  /** Slot width. Override the field for a fixed cadence, or `intervalFor` for a dynamic one. */
+  protected pollIntervalMinutes = 1;
 
   /**
-   * When true, poll on absolute `pollIntervalMinutes` boundaries (:00, :05, :10 … in UTC) and, if
-   * no reading has yet been recorded for the current window, retry every minute until one succeeds —
-   * then stay quiet until the next boundary. When false (default), use the legacy drift-based
-   * cadence keyed off `lastPollTime`.
+   * Cron-loop deadline for one poll of this vendor. 20 s is generous against a measured p90 of
+   * ~5 s across every vendor; raise it only where the vendor has a legitimate long path (Tesla's
+   * wake loop), never to accommodate a retry ladder.
    */
-  protected alignToBoundary = false;
+  readonly pollDeadlineMs: number = 20_000;
 
   /**
-   * Evaluate whether this device should be polled now
-   * @param device - The device to evaluate
-   * @param lastPollTime - Time of last poll
-   * @param now - Current time
-   * @returns Evaluation result with shouldPoll flag, reason, and next poll time
+   * Whole minutes into each slot before this vendor may be polled — its publication lag, measured
+   * (`scripts/utils/poll-cadence.ts`), not guessed. 0 for vendors that serve a live snapshot.
    */
-  protected evaluateSchedule(
-    device: DeviceConfigView,
-    lastPollTime: Date | null,
-    now: Date,
-  ): ScheduleEvaluation {
-    if (this.alignToBoundary) {
-      return this.evaluateBoundarySchedule(device, now);
-    }
+  protected pollOffsetMinutes = 0;
 
-    const targetIntervalMs = this.pollIntervalMinutes * 60 * 1000;
-    const toleranceMs = this.toleranceSeconds * 1000;
+  /** Slot width for one device. Override when the cadence depends on device state (see Tesla). */
+  protected intervalFor(_device: DeviceConfigView): number {
+    return this.pollIntervalMinutes;
+  }
 
-    // If never polled, poll now
-    if (!lastPollTime) {
-      // Next poll will be one interval from now, aligned to minute boundary
-      const nextPollTime = getNextMinuteBoundary(
-        this.pollIntervalMinutes,
-        device.timezoneOffsetMin,
-      );
-      return {
-        shouldPoll: true,
-        reason: "Never polled",
-        nextPollTime,
-      };
-    }
+  /**
+   * Vendor-specific veto, evaluated before the slot rule — "there is no point polling right now",
+   * as distinct from "it isn't time yet". Enphase uses it for its daylight window, OpenElectricity
+   * for its learned publish-arrival window. Returning a reason keeps the skip legible in the poll
+   * result exactly as a schedule skip is.
+   */
+  protected async isEligible(
+    _device: DeviceConfigView,
+    _now: Date,
+  ): Promise<true | { eligible: false; reason: string }> {
+    return true;
+  }
 
-    const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
-
-    // Check if we've reached the interval (with tolerance for delays)
-    if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
-      // Next poll will be one interval from now, aligned to minute boundary
-      const nextPollTime = getNextMinuteBoundary(
-        this.pollIntervalMinutes,
-        device.timezoneOffsetMin,
-      );
-      return {
-        shouldPoll: true,
-        reason: `Interval reached (${this.pollIntervalMinutes} min)`,
-        nextPollTime,
-      };
-    }
-
-    // Not time yet - calculate when next poll should be, aligned to minute boundary
-    const nextPollTime = getNextMinuteBoundary(
-      this.pollIntervalMinutes,
+  /**
+   * When this device could next be polled — the start of its next slot, plus the offset. Display
+   * only; nothing sleeps on it. Computed here so no adapter has to.
+   */
+  private nextPollFor(device: DeviceConfigView, nowMs: number): ZonedDateTime {
+    const next = getNextMinuteBoundary(
+      this.intervalFor(device),
       device.timezoneOffsetMin,
+      new Date(nowMs),
     );
-
-    return {
-      shouldPoll: false,
-      reason: `Not due yet (polls every ${this.pollIntervalMinutes} min)`,
-      nextPollTime,
-    };
+    return this.pollOffsetMinutes
+      ? next.add({ minutes: this.pollOffsetMinutes })
+      : next;
   }
 
   /**
-   * Boundary-aligned schedule (opt-in via `alignToBoundary`). Poll on absolute
-   * `pollIntervalMinutes` boundaries and, until a reading is recorded for the current window, retry
-   * every minute (the minutely cron re-evaluates each tick). Keyed off `lastSuccessTime`, which is
-   * already loaded with the device, so it needs no extra state and survives serverless cold starts.
-   */
-  private evaluateBoundarySchedule(
-    device: DeviceConfigView,
-    now: Date,
-  ): ScheduleEvaluation {
-    const intervalMs = this.pollIntervalMinutes * 60 * 1000;
-    const boundaryMs = Math.floor(now.getTime() / intervalMs) * intervalMs;
-    const lastSuccess = device.pollingStatus?.lastSuccessTime ?? null;
-    const recorded = lastSuccess != null && lastSuccess.getTime() >= boundaryMs;
-    const nextPollTime = getNextMinuteBoundary(
-      this.pollIntervalMinutes,
-      device.timezoneOffsetMin,
-    );
-
-    if (recorded) {
-      return {
-        shouldPoll: false,
-        reason: "Recorded this window",
-        nextPollTime,
-      };
-    }
-
-    const atBoundary = now.getTime() - boundaryMs < 60 * 1000;
-    return {
-      shouldPoll: true,
-      reason: atBoundary
-        ? "Boundary poll"
-        : "Retry until next boundary (window not yet recorded)",
-      nextPollTime,
-    };
-  }
-
-  /**
-   * Get the last poll time for this device
-   * Uses the polling status that's already loaded with the device
-   * @param device - The device to check
-   * @returns Time of last poll, or null if never polled
-   */
-  protected async getLastPollTime(
-    device: DeviceConfigView,
-  ): Promise<Date | null> {
-    // The polling status is already loaded with the device by the config registry
-    return device.pollingStatus?.lastPollTime || null;
-  }
-
-  /**
-   * Check if device should be polled based on schedule
-   * @param device - The device to check
-   * @param forcePollAll - If true, always returns { shouldPoll: true }
-   * @param now - Current time
-   * @returns Object with shouldPoll flag, reason if skipped, and nextPoll time
+   * Should this device be polled now? FINAL — the one implementation of "is it time", for every
+   * vendor. Vendors influence it through `intervalFor` / `pollOffsetMinutes` / `isEligible` only.
+   *
+   * Keyed on `lastSuccessTime` (a failed poll must not consume its slot) which, since this change,
+   * stamps when the poll STARTED — see `lib/vendors/schedule.ts` for why both matter.
    */
   async shouldPoll(
     device: DeviceConfigView,
@@ -191,13 +125,24 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       return { shouldPoll: true };
     }
 
-    const lastPollTime = await this.getLastPollTime(device);
-    const evaluation = this.evaluateSchedule(device, lastPollTime, now);
+    const intervalMinutes = this.intervalFor(device);
+    const nextPoll = this.nextPollFor(device, now.getTime());
+
+    const eligible = await this.isEligible(device, now);
+    if (eligible !== true) {
+      return { shouldPoll: false, reason: eligible.reason, nextPoll };
+    }
+
+    const decision = evaluateSlot(
+      now.getTime(),
+      device.pollingStatus?.lastSuccessTime?.getTime() ?? null,
+      { intervalMinutes, offsetMinutes: this.pollOffsetMinutes },
+    );
 
     return {
-      shouldPoll: evaluation.shouldPoll,
-      reason: evaluation.reason,
-      nextPoll: evaluation.nextPollTime,
+      shouldPoll: decision.due,
+      reason: `${decision.reason} (${intervalMinutes} min)`,
+      nextPoll,
     };
   }
 
@@ -337,7 +282,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
       return this.polled(
         recordsProcessed,
-        result.nextPollTime,
+        this.nextPollFor(device, startedAt.getTime()),
         result.rawResponse,
         stages,
       );
@@ -454,7 +399,10 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       },
       collector.observations,
     );
-    await updatePollingStatusSuccess(systemId, rawResponse);
+    // `startedAt`, NOT "now": the slot rule asks which slot this poll belongs to, and a poll that
+    // began at 10:04:58 and finished at 10:05:02 belongs to 10:00. Stamping the completion time
+    // recorded it into the 10:05 slot and suppressed that slot's poll.
+    await updatePollingStatusSuccess(systemId, rawResponse, startedAt);
   }
 
   /**
@@ -483,6 +431,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
       systemId,
       result.error || "Unknown error",
       result.rawResponse,
+      startedAt,
     );
   }
 

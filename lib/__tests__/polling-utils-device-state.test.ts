@@ -59,6 +59,9 @@ function makeFakeDb(fail: { deviceState?: boolean } = {}) {
 /** Collapse whitespace so assertions read like the SQL, not like the template literal. */
 const flat = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** The poll's START instant — what the slot scheduler keys off. See `lib/vendors/schedule.ts`. */
+const POLL_START = new Date("2026-08-15T05:04:58.000Z");
+
 describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
   beforeEach(() => {
     mockDb = null;
@@ -68,7 +71,7 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     const { db, capture } = makeFakeDb();
     mockDb = db;
 
-    await updatePollingStatusSuccess(7, { soc: 55 });
+    await updatePollingStatusSuccess(7, { soc: 55 }, POLL_START);
 
     expect(capture.deviceState).toHaveLength(1);
     // polling_status is frozen as the rollback snapshot — resurrecting the write costs a full
@@ -92,8 +95,8 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     const { db, capture } = makeFakeDb();
     mockDb = db;
 
-    await updatePollingStatusSuccess(7, null);
-    await updatePollingStatusError(7, new Error("nope"));
+    await updatePollingStatusSuccess(7, null, POLL_START);
+    await updatePollingStatusError(7, new Error("nope"), null, POLL_START);
 
     const [success, failure] = capture.deviceState.map((c) => flat(c.sql));
 
@@ -121,9 +124,7 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     const { db, capture } = makeFakeDb();
     mockDb = db;
 
-    const before = Date.now();
-    await updatePollingStatusSuccess(7, null);
-    const after = Date.now();
+    await updatePollingStatusSuccess(7, null, POLL_START);
 
     const { sql: text, params } = capture.deviceState[0];
     expect(flat(text)).toContain("::timestamp");
@@ -133,11 +134,9 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
         typeof p === "string" && /^\d{4}-\d\d-\d\dT[\d:.]+Z$/.test(p),
     );
     expect(stamps.length).toBeGreaterThan(0);
-    for (const s of stamps) {
-      const t = Date.parse(s);
-      expect(t).toBeGreaterThanOrEqual(before);
-      expect(t).toBeLessThanOrEqual(after);
-    }
+    // Every stamp is the poll's START, not "now" — the slot scheduler asks which slot the poll
+    // belongs to, and a poll finishing just past a boundary must not claim the slot it crossed into.
+    for (const s of stamps) expect(s).toBe(POLL_START.toISOString());
     // No raw Date survives into the params — that is the failure mode being guarded.
     expect(params.some((p) => p instanceof Date)).toBe(false);
   });
@@ -146,7 +145,7 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     const { db, capture } = makeFakeDb();
     mockDb = db;
 
-    await updatePollingStatusSuccess(7);
+    await updatePollingStatusSuccess(7, null, POLL_START);
 
     const { sql: text, params } = capture.deviceState[0];
     expect(flat(text)).toContain("NULL::jsonb");
@@ -157,7 +156,7 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     const { db, capture } = makeFakeDb();
     mockDb = db;
 
-    await updatePollingStatusSuccess(7, { soc: 55 });
+    await updatePollingStatusSuccess(7, { soc: 55 }, POLL_START);
 
     const { params } = capture.deviceState[0];
     const json = params.filter(
@@ -174,7 +173,11 @@ describe("device_state polling writer (config-v4 Phase 12 slice C)", () => {
     // minting a duplicate session. Both entry points must hold that line.
     const { db } = makeFakeDb({ deviceState: true });
     mockDb = db;
-    await expect(updatePollingStatusSuccess(7, null)).resolves.toBeUndefined();
-    await expect(updatePollingStatusError(7, "boom")).resolves.toBeUndefined();
+    await expect(
+      updatePollingStatusSuccess(7, null, POLL_START),
+    ).resolves.toBeUndefined();
+    await expect(
+      updatePollingStatusError(7, "boom", null, POLL_START),
+    ).resolves.toBeUndefined();
   });
 });

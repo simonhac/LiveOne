@@ -11,7 +11,7 @@
  * (wake-or-skip) path rather than recording a failed poll.
  */
 
-import { BaseVendorAdapter, type ScheduleEvaluation } from "../base-adapter";
+import { BaseVendorAdapter } from "../base-adapter";
 import type {
   ControlCapability,
   FetchContext,
@@ -20,7 +20,6 @@ import type {
 } from "../types";
 import { TeslaControlCapability } from "./control";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
-import { getNextMinuteBoundary } from "@/lib/date-utils";
 import { getTeslaClient } from "./tesla-client";
 import { getValidTeslaToken } from "./tesla-auth";
 import { TESLA_POINTS } from "./point-metadata";
@@ -77,66 +76,24 @@ export class TeslaAdapter extends BaseVendorAdapter {
   readonly control: ControlCapability = new TeslaControlCapability();
 
   protected pollIntervalMinutes = TESLA_POLL_DEFAULTS.idlePollMinutes;
-  protected toleranceSeconds = 60;
+  // Waking a sleeping car polls the Fleet API every 2 s for up to 30 s (tesla-client.ts wakeUp),
+  // which is real work rather than a stalled request — so the deadline has to clear it.
+  readonly pollDeadlineMs = 40_000;
 
-  // Track last known charging state per device (in-memory cache)
+  // Track last known charging state per device (in-memory cache).
+  // ⚠️ Process-local: on a serverless cold start this is empty, so a charging car falls back to the
+  // idle cadence until the next successful poll re-primes it.
   private chargingStates = new Map<number, boolean>();
 
   /**
-   * Override evaluateSchedule for Tesla-specific logic:
-   * - 15 min default
-   * - 2 min (default) when charging (from previous poll)
+   * Tesla's whole scheduling contribution: a tighter slot while the car is charging (2 min by
+   * default, per-device overridable), so a charge-limit overshoot is bounded to one slot.
    */
-  protected evaluateSchedule(
-    device: DeviceConfigView,
-    lastPollTime: Date | null,
-    now: Date,
-  ): ScheduleEvaluation {
-    // Determine interval based on last known charging state, honouring per-device overrides
+  protected intervalFor(device: DeviceConfigView): number {
     const cfg = resolveTeslaConfig(device);
-    const isCharging = this.chargingStates.get(device.id) || false;
-    const interval = isCharging ? cfg.chargingInterval : cfg.idleInterval;
-
-    // If never polled, poll now
-    if (!lastPollTime) {
-      const nextPollTime = getNextMinuteBoundary(
-        interval,
-        device.timezoneOffsetMin,
-      );
-      return {
-        shouldPoll: true,
-        reason: "Never polled",
-        nextPollTime,
-      };
-    }
-
-    const msSinceLastPoll = now.getTime() - lastPollTime.getTime();
-    const targetIntervalMs = interval * 60 * 1000;
-    const toleranceMs = this.toleranceSeconds * 1000;
-
-    if (msSinceLastPoll >= targetIntervalMs - toleranceMs) {
-      const nextPollTime = getNextMinuteBoundary(
-        interval,
-        device.timezoneOffsetMin,
-      );
-      return {
-        shouldPoll: true,
-        reason: isCharging
-          ? `Charging interval (${interval} min)`
-          : `Default interval (${interval} min)`,
-        nextPollTime,
-      };
-    }
-
-    const nextPollTime = getNextMinuteBoundary(
-      interval,
-      device.timezoneOffsetMin,
-    );
-    return {
-      shouldPoll: false,
-      reason: `Not due yet (polls every ${interval} min${isCharging ? ", charging" : ""})`,
-      nextPollTime,
-    };
+    return this.chargingStates.get(device.id)
+      ? cfg.chargingInterval
+      : cfg.idleInterval;
   }
 
   /**
@@ -211,14 +168,9 @@ export class TeslaAdapter extends BaseVendorAdapter {
             console.log(
               `[Tesla] Vehicle ${vehicleId} is ${vehicle.state}; wakeToPoll disabled, skipping poll (no wake)`,
             );
-            const nextPollTime = getNextMinuteBoundary(
-              cfg.idleInterval,
-              device.timezoneOffsetMin,
-            );
             return {
               success: true,
               readings: [],
-              nextPollTime,
               rawResponse: {
                 skipped: true,
                 reason: `Vehicle ${vehicle.state}, wakeToPoll disabled`,
@@ -235,14 +187,9 @@ export class TeslaAdapter extends BaseVendorAdapter {
             console.log(
               `[Tesla] Vehicle ${vehicleId} did not wake, skipping poll`,
             );
-            const nextPollTime = getNextMinuteBoundary(
-              cfg.idleInterval,
-              device.timezoneOffsetMin,
-            );
             return {
               success: true,
               readings: [],
-              nextPollTime,
               rawResponse: { skipped: true, reason: "Vehicle did not wake up" },
             };
           }
@@ -284,17 +231,11 @@ export class TeslaAdapter extends BaseVendorAdapter {
         `[Tesla] System ${device.id}: Extracted ${readings.length} readings`,
       );
 
-      // Calculate next poll time based on current charging state
-      const nextInterval = isCharging ? cfg.chargingInterval : cfg.idleInterval;
-      const nextPollTime = getNextMinuteBoundary(
-        nextInterval,
-        device.timezoneOffsetMin,
-      );
-
+      // `chargingStates` was updated above, so `intervalFor` already reflects the state we just
+      // observed — the base adapter derives the next poll time from it.
       return {
         success: true,
         readings,
-        nextPollTime,
         rawResponse: vehicleData,
       };
     } catch (error) {

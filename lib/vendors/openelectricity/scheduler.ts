@@ -154,6 +154,25 @@ export function decidePoll(args: {
 /**
  * Pure EWMA update applied after a NEW interval is captured. Re-pulls of an already-seen
  * interval (revisions) don't move the estimate. Returns the same reference when unchanged.
+ *
+ * ⚠️ The measurement is only valid when we captured the interval that had just closed. The original
+ * version measured `observedAt − newestCapturedInterval` unconditionally, and that is a different
+ * quantity whenever a poll picks up an OLDER interval: catching the 11:45 interval at 11:52 records
+ * a 7-minute "delay" for data that may have published at 11:47, and catching a backlog of two
+ * intervals at once records a delay for the wrong one entirely.
+ *
+ * Measured on prod 2026-08-15: `delaySec` had collapsed to 61 s — the `MIN_DELAY_SEC` floor — so the
+ * arrival window opened ~31 s after each interval closed, well before NEM's documented 1-3 min
+ * publication lag. Polls therefore landed too early to see the interval they were waiting for, the
+ * capture slipped to roughly one poll per two intervals, and both regions ran at ~7 polls/h against
+ * a 12/h target. No data was lost (the 45-min lookback backfills) but every interval arrived about
+ * twice as late as intended.
+ *
+ * So there are two cases:
+ *  - we caught the just-closed interval ⇒ a true delay measurement;
+ *  - we only caught an older one ⇒ the target had NOT published by now, which is a LOWER BOUND on
+ *    the delay. Feeding the stale interval's age in as if it were the delay is what dragged the
+ *    estimate down; nudging toward the bound is what the evidence actually supports.
  */
 export function applyObservation(
   state: OeSchedState,
@@ -161,13 +180,23 @@ export function applyObservation(
   observedAtMs: number,
 ): OeSchedState {
   if (capturedIntervalEndMs <= state.lastSeenIntervalEndMs) return state;
-  const observed = clamp(
-    (observedAtMs - capturedIntervalEndMs) / 1000,
-    MIN_DELAY_SEC,
-    MAX_DELAY_SEC,
-  );
+
+  const justClosedEndMs = floor5(observedAtMs);
+  const caughtTheTarget = capturedIntervalEndMs >= justClosedEndMs;
+  const observedSec = caughtTheTarget
+    ? (observedAtMs - capturedIntervalEndMs) / 1000
+    : // Lower bound: the just-closed interval still hadn't published at `observedAtMs`.
+      (observedAtMs - justClosedEndMs) / 1000;
+
+  const observed = clamp(observedSec, MIN_DELAY_SEC, MAX_DELAY_SEC);
+  // A lower bound may only push the estimate UP — it is evidence that the delay is at least this
+  // long, never that it is this short.
+  const target = caughtTheTarget
+    ? observed
+    : Math.max(observed, state.delaySec);
+
   const delaySec = Math.round(
-    EWMA_ALPHA * observed + (1 - EWMA_ALPHA) * state.delaySec,
+    EWMA_ALPHA * target + (1 - EWMA_ALPHA) * state.delaySec,
   );
   return { ...state, delaySec, lastSeenIntervalEndMs: capturedIntervalEndMs };
 }

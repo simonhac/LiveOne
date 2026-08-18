@@ -8,7 +8,6 @@ import type {
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
-import { getNextMinuteBoundary } from "@/lib/date-utils";
 
 interface MondoCredentials {
   email: string;
@@ -39,9 +38,7 @@ export class MondoAdapter extends BaseVendorAdapter {
   readonly dataSource = "poll" as const;
   readonly supportsAddDevice = true;
 
-  // Mondo polls every 2 minutes
   protected pollIntervalMinutes = 2;
-  protected toleranceSeconds = 30;
 
   /**
    * Override getLastReading - returns null for now
@@ -307,18 +304,11 @@ export class MondoAdapter extends BaseVendorAdapter {
 
       console.log(`[Mondo] Fetch complete: ${readings.length} readings`);
 
-      // Calculate next poll time at the next boundary
-      const nextPollTime = getNextMinuteBoundary(
-        this.pollIntervalMinutes,
-        device.timezoneOffsetMin,
-      );
-
       return {
         success: true,
         readings,
         recordsProcessed: readings.length,
         rawResponse: subcircuitData,
-        nextPollTime,
       };
     } catch (error) {
       console.error(`[Mondo] Fetch error:`, error);

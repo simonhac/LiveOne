@@ -307,7 +307,7 @@ export async function POST(request: NextRequest) {
 
       // Update polling status to show successful data receipt
       // Store the parsed JSON object
-      await updatePollingStatusSuccess(device.id, data);
+      await updatePollingStatusSuccess(device.id, data, sessionStart);
 
       // Update session with success
       const duration = Date.now() - sessionStart.getTime();
@@ -344,6 +344,8 @@ export async function POST(request: NextRequest) {
       await updatePollingStatusError(
         device.id,
         dbError instanceof Error ? dbError : "Database error",
+        null,
+        sessionStart,
       );
 
       // Update session with error
