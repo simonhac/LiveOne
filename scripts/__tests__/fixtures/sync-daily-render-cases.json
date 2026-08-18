@@ -1,0 +1,63 @@
+[
+  {
+    "name": "mid-day row: ✅ / ⚠️ / ❌ ticks, linked labels, duration + reason in parens; only elapsed buckets get ⬜",
+    "state": {
+      "channel": "C123",
+      "ts": "1755000000.000100",
+      "date": "2026-08-18",
+      "header": "*sync prod→dev — Tue 18 Aug 2026 (AEST)*",
+      "entries": [
+        {
+          "label": "00:20",
+          "status": "ok",
+          "detail": "1m 21s",
+          "url": "https://github.com/simonhac/LiveOne/actions/runs/1/job/11"
+        },
+        {
+          "label": "02:20",
+          "status": "ok",
+          "detail": "58s",
+          "url": "https://github.com/simonhac/LiveOne/actions/runs/2/job/22"
+        },
+        {
+          "label": "04:20",
+          "status": "warn",
+          "detail": "1m 21s, 2 recovered",
+          "url": "https://github.com/simonhac/LiveOne/actions/runs/3/job/33"
+        },
+        {
+          "label": "06:20",
+          "status": "fail",
+          "detail": "5m 33s, prod→dev DB sync: database connection dropout",
+          "url": "https://github.com/simonhac/LiveOne/actions/runs/4/job/44"
+        }
+      ]
+    },
+    "expected": "*sync prod→dev — Tue 18 Aug 2026 (AEST)*\n✅ <https://github.com/simonhac/LiveOne/actions/runs/1/job/11|00:20> (1m 21s)  ·  ✅ <https://github.com/simonhac/LiveOne/actions/runs/2/job/22|02:20> (58s)  ·  ⚠️ <https://github.com/simonhac/LiveOne/actions/runs/3/job/33|04:20> (1m 21s, 2 recovered)  ·  ❌ <https://github.com/simonhac/LiveOne/actions/runs/4/job/44|06:20> (5m 33s, prod→dev DB sync: database connection dropout)  ·  ⬜ 08:00  ·  ⬜ 10:00"
+  },
+  {
+    "name": "a past day is fully due: every empty bucket shows ⬜",
+    "state": {
+      "channel": "C123",
+      "ts": "1755000000.000200",
+      "date": "2026-08-17",
+      "header": "*sync prod→dev — Mon 17 Aug 2026 (AEST)*",
+      "entries": [{ "label": "20:20", "status": "ok", "detail": "42s" }]
+    },
+    "expected": "*sync prod→dev — Mon 17 Aug 2026 (AEST)*\n⬜ 00:00  ·  ⬜ 02:00  ·  ⬜ 04:00  ·  ⬜ 06:00  ·  ⬜ 08:00  ·  ⬜ 10:00  ·  ⬜ 12:00  ·  ⬜ 14:00  ·  ⬜ 16:00  ·  ⬜ 18:00  ·  ✅ 20:20 (42s)  ·  ⬜ 22:00"
+  },
+  {
+    "name": "manual (workflow_dispatch) run renders the 🖐️ prefix and no parens when detail is empty",
+    "state": {
+      "channel": "C123",
+      "ts": "1755000000.000300",
+      "date": "2026-08-17",
+      "header": "*H*",
+      "entries": [
+        { "label": "09:45", "status": "ok", "detail": "", "manual": true },
+        { "label": "10:20", "status": "ok", "detail": "51s", "manual": false }
+      ]
+    },
+    "expected": "*H*\n⬜ 00:00  ·  ⬜ 02:00  ·  ⬜ 04:00  ·  ⬜ 06:00  ·  🖐️ ✅ 09:45  ·  ✅ 10:20 (51s)  ·  ⬜ 12:00  ·  ⬜ 14:00  ·  ⬜ 16:00  ·  ⬜ 18:00  ·  ⬜ 20:00  ·  ⬜ 22:00"
+  }
+]

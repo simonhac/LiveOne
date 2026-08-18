@@ -20,12 +20,12 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     # Post-fix the sync runs in a couple of minutes; 15 caps wasted Actions minutes if a leg wedges,
-    # while leaving generous headroom over the ~5-min target. A timeout shows as `cancelled` and fires
-    # the `Alert on timeout` step below (timeouts used to be silent — no `if: failure()`).
+    # while leaving generous headroom over the ~5-min target. A timeout shows as `cancelled`, which the
+    # `Slack daily row` step below still records as ❌ (timeouts used to be silent — no `if: failure()`).
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: read # gh run list — read the previous run's conclusion for the recovery ping
+      actions: read # jobs API — resolve this job's log URL, which the Slack row's timestamp links to
     steps:
       - uses: actions/checkout@v4
 
@@ -84,66 +84,25 @@ jobs:
           PLANETSCALE_PROD_BRANCH_ID: ${{ secrets.PLANETSCALE_PROD_BRANCH_ID }}
         run: npx tsx scripts/utils/run-workflow-step-with-diagnostics.ts "dev ownership remap" npm run db:reown-dev
 
-      # On a clean run: (1) warn to Slack if the sync blew the 5-min target, outputting the elapsed time;
-      # (2) if the previous run was unhealthy (failed or timed out), post a one-shot "recovered" ping.
-      - name: Report duration + recovery
-        if: success()
+      # ONE Slack message per Sydney day, edited in place, one tick per run — the same pattern the
+      # 2-hourly PG backups use (the-gitfather), in the same channel, with the same bot token. This
+      # step replaces the old per-event webhook posts (over-target / recovered-dropouts / failure /
+      # timeout / "recovered" ping): all of them are now folded into the row's glyph + parens, so a
+      # ❌ followed by a ✅ *is* the recovery notice. OBSERVATIONS_ALERT_WEBHOOK_URL is deliberately
+      # NOT passed — the bot already posts to this channel, so the webhook would duplicate every
+      # alert (same reasoning as pg-backup.yml). A failure still gets a loud <!here> message,
+      # threaded under the day row.
+      #
+      # `always()` so a failed or cancelled (= timed-out) run still ticks — a timeout must read as
+      # ❌, not as a missing run. `continue-on-error` so Slack can never decide the job's colour.
+      - name: Slack daily row
+        if: always()
+        continue-on-error: true
         env:
-          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          [ -n "${ALERT_WEBHOOK_URL:-}" ] || exit 0
-          ELAPSED=$(( $(date +%s) - SYNC_START ))
-          MIN=$(( ELAPSED / 60 )); SEC=$(( ELAPSED % 60 ))
-          post() {
-            curl -fsS -X POST -H 'Content-Type: application/json' \
-              -d "{\"text\":\"$1\"}" "$ALERT_WEBHOOK_URL" || true
-          }
-          echo "sync took ${MIN}m ${SEC}s (${ELAPSED}s)"
-          # Recovered connection drops are still operationally significant. The
-          # wrapped steps count retry events without copying arbitrary logs or secrets.
-          DROPOUTS="${SYNC_CONNECTION_DROPOUT_COUNT:-0}"
-          if [ "$DROPOUTS" -gt 0 ]; then
-            post "⚠️ sync-prod-to-dev recovered from ${DROPOUTS} database connection dropout(s) during ${SYNC_CONNECTION_DROPOUT_STAGES:-unknown stage}; completed in ${MIN}m ${SEC}s. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          fi
-          # (1) Over the 5-minute (300s) target → warn, with the time.
-          if [ "$ELAPSED" -gt 300 ]; then
-            post "⚠️ sync-prod-to-dev took ${MIN}m ${SEC}s — over the 5-min target. See GitHub Actions."
-          fi
-          # (2) First success after an unhealthy run. This run is still in_progress, so the latest
-          # *completed* run is the previous one; announce recovery if it failed or was cancelled (timeout).
-          PREV=$(gh run list --workflow=sync-prod-to-dev.yml --branch "${GITHUB_REF_NAME}" \
-                   --status completed --limit 1 --json conclusion --jq '.[0].conclusion // ""' || echo "")
-          if [ "$PREV" = "failure" ] || [ "$PREV" = "cancelled" ]; then
-            post "✅ sync-prod-to-dev recovered — liveone-dev is fresh again (latest sync took ${MIN}m ${SEC}s)."
-          fi
-
-      - name: Alert on failure
-        if: failure()
-        env:
-          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
-        run: |
-          [ -n "${ALERT_WEBHOOK_URL:-}" ] || exit 0
-          STAGE="${SYNC_FAILURE_STAGE:-workflow setup}"
-          MODE="${SYNC_FAILURE_MODE:-unclassified failure}"
-          DETAIL="${SYNC_FAILURE_DETAIL:-inspect the linked Actions log}"
-          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          PAYLOAD=$(jq -n \
-            --arg text "🔴 sync-prod-to-dev FAILED at ${STAGE}: ${MODE} — ${DETAIL}. liveone-dev may be stale. ${RUN_URL}" \
-            '{text: $text}')
-          curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d "$PAYLOAD" \
-            "$ALERT_WEBHOOK_URL" || true
-
-      # A timeout (timeout-minutes exceeded) surfaces as `cancelled`, which the failure alert misses —
-      # and a timeout is by definition over the 5-min target. Warn so stale dev is never silent.
-      - name: Alert on timeout
-        if: cancelled()
-        env:
-          ALERT_WEBHOOK_URL: ${{ secrets.OBSERVATIONS_ALERT_WEBHOOK_URL }}
-        run: |
-          [ -n "${ALERT_WEBHOOK_URL:-}" ] || exit 0
-          curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d '{"text":"⚠️ sync-prod-to-dev TIMED OUT (over the 5-min target) — liveone-dev may be stale. See GitHub Actions."}' \
-            "$ALERT_WEBHOOK_URL" || true
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
+          KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: npx tsx scripts/utils/report-sync-run-to-slack.ts
