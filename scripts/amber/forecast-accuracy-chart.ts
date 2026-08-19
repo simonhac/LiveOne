@@ -38,6 +38,8 @@ export interface ChartSeries {
 export interface ChartSpec {
   title: string;
   subtitle: string;
+  /** Caller-supplied, because the honest wording depends on the lead anchor it chose. */
+  footnote: string;
   series: ChartSeries[];
 }
 
@@ -146,7 +148,7 @@ function buildSvg(spec: ChartSpec): string {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" font-family="system-ui, -apple-system, sans-serif">`,
     `<rect width="${WIDTH}" height="${HEIGHT}" fill="${SURFACE}"/>`,
     `<text x="24" y="34" font-size="16" font-weight="600" fill="${TEXT_PRIMARY}">${esc(spec.title)}</text>`,
-    `<text x="24" y="55" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(spec.subtitle)} · c/kWh incl GST · lead anchored to interval end</text>`,
+    `<text x="24" y="55" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(spec.subtitle)} · c/kWh incl GST</text>`,
   );
 
   // Legend — always present for ≥2 series; identity never colour-alone (points are labelled too).
@@ -277,7 +279,7 @@ function buildSvg(spec: ChartSpec): string {
   }
 
   parts.push(
-    `<text x="24" y="${HEIGHT - 12}" font-size="11" fill="${TEXT_MUTED}">Lead time before the interval ends. Higher error at longer lead = the forecast improves as the interval approaches.</text>`,
+    `<text x="24" y="${HEIGHT - 12}" font-size="11" fill="${TEXT_MUTED}">${esc(spec.footnote)}</text>`,
     `</svg>`,
   );
   return parts.join("\n");

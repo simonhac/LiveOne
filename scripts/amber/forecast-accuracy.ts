@@ -500,6 +500,10 @@ async function main() {
     const written = await renderAccuracyChart(args.chart, {
       title: `Amber forecast error vs lead — ${device.name}`,
       subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST · lead anchored to interval ${args.anchor}`,
+      footnote:
+        args.anchor === "start"
+          ? "Lead time before the half-hour begins. Higher error at longer lead = the forecast improves as the interval approaches."
+          : "Lead time before the half-hour ends. Higher error at longer lead = the forecast improves as the interval approaches.",
       series: args.channels.map((channel) => ({
         channel: CHANNEL_POINTS[channel].short,
         points: summaries
