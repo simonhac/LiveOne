@@ -88,6 +88,18 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    */
   protected retryWindowMinutes: number | undefined = undefined;
 
+  /**
+   * How stale this vendor's last SUCCESSFUL poll may get before the health monitor pages
+   * (`/api/cron/monitor-observations`). Nothing in the scheduler reads it — it is a monitoring
+   * threshold, declared here because that is where the rest of a vendor's cadence facts live and
+   * the monitor already reads them structurally off the adapter.
+   *
+   * Undefined means the default `pollIntervalMinutes × MONITOR_DEVICE_STALE_SLOTS`. Override only
+   * where the vendor has a KNOWN, measured window of unavailability that the generic multiple
+   * cannot express — otherwise raise `MONITOR_DEVICE_STALE_SLOTS`, or fix the vendor.
+   */
+  readonly staleBudgetMinutes: number | undefined = undefined;
+
   /** Slot width for one device. Override when the cadence depends on device state (see Tesla). */
   protected intervalFor(_device: DeviceConfigView): number {
     return this.pollIntervalMinutes;
