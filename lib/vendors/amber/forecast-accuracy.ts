@@ -30,10 +30,23 @@ import { isSettledQuality } from "@/lib/data-quality";
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
+/**
+ * Which end of the target interval the lead is measured to.
+ *
+ * `end` — "6h out" is the last forecast published 6h before the interval FINISHES.
+ * `start` — 6h before it BEGINS, which is how a decision is actually framed: "what will the price
+ * be for the half-hour starting at 8pm". For Amber's uniform 30-minute intervals the two differ by
+ * exactly that 30 minutes, so a start-anchored curve is an end-anchored one shifted half an hour —
+ * same shape, different question.
+ */
+export type LeadAnchor = "end" | "start";
+
 /** One stored forecast revision for a target interval (the columns scoring needs). */
 export interface ForecastObservation {
   intervalEndMs: number;
   observedAtMs: number;
+  /** Interval length, so `start` anchoring works per-row instead of assuming every interval is 30. */
+  durationMin: number;
   perKwh: number | null;
   advLow: number | null;
   advPredicted: number | null;
@@ -137,10 +150,17 @@ export function parseLeads(spec: string): number[] {
 
 /**
  * The instant a forecast must have been published by, to count as being "leadHours out".
- * Anchored to the interval END (see the module doc-comment).
+ * The single owner of the anchor convention — see {@link LeadAnchor}.
  */
-export function cutoffMsFor(intervalEndMs: number, leadHours: number): number {
-  return intervalEndMs - leadHours * HOUR_MS;
+export function cutoffMsFor(
+  intervalEndMs: number,
+  leadHours: number,
+  anchor: LeadAnchor = "end",
+  durationMin = 0,
+): number {
+  const anchorMs =
+    anchor === "start" ? intervalEndMs - durationMin * 60_000 : intervalEndMs;
+  return anchorMs - leadHours * HOUR_MS;
 }
 
 /**
@@ -224,7 +244,7 @@ export function pairForecastsWithActuals(
   revisions: readonly ForecastObservation[],
   truth: ReadonlyMap<number, SettledActual>,
   leadHours: number,
-  options: { maxStalenessMin?: number } = {},
+  options: { maxStalenessMin?: number; anchor?: LeadAnchor } = {},
 ): ScoredPair[] {
   const byInterval = new Map<number, ForecastObservation[]>();
   for (const r of revisions) {
@@ -236,7 +256,12 @@ export function pairForecastsWithActuals(
 
   const pairs: ScoredPair[] = [];
   for (const [intervalEndMs, list] of byInterval) {
-    const cutoffMs = cutoffMsFor(intervalEndMs, leadHours);
+    const cutoffMs = cutoffMsFor(
+      intervalEndMs,
+      leadHours,
+      options.anchor ?? "end",
+      list[0].durationMin,
+    );
     const inForce = forecastInForceAt(list, cutoffMs);
     if (!inForce || inForce.perKwh === null) continue;
 

@@ -34,6 +34,7 @@ function obs(
   return {
     intervalEndMs,
     observedAtMs,
+    durationMin: 30,
     perKwh,
     advLow: band?.[0] ?? null,
     advPredicted: band?.[1] ?? null,
@@ -83,9 +84,31 @@ describe("parseLeads", () => {
 });
 
 describe("cutoffMsFor", () => {
-  it("anchors the lead to the interval END", () => {
+  it("anchors the lead to the interval END by default", () => {
     expect(cutoffMsFor(T, 6)).toBe(T - 6 * HOUR);
     expect(cutoffMsFor(T, 0.5)).toBe(T - 30 * 60_000);
+  });
+
+  it("anchors to the interval START when asked", () => {
+    // The interval ending at T covers T−30min … T, so 6h before it BEGINS is 6.5h before it ends.
+    expect(cutoffMsFor(T, 6, "start", 30)).toBe(T - 6.5 * HOUR);
+  });
+
+  /**
+   * The equivalence worth knowing before reading two charts as two findings: with a uniform
+   * interval length, start-anchoring at lead L IS end-anchoring at L + length. Same numbers,
+   * different question.
+   */
+  it("start at lead L equals end at lead L + the interval length", () => {
+    for (const lead of [1, 2, 6, 12]) {
+      expect(cutoffMsFor(T, lead, "start", 30)).toBe(
+        cutoffMsFor(T, lead + 0.5, "end", 30),
+      );
+    }
+  });
+
+  it("uses each interval's own length, not an assumed 30", () => {
+    expect(cutoffMsFor(T, 1, "start", 5)).toBe(T - HOUR - 5 * 60_000);
   });
 });
 
@@ -157,6 +180,20 @@ describe("pairForecastsWithActuals", () => {
     [T, 24, "b"],
     [T + 30 * 60_000, 26, "b"],
   ]);
+
+  it("shifts the cutoff by the interval length when anchored to start", () => {
+    // Observed 2h05 before the interval ENDS = 1h35 before it STARTS. In scope at a 1h start-lead,
+    // out of scope at 2h.
+    const revisions = [obs(T, T - 2 * HOUR - 5 * 60_000, 27)];
+    expect(
+      pairForecastsWithActuals(revisions, truth, 1, { anchor: "start" }),
+    ).toHaveLength(1);
+    expect(
+      pairForecastsWithActuals(revisions, truth, 2, { anchor: "start" }),
+    ).toHaveLength(0);
+    // The same revision IS in scope at a 2h END-lead — the anchor is the only difference.
+    expect(pairForecastsWithActuals(revisions, truth, 2)).toHaveLength(1);
+  });
 
   it("pairs on interval_end and signs the error forecast − actual", () => {
     const pairs = pairForecastsWithActuals(

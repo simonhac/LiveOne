@@ -11,9 +11,14 @@
  * Read-only. Safe against prod.
  *
  * Conventions that matter:
- *   - **Lead anchors to the interval END.** "6h out" = the last forecast published at or before
- *     `interval_end − 6h`. The interval ending 14:00 covers 13:30-14:00, so that is 5.5h before it
- *     starts. `cutoffMsFor` in lib/vendors/amber/forecast-accuracy.ts owns this.
+ *   - **`--anchor` (default `end`) picks which end of the interval the lead is measured to.**
+ *     `end`: "6h out" = published at or before `interval_end − 6h`. `start`: 6h before the
+ *     half-hour BEGINS, which is how a decision is framed ("what will the price be for the
+ *     half-hour starting at 8pm"). `cutoffMsFor` in lib/vendors/amber/forecast-accuracy.ts owns it.
+ *     ⚠️ Amber's intervals are uniformly 30 minutes, so the two anchors differ by exactly that:
+ *     start-anchored at lead L is end-anchored at L + 0.5, the SAME curve shifted half an hour.
+ *     Use it because it labels the axis with the question you are actually asking, not because it
+ *     is a second measurement.
  *   - **Truth** is the settled 5m-aggregate price for the same `interval_end`, preferring `b`
  *     (billable, final) over `a` (actual). Both tables key on Amber's `nemTime`, so the join is
  *     plain equality — no timezone arithmetic.
@@ -31,6 +36,7 @@
  *   npm run amber:forecast-accuracy -- --days=7 --leads=1-12
  *   npm run amber:forecast-accuracy -- --leads=1-24 --summary-leads=1,6,12,24
  *   npm run amber:forecast-accuracy -- --start=2026-08-15 --end=2026-08-21 --csv=.context/afa.csv
+ *   npm run amber:forecast-accuracy -- --anchor=start
  *   npm run amber:forecast-accuracy -- --health-only
  *   npm run amber:forecast-accuracy -- --no-chart --json
  *
@@ -59,6 +65,7 @@ import type {
   SkillScore,
 } from "@/lib/vendors/amber/forecast-accuracy";
 import { parseLeads } from "@/lib/vendors/amber/forecast-accuracy";
+import type { LeadAnchor } from "@/lib/vendors/amber/forecast-accuracy";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -104,6 +111,13 @@ interface Args {
   chart: string | null;
   json: boolean;
   healthOnly: boolean;
+  anchor: LeadAnchor;
+}
+
+function anchorOf(v: string | undefined): LeadAnchor {
+  if (v === undefined || v === "end") return "end";
+  if (v === "start") return "start";
+  throw new Error(`--anchor must be 'end' or 'start' (got '${v}')`);
 }
 
 function parseArgs(argv: string[]): Args {
@@ -156,6 +170,7 @@ function parseArgs(argv: string[]): Args {
       : (get("chart") ?? ".context/amber-forecast-accuracy.png"),
     json: has("json"),
     healthOnly: has("health-only"),
+    anchor: anchorOf(get("anchor")),
   };
 }
 
@@ -247,7 +262,11 @@ async function main() {
 
   console.log(
     `\nAmber forecast accuracy — device ${device.rid} (${device.name})\n` +
-      `window ${aest(fromMs)} → ${aest(toMs)} AEST  (all times AEST, prices c/kWh incl GST)`,
+      `window ${aest(fromMs)} → ${aest(toMs)} AEST  (all times AEST, prices c/kWh incl GST)\n` +
+      `lead anchored to interval ${args.anchor.toUpperCase()}` +
+      (args.anchor === "start"
+        ? " — i.e. N hours before the half-hour BEGINS"
+        : " — i.e. N hours before the half-hour FINISHES"),
   );
 
   await reportHealth(db, sql, device.rid, fromMs, toMs, rowsOf);
@@ -360,6 +379,7 @@ async function main() {
       const revisions = rowsOf<{
         interval_end_ms: string;
         observed_at_ms: string;
+        duration_min: number;
         per_kwh: number | null;
         adv_low: number | null;
         adv_predicted: number | null;
@@ -369,17 +389,20 @@ async function main() {
           SELECT DISTINCT ON (interval_end)
                  (extract(epoch FROM interval_end) * 1000)::bigint AS interval_end_ms,
                  (extract(epoch FROM observed_at) * 1000)::bigint AS observed_at_ms,
-                 per_kwh, adv_low, adv_predicted, adv_high
+                 duration_min, per_kwh, adv_low, adv_predicted, adv_high
           FROM amber_forecast_history
           WHERE device_rid = ${device.rid} AND channel = ${channel}
             AND interval_end >= ${toPgTimestamp(fromMs)}::timestamp
             AND interval_end <= ${toPgTimestamp(toMs)}::timestamp
-            AND observed_at <= interval_end - ${lead} * interval '1 hour'
+            AND observed_at <= interval_end
+              - ${args.anchor === "start" ? sql`duration_min * interval '1 minute'` : sql`interval '0'`}
+              - ${lead} * interval '1 hour'
           ORDER BY interval_end, observed_at DESC`),
       ).map(
         (r): ForecastObservation => ({
           intervalEndMs: Number(r.interval_end_ms),
           observedAtMs: Number(r.observed_at_ms),
+          durationMin: Number(r.duration_min),
           perKwh: r.per_kwh,
           advLow: r.adv_low,
           advPredicted: r.adv_predicted,
@@ -389,6 +412,7 @@ async function main() {
 
       const pairs = pairForecastsWithActuals(revisions, truth, lead, {
         maxStalenessMin: args.maxStalenessMin,
+        anchor: args.anchor,
       });
       const summary = summarisePairs(pairs, targets);
       const skill = persistenceSkill(pairs, truth);
@@ -475,7 +499,7 @@ async function main() {
     const { renderAccuracyChart } = await import("./forecast-accuracy-chart");
     const written = await renderAccuracyChart(args.chart, {
       title: `Amber forecast error vs lead — ${device.name}`,
-      subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST`,
+      subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST · lead anchored to interval ${args.anchor}`,
       series: args.channels.map((channel) => ({
         channel: CHANNEL_POINTS[channel].short,
         points: summaries
