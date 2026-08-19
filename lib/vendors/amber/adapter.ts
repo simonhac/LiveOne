@@ -29,6 +29,21 @@ export class AmberAdapter extends BaseVendorAdapter {
   // Amber usage data: poll every 5 minutes
   protected pollIntervalMinutes = 5;
 
+  /**
+   * Amber takes a scheduled nightly maintenance window, 00:05-00:30 AEST: `/prices` answers 502 for
+   * the whole of it. Measured on prod 2026-08-19 over the preceding 14 days — 90 failed CRON polls,
+   * 100% of them in AEST hour 00, on all 14 nights, one error string. The default budget (3 × the
+   * 5-minute slot = 15 min) therefore pages at 00:30 every single night for a vendor behaving
+   * exactly as advertised, which is how a monitor gets ignored.
+   *
+   * 45 min clears a 30-minute window with headroom and still pages if Amber is genuinely dark. It
+   * is deliberately NOT an `isEligible` gate keyed on the clock: that would bake a vendor's ops
+   * schedule into our source, break silently the day Amber moves it, and hide a real outage that
+   * happened to start at midnight. Nothing is lost during the window — prices are 30-minute
+   * intervals and the 00:30 poll refetches today + tomorrow.
+   */
+  readonly staleBudgetMinutes = 45;
+
   readonly credentialFields: CredentialField[] = [
     {
       name: "apiKey",

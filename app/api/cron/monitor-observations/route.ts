@@ -74,6 +74,10 @@ const RAW_STALE_MINUTES = num(process.env.MONITOR_RAW_STALE_MINUTES, 15);
 // blip plus the ~3% of Vercel cron ticks that never fire, without tolerating a real outage: the
 // 30-minute Amber vendor outage (6 slots) and the 25-minute Sigenergy 502 run would both have
 // tripped it, while the ordinary 1-2 slot misses in the same 24 h would not.
+//
+// It is the DEFAULT, not the rule: an adapter may declare `staleBudgetMinutes` where its own
+// reality doesn't fit a multiple of its slot (Amber's is a scheduled, nightly, 30-minute vendor
+// maintenance window — see `lib/vendors/amber/adapter.ts`).
 const DEVICE_STALE_SLOTS = num(process.env.MONITOR_DEVICE_STALE_SLOTS, 3);
 const QUEUE_LAG_MAX = num(process.env.MONITOR_QUEUE_LAG_MAX, 1000);
 const DLQ_ALERT = num(process.env.MONITOR_DLQ_ALERT, 50); // DLQ ≥ this ⇒ alert (any DLQ ⇒ warn)
@@ -252,12 +256,17 @@ export async function GET(request: NextRequest) {
       const adapter = VendorRegistry.getAdapter(row.vendor) as unknown as {
         dataSource?: string;
         pollIntervalMinutes?: number;
+        staleBudgetMinutes?: number;
       } | null;
       // Push vendors have no schedule to be late against; their freshness is the pusher's problem.
       if (!adapter || adapter.dataSource === "push") continue;
 
+      // A vendor may declare its own budget where the generic multiple can't express its reality —
+      // Amber's scheduled nightly outage is 6 slots long and paged every night. Per-vendor, because
+      // raising DEVICE_STALE_SLOTS to cover it would blunt the check for the whole fleet.
       const slot = adapter.pollIntervalMinutes ?? 5;
-      const budget = slot * DEVICE_STALE_SLOTS;
+      const declared = adapter.staleBudgetMinutes;
+      const budget = declared ?? slot * DEVICE_STALE_SLOTS;
       const staleMin =
         row.stale_min === null ? null : Math.round(Number(row.stale_min));
 
@@ -272,8 +281,10 @@ export async function GET(request: NextRequest) {
           severity: "alert",
           code: "device_poll_stale",
           message:
-            `${row.vendor} device ${row.rid} (${row.name}) last succeeded ${staleMin} min ago ` +
-            `— over ${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budget} min).`,
+            `${row.vendor} device ${row.rid} (${row.name}) last succeeded ${staleMin} min ago — over ` +
+            (declared !== undefined
+              ? `its declared ${declared} min staleness budget.`
+              : `${DEVICE_STALE_SLOTS}× its ${slot} min slot (${budget} min).`),
         });
       }
     }

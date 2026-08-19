@@ -18,7 +18,12 @@
  *
  * 2. **Keyed on the last SUCCESS, not the last attempt.** A failed poll must not consume its slot,
  *    or a vendor blip costs a whole interval. (Sigenergy already depended on this and defends it by
- *    classing an all-null snapshot as a failure rather than an empty success.)
+ *    classing an all-null snapshot as a failure rather than an empty success.) The retry is
+ *    **bounded** — see `RETRY_WINDOW_MINUTES`. Unbounded, this property is an amplifier: measured on
+ *    prod, Amber's scheduled nightly vendor outage (00:05-00:30 AEST, 502s, 14 nights out of 14)
+ *    turned 5 failed polls into 25, because every one of them retried every minute until its slot
+ *    closed. The blip this property exists for is one tick long; a vendor that is deliberately down
+ *    is not a blip, and re-asking it 5 times a slot changes nothing.
  *
  * 3. **Keyed on when the poll STARTED.** `device_state.last_success_time` used to be stamped at
  *    completion, so a poll starting 10:04:58 and finishing 10:05:02 recorded itself into the 10:05
@@ -29,6 +34,26 @@
  */
 
 const MINUTE_MS = 60_000;
+
+/**
+ * How far into a slot a RETRY may still run, measured from the slot's opening (start + offset).
+ *
+ * Expressed as a window rather than an attempt counter on purpose: the cron is `* * * * *`, so it
+ * offers at most one attempt per minute, and a 2-minute window therefore IS "at most 2 attempts"
+ * — without persisting a per-slot counter, which is what keeps this function pure.
+ */
+export const RETRY_WINDOW_MINUTES = 2;
+
+/**
+ * Consecutive failed polls after which the retry window closes entirely (first attempt per slot
+ * only) until something succeeds.
+ *
+ * At 2 attempts a slot this is ~3 consecutively failed slots — long enough that a vendor having a
+ * bad couple of minutes still gets its retries, short enough that a vendor which is simply down
+ * stops being asked twice for every slot of the outage. `device_state.consecutive_errors` is reset
+ * to 0 by any successful poll (`lib/polling-utils.ts`), so recovery needs no timer.
+ */
+export const BREAKER_AFTER_ERRORS = 5;
 
 /** What a vendor declares. Anything beyond this is a gate, not a schedule. */
 export interface SlotSchedule {
@@ -42,6 +67,26 @@ export interface SlotSchedule {
    * one into the previous slot.
    */
   offsetMinutes?: number;
+  /**
+   * Override the in-slot retry window (see {@link RETRY_WINDOW_MINUTES}).
+   *
+   * ⚠️ The obvious reason to widen it — "this vendor's slot is an hour, so one bad minute costs the
+   * whole hour" — is wrong for the only vendor it describes. Enphase is capped at ~1000 calls a
+   * MONTH (`lib/vendors/enphase/enphase-client.ts`) against a normal spend of ~18/day, so a single
+   * unbounded hour of retries would burn 60 calls — 6% of the month — on a vendor that fails for
+   * reasons a retry ladder cannot fix; and Enphase loses nothing anyway, because each poll fetches
+   * an hour of 5-minute intervals and the overnight repair pass re-fetches yesterday once it has
+   * settled. Widen this only for a vendor that is BOTH un-refetchable AND not quota-limited.
+   */
+  retryWindowMinutes?: number;
+}
+
+/**
+ * Failure state the caller already holds, passed IN so this stays pure and clock-free.
+ * `consecutiveErrors` is `device_state.consecutive_errors` verbatim.
+ */
+export interface SlotState {
+  consecutiveErrors?: number;
 }
 
 export interface SlotDecision {
@@ -68,11 +113,13 @@ export function nextSlotStart(ms: number, intervalMinutes: number): number {
  * Is a poll due now?
  *
  * @param lastSuccessMs - when the last SUCCESSFUL poll STARTED, or null if never
+ * @param state - failure state (see {@link SlotState}); omitted means "no failures on record"
  */
 export function evaluateSlot(
   nowMs: number,
   lastSuccessMs: number | null,
   schedule: SlotSchedule,
+  state?: SlotState,
 ): SlotDecision {
   const { intervalMinutes } = schedule;
   if (!(intervalMinutes > 0)) {
@@ -92,7 +139,24 @@ export function evaluateSlot(
     };
   }
 
+  const intoSlotMs = nowMs - openMs;
+  const breakerOpen = (state?.consecutiveErrors ?? 0) >= BREAKER_AFTER_ERRORS;
+
   if (lastSuccessMs === null) {
+    // A device that has never succeeded has no recorded slot to close, so the retry above can never
+    // engage and it polls EVERY minute, forever — 1440 calls a day at a vendor that isn't answering
+    // (a dead credential, a de-registered site), and `device_never_polled` is only a `warn`, so
+    // nothing pages while it happens. Against Enphase's ~1000 calls/MONTH that empties the quota in
+    // under a day. The breaker applies here too; the in-slot window deliberately does not, because a
+    // genuinely new device should keep asking until it gets its first reading.
+    if (breakerOpen && intoSlotMs >= MINUTE_MS) {
+      return {
+        due: false,
+        reason: `never polled — breaker open after ${state?.consecutiveErrors} consecutive failures`,
+        slotStartMs,
+        nextDueMs: slotStartMs + intervalMinutes * MINUTE_MS + offsetMs,
+      };
+    }
     return { due: true, reason: "never polled", slotStartMs, nextDueMs: nowMs };
   }
 
@@ -109,12 +173,31 @@ export function evaluateSlot(
     };
   }
 
+  // Distinguishing the first attempt from a retry is the signal that tells a capture outage apart
+  // from a vendor that simply had nothing new — they look identical downstream otherwise.
+  if (intoSlotMs < MINUTE_MS) {
+    return { due: true, reason: "slot poll", slotStartMs, nextDueMs: nowMs };
+  }
+
+  // Retry, but only within the budget. The breaker (a vendor failing slot after slot) collapses the
+  // window to the first attempt; a success zeroes `consecutive_errors` and restores it.
+  const windowMs =
+    (breakerOpen ? 1 : (schedule.retryWindowMinutes ?? RETRY_WINDOW_MINUTES)) *
+    MINUTE_MS;
+  if (intoSlotMs >= windowMs) {
+    return {
+      due: false,
+      reason: breakerOpen
+        ? `retry breaker open after ${state?.consecutiveErrors} consecutive failures — one attempt per slot`
+        : "retry budget spent for this slot",
+      slotStartMs,
+      nextDueMs: slotStartMs + intervalMinutes * MINUTE_MS + offsetMs,
+    };
+  }
+
   return {
     due: true,
-    // Distinguishing the first attempt from a retry is the signal that tells a capture outage apart
-    // from a vendor that simply had nothing new — they look identical downstream otherwise.
-    reason:
-      nowMs - openMs < MINUTE_MS ? "slot poll" : "retrying until slot recorded",
+    reason: "retrying until slot recorded",
     slotStartMs,
     nextDueMs: nowMs,
   };

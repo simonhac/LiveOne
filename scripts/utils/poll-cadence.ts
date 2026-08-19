@@ -7,10 +7,18 @@
  *
  *  1. **Standing health check.** Per device: polls/hour against the declared slot, gap percentiles,
  *     how often a poll lands on the minute it is due (slot start + offset), duration percentiles,
- *     failures, and the duplicate-minute count that betrays overlapping cron runs. The slot is PER DEVICE
+ *     failures, and the duplicate-minute count. The slot is PER DEVICE
  *     (`intervalFor`), not per vendor class, so a per-device override is reported as the cadence the
  *     scheduler actually uses; and on-slot is suppressed for vendors that deliberately poll inside
  *     their slot rather than on its boundary (`slotAlignment`).
+ *
+ *     ⚠️ A duplicate minute does NOT by itself mean overlapping cron runs. Measured on prod
+ *     2026-08-19: 3% of Vercel's minutely deliveries arrive < 45 s after the previous one, then ramp
+ *     back onto phase over the next two or three ticks — which puts two polls in one minute while
+ *     the invocations remain strictly sequential and non-overlapping. Confirm overlap from
+ *     `sessions.session_label`, whose `{instance}/{seq}` prefix is unique PER INVOCATION: two polls
+ *     of one device sharing a prefix+seq is a re-dispatch inside a tick; different seqs, with
+ *     durations shorter than the gap between them, is just delivery jitter.
  *
  *  2. **Before/after evidence for a scheduling change.** Run it, change the schedule, run it again.
  *

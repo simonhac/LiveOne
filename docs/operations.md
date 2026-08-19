@@ -32,19 +32,21 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 
 ### Signals
 
-| alert code                                                     | what it means when it fires                                                                               | default                   | env override                          |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------- |
-| `raw_landing_stale`                                            | Nothing has landed in `point_readings` for N min — the pipeline is stalled. **(This is the common one.)** | > 15 min                  | `MONITOR_RAW_STALE_MINUTES`           |
-| `no_raw_despite_sessions`                                      | Poll sessions succeeded but **0** readings landed in the last hour — the queue is dropping readings.      | ≥ 5 sessions, 0 raw       | `MONITOR_MIN_SESSIONS`                |
-| `response_presence_low`                                        | < 80% of recent successful CRON sessions carry a `response` — the mirror pipeline is degraded.            | 0.8                       | `MONITOR_RESPONSE_PRESENCE_MIN`       |
-| `queue_lag_high`                                               | QStash queue lag too high — the receiver isn't keeping up.                                                | > 1000                    | `MONITOR_QUEUE_LAG_MAX`               |
-| `dlq_high` (alert) / `dlq_present` (warn)                      | Messages stuck in the dead-letter queue — failed deliveries piling up.                                    | ≥ 50 alert; any > 0 warns | `MONITOR_DLQ_ALERT`                   |
-| `queue_paused` (warn)                                          | The observations queue is paused — ingestion halted.                                                      | —                         | —                                     |
-| `outbox_backlog_high`                                          | Phase-4 relay stalled — too many unpublished `observations_outbox` rows.                                  | > 500 rows                | `MONITOR_OUTBOX_BACKLOG_MAX`          |
-| `outbox_stale`                                                 | Phase-4 relay isn't draining — oldest unpublished row too old.                                            | > 10 min                  | `MONITOR_OUTBOX_STALE_MINUTES`        |
-| `batprov_blend_stale` (alert) / `batprov_blend_missing` (warn) | Battery-provenance live blend hasn't advanced — the minutely provenance reconcile may be failing.         | > 15 min                  | `MONITOR_BATPROV_BLEND_STALE_MINUTES` |
-| `batprov_rollup_stale` (warn)                                  | `flow_attr_1d` rollup not advancing — the daily provenance heal may be failing.                           | > 30 h                    | `MONITOR_BATPROV_ROLLUP_STALE_HOURS`  |
-| `batprov_estimated_fraction_high` (warn)                       | Too much recent attributed energy used an estimated/missing input (e.g. an upstream price/grid gap).      | > 0.6 over 3 days         | `MONITOR_BATPROV_ESTIMATED_FRAC_MAX`  |
+| alert code                                                     | what it means when it fires                                                                               | default                    | env override                          |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------- |
+| `raw_landing_stale`                                            | Nothing has landed in `point_readings` for N min — the pipeline is stalled. **(This is the common one.)** | > 15 min                   | `MONITOR_RAW_STALE_MINUTES`           |
+| `no_raw_despite_sessions`                                      | Poll sessions succeeded but **0** readings landed in the last hour — the queue is dropping readings.      | ≥ 5 sessions, 0 raw        | `MONITOR_MIN_SESSIONS`                |
+| `device_poll_stale`                                            | **One** device's last successful poll is too old — that vendor is failing while the fleet looks healthy.  | > 3× the device's own slot | `MONITOR_DEVICE_STALE_SLOTS`          |
+| `device_never_polled` (warn)                                   | An active polled device has no successful poll on record at all — newly added, or never worked.           | —                          | —                                     |
+| `response_presence_low`                                        | < 80% of recent successful CRON sessions carry a `response` — the mirror pipeline is degraded.            | 0.8                        | `MONITOR_RESPONSE_PRESENCE_MIN`       |
+| `queue_lag_high`                                               | QStash queue lag too high — the receiver isn't keeping up.                                                | > 1000                     | `MONITOR_QUEUE_LAG_MAX`               |
+| `dlq_high` (alert) / `dlq_present` (warn)                      | Messages stuck in the dead-letter queue — failed deliveries piling up.                                    | ≥ 50 alert; any > 0 warns  | `MONITOR_DLQ_ALERT`                   |
+| `queue_paused` (warn)                                          | The observations queue is paused — ingestion halted.                                                      | —                          | —                                     |
+| `outbox_backlog_high`                                          | Phase-4 relay stalled — too many unpublished `observations_outbox` rows.                                  | > 500 rows                 | `MONITOR_OUTBOX_BACKLOG_MAX`          |
+| `outbox_stale`                                                 | Phase-4 relay isn't draining — oldest unpublished row too old.                                            | > 10 min                   | `MONITOR_OUTBOX_STALE_MINUTES`        |
+| `batprov_blend_stale` (alert) / `batprov_blend_missing` (warn) | Battery-provenance live blend hasn't advanced — the minutely provenance reconcile may be failing.         | > 15 min                   | `MONITOR_BATPROV_BLEND_STALE_MINUTES` |
+| `batprov_rollup_stale` (warn)                                  | `flow_attr_1d` rollup not advancing — the daily provenance heal may be failing.                           | > 30 h                     | `MONITOR_BATPROV_ROLLUP_STALE_HOURS`  |
+| `batprov_estimated_fraction_high` (warn)                       | Too much recent attributed energy used an estimated/missing input (e.g. an upstream price/grid gap).      | > 0.6 over 3 days          | `MONITOR_BATPROV_ESTIMATED_FRAC_MAX`  |
 
 ### Reading the alert
 
@@ -60,6 +62,14 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 (single writer) → point_readings`. If sessions are still succeeding but raw
   stopped, the break is downstream of polling; the `dlq_high` / `queue_lag_high` /
   `outbox_stale` values from that window point at which stage.
+- **`device_poll_stale` is the per-device counterpart.** `raw_landing_stale` is a
+  fleet-wide `max()`, so one healthy device masks every other one going dark. This
+  check holds each active polled device to its OWN declared slot (hourly Enphase and
+  minutely Selectronic are not judged alike). A vendor may declare
+  `staleBudgetMinutes` on its adapter where a multiple of its slot can't express its
+  reality — Amber does (45 min), because it takes a scheduled 00:05–00:30 AEST
+  maintenance window every night; when it does, the alert text says "its declared N
+  min staleness budget" instead of "3× its slot". Push vendors are exempt.
 - **It detects; it does not heal.** Recovery is QStash retries plus the minutely
   `relay-outbox` cron (`vercel.json`, `* * * * *`) draining the durable outbox once
   the receiver is healthy again. The monitor is the smoke alarm; the relay is what
