@@ -47,7 +47,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   // `evaluateSchedule` and re-derive the cadence themselves; every one of those overrides turned
   // out to be a gate or an interval selector rather than a different algorithm, and between them
   // they carried three copies of the same drift arithmetic and 17 calls to `getNextMinuteBoundary`
-  // purely to build a display string. A vendor now declares at most the three things below.
+  // purely to build a display string. A vendor now declares at most the handful of facts below —
+  // each one a NUMBER the shared rule consumes, never an algorithm of its own.
 
   /** Slot width. Override the field for a fixed cadence, or `intervalFor` for a dynamic one. */
   protected pollIntervalMinutes = 1;
@@ -79,6 +80,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * boundary, so the number means something.
    */
   readonly slotAlignment: "boundary" | "within-slot" = "boundary";
+
+  /**
+   * How far into a slot this vendor may still be RETRIED after a failure — see
+   * `RETRY_WINDOW_MINUTES` in `lib/vendors/schedule.ts` for why the cap is a window rather than a
+   * counter. Undefined takes the shared default (2 minutes ⇒ at most 2 attempts per slot).
+   */
+  protected retryWindowMinutes: number | undefined = undefined;
 
   /** Slot width for one device. Override when the cadence depends on device state (see Tesla). */
   protected intervalFor(_device: DeviceConfigView): number {
@@ -115,10 +123,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
 
   /**
    * Should this device be polled now? FINAL — the one implementation of "is it time", for every
-   * vendor. Vendors influence it through `intervalFor` / `pollOffsetMinutes` / `isEligible` only.
+   * vendor. Vendors influence it through `intervalFor` / `pollOffsetMinutes` / `retryWindowMinutes`
+   * / `isEligible` only.
    *
    * Keyed on `lastSuccessTime` (a failed poll must not consume its slot) which, since this change,
-   * stamps when the poll STARTED — see `lib/vendors/schedule.ts` for why both matter.
+   * stamps when the poll STARTED — see `lib/vendors/schedule.ts` for why both matter. That retry is
+   * bounded by an in-slot budget plus a consecutive-failure breaker, both fed from the
+   * `device_state` row this method already has in hand.
    */
   async shouldPoll(
     device: DeviceConfigView,
@@ -151,7 +162,12 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
     const decision = evaluateSlot(
       now.getTime(),
       device.pollingStatus?.lastSuccessTime?.getTime() ?? null,
-      { intervalMinutes, offsetMinutes: this.pollOffsetMinutes },
+      {
+        intervalMinutes,
+        offsetMinutes: this.pollOffsetMinutes,
+        retryWindowMinutes: this.retryWindowMinutes,
+      },
+      { consecutiveErrors: device.pollingStatus?.consecutiveErrors ?? 0 },
     );
 
     return {
