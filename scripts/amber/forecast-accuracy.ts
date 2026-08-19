@@ -64,11 +64,29 @@ const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 const AEST_OFFSET_MS = 10 * HOUR_MS; // fixed +10, no DST — Amber's nemTime basis
 
-/** Amber `channelType` → the `points.physical_path` its settled price lands on. */
-const CHANNEL_POINTS: Record<string, { path: string; label: string }> = {
-  general: { path: "E1/perKwh", label: "grid import" },
-  feedIn: { path: "B1/perKwh", label: "grid export (feed-in)" },
-  controlledLoad: { path: "CL1/perKwh", label: "controlled load" },
+/**
+ * Amber `channelType` → the `points.physical_path` its settled price lands on, plus how to name it.
+ *
+ * `short` is for the chart legend only. Amber's own wire names are what the console sections and
+ * the CSV's `channel` column use, because that column is a KEY — it joins back to
+ * `amber_forecast_history.channel` — and renaming it would break that for the sake of prettier
+ * output. Presentation gets the readable name; data keeps the vendor's.
+ */
+const CHANNEL_POINTS: Record<
+  string,
+  { path: string; label: string; short: string }
+> = {
+  general: { path: "E1/perKwh", label: "grid import", short: "import" },
+  feedIn: {
+    path: "B1/perKwh",
+    label: "grid export (feed-in)",
+    short: "export",
+  },
+  controlledLoad: {
+    path: "CL1/perKwh",
+    label: "controlled load",
+    short: "ctrl load",
+  },
 };
 
 interface Args {
@@ -459,7 +477,7 @@ async function main() {
       title: `Amber forecast error vs lead — ${device.name}`,
       subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST`,
       series: args.channels.map((channel) => ({
-        channel,
+        channel: CHANNEL_POINTS[channel].short,
         points: summaries
           .filter(
             (s) => s.channel === channel && Number.isFinite(s.summary.mae),

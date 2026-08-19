@@ -49,8 +49,14 @@ const TEXT_MUTED = "#83817c";
 const GRID = "#e6e5e1";
 
 const WIDTH = 960;
-const HEIGHT = 412;
-const FACET_TOP = 128;
+const HEIGHT = 434;
+const FACET_TOP = 150;
+/**
+ * Legend baseline, fixed rather than derived from FACET_TOP. Tying it to the facets meant that
+ * every time the panels gained a line of chrome (the per-panel captions) the legend moved with
+ * them and the gap stayed cramped.
+ */
+const LEGEND_Y = 88;
 const FACET_HEIGHT = 210;
 const FACET_GAP = 44;
 const MARGIN_LEFT = 56;
@@ -149,8 +155,8 @@ function buildSvg(spec: ChartSpec): string {
     for (const [i, s] of live.entries()) {
       const color = SERIES_COLORS[i % SERIES_COLORS.length];
       parts.push(
-        `<circle cx="${lx + 5}" cy="${FACET_TOP - 44}" r="5" fill="${color}"/>`,
-        `<text x="${lx + 16}" y="${FACET_TOP - 40}" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(s.channel)}</text>`,
+        `<circle cx="${lx + 5}" cy="${LEGEND_Y}" r="5" fill="${color}"/>`,
+        `<text x="${lx + 16}" y="${LEGEND_Y + 4}" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(s.channel)}</text>`,
       );
       lx += 24 + s.channel.length * 7.2;
     }
