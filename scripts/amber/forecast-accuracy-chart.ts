@@ -17,13 +17,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { scaleLinear } from "d3-scale";
-import { line as d3line } from "d3-shape";
+import { area as d3area, line as d3line } from "d3-shape";
 
 export interface ChartPoint {
   lead: number;
   mae: number;
   p90: number;
   bias: number;
+  /** s.d. of the absolute errors — half-width of the band around `mae`. */
+  maeSd: number;
+  /** STANDARD ERROR of the mean signed error — half-width of the band around `bias`. */
+  biasSe: number;
 }
 
 export interface ChartSeries {
@@ -34,6 +38,8 @@ export interface ChartSeries {
 export interface ChartSpec {
   title: string;
   subtitle: string;
+  /** Caller-supplied, because the honest wording depends on the lead anchor it chose. */
+  footnote: string;
   series: ChartSeries[];
 }
 
@@ -45,22 +51,77 @@ const TEXT_MUTED = "#83817c";
 const GRID = "#e6e5e1";
 
 const WIDTH = 960;
-const HEIGHT = 400;
-const FACET_TOP = 116;
+const HEIGHT = 434;
+const FACET_TOP = 150;
+/**
+ * Legend baseline, fixed rather than derived from FACET_TOP. Tying it to the facets meant that
+ * every time the panels gained a line of chrome (the per-panel captions) the legend moved with
+ * them and the gap stayed cramped.
+ */
+const LEGEND_Y = 88;
 const FACET_HEIGHT = 210;
 const FACET_GAP = 44;
 const MARGIN_LEFT = 56;
 const MARGIN_RIGHT = 24;
 
+/**
+ * The two banded panels shade DIFFERENT quantities, which is why each carries its own caption
+ * rather than the chart carrying one global note:
+ *
+ *  - MAE is tinted with ±1 s.d. of the individual interval errors — how variable any one interval
+ *    is. At ~±1.4 c/kWh that is genuinely as wide as the mean itself.
+ *  - Bias is tinted with ±1 STANDARD ERROR of the mean (s.d./√n ≈ ±0.14) — how precisely the bias
+ *    is known. A spread band here would be ±2 c/kWh, wider than the panel, and would bury the very
+ *    thing the wide axis exists to show: that bias is reliably zero, not merely noisily zero.
+ *
+ * `p90` is unbanded deliberately: it is a QUANTILE, and a standard deviation about a quantile is
+ * not a quantity — banding it would put a plausible-looking ribbon around a number it does not
+ * describe.
+ *
+ * `share` gives the two absolute-error panels one y domain so their heights are directly
+ * comparable; without it each autoscales and a reader compares two differently-stretched pictures.
+ *
+ * `fixed` pins bias to ±2 c/kWh. Autoscaling it was actively misleading — bias is flat at zero at
+ * every lead, and a domain of ±0.25 rendered pure noise as a strong-looking pattern.
+ */
 const FACETS: {
-  key: keyof Omit<ChartPoint, "lead">;
+  key: keyof Omit<ChartPoint, "lead" | "maeSd" | "biasSe">;
   title: string;
+  caption: string;
   zeroRule: boolean;
+  sd?: keyof Pick<ChartPoint, "maeSd" | "biasSe">;
+  share?: "abs";
+  fixed?: [number, number];
 }[] = [
-  { key: "mae", title: "Mean absolute error", zeroRule: false },
-  { key: "p90", title: "p90 absolute error", zeroRule: false },
-  { key: "bias", title: "Bias (forecast − actual)", zeroRule: true },
+  {
+    key: "mae",
+    title: "Mean absolute error",
+    caption: "shaded: ±1 s.d. of interval errors",
+    zeroRule: false,
+    sd: "maeSd",
+    share: "abs",
+  },
+  {
+    key: "p90",
+    title: "p90 absolute error",
+    caption: "no band — a quantile, not a mean",
+    zeroRule: false,
+    share: "abs",
+  },
+  {
+    key: "bias",
+    title: "Bias (forecast − actual)",
+    caption: "shaded: ±1 standard error of the mean",
+    zeroRule: true,
+    sd: "biasSe",
+    fixed: [-2, 2],
+  },
 ];
+
+/** Tint opacity for the uncertainty band. Low enough that two overlapping bands stay readable. */
+const BAND_OPACITY = 0.16;
+/** Minimum vertical separation between two direct labels in the same panel, in px. */
+const LABEL_MIN_GAP = 14;
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -87,7 +148,7 @@ function buildSvg(spec: ChartSpec): string {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" viewBox="0 0 ${WIDTH} ${HEIGHT}" font-family="system-ui, -apple-system, sans-serif">`,
     `<rect width="${WIDTH}" height="${HEIGHT}" fill="${SURFACE}"/>`,
     `<text x="24" y="34" font-size="16" font-weight="600" fill="${TEXT_PRIMARY}">${esc(spec.title)}</text>`,
-    `<text x="24" y="55" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(spec.subtitle)} · c/kWh incl GST · lead anchored to interval end</text>`,
+    `<text x="24" y="55" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(spec.subtitle)} · c/kWh incl GST</text>`,
   );
 
   // Legend — always present for ≥2 series; identity never colour-alone (points are labelled too).
@@ -96,34 +157,53 @@ function buildSvg(spec: ChartSpec): string {
     for (const [i, s] of live.entries()) {
       const color = SERIES_COLORS[i % SERIES_COLORS.length];
       parts.push(
-        `<circle cx="${lx + 5}" cy="${FACET_TOP - 44}" r="5" fill="${color}"/>`,
-        `<text x="${lx + 16}" y="${FACET_TOP - 40}" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(s.channel)}</text>`,
+        `<circle cx="${lx + 5}" cy="${LEGEND_Y}" r="5" fill="${color}"/>`,
+        `<text x="${lx + 16}" y="${LEGEND_Y + 4}" font-size="12.5" fill="${TEXT_SECONDARY}">${esc(s.channel)}</text>`,
       );
       lx += 24 + s.channel.length * 7.2;
     }
   }
 
+  // One domain for every panel marked `share: "abs"`, taken over both panels AND their bands, so a
+  // reader can compare the two pictures by height. Anchored at 0 because these are magnitudes.
+  const sharedAbs = FACETS.filter((f) => f.share === "abs").flatMap((f) =>
+    live.flatMap((s) =>
+      s.points.flatMap((p) => [p[f.key], f.sd ? p[f.key] + p[f.sd] : p[f.key]]),
+    ),
+  );
+  const sharedAbsMax = Math.max(...sharedAbs) * 1.08;
+
   for (const [fi, facet] of FACETS.entries()) {
     const x0 = MARGIN_LEFT + fi * (facetWidth + FACET_GAP);
     const y0 = FACET_TOP;
-    const values = live.flatMap((s) => s.points.map((p) => p[facet.key]));
-    let lo = Math.min(...values, facet.zeroRule ? 0 : Infinity);
-    let hi = Math.max(...values, facet.zeroRule ? 0 : -Infinity);
-    if (lo === hi) {
-      lo -= 0.5;
-      hi += 0.5;
+
+    let domain: [number, number];
+    if (facet.fixed) {
+      domain = facet.fixed;
+    } else if (facet.share === "abs") {
+      domain = [0, sharedAbsMax];
+    } else {
+      const values = live.flatMap((s) => s.points.map((p) => p[facet.key]));
+      let lo = Math.min(...values, facet.zeroRule ? 0 : Infinity);
+      let hi = Math.max(...values, facet.zeroRule ? 0 : -Infinity);
+      if (lo === hi) {
+        lo -= 0.5;
+        hi += 0.5;
+      }
+      const pad = (hi - lo) * 0.12;
+      domain = [lo - pad, hi + pad];
     }
-    const pad = (hi - lo) * 0.12;
 
     const x = scaleLinear()
       .domain([leads[0], leads[leads.length - 1]])
       .range([x0, x0 + facetWidth]);
     const y = scaleLinear()
-      .domain([lo - pad, hi + pad])
+      .domain(domain)
       .range([y0 + FACET_HEIGHT, y0]);
 
     parts.push(
-      `<text x="${x0}" y="${y0 - 12}" font-size="12.5" font-weight="600" fill="${TEXT_PRIMARY}">${esc(facet.title)}</text>`,
+      `<text x="${x0}" y="${y0 - 26}" font-size="12.5" font-weight="600" fill="${TEXT_PRIMARY}">${esc(facet.title)}</text>`,
+      `<text x="${x0}" y="${y0 - 10}" font-size="11" fill="${TEXT_MUTED}">${esc(facet.caption)}</text>`,
     );
 
     // Recessive gridlines + y labels.
@@ -133,7 +213,7 @@ function buildSvg(spec: ChartSpec): string {
         `<text x="${x0 - 8}" y="${(y(t) + 4).toFixed(1)}" font-size="11" text-anchor="end" fill="${TEXT_MUTED}">${t}</text>`,
       );
     }
-    if (facet.zeroRule && lo - pad < 0 && hi + pad > 0) {
+    if (facet.zeroRule && domain[0] < 0 && domain[1] > 0) {
       parts.push(
         `<line x1="${x0}" y1="${y(0).toFixed(1)}" x2="${(x0 + facetWidth).toFixed(1)}" y2="${y(0).toFixed(1)}" stroke="${TEXT_MUTED}" stroke-width="1.5"/>`,
       );
@@ -148,9 +228,29 @@ function buildSvg(spec: ChartSpec): string {
       .x((p) => x(p.lead))
       .y((p) => y(p[facet.key]));
 
+    const sdKey = facet.sd;
+    // Clamped to the panel: |error| has a floor of 0 and its distribution is right-skewed, so
+    // mae − sd routinely goes negative. Drawing that would assert a negative absolute error.
+    const band = sdKey
+      ? d3area<ChartPoint>()
+          .x((p) => x(p.lead))
+          .y0((p) => y(Math.max(domain[0], p[facet.key] - p[sdKey])))
+          .y1((p) => y(Math.min(domain[1], p[facet.key] + p[sdKey])))
+      : null;
+
+    const placedLabelY: number[] = [];
+
     for (const [i, s] of live.entries()) {
       const color = SERIES_COLORS[i % SERIES_COLORS.length];
       const pts = [...s.points].sort((a, b) => a.lead - b.lead);
+      if (band) {
+        const b = band(pts);
+        if (b) {
+          parts.push(
+            `<path d="${b}" fill="${color}" fill-opacity="${BAND_OPACITY}" stroke="none"/>`,
+          );
+        }
+      }
       const d = path(pts);
       if (d) {
         parts.push(
@@ -163,16 +263,23 @@ function buildSvg(spec: ChartSpec): string {
           `<circle cx="${x(p.lead).toFixed(1)}" cy="${y(p[facet.key]).toFixed(1)}" r="4.5" fill="${color}" stroke="${SURFACE}" stroke-width="2"/>`,
         );
       }
-      // Direct label on the last point only — never a number on every point.
+      // Direct label on the last point only — never a number on every point. Stacked away from any
+      // label already placed in this panel: on the bias facet the two series converge to within
+      // 0.04 c/kWh, which put two labels on the same pixels and rendered both unreadable.
       const last = pts[pts.length - 1];
+      let ly = y(last[facet.key]) - 12;
+      while (placedLabelY.some((py) => Math.abs(py - ly) < LABEL_MIN_GAP)) {
+        ly -= LABEL_MIN_GAP;
+      }
+      placedLabelY.push(ly);
       parts.push(
-        `<text x="${(x(last.lead) - 8).toFixed(1)}" y="${(y(last[facet.key]) - 12).toFixed(1)}" font-size="11.5" text-anchor="end" fill="${TEXT_SECONDARY}">${last[facet.key].toFixed(2)}</text>`,
+        `<text x="${(x(last.lead) - 8).toFixed(1)}" y="${ly.toFixed(1)}" font-size="11.5" text-anchor="end" fill="${TEXT_SECONDARY}">${last[facet.key].toFixed(2)}</text>`,
       );
     }
   }
 
   parts.push(
-    `<text x="24" y="${HEIGHT - 12}" font-size="11" fill="${TEXT_MUTED}">Lead time before the interval ends. Higher error at longer lead = the forecast improves as the interval approaches.</text>`,
+    `<text x="24" y="${HEIGHT - 12}" font-size="11" fill="${TEXT_MUTED}">${esc(spec.footnote)}</text>`,
     `</svg>`,
   );
   return parts.join("\n");

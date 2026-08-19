@@ -5,6 +5,7 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   cutoffMsFor,
+  parseLeads,
   forecastInForceAt,
   pairForecastsWithActuals,
   persistenceSkill,
@@ -33,6 +34,7 @@ function obs(
   return {
     intervalEndMs,
     observedAtMs,
+    durationMin: 30,
     perKwh,
     advLow: band?.[0] ?? null,
     advPredicted: band?.[1] ?? null,
@@ -51,10 +53,62 @@ const truthOf = (
     })),
   );
 
+describe("parseLeads", () => {
+  it("takes a comma list", () => {
+    expect(parseLeads("1,2,6,12")).toEqual([1, 2, 6, 12]);
+  });
+
+  it("expands an inclusive range", () => {
+    expect(parseLeads("1-12")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it("mixes ranges and singles, deduping and sorting", () => {
+    expect(parseLeads("6,1-3,2,12")).toEqual([1, 2, 3, 6, 12]);
+  });
+
+  it("accepts a fractional lead as an explicit entry", () => {
+    expect(parseLeads("0.5,1")).toEqual([0.5, 1]);
+  });
+
+  it("tolerates whitespace and trailing separators", () => {
+    expect(parseLeads(" 1 , 2 ,")).toEqual([1, 2]);
+  });
+
+  /** A silently-wrong lead set would score the wrong cutoffs and look entirely plausible. */
+  it("rejects garbage rather than dropping it", () => {
+    expect(() => parseLeads("1,abc")).toThrow(/bad lead/);
+    expect(() => parseLeads("0")).toThrow(/bad lead/);
+    expect(() => parseLeads("-3")).toThrow(/bad lead/);
+    expect(() => parseLeads("12-1")).toThrow(/bad lead range/);
+  });
+});
+
 describe("cutoffMsFor", () => {
-  it("anchors the lead to the interval END", () => {
+  it("anchors the lead to the interval END by default", () => {
     expect(cutoffMsFor(T, 6)).toBe(T - 6 * HOUR);
     expect(cutoffMsFor(T, 0.5)).toBe(T - 30 * 60_000);
+  });
+
+  it("anchors to the interval START when asked", () => {
+    // The interval ending at T covers T−30min … T, so 6h before it BEGINS is 6.5h before it ends.
+    expect(cutoffMsFor(T, 6, "start", 30)).toBe(T - 6.5 * HOUR);
+  });
+
+  /**
+   * The equivalence worth knowing before reading two charts as two findings: with a uniform
+   * interval length, start-anchoring at lead L IS end-anchoring at L + length. Same numbers,
+   * different question.
+   */
+  it("start at lead L equals end at lead L + the interval length", () => {
+    for (const lead of [1, 2, 6, 12]) {
+      expect(cutoffMsFor(T, lead, "start", 30)).toBe(
+        cutoffMsFor(T, lead + 0.5, "end", 30),
+      );
+    }
+  });
+
+  it("uses each interval's own length, not an assumed 30", () => {
+    expect(cutoffMsFor(T, 1, "start", 5)).toBe(T - HOUR - 5 * 60_000);
   });
 });
 
@@ -126,6 +180,20 @@ describe("pairForecastsWithActuals", () => {
     [T, 24, "b"],
     [T + 30 * 60_000, 26, "b"],
   ]);
+
+  it("shifts the cutoff by the interval length when anchored to start", () => {
+    // Observed 2h05 before the interval ENDS = 1h35 before it STARTS. In scope at a 1h start-lead,
+    // out of scope at 2h.
+    const revisions = [obs(T, T - 2 * HOUR - 5 * 60_000, 27)];
+    expect(
+      pairForecastsWithActuals(revisions, truth, 1, { anchor: "start" }),
+    ).toHaveLength(1);
+    expect(
+      pairForecastsWithActuals(revisions, truth, 2, { anchor: "start" }),
+    ).toHaveLength(0);
+    // The same revision IS in scope at a 2h END-lead — the anchor is the only difference.
+    expect(pairForecastsWithActuals(revisions, truth, 2)).toHaveLength(1);
+  });
 
   it("pairs on interval_end and signs the error forecast − actual", () => {
     const pairs = pairForecastsWithActuals(
@@ -273,6 +341,38 @@ describe("summarisePairs", () => {
     expect(s.maxAbsError).toBe(3);
   });
 
+  it("reports the SPREAD of the errors, not the precision of the mean", () => {
+    // errors +1, −3, +2, −2 ⇒ |e| 1,2,2,3 (mean 2, population var 0.5) and signed mean −0.5
+    // (population var 4.25). The chart's ±1 s.d. band is drawn from these.
+    const s = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
+    expect(s.sdAbsError).toBeCloseTo(Math.sqrt(0.5), 10);
+    expect(s.sdError).toBeCloseTo(Math.sqrt(4.25), 10);
+  });
+
+  it("reports the standard ERROR of the mean separately from the spread", () => {
+    // The bias band is drawn from this, and it must shrink with n while the spread does not.
+    const four = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
+    expect(four.seError).toBeCloseTo(four.sdError / Math.sqrt(4), 10);
+
+    const sixteen = summarisePairs(
+      [pair(1), pair(-3), pair(2), pair(-2)].flatMap((p) => [p, p, p, p]),
+      16,
+    );
+    expect(sixteen.sdError).toBeCloseTo(four.sdError, 10); // spread unchanged
+    expect(sixteen.seError).toBeCloseTo(four.seError / 2, 10); // precision doubles
+  });
+
+  it("keeps the identity rmse² = bias² + sdError²", () => {
+    const s = summarisePairs([pair(1), pair(-3), pair(2), pair(-2)], 4);
+    expect(s.rmse ** 2).toBeCloseTo(s.bias ** 2 + s.sdError ** 2, 10);
+  });
+
+  it("reports zero spread for identical errors", () => {
+    const s = summarisePairs([pair(2), pair(2), pair(2)], 3);
+    expect(s.sdAbsError).toBe(0);
+    expect(s.sdError).toBe(0);
+  });
+
   it("scores band coverage over only the pairs that had a band", () => {
     const s = summarisePairs(
       [pair(1, 0, true), pair(2, 0, false), pair(3, 0, null)],
@@ -286,6 +386,9 @@ describe("summarisePairs", () => {
     expect(s.paired).toBe(0);
     expect(s.coverage).toBe(0);
     expect(s.mae).toBeNaN();
+    expect(s.sdAbsError).toBeNaN();
+    expect(s.sdError).toBeNaN();
+    expect(s.seError).toBeNaN();
     expect(s.bandCoverage).toBeNaN();
   });
 

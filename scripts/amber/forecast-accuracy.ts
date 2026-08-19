@@ -11,9 +11,14 @@
  * Read-only. Safe against prod.
  *
  * Conventions that matter:
- *   - **Lead anchors to the interval END.** "6h out" = the last forecast published at or before
- *     `interval_end − 6h`. The interval ending 14:00 covers 13:30-14:00, so that is 5.5h before it
- *     starts. `cutoffMsFor` in lib/vendors/amber/forecast-accuracy.ts owns this.
+ *   - **`--anchor` (default `end`) picks which end of the interval the lead is measured to.**
+ *     `end`: "6h out" = published at or before `interval_end − 6h`. `start`: 6h before the
+ *     half-hour BEGINS, which is how a decision is framed ("what will the price be for the
+ *     half-hour starting at 8pm"). `cutoffMsFor` in lib/vendors/amber/forecast-accuracy.ts owns it.
+ *     ⚠️ Amber's intervals are uniformly 30 minutes, so the two anchors differ by exactly that:
+ *     start-anchored at lead L is end-anchored at L + 0.5, the SAME curve shifted half an hour.
+ *     Use it because it labels the axis with the question you are actually asking, not because it
+ *     is a second measurement.
  *   - **Truth** is the settled 5m-aggregate price for the same `interval_end`, preferring `b`
  *     (billable, final) over `a` (actual). Both tables key on Amber's `nemTime`, so the join is
  *     plain equality — no timezone arithmetic.
@@ -21,11 +26,17 @@
  *     settled truth. An interval with no forecast at that lead was outside Amber's horizon (or
  *     predates the capture); it lowers coverage rather than being scored as a hit or a miss.
  *   - `--start`/`--end` are AEST calendar days (fixed +10, no DST), inclusive.
+ *   - `--leads` (default `1-12`) is what gets COMPUTED; `--summary-leads` (default `1,2,6,12`) is
+ *     only what reaches the console table. Every computed lead lands in the CSV, the JSON and the
+ *     chart, because the shape of error against lead is the interesting output and a 12-row grid
+ *     per channel is not how anyone reads a shape.
  *
  * Usage:
  *   npm run amber:forecast-accuracy
- *   npm run amber:forecast-accuracy -- --days=7 --leads=1,2,6,12
+ *   npm run amber:forecast-accuracy -- --days=7 --leads=1-12
+ *   npm run amber:forecast-accuracy -- --leads=1-24 --summary-leads=1,6,12,24
  *   npm run amber:forecast-accuracy -- --start=2026-08-15 --end=2026-08-21 --csv=.context/afa.csv
+ *   npm run amber:forecast-accuracy -- --anchor=start
  *   npm run amber:forecast-accuracy -- --health-only
  *   npm run amber:forecast-accuracy -- --no-chart --json
  *
@@ -53,21 +64,43 @@ import type {
   SettledActual,
   SkillScore,
 } from "@/lib/vendors/amber/forecast-accuracy";
+import { parseLeads } from "@/lib/vendors/amber/forecast-accuracy";
+import type { LeadAnchor } from "@/lib/vendors/amber/forecast-accuracy";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 const AEST_OFFSET_MS = 10 * HOUR_MS; // fixed +10, no DST — Amber's nemTime basis
 
-/** Amber `channelType` → the `points.physical_path` its settled price lands on. */
-const CHANNEL_POINTS: Record<string, { path: string; label: string }> = {
-  general: { path: "E1/perKwh", label: "grid import" },
-  feedIn: { path: "B1/perKwh", label: "grid export (feed-in)" },
-  controlledLoad: { path: "CL1/perKwh", label: "controlled load" },
+/**
+ * Amber `channelType` → the `points.physical_path` its settled price lands on, plus how to name it.
+ *
+ * `short` is for the chart legend only. Amber's own wire names are what the console sections and
+ * the CSV's `channel` column use, because that column is a KEY — it joins back to
+ * `amber_forecast_history.channel` — and renaming it would break that for the sake of prettier
+ * output. Presentation gets the readable name; data keeps the vendor's.
+ */
+const CHANNEL_POINTS: Record<
+  string,
+  { path: string; label: string; short: string }
+> = {
+  general: { path: "E1/perKwh", label: "grid import", short: "import" },
+  feedIn: {
+    path: "B1/perKwh",
+    label: "grid export (feed-in)",
+    short: "export",
+  },
+  controlledLoad: {
+    path: "CL1/perKwh",
+    label: "controlled load",
+    short: "ctrl load",
+  },
 };
 
 interface Args {
   deviceRid?: number;
   leads: number[];
+  /** Subset of `leads` shown in the console table; the CSV/JSON/chart always carry all of them. */
+  summaryLeads: number[];
   days: number;
   start?: string;
   end?: string;
@@ -78,6 +111,13 @@ interface Args {
   chart: string | null;
   json: boolean;
   healthOnly: boolean;
+  anchor: LeadAnchor;
+}
+
+function anchorOf(v: string | undefined): LeadAnchor {
+  if (v === undefined || v === "end") return "end";
+  if (v === "start") return "start";
+  throw new Error(`--anchor must be 'end' or 'start' (got '${v}')`);
 }
 
 function parseArgs(argv: string[]): Args {
@@ -87,12 +127,16 @@ function parseArgs(argv: string[]): Args {
   };
   const has = (name: string) => argv.includes(`--${name}`);
 
-  const leads = (get("leads") ?? "1,2,6,12")
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0)
-    .sort((a, b) => a - b);
+  const leads = parseLeads(get("leads") ?? "1-12");
   if (leads.length === 0) throw new Error("--leads must list positive hours");
+
+  // Which leads reach the CONSOLE table. Every computed lead still lands in the CSV, the JSON and
+  // the chart — the table is a reading aid, and a 12-row grid per channel is one to skim past
+  // rather than read. Leads not in the computed set are silently ignored, so narrowing `--leads`
+  // does not require also narrowing this.
+  const summaryLeads = parseLeads(get("summary-leads") ?? "1,2,6,12").filter(
+    (l) => leads.includes(l),
+  );
 
   const channels = (get("channels") ?? "general,feedIn")
     .split(",")
@@ -112,6 +156,7 @@ function parseArgs(argv: string[]): Args {
   return {
     deviceRid,
     leads,
+    summaryLeads,
     days: Number(get("days") ?? 7),
     start: get("start"),
     end: get("end"),
@@ -125,6 +170,7 @@ function parseArgs(argv: string[]): Args {
       : (get("chart") ?? ".context/amber-forecast-accuracy.png"),
     json: has("json"),
     healthOnly: has("health-only"),
+    anchor: anchorOf(get("anchor")),
   };
 }
 
@@ -216,7 +262,11 @@ async function main() {
 
   console.log(
     `\nAmber forecast accuracy — device ${device.rid} (${device.name})\n` +
-      `window ${aest(fromMs)} → ${aest(toMs)} AEST  (all times AEST, prices c/kWh incl GST)`,
+      `window ${aest(fromMs)} → ${aest(toMs)} AEST  (all times AEST, prices c/kWh incl GST)\n` +
+      `lead anchored to interval ${args.anchor.toUpperCase()}` +
+      (args.anchor === "start"
+        ? " — i.e. N hours before the half-hour BEGINS"
+        : " — i.e. N hours before the half-hour FINISHES"),
   );
 
   await reportHealth(db, sql, device.rid, fromMs, toMs, rowsOf);
@@ -318,6 +368,10 @@ async function main() {
     }
 
     console.log(
+      `\n  ${args.leads.length} leads computed; showing ${args.summaryLeads.join("/")}h ` +
+        `(all of them are in the CSV, the JSON and the chart)`,
+    );
+    console.log(
       "\n  lead  paired  cover     MAE    bias    RMSE     p50     p90     max  band%  advMAE  skill  staleP90",
     );
 
@@ -325,6 +379,7 @@ async function main() {
       const revisions = rowsOf<{
         interval_end_ms: string;
         observed_at_ms: string;
+        duration_min: number;
         per_kwh: number | null;
         adv_low: number | null;
         adv_predicted: number | null;
@@ -334,17 +389,20 @@ async function main() {
           SELECT DISTINCT ON (interval_end)
                  (extract(epoch FROM interval_end) * 1000)::bigint AS interval_end_ms,
                  (extract(epoch FROM observed_at) * 1000)::bigint AS observed_at_ms,
-                 per_kwh, adv_low, adv_predicted, adv_high
+                 duration_min, per_kwh, adv_low, adv_predicted, adv_high
           FROM amber_forecast_history
           WHERE device_rid = ${device.rid} AND channel = ${channel}
             AND interval_end >= ${toPgTimestamp(fromMs)}::timestamp
             AND interval_end <= ${toPgTimestamp(toMs)}::timestamp
-            AND observed_at <= interval_end - ${lead} * interval '1 hour'
+            AND observed_at <= interval_end
+              - ${args.anchor === "start" ? sql`duration_min * interval '1 minute'` : sql`interval '0'`}
+              - ${lead} * interval '1 hour'
           ORDER BY interval_end, observed_at DESC`),
       ).map(
         (r): ForecastObservation => ({
           intervalEndMs: Number(r.interval_end_ms),
           observedAtMs: Number(r.observed_at_ms),
+          durationMin: Number(r.duration_min),
           perKwh: r.per_kwh,
           advLow: r.adv_low,
           advPredicted: r.adv_predicted,
@@ -354,19 +412,22 @@ async function main() {
 
       const pairs = pairForecastsWithActuals(revisions, truth, lead, {
         maxStalenessMin: args.maxStalenessMin,
+        anchor: args.anchor,
       });
       const summary = summarisePairs(pairs, targets);
       const skill = persistenceSkill(pairs, truth);
       summaries.push({ channel, lead, summary, skill });
 
-      console.log(
-        `  ${String(lead).padStart(3)}h  ${String(summary.paired).padStart(6)}  ` +
-          `${pct(summary.coverage)}  ${num(summary.mae, 2, 6)}  ${num(summary.bias, 2, 6)}  ` +
-          `${num(summary.rmse, 2, 6)}  ${num(summary.p50AbsError, 2, 6)}  ` +
-          `${num(summary.p90AbsError, 2, 6)}  ${num(summary.maxAbsError, 2, 6)}  ` +
-          `${pct(summary.bandCoverage)}  ${num(summary.advPredictedMae, 2, 6)}  ` +
-          `${num(skill?.skill ?? NaN, 2, 5)}  ${num(summary.p90StalenessMin, 1, 8)}`,
-      );
+      if (args.summaryLeads.includes(lead)) {
+        console.log(
+          `  ${String(lead).padStart(3)}h  ${String(summary.paired).padStart(6)}  ` +
+            `${pct(summary.coverage)}  ${num(summary.mae, 2, 6)}  ${num(summary.bias, 2, 6)}  ` +
+            `${num(summary.rmse, 2, 6)}  ${num(summary.p50AbsError, 2, 6)}  ` +
+            `${num(summary.p90AbsError, 2, 6)}  ${num(summary.maxAbsError, 2, 6)}  ` +
+            `${pct(summary.bandCoverage)}  ${num(summary.advPredictedMae, 2, 6)}  ` +
+            `${num(skill?.skill ?? NaN, 2, 5)}  ${num(summary.p90StalenessMin, 1, 8)}`,
+        );
+      }
 
       for (const p of pairs) {
         pairRows.push(
@@ -400,8 +461,8 @@ async function main() {
   if (args.csv) {
     const header =
       "channel,lead_hours,targets,paired,coverage,mae,bias,rmse,p50_abs_error,p90_abs_error," +
-      "max_abs_error,band_coverage,adv_predicted_mae,skill,persistence_mae,p50_staleness_min," +
-      "p90_staleness_min,max_staleness_min";
+      "max_abs_error,sd_abs_error,sd_error,se_error,band_coverage,adv_predicted_mae,skill," +
+      "persistence_mae,p50_staleness_min,p90_staleness_min,max_staleness_min";
     const body = summaries.map(({ channel, lead, summary: s, skill }) =>
       [
         channel,
@@ -415,6 +476,9 @@ async function main() {
         s.p50AbsError,
         s.p90AbsError,
         s.maxAbsError,
+        s.sdAbsError,
+        s.sdError,
+        s.seError,
         s.bandCoverage,
         s.advPredictedMae,
         skill?.skill ?? "",
@@ -434,10 +498,14 @@ async function main() {
   if (args.chart) {
     const { renderAccuracyChart } = await import("./forecast-accuracy-chart");
     const written = await renderAccuracyChart(args.chart, {
-      title: `Amber forecast error vs lead — device ${device.rid} (${device.name})`,
-      subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST`,
+      title: `Amber forecast error vs lead — ${device.name}`,
+      subtitle: `${aest(fromMs)} → ${aest(toMs)} AEST · lead anchored to interval ${args.anchor}`,
+      footnote:
+        args.anchor === "start"
+          ? "Lead time before the half-hour begins. Higher error at longer lead = the forecast improves as the interval approaches."
+          : "Lead time before the half-hour ends. Higher error at longer lead = the forecast improves as the interval approaches.",
       series: args.channels.map((channel) => ({
-        channel,
+        channel: CHANNEL_POINTS[channel].short,
         points: summaries
           .filter(
             (s) => s.channel === channel && Number.isFinite(s.summary.mae),
@@ -447,6 +515,8 @@ async function main() {
             mae: s.summary.mae,
             p90: s.summary.p90AbsError,
             bias: s.summary.bias,
+            maeSd: s.summary.sdAbsError,
+            biasSe: s.summary.seError,
           })),
       })),
     });

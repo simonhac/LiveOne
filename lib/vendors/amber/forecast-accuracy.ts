@@ -30,10 +30,23 @@ import { isSettledQuality } from "@/lib/data-quality";
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
+/**
+ * Which end of the target interval the lead is measured to.
+ *
+ * `end` — "6h out" is the last forecast published 6h before the interval FINISHES.
+ * `start` — 6h before it BEGINS, which is how a decision is actually framed: "what will the price
+ * be for the half-hour starting at 8pm". For Amber's uniform 30-minute intervals the two differ by
+ * exactly that 30 minutes, so a start-anchored curve is an end-anchored one shifted half an hour —
+ * same shape, different question.
+ */
+export type LeadAnchor = "end" | "start";
+
 /** One stored forecast revision for a target interval (the columns scoring needs). */
 export interface ForecastObservation {
   intervalEndMs: number;
   observedAtMs: number;
+  /** Interval length, so `start` anchoring works per-row instead of assuming every interval is 30. */
+  durationMin: number;
   perKwh: number | null;
   advLow: number | null;
   advPredicted: number | null;
@@ -74,6 +87,21 @@ export interface AccuracySummary {
   /** Mean error. Positive = Amber forecasts HIGH on average. */
   bias: number;
   rmse: number;
+  /**
+   * Spread of the ABSOLUTE errors — the width of the error distribution, not the precision of the
+   * mean. Deliberately the population s.d. and not the standard error (s.d./√n): with ~200 pairs
+   * the standard error is ~1/14th of this, so a band drawn from it would say "we know the mean
+   * accurately" when the question being asked is "how variable is any given interval's error".
+   */
+  sdAbsError: number;
+  /** Spread of the SIGNED errors. Note rmse² = bias² + sdError². */
+  sdError: number;
+  /**
+   * Standard error of the mean signed error, `sdError / √n` — how precisely BIAS itself is known,
+   * as distinct from how variable a single interval is. This is the honest band for the claim
+   * "bias is negligible": a spread band answers a different question and, at ~±2 c/kWh, buries it.
+   */
+  seError: number;
   p50AbsError: number;
   p90AbsError: number;
   maxAbsError: number;
@@ -96,11 +124,43 @@ export interface SkillScore {
 }
 
 /**
- * The instant a forecast must have been published by, to count as being "leadHours out".
- * Anchored to the interval END (see the module doc-comment).
+ * Lead hours from a comma list, an inclusive `a-b` range, or a mix: `1-12`, `1,2,6,12`, `1-6,12`.
+ * Ranges exist because the interesting question is the SHAPE of error against lead, and typing
+ * twelve numbers to get it is friction that discourages asking.
  */
-export function cutoffMsFor(intervalEndMs: number, leadHours: number): number {
-  return intervalEndMs - leadHours * HOUR_MS;
+export function parseLeads(spec: string): number[] {
+  const out = new Set<number>();
+  for (const part of spec.split(",").map((s) => s.trim())) {
+    if (!part) continue;
+    const range = /^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$/.exec(part);
+    if (range) {
+      const [lo, hi] = [Number(range[1]), Number(range[2])];
+      if (!(lo > 0) || hi < lo) throw new Error(`bad lead range '${part}'`);
+      // Whole-hour steps: the cron decides once a minute, so sub-hour resolution here would be
+      // spurious precision. Fractional leads are still accepted as explicit list entries.
+      for (let l = lo; l <= hi; l++) out.add(l);
+      continue;
+    }
+    const n = Number(part);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`bad lead '${part}'`);
+    out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * The instant a forecast must have been published by, to count as being "leadHours out".
+ * The single owner of the anchor convention — see {@link LeadAnchor}.
+ */
+export function cutoffMsFor(
+  intervalEndMs: number,
+  leadHours: number,
+  anchor: LeadAnchor = "end",
+  durationMin = 0,
+): number {
+  const anchorMs =
+    anchor === "start" ? intervalEndMs - durationMin * 60_000 : intervalEndMs;
+  return anchorMs - leadHours * HOUR_MS;
 }
 
 /**
@@ -184,7 +244,7 @@ export function pairForecastsWithActuals(
   revisions: readonly ForecastObservation[],
   truth: ReadonlyMap<number, SettledActual>,
   leadHours: number,
-  options: { maxStalenessMin?: number } = {},
+  options: { maxStalenessMin?: number; anchor?: LeadAnchor } = {},
 ): ScoredPair[] {
   const byInterval = new Map<number, ForecastObservation[]>();
   for (const r of revisions) {
@@ -196,7 +256,12 @@ export function pairForecastsWithActuals(
 
   const pairs: ScoredPair[] = [];
   for (const [intervalEndMs, list] of byInterval) {
-    const cutoffMs = cutoffMsFor(intervalEndMs, leadHours);
+    const cutoffMs = cutoffMsFor(
+      intervalEndMs,
+      leadHours,
+      options.anchor ?? "end",
+      list[0].durationMin,
+    );
     const inForce = forecastInForceAt(list, cutoffMs);
     if (!inForce || inForce.perKwh === null) continue;
 
@@ -258,6 +323,9 @@ export function summarisePairs(
       mae: NaN,
       bias: NaN,
       rmse: NaN,
+      sdAbsError: NaN,
+      sdError: NaN,
+      seError: NaN,
       p50AbsError: NaN,
       p90AbsError: NaN,
       maxAbsError: NaN,
@@ -278,11 +346,19 @@ export function summarisePairs(
   const banded = pairs.filter((p) => p.inBand !== null);
   const withAdv = pairs.filter((p) => p.advPredicted !== null);
 
+  const mae = sumAbs / n;
+  const bias = sumSigned / n;
+  const varAbs = absErrors.reduce((s, v) => s + (v - mae) ** 2, 0) / n;
+  const varSigned = pairs.reduce((s, p) => s + (p.error - bias) ** 2, 0) / n;
+
   return {
     ...empty,
-    mae: sumAbs / n,
-    bias: sumSigned / n,
+    mae,
+    bias,
     rmse: Math.sqrt(sumSquares / n),
+    sdAbsError: Math.sqrt(varAbs),
+    sdError: Math.sqrt(varSigned),
+    seError: Math.sqrt(varSigned / n),
     p50AbsError: quantile(absErrors, 0.5),
     p90AbsError: quantile(absErrors, 0.9),
     maxAbsError: absErrors[absErrors.length - 1],
