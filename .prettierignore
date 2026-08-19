@@ -1,0 +1,7 @@
+# Markdown is NOT formatted by prettier here, and this file is what makes that a decision rather
+# than an accident of the lint-staged globs in package.json (which only match js/jsx/ts/tsx/json).
+#
+# Why: prettier re-aligns every column of a markdown table it touches, so adding two rows to the
+# signal table in docs/operations.md rewrites the whole table and buries the change in 36 lines of
+# whitespace. The docs here carry the *why* — they are meant to be read in diffs.
+*.md

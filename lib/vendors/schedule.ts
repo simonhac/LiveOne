@@ -68,9 +68,15 @@ export interface SlotSchedule {
    */
   offsetMinutes?: number;
   /**
-   * Override the in-slot retry window (see {@link RETRY_WINDOW_MINUTES}). The default suits a
-   * 5-minute vendor, where a lost slot costs 5 minutes; a vendor on a much wider slot may be worth
-   * asking for longer, because one bad minute there costs an hour.
+   * Override the in-slot retry window (see {@link RETRY_WINDOW_MINUTES}).
+   *
+   * ⚠️ The obvious reason to widen it — "this vendor's slot is an hour, so one bad minute costs the
+   * whole hour" — is wrong for the only vendor it describes. Enphase is capped at ~1000 calls a
+   * MONTH (`lib/vendors/enphase/enphase-client.ts`) against a normal spend of ~18/day, so a single
+   * unbounded hour of retries would burn 60 calls — 6% of the month — on a vendor that fails for
+   * reasons a retry ladder cannot fix; and Enphase loses nothing anyway, because each poll fetches
+   * an hour of 5-minute intervals and the overnight repair pass re-fetches yesterday once it has
+   * settled. Widen this only for a vendor that is BOTH un-refetchable AND not quota-limited.
    */
   retryWindowMinutes?: number;
 }
@@ -133,7 +139,24 @@ export function evaluateSlot(
     };
   }
 
+  const intoSlotMs = nowMs - openMs;
+  const breakerOpen = (state?.consecutiveErrors ?? 0) >= BREAKER_AFTER_ERRORS;
+
   if (lastSuccessMs === null) {
+    // A device that has never succeeded has no recorded slot to close, so the retry above can never
+    // engage and it polls EVERY minute, forever — 1440 calls a day at a vendor that isn't answering
+    // (a dead credential, a de-registered site), and `device_never_polled` is only a `warn`, so
+    // nothing pages while it happens. Against Enphase's ~1000 calls/MONTH that empties the quota in
+    // under a day. The breaker applies here too; the in-slot window deliberately does not, because a
+    // genuinely new device should keep asking until it gets its first reading.
+    if (breakerOpen && intoSlotMs >= MINUTE_MS) {
+      return {
+        due: false,
+        reason: `never polled — breaker open after ${state?.consecutiveErrors} consecutive failures`,
+        slotStartMs,
+        nextDueMs: slotStartMs + intervalMinutes * MINUTE_MS + offsetMs,
+      };
+    }
     return { due: true, reason: "never polled", slotStartMs, nextDueMs: nowMs };
   }
 
@@ -152,14 +175,12 @@ export function evaluateSlot(
 
   // Distinguishing the first attempt from a retry is the signal that tells a capture outage apart
   // from a vendor that simply had nothing new — they look identical downstream otherwise.
-  const intoSlotMs = nowMs - openMs;
   if (intoSlotMs < MINUTE_MS) {
     return { due: true, reason: "slot poll", slotStartMs, nextDueMs: nowMs };
   }
 
   // Retry, but only within the budget. The breaker (a vendor failing slot after slot) collapses the
   // window to the first attempt; a success zeroes `consecutive_errors` and restores it.
-  const breakerOpen = (state?.consecutiveErrors ?? 0) >= BREAKER_AFTER_ERRORS;
   const windowMs =
     (breakerOpen ? 1 : (schedule.retryWindowMinutes ?? RETRY_WINDOW_MINUTES)) *
     MINUTE_MS;

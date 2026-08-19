@@ -84,7 +84,9 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
   /**
    * How far into a slot this vendor may still be RETRIED after a failure — see
    * `RETRY_WINDOW_MINUTES` in `lib/vendors/schedule.ts` for why the cap is a window rather than a
-   * counter. Undefined takes the shared default (2 minutes ⇒ at most 2 attempts per slot).
+   * counter, and `SlotSchedule.retryWindowMinutes` for why "but its slot is an hour" is NOT a reason
+   * to widen it. Undefined takes the shared default (2 minutes ⇒ at most 2 attempts per slot), and
+   * no vendor currently overrides it.
    */
   protected retryWindowMinutes: number | undefined = undefined;
 

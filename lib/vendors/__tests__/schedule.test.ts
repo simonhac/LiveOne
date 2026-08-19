@@ -254,6 +254,45 @@ describe("evaluateSlot", () => {
       expect(d.reason).toMatch(/breaker open/);
     });
 
+    /**
+     * A device that has never succeeded closes no slot, so the retry budget above never engages and
+     * it polls every minute forever. `device_never_polled` is only a `warn`, so nothing pages while
+     * a dead credential spends 1440 calls a day.
+     */
+    describe("a device that has never succeeded", () => {
+      it("keeps asking while the failures are few — it has no reading yet", () => {
+        for (const t of ["05:05:33", "05:06:33", "05:09:33"]) {
+          expect(
+            evaluateSlot(at(`2026-08-15T${t}Z`), null, every5, {
+              consecutiveErrors: 4,
+            }).due,
+          ).toBe(true);
+        }
+      });
+
+      it("drops to one attempt per slot once the breaker trips", () => {
+        const tripped = { consecutiveErrors: BREAKER_AFTER_ERRORS };
+        expect(
+          evaluateSlot(at("2026-08-15T05:05:33Z"), null, every5, tripped).due,
+        ).toBe(true);
+        const d = evaluateSlot(
+          at("2026-08-15T05:06:33Z"),
+          null,
+          every5,
+          tripped,
+        );
+        expect(d.due).toBe(false);
+        expect(d.reason).toMatch(/never polled — breaker open/);
+        expect(d.nextDueMs).toBe(at("2026-08-15T05:10:00Z"));
+      });
+
+      it("still polls a brand-new device immediately", () => {
+        expect(evaluateSlot(at("2026-08-15T05:05:33Z"), null, every5).due).toBe(
+          true,
+        );
+      });
+    });
+
     it("restores the full window as soon as something succeeds", () => {
       // `consecutive_errors` is zeroed by any successful poll, so recovery needs no timer.
       expect(
@@ -276,7 +315,9 @@ describe("evaluateSlot", () => {
       }
     });
 
-    it("honours a widened window (a vendor whose slot is too wide to lose)", () => {
+    // The knob exists; see `SlotSchedule.retryWindowMinutes` for why "its slot is an hour" is not a
+    // reason to reach for it. No vendor overrides it today.
+    it("honours a widened window", () => {
       const wide = { intervalMinutes: 60, retryWindowMinutes: 10 };
       const hourly = at("2026-08-15T05:00:04Z");
       expect(evaluateSlot(at("2026-08-15T06:09:00Z"), hourly, wide).due).toBe(
