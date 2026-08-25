@@ -3,11 +3,14 @@
 import { useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import PeriodSwitcher from "@/components/PeriodSwitcher";
-import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
-import { getPeriodDuration, isDateOnlyPeriod } from "@/lib/charts/temporal";
-import { formatHoverTimestamp } from "@/lib/charts/temporal";
+import {
+  getPeriodDuration,
+  isDateOnlyPeriod,
+  formatWindowLabel,
+  formatHoverTimestamp,
+} from "@/lib/charts/temporal";
 import { useChartFocus } from "@/lib/charts/ChartFocusContext";
 
 interface TemporalNavigatorProps {
@@ -70,14 +73,19 @@ export default function TemporalNavigator({
     const startMs = start
       ? Date.parse(start)
       : nowMs - getPeriodDuration(period);
-    // M/Y carry an INCLUSIVE last day at UTC-midnight, so the end instant already maps to the last
-    // included day (no adjustment): M reads "22 Jun – 21 Jul 2026".
     const endMs = end ? Date.parse(end) : nowMs;
     const startZdt = fromUnixTimestamp(startMs / 1000, timezoneOffsetMin);
     const endZdt = fromUnixTimestamp(endMs / 1000, timezoneOffsetMin);
+    // formatWindowLabel owns the exclusive-vs-inclusive end rule: a whole-day D/W window collapses
+    // to its date-only spelling ("24 Aug 2026"), while M/Y already carry an INCLUSIVE last day and
+    // read as-is ("22 Jun – 21 Jul 2026").
     return {
-      desktop: formatDateTimeRange(startZdt, endZdt, !isDateOnlyPeriod(period)),
-      mobile: formatDateTimeRange(startZdt, endZdt, false),
+      desktop: formatWindowLabel(startZdt, endZdt, period, {
+        includeTime: !isDateOnlyPeriod(period),
+      }),
+      mobile: formatWindowLabel(startZdt, endZdt, period, {
+        includeTime: false,
+      }),
     };
   })();
 
@@ -105,11 +113,14 @@ export default function TemporalNavigator({
             {hoverLabel ? hoverLabel.mobile : rangeLabel.mobile}
           </span>
         </span>
-        {/* Prev/Next navigation buttons */}
+        {/* Prev/Next navigation buttons. `-ml-px` collapses the shared border seam (matching
+            PeriodSwitcher) and `focus:z-20` keeps a focused button's UA ring painted ABOVE its
+            neighbour — z-index applies to flex items even though these are `position: static`, so
+            without it the later sibling's opaque background clips the ring at the seam. */}
         <div className="inline-flex rounded-md shadow-sm" role="group">
           <button
             onClick={older}
-            className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none"
+            className="px-2 py-1 text-sm font-medium border rounded-l-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white focus:z-20 transition-none"
             title="Older (Previous)"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -117,7 +128,7 @@ export default function TemporalNavigator({
           <button
             onClick={newer}
             disabled={isLatest}
-            className="px-2 py-1 text-sm font-medium border-l-0 border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-none"
+            className="px-2 py-1 text-sm font-medium -ml-px border rounded-r-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white focus:z-20 disabled:opacity-50 disabled:cursor-not-allowed transition-none"
             title="Newer (Next)"
           >
             <ChevronRight className="w-4 h-4" />
