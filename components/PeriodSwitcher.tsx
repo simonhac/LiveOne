@@ -28,12 +28,14 @@ export default function PeriodSwitcher({
           key={period}
           onClick={() => onChange(period)}
           className={`
-            px-3 py-1 text-xs font-medium transition-colors border
+            px-3 py-1 text-xs font-medium transition-colors border focus:z-20
             ${index === 0 ? "rounded-l-md" : "-ml-px"}
             ${index === periods.length - 1 ? "rounded-r-md" : ""}
             ${
               value === period
-                ? "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
+                ? // z-10 lifts the selected button over its neighbours' borders; focus:z-20
+                  // above outranks it so a focused button's ring is never painted under it.
+                  "bg-blue-900/50 text-blue-300 border-blue-800 z-10"
                 : "bg-gray-700 text-gray-400 border-gray-600 hover:bg-gray-600 hover:text-gray-300"
             }
           `}

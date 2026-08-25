@@ -15,8 +15,9 @@
  *    today's partial day. They are date-only and ALWAYS carry an explicit window (see below).
  */
 import { format } from "date-fns";
-import { formatTime12h } from "@/lib/fe-date-format";
+import { formatTime12h, formatDateTimeRange } from "@/lib/fe-date-format";
 import { parseDate } from "@internationalized/date";
+import type { ZonedDateTime } from "@internationalized/date";
 import {
   getTodayInTimezone,
   periodStep,
@@ -132,6 +133,47 @@ export function getPeriodIntervalMinutes(period: ChartTimeRange): number {
 /** M and Y are day-based (date-only) periods: their URL window omits the time-of-day and the offset. */
 export function isDateOnlyPeriod(period: ChartTimeRange): boolean {
   return period === "M" || period === "Y";
+}
+
+/** True when a zoned instant sits exactly on local midnight. */
+function isLocalMidnight(zdt: ZonedDateTime): boolean {
+  return (
+    zdt.hour === 0 &&
+    zdt.minute === 0 &&
+    zdt.second === 0 &&
+    zdt.millisecond === 0
+  );
+}
+
+/**
+ * The navigator's range label for a window.
+ *
+ * D/W windows carry an EXCLUSIVE end, so a window running local-midnight -> local-midnight covers a
+ * whole number of calendar days: collapse it to the date-only INCLUSIVE spelling ("24 Aug 2026",
+ * "18 – 24 Aug 2026") instead of printing the bookend times ("12am, 24 Aug – 12am, 25 Aug 2026").
+ * A live trailing D/W window ends at `now`, so it is untouched and still shows its times.
+ *
+ * M/Y are never adjusted: their window is ALREADY an inclusive `[firstDay, lastDay]`
+ * (see {@link decodeRangeFromParams}), so "22 Jun – 21 Jul 2026" is right as it stands.
+ *
+ * Lives here rather than in `formatDateTimeRange` because that formatter is generic and its other
+ * callers (ViewDataModal's row cursors, SiteChartsCard's first/last bucket) pass INCLUSIVE ends —
+ * the exclusive-end rule is the navigator's, not the formatter's.
+ */
+export function formatWindowLabel(
+  start: ZonedDateTime,
+  end: ZonedDateTime,
+  period: ChartTimeRange,
+  opts: { includeTime: boolean },
+): string {
+  if (
+    !isDateOnlyPeriod(period) &&
+    isLocalMidnight(start) &&
+    isLocalMidnight(end)
+  ) {
+    return formatDateTimeRange(start, end.subtract({ days: 1 }), false);
+  }
+  return formatDateTimeRange(start, end, opts.includeTime);
 }
 
 /**
