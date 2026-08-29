@@ -128,9 +128,11 @@ export function walkNodes(
  * `descriptor` stayed empty (measured at stage 13 on `/admin/dashboards`).
  */
 export function countCardNodes(doc: DashboardV4): number {
-  let n = 0;
-  walkNodes(doc, (node) => {
-    if (node.kind === "card") n++;
-  });
-  return n;
+  return countCardsInNode(doc.root);
+}
+
+/** Leaf-card count of a single subtree (the node itself included) — `countCardNodes` for a branch. */
+export function countCardsInNode(node: DashboardNode): number {
+  if (node.kind === "card") return 1;
+  return node.children.reduce((n, child) => n + countCardsInNode(child), 0);
 }

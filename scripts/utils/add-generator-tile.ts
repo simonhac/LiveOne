@@ -35,7 +35,9 @@
  *   - each write is its own transaction with `SELECT … FOR UPDATE` and a `revision` bump, mirroring
  *     `updateDashboardDoc` — a concurrent editor's `If-Match` conflicts instead of being clobbered.
  */
-import { Client } from "pg";
+// Connection + identity print + CAS write are the dashboard CLI's shared plumbing — one
+// implementation of the "mirrors updateDashboardDoc" transaction, not three hand-kept copies.
+import { connect, printTarget, writeDoc } from "../ops/dashboard/db";
 import { TILE_ORDER } from "@/lib/capabilities/catalog";
 import { isTileViewType } from "@/lib/dashboard/card-types";
 import {
@@ -66,26 +68,6 @@ function parseArgs(argv: string[]): Args {
     onlyId: idFlag?.slice("--id=".length),
     apply: flags.includes("--apply"),
   };
-}
-
-async function connect(): Promise<Client> {
-  const raw = process.env.MIGRATE_DATABASE_URL;
-  if (!raw) {
-    throw new Error(
-      "set MIGRATE_DATABASE_URL to the connection string of the database to migrate",
-    );
-  }
-  // `pg` rejects the PlanetScale ssl params; strip them exactly as getPoolConfig does for the pool.
-  const u = new URL(raw);
-  for (const p of ["sslmode", "sslcert", "sslkey", "sslrootcert"]) {
-    u.searchParams.delete(p);
-  }
-  const client = new Client({
-    connectionString: u.toString(),
-    ssl: { rejectUnauthorized: false },
-  });
-  await client.connect();
-  return client;
 }
 
 /** Where a `generator` card belongs among the tiles already in a row. */
@@ -204,13 +186,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const client = await connect();
   try {
-    const who = await client.query("select current_user, current_database()");
-    console.log(
-      `target: ${who.rows[0].current_database} as ${who.rows[0].current_user} @ ${client.host}`,
-    );
-    console.log(
-      `add tile: "${TILE_TYPE}"   mode: ${args.apply ? "APPLY" : "dry-run"}\n`,
-    );
+    await printTarget(client, args.apply ? "APPLY" : "dry-run");
+    console.log(`add tile: "${TILE_TYPE}"\n`);
 
     // Eligibility, straight from the data: which areas have a commandable generator.
     const areas = await client.query<{ id: string; name: string }>(
@@ -292,27 +269,7 @@ async function main() {
       touched++;
 
       if (!args.apply) continue;
-      await client.query("begin");
-      try {
-        // Mirrors `updateDashboardDoc`: lock, bump the revision (the ETag/If-Match token), write.
-        const locked = await client.query<{ revision: number }>(
-          "select revision from dashboards where id = $1 for update",
-          [row.id],
-        );
-        if (locked.rows[0]?.revision !== row.revision) {
-          throw new Error(
-            `revision moved under us (${row.revision} -> ${locked.rows[0]?.revision}); re-run`,
-          );
-        }
-        await client.query(
-          "update dashboards set doc = $1, revision = revision + 1, updated_at = now() where id = $2",
-          [JSON.stringify(result.normalized ?? doc), row.id],
-        );
-        await client.query("commit");
-      } catch (err) {
-        await client.query("rollback");
-        throw err;
-      }
+      await writeDoc(client, row, result.normalized ?? doc);
     }
 
     console.log(

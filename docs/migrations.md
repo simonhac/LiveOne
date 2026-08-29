@@ -146,6 +146,14 @@ Ordering and scope:
 - **Prefer it in the same PR as the rename**, so the code and the data never disagree across a deploy.
   There is no read-time upgrade ladder and no legacy-alias map — by design, so the two never drift.
 
+**Ad-hoc document edits** — `npm run dashboard` (`scripts/ops/dashboard/cli.ts`) is the general-purpose
+editor for `dashboards.doc` and dashboard metadata: `list` / `show` (prints the `n_…` node ids edits
+address) / `validate` / `rename` / `add-card` / `add-group` / `remove-node` / `move-node` / `set-prop`.
+Same safety model as the rewrite script: connection from `MIGRATE_DATABASE_URL` only, printed
+`target:` identity, dry-run by default with `--apply`, every result doc gated on `validateDocV4`, and
+CAS writes that bump `revision`. Use it for one-off edits; a rename that must sweep every document
+still wants `migrate-card-type.ts`.
+
 **Precedent.** `generator-runs` → `runs` (PR #338, Aug 2026) shipped the code, catalog, seed strategy
 and fixtures, but no document rewrite: one prod dashboard (Daylesford) rendered `Unknown card type
 generator-runs` until it was swept and migrated. Earlier renames got away with it by luck —

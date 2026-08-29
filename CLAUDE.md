@@ -162,6 +162,23 @@ The project has utility scripts in `/scripts`:
 
 - `/scripts/temp/` - Temporary scripts for one-off tasks
 - `/scripts/utils/` - Reusable utility scripts
+- `/scripts/ops/` - Operator CLIs (agent-facing)
+
+#### Dashboard CLI
+
+`npm run dashboard -- <command>` (`scripts/ops/dashboard/cli.ts`) edits stored dashboard documents
+(`dashboards.doc`) directly in Postgres: `list` / `show` / `validate` / `rename` / `add-card` /
+`add-group` / `remove-node` / `move-node` / `set-prop`. Run `-- <command> --help` for options.
+
+- Connection from **`MIGRATE_DATABASE_URL` only** (prod: short-TTL `pscale role` url); for dev use
+  `npm run dashboard:dev -- <command>` (reads `.env.local`, refuses a prod URL). Read the printed
+  `target:` line before `--apply`.
+- Mutations are **dry-run by default**; `--apply` writes (CAS on `revision`, mirrors
+  `updateDashboardDoc`).
+- 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
+- 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev (environments
+  drift). "Make the same edit in both" means re-running `show` in each environment first — never
+  reuse a node id across environments.
 
 #### Development API Authentication
 
