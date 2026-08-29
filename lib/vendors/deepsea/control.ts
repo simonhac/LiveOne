@@ -10,6 +10,13 @@
  * silent factor-of-60 on a command that runs a diesel engine is the kind of bug that reads as
  * "it stopped after 30 seconds" or, far worse, "it ran for 30 hours".
  *
+ * 🛑 The passkey is ALWAYS the DEVICE OWNER's, resolved from their Clerk credentials — never a
+ * session user's and never an env var. Same rule as Tesla (lib/control/ownership.ts): an admin
+ * commanding someone else's hardware does so on the owner's credentials, an automation with no
+ * session user resolves them from the device alone, and an OWNERLESS device is commandable by
+ * nobody. An env var would make the credential a property of the deployment instead, so any device
+ * on it could command the generator.
+ *
  * 🛑 Two independent ceilings guard the runtime, and that is on purpose: the point's `control`
  * descriptor (max minutes, enforced by `validatePointAction` before we are called) and the hub's
  * `control.maxRuntimeSec` (enforced on the hub, which is the thing actually holding the latch).
@@ -22,6 +29,7 @@ import type {
   ControlInvokeResult,
 } from "../types";
 import { ControlDispatchError } from "@/lib/control/errors";
+import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { hubRun } from "./hub-client";
 
 /**
@@ -58,8 +66,24 @@ export class DeepSeaControlCapability implements ControlCapability {
       throw new ControlDispatchError("Device has no vendor site id", 400);
     }
 
+    const ownerId = ctx.device.ownerClerkUserId;
+    if (!ownerId) {
+      // Not an oversight: ownerless hardware is commandable by nobody, because there are no
+      // credentials to command it WITH. See lib/control/ownership.ts.
+      throw new ControlDispatchError("System has no owner", 400);
+    }
+
+    const credentials = await getDeviceCredentials(ownerId, ctx.device.id);
+    const passkey = credentials?.controlPasskey;
+    if (typeof passkey !== "string" || !passkey) {
+      throw new ControlDispatchError(
+        "This generator has no control passkey stored — generator control is not set up for this device",
+        501,
+      );
+    }
+
     const runtimeSec = Math.round(minutes * 60); // ← the unit seam
-    const result = await hubRun(siteId, runtimeSec);
+    const result = await hubRun(siteId, passkey, runtimeSec);
 
     if (!result.ok) {
       // The hub refused (not in Auto, already running under someone else's command, over its own

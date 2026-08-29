@@ -10,27 +10,22 @@
  * functions are neither. The hub owns the deadline (absolute instant, persisted, doubly enforced);
  * this client only ever *asks*, and a request that never arrives simply means no run.
  *
- * Transport auth is two independent credentials:
- *  - a Cloudflare Access **service token** (`CF-Access-Client-Id/Secret`), because the hub
- *    publishes no public HTTP — everything goes through the cloudflared tunnel behind Access, and
- *    Vercel's egress IPs are dynamic so an allowlist is not an option;
- *  - the **per-device passkey**, which scopes a caller to one device and is what the hub checks.
+ * Transport auth is two independent credentials, and they live in deliberately different places:
+ *  - a Cloudflare Access **service token** (`CF-Access-Client-Id/Secret`) in ENV, because it is a
+ *    property of this DEPLOYMENT — how the app reaches the hub at all — not of any device. The
+ *    hub publishes no public HTTP; everything goes through the cloudflared tunnel behind Access,
+ *    and Vercel's egress IPs are dynamic so an IP allowlist is not an option. Directly analogous
+ *    to `TESLA_CLIENT_ID`/`TESLA_CLIENT_SECRET`.
+ *  - the **per-device passkey**, passed in by the caller, which resolves it from the DEVICE
+ *    OWNER's Clerk credentials (see ./control.ts). It is a per-device secret like a Selectronic
+ *    password or a Tesla refresh token, so it lives where those live — never in env, which would
+ *    make it a property of the deployment and let any device on it command the generator.
  */
 
 import { ControlDispatchError } from "@/lib/control/errors";
 
 /** Default hub origin; override per-environment with USHER_CONTROL_URL. */
 const DEFAULT_HUB_URL = "https://usher.liveone.energy";
-
-/**
- * Per-site passkey env vars. Deliberately an explicit allowlist rather than a derived name
- * (`${siteId.toUpperCase()}_CONTROL_KEY`): a device row's `vendorSiteId` is data, and deriving an
- * env var name from data lets a config edit reach for an arbitrary secret. Adding a controllable
- * site is a code change, reviewed like one.
- */
-const PASSKEY_ENV_BY_SITE: Record<string, string> = {
-  sheephouse: "SHEEPHOUSE_CONTROL_KEY",
-};
 
 export interface HubRunResult {
   ok: boolean;
@@ -61,48 +56,29 @@ function hubUrl(): string {
 }
 
 /**
- * Resolve the transport + device credentials, or throw a 501 the command plane reports as
- * "unavailable". Checked at CALL time, not module load — a module-level const is untestable and
- * misbehaves on a serverless cold start with late-injected env (same reasoning as Tesla's
- * `hasFleetApiConfig`).
+ * The DEPLOYMENT's transport credentials. Read at CALL time, not module load — a module-level
+ * const is untestable and misbehaves on a serverless cold start with late-injected env (the same
+ * reasoning as Tesla's `hasFleetApiConfig`).
+ *
+ * Optional by design: absent, we send no Access headers, so a developer can point
+ * `USHER_CONTROL_URL` at a hub reachable without the tunnel. In production their absence simply
+ * means Cloudflare answers 403 before the hub ever sees the request — fail-closed at the edge.
  */
-function resolveAuth(siteId: string): {
-  passkey: string;
-  accessHeaders: Record<string, string>;
-} {
-  const passkeyEnv = PASSKEY_ENV_BY_SITE[siteId];
-  if (!passkeyEnv) {
-    throw new ControlDispatchError(
-      `No generator control is configured for site '${siteId}'`,
-      501,
-    );
-  }
-  const passkey = process.env[passkeyEnv];
-  if (!passkey) {
-    throw new ControlDispatchError(
-      `Generator control is not configured on this deployment (${passkeyEnv} is unset)`,
-      501,
-    );
-  }
-
-  // Access credentials are required in production but optional locally, so a developer can point
-  // USHER_CONTROL_URL at a hub reachable without the tunnel.
+function accessHeaders(): Record<string, string> {
   const id = process.env.USHER_CF_ACCESS_CLIENT_ID;
   const secret = process.env.USHER_CF_ACCESS_CLIENT_SECRET;
-  const accessHeaders: Record<string, string> =
-    id && secret
-      ? { "CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret }
-      : {};
-  return { passkey, accessHeaders };
+  return id && secret
+    ? { "CF-Access-Client-Id": id, "CF-Access-Client-Secret": secret }
+    : {};
 }
 
 async function call<T>(
   siteId: string,
+  passkey: string,
   path: "run" | "noop",
   body: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<T> {
-  const { passkey, accessHeaders } = resolveAuth(siteId);
   const url = `${hubUrl()}/api/usher/control/${encodeURIComponent(siteId)}/${path}`;
 
   const controller = new AbortController();
@@ -113,7 +89,7 @@ async function call<T>(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...accessHeaders,
+        ...accessHeaders(),
       },
       body: JSON.stringify({ ...body, passkey }),
       signal: controller.signal,
@@ -172,15 +148,17 @@ async function call<T>(
  */
 export function hubRun(
   siteId: string,
+  passkey: string,
   runtimeSec: number,
 ): Promise<HubRunResult> {
-  return call<HubRunResult>(siteId, "run", { runtimeSec }, 20_000);
+  return call<HubRunResult>(siteId, passkey, "run", { runtimeSec }, 20_000);
 }
 
 /** The safe probe: full chain, FC3 reads only, cannot move the engine. */
 export function hubNoop(
   siteId: string,
+  passkey: string,
   runtimeSec = 60,
 ): Promise<HubNoopResult> {
-  return call<HubNoopResult>(siteId, "noop", { runtimeSec }, 15_000);
+  return call<HubNoopResult>(siteId, passkey, "noop", { runtimeSec }, 15_000);
 }

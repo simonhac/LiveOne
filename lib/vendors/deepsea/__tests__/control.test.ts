@@ -12,9 +12,18 @@ import {
 } from "@jest/globals";
 
 const hubRun =
-  jest.fn<(siteId: string, runtimeSec: number) => Promise<unknown>>();
+  jest.fn<
+    (siteId: string, passkey: string, runtimeSec: number) => Promise<unknown>
+  >();
 jest.mock("../hub-client", () => ({
-  hubRun: (...args: [string, number]) => hubRun(...args),
+  hubRun: (...args: [string, string, number]) => hubRun(...args),
+}));
+
+const getDeviceCredentials =
+  jest.fn<(userId: string, systemId: number) => Promise<unknown>>();
+jest.mock("@/lib/secure-credentials", () => ({
+  getDeviceCredentials: (...args: [string, number]) =>
+    getDeviceCredentials(...args),
 }));
 
 import { DeepSeaControlCapability } from "../control";
@@ -24,7 +33,7 @@ function ctx(
   overrides: Partial<ControlInvokeContext> = {},
 ): ControlInvokeContext {
   return {
-    device: { vendorSiteId: "sheephouse" },
+    device: { vendorSiteId: "sheephouse", ownerClerkUserId: "user_1", id: 14 },
     point: {
       logicalPath: "source.generator.control.request",
       metricType: "duration",
@@ -39,6 +48,8 @@ describe("DeepSeaControlCapability", () => {
   const cap = new DeepSeaControlCapability();
 
   beforeEach(() => {
+    getDeviceCredentials.mockReset();
+    getDeviceCredentials.mockResolvedValue({ controlPasskey: "pk-secret" });
     hubRun.mockReset();
     hubRun.mockResolvedValue({
       ok: true,
@@ -53,7 +64,7 @@ describe("DeepSeaControlCapability", () => {
 
   it("converts MINUTES to SECONDS exactly once (the unit seam)", async () => {
     await cap.invoke(ctx({ value: 30 }));
-    expect(hubRun).toHaveBeenCalledWith("sheephouse", 1800);
+    expect(hubRun).toHaveBeenCalledWith("sheephouse", "pk-secret", 1800);
   });
 
   it("passes 0 through unchanged — the hub's 'stop' semantics", async () => {
@@ -64,7 +75,7 @@ describe("DeepSeaControlCapability", () => {
       remainingSec: null,
     });
     const r = await cap.invoke(ctx({ value: 0 }));
-    expect(hubRun).toHaveBeenCalledWith("sheephouse", 0);
+    expect(hubRun).toHaveBeenCalledWith("sheephouse", "pk-secret", 0);
     expect(r.ok).toBe(true);
     expect(r.reason).toContain("cool down");
   });
@@ -114,6 +125,32 @@ describe("DeepSeaControlCapability", () => {
     await expect(cap.invoke(ctx({ value: undefined }))).rejects.toThrow(
       /non-negative/,
     );
+    expect(hubRun).not.toHaveBeenCalled();
+  });
+
+  it("resolves the passkey from the DEVICE OWNER's credentials, not from env", async () => {
+    await cap.invoke(ctx());
+    expect(getDeviceCredentials).toHaveBeenCalledWith("user_1", 14);
+  });
+
+  it("refuses an OWNERLESS device — commandable by nobody, no credentials to command it with", async () => {
+    await expect(
+      cap.invoke(
+        ctx({
+          device: {
+            vendorSiteId: "sheephouse",
+            ownerClerkUserId: null,
+            id: 14,
+          } as never,
+        }),
+      ),
+    ).rejects.toThrow(/no owner/i);
+    expect(hubRun).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the owner has no stored control passkey (501, not a silent no-op)", async () => {
+    getDeviceCredentials.mockResolvedValue({ apiKey: "gk_only" });
+    await expect(cap.invoke(ctx())).rejects.toThrow(/no control passkey/i);
     expect(hubRun).not.toHaveBeenCalled();
   });
 
