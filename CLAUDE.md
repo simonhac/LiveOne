@@ -174,7 +174,11 @@ The project has utility scripts in `/scripts`:
   `npm run dashboard:dev -- <command>` (reads `.env.local`, refuses a prod URL). Read the printed
   `target:` line before `--apply`.
 - Mutations are **dry-run by default**; `--apply` writes (CAS on `revision`, mirrors
-  `updateDashboardDoc`).
+  `updateDashboardDoc`). Off a terminal `--apply` additionally requires `--yes` — it refuses rather
+  than prompting, because a prompt with no terminal is a hang.
+- Built on the shared CLI kit (`lib/cli/`), so every subcommand has `--help`, and output is
+  `--format human|json` (human at a terminal, **json when piped**) with data on stdout and all
+  diagnostics on stderr.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
 - 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev (environments
   drift). "Make the same edit in both" means re-running `show` in each environment first — never
