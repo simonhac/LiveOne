@@ -153,7 +153,7 @@ device's `gk_` gusher key.
 | `HOSTNAME` / `PORT`         | server bind (`127.0.0.1:3000` in the Fly image — cloudflared fronts it)                                            |
 | _(per source)_              | the var named by that source's `apiKeyEnv`, e.g. `MUSHER_API_KEY`, `KINKORA_API_KEY`                               |
 | `MUSHER_DIAGNOSTICS`        | `1` = capture the full DeepSea register dump every poll — see [operations](docs/operations.md#deepsea-diagnostics) |
-| `MUSHER_DIAG_POSTRUN_TICKS` | ticks to hold the fast cadence after a run ends (default 6)                                                        |
+| `MUSHER_DIAG_POSTRUN_SECONDS` | seconds to hold the fast cadence after a run ends (default 3600). Was `…_TICKS`, a tick count, which rescaled itself whenever the poll cadence changed |
 
 ## Deploy
 

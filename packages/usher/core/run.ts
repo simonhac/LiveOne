@@ -25,16 +25,29 @@ export interface Entry {
 }
 
 /**
- * An entry with its OWN push cadence. Each scheduled entry runs an independent loop, so sources with
- * different cadences coexist (e.g. musher 5 min/1 min; fusher 1 min). Poll ≠ push: a source may poll
- * its device faster internally (fusher's Site self-polls every 2 s) — `intervalMs` here is the PUSH
- * period at which the run-loop harvests + pushes.
+ * An entry with its OWN cadences. Each scheduled entry runs an independent loop, so sources with
+ * different cadences coexist (e.g. musher 15 s poll / 5 min push; fusher 1 min).
+ *
+ * POLL ≠ PUSH, in two separate senses:
+ *  - a source may poll its device faster INTERNALLY (fusher's Site self-polls every 2 s), and
+ *  - the loop may poll faster than it DELIVERS (`pushIntervalMs` > `intervalMs`).
+ * The second is what lets musher journal the full register dump every 15 s while LiveOne keeps
+ * receiving one reading every 5 minutes.
  */
 export interface ScheduledEntry extends Entry {
-  /** idle push period (ms) */
+  /** idle POLL period (ms) — how often the loop reads the source */
   intervalMs: number;
-  /** faster push period while the source reports isRunning (defaults to intervalMs) */
+  /** faster poll period while the source reports isRunning (defaults to intervalMs) */
   activeIntervalMs?: number;
+  /**
+   * Idle PUSH period (ms) — how often a poll is delivered to gusher. Defaults to `intervalMs`
+   * (deliver every poll: the historical behaviour). Undelivered ticks still READ the device, so
+   * anything the source records internally — musher's diagnostic journal — keeps full poll
+   * resolution while deliveries stay rare.
+   */
+  pushIntervalMs?: number;
+  /** push period while the source reports isRunning (defaults to pushIntervalMs) */
+  activePushIntervalMs?: number;
   /** wake on wall-clock multiples of the period (default true) */
   alignToBoundary?: boolean;
 }
@@ -56,12 +69,18 @@ export const DEFAULT_TICK_TIMEOUT_MS = 30_000;
 export interface TickResult {
   name: string;
   siteId: string;
-  /** readings pushed this tick (0 = all n/a), or null on read/push error */
+  /** readings COLLECTED this tick (0 = all n/a), or null on read error — see `delivered` */
   count: number | null;
   /** whether the source reported itself "running"/active this tick */
   active: boolean;
   /** ISO time of the tick */
   at: string;
+  /**
+   * Whether this tick was delivered (journalled to the blackbox + pushed). False on a poll-only
+   * tick — the device was read, but the push cadence said "not yet". Undefined when the tick
+   * errored or had nothing to send.
+   */
+  delivered?: boolean;
   /** whether the push succeeded (undefined when there was nothing to push) */
   pushOk?: boolean;
   /** whether a failed push's batch was durably spooled for later re-send */
@@ -112,6 +131,12 @@ export async function tickOnce(
   entry: Entry,
   log: (m: string) => void,
   timeoutMs: number = DEFAULT_TICK_TIMEOUT_MS,
+  /**
+   * Decides, AFTER the read (so it can see whether the source is running), whether this tick is
+   * delivered. Returning false means read-only: the source still saw the device and recorded
+   * whatever it records internally, but nothing is blackboxed or pushed. Defaults to always.
+   */
+  shouldDeliver: (active: boolean) => boolean = () => true,
 ): Promise<TickResult> {
   const { source, pusher, blackbox, spool } = entry;
   const tickStart = Date.now();
@@ -150,6 +175,14 @@ export async function tickOnce(
     return { ...base, count: 0, active };
   }
 
+  // Poll-only tick: the device was read (and the source journalled whatever it journals), but the
+  // push cadence says this one isn't delivered. Return before the blackbox so the flight recorder
+  // stays a record of DELIVERIES — otherwise a fast poll cadence would inflate it just as much as
+  // it would inflate the receiver, which is the thing we are avoiding.
+  if (!shouldDeliver(active)) {
+    return { ...base, count: readings.length, active, delivered: false };
+  }
+
   // Journal BEFORE pushing — the blackbox records what was collected, not what was delivered.
   await blackbox?.append({
     at: new Date().toISOString(),
@@ -180,6 +213,7 @@ export async function tickOnce(
     ...base,
     count: readings.length,
     active,
+    delivered: true,
     pushOk: outcome === "ok",
     spooled,
     error:
@@ -202,10 +236,30 @@ async function runEntryLoop(
 ): Promise<void> {
   const idleMs = entry.intervalMs;
   const activeMs = entry.activeIntervalMs ?? idleMs;
+  const idlePushMs = entry.pushIntervalMs ?? idleMs;
+  const activePushMs = entry.activePushIntervalMs ?? idlePushMs;
   const align = entry.alignToBoundary ?? true;
+
+  // Delivery is scheduled on WALL-CLOCK elapsed time, not "every Nth tick": a slow, timed-out or
+  // errored poll must not drag the push schedule with it. 0 = never delivered, so the first tick
+  // always goes.
+  let lastDeliveredAt = 0;
+  // Previous running state, for the transition push. undefined until the first successful read, so
+  // process start is not itself treated as a transition (the first tick delivers anyway).
+  let wasActive: boolean | undefined;
+
   for (;;) {
     const tickStart = Date.now();
-    const result = await tickOnce(entry, log, tickTimeoutMs);
+    const result = await tickOnce(entry, log, tickTimeoutMs, (active) => {
+      // Deliver immediately when the genset starts or stops. The whole reason for polling faster
+      // than we push is to catch that edge, and it would be perverse to see it within one poll and
+      // then sit on it for the rest of the push period.
+      if (wasActive !== undefined && active !== wasActive) return true;
+      const dueMs = active ? activePushMs : idlePushMs;
+      return Date.now() - lastDeliveredAt >= dueMs;
+    });
+    if (result.delivered) lastDeliveredAt = Date.now();
+    if (result.count !== null) wasActive = result.active;
     try {
       onTick?.(entry, result);
     } catch {
@@ -240,13 +294,22 @@ export async function runLoop(
   const log = opts.log ?? ((m: string) => console.log(m));
   log(
     `usher: ${entries.length} source(s) [${entries
-      .map(
-        (e) =>
-          `${e.source.name}@${e.intervalMs / 1000}s` +
+      .map((e) => {
+        const poll =
+          `${e.intervalMs / 1000}s` +
           (e.activeIntervalMs && e.activeIntervalMs !== e.intervalMs
             ? `/${e.activeIntervalMs / 1000}s active`
-            : ""),
-      )
+            : "");
+        const pushMs = e.pushIntervalMs ?? e.intervalMs;
+        const activePushMs = e.activePushIntervalMs ?? pushMs;
+        const decoupled =
+          pushMs !== e.intervalMs || activePushMs !== (e.activeIntervalMs ?? e.intervalMs);
+        const push = decoupled
+          ? ` push ${pushMs / 1000}s` +
+            (activePushMs !== pushMs ? `/${activePushMs / 1000}s active` : "")
+          : "";
+        return `${e.source.name} poll ${poll}${push}`;
+      })
       .join(", ")}]`,
   );
   if (opts.once) {

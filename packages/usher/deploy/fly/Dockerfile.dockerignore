@@ -4,3 +4,16 @@
 **/.next-build
 .git
 **/*.log
+
+# Local database files and dumps (2026-08-10). These are gitignored, so they were invisible to a
+# `git status` check but NOT to the Docker build context — a deploy was uploading ~4.1 GB of them to
+# Fly's remote builder at ~1 MB/s, which is both an hour of pointless transfer and local database
+# contents leaving the machine for no reason. The image needs source only.
+db-backups
+backups
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+**/*.dump
+**/*.sql.gz

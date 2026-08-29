@@ -9,15 +9,31 @@ gushEndpoint: https://www.liveone.energy/api/gush
 
 sources:
   # DeepSea generator at the primary site (musher). Reached over the sheephouse WireGuard tunnel on Fly,
-  # or directly on the LAN from a Pi. Poll==push: 5 min idle, 1 min while the genset is running.
+  # or directly on the LAN from a Pi. Poll 15 s; push 5 min idle / 1 min running.
+  #
+  # ⚠️ TEMPORARY high-resolution POLL cadence (2026-08-10). It was 300 s idle / 60 s running. The open
+  # question is WHICH digital input the SP-PRO closes to command a start (see the Daylesford
+  # generator-run-accounting write-up), and that is a transition we need bracketed tightly — at 300 s
+  # the pre-start snapshot is up to five minutes stale and useless for attributing the edge. Costs
+  # ~52 MB/day of diag journal (~0.5 MB/day once rolled — see diag-journal.ts on why gzip gets
+  # ~106:1), which is why the journal now has a 100 MB cap. Put pollSec back to 300 once the start
+  # trigger is identified.
+  #
+  # The PUSH cadence is deliberately NOT raised with it. Before the two were split, a faster poll
+  # dragged deliveries with it — 288 → 5,760 pushes/day, a 20× increase in what LiveOne stores, for
+  # a change only ever meant to buy local diagnostic resolution. LiveOne keeps receiving exactly
+  # what it always did; the extra resolution stays on the Fly volume. A start or stop delivers
+  # immediately regardless, so a run still reaches LiveOne within one poll of beginning.
   - type: deepsea
     siteId: sheephouse
     apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)
     host: 10.0.1.244
     port: 502
     unitId: 10
-    pollSec: 300
-    activeSec: 60
+    pollSec: 15 # read + journal
+    activeSec: 15
+    pushSec: 300 # deliver to gusher — unchanged from pre-2026-08-10
+    activePushSec: 60
 
   # Fronius at Kinkora (fusher) — one site, two inverters (master + slave), aggregated. The Site
   # self-polls each inverter every 2 s; the run-loop pushes the minutely report once per minute.

@@ -41,13 +41,17 @@ primary_region = "syd"
   # poll — idle included — to /data/usher/diag/YYYY-MM-DD.jsonl (gzipped on the day roll).
   # Declared here, NOT as a secret: these are plain config, and keeping them visible in the repo is
   # the point — the flag was previously set out-of-band, so nobody knew capture was off and the
-  # 2026-07-26 run was lost. Costs ~2.3 MB/day uncompressed (~0.25 MB/day once rolled) and there is
-  # NO GC on the diag dir. To turn off: set MUSHER_DIAGNOSTICS = "0" and redeploy, then prune
-  # /data/usher/diag.
+  # 2026-07-26 run was lost. At the temporary 15 s cadence (usher.example.yaml) this costs ~52 MB/day
+  # uncompressed, but only ~0.5 MB/day once rolled — these records are near-identical, so gzip gets
+  # ~106:1 (measured, not estimated). The journal enforces a 100 MB cap on the diag dir, purging
+  # OLDEST first; the live day file dominates it, leaving roughly three months of history. To turn
+  # off: set MUSHER_DIAGNOSTICS = "0" and redeploy, then prune /data/usher/diag.
   MUSHER_DIAGNOSTICS = "1"
-  # Polls to hold the fast (1-min) cadence after a run ends — a fine-resolution cool-down baseline.
-  # Does NOT gate capture (that is unconditional); 60 ticks ≈ 60 minutes.
-  MUSHER_DIAG_POSTRUN_TICKS = "60"
+  # How long to hold the source "active" after a run ends — a fine-resolution cool-down baseline.
+  # Does NOT gate capture (that is unconditional). Expressed in SECONDS; it replaced
+  # MUSHER_DIAG_POSTRUN_TICKS, which was a tick COUNT and therefore silently rescaled whenever the
+  # poll cadence changed — 60 ticks was an hour at 60 s polling and became fifteen minutes at 15 s.
+  MUSHER_DIAG_POSTRUN_SECONDS = "3600"
 
 # Persistent volume for the usher store — survives deploys/restarts, so an outage backlog is never
 # lost to a redeploy. CREATE THE VOLUME BEFORE THE FIRST DEPLOY WITH THIS BLOCK (the deploy fails

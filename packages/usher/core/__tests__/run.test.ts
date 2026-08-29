@@ -192,3 +192,72 @@ describe("tickOnce store wiring (blackbox + spool)", () => {
     expect(captured.readings).toHaveLength(1);
   });
 });
+
+describe("tickOnce delivery gating (poll ≠ push)", () => {
+  function makeStore() {
+    const journalled: unknown[] = [];
+    return {
+      journalled,
+      blackbox: {
+        append: async (r: unknown) => {
+          journalled.push(r);
+        },
+      },
+    };
+  }
+
+  it("reads the device but neither blackboxes nor pushes on a poll-only tick", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, { blackbox: store.blackbox });
+
+    const r = await tickOnce(entry, () => {}, undefined, () => false);
+
+    expect(r).toMatchObject({ count: 1, active: true, delivered: false });
+    expect(r.pushOk).toBeUndefined();
+    expect(captured.readings).toBeUndefined(); // never reached the pusher
+    expect(store.journalled).toHaveLength(0); // blackbox records DELIVERIES, not polls
+  });
+
+  it("delivers normally when the gate allows it", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, { blackbox: store.blackbox });
+
+    const r = await tickOnce(entry, () => {}, undefined, () => true);
+
+    expect(r).toMatchObject({ count: 1, delivered: true, pushOk: true });
+    expect(captured.readings).toHaveLength(1);
+    expect(store.journalled).toHaveLength(1);
+  });
+
+  it("gives the gate the source's running state, so push cadence can differ when active", async () => {
+    const seen: boolean[] = [];
+    const gate = (active: boolean) => {
+      seen.push(active);
+      return false;
+    };
+    await tickOnce(makeEntry(async () => ({ x: 5 })).entry, () => {}, undefined, gate); // running
+    await tickOnce(makeEntry(async () => ({ x: 0 })).entry, () => {}, undefined, gate); // idle
+    expect(seen).toEqual([true, false]);
+  });
+
+  it("delivers by default, so callers that ignore the gate are unaffected", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ delivered: true, pushOk: true });
+    expect(captured.readings).toHaveLength(1);
+  });
+
+  it("never consults the gate when there is nothing to send", async () => {
+    let consulted = false;
+    const { entry } = makeEntry(async () => ({}));
+    const r = await tickOnce(entry, () => {}, undefined, () => {
+      consulted = true;
+      return true;
+    });
+    expect(r).toMatchObject({ count: 0 });
+    expect(r.delivered).toBeUndefined();
+    expect(consulted).toBe(false);
+  });
+});

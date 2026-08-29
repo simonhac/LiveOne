@@ -46,15 +46,29 @@ export function createSource(
   }
 }
 
-/** Push cadence for a source. deepsea: idle/active poll==push; fronius: fixed push (2 s poll is internal). */
+/**
+ * Cadences for a source.
+ *
+ * deepsea: POLL (= read + diagnostic journal) and PUSH (= deliver to gusher) are independent. Both
+ * default to `pollSec`, which reproduces the old poll==push behaviour, so a config that sets
+ * neither `pushSec` nor `activePushSec` is unaffected by the split.
+ *
+ * fronius: `pushSec` is the only cadence the run-loop sees — the 2 s inverter poll is internal to
+ * the Site, so its poll interval is its push interval as far as this layer is concerned.
+ */
 function cadenceFor(sc: SourceConfig): {
   intervalMs: number;
   activeIntervalMs?: number;
+  pushIntervalMs?: number;
+  activePushIntervalMs?: number;
 } {
   if (sc.type === "deepsea") {
+    const pushSec = sc.pushSec ?? sc.pollSec;
     return {
       intervalMs: sc.pollSec * 1000,
       activeIntervalMs: (sc.activeSec ?? sc.pollSec) * 1000,
+      pushIntervalMs: pushSec * 1000,
+      activePushIntervalMs: (sc.activePushSec ?? pushSec) * 1000,
     };
   }
   return { intervalMs: sc.pushSec * 1000 };
@@ -83,14 +97,16 @@ export function buildEntries(
       apiKey: resolveApiKey(sc.apiKeyEnv),
       log: (m) => log(`[${sc.siteId}] ${m}`),
     });
-    const { intervalMs, activeIntervalMs } = cadenceFor(sc);
+    // Spread, don't destructure: naming the fields here means every cadence added to `cadenceFor`
+    // has to be repeated in a second place, and forgetting drops it SILENTLY — the loop just falls
+    // back to its default and nothing errors. That is exactly how the push cadences were lost on
+    // their first deploy.
     return {
       source,
       pusher,
       blackbox: store?.blackbox ?? null,
       spool: store?.spool ?? null,
-      intervalMs,
-      activeIntervalMs,
+      ...cadenceFor(sc),
       alignToBoundary: true,
     };
   });

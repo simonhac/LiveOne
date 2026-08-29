@@ -114,16 +114,19 @@ export function createMusher(opts: MusherOptions): Source {
 
   // ── Diagnostics (temporary, env-gated) ──────────────────────────────────────
   // MUSHER_DIAGNOSTICS=1 durably captures the FULL register dump (all ~94 regs: raw words + decoded
-  // value + sentinel reason) on EVERY poll — idle included, at the 5-min idle cadence.
-  // MUSHER_DIAG_POSTRUN_TICKS no longer gates capture; it only holds the fast (1-min) cadence for
-  // that many polls after a run ends, giving a fine-resolution cool-down baseline.
+  // value + sentinel reason) on EVERY poll — idle included.
+  //
+  // MUSHER_DIAG_POSTRUN_SECONDS does not gate capture; it keeps the source reporting "active" for
+  // that long after a run ends, holding the fast cadence to give a fine-resolution cool-down
+  // baseline. It is a DURATION (it replaced MUSHER_DIAG_POSTRUN_TICKS, a tick count) precisely
+  // because ticks are not one: changing the poll cadence silently rescaled the tail — at 60 s polls
+  // 60 ticks meant an hour, and the move to 15 s quietly cut it to fifteen minutes.
   const DIAG = process.env.MUSHER_DIAGNOSTICS === "1";
-  const POSTRUN = Math.max(
-    0,
-    Number(process.env.MUSHER_DIAG_POSTRUN_TICKS) || 6,
-  );
+  const POSTRUN_MS =
+    Math.max(0, Number(process.env.MUSHER_DIAG_POSTRUN_SECONDS) || 3600) * 1000;
   const log = opts.log ?? (() => {});
-  let holdRemaining = 0;
+  /** epoch ms until which a just-ended run keeps the source "active" (0 = not holding) */
+  let holdUntil = 0;
   let lastActive = false;
   // Kick off the durable journal (async); appends are fire-and-forget so a slow disk never delays a
   // tick's push. Missing the first tick or two before it resolves is fine — a run isn't imminent then.
@@ -192,16 +195,22 @@ export function createMusher(opts: MusherOptions): Source {
           const running =
             Number(values.engineRpm ?? 0) > 0 ||
             Number(values.genFreqHz ?? 0) > 0;
+          const nowMs = Date.now();
           if (running) {
-            holdRemaining = POSTRUN;
+            holdUntil = nowMs + POSTRUN_MS; // restart the tail on every running poll
             lastActive = true;
-          } else if (holdRemaining > 0) {
-            lastActive = true;
-            holdRemaining--; // consume one post-run slot
+          } else if (nowMs < holdUntil) {
+            lastActive = true; // still inside the cool-down tail
           } else {
             lastActive = false;
+            holdUntil = 0;
           }
-          emitDiag(dump, running, holdRemaining);
+          // `hold` in the record is now SECONDS remaining, not ticks remaining.
+          emitDiag(
+            dump,
+            running,
+            Math.max(0, Math.ceil((holdUntil - nowMs) / 1000)),
+          );
         }
         return values;
       } finally {

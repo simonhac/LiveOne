@@ -24,10 +24,24 @@ const DeepseaSourceSchema = z.object({
   host: z.string(),
   port: z.number().optional(),
   unitId: z.number().optional(),
-  /** idle push period (s); the run-loop reads + pushes on this cadence */
+  /**
+   * Idle POLL period (s) — how often the run-loop reads the controller, and therefore the
+   * diagnostic journal's cadence, since a journal record IS a read. Delivery to gusher is now a
+   * SEPARATE cadence (`pushSec`); this key used to mean "push period" as well, back when the two
+   * were welded together.
+   */
   pollSec: z.number().positive().default(300),
-  /** faster push period (s) while the genset is running; defaults to pollSec (no speed-up) */
+  /** faster poll period (s) while the genset is running; defaults to pollSec (no speed-up) */
   activeSec: z.number().positive().optional(),
+  /**
+   * Idle PUSH period (s) — how often a poll is actually delivered to gusher. Defaults to `pollSec`,
+   * i.e. deliver every poll, which is the historical behaviour and what every other deployment
+   * still gets. Set it LONGER than `pollSec` to poll (and journal) at high resolution without
+   * multiplying what LiveOne stores.
+   */
+  pushSec: z.number().positive().optional(),
+  /** push period (s) while the genset is running; defaults to pushSec */
+  activePushSec: z.number().positive().optional(),
 });
 
 const FroniusSourceSchema = z.object({
