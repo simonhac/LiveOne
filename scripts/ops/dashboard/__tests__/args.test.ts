@@ -90,4 +90,16 @@ describe("intFlag", () => {
       intFlag(parseCommandArgs(["x", "--index=abc"], SPEC), "index", 0, 12),
     ).toThrow(UsageError);
   });
+
+  it("rejects an empty value (Number('') is 0, which must not mean index 0)", () => {
+    expect(() =>
+      intFlag(parseCommandArgs(["x", "--index="], SPEC), "index", 0, 12),
+    ).toThrow(UsageError);
+    expect(() =>
+      intFlag(parseCommandArgs(["x", "--index=0x5"], SPEC), "index", 0, 12),
+    ).toThrow(UsageError);
+    expect(() =>
+      intFlag(parseCommandArgs(["x", "--index= 3"], SPEC), "index", 0, 12),
+    ).toThrow(UsageError);
+  });
 });

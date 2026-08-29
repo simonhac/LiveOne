@@ -18,11 +18,30 @@ import { Dashboard } from "@/lib/ids";
 import { UsageError } from "./args";
 
 export async function connect(): Promise<Client> {
-  const raw = process.env.MIGRATE_DATABASE_URL;
+  let raw = process.env.MIGRATE_DATABASE_URL;
+  // `npm run dashboard:dev` sets DASHBOARD_DEV_FALLBACK=1 and loads .env.local via tsx --env-file,
+  // allowing the ambient dev URL — but ONLY behind that explicit gate, and never a URL carrying the
+  // prod branch id. Plain `npm run dashboard` stays MIGRATE_DATABASE_URL-only: an ambient variable
+  // must not silently choose the target. (This fallback direction is fail-closed: the token is
+  // present iff the URL is prod. The unreliable direction — "no token, therefore not prod", which a
+  // minted pscale_api_… role would trip — is never relied on; see the module header.)
+  if (!raw && process.env.DASHBOARD_DEV_FALLBACK === "1") {
+    const dev = process.env.PLANETSCALE_DATABASE_URL;
+    const prodToken = process.env.PLANETSCALE_PROD_BRANCH_ID;
+    if (dev && prodToken && dev.includes(prodToken)) {
+      throw new Error(
+        "dashboard:dev refuses to run: PLANETSCALE_DATABASE_URL carries the prod branch id",
+      );
+    }
+    raw = dev;
+  }
   if (!raw) {
     throw new Error(
       "set MIGRATE_DATABASE_URL to the connection string of the database to target\n" +
-        "  dev:  MIGRATE_DATABASE_URL=$PLANETSCALE_DATABASE_URL (from .env.local)\n" +
+        // .env.local is NOT sourced into your shell, so $PLANETSCALE_DATABASE_URL expands empty —
+        // the hint must be a command that actually works.
+        "  dev:  npm run dashboard:dev -- <command> …   (reads .env.local), or\n" +
+        "        MIGRATE_DATABASE_URL=$(grep '^PLANETSCALE_DATABASE_URL=' .env.local | cut -d= -f2-) npm run dashboard -- …\n" +
         "  prod: pscale role create liveone sydney dash-cli --inherited-roles postgres --ttl 1h",
     );
   }
@@ -81,11 +100,13 @@ export async function listDashboards(
   client: Client,
   owner?: string,
 ): Promise<DashRow[]> {
+  // Presence check, not truthiness: an empty string must filter (to zero rows), never silently
+  // widen the query to every owner. The CLI rejects `--owner=` upstream anyway.
   const res = await client.query(
     `select ${ROW_COLUMNS} from dashboards
-      ${owner ? "where owner_user_id = $1" : ""}
+      ${owner !== undefined ? "where owner_user_id = $1" : ""}
       order by owner_user_id, name nulls last, id`,
-    owner ? [owner] : [],
+    owner !== undefined ? [owner] : [],
   );
   return res.rows.map(toRow);
 }
@@ -117,10 +138,19 @@ export async function resolveDashboard(
     where = "slug = $1";
     param = ref;
   }
-  const res = await client.query(
+  let res = await client.query(
     `select ${ROW_COLUMNS} from dashboards where ${where}`,
     [param],
   );
+  // An all-digit ref is tried as legacy_id first, but `isValidAlias` permits all-digit slugs
+  // (e.g. "2025") — on a legacy_id miss, fall through to the slug lookup so such a dashboard is
+  // still addressable. (If BOTH exist, legacy_id wins; use the db_… id to disambiguate.)
+  if (res.rowCount === 0 && where === "legacy_id = $1") {
+    res = await client.query(
+      `select ${ROW_COLUMNS} from dashboards where slug = $1`,
+      [ref],
+    );
+  }
   if (res.rowCount === 0) throw new Error(`no dashboard matches "${ref}"`);
   if ((res.rowCount ?? 0) > 1) {
     const candidates = res.rows

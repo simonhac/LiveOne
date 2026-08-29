@@ -117,8 +117,13 @@ export function intFlag(
 ): number | undefined {
   const raw = str(parsed, name);
   if (raw === undefined) return undefined;
+  // Canonical decimal digits only: Number("") is 0 and Number also accepts "0x5" / " 3 ", so a
+  // bare `--index=` (a shell slip) must not silently mean index 0.
+  if (!/^-?\d+$/.test(raw)) {
+    throw new UsageError(`--${name} must be an integer ${min}..${max}`);
+  }
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < min || n > max) {
+  if (n < min || n > max) {
     throw new UsageError(`--${name} must be an integer ${min}..${max}`);
   }
   return n;

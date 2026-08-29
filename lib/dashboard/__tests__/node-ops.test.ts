@@ -16,7 +16,13 @@ import {
   subtreeIds,
 } from "../node-ops";
 import { validateDocV4 } from "../v4-validate";
-import type { CardNode, DashboardV4, GroupNode } from "../v4";
+import {
+  countCardNodes,
+  countCardsInNode,
+  type CardNode,
+  type DashboardV4,
+  type GroupNode,
+} from "../v4";
 import { Area, Device } from "@/lib/ids";
 
 const AREA = Area.generate();
@@ -308,6 +314,14 @@ describe("helpers", () => {
       "n_3",
       "n_4",
     ]);
+  });
+
+  it("countCardsInNode counts leaf cards of a subtree", () => {
+    const doc = fixture();
+    expect(countCardsInNode(doc.root)).toBe(3);
+    expect(countCardsInNode(doc.root.children[0])).toBe(2); // the n_1 group
+    expect(countCardsInNode(doc.root.children[1])).toBe(1); // the lone n_4 card
+    expect(countCardsInNode(doc.root)).toBe(countCardNodes(doc));
   });
 
   it("countMissingIds counts nodes normalizeDocV4 would assign", () => {

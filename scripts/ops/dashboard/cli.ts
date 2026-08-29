@@ -27,7 +27,12 @@
  *     accepted with an explicit `--allow-unknown-type`;
  *   - `--area`/`--device` refs are format-checked AND looked up in the target database (this path
  *     bypasses the API's readability check; ownership/grants are deliberately NOT checked — this is
- *     an operator tool);
+ *     an operator tool). 🛑 Consequences of the bypass: share-token scope is derived from the doc at
+ *     read time, so a ref written here on a SHARED dashboard immediately widens anonymous viewers'
+ *     scope; and a ref the owner cannot read makes the doc unsaveable via the web editor (every UI
+ *     PUT 403s until the ref is removed). A warning is printed on every ref write;
+ *   - `n_…` node ids are minted per-document per-ENVIRONMENT (`normalizeDocV4`) and are NOT portable
+ *     between prod and dev — the same edit in both means re-running `show` in each;
  *   - each write is its own transaction with `SELECT … FOR UPDATE` and a `revision` bump, mirroring
  *     `updateDashboardDoc` — a concurrent editor's `If-Match` conflicts instead of being clobbered.
  *
@@ -43,19 +48,20 @@ import {
 } from "@/lib/dashboard/card-types";
 import {
   countCardNodes,
+  countCardsInNode,
   isDashboardV4,
   type CardNode,
   type DashboardV4,
   type GroupNode,
   type NodeId,
 } from "@/lib/dashboard/v4";
+import { isAliasCollision } from "@/lib/dashboard/dashboards";
 import { validateDocV4, type DocIssue } from "@/lib/dashboard/v4-validate";
 import {
   countMissingIds,
   findNode,
   insertNode,
   moveNode,
-  NodeOpError,
   removeNode,
   setNodeProps,
   subtreeIds,
@@ -63,7 +69,6 @@ import {
   type NodePosition,
 } from "@/lib/dashboard/node-ops";
 import { renderDocTree } from "@/lib/dashboard/v4-tree-text";
-import { isUniqueViolationOn } from "@/lib/db/pg-error";
 import {
   atMostOneOf,
   bool,
@@ -111,7 +116,9 @@ function loadWorkingDoc(row: DashRow): {
   if (!isDashboardV4(row.doc)) {
     throw new Error(`${dashLabel(row)}: doc is not a v4 document`);
   }
-  const missingIds = countMissingIds(row.doc);
+  // Validate BEFORE walking: isDashboardV4 checks only version + root.kind, so a doc whose root
+  // lacks `children` would make countMissingIds' walk throw a raw TypeError instead of the
+  // refusal below. Once the envelope parsed, walking the raw doc is safe.
   const res = validateDocV4(row.doc);
   if (!res.valid) {
     printIssues(res.errors, "error");
@@ -119,12 +126,21 @@ function loadWorkingDoc(row: DashRow): {
       `${dashLabel(row)}: stored doc is already invalid — refusing to edit (see \`dashboard validate\`)`,
     );
   }
+  const missingIds = countMissingIds(row.doc);
   return { working: res.normalized!, missingIds };
 }
 
 /**
  * Format-check an `--area`/`--device` flag and confirm the row exists in the target database.
- * (Existence only: this admin path deliberately skips the API's readability/no-escalation check.)
+ *
+ * 🛑 EXISTENCE ONLY — this admin path deliberately skips the API's `checkDocRefsReadable`
+ * (readability/no-escalation) check, and that has two concrete consequences:
+ *   - Share-token scope is derived from the doc at READ time (`collectRefs` → `allowedSystemIds`),
+ *     so writing a ref here on a dashboard with an active share token IMMEDIATELY widens what
+ *     anonymous `?access=` viewers can query — no grant row anywhere.
+ *   - A ref outside the owner's readable set makes the doc unsaveable via the web editor: every
+ *     subsequent UI PUT 403s until this CLI removes the ref.
+ * The warning below is printed on every ref write so neither happens silently.
  */
 async function checkRef(
   client: Client,
@@ -145,6 +161,10 @@ async function checkRef(
   if (res.rowCount === 0) {
     throw new Error(`--${kind}: no ${kind} ${value} in the target database`);
   }
+  console.error(
+    `warning: readability of ${value} is NOT checked — on a shared dashboard this ref widens what ` +
+      `anonymous viewers can query, and a ref the owner cannot read locks the doc out of the web editor`,
+  );
 }
 
 /** The unknown-card-type gate — only for the type THIS command introduces. */
@@ -284,6 +304,55 @@ async function runDocMutation(
   return 0;
 }
 
+/**
+ * The shared add-card / add-group flow. The caller supplies only the node-specific flags (via
+ * `makeBareNode`) and the summary wording; the envelope flags (`--area`/`--device`/`--hidden`/
+ * `--columns`), position parsing, insertion and the preview/write are one implementation, so a fix
+ * to the insert path cannot land in one command and miss the other.
+ */
+async function runInsert(
+  parsed: ParsedArgs,
+  makeBareNode: (parsed: ParsedArgs) => CardNode | GroupNode,
+  summaryOf: (node: CardNode | GroupNode) => string,
+): Promise<number> {
+  return withClient(async (client) => {
+    const apply = bool(parsed, "apply");
+    await printTarget(client, apply ? "APPLY" : "dry-run");
+    const node = makeBareNode(parsed);
+    const area = str(parsed, "area");
+    if (area !== undefined) {
+      await checkRef(client, "area", area);
+      if (Area.is(area)) node.area = area;
+    }
+    const device = str(parsed, "device");
+    if (device !== undefined) {
+      await checkRef(client, "device", device);
+      if (Device.is(device)) node.device = device;
+    }
+    if (bool(parsed, "hidden")) node.hidden = true;
+    const columns = intFlag(parsed, "columns", 1, 12);
+    if (columns !== undefined) node.size = { columns };
+
+    const row = await resolveDashboard(client, parsed.positionals[0]);
+    const { working, missingIds } = loadWorkingDoc(row);
+    const pos = parsePositionFlags(parsed, working.root.id!, false);
+    const res = insertNode(working, node, pos);
+    return runDocMutation(
+      client,
+      row,
+      working,
+      missingIds,
+      {
+        next: res.doc,
+        summary: `${summaryOf(node)} ${describePosition(pos)}`,
+        markerSlot: { parentId: res.parentId, index: res.index, marker: "+" },
+        renderRootId: res.parentId,
+      },
+      apply,
+    );
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -309,7 +378,14 @@ const commands: Record<string, Command> = {
     run: (parsed) =>
       withClient(async (client) => {
         await printTarget(client, "read-only");
-        const rows = await listDashboards(client, str(parsed, "owner"));
+        const owner = str(parsed, "owner");
+        if (owner === "") {
+          // An unset shell variable must not silently widen the query to every dashboard.
+          throw new UsageError(
+            "--owner: empty (omit the flag to list all owners)",
+          );
+        }
+        const rows = await listDashboards(client, owner);
         const entries = rows.map((r) => ({
           id: Dashboard.encode(r.id),
           legacyId: r.legacyId,
@@ -350,21 +426,23 @@ const commands: Record<string, Command> = {
         await printTarget(client, "read-only");
         const row = await resolveDashboard(client, parsed.positionals[0]);
         const nodeId = str(parsed, "node");
-        if (bool(parsed, "json") && nodeId === undefined) {
-          // The raw stored doc, byte-faithful (no normalization).
-          console.log(JSON.stringify(row.doc, null, 2));
-          return 0;
-        }
+        // Always the NORMALIZED form — the JSON carries the same n_… ids the tree prints, so an
+        // id copied from either view addresses the same node in an edit command.
         const { working, missingIds } = loadWorkingDoc(row);
         if (missingIds > 0) {
           console.error(
             `note: ${missingIds} node(s) had no id; ids shown will be persisted by the next write`,
           );
         }
+        // An unknown --node is an ERROR in both output modes (renderDocTree's "(no node …)"
+        // placeholder with exit 0 read as success to scripted callers).
+        if (nodeId !== undefined && !findNode(working, nodeId)) {
+          throw new Error(`no node "${nodeId}"`);
+        }
         if (bool(parsed, "json")) {
-          const found = findNode(working, nodeId!);
-          if (!found) throw new Error(`no node "${nodeId}"`);
-          console.log(JSON.stringify(found.node, null, 2));
+          const out =
+            nodeId === undefined ? working : findNode(working, nodeId)!.node;
+          console.log(JSON.stringify(out, null, 2));
           return 0;
         }
         console.log(
@@ -510,7 +588,7 @@ const commands: Record<string, Command> = {
             params,
           );
         } catch (err) {
-          if (isUniqueViolationOn(err, "dashboards_owner_alias_unique")) {
+          if (isAliasCollision(err)) {
             throw new Error(
               `slug "${slug}" is already used by another of ${row.ownerUserId}'s dashboards`,
             );
@@ -544,49 +622,20 @@ const commands: Record<string, Command> = {
         "         [--allow-unknown-type] [--apply]",
     },
     run: (parsed) =>
-      withClient(async (client) => {
-        const apply = bool(parsed, "apply");
-        await printTarget(client, apply ? "APPLY" : "dry-run");
-        const type = str(parsed, "type");
-        if (type === undefined) throw new UsageError("--type is required");
-        checkCardType(type, bool(parsed, "allow-unknown-type"));
-        const config = parseConfigFlags(parsed);
-        checkConfigAllowed(type, config);
-        const area = str(parsed, "area");
-        const device = str(parsed, "device");
-        if (area !== undefined) await checkRef(client, "area", area);
-        if (device !== undefined) await checkRef(client, "device", device);
-        const columns = intFlag(parsed, "columns", 1, 12);
-
-        const row = await resolveDashboard(client, parsed.positionals[0]);
-        const { working, missingIds } = loadWorkingDoc(row);
-        const node: CardNode = { kind: "card", type };
-        if (config !== undefined) node.config = config;
-        if (area !== undefined && Area.is(area)) node.area = area;
-        if (device !== undefined && Device.is(device)) node.device = device;
-        if (bool(parsed, "hidden")) node.hidden = true;
-        if (columns !== undefined) node.size = { columns };
-
-        const pos = parsePositionFlags(parsed, working.root.id!, false);
-        const res = insertNode(working, node, pos);
-        return runDocMutation(
-          client,
-          row,
-          working,
-          missingIds,
-          {
-            next: res.doc,
-            summary: `insert card "${type}" ${describePosition(pos)}`,
-            markerSlot: {
-              parentId: res.parentId,
-              index: res.index,
-              marker: "+",
-            },
-            renderRootId: res.parentId,
-          },
-          apply,
-        );
-      }),
+      runInsert(
+        parsed,
+        (p) => {
+          const type = str(p, "type");
+          if (type === undefined) throw new UsageError("--type is required");
+          checkCardType(type, bool(p, "allow-unknown-type"));
+          const config = parseConfigFlags(p);
+          checkConfigAllowed(type, config);
+          const node: CardNode = { kind: "card", type };
+          if (config !== undefined) node.config = config;
+          return node;
+        },
+        (node) => `insert card "${(node as CardNode).type}"`,
+      ),
   },
 
   "add-group": {
@@ -602,54 +651,25 @@ const commands: Record<string, Command> = {
         "         [--parent=<n_id>] [--index=<k>|--before=<n_id>|--after=<n_id>] [--apply]",
     },
     run: (parsed) =>
-      withClient(async (client) => {
-        const apply = bool(parsed, "apply");
-        await printTarget(client, apply ? "APPLY" : "dry-run");
-        const direction = str(parsed, "direction");
-        if (
-          direction !== undefined &&
-          direction !== "row" &&
-          direction !== "column"
-        ) {
-          throw new UsageError("--direction must be row or column");
-        }
-        const area = str(parsed, "area");
-        const device = str(parsed, "device");
-        if (area !== undefined) await checkRef(client, "area", area);
-        if (device !== undefined) await checkRef(client, "device", device);
-        const columns = intFlag(parsed, "columns", 1, 12);
-
-        const row = await resolveDashboard(client, parsed.positionals[0]);
-        const { working, missingIds } = loadWorkingDoc(row);
-        const node: GroupNode = { kind: "group", children: [] };
-        if (direction !== undefined) node.direction = direction;
-        if (bool(parsed, "wrap")) node.wrap = true;
-        if (bool(parsed, "heading")) node.heading = true;
-        if (area !== undefined && Area.is(area)) node.area = area;
-        if (device !== undefined && Device.is(device)) node.device = device;
-        if (bool(parsed, "hidden")) node.hidden = true;
-        if (columns !== undefined) node.size = { columns };
-
-        const pos = parsePositionFlags(parsed, working.root.id!, false);
-        const res = insertNode(working, node, pos);
-        return runDocMutation(
-          client,
-          row,
-          working,
-          missingIds,
-          {
-            next: res.doc,
-            summary: `insert group ${describePosition(pos)}`,
-            markerSlot: {
-              parentId: res.parentId,
-              index: res.index,
-              marker: "+",
-            },
-            renderRootId: res.parentId,
-          },
-          apply,
-        );
-      }),
+      runInsert(
+        parsed,
+        (p) => {
+          const direction = str(p, "direction");
+          if (
+            direction !== undefined &&
+            direction !== "row" &&
+            direction !== "column"
+          ) {
+            throw new UsageError("--direction must be row or column");
+          }
+          const node: GroupNode = { kind: "group", children: [] };
+          if (direction !== undefined) node.direction = direction;
+          if (bool(p, "wrap")) node.wrap = true;
+          if (bool(p, "heading")) node.heading = true;
+          return node;
+        },
+        () => "insert group",
+      ),
   },
 
   "remove-node": {
@@ -669,13 +689,7 @@ const commands: Record<string, Command> = {
         const { working, missingIds } = loadWorkingDoc(row);
         const id = parsed.positionals[1];
         const res = removeNode(working, id);
-        const removedCards =
-          res.removed.kind === "card"
-            ? 1
-            : countCardNodes({
-                ...working,
-                root: { kind: "group", children: [res.removed] },
-              });
+        const removedCards = countCardsInNode(res.removed);
         const removedMarkers = new Map(
           subtreeIds(res.removed).map((n) => [n, "-"] as const),
         );
@@ -816,6 +830,10 @@ const commands: Record<string, Command> = {
           checkCardType(type, bool(parsed, "allow-unknown-type"));
           patch.type = type;
         }
+        // Mutual exclusion FIRST: parseConfigFlags holds the atMostOneOf check, and the
+        // --config=none branch skips it — without this, `--config=none --config-json=…` would
+        // silently delete the config and drop the supplied JSON.
+        atMostOneOf(parsed, ["config", "config-json", "config-file"]);
         const rawConfig = str(parsed, "config");
         if (rawConfig !== undefined && rawConfig !== "none") {
           throw new UsageError(
@@ -872,9 +890,11 @@ function globalUsage(): string {
     "",
     "Run `npm run dashboard -- <command> --help` for a command's options.",
     "Mutations are DRY-RUN by default; pass --apply to write.",
-    "The connection comes from MIGRATE_DATABASE_URL only (dev: $PLANETSCALE_DATABASE_URL from",
-    ".env.local; prod: a short-TTL `pscale role` url). Read the printed `target:` line before --apply.",
+    "The connection comes from MIGRATE_DATABASE_URL only (prod: a short-TTL `pscale role` url);",
+    "`npm run dashboard:dev` reads the dev URL from .env.local and refuses a prod URL.",
+    "Read the printed `target:` line before --apply.",
     "🛑 Durable edits go to PROD — the 2-hourly prod→dev sync reverts dev-only dashboard edits.",
+    "🛑 n_… node ids are per-environment — never reuse an id from prod against dev or vice versa.",
   ].join("\n");
 }
 
@@ -903,10 +923,6 @@ main()
   })
   .catch((err) => {
     console.error(err instanceof Error ? err.message : err);
-    process.exitCode =
-      err instanceof UsageError || err instanceof NodeOpError
-        ? err instanceof UsageError
-          ? 2
-          : 1
-        : 1;
+    // Usage errors are exit 2; everything else (NodeOpError included) is a plain failure, exit 1.
+    process.exitCode = err instanceof UsageError ? 2 : 1;
   });

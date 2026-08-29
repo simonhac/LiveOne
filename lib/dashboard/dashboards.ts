@@ -81,7 +81,7 @@ const ALIAS_UNIQUE = "dashboards_owner_alias_unique";
  * On this database the name arrives only in the pg `message` (PlanetScale's proxy strips `constraint`);
  * `violatedUniqueName` handles that. Read `lib/db/pg-error.ts` before touching this.
  */
-function isAliasCollision(err: unknown): boolean {
+export function isAliasCollision(err: unknown): boolean {
   return isUniqueViolationOn(err, ALIAS_UNIQUE);
 }
 
