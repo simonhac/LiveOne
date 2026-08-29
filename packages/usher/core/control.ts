@@ -104,6 +104,23 @@ export const CONTROL_MANIFEST: Manifest = [
     defaultName: "Control Last Error",
     subsystem: "generator",
   },
+  {
+    // The WRITABLE point (LiveOne mints its control descriptor server-side — see
+    // lib/control/control-registry.ts; a pusher never asserts its own writability).
+    //
+    // Value = minutes REMAINING on the commanded run, 0 when idle. Command and readback share one
+    // unit deliberately: you set it to 30 to run for 30 minutes, and it counts down to 0. The
+    // logicalPathStem + metricType here are the address lib/vendors/deepsea/control.ts dispatches
+    // on ("source.generator.control/duration"), so renaming either breaks the command — that pair
+    // is a contract, not a label.
+    key: "controlRunRequestMin",
+    physicalPathTail: "generator_run_request_min",
+    logicalPathStem: "source.generator.control",
+    metricType: "duration",
+    metricUnit: "min",
+    defaultName: "Generator Run Request",
+    subsystem: "generator",
+  },
 ];
 
 /** What resume() finds on disk. `stopAt` is ISO — the absolute instant is the ONLY authority. */
@@ -668,6 +685,12 @@ export class RunSupervisor {
         this.stopAtMs != null ? Math.round(this.stopAtMs / 1000) : null,
       controlState: this.state(),
       controlLastError: this.lastError,
+      // Minutes remaining, rounded UP so a run with 20 s left reads 1 rather than 0 — 0 is the
+      // command value for "stop" and must mean "no run in progress", never "nearly done".
+      controlRunRequestMin:
+        this.remainingSec() != null
+          ? Math.ceil((this.remainingSec() as number) / 60)
+          : 0,
     };
   }
 
