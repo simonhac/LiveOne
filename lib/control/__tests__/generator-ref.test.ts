@@ -9,7 +9,9 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   describeGeneratorState,
+  firstPresentPath,
   generatorTileLine,
+  GENERATOR_RPM_PATHS,
   panelIsAuto,
   runMinutesLeft,
   type GeneratorControlState,
@@ -99,6 +101,39 @@ describe("runMinutesLeft", () => {
     expect(runMinutesLeft(null, NOW)).toBeNull();
     expect(runMinutesLeft(undefined, NOW)).toBeNull();
     expect(runMinutesLeft(Number.NaN, NOW)).toBeNull();
+  });
+});
+
+describe("firstPresentPath", () => {
+  const MODERN = GENERATOR_RPM_PATHS[0];
+  const LEGACY = GENERATOR_RPM_PATHS[1];
+
+  it("prefers the manifest-correct path when both are present", () => {
+    expect(
+      firstPresentPath({ [MODERN]: 1, [LEGACY]: 2 }, GENERATOR_RPM_PATHS),
+    ).toBe(MODERN);
+  });
+
+  it("🛑 falls back to the legacy path, which is the one PROD actually carries", () => {
+    // #150 renamed the manifest stem; `points` rows are keyed on `physical_path` and only their
+    // `control` field is drift-healed, so the already-minted row kept `generator.engine`.
+    expect(firstPresentPath({ [LEGACY]: 2 }, GENERATOR_RPM_PATHS)).toBe(LEGACY);
+  });
+
+  it("returns null when neither is present, or there is no map at all", () => {
+    expect(firstPresentPath({}, GENERATOR_RPM_PATHS)).toBeNull();
+    expect(firstPresentPath(null, GENERATOR_RPM_PATHS)).toBeNull();
+    expect(firstPresentPath(undefined, GENERATOR_RPM_PATHS)).toBeNull();
+  });
+
+  it("treats a null-valued entry as absent, so a dead point does not mask a live one", () => {
+    expect(
+      firstPresentPath({ [MODERN]: null, [LEGACY]: 2 }, GENERATOR_RPM_PATHS),
+    ).toBe(LEGACY);
+  });
+
+  it("accepts a zero reading — 0 rpm is a fact, not an absence", () => {
+    expect(firstPresentPath({ [MODERN]: 0 }, GENERATOR_RPM_PATHS)).toBe(MODERN);
   });
 });
 

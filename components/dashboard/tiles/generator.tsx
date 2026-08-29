@@ -8,10 +8,11 @@ import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import {
   GENERATOR_CONTROL_PATHS,
   GENERATOR_MODE_PATH,
-  GENERATOR_RPM_PATH,
+  GENERATOR_RPM_PATHS,
   GENERATOR_STATUS_PATH,
   GENERATOR_STOP_AT_PATH,
   GENERATOR_ERROR_PATH,
+  firstPresentPath,
   generatorTileLine,
 } from "@/lib/control/generator-ref";
 import type { TilePlugin, TileRenderProps } from "./types";
@@ -42,7 +43,10 @@ function GeneratorTile({
   const state = getTextValue(latest, GENERATOR_STATUS_PATH);
   const mode = getTextValue(latest, GENERATOR_MODE_PATH);
   const stopAt = getPointValue(latest, GENERATOR_STOP_AT_PATH);
-  const rpm = getPointValue(latest, GENERATOR_RPM_PATH);
+  // Resolved rather than hardcoded: the readings still arrive on the pre-#150 logical path on
+  // prod. See GENERATOR_RPM_PATHS.
+  const rpmPath = firstPresentPath(latest, GENERATOR_RPM_PATHS);
+  const rpm = rpmPath ? getPointValue(latest, rpmPath) : null;
   const lastError = getTextValue(latest, GENERATOR_ERROR_PATH);
 
   // A commanded run's countdown must tick without waiting for the next 15 s push, and `stop_at` is
