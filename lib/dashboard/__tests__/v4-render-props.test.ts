@@ -207,7 +207,7 @@ const FIXTURE_DOC: DashboardV4 = {
         area: AREA_1, // handle 1, chartCapable
         heading: true,
         children: [
-          // ---- the tile path (V4TileCell): all 9 promoted tile views -------------------------
+          // ---- the tile path (V4TileCell): all 10 promoted tile views ------------------------
           {
             id: "n_row",
             kind: "group",
@@ -220,6 +220,7 @@ const FIXTURE_DOC: DashboardV4 = {
               { id: "n_t_grid", kind: "card", type: "house-to-grid" },
               { id: "n_t_amber", kind: "card", type: "amber" },
               { id: "n_t_ev", kind: "card", type: "ev" },
+              { id: "n_t_generator", kind: "card", type: "generator" },
               { id: "n_t_renewables", kind: "card", type: "renewables" },
               // device-bound tile: `V4TileCell` must fetch the DEVICE's handle (13), not the area's.
               {
@@ -366,6 +367,7 @@ const EXPECTED_KEYS = [
   "tile:battery@1",
   "tile:battery@11",
   "tile:ev@1",
+  "tile:generator@1",
   "tile:hotWater@1",
   "tile:house-to-grid@1",
   "tile:load@1",
@@ -476,7 +478,7 @@ beforeAll(() => {
 });
 
 describe("v4 renderer — coverage and arity", () => {
-  it("exercises every one of the 20 known v4 card types", () => {
+  it("exercises every one of the 21 known v4 card types", () => {
     const covered = new Set<string>();
     for (const c of pluginCaptures)
       covered.add(c.plugin.replace(/^(card|tile):/, ""));

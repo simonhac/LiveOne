@@ -79,6 +79,105 @@ export const SOLAR_SCENARIOS: Record<string, LatestPointValues> = {
 };
 
 // ---------------------------------------------------------------------------
+// Tile — Generator (the usher hub's control-plane points + engine speed)
+// ---------------------------------------------------------------------------
+
+/** A TEXT point. Text values travel as strings even though the type says number — see
+ *  `getTextValue` in components/dashboard/tiles/shared.tsx. */
+function mkText(
+  value: string,
+  logicalPath: string,
+  displayName: string,
+  ageSeconds: number = FRESH,
+): LatestPointValue {
+  return {
+    value: value as unknown as number,
+    logicalPath,
+    measurementTime: new Date(Date.now() - ageSeconds * 1000),
+    metricUnit: "text",
+    displayName,
+  };
+}
+
+/** `stop_at` as the hub pushes it: epoch SECONDS, `minutesAhead` from now. */
+const stopAt = (minutesAhead: number): LatestPointValue =>
+  mk(
+    Math.round((Date.now() + minutesAhead * 60_000) / 1000),
+    "source.generator.control.stop_at/time",
+    "epoch_s",
+    "Commanded Stop At",
+  );
+
+const genState = (state: string, ageSeconds?: number) =>
+  mkText(
+    state,
+    "source.generator.control.status/state",
+    "Control State",
+    ageSeconds,
+  );
+const genMode = (mode: string, ageSeconds?: number) =>
+  mkText(mode, "source.generator.mode/state", "Control Mode", ageSeconds);
+const genRpm = (rpm: number) =>
+  mk(rpm, "source.generator.engine/speed", "rpm", "Engine Speed");
+
+export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
+  idle: {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator.engine/speed": genRpm(0),
+  },
+  "running (ours)": {
+    "source.generator.control.status/state": genState("running:hub"),
+    "source.generator.control.stop_at/time": stopAt(23),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator.engine/speed": genRpm(1542),
+  },
+  "running (inverter)": {
+    "source.generator.control.status/state": genState("running:sp-pro"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator.engine/speed": genRpm(1497),
+  },
+  "cooling down": {
+    "source.generator.control.status/state": genState("stopping"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator.engine/speed": genRpm(980),
+  },
+  "panel in Stop": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Stop"),
+    "source.generator.engine/speed": genRpm(0),
+  },
+  "stop failing": {
+    "source.generator.control.status/state": genState("stop-failing"),
+    "source.generator.control.stop_at/time": stopAt(-2),
+    "source.generator.control.error/state": mkText(
+      "stop write failed: timeout — retrying every 15s until confirmed",
+      "source.generator.control.error/state",
+      "Control Last Error",
+    ),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator.engine/speed": genRpm(1502),
+  },
+  "still running after release": {
+    "source.generator.control.status/state": genState(
+      "latch-released-still-running",
+    ),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator.engine/speed": genRpm(1488),
+  },
+  // The register has not been read at all — the tile must show an em-dash, not a confident 0.
+  "no engine read": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Auto"),
+  },
+  stale: {
+    "source.generator.control.status/state": genState("idle", STALE),
+    "source.generator.mode/state": genMode("Auto", STALE),
+    "source.generator.engine/speed": genRpm(0),
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Tile — Load (load/power + load.* children + synthesized rest-of-house)
 // ---------------------------------------------------------------------------
 export const LOAD_SCENARIOS: Record<string, LatestPointValues> = {

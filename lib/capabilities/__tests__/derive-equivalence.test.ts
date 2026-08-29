@@ -35,6 +35,7 @@ const LEGACY_TILE_IDS: readonly TileId[] = [
   "house-to-grid",
   "amber",
   "ev",
+  "generator",
   "renewables",
 ];
 const hasVal = (latest: LatestPointValues, path: string): boolean =>
@@ -62,6 +63,10 @@ function legacyAvailableTiles(latest: LatestPointValues): TileId[] {
     "house-to-grid": hasVal(latest, "bidi.grid/power"),
     amber: hasVal(latest, "bidi.grid.import/rate"),
     ev: hasVal(latest, "ev.battery/soc"),
+    // generator: the hub-supervised run-request point — "there is a generator we can command",
+    // which is deliberately narrower than "there is a generator" (see `generator/control` in
+    // lib/capabilities/registry.ts).
+    generator: hasVal(latest, "source.generator.control.request/duration"),
     // renewables: solar generation OR a grid connection (grid/power ← bidi.grid/power).
     renewables: solar || hasVal(latest, "bidi.grid/power"),
   };
@@ -96,6 +101,7 @@ const UNIVERSE = [
   "bidi.grid.import/rate",
   "ev.battery/soc",
   "load.hws/temperature",
+  "source.generator.control.request/duration",
 ] as const;
 
 const mkValue = (path: string): LatestPointValue => ({
@@ -121,7 +127,7 @@ describe("capability model reproduces the original derivers", () => {
   });
 
   it("availableTilesFromCaps ∘ capabilitiesFromLatest === (old availableTiles), for EVERY path subset", () => {
-    const total = 1 << UNIVERSE.length; // 2^11 = 2048 combinations
+    const total = 1 << UNIVERSE.length; // 2^12 = 4096 combinations
     for (let mask = 0; mask < total; mask++) {
       const latest = latestForMask(mask);
       const viaCaps = availableTilesFromCaps(capabilitiesFromLatest(latest));

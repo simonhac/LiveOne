@@ -1,0 +1,535 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  Minus,
+  Play,
+  RefreshCw,
+  Square,
+  XCircle,
+} from "lucide-react";
+import { queryKeys } from "@/lib/queries/keys";
+import { measurementMsOf } from "@/lib/control/point-ref";
+import { describeDecline } from "@/lib/control/decline-copy";
+import { GENERATOR_RUN_REQUEST_ADDRESS } from "@/lib/control/addresses";
+import {
+  GENERATOR_ERROR_PATH,
+  GENERATOR_MODE_PATH,
+  GENERATOR_STATUS_PATH,
+  GENERATOR_STOP_AT_PATH,
+  describeGeneratorState,
+  generatorRunRequestTarget,
+  runMinutesLeft,
+} from "@/lib/control/generator-ref";
+import ControlNotice, {
+  type ControlNoticeValue,
+} from "@/components/ControlNotice";
+import CommandActivityLog from "@/components/CommandActivityLog";
+import type { LatestPointValues } from "@/lib/types/api";
+
+/** The `POST …/preflight` body — mirrors `ControlPreflightResult` (lib/vendors/types.ts). */
+interface PreflightJson {
+  ok: boolean;
+  wouldProceed?: boolean;
+  verdict: string;
+  checks?: { label: string; value: string; ok: boolean | null }[];
+  /** DeepSea puts the hub's `ControlStatus` here — the freshest word on the run in progress. */
+  detail?: {
+    maxRuntimeSec?: number;
+    latched?: boolean;
+    stopAt?: string | null;
+  } | null;
+}
+
+/**
+ * The point's own `control` descriptor bound (lib/control/control-registry.ts:
+ * `{kind:"number", min:0, max:120, step:5}`).
+ *
+ * 🛑 This is the UI/plausibility bound, NOT the safety bound. The hub's `maxRuntimeSec` is the one
+ * actually enforced where the latch is held, the two are deliberately independent, and the slider
+ * clamps DOWN to whichever the preflight reports. A mistake here cannot widen what will run.
+ */
+const DESCRIPTOR_MAX_MIN = 120;
+const STEP_MIN = 5;
+const PRESETS_MIN = [5, 15, 30, 60, 120];
+const DEFAULT_MIN = 30;
+
+/** How long after an ambiguous send before we re-probe to find out what actually happened. */
+const AMBIGUITY_RECHECK_MS = 5_000;
+
+/** "as of…" words for the status line. Null when there is nothing to date. */
+function freshnessWords(ms: number | null, nowMs: number): string | null {
+  if (ms == null) return null;
+  const age = Math.max(0, nowMs - ms);
+  if (age < 45_000) return "just now";
+  const min = Math.round(age / 60_000);
+  if (min < 1) return "under a minute ago";
+  if (min < 120) return `${min} min ago`;
+  return `${Math.round(min / 60)} h ago`;
+}
+
+function text(latest: LatestPointValues | null, path: string): string | null {
+  const v = latest?.[path]?.value as unknown;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function num(latest: LatestPointValues | null, path: string): number | null {
+  const v = latest?.[path]?.value as unknown;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+interface GeneratorControlDialogProps {
+  /** The DEVICE (or area) handle whose `/api/data` this dialog invalidates after a command. */
+  systemId: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  latest: LatestPointValues | null;
+}
+
+/**
+ * Generator run controls — opened from the cog on the generator tile.
+ *
+ * Commands go through the generic command plane exactly as the Tesla dialog's do:
+ * `POST /api/v4/points/{pt_}/action {action:"set_value", value:<MINUTES>}`, where 0 stops. The
+ * target `pt_` comes from the `pointReference` the latest-values map already carries — nothing is
+ * hardcoded.
+ *
+ * ## What is different from the charge dialog, and why
+ *
+ * - **Start is GATED on a live preflight.** `TeslaControlDialog` deliberately never disables
+ *   Start/Stop, because a redundant press there is a benign decline plus a free re-poll. Here the
+ *   worst case is a diesel engine running that nobody meant to start, so Start stays disabled until
+ *   the hub's `noop` — the whole chain, FC3 reads only, decided by the same `gateStart()` a real
+ *   run consults — says a run would be accepted. The refusal shown is the hub's own sentence; this
+ *   dialog never forms a second opinion about whether a start is safe.
+ * - **Stop is never gated**, which IS the Tesla rule: releasing the latch has to stay reachable when
+ *   our picture is stale, when the probe failed, and especially when something has gone wrong.
+ * - **There is no Refresh button.** DeepSea is a push vendor; there is nothing for the web tier to
+ *   re-poll, and the preflight *is* the fresh read.
+ * - **`released ≠ stopped`.** A stop that only cleared our latch comes back from the vendor as a
+ *   200 with a `reason` explaining that the inverter is still calling for the engine. That renders
+ *   as an informational notice, never a success tick.
+ */
+export default function GeneratorControlDialog({
+  systemId,
+  open,
+  onOpenChange,
+  latest,
+}: GeneratorControlDialogProps) {
+  const queryClient = useQueryClient();
+
+  const target = generatorRunRequestTarget(latest);
+  const state = text(latest, GENERATOR_STATUS_PATH);
+  const mode = text(latest, GENERATOR_MODE_PATH);
+  const lastError = text(latest, GENERATOR_ERROR_PATH);
+  const stopAtSec = num(latest, GENERATOR_STOP_AT_PATH);
+  const statusMs = measurementMsOf(latest, GENERATOR_STATUS_PATH);
+
+  const status = describeGeneratorState(state);
+
+  const [minutes, setMinutes] = useState<number>(DEFAULT_MIN);
+  const [notice, setNotice] = useState<ControlNoticeValue | null>(null);
+  const [pending, setPending] = useState<"start" | "extend" | "stop" | null>(
+    null,
+  );
+  // Ticks the countdown between 15 s pushes; `stop_at` is absolute so nothing is re-fetched.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!open) return;
+    const t = setInterval(() => setNowMs(Date.now()), 5_000);
+    return () => clearInterval(t);
+  }, [open]);
+
+  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(
+    () => () => {
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current = [];
+    },
+    [],
+  );
+
+  // ── the preflight ────────────────────────────────────────────────────────
+  //
+  // Fired unconditionally on open (unlike the Tesla dialog's staleness-gated refresh): it costs no
+  // vendor money, cannot wake or move hardware, and answering "is it safe to start this" is the
+  // reason the dialog exists. `useQuery` rather than a mutation so "Check again" is a refetch and
+  // the in-flight state is free — but with no interval: this is a probe, not a poll.
+  const preflight = useQuery({
+    queryKey: ["generator-preflight", target ?? ""],
+    queryFn: async (): Promise<PreflightJson> => {
+      // 🛑 Deliberately NO `value`, and the chosen duration is deliberately NOT in the query key.
+      // Every runtime this dialog can offer is already clamped to the hub's `maxRuntimeSec`, and
+      // that cap is the ONLY runtime-dependent term in `gateStart()` — so the verdict cannot
+      // change with the slider, and keying on it would fire a Modbus round-trip over WireGuard
+      // per slider step. The probe asks about the moment, not about a particular length of run.
+      const res = await fetch(`/api/v4/points/${target}/preflight`, {
+        method: "POST",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Could not check the engine");
+      return body as PreflightJson;
+    },
+    enabled: open && !!target,
+    // A probe answers about a MOMENT. Nothing may serve a cached verdict about whether it is safe
+    // to start an engine, so every open re-asks.
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  // The ceiling that is actually enforced, once the hub has told us. Until then the point's own
+  // descriptor bound stands. `Math.min` on purpose: whichever is lower wins, always.
+  const hubMaxMin = preflight.data?.detail?.maxRuntimeSec
+    ? Math.floor(preflight.data.detail.maxRuntimeSec / 60)
+    : null;
+  const maxMin = Math.max(
+    STEP_MIN,
+    Math.min(DESCRIPTOR_MAX_MIN, hubMaxMin ?? DESCRIPTOR_MAX_MIN),
+  );
+  useEffect(() => {
+    setMinutes((m) => Math.min(m, maxMin));
+  }, [maxMin]);
+
+  // Prefer the PROBE's deadline when it has one: it is a live read, where the pushed point is up
+  // to 15 s old — which is exactly the window right after a Start, when the countdown matters most.
+  const probeStopAtSec = preflight.data?.detail?.stopAt
+    ? Date.parse(preflight.data.detail.stopAt) / 1000
+    : null;
+  const minsLeft = runMinutesLeft(probeStopAtSec ?? stopAtSec, nowMs);
+  // Either source may be the fresher one, so a run in progress according to EITHER is a run in
+  // progress. Getting this wrong in the optimistic direction would offer Start for a running engine.
+  const runInProgress =
+    status.commanded || preflight.data?.detail?.latched === true;
+  const canStart =
+    preflight.data?.ok === true && preflight.data.wouldProceed === true;
+
+  function scheduleDataRefresh() {
+    // The push cadence is 15 s, so the backstop sits one tick past it — an early look for the
+    // fast case, and a second that is guaranteed to be after a fresh push has landed.
+    for (const delay of [6_000, 20_000]) {
+      timersRef.current.push(
+        setTimeout(() => {
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.data(systemId),
+          });
+        }, delay),
+      );
+    }
+  }
+
+  const mutation = useMutation({
+    mutationFn: async ({ value }: { key: typeof pending; value: number }) => {
+      const response = await fetch(`/api/v4/points/${target}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_value", value }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Command failed");
+      return data as { ok: boolean; reason: string | null };
+    },
+    onMutate: ({ key }) => {
+      setNotice(null);
+      setPending(key);
+    },
+    onSuccess: async (data) => {
+      // 🛑 Both legs carry the vendor's own words. On the success leg that matters as much as on
+      // the decline: "Released the hub's run request, but the engine is still running — it is being
+      // commanded by the SP-PRO inverter, which this control cannot override" arrives as ok:true,
+      // and swallowing it in favour of a tick would tell the user the engine had stopped.
+      if (data.reason) {
+        setNotice({
+          tone: "info",
+          text: data.ok
+            ? data.reason
+            : describeDecline(
+                "set_value",
+                data.reason,
+                GENERATOR_RUN_REQUEST_ADDRESS,
+              ).text,
+        });
+      }
+      scheduleDataRefresh();
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.data(systemId),
+      });
+      if (target) {
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.commands(target),
+        });
+      }
+      void preflight.refetch();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : "Command failed";
+      setNotice({ tone: "error", text: message });
+      // 🛑 An ambiguous send is never "nothing happened". `hub-client.ts` answers a timeout with a
+      // message saying the start MAY have taken effect, so go and find out rather than leaving the
+      // user with a red box and no facts. Harmless in the ordinary error case: it is a read.
+      timersRef.current.push(
+        setTimeout(() => {
+          void preflight.refetch();
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.data(systemId),
+          });
+        }, AMBIGUITY_RECHECK_MS),
+      );
+    },
+    onSettled: () => setPending(null),
+  });
+
+  // A fresh open should not inherit the last visit's notice.
+  useEffect(() => {
+    if (!open) setNotice(null);
+  }, [open]);
+
+  const busy = mutation.isPending;
+  const freshness = freshnessWords(statusMs, nowMs);
+  const stopsAtWords =
+    stopAtSec != null
+      ? new Date(stopAtSec * 1000).toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Generator control</DialogTitle>
+          <DialogDescription className="flex flex-wrap items-center gap-1.5">
+            <span>{status.detail}</span>
+            {freshness && (
+              <span className="text-xs text-gray-500">· as of {freshness}</span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="mt-2 space-y-5">
+          {/* The hub's own last error, if any. Above everything, because it changes how to read
+              everything below it. */}
+          {lastError && (
+            <div className="rounded-md border border-red-800/70 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+              {lastError}
+            </div>
+          )}
+
+          {/* ── Engine check ────────────────────────────────────────────── */}
+          <section className="rounded-md border border-gray-700 bg-gray-900/40 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-300">
+                Engine check
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                disabled={preflight.isFetching || !target}
+                onClick={() => void preflight.refetch()}
+              >
+                {preflight.isFetching ? (
+                  <>
+                    <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
+                    checking…
+                  </>
+                ) : (
+                  "Check again"
+                )}
+              </Button>
+            </div>
+
+            {!target ? (
+              // The point exists but KV has not carried its `pt_` yet (a device that has not pushed
+              // since the deploy). Self-heals on the next 15 s tick; say so rather than showing a
+              // dead button.
+              <p className="text-xs text-gray-400">
+                Waiting for the generator to report in.
+              </p>
+            ) : preflight.isLoading ? (
+              <p className="text-xs text-gray-400">Reading the controller…</p>
+            ) : preflight.isError ? (
+              <p className="text-xs text-red-400">
+                {preflight.error instanceof Error
+                  ? preflight.error.message
+                  : "Could not check the engine."}
+              </p>
+            ) : (
+              <>
+                <ul className="space-y-1 text-xs">
+                  {(preflight.data?.checks ?? []).map((c) => (
+                    <li key={c.label} className="flex items-center gap-2">
+                      {c.ok === true ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                      ) : c.ok === false ? (
+                        <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                      ) : (
+                        <Minus className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+                      )}
+                      <span className="w-32 shrink-0 text-gray-400">
+                        {c.label}
+                      </span>
+                      <span className="text-gray-200">{c.value}</span>
+                    </li>
+                  ))}
+                </ul>
+                {/* 🛑 A REFUSAL is shown VERBATIM: it is the hub's own sentence, produced by the
+                    same `gateStart()` a real run consults, and it is written to be read by a human
+                    ("module is not in Auto (mode=Stop) — possible local lockout; not overridable
+                    remotely"). Nothing here forms a second opinion about it.
+
+                    The ACCEPTANCE is not, because there the hub's wording is mechanical log voice
+                    about a runtime we did not ask it about ("a 60s run would START now"), and
+                    repeating that under a slider set to 30 minutes would be actively misleading. */}
+                {preflight.data && (
+                  <p
+                    className={`mt-2 flex items-start gap-1.5 text-xs ${
+                      canStart ? "text-green-500/90" : "text-amber-400/90"
+                    }`}
+                  >
+                    {canStart ? (
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span>
+                      {canStart
+                        ? `Ready — a ${minutes} minute run would start now.`
+                        : preflight.data.verdict}
+                    </span>
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+
+          <ControlNotice notice={notice} onDismiss={() => setNotice(null)} />
+
+          {/* ── Duration ────────────────────────────────────────────────── */}
+          <div className="space-y-2">
+            <Label htmlFor="generator-minutes">Run for {minutes} min</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS_MIN.filter((p) => p <= maxMin).map((p) => (
+                <Button
+                  key={p}
+                  type="button"
+                  size="sm"
+                  variant={p === minutes ? "default" : "outline"}
+                  className="h-7 px-2.5 text-xs"
+                  disabled={busy}
+                  onClick={() => setMinutes(p)}
+                >
+                  {p}
+                </Button>
+              ))}
+            </div>
+            <input
+              id="generator-minutes"
+              type="range"
+              min={STEP_MIN}
+              max={maxMin}
+              step={STEP_MIN}
+              value={minutes}
+              disabled={busy}
+              onChange={(e) => setMinutes(parseInt(e.target.value, 10))}
+              className="w-full accent-amber-500"
+            />
+          </div>
+
+          {/* ── The command ─────────────────────────────────────────────── */}
+          {runInProgress ? (
+            <div className="space-y-2">
+              <p className="text-sm text-amber-400/90">
+                Running
+                {stopsAtWords ? ` · stops at ${stopsAtWords}` : ""}
+                {minsLeft != null ? ` (${minsLeft} min left)` : ""}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  disabled={busy || !target}
+                  onClick={() =>
+                    mutation.mutate({ key: "extend", value: minutes })
+                  }
+                >
+                  {pending === "extend" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Play className="mr-2 h-4 w-4" />
+                  )}
+                  Extend to {minutes} min
+                </Button>
+                {/* 🛑 Never disabled on the preflight. Letting go of the latch must stay reachable
+                    when our picture is stale or the probe itself failed. */}
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  disabled={busy || !target}
+                  onClick={() => mutation.mutate({ key: "stop", value: 0 })}
+                >
+                  {pending === "stop" ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Square className="mr-2 h-4 w-4" />
+                  )}
+                  Stop now
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Button
+                className="w-full"
+                disabled={busy || !target || !canStart}
+                onClick={() =>
+                  mutation.mutate({ key: "start", value: minutes })
+                }
+              >
+                {pending === "start" ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="mr-2 h-4 w-4" />
+                )}
+                Start generator · {minutes} min
+              </Button>
+              {/* The engine may be running without US having started it (the inverter's own
+                  request, or a cool-down tail). Our stop cannot end that run, but it CAN clear a
+                  latch we are somehow still holding, so the affordance stays. */}
+              <Button
+                variant="ghost"
+                className="w-full text-gray-400"
+                disabled={busy || !target}
+                onClick={() => mutation.mutate({ key: "stop", value: 0 })}
+              >
+                {pending === "stop" ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Square className="mr-2 h-4 w-4" />
+                )}
+                Release any run request
+              </Button>
+            </div>
+          )}
+
+          <CommandActivityLog pt={target} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

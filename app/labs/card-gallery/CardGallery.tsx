@@ -20,6 +20,7 @@ import type { LatestPointValues } from "@/lib/types/api";
 import {
   SOLAR_SCENARIOS,
   LOAD_SCENARIOS,
+  GENERATOR_SCENARIOS,
   BATTERY_SCENARIOS,
   GRID_SCENARIOS,
   AMBER_SCENARIOS,
@@ -291,6 +292,18 @@ export default function CardGallery() {
           playground={{ w: 200, h: 140 }}
           render={(s) => (
             <TileCell latest={GRID_SCENARIOS[s]} id="house-to-grid" />
+          )}
+        />
+
+        <CardSection
+          title="Generator"
+          note="Tile. State copy comes from the hub's own vocabulary; the countdown is derived from the ABSOLUTE stop_at, so 'stop failing' (a deadline 2 min in the past) correctly shows no countdown. canControl is false here, so the control cog is absent by design."
+          scenarios={Object.keys(GENERATOR_SCENARIOS)}
+          defaultScenario="running (ours)"
+          presetWidths={POWER_WIDTHS}
+          playground={{ w: 200, h: 140 }}
+          render={(s) => (
+            <TileCell latest={GENERATOR_SCENARIOS[s]} id="generator" />
           )}
         />
 

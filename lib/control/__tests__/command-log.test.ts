@@ -192,4 +192,76 @@ describe("formatCommandEntry", () => {
       ).sentence,
     ).toBe("You sent 'press' to hws/active");
   });
+
+  // ── the generator, whose voice is NOT the car's ──────────────────────────────────────────────
+
+  describe("generator run requests", () => {
+    const gen = (over: Partial<CommandLogEntryJson> = {}) =>
+      entry({
+        logicalPath: "source.generator.control.request",
+        metricType: "duration",
+        action: "set_value",
+        value: 30,
+        ...over,
+      });
+
+    it("says minutes, because the point IS minutes", () => {
+      expect(formatCommandEntry(gen(), NOW).sentence).toBe(
+        "You ran the generator for 30 min",
+      );
+    });
+
+    it("🛑 reads 0 as a STOP, not as a zero-minute run", () => {
+      expect(formatCommandEntry(gen({ value: 0 }), NOW).sentence).toBe(
+        "You stopped the generator",
+      );
+    });
+
+    it("names an automation as the subject, same as for a car", () => {
+      expect(
+        formatCommandEntry(
+          gen({
+            requestedBy: {
+              kind: "automation",
+              automationId: "au_1",
+              name: "Low battery",
+            },
+          }),
+          NOW,
+        ).sentence,
+      ).toBe("‘Low battery’ ran the generator for 30 min");
+    });
+
+    it("🛑 passes the hub's own decline through verbatim — it is already a sentence", () => {
+      const reason =
+        "module is not in Auto (mode=Stop) — possible local lockout; not overridable remotely";
+      expect(
+        formatCommandEntry(gen({ status: "rejected", reason }), NOW),
+      ).toMatchObject({
+        sentence: `You asked to run the generator for 30 min, but ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`,
+        tone: "benign",
+      });
+    });
+
+    it("🛑 says the GENERATOR could not be reached, never the car", () => {
+      expect(formatCommandEntry(gen({ status: "failed" }), NOW).sentence).toBe(
+        "You asked to run the generator for 30 min, but the generator couldn’t be reached",
+      );
+    });
+
+    it("an unrecognised address says 'the device' rather than guessing", () => {
+      expect(
+        formatCommandEntry(
+          entry({
+            logicalPath: "pump",
+            metricType: "active",
+            status: "failed",
+          }),
+          NOW,
+        ).sentence,
+      ).toBe(
+        "You asked to send 'turn_on' to pump/active, but the device couldn’t be reached",
+      );
+    });
+  });
 });

@@ -26,22 +26,111 @@
 import type {
   ControlCapability,
   ControlInvokeContext,
+  ControlPreflightCheck,
+  ControlPreflightContext,
+  ControlPreflightResult,
   ControlInvokeResult,
 } from "../types";
 import { ControlDispatchError } from "@/lib/control/errors";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
-import { hubRun } from "./hub-client";
+import { hubNoop, hubRun, type HubNoopResult } from "./hub-client";
 
 /**
  * The point this capability commands, by LOGICAL address (`logicalPath/metricType`) so it stays
  * stable across physical field renames — same convention as Tesla's `resolveDispatch`.
  */
-const RUN_REQUEST_ADDRESS = "source.generator.control.request/duration";
+export const RUN_REQUEST_ADDRESS = "source.generator.control.request/duration";
+
+/**
+ * Resolve (site, owner passkey) for a point this capability answers for — shared by `invoke` and
+ * `preflight` so the two can never disagree about WHICH point is commandable or WHOSE credentials
+ * command it. Throws the same `ControlDispatchError`s `invoke` always has.
+ */
+async function resolveTarget(ctx: {
+  device: ControlInvokeContext["device"];
+  point: ControlInvokeContext["point"];
+}): Promise<{ siteId: string; passkey: string }> {
+  const address = `${ctx.point.logicalPath ?? ""}/${ctx.point.metricType}`;
+  if (address !== RUN_REQUEST_ADDRESS) {
+    // A server config bug rather than a user error: `points.control` claims this point is
+    // writable but this vendor has no command for it. Surfaces as 'failed'/500.
+    throw new Error(
+      `DeepSea has no command for ${ctx.point.logicalPath ?? "?"}/${ctx.point.metricType}`,
+    );
+  }
+
+  const siteId = ctx.device.vendorSiteId;
+  if (!siteId) {
+    throw new ControlDispatchError("Device has no vendor site id", 400);
+  }
+
+  const ownerId = ctx.device.ownerClerkUserId;
+  if (!ownerId) {
+    // Not an oversight: ownerless hardware is commandable by nobody, because there are no
+    // credentials to command it WITH. See lib/control/ownership.ts.
+    throw new ControlDispatchError("System has no owner", 400);
+  }
+
+  const credentials = await getDeviceCredentials(ownerId, ctx.device.id);
+  const passkey = credentials?.controlPasskey;
+  if (typeof passkey !== "string" || !passkey) {
+    throw new ControlDispatchError(
+      "This generator has no control passkey stored — generator control is not set up for this device",
+      501,
+    );
+  }
+  return { siteId, passkey };
+}
+
+/**
+ * The hub's read-only answer, as the generic checklist the UI renders. Deliberately a straight
+ * TRANSCRIPTION of what the hub read — no facts are invented here, and `wouldProceed`/`verdict`
+ * are passed through rather than recomputed, because the hub derives them from the same
+ * `gateStart()` a real request consults.
+ */
+function preflightChecks(noop: HubNoopResult): ControlPreflightCheck[] {
+  const pre = noop.preflight;
+  if (!pre) return [];
+  const own = pre.ownership;
+  return [
+    {
+      label: "Panel mode",
+      value: own.modeName ?? (own.mode == null ? "unreadable" : `${own.mode}`),
+      // Mode 1 is Auto. Anything else may be a deliberate local lockout (refuelling, hands in the
+      // engine bay) and is NOT overridable remotely — see gateStart() on the hub.
+      ok: own.mode === 1,
+    },
+    {
+      label: "Engine",
+      value: own.running ? "running" : "stopped",
+      ok: !own.running,
+    },
+    {
+      label: "Inverter demand",
+      value:
+        own.remoteStartInput === "closed"
+          ? "calling for the generator"
+          : own.remoteStartInput === "open"
+            ? "not calling"
+            : "unknown",
+      // Informational, not a gate: the SP-PRO calling is only a refusal in combination with the
+      // engine already running, which the row above already reports.
+      ok: own.remoteStartInput === "closed" ? null : true,
+    },
+    {
+      label: "Module supports",
+      value: [
+        pre.scfSupported.telemetryStart ? "start" : "no start",
+        pre.scfSupported.telemetryCancel ? "cancel" : "NO CANCEL",
+      ].join(" / "),
+      ok: pre.scfSupported.telemetryStart && pre.scfSupported.telemetryCancel,
+    },
+  ];
+}
 
 export class DeepSeaControlCapability implements ControlCapability {
   async invoke(ctx: ControlInvokeContext): Promise<ControlInvokeResult> {
-    const address = `${ctx.point.logicalPath ?? ""}/${ctx.point.metricType}`;
-    if (address !== RUN_REQUEST_ADDRESS || ctx.action !== "set_value") {
+    if (ctx.action !== "set_value") {
       // A server config bug rather than a user error: `points.control` claims this point is
       // writable but this vendor has no command for it. Surfaces as 'failed'/500.
       throw new Error(
@@ -61,26 +150,7 @@ export class DeepSeaControlCapability implements ControlCapability {
       );
     }
 
-    const siteId = ctx.device.vendorSiteId;
-    if (!siteId) {
-      throw new ControlDispatchError("Device has no vendor site id", 400);
-    }
-
-    const ownerId = ctx.device.ownerClerkUserId;
-    if (!ownerId) {
-      // Not an oversight: ownerless hardware is commandable by nobody, because there are no
-      // credentials to command it WITH. See lib/control/ownership.ts.
-      throw new ControlDispatchError("System has no owner", 400);
-    }
-
-    const credentials = await getDeviceCredentials(ownerId, ctx.device.id);
-    const passkey = credentials?.controlPasskey;
-    if (typeof passkey !== "string" || !passkey) {
-      throw new ControlDispatchError(
-        "This generator has no control passkey stored — generator control is not set up for this device",
-        501,
-      );
-    }
+    const { siteId, passkey } = await resolveTarget(ctx);
 
     const runtimeSec = Math.round(minutes * 60); // ← the unit seam
     const result = await hubRun(siteId, passkey, runtimeSec);
@@ -124,6 +194,54 @@ export class DeepSeaControlCapability implements ControlCapability {
         result.action === "extended"
           ? `Run extended — now stops at ${stopsAt}.`
           : `Generator starting — runs until ${stopsAt}.`,
+    };
+  }
+
+  /**
+   * The read-only dry run, backed by the hub's `noop`: Access → passkey → registry → supervisor →
+   * device mutex → Modbus over WireGuard → the DSE, using FC3 READS ONLY. There is no code path
+   * from here to a control-key write, and the verdict comes from the same `gateStart()` the real
+   * request path uses — which is the only reason a UI may use it as a gate.
+   *
+   * 🛑 A preflight NEVER throws for a bad answer. "The hub is unreachable" and "the panel is in
+   * Stop" are both things the user asked to be told; turning either into a 500 would hide the one
+   * fact they opened the dialog for. Only a resolution failure (wrong point, no owner, no passkey)
+   * propagates, because that is a configuration bug rather than a state report.
+   */
+  async preflight(
+    ctx: ControlPreflightContext,
+  ): Promise<ControlPreflightResult> {
+    const { siteId, passkey } = await resolveTarget(ctx);
+
+    // The minutes the caller is considering. 0 ("stop") is not a start decision at all, so probe
+    // the hub's default rather than asking "would a 0-second run be accepted".
+    const minutes = ctx.value;
+    const runtimeSec =
+      typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
+        ? Math.round(minutes * 60) // ← the same unit seam as invoke()
+        : undefined;
+
+    let noop: HubNoopResult;
+    try {
+      noop = await hubNoop(siteId, passkey, runtimeSec);
+    } catch (e) {
+      // Includes the hub's own "device unreachable: … a real run would refuse too" sentence, which
+      // `call()` preserves out of the 503 body's `verdict`.
+      return {
+        ok: false,
+        verdict:
+          e instanceof Error
+            ? e.message
+            : "the generator hub could not be reached",
+      };
+    }
+
+    return {
+      ok: noop.ok,
+      wouldProceed: noop.wouldStart,
+      verdict: noop.verdict,
+      checks: preflightChecks(noop),
+      detail: noop.controlStatus ?? null,
     };
   }
 }

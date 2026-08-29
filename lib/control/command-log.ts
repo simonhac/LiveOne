@@ -8,7 +8,12 @@
  * Sentences are complete and calm — "You started charging", "'Stop after 15 min' stopped
  * charging", "You asked to start charging, but the car was already charging". Time RENDERING
  * (locale, "yesterday") is the UI's job; this module only hands back `timeMs`.
+ *
+ * The voice is ADDRESS-KEYED, not Tesla's: "the car couldn’t be reached" is the wrong sentence
+ * about a diesel engine, so the noun comes from `objectNoun` and an unrecognised address says
+ * "the device" rather than guessing.
  */
+import { GENERATOR_RUN_REQUEST_ADDRESS } from "./addresses";
 import { describeDecline } from "./decline-copy";
 import type { PointActionName } from "./point-control";
 
@@ -40,13 +45,43 @@ export interface CommandLogLine {
 /** How long a `pending` row can sit before the log says so out loud. */
 const PENDING_STALE_MS = 2 * 60_000;
 
+/** `logicalPath/metricType` — the pair every copy decision here switches on. */
+function addressOf(e: CommandLogEntryJson): string {
+  return `${e.logicalPath ?? ""}/${e.metricType}`;
+}
+
+/**
+ * The THING that was commanded, as a noun phrase — "the car couldn't be reached" is the wrong
+ * sentence about a diesel engine. Unknown addresses get "the device", which is never wrong.
+ */
+function objectNoun(e: CommandLogEntryJson): string {
+  switch (addressOf(e)) {
+    case "ev.charge/active":
+    case "ev.charge.limit/soc":
+    case "ev.charge.limit/current":
+      return "the car";
+    case GENERATOR_RUN_REQUEST_ADDRESS:
+      return "the generator";
+  }
+  return "the device";
+}
+
 /**
  * The intent, as a verb phrase: what was ASKED, independent of how it went.
  * Unknown addresses degrade to an honest generic rather than guessing.
  */
 function verbPhrase(e: CommandLogEntryJson): string {
-  const address = `${e.logicalPath ?? ""}/${e.metricType}`;
+  const address = addressOf(e);
   switch (address) {
+    case GENERATOR_RUN_REQUEST_ADDRESS:
+      // The unit seam again: the point IS minutes, so the sentence says minutes. `0` is the
+      // command value for stop, which reads as a different verb entirely.
+      if (e.action === "set_value" && e.value != null) {
+        return e.value === 0
+          ? "stop the generator"
+          : `run the generator for ${e.value} min`;
+      }
+      break;
     case "ev.charge/active":
       if (e.action === "turn_on") return "start charging";
       if (e.action === "turn_off") return "stop charging";
@@ -68,6 +103,7 @@ function pastPhrase(e: CommandLogEntryJson): string {
   const phrase = verbPhrase(e);
   if (phrase.startsWith("start ")) return `started ${phrase.slice(6)}`;
   if (phrase.startsWith("stop ")) return `stopped ${phrase.slice(5)}`;
+  if (phrase.startsWith("run ")) return `ran ${phrase.slice(4)}`;
   if (phrase.startsWith("set ")) return phrase; // "set" is its own past tense
   if (phrase.startsWith("send ")) return `sent ${phrase.slice(5)}`;
   return phrase;
@@ -98,7 +134,11 @@ export function formatCommandEntry(
     case "rejected": {
       // A benign decline ("not_charging" back from a Stop) is reassurance; a protocol refusal
       // is a real failure. `describeDecline` is the shared judge of which is which.
-      const decline = describeDecline(e.action as PointActionName, e.reason);
+      const decline = describeDecline(
+        e.action as PointActionName,
+        e.reason,
+        addressOf(e),
+      );
       if (e.reason && decline.known) {
         return {
           timeMs,
@@ -109,7 +149,7 @@ export function formatCommandEntry(
       const detail = e.error ?? e.reason;
       return {
         timeMs,
-        sentence: `${who} asked to ${verbPhrase(e)}, but the car refused${detail ? ` (${detail})` : ""}`,
+        sentence: `${who} asked to ${verbPhrase(e)}, but ${objectNoun(e)} refused${detail ? ` (${detail})` : ""}`,
         tone: "error",
       };
     }
@@ -117,7 +157,7 @@ export function formatCommandEntry(
     case "failed":
       return {
         timeMs,
-        sentence: `${who} asked to ${verbPhrase(e)}, but the car couldn’t be reached`,
+        sentence: `${who} asked to ${verbPhrase(e)}, but ${objectNoun(e)} couldn’t be reached`,
         tone: "error",
       };
 
