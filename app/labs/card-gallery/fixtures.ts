@@ -117,35 +117,53 @@ const genState = (state: string, ageSeconds?: number) =>
   );
 const genMode = (mode: string, ageSeconds?: number) =>
   mkText(mode, "source.generator.mode/state", "Control Mode", ageSeconds);
+
+// 🛑 The LEGACY logical paths on purpose — they are the ones prod actually carries. #150 renamed
+// the musher manifest's stems, but `points` rows are keyed on `physical_path` and only `control` is
+// drift-healed, so the already-minted rows kept `generator.engine` / `generator.output`. A fixture
+// that used the manifest-correct paths would be testing a shape no environment has.
 const genRpm = (rpm: number) =>
-  mk(rpm, "source.generator.engine/speed", "rpm", "Engine Speed");
+  mk(rpm, "generator.engine/speed", "rpm", "Engine Speed");
+const genHz = (hz: number) =>
+  mk(hz, "generator.output/frequency", "Hz", "Generator Frequency");
+
+/** The engine, turning: rpm + Hz together, since the tile shows them as one row. */
+const engine = (rpm: number, hz: number) => ({
+  "generator.engine/speed": genRpm(rpm),
+  "generator.output/frequency": genHz(hz),
+});
 
 export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
-  idle: {
+  "auto (armed)": {
     "source.generator.control.status/state": genState("idle"),
     "source.generator.mode/state": genMode("Auto"),
-    "source.generator.engine/speed": genRpm(0),
+    ...engine(0, 0),
   },
   "running (ours)": {
     "source.generator.control.status/state": genState("running:hub"),
     "source.generator.control.stop_at/time": stopAt(23),
     "source.generator.mode/state": genMode("Auto"),
-    "source.generator.engine/speed": genRpm(1542),
+    ...engine(1502, 50.1),
   },
   "running (inverter)": {
     "source.generator.control.status/state": genState("running:sp-pro"),
     "source.generator.mode/state": genMode("Auto"),
-    "source.generator.engine/speed": genRpm(1497),
+    ...engine(1497, 49.9),
   },
   "cooling down": {
     "source.generator.control.status/state": genState("stopping"),
     "source.generator.mode/state": genMode("Auto"),
-    "source.generator.engine/speed": genRpm(980),
+    ...engine(980, 32.4),
   },
-  "panel in Stop": {
+  "locked out": {
     "source.generator.control.status/state": genState("idle"),
     "source.generator.mode/state": genMode("Stop"),
-    "source.generator.engine/speed": genRpm(0),
+    ...engine(0, 0),
+  },
+  "running, panel locked": {
+    "source.generator.control.status/state": genState("running:sp-pro"),
+    "source.generator.mode/state": genMode("Stop"),
+    ...engine(1499, 50.0),
   },
   "stop failing": {
     "source.generator.control.status/state": genState("stop-failing"),
@@ -156,24 +174,23 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
       "Control Last Error",
     ),
     "source.generator.mode/state": genMode("Auto"),
-    "source.generator.engine/speed": genRpm(1502),
+    ...engine(1502, 50.0),
   },
   "still running after release": {
     "source.generator.control.status/state": genState(
       "latch-released-still-running",
     ),
     "source.generator.mode/state": genMode("Auto"),
-    "source.generator.engine/speed": genRpm(1488),
+    ...engine(1488, 49.8),
   },
-  // The register has not been read at all — the tile must show an em-dash, not a confident 0.
-  "no engine read": {
+  // The panel has not been read at all — must NOT claim the generator is armed.
+  "mode unknown": {
     "source.generator.control.status/state": genState("idle"),
-    "source.generator.mode/state": genMode("Auto"),
   },
   stale: {
     "source.generator.control.status/state": genState("idle", STALE),
     "source.generator.mode/state": genMode("Auto", STALE),
-    "source.generator.engine/speed": genRpm(0),
+    ...engine(0, 0),
   },
 };
 

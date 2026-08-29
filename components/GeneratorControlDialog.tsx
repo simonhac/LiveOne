@@ -138,7 +138,7 @@ export default function GeneratorControlDialog({
   const stopAtSec = num(latest, GENERATOR_STOP_AT_PATH);
   const statusMs = measurementMsOf(latest, GENERATOR_STATUS_PATH);
 
-  const status = describeGeneratorState(state);
+  const status = describeGeneratorState(state, mode);
 
   const [minutes, setMinutes] = useState<number>(DEFAULT_MIN);
   const [notice, setNotice] = useState<ControlNoticeValue | null>(null);
@@ -214,7 +214,7 @@ export default function GeneratorControlDialog({
   // Either source may be the fresher one, so a run in progress according to EITHER is a run in
   // progress. Getting this wrong in the optimistic direction would offer Start for a running engine.
   const runInProgress =
-    status.commanded || preflight.data?.detail?.latched === true;
+    status.isCommandedRun || preflight.data?.detail?.latched === true;
   const canStart =
     preflight.data?.ok === true && preflight.data.wouldProceed === true;
 
@@ -314,7 +314,7 @@ export default function GeneratorControlDialog({
         <DialogHeader>
           <DialogTitle>Generator control</DialogTitle>
           <DialogDescription className="flex flex-wrap items-center gap-1.5">
-            <span>{status.detail}</span>
+            <span>{status.sentence}</span>
             {freshness && (
               <span className="text-xs text-gray-500">· as of {freshness}</span>
             )}

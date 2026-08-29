@@ -51,6 +51,15 @@ export const GENERATOR_RPM_PATHS = [
   "generator.engine/speed",
 ] as const;
 
+/** Alternator output frequency, Hz. Same two-path story as {@link GENERATOR_RPM_PATHS}. */
+export const GENERATOR_HZ_PATHS = [
+  "source.generator.output/frequency",
+  "generator.output/frequency",
+] as const;
+
+/** The derived run-detector point, whose `sourceSystemId` names the device that owns the runs. */
+export const GENERATOR_RUNNING_PATH = "source.generator/running";
+
 /**
  * The paths the tile's control would COMMAND, most specific first — what `datumCanControlPoint`
  * uses to gate the cog on ownership of the DEVICE that would be commanded, rather than on the area
@@ -91,86 +100,145 @@ export type GeneratorControlState =
   | "latch-released-still-running";
 
 export interface GeneratorStatusCopy {
-  /** The short line a tile shows. */
+  /**
+   * The tile's HERO word — what the generator is, in one glance. Short by construction: it sits in
+   * the same slot as the Grid tile's "Idle" and the Battery tile's "67.8%".
+   */
   label: string;
+  /** The qualifying line under the hero ("called by inverter"), or null when the hero says it all. */
+  detail: string | null;
   /**
    * `commanded` = this run is ours and the hub is holding the deadline (the one amber state);
    * `running` = it is running, but not at our request; `warning` = something needs a human.
    */
   tone: "idle" | "running" | "commanded" | "warning";
   /** True ⇒ a run of ours is in progress, so the dialog shows Extend/Stop rather than Start. */
-  commanded: boolean;
+  isCommandedRun: boolean;
+  /** True ⇒ the engine is turning (or cooling), so the rpm/Hz row is worth showing. */
+  isRunning: boolean;
   /** A fuller sentence for the dialog header, where there is room to be explicit. */
-  detail: string;
+  sentence: string;
 }
 
 const UNKNOWN: GeneratorStatusCopy = {
-  label: "Unknown",
+  label: "—",
+  detail: "no status reported",
   tone: "idle",
-  commanded: false,
-  detail: "The generator's state has not been reported.",
+  isCommandedRun: false,
+  isRunning: false,
+  sentence: "The generator's state has not been reported.",
 };
 
-const COPY: Record<GeneratorControlState, GeneratorStatusCopy> = {
-  idle: {
-    label: "Off",
-    tone: "idle",
-    commanded: false,
-    detail: "The generator is stopped.",
-  },
+/**
+ * 🛑 IDLE IS NOT ONE STATE, and this is the distinction the whole vocabulary turns on. A stopped
+ * generator whose panel is in Auto is ARMED — it will start on its own when the inverter calls for
+ * it. A stopped generator whose panel is in Stop is LOCKED OUT: nothing, local or remote, will
+ * start it, and no remote request can override that (see `gateStart` on the hub). Rendering both as
+ * "Off" would hide the difference between a site with backup power and a site without it, which is
+ * the single most consequential fact this tile carries. So `idle` resolves against the panel mode
+ * below rather than having a fixed entry here.
+ */
+const COPY: Record<
+  Exclude<GeneratorControlState, "idle">,
+  GeneratorStatusCopy
+> = {
   "running:hub": {
     label: "Running",
+    detail: "on request from LiveOne",
     tone: "commanded",
-    commanded: true,
-    detail: "Running on a request from LiveOne.",
+    isCommandedRun: true,
+    isRunning: true,
+    sentence: "Running on a request from LiveOne.",
   },
   "running:sp-pro": {
     label: "Running",
+    detail: "called by inverter",
     tone: "running",
-    commanded: false,
+    isCommandedRun: false,
+    isRunning: true,
     // Worth spelling out: this run is the inverter's, and our Stop cannot end it — fn 33 clears
     // only OUR latch. Saying "running" alone would imply a stop button that works.
-    detail:
+    sentence:
       "Running at the inverter's request. LiveOne cannot stop a run it did not start.",
   },
   "running:other": {
     label: "Running",
+    detail: null,
     tone: "running",
-    commanded: false,
-    detail: "Running, but not at LiveOne's request.",
+    isCommandedRun: false,
+    isRunning: true,
+    sentence: "Running, but not at LiveOne's request.",
   },
   stopping: {
-    label: "Cooling down",
+    label: "Cooling",
+    detail: "run request released",
     tone: "running",
-    commanded: false,
-    detail: "The run request was released; the engine is cooling down.",
+    isCommandedRun: false,
+    isRunning: true,
+    sentence: "The run request was released; the engine is cooling down.",
   },
   "stop-failing": {
     label: "Stop failing",
+    detail: "hub is retrying",
     tone: "warning",
-    commanded: true,
+    isCommandedRun: true,
+    isRunning: true,
     // The one truly bad outcome. The hub retries every 15 s indefinitely, and saying so is the
     // difference between "something is broken" and "something is broken and being handled".
-    detail:
+    sentence:
       "The hub could not confirm the stop and is retrying every 15 seconds. Check the generator.",
   },
   "latch-released-still-running": {
-    label: "Still running",
+    label: "Running",
+    detail: "released, still running",
     tone: "warning",
-    commanded: false,
+    isCommandedRun: false,
+    isRunning: true,
     // 🛑 Released ≠ stopped. We let go and it kept turning past the cool-down grace, so something
     // else is commanding it.
-    detail:
+    sentence:
       "LiveOne released its run request, but the engine is still running — something else is commanding it.",
   },
 };
 
-/** What a hub state is called. An unrecognised state claims nothing rather than guessing. */
+const AUTO: GeneratorStatusCopy = {
+  label: "Auto",
+  detail: "ready to start",
+  tone: "idle",
+  isCommandedRun: false,
+  isRunning: false,
+  sentence: "Stopped, and armed to start automatically.",
+};
+
+const LOCKED_OUT: GeneratorStatusCopy = {
+  label: "Locked out",
+  detail: "panel not in Auto",
+  tone: "warning",
+  isCommandedRun: false,
+  isRunning: false,
+  sentence:
+    "The panel is not in Auto, so the generator will not start — locally or remotely. Someone may have taken it out of service deliberately.",
+};
+
+/**
+ * What the generator is doing, in words, from the hub's state and the DSE's panel mode.
+ *
+ * An unrecognised state claims nothing rather than guessing. The panel mode only decides the IDLE
+ * case: a turning engine is a turning engine whatever the panel says, and "Running" is the more
+ * urgent fact — the lockout still rides along on the `lockedOut` flag for the caller to append.
+ */
 export function describeGeneratorState(
   state: string | null | undefined,
+  mode?: string | null,
 ): GeneratorStatusCopy {
   if (!state) return UNKNOWN;
-  return COPY[state as GeneratorControlState] ?? UNKNOWN;
+  if (state === "idle") {
+    // Mode unknown (the point has not arrived) is NOT the same as "in Auto" — claiming a generator
+    // is armed when we cannot see the panel would be the one lie that matters here.
+    if (mode == null) return { ...AUTO, label: "Off", detail: null };
+    return panelIsAuto(mode) ? AUTO : LOCKED_OUT;
+  }
+  return COPY[state as Exclude<GeneratorControlState, "idle">] ?? UNKNOWN;
 }
 
 // --- derivations -----------------------------------------------------------------------------
@@ -193,38 +261,44 @@ export function runMinutesLeft(
   return Math.ceil(remainingMs / 60_000);
 }
 
+/** Whole minutes a run has been going, from its ISO start. Null when there is no open run. */
+export function runMinutesElapsed(
+  startIso: string | null | undefined,
+  nowMs: number,
+): number | null {
+  if (!startIso) return null;
+  const startMs = Date.parse(startIso);
+  if (!Number.isFinite(startMs)) return null;
+  return Math.max(0, Math.floor((nowMs - startMs) / 60_000));
+}
+
 /** Whether the DSE's front panel is in Auto — the precondition no remote request may override. */
 export function panelIsAuto(mode: string | null | undefined): boolean {
   return (mode ?? "").trim().toLowerCase() === "auto";
 }
 
 /**
- * The tile's one-line state, assembled from the pieces above.
+ * The tile's time row: how long OUR run has left, or how long ANY run has been going.
  *
- * The panel-mode suffix is here rather than only in the dialog because it is the single fact that
- * most often explains a refusal, it costs one word, and a user who can see "Panel in Stop" on the
- * dashboard does not need to open anything to know why nothing will start.
+ * Remaining wins where we have it, because a deadline is actionable where an elapsed count is only
+ * informational — and it is the number the user set.
  */
-export function generatorTileLine(input: {
-  state: string | null | undefined;
-  mode: string | null | undefined;
+export function runTimeWords(input: {
+  isCommandedRun: boolean;
+  isRunning: boolean;
   stopAtEpochSec: number | null | undefined;
+  runStartIso: string | null | undefined;
   nowMs: number;
-}): { text: string; tone: GeneratorStatusCopy["tone"] } {
-  const copy = describeGeneratorState(input.state);
-  const parts = [copy.label];
-
-  if (copy.commanded) {
-    const mins = runMinutesLeft(input.stopAtEpochSec, input.nowMs);
-    if (mins != null) parts.push(`${mins} min left`);
-  } else if (input.state === "running:sp-pro") {
-    parts.push("called by inverter");
+}): { short: string; long: string; value: string } | null {
+  if (input.isCommandedRun) {
+    const left = runMinutesLeft(input.stopAtEpochSec, input.nowMs);
+    if (left != null)
+      return { short: "Stops", long: "Stops in", value: `${left} min` };
   }
-
-  // Only ever mentioned when it is NOT the normal case, so its presence carries the meaning.
-  if (input.mode && !panelIsAuto(input.mode)) {
-    parts.push(`panel in ${input.mode}`);
+  if (input.isRunning) {
+    const elapsed = runMinutesElapsed(input.runStartIso, input.nowMs);
+    if (elapsed != null)
+      return { short: "Run", long: "Running", value: `${elapsed} min` };
   }
-
-  return { text: parts.join(" · "), tone: copy.tone };
+  return null;
 }
