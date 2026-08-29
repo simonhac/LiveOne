@@ -143,6 +143,10 @@ differ.
 Secrets never go in the file: each source names an env var via `apiKeyEnv`, and that var holds the
 device's `gk_` gusher key.
 
+A deepsea source may also carry an opt-in `control` block (`passkeyEnv` + `maxRuntimeSec`) enabling
+remote start/stop — see [Remote control](#remote-control-generator-startstop) below. Omit it and the
+device is read-only, permanently and structurally.
+
 ### Environment
 
 | var                         | what                                                                                                               |
@@ -154,6 +158,49 @@ device's `gk_` gusher key.
 | _(per source)_              | the var named by that source's `apiKeyEnv`, e.g. `MUSHER_API_KEY`, `KINKORA_API_KEY`                               |
 | `MUSHER_DIAGNOSTICS`        | `1` = capture the full DeepSea register dump every poll — see [operations](docs/operations.md#deepsea-diagnostics) |
 | `MUSHER_DIAG_POSTRUN_SECONDS` | seconds to hold the fast cadence after a run ends (default 3600). Was `…_TICKS`, a tick count, which rescaled itself whenever the poll cadence changed |
+| _(per controllable source)_ | the var named by that source's `control.passkeyEnv`, e.g. `SHEEPHOUSE_CONTROL_KEY`. Resolved lazily per request — missing = the control route 503s, the collector is untouched |
+| `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD` | optional: verify the Cloudflare Access JWT at the origin too, so the control route is gated even if an edge policy is wrong |
+
+## Remote control (generator start/stop)
+
+Only for sources with a `control` block; only musher implements it.
+
+**Start with `noop`.** It runs the entire chain — Access → passkey → registry → supervisor →
+device mutex → Modbus over WireGuard → the DSE — and reports exactly what a real run would decide,
+using the same gate function, while issuing **FC3 reads only**. There is no code path from the noop
+handler to `writeControlKey`. Use it after every deploy, and before any run you're unsure about.
+
+```bash
+curl -X POST https://usher.liveone.energy/api/usher/control/sheephouse/noop \
+  -H "CF-Access-Client-Id: $CF_ID" -H "CF-Access-Client-Secret: $CF_SECRET" \
+  -H "x-usher-passkey: …"
+# → { wouldStart: true, verdict: "a 60s run would START now",
+#     preflight: { ownership: { modeName: "Auto", remoteStartInput: "open", running: false },
+#                  scfSupported: { telemetryStart: true, telemetryCancel: true } } }
+```
+
+```bash
+# start a 3-minute supervised run (runtimeSec: 0 stops)
+curl -X POST https://usher.liveone.energy/api/usher/control/sheephouse/run \
+  -H "CF-Access-Client-Id: $CF_ID" -H "CF-Access-Client-Secret: $CF_SECRET" \
+  -H 'content-type: application/json' \
+  -d '{"passkey": "…", "runtimeSec": 180}'
+
+# status
+curl https://usher.liveone.energy/api/usher/control/sheephouse/run \
+  -H "CF-Access-Client-Id: $CF_ID" -H "CF-Access-Client-Secret: $CF_SECRET" \
+  -H "x-usher-passkey: …"
+```
+
+⚠️ **This physically cranks and runs a diesel engine.** The DSE has no runtime parameter — the hub
+holds the start latch and enforces the deadline itself, from a persisted absolute instant that
+survives restarts. Read
+[docs/architecture.md § Remote control](docs/architecture.md#remote-control-musher-only-the-hub-holds-the-latch)
+before touching this; the invariants there are load-bearing, not stylistic.
+
+Notable responses: **409** the module is not in Auto (possible local lockout at the panel) or the
+engine is already running under someone else's command; **400** over `maxRuntimeSec`; **503** the
+passkey secret is missing on the hub.
 
 ## Deploy
 
@@ -168,5 +215,7 @@ device's `gk_` gusher key.
 npm test -- packages/usher
 ```
 
-Covers the run loop, spool and blackbox (`core/__tests__/`) and the Fronius source
-(`sources/__tests__/`).
+Covers the run loop, spool and blackbox (`core/__tests__/`), the Fronius source
+(`sources/__tests__/`), and the control layer — the `RunSupervisor`'s safety invariants
+(`core/__tests__/control.test.ts`), the route's auth layering (`control-api.test.ts`), and the
+device mutex's hung-read property (`sources/__tests__/musher-mutex.test.ts`).

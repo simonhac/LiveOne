@@ -65,5 +65,13 @@ fi
 
 sleep 5 # let the UDMs (re)handshake so the first device read reaches the LANs
 
-log "starting usher server on ${HOSTNAME:-127.0.0.1}:${PORT:-3000} (config ${USHER_CONFIG:-usher.yaml})"
+# Bind LOOPBACK ONLY, explicitly. Next standalone reads $HOSTNAME as its bind address, and in a Fly
+# container HOSTNAME is set to the machine name — so the old ${HOSTNAME:-127.0.0.1} fallback never
+# fired and the server could bind beyond loopback. That mattered little for the read-only inspector,
+# but this server now carries the generator CONTROL route, and wg0 routes traffic from both site
+# LANs: without this line, any LAN device could reach the control API with only the passkey in the
+# way. cloudflared connects via localhost; nothing else should reach the port at all.
+export HOSTNAME=127.0.0.1
+
+log "starting usher server on ${HOSTNAME}:${PORT:-3000} (config ${USHER_CONFIG:-usher.yaml})"
 exec node /app/packages/usher/server.js

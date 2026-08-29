@@ -5,6 +5,7 @@ import {
 } from "@/lib/polling-utils";
 import { sessionManager } from "@/lib/session-manager";
 import { PointManager, type SessionInfo } from "@/lib/point/point-manager";
+import { resolvePointControl } from "@/lib/control/control-registry";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type { PointReadingInput } from "@/lib/vendors/types";
@@ -177,6 +178,15 @@ export async function POST(request: NextRequest) {
           metricType: r.metricType,
           metricUnit: r.metricUnit,
           transform: r.transform ?? null,
+          // Writability is the ONE piece of point metadata the pusher does not get to declare.
+          // A `gk_` key is a device credential; if a reading could assert `control`, that key (or
+          // a collector bug) could mint a commandable point. Resolved server-side instead — see
+          // lib/control/control-registry.ts. Null for every point but the listed few.
+          control: resolvePointControl(
+            device.vendorType,
+            r.subsystem ?? null,
+            r.physicalPathTail,
+          ),
         },
         rawValue: r.value,
         measurementTime: t,

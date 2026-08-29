@@ -1,12 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from "@jest/globals";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  jest,
+} from "@jest/globals";
 
-// `modbus-serial` is a runtime dep of the DSE client and is not installed in this checkout; the
-// factory imports it transitively. Nothing here touches Modbus, so a bare stub is enough.
-jest.mock(
-  "modbus-serial",
-  () => ({ __esModule: true, default: class {} }),
-  { virtual: true }, // not installed in this checkout at all, so the mock must be virtual
-);
+// `modbus-serial` is a runtime dep of the DSE client, imported transitively by the factory. Nothing
+// here touches Modbus, so a bare stub is enough.
+//
+// NOT `{ virtual: true }`: the module IS installed. Registering it virtually while another suite
+// mocks it normally corrupts the resolver when the two share a jest worker — the other suite then
+// gets the REAL library and dials the real generator's IP. (Observed as an intermittent
+// `connect EHOSTUNREACH 10.0.1.244:502` in musher-mutex.test.ts.) Keep both mocks the same shape.
+jest.mock("modbus-serial", () => ({ __esModule: true, default: class {} }));
 
 import { buildEntries } from "../factory";
 import { UsherConfigSchema } from "../config";

@@ -16,8 +16,12 @@
  *    registers among 32-bit accumulators, and has an unsupported hybrid gap); fields are
  *    decoded per-field by (offset, words), never as a contiguous all-32-bit block.
  *
- * READ-ONLY: this module only issues FC3 reads — it never writes to the controller.
- * (The control page — 4104/4105 remote start/stop keys — is deliberately NOT mapped.)
+ * MOSTLY READ-ONLY. The register MAP (`REGISTERS`) is FC3-read-only and always will be.
+ * The one exception is the control page: `writeControlKey()` issues the FC16 write to
+ * 4104/4105 that physically starts and stops the engine (per DSE doc 056-051 "Gencomm Control
+ * Keys and Remote Control Outputs", available from DSE Technical Support on request — not
+ * redistributed in this repo). Nothing calls it except the control layer (core/control.ts);
+ * the collector path never writes.
  *
  * Register addresses/scaling beyond Page-4 offsets 0..7 are spec/second-source derived
  * (Victron dbus-modbus-client dse.py + DSE GenComm SP-228) and should be sanity-checked
@@ -33,6 +37,36 @@ export const DEFAULT_TIMEOUT_MS = 5000; // generous for ~300ms RTT over Teleport
 
 /** Absolute address of the battery-voltage register — the connection sanity anchor. */
 export const BATTERY_V_ADDR = 1029;
+
+// ── control page (16) — the only write path ──────────────────────────────────
+// DSE 056-051 issue 4 §3: a System Control Key is actioned by writing the key AND its
+// one's complement (65535 - key) to 4104/4105 in a SINGLE FC16 transaction. The complement
+// is an anti-corruption handshake — a lone 4104 write is rejected.
+
+/** System control key register; the complement goes in the next one (4105). */
+export const CONTROL_KEY_ADDR = 4104;
+/** SCF support map — 8 read-only registers advertising which function codes exist. */
+export const SCF_SUPPORT_ADDR = 4096;
+export const SCF_SUPPORT_WORDS = 8;
+/** key = KEY_BASE + function code. */
+export const CONTROL_KEY_BASE = 35700;
+
+/** The System Control Functions we use (056-051 §3.1 lists all of them). */
+export const SCF = {
+  SELECT_STOP: 0,
+  SELECT_AUTO: 1,
+  SELECT_MANUAL: 2,
+  START_ENGINE: 5,
+  TELEMETRY_START: 32,
+  TELEMETRY_CANCEL: 33,
+} as const;
+
+/** Is function `fn` set in an 8-word SCF support map? Bit 15-(fn%16) of word fn>>4 (056-051 §3). */
+export function scfSupports(map: number[], fn: number): boolean {
+  const word = map[fn >> 4];
+  if (word == null) return false;
+  return ((word >> (15 - (fn % 16))) & 1) === 1;
+}
 
 // ── sentinels ────────────────────────────────────────────────────────────────
 // GenComm reserves the TOP 8 CODES of each width as "not available / over-range /
@@ -778,23 +812,105 @@ export const REGISTERS: RegField[] = [
   // fitted on 2026-07-06 is wired to anything the controller uses, and WHICH input the SP-PRO closes
   // to command a start. Page 13 offset 0 carries the fuel and start relays, which distinguishes "the
   // DSE commanded this start" from "something else cranked the engine".
-  f("Digital I/O", 12, 0, "digInNamed1", "Named digital inputs 1 (estop, oil-pressure switch, engine-temp switch, remote start)", 1, false, 1, "", HI, {
-    note: "2 bits/input, MSB first: estop, lowOilPressSwitch, highEngineTempSwitch, remoteStart, remoteFuelOn, lampTest, reset, panelLock. Read 0x7FFF live 2026-08-10 = estop Closed, all others Unimplemented.",
-  }),
-  f("Digital I/O", 12, 1, "digInNamed2", "Named digital inputs 2 (panel buttons)", 1, false, 1, "", HI, {
-    note: "start, stop, transfer-to-gen, transfer-to-mains buttons. Read 0xFFFF live 2026-08-10 = all Unimplemented.",
-  }),
-  f("Digital I/O", 12, 16, "digInUnnamedCount", "Configurable digital input count", 1, false, 1, "", HI, {
-    note: "Read 8 live 2026-08-10.",
-  }),
-  f("Digital I/O", 12, 17, "digInUnnamed1To16", "Configurable digital inputs 1-16", 1, false, 1, "", HI, {
-    note: "1 bit/input, input 1 = MSB (bit 15). Read 0x2000 live 2026-08-10 = input 3 Closed with the engine stopped — the leading candidate for the oil pressure switch, which should go Open once oil pressure builds.",
-  }),
-  f("Digital I/O", 13, 0, "digOutNamed1", "Named digital outputs 1 (fuel + start relays)", 1, false, 1, "", MED, {
-    note: "2 bits/output, MSB first: fuelRelay, startRelay, mainsLoadingRelay, genLoadingRelay, modemPowerRelay. Not yet observed live.",
-  }),
-  f("Digital I/O", 13, 16, "digOutUnnamedCount", "Configurable digital output count", 1, false, 1, "", MED),
-  f("Digital I/O", 13, 17, "digOutUnnamed1To16", "Configurable digital outputs 1-16", 1, false, 1, "", MED),
+  f(
+    "Digital I/O",
+    12,
+    0,
+    "digInNamed1",
+    "Named digital inputs 1 (estop, oil-pressure switch, engine-temp switch, remote start)",
+    1,
+    false,
+    1,
+    "",
+    HI,
+    {
+      note: "2 bits/input, MSB first: estop, lowOilPressSwitch, highEngineTempSwitch, remoteStart, remoteFuelOn, lampTest, reset, panelLock. Read 0x7FFF live 2026-08-10 = estop Closed, all others Unimplemented.",
+    },
+  ),
+  f(
+    "Digital I/O",
+    12,
+    1,
+    "digInNamed2",
+    "Named digital inputs 2 (panel buttons)",
+    1,
+    false,
+    1,
+    "",
+    HI,
+    {
+      note: "start, stop, transfer-to-gen, transfer-to-mains buttons. Read 0xFFFF live 2026-08-10 = all Unimplemented.",
+    },
+  ),
+  f(
+    "Digital I/O",
+    12,
+    16,
+    "digInUnnamedCount",
+    "Configurable digital input count",
+    1,
+    false,
+    1,
+    "",
+    HI,
+    {
+      note: "Read 8 live 2026-08-10.",
+    },
+  ),
+  f(
+    "Digital I/O",
+    12,
+    17,
+    "digInUnnamed1To16",
+    "Configurable digital inputs 1-16",
+    1,
+    false,
+    1,
+    "",
+    HI,
+    {
+      note: "1 bit/input, input 1 = MSB (bit 15). Read 0x2000 live 2026-08-10 = input 3 Closed with the engine stopped — the leading candidate for the oil pressure switch, which should go Open once oil pressure builds.",
+    },
+  ),
+  f(
+    "Digital I/O",
+    13,
+    0,
+    "digOutNamed1",
+    "Named digital outputs 1 (fuel + start relays)",
+    1,
+    false,
+    1,
+    "",
+    MED,
+    {
+      note: "2 bits/output, MSB first: fuelRelay, startRelay, mainsLoadingRelay, genLoadingRelay, modemPowerRelay. Not yet observed live.",
+    },
+  ),
+  f(
+    "Digital I/O",
+    13,
+    16,
+    "digOutUnnamedCount",
+    "Configurable digital output count",
+    1,
+    false,
+    1,
+    "",
+    MED,
+  ),
+  f(
+    "Digital I/O",
+    13,
+    17,
+    "digOutUnnamed1To16",
+    "Configurable digital outputs 1-16",
+    1,
+    false,
+    1,
+    "",
+    MED,
+  ),
 
   // ── Internal analogue inputs + their configured units (Page 178) ──────────
   // Every input read 0x7FFF (Unimplemented) on 2026-08-10, and A/B's unit info was blank — nothing is
@@ -802,14 +918,48 @@ export const REGISTERS: RegField[] = [
   // sender (the coolant sender fitted 2026-07-06 is the open case) these start reporting, so this is
   // the automated proof that commissioning actually happened. Unsigned for the same reason as above.
   ...(["A", "B", "C", "D", "E", "F"] as const).map((id, i) =>
-    f("Analogue inputs", 178, i, `analogueIn${id}`, `Internal analogue input ${id}`, 1, false, 1, "", MED, {
-      note: "Read 0x7FFF (Unimplemented) live 2026-08-10 — no sender configured.",
-    }),
+    f(
+      "Analogue inputs",
+      178,
+      i,
+      `analogueIn${id}`,
+      `Internal analogue input ${id}`,
+      1,
+      false,
+      1,
+      "",
+      MED,
+      {
+        note: "Read 0x7FFF (Unimplemented) live 2026-08-10 — no sender configured.",
+      },
+    ),
   ),
   // Unit ID / multiplier / precision for A and B — the configuration readout. SP-228: "the unit
   // information is extracted from the analogue input configuration data."
-  f("Analogue inputs", 178, 16, "analogueInAUnitId", "Analogue input A unit ID", 1, false, 1, "", MED),
-  f("Analogue inputs", 178, 31, "analogueInBUnitId", "Analogue input B unit ID", 1, false, 1, "", MED),
+  f(
+    "Analogue inputs",
+    178,
+    16,
+    "analogueInAUnitId",
+    "Analogue input A unit ID",
+    1,
+    false,
+    1,
+    "",
+    MED,
+  ),
+  f(
+    "Analogue inputs",
+    178,
+    31,
+    "analogueInBUnitId",
+    "Analogue input B unit ID",
+    1,
+    false,
+    1,
+    "",
+    MED,
+  ),
 
   // ── Mains / utility — CONDITIONAL: expect n/a on a plain DSE7410 MkII ──────
   // (auto-start-only; no mains monitoring / no mains CTs. The 7420 is the AMF variant.)
@@ -1360,6 +1510,75 @@ export class DseClient {
     }
 
     return { unitId: this.unitId, readings, pageErrors };
+  }
+
+  /**
+   * Read a handful of mapped fields by key, one FC3 request each (they usually live on
+   * different pages, so batching buys nothing). Used by the control layer for its
+   * fresh-at-command-time pre-flight reads; unknown keys throw.
+   */
+  async readFields(keys: string[]): Promise<Record<string, number | null>> {
+    if (!this.connected) await this.connect();
+    this.client.setID(this.unitId);
+    const out: Record<string, number | null> = {};
+    for (const key of keys) {
+      const fld = REGISTERS.find((r) => r.key === key);
+      if (!fld) throw new Error(`readFields: unknown register key ${key}`);
+      const res = await this.client.readHoldingRegisters(
+        fld.address,
+        fld.words,
+      );
+      out[key] = decodeField(fld, res.data);
+    }
+    return out;
+  }
+
+  /**
+   * Read the 8-word SCF support map (4096–4103). Pair with `scfSupports()` to confirm a
+   * function exists on THIS module before commanding it.
+   */
+  async readScfSupport(): Promise<number[]> {
+    if (!this.connected) await this.connect();
+    this.client.setID(this.unitId);
+    const res = await this.client.readHoldingRegisters(
+      SCF_SUPPORT_ADDR,
+      SCF_SUPPORT_WORDS,
+    );
+    return res.data;
+  }
+
+  /**
+   * ⚠️ THE ONLY WRITE IN THIS MODULE — it physically starts/stops the engine.
+   *
+   * Sends one System Control Key: FC16 write of [key, 65535-key] to 4104/4105 in a single
+   * transaction (DSE 056-051 §3). Keys are momentary commands with no parameters — there is
+   * no "run for N seconds" key; a timed run is the caller holding the telemetry-start latch
+   * and clearing it later (see core/control.ts).
+   *
+   * Pass `verifySupport: false` only when the support map has already been checked this session.
+   */
+  async writeControlKey(
+    fn: number,
+    opts: { verifySupport?: boolean } = {},
+  ): Promise<void> {
+    if (!this.connected) await this.connect();
+    this.client.setID(this.unitId);
+
+    if (opts.verifySupport !== false) {
+      const map = await this.readScfSupport();
+      if (!scfSupports(map, fn)) {
+        throw new Error(
+          `DSE control function ${fn} is not supported by this module (SCF map ${map.map((w) => w.toString(16)).join(",")})`,
+        );
+      }
+    }
+
+    const key = CONTROL_KEY_BASE + fn;
+    const complement = 65535 - key;
+    this.log(
+      `control key fn=${fn} → write [${key}, ${complement}] @${CONTROL_KEY_ADDR}`,
+    );
+    await this.client.writeRegisters(CONTROL_KEY_ADDR, [key, complement]);
   }
 
   async close(): Promise<void> {

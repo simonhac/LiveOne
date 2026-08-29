@@ -22,6 +22,11 @@
 #                            `apiKeyEnv` actually reads — NOT "SHEEPHOUSE_API_KEY", as this comment
 #                            previously claimed; provisioning that name silently yields no auth)
 #   KINKORA_API_KEY          gusher gk_ key for system "kinkora"
+#   SHEEPHOUSE_CONTROL_KEY   per-device passkey for the generator control route (usher.yaml
+#                            control.passkeyEnv). Resolved lazily per request — missing = the
+#                            control route 503s; the collector is unaffected.
+#   CF_ACCESS_TEAM_DOMAIN    (optional) e.g. "myteam.cloudflareaccess.com" — enables origin-side
+#   CF_ACCESS_AUD            verification of the Cf-Access-Jwt-Assertion on /api/usher/control/*
 app = "liveone-flyhub"
 primary_region = "syd"
 
