@@ -12,7 +12,7 @@ describe("resolvePointControl", () => {
   it("returns the descriptor for the generator run-request point", () => {
     expect(
       resolvePointControl("deepsea", "generator", "generator_run_request_min"),
-    ).toEqual({ kind: "number", min: 0, max: 120, step: 5 });
+    ).toEqual({ kind: "number", min: 0, max: 360, step: 5 });
   });
 
   it("is case-insensitive on vendorType (device rows are not normalised)", () => {

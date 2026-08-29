@@ -39,12 +39,19 @@ import ControlNotice, {
 } from "@/components/ControlNotice";
 import CommandActivityLog from "@/components/CommandActivityLog";
 import type { LatestPointValues } from "@/lib/types/api";
+import {
+  renderMessageLike,
+  type StructuredMessage,
+} from "@/lib/control/message-format";
+import { formatSecondsAsDuration, formatTime12h } from "@/lib/fe-date-format";
 
 /** The `POST …/preflight` body — mirrors `ControlPreflightResult` (lib/vendors/types.ts). */
 interface PreflightJson {
   ok: boolean;
   wouldProceed?: boolean;
   verdict: string;
+  /** `verdict` unrendered, when it names an instant — see lib/control/message-format.ts. */
+  verdictMessage?: StructuredMessage;
   checks?: { label: string; value: string; ok: boolean | null }[];
   /** DeepSea puts the hub's `ControlStatus` here — the freshest word on the run in progress. */
   detail?: {
@@ -56,16 +63,40 @@ interface PreflightJson {
 
 /**
  * The point's own `control` descriptor bound (lib/control/control-registry.ts:
- * `{kind:"number", min:0, max:120, step:5}`).
+ * `{kind:"number", min:0, max:360, step:5}`).
  *
  * 🛑 This is the UI/plausibility bound, NOT the safety bound. The hub's `maxRuntimeSec` is the one
  * actually enforced where the latch is held, the two are deliberately independent, and the slider
  * clamps DOWN to whichever the preflight reports. A mistake here cannot widen what will run.
  */
-const DESCRIPTOR_MAX_MIN = 120;
+const DESCRIPTOR_MAX_MIN = 360;
 const STEP_MIN = 5;
-const PRESETS_MIN = [5, 15, 30, 60, 120];
+
+/**
+ * The preset chips.
+ *
+ * Labelled explicitly rather than derived, because the spoken form of a preset is not the spoken
+ * form of a duration: 90 minutes is offered as "1.5h" (one chip, one glance) where the sentences
+ * below call the same run "1h 30m" via `formatSecondsAsDuration`. Every value is a multiple of
+ * `STEP_MIN` so a chip always lands exactly on a slider stop.
+ */
+const PRESETS: { min: number; label: string }[] = [
+  { min: 5, label: "5m" },
+  { min: 15, label: "15m" },
+  { min: 30, label: "30m" },
+  { min: 60, label: "1h" },
+  { min: 90, label: "1.5h" },
+  { min: 120, label: "2h" },
+  { min: 180, label: "3h" },
+  { min: 240, label: "4h" },
+  { min: 360, label: "6h" },
+];
 const DEFAULT_MIN = 30;
+
+/** "30m", "1h 30m", "6h" — the house duration spelling, for the sentences around the slider. */
+function runWords(minutes: number): string {
+  return formatSecondsAsDuration(minutes * 60);
+}
 
 /** How long after an ambiguous send before we re-probe to find out what actually happened. */
 const AMBIGUITY_RECHECK_MS = 5_000;
@@ -77,7 +108,7 @@ function freshnessWords(ms: number | null, nowMs: number): string | null {
   if (age < 45_000) return "just now";
   const min = Math.round(age / 60_000);
   if (min < 1) return "under a minute ago";
-  if (min < 120) return `${min} min ago`;
+  if (min < 120) return `${min}\u00A0min ago`;
   return `${Math.round(min / 60)} h ago`;
 }
 
@@ -241,7 +272,11 @@ export default function GeneratorControlDialog({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Command failed");
-      return data as { ok: boolean; reason: string | null };
+      return data as {
+        ok: boolean;
+        reason: string | null;
+        reasonMessage?: StructuredMessage;
+      };
     },
     onMutate: ({ key }) => {
       setNotice(null);
@@ -253,13 +288,17 @@ export default function GeneratorControlDialog({
       // commanded by the SP-PRO inverter, which this control cannot override" arrives as ok:true,
       // and swallowing it in favour of a tick would tell the user the engine had stopped.
       if (data.reason) {
+        // Prefer the template when the vendor sent one: its instant is spelled in the reader's
+        // clock, where `reason` carries ISO so the audit row stays unambiguous.
+        const spoken =
+          renderMessageLike(data.reasonMessage ?? data.reason) ?? data.reason;
         setNotice({
           tone: "info",
           text: data.ok
-            ? data.reason
+            ? spoken
             : describeDecline(
                 "set_value",
-                data.reason,
+                spoken,
                 GENERATOR_RUN_REQUEST_ADDRESS,
               ).text,
         });
@@ -299,13 +338,17 @@ export default function GeneratorControlDialog({
   }, [open]);
 
   const busy = mutation.isPending;
+  // Only the runtimes the hub would actually accept — see `maxMin`.
+  const presets = PRESETS.filter((p) => p.min <= maxMin);
   const freshness = freshnessWords(statusMs, nowMs);
+  // The house 12-hour spelling ("12:03am"), in the BROWSER's zone — the clock the reader is looking
+  // at while the engine runs. `stopAtSec` is an absolute instant, so no offset arithmetic is needed.
   const stopsAtWords =
     stopAtSec != null
-      ? new Date(stopAtSec * 1000).toLocaleTimeString([], {
-          hour: "numeric",
-          minute: "2-digit",
-        })
+      ? (() => {
+          const d = new Date(stopAtSec * 1000);
+          return formatTime12h({ hour: d.getHours(), minute: d.getMinutes() });
+        })()
       : null;
 
   return (
@@ -326,7 +369,9 @@ export default function GeneratorControlDialog({
               everything below it. */}
           {lastError && (
             <div className="rounded-md border border-red-800/70 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-              {lastError}
+              {/* A text POINT value, so there is no template to carry — the instant localizer is
+                  the only lever, and it is enough: it rewrites the ISO and nothing else. */}
+              {renderMessageLike(lastError)}
             </div>
           )}
 
@@ -362,7 +407,7 @@ export default function GeneratorControlDialog({
                 Waiting for the generator to report in.
               </p>
             ) : preflight.isLoading ? (
-              <p className="text-xs text-gray-400">Reading the controller…</p>
+              <EngineCheckSkeleton />
             ) : preflight.isError ? (
               <p className="text-xs text-red-400">
                 {preflight.error instanceof Error
@@ -398,7 +443,7 @@ export default function GeneratorControlDialog({
                     repeating that under a slider set to 30 minutes would be actively misleading. */}
                 {preflight.data && (
                   <p
-                    className={`mt-2 flex items-start gap-1.5 text-xs ${
+                    className={`mt-2 flex min-h-[2rem] items-start gap-1.5 text-xs ${
                       canStart ? "text-green-500/90" : "text-amber-400/90"
                     }`}
                   >
@@ -409,8 +454,11 @@ export default function GeneratorControlDialog({
                     )}
                     <span>
                       {canStart
-                        ? `Ready — a ${minutes} minute run would start now.`
-                        : preflight.data.verdict}
+                        ? `Ready — a ${runWords(minutes)} run would start now.`
+                        : (renderMessageLike(
+                            preflight.data.verdictMessage ??
+                              preflight.data.verdict,
+                          ) ?? preflight.data.verdict)}
                     </span>
                   </p>
                 )}
@@ -422,19 +470,30 @@ export default function GeneratorControlDialog({
 
           {/* ── Duration ────────────────────────────────────────────────── */}
           <div className="space-y-2">
-            <Label htmlFor="generator-minutes">Run for {minutes} min</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {PRESETS_MIN.filter((p) => p <= maxMin).map((p) => (
+            <Label htmlFor="generator-minutes">
+              Run for {runWords(minutes)}
+            </Label>
+            {/* One row, spanning the slider's full width: an equal-fraction grid rather than a
+                wrapping flex, so the chips end flush with both ends of the track below them and
+                the run lengths read as one scale. `min-w-0` + `px-0` let a chip shrink below its
+                label's natural padding instead of overflowing the grid. */}
+            <div
+              className="grid gap-1"
+              style={{
+                gridTemplateColumns: `repeat(${presets.length}, minmax(0, 1fr))`,
+              }}
+            >
+              {presets.map((p) => (
                 <Button
-                  key={p}
+                  key={p.min}
                   type="button"
                   size="sm"
-                  variant={p === minutes ? "default" : "outline"}
-                  className="h-7 px-2.5 text-xs"
+                  variant={p.min === minutes ? "default" : "outline"}
+                  className="h-7 min-w-0 px-0 text-xs"
                   disabled={busy}
-                  onClick={() => setMinutes(p)}
+                  onClick={() => setMinutes(p.min)}
                 >
-                  {p}
+                  {p.label}
                 </Button>
               ))}
             </div>
@@ -457,7 +516,7 @@ export default function GeneratorControlDialog({
               <p className="text-sm text-amber-400/90">
                 Running
                 {stopsAtWords ? ` · stops at ${stopsAtWords}` : ""}
-                {minsLeft != null ? ` (${minsLeft} min left)` : ""}
+                {minsLeft != null ? ` (${runWords(minsLeft)} left)` : ""}
               </p>
               <div className="flex gap-2">
                 <Button
@@ -473,7 +532,7 @@ export default function GeneratorControlDialog({
                   ) : (
                     <Play className="mr-2 h-4 w-4" />
                   )}
-                  Extend to {minutes} min
+                  Extend to {runWords(minutes)}
                 </Button>
                 {/* 🛑 Never disabled on the preflight. Letting go of the latch must stay reachable
                     when our picture is stale or the probe itself failed. */}
@@ -506,7 +565,7 @@ export default function GeneratorControlDialog({
                 ) : (
                   <Play className="mr-2 h-4 w-4" />
                 )}
-                Start generator · {minutes} min
+                Start generator · {runWords(minutes)}
               </Button>
               {/* The engine may be running without US having started it (the inverter's own
                   request, or a cool-down tail). Our stop cannot end that run, but it CAN clear a
@@ -531,5 +590,39 @@ export default function GeneratorControlDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The engine check at its FINAL height, before the probe answers.
+ *
+ * The box used to paint one line ("Reading the controller…") and then grow to four rows plus a
+ * verdict, which moved every control below it just as the user reached for one. The height is
+ * knowable: `preflightChecks` (lib/vendors/deepsea/control.ts) returns exactly four checks, always
+ * — one per fact the DSE is asked about — so the skeleton is four rows and not a guess.
+ *
+ * It mirrors the real `<li>` markup rather than approximating it, so the two cannot drift out of
+ * alignment: same `space-y-1`, same `h-3.5 w-3.5` status glyph, same `w-32` label column, and the
+ * same `min-h` on the verdict line that the loaded state carries.
+ */
+function EngineCheckSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Reading the controller">
+      <ul className="space-y-1 text-xs">
+        {[0, 1, 2, 3].map((i) => (
+          <li key={i} className="flex items-center gap-2">
+            <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-gray-700" />
+            <span className="w-32 shrink-0">
+              <span className="block h-3 w-20 animate-pulse rounded bg-gray-700/70" />
+            </span>
+            <span className="block h-3 w-24 animate-pulse rounded bg-gray-700/70" />
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 flex min-h-[2rem] items-start gap-1.5 text-xs">
+        <span className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-gray-700" />
+        <span className="block h-3 w-48 animate-pulse rounded bg-gray-700/70" />
+      </p>
+    </div>
   );
 }

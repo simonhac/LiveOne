@@ -162,6 +162,8 @@ export class DeepSeaControlCapability implements ControlCapability {
       return {
         ok: false,
         reason: result.reason ?? "the generator hub declined the request",
+        // The hub's own template when it sent one (the ambiguous-start sentence names a deadline).
+        reasonMessage: result.reasonMessage,
       };
     }
 
@@ -181,19 +183,25 @@ export class DeepSeaControlCapability implements ControlCapability {
           };
     }
 
-    const stopsAt = result.stopAt
-      ? new Date(result.stopAt).toLocaleTimeString("en-AU", {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: "Australia/Melbourne",
-        })
-      : "an unknown time";
+    // 🛑 The AUDIT sentence keeps the instant in ISO, and the DISPLAY sentence is a template the
+    // reader spells. This used to render `Australia/Melbourne` in a hardcoded `en-AU` call, which
+    // was wrong twice over: it named the wrong clock for any site that is not Daylesford, and it
+    // baked a presentation decision into a row that outlives the dialog that showed it.
+    const extended = result.action === "extended";
+    const audit = result.stopAt ?? "an unknown time";
     return {
       ok: true,
-      reason:
-        result.action === "extended"
-          ? `Run extended — now stops at ${stopsAt}.`
-          : `Generator starting — runs until ${stopsAt}.`,
+      reason: extended
+        ? `Run extended — now stops at ${audit}.`
+        : `Generator starting — runs until ${audit}.`,
+      reasonMessage: result.stopAt
+        ? {
+            template: extended
+              ? "Run extended — now stops at {stopAt, time, short}."
+              : "Generator starting — runs until {stopAt, time, short}.",
+            values: { stopAt: result.stopAt },
+          }
+        : undefined,
     };
   }
 
@@ -240,6 +248,10 @@ export class DeepSeaControlCapability implements ControlCapability {
       ok: noop.ok,
       wouldProceed: noop.wouldStart,
       verdict: noop.verdict,
+      // Passed through, never synthesised here: when the hub sends a template it is because the
+      // sentence names an instant only the reader can spell. An older hub sends none and the flat
+      // `verdict` stands on its own.
+      verdictMessage: noop.verdictMessage,
       checks: preflightChecks(noop),
       detail: noop.controlStatus ?? null,
     };

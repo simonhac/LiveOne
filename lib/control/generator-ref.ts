@@ -144,7 +144,7 @@ const COPY: Record<
 > = {
   "running:hub": {
     label: "Running",
-    detail: "on request from LiveOne",
+    detail: "on LiveOne request",
     tone: "commanded",
     isCommandedRun: true,
     isRunning: true,
@@ -171,7 +171,7 @@ const COPY: Record<
   },
   stopping: {
     label: "Cooling",
-    detail: "run request released",
+    detail: "request released",
     tone: "running",
     isCommandedRun: false,
     isRunning: true,
@@ -190,7 +190,10 @@ const COPY: Record<
   },
   "latch-released-still-running": {
     label: "Running",
-    detail: "released, still running",
+    // Just "released": the tile appends the elapsed clause to this line ("released, running
+    // 76 min"), so saying "still running" here as well produced "released, still running, running
+    // 76 min". The fact survives — the time clause is what states it.
+    detail: "released",
     tone: "warning",
     isCommandedRun: false,
     isRunning: true,
@@ -282,6 +285,11 @@ export function panelIsAuto(mode: string | null | undefined): boolean {
  *
  * Remaining wins where we have it, because a deadline is actionable where an elapsed count is only
  * informational — and it is the number the user set.
+ *
+ * 🛑 The `\u00A0` between the number and its unit is a NON-BREAKING space and is load-bearing: the
+ * value lands in a tile's grid cell and in a one-line clause under the hero, and a plain space lets
+ * "23" and "min" land on different lines. Same rule as `lib/fe-date-format.ts`, which NBSP-joins
+ * every number/unit pair it spells.
  */
 export function runTimeWords(input: {
   isCommandedRun: boolean;
@@ -293,12 +301,20 @@ export function runTimeWords(input: {
   if (input.isCommandedRun) {
     const left = runMinutesLeft(input.stopAtEpochSec, input.nowMs);
     if (left != null)
-      return { short: "Stops", long: "Stops in", value: `${left} min` };
+      return {
+        short: "Stops",
+        long: "Stops in",
+        value: `${left}\u00A0min`,
+      };
   }
   if (input.isRunning) {
     const elapsed = runMinutesElapsed(input.runStartIso, input.nowMs);
     if (elapsed != null)
-      return { short: "Run", long: "Running", value: `${elapsed} min` };
+      return {
+        short: "Run",
+        long: "Running",
+        value: `${elapsed}\u00A0min`,
+      };
   }
   return null;
 }

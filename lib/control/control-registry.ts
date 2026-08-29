@@ -27,10 +27,14 @@ const MANIFESTS: Record<string, DeviceControlManifest> = {
      * back as minutes remaining, so the control and its value share one unit.
      *
      * `max` is a UI/plausibility bound, NOT the safety bound — the hub's own `maxRuntimeSec`
-     * (currently 120 min) is enforced where the latch is actually held, and the two are
-     * deliberately independent. `step: 5` keeps a slider from producing 37-minute runs.
+     * (currently 360 min, `usher.example.yaml`) is enforced where the latch is actually held, and
+     * the two are deliberately independent. `step: 5` keeps a slider from producing 37-minute runs.
+     *
+     * 🛑 This bound is ENFORCED server-side (`point-control.ts` rejects a value outside
+     * `[min, max]`), so raising the hub's cap without raising this one silently caps the UI at the
+     * old value. The two moved together to 6 h; keep them that way.
      */
-    generator_run_request_min: { kind: "number", min: 0, max: 120, step: 5 },
+    generator_run_request_min: { kind: "number", min: 0, max: 360, step: 5 },
   },
 };
 

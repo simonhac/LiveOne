@@ -194,6 +194,37 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
   },
 };
 
+/**
+ * The WRITABLE run-request point, carrying a `pointReference`.
+ *
+ * `GeneratorControlDialog` resolves its command target through `generatorRunRequestTarget` →
+ * `pointIdOf`, which reads `pointReference` off this entry and validates it with `Point.parse`. A
+ * fixture without it renders the dialog's "Waiting for the generator to report in." branch — a real
+ * state, but not the one you usually want to look at. The id is a well-formed `pt_` so the parse
+ * succeeds; nothing dereferences it, because the gallery's fetch stub answers every control route.
+ */
+const RUN_REQUEST: LatestPointValue = {
+  value: 0,
+  logicalPath: "source.generator.control.request",
+  measurementTime: new Date(Date.now() - FRESH * 1000),
+  metricUnit: "min",
+  displayName: "Run Request",
+  pointReference: "pt_01kybrhzkmfyxvz63d15rscj19",
+  sourceSystemId: 14,
+};
+
+/**
+ * Every generator scenario again, with the control point added — the shape a viewer who OWNS the
+ * generator sees. Derived rather than hand-written so the two can never describe different engines.
+ */
+export const GENERATOR_CONTROL_SCENARIOS: Record<string, LatestPointValues> =
+  Object.fromEntries(
+    Object.entries(GENERATOR_SCENARIOS).map(([name, latest]) => [
+      name,
+      { ...latest, "source.generator.control.request/duration": RUN_REQUEST },
+    ]),
+  );
+
 // ---------------------------------------------------------------------------
 // Tile — Load (load/power + load.* children + synthesized rest-of-house)
 // ---------------------------------------------------------------------------

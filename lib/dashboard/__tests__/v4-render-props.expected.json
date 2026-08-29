@@ -684,7 +684,7 @@
           "extra": {
             "$element": "div",
             "$props": {
-              "children": [false, null, false, null],
+              "children": [false, false, null],
               "className": "grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums"
             }
           },

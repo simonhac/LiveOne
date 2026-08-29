@@ -23,6 +23,7 @@
  */
 
 import { ControlDispatchError } from "@/lib/control/errors";
+import type { StructuredMessage } from "@/lib/control/message-format";
 
 /** Default hub origin; override per-environment with USHER_CONTROL_URL. */
 const DEFAULT_HUB_URL = "https://usher.liveone.energy";
@@ -31,6 +32,9 @@ export interface HubRunResult {
   ok: boolean;
   action?: "started" | "extended" | "released";
   reason?: string;
+  /** `reason` unrendered, when it names an instant. Absent from a hub older than the ICU change;
+   *  `reason` is always populated, so a caller may prefer this and fall back without branching. */
+  reasonMessage?: StructuredMessage;
   stopAt: string | null;
   remainingSec: number | null;
   released?: boolean;
@@ -49,6 +53,9 @@ export interface HubNoopResult {
   /** The hub's own answer, from the same `gateStart()` a real request consults. */
   wouldStart?: boolean;
   verdict: string;
+  /** `verdict` unrendered — see `reasonMessage`. Only the already-latched verdict names an instant,
+   *  so this is absent for every other outcome and the flat `verdict` is the answer. */
+  verdictMessage?: StructuredMessage;
   /** Absent when `ok` is false — there was no successful read to report. */
   preflight?: {
     ownership: {

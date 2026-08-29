@@ -35,7 +35,7 @@ sources:
     # WITHOUT touching the collector.
     control:
       passkeyEnv: SHEEPHOUSE_CONTROL_KEY
-      maxRuntimeSec: 7200 # per-request cap (s); requests above it are rejected with a 400
+      maxRuntimeSec: 21600 # per-request cap (s) = 6 h; requests above it are rejected with a 400
     unitId: 10
     pollSec: 15 # read + journal
     activeSec: 15
