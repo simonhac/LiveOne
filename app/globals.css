@@ -57,9 +57,61 @@
   animation: shimmer-sweep 1.4s ease-in-out infinite;
 }
 
+/* Text shimmer — a highlight sweeping THROUGH the letters, for a value that is live right now.
+   Unlike `.shimmer` (a placeholder for a value we do not have yet) this one is painted into the
+   glyphs via background-clip, so the word stays fully legible while it moves. The 2s period is
+   deliberately slow: it should read as a pulse on a running machine, not as a loading state.
+
+   🛑 The gradient TILES (`repeat-x`) and is sized in `em`, not `no-repeat` at `300%`. With
+   no-repeat the painted band is finite, so once the animation carried it past the element there
+   was nothing behind the glyphs at all — and with `-webkit-text-fill-color: transparent` that
+   renders the word INVISIBLE. It read as "Running" blanking out, redrawing, then shimmering. A
+   repeating tile always has paint under every glyph, and because the gradient starts and ends on
+   the same colour, shifting by exactly one tile width is a seamless loop. */
+@keyframes shimmer-text {
+  from {
+    background-position: 0em 0;
+  }
+  to {
+    background-position: 12em 0;
+  }
+}
+
+.shimmer-text {
+  /* The word rests at 80% of its OWN colour and a narrow 100% band travels through it.
+     `color-mix` on `currentColor` rather than a literal white, so the effect is a brightness ramp
+     within one hue: a white hero shimmers white, and a red one (the generator's "Stop failing")
+     shimmers red. A hardcoded white band would have put a white flash through a word whose whole
+     job is to read as a warning. The 80/100 relationship is fixed either way, so the contrast does
+     not depend on the hue the caller chose. */
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, currentColor 80%, transparent) 0%,
+    color-mix(in srgb, currentColor 80%, transparent) 42%,
+    currentColor 50%,
+    color-mix(in srgb, currentColor 80%, transparent) 58%,
+    color-mix(in srgb, currentColor 80%, transparent) 100%
+  );
+  /* One tile is much wider than any hero word, so the band crosses it as a periodic glint rather
+     than sitting on it permanently. */
+  background-size: 12em 100%;
+  background-repeat: repeat-x;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-text 2s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shimmer {
     animation: none;
+  }
+
+  /* Falls back to the resting 80%, in the hero's own hue — never a transparent glyph. */
+  .shimmer-text {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: color-mix(in srgb, currentColor 80%, transparent);
   }
 }
 

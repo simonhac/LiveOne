@@ -15,7 +15,14 @@ interface TileProps {
   borderColor: string;
   staleThresholdSeconds: number;
   measurementTime?: Date;
-  extraInfo?: string;
+  /** The qualifying line under the hero. A node, not a string: a tile may need to colour part of
+   *  it (the generator's amber countdown) without the whole line changing tone. */
+  extraInfo?: React.ReactNode;
+  /** Tailwind text colour for the HERO. Defaults to `text-gray-100`; a tile overrides it to say
+   *  something the word alone cannot (the generator's red "Locked out"). */
+  valueColor?: string;
+  /** Extra classes on the hero value itself — e.g. the running generator's shimmer. */
+  valueClassName?: string;
   extra?: React.ReactNode;
   /**
    * Absolutely-positioned chrome drawn inside the tile's own box — the generator's control cog.
@@ -29,6 +36,12 @@ interface TileProps {
   overlay?: React.ReactNode;
 }
 
+/**
+ * `@container` on the root lets a tile's own contents respond to the TILE's width rather than the
+ * viewport's. The `md:` variants elsewhere in here cannot: on a desktop viewport `md:` is always
+ * true, so a 180px tile in a dashboard grid still got every "wide" treatment. Purely additive —
+ * nothing changes until a descendant uses an `@[…]` variant.
+ */
 export default function Tile({
   title,
   value,
@@ -42,6 +55,8 @@ export default function Tile({
   extraInfo,
   extra,
   overlay,
+  valueColor,
+  valueClassName,
 }: TileProps) {
   const [isStale, setIsStale] = useState(false);
   const [isTooltipVisible, setIsTooltipVisible] = useState(false);
@@ -124,7 +139,7 @@ export default function Tile({
 
   return (
     <div
-      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 relative overflow-hidden min-h-[110px] md:min-h-0 ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
+      className={`${bgColor} border ${borderColor} rounded-lg p-2 md:p-4 @container relative overflow-hidden min-h-[110px] md:min-h-0 ${isStale ? "opacity-75" : ""} ${ttInterphases.className}`}
     >
       {isStale && (
         <div
@@ -183,8 +198,10 @@ export default function Tile({
             {icon}
           </div>
         </div>
-        <p className="text-xl md:text-2xl font-bold text-gray-100">
-          <Value value={value} unit={unit} />
+        <p
+          className={`text-xl md:text-2xl font-bold ${valueColor ?? "text-gray-100"}`}
+        >
+          <Value value={value} unit={unit} className={valueClassName} />
         </p>
         {extraInfo && <p className="text-xs text-gray-400">{extraInfo}</p>}
         {extra && <div className="mt-0.5 md:mt-1">{extra}</div>}

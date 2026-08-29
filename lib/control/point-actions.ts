@@ -26,6 +26,7 @@ import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { VendorRegistry } from "@/lib/vendors/registry";
 import { ControlDispatchError, ControlRejectedError } from "./errors";
 import { validatePointAction, type PointActionName } from "./point-control";
+import type { StructuredMessage } from "@/lib/control/message-format";
 
 export interface PointActionRequest {
   point: PointRow;
@@ -50,7 +51,14 @@ export type PointActionOutcome =
       commandId?: string;
     }
   /** Dispatched and answered — `ok:false` is a BENIGN vendor decline, still a 200. */
-  | { kind: "completed"; ok: boolean; reason: string | null; commandId: string }
+  | {
+      kind: "completed";
+      ok: boolean;
+      reason: string | null;
+      /** `reason` unrendered — see `ControlInvokeResult.reasonMessage`. Not persisted. */
+      reasonMessage?: StructuredMessage;
+      commandId: string;
+    }
   /** The vendor refused as a matter of protocol/config → 422. */
   | { kind: "rejected"; error: string; code: string; commandId: string }
   /** Something unexpected blew up mid-dispatch → 500. */
@@ -175,6 +183,9 @@ export async function dispatchPointAction(
       kind: "completed",
       ok: result.ok,
       reason: reason || null,
+      // Deliberately NOT persisted above: the audit row keeps the rendered sentence (with its
+      // instant in ISO), which is the record. This is presentation, and only the caller needs it.
+      reasonMessage: result.reasonMessage,
       commandId,
     };
   } catch (error) {

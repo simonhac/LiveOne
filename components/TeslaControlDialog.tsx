@@ -89,7 +89,7 @@ function freshnessWords(ms: number | null, nowMs: number): string | null {
   const age = Math.max(0, nowMs - ms);
   if (age < 60_000) return "just now";
   const min = Math.round(age / 60_000);
-  if (min < 120) return `${min} min ago`;
+  if (min < 120) return `${min}\u00A0min ago`;
   return `${Math.round(min / 60)} h ago`;
 }
 

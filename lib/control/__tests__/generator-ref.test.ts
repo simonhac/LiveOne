@@ -241,7 +241,7 @@ describe("runTimeWords", () => {
         runStartIso: startedAt,
         nowMs: NOW,
       }),
-    ).toEqual({ short: "Stops", long: "Stops in", value: "23 min" });
+    ).toEqual({ short: "Stops", long: "Stops in", value: "23\u00A0min" });
   });
 
   it("falls back to elapsed for a run we did not command, and so have no deadline for", () => {
@@ -253,7 +253,7 @@ describe("runTimeWords", () => {
         runStartIso: startedAt,
         nowMs: NOW,
       }),
-    ).toEqual({ short: "Run", long: "Running", value: "12 min" });
+    ).toEqual({ short: "Run", long: "Running", value: "12\u00A0min" });
   });
 
   it("🛑 falls back to elapsed when OUR deadline has already passed, rather than showing nothing", () => {
@@ -266,7 +266,7 @@ describe("runTimeWords", () => {
         runStartIso: startedAt,
         nowMs: NOW,
       }),
-    ).toEqual({ short: "Run", long: "Running", value: "12 min" });
+    ).toEqual({ short: "Run", long: "Running", value: "12\u00A0min" });
   });
 
   it("says nothing at all when the engine is stopped", () => {

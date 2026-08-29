@@ -6,6 +6,7 @@ import type { SessionCause } from "@/lib/session-manager";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { PointRow } from "@/lib/db/planetscale/schema";
 import type { PointActionName } from "@/lib/control/point-control";
+import type { StructuredMessage } from "@/lib/control/message-format";
 
 /**
  * Field definition for credential requirements
@@ -121,6 +122,15 @@ export interface ControlInvokeContext {
 export interface ControlInvokeResult {
   ok: boolean;
   reason?: string;
+  /**
+   * `reason` UNRENDERED, when it names an instant (see `lib/control/message-format.ts`).
+   *
+   * The flat `reason` remains the AUDIT record — it is what lands in `point_commands.vendorResult`,
+   * so it must stay a complete sentence on its own and must not depend on a reader. Emit the instant
+   * there in ISO form and put the template here; the dialog prefers this, the audit trail keeps the
+   * unambiguous instant, and neither has to know about the other.
+   */
+  reasonMessage?: StructuredMessage;
 }
 
 /**
@@ -145,6 +155,13 @@ export interface ControlPreflightResult {
   wouldProceed?: boolean;
   /** One human sentence, from the vendor. Always present, including on failure. */
   verdict: string;
+  /**
+   * `verdict` UNRENDERED, when it names an instant a hub had no locale to spell (see
+   * `lib/control/message-format.ts`). Optional and additive: `verdict` is always populated, so a
+   * renderer may prefer this and fall back without branching, and a vendor that never emits an
+   * instant simply never sets it.
+   */
+  verdictMessage?: StructuredMessage;
   /** Named facts the probe read, in display order. Rendered as a checklist. */
   checks?: ControlPreflightCheck[];
   /** Vendor-specific extras the caller understands (DeepSea: the hub's `ControlStatus`). */

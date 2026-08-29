@@ -17,10 +17,14 @@ import HomeEnergyCard from "@/components/HomeEnergyCard";
 import { CARD_RENDERERS } from "@/components/dashboard/registry";
 import type { TileId } from "@/lib/dashboard/card-types";
 import type { LatestPointValues } from "@/lib/types/api";
+import { useQueryClient } from "@tanstack/react-query";
+import GeneratorControlDialog from "@/components/GeneratorControlDialog";
+import { installControlStub, type ControlScenarioName } from "./control-stub";
 import {
   SOLAR_SCENARIOS,
   LOAD_SCENARIOS,
   GENERATOR_SCENARIOS,
+  GENERATOR_CONTROL_SCENARIOS,
   BATTERY_SCENARIOS,
   GRID_SCENARIOS,
   AMBER_SCENARIOS,
@@ -35,16 +39,44 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Renders a single tile faithfully via the real tile plugin (no systemId → no live fetches). */
-function TileCell({ latest, id }: { latest: LatestPointValues; id: TileId }) {
+/** Generator scenarios whose engine is TURNING — the stubbed run-periods opens a run for these. */
+const RUNNING_SCENARIOS = new Set([
+  "running (ours)",
+  "running (inverter)",
+  "cooling down",
+  "running, panel locked",
+  "stop failing",
+  "still running after release",
+]);
+
+/**
+ * Renders a single tile faithfully via the real tile plugin.
+ *
+ * `systemId` is undefined by default, which is what keeps the gallery free of live fetches — a tile
+ * only queries when it has a subject to query about. Pass one (with `canControl`) to review the
+ * control affordance; the gallery's fetch stub answers the control routes, and the two data queries
+ * a tile fires with a systemId (`/api/data`, run-periods) simply fail and leave their rows absent.
+ */
+function TileCell({
+  latest,
+  id,
+  canControl = false,
+  systemId,
+}: {
+  latest: LatestPointValues;
+  id: TileId;
+  canControl?: boolean;
+  systemId?: number;
+}) {
   const { Render } = CARD_RENDERERS[id];
   return (
     <Render
       latest={latest}
       data={null}
+      systemId={systemId}
       staleThresholdSeconds={300}
       showGrid={true}
-      canControl={false}
+      canControl={canControl}
     />
   );
 }
@@ -154,6 +186,7 @@ function CardSection({
   render,
   presetWidths,
   playground,
+  onScenarioChange,
 }: {
   title: string;
   note?: string;
@@ -162,8 +195,14 @@ function CardSection({
   render: (scenario: string) => React.ReactNode;
   presetWidths: number[];
   playground: { w: number; h: number };
+  /** Lets the page react to the picked state — the generator's stubbed run-periods follows it. */
+  onScenarioChange?: (scenario: string) => void;
 }) {
-  const [scenario, setScenario] = useState(defaultScenario);
+  const [scenario, setScenarioState] = useState(defaultScenario);
+  const setScenario = (next: string) => {
+    setScenarioState(next);
+    onScenarioChange?.(next);
+  };
   return (
     <section className="mb-12 border-b border-gray-800 pb-10">
       <h2 className="text-lg font-semibold text-gray-100 mb-1">{title}</h2>
@@ -207,6 +246,34 @@ const AMBERNOW_WIDTHS = [220, 280, 340, 420];
 // ---------------------------------------------------------------------------
 export default function CardGallery() {
   const [debug, setDebug] = useState(false);
+
+  /**
+   * The control-plane fetch stub, installed for the WHOLE page.
+   *
+   * Page-level and not per-section on purpose: the generator tile fires its `/api/data` and
+   * run-periods reads as soon as it mounts, so a stub installed by a section further down would
+   * lose the race and the tile would render its empty state before the answers existed.
+   *
+   * Both live states follow the pickers through refs rather than the effect's deps, so changing a
+   * scenario never reinstalls — a reinstall mid-flight would restore a stale `fetch` and leave the
+   * page unpatched.
+   */
+  const queryClient = useQueryClient();
+  const dialogScenario = useRef<ControlScenarioName>("ready to start");
+  const genScenario = useRef<string>("auto (armed)");
+  // 🛑 Installed during RENDER, not in an effect. React runs CHILD effects before parent ones, so a
+  // stub installed in this component's `useEffect` arrives after the tiles below have already fired
+  // their queries — they 404, React Query caches the failure, and the rows the gallery exists to
+  // show never appear. A `useState` initializer runs before any child renders at all.
+  const [uninstall] = useState(() =>
+    installControlStub({
+      scenario: () => dialogScenario.current,
+      // A run-periods answer must agree with the tile's own status word, or the tile would read
+      // "Since 9:43am" over a hero that says the engine is stopped.
+      runOpen: () => RUNNING_SCENARIOS.has(genScenario.current),
+    }),
+  );
+  useEffect(() => uninstall, [uninstall]);
 
   useEffect(() => {
     setDebug(new URLSearchParams(window.location.search).has("debug"));
@@ -297,7 +364,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Generator"
-          note="Tile. Status copy comes from the hub's own vocabulary, except idle, which splits on the panel mode: Auto means ARMED, anything else means LOCKED OUT, and an unread panel says neither. The time row prefers OUR run's remaining minutes and falls back to elapsed. The Generated kWh/$ row needs a live run-periods fetch, so it is absent here (no systemId), as is the cog (canControl is false)."
+          note="Tile as a viewer who canNOT control it: no cog, so the Gauge keeps the top-right corner. Status copy comes from the hub's own vocabulary, except idle, which splits on the panel mode: Auto means ARMED, anything else means LOCKED OUT, and an unread panel says neither. The time row prefers OUR run's remaining minutes and falls back to elapsed. The Generated kWh/$ row needs a live run-periods fetch, so it is absent here (no systemId)."
           scenarios={Object.keys(GENERATOR_SCENARIOS)}
           defaultScenario="running (ours)"
           presetWidths={POWER_WIDTHS}
@@ -306,6 +373,32 @@ export default function CardGallery() {
             <TileCell latest={GENERATOR_SCENARIOS[s]} id="generator" />
           )}
         />
+
+        <CardSection
+          title="Generator — with controls"
+          note="The same tile as a viewer who OWNS the generator: the cog moves into the top-right corner (where TeslaSmallCard puts its own, and where the Gauge used to sit) and opens the run controls. The Generated row reads 'Since h:mma' with THIS RUN's energy while an open run exists, and 'This period' otherwise — here it is absent, because the run-periods fetch has nothing to answer it."
+          scenarios={Object.keys(GENERATOR_CONTROL_SCENARIOS)}
+          defaultScenario="auto (armed)"
+          onScenarioChange={(sc) => {
+            genScenario.current = sc;
+            // The stubbed run-periods answer depends on this pick, but its query KEY does not — so
+            // without dropping the cache the tile would keep the answer it got for the previous
+            // scenario and show "This period" over a hero that says the engine is running.
+            queryClient.removeQueries();
+          }}
+          presetWidths={POWER_WIDTHS}
+          playground={{ w: 200, h: 140 }}
+          render={(sc) => (
+            <TileCell
+              latest={GENERATOR_CONTROL_SCENARIOS[sc]}
+              id="generator"
+              canControl
+              systemId={14}
+            />
+          )}
+        />
+
+        <GeneratorDialogSection scenarioRef={dialogScenario} />
 
         <CardSection
           title="Hot Water"
@@ -393,5 +486,76 @@ export default function CardGallery() {
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * The generator control DIALOG, driven by canned hub answers.
+ *
+ * Not a `CardSection`: a dialog has no size matrix to sweep, and what needs sweeping instead is the
+ * hub's ANSWER — the verdicts, the latched branch, the failures. Each scenario is one canned
+ * preflight body (see ./control-stub), so every state the dialog can reach is one click away
+ * instead of one diesel engine away.
+ *
+ * The stub is installed while this section is mounted and removed when it unmounts, so nothing else
+ * in the gallery — or in the app, if you navigate away — sees a patched `fetch`.
+ */
+function GeneratorDialogSection({
+  scenarioRef,
+}: {
+  scenarioRef: React.MutableRefObject<ControlScenarioName>;
+}) {
+  const SCENARIOS: ControlScenarioName[] = [
+    "ready to start",
+    "checking (skeleton)",
+    "refused: panel not in Auto",
+    "refused: engine already running",
+    "already latched (ISO instant)",
+    "hub unreachable",
+    "no control passkey",
+  ];
+  const [scenario, setScenario] = useState<ControlScenarioName>(SCENARIOS[0]);
+  const [open, setOpen] = useState(false);
+  scenarioRef.current = scenario;
+
+  const latest =
+    GENERATOR_CONTROL_SCENARIOS[
+      scenario === "already latched (ISO instant)"
+        ? "running (ours)"
+        : "auto (armed)"
+    ];
+
+  return (
+    <section className="mb-12 border-b border-gray-800 pb-10">
+      <h2 className="text-lg font-semibold text-gray-100 mb-1">
+        Generator control dialog
+      </h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Every hub answer, without hardware. &ldquo;checking&rdquo; holds the
+        preflight open so the engine-check skeleton can be inspected — the box
+        must not change height when it resolves. &ldquo;already latched&rdquo;
+        is the ICU case: the hub sends both a flat sentence carrying an ISO
+        instant and a template, and the dialog must show a local time either
+        way. Start writes nothing; the action route is stubbed too.
+      </p>
+      <StatePicker
+        options={SCENARIOS}
+        value={scenario}
+        onChange={(v) => setScenario(v as ControlScenarioName)}
+      />
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded border border-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:border-gray-500"
+      >
+        Open dialog
+      </button>
+      <GeneratorControlDialog
+        systemId={14}
+        open={open}
+        onOpenChange={setOpen}
+        latest={latest}
+      />
+    </section>
   );
 }

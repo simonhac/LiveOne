@@ -173,8 +173,8 @@ export function formatChargeLimitLine(
   if (desc.targetMinutes != null) {
     parts.push(
       desc.remainingMinutes != null
-        ? `in ${desc.remainingMinutes} min`
-        : `after ${desc.targetMinutes} min`,
+        ? `in ${desc.remainingMinutes}\u00A0min`
+        : `after ${desc.targetMinutes}\u00A0min`,
     );
   }
   if (desc.targetKwh != null) {
@@ -203,8 +203,8 @@ export function formatChargeLimitCompact(
   }
   if (desc.targetMinutes != null) {
     return desc.remainingMinutes != null
-      ? `→ ${desc.remainingMinutes} min`
-      : `→ ${desc.targetMinutes} min`;
+      ? `→ ${desc.remainingMinutes}\u00A0min`
+      : `→ ${desc.targetMinutes}\u00A0min`;
   }
   return null;
 }
@@ -215,7 +215,7 @@ export function formatChargeLimitCompact(
  */
 export function targetWords(minutes?: number, kwhTarget?: number): string {
   const parts: string[] = [];
-  if (minutes != null) parts.push(`${minutes} min`);
+  if (minutes != null) parts.push(`${minutes}\u00A0min`);
   if (kwhTarget != null) parts.push(`${kwhTarget} kWh`);
   return parts.join(" or ");
 }

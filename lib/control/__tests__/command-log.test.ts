@@ -207,7 +207,7 @@ describe("formatCommandEntry", () => {
 
     it("says minutes, because the point IS minutes", () => {
       expect(formatCommandEntry(gen(), NOW).sentence).toBe(
-        "You ran the generator for 30 min",
+        "You ran the generator for 30\u00A0min",
       );
     });
 
@@ -229,7 +229,7 @@ describe("formatCommandEntry", () => {
           }),
           NOW,
         ).sentence,
-      ).toBe("‘Low battery’ ran the generator for 30 min");
+      ).toBe("‘Low battery’ ran the generator for 30\u00A0min");
     });
 
     it("🛑 passes the hub's own decline through verbatim — it is already a sentence", () => {
@@ -238,14 +238,14 @@ describe("formatCommandEntry", () => {
       expect(
         formatCommandEntry(gen({ status: "rejected", reason }), NOW),
       ).toMatchObject({
-        sentence: `You asked to run the generator for 30 min, but ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`,
+        sentence: `You asked to run the generator for 30\u00A0min, but ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`,
         tone: "benign",
       });
     });
 
     it("🛑 says the GENERATOR could not be reached, never the car", () => {
       expect(formatCommandEntry(gen({ status: "failed" }), NOW).sentence).toBe(
-        "You asked to run the generator for 30 min, but the generator couldn’t be reached",
+        "You asked to run the generator for 30\u00A0min, but the generator couldn’t be reached",
       );
     });
 

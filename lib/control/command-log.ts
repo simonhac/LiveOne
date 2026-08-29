@@ -79,7 +79,7 @@ function verbPhrase(e: CommandLogEntryJson): string {
       if (e.action === "set_value" && e.value != null) {
         return e.value === 0
           ? "stop the generator"
-          : `run the generator for ${e.value} min`;
+          : `run the generator for ${e.value}\u00A0min`;
       }
       break;
     case "ev.charge/active":

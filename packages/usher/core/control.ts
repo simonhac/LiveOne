@@ -37,6 +37,7 @@ import type {
 } from "./source";
 import type { Manifest } from "./source";
 import type { ControlConfig } from "./config";
+import type { StructuredMessage } from "./message";
 
 /** Retry cadence for a failed stop, and the passive deadline reconcile. */
 export const STOP_RETRY_MS = 15_000;
@@ -144,6 +145,9 @@ export interface RunRequestResult {
   status: 200 | 400 | 409 | 500 | 503;
   action?: "started" | "extended" | "released";
   reason?: string;
+  /** `reason`, unrendered, when it carries an instant the reader must spell locally. See message.ts.
+   *  The flat `reason` above is always populated too — it is the compatibility leg. */
+  reasonMessage?: StructuredMessage;
   stopAt: string | null;
   remainingSec: number | null;
   ownership?: ControlOwnership;
@@ -328,6 +332,11 @@ export class RunSupervisor {
         ok: false,
         status: 500,
         reason: `start may have taken effect (write failed after delivery was possible); a stop is scheduled for ${this.stopAtIso()}`,
+        reasonMessage: {
+          template:
+            "start may have taken effect (write failed after delivery was possible); a stop is scheduled for {stopAt, time, short}",
+          values: { stopAt: this.stopAtIso() },
+        },
         ownership,
       });
     }
@@ -412,6 +421,8 @@ export class RunSupervisor {
     preflight?: ControlPreflight;
     wouldStart?: boolean;
     verdict: string;
+    /** `verdict`, unrendered, when it carries an instant. See message.ts. */
+    verdictMessage?: StructuredMessage;
     status_?: ControlStatus;
   }> {
     let pre: ControlPreflight;
@@ -451,6 +462,14 @@ export class RunSupervisor {
         : wouldStart
           ? `a ${runtimeSec}s run would START now`
           : `a run would be REFUSED: ${reasons.join("; ")}`,
+      // Only the latched verdict names an instant, so only it needs spelling by the reader.
+      verdictMessage: this.latched
+        ? {
+            template:
+              "a run is already latched (stop at {stopAt, time, short}); a request would EXTEND it",
+            values: { stopAt: this.stopAtIso() },
+          }
+        : undefined,
     };
   }
 

@@ -144,6 +144,91 @@ describe("DeepSeaControlCapability", () => {
     expect(r.reason).toContain("extended");
   });
 
+  describe("the deadline it reports", () => {
+    /**
+     * 🛑 This used to render the deadline with a hardcoded `en-AU` locale in a hardcoded
+     * `Australia/Melbourne`, which was wrong twice: it named the wrong clock for any site that is
+     * not Daylesford, and it froze a presentation choice into `point_commands.vendorResult`, which
+     * outlives the dialog that showed it. The audit sentence now carries the INSTANT and the
+     * display sentence is a template the reader spells.
+     */
+    it("keeps the instant unambiguous in the audit sentence", async () => {
+      const r = await cap.invoke(ctx());
+      expect(r.reason).toContain("2026-08-29T08:00:00.000Z");
+      expect(r.reason).not.toMatch(/Melbourne|AEST|AEDT/);
+    });
+
+    it("names no timezone of its own", async () => {
+      const r = await cap.invoke(ctx());
+      // Nothing here may decide which clock the reader is on.
+      expect(r.reason).not.toMatch(/\b\d{1,2}:\d{2}\s?(am|pm|AM|PM)\b/);
+    });
+
+    it("sends a template whose instant the reader will spell", async () => {
+      const r = await cap.invoke(ctx());
+      expect(r.reasonMessage).toEqual({
+        template: "Generator starting — runs until {stopAt, time, short}.",
+        values: { stopAt: "2026-08-29T08:00:00.000Z" },
+      });
+    });
+
+    it("templates the EXTENDED sentence too", async () => {
+      hubRun.mockResolvedValue({
+        ok: true,
+        action: "extended",
+        stopAt: "2026-08-29T08:00:00.000Z",
+        remainingSec: 1800,
+      });
+      const r = await cap.invoke(ctx());
+      expect(r.reasonMessage?.template).toBe(
+        "Run extended — now stops at {stopAt, time, short}.",
+      );
+    });
+
+    it("sends no template when the hub reported no deadline", async () => {
+      hubRun.mockResolvedValue({
+        ok: true,
+        action: "started",
+        stopAt: null,
+        remainingSec: null,
+      });
+      const r = await cap.invoke(ctx());
+      expect(r.reasonMessage).toBeUndefined();
+      // The sentence still stands on its own — a missing slot must never surface as "undefined".
+      expect(r.reason).toContain("an unknown time");
+    });
+
+    it("passes the HUB's own template through on a decline, unaltered", async () => {
+      hubRun.mockResolvedValue({
+        ok: false,
+        reason:
+          "start may have taken effect (write failed after delivery was possible); a stop is scheduled for 2026-08-29T08:00:00.000Z",
+        reasonMessage: {
+          template:
+            "start may have taken effect (write failed after delivery was possible); a stop is scheduled for {stopAt, time, short}",
+          values: { stopAt: "2026-08-29T08:00:00.000Z" },
+        },
+        stopAt: "2026-08-29T08:00:00.000Z",
+        remainingSec: null,
+      });
+      const r = await cap.invoke(ctx());
+      expect(r.ok).toBe(false);
+      expect(r.reasonMessage?.values?.stopAt).toBe("2026-08-29T08:00:00.000Z");
+    });
+
+    it("is undefined for a hub that sends no template (an older build)", async () => {
+      hubRun.mockResolvedValue({
+        ok: false,
+        reason: "module is not in Auto (mode=Stop)",
+        stopAt: null,
+        remainingSec: null,
+      });
+      const r = await cap.invoke(ctx());
+      expect(r.reasonMessage).toBeUndefined();
+      expect(r.reason).toContain("not in Auto");
+    });
+  });
+
   it("rejects a negative or non-numeric runtime before touching the hub", async () => {
     await expect(cap.invoke(ctx({ value: -5 }))).rejects.toThrow(
       /non-negative/,

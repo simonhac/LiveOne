@@ -4,6 +4,7 @@ import {
   GAP_CLASS,
   UNIT_CLASS,
   UNIT_MUTED_CLASS,
+  UNIT_SMALL_CAPS_CLASS,
   type UnitGap,
 } from "@/lib/point/unit-typography";
 
@@ -21,14 +22,18 @@ function UnitSpan({
   children,
   gap,
   muted,
+  smallCaps,
 }: {
   children: React.ReactNode;
   gap: UnitGap;
   muted: boolean;
+  smallCaps?: boolean;
 }) {
   return (
     <span
-      className={`${UNIT_CLASS} ${GAP_CLASS[gap]} ${muted ? UNIT_MUTED_CLASS : ""}`}
+      className={`${UNIT_CLASS} ${GAP_CLASS[gap]} ${muted ? UNIT_MUTED_CLASS : ""} ${
+        smallCaps ? UNIT_SMALL_CAPS_CLASS : ""
+      }`}
     >
       {children}
     </span>
@@ -61,7 +66,11 @@ export default function Value({
       {prefix && <span className={UNIT_CLASS}>{prefix}</span>}
       {value}
       {parts?.head && (
-        <UnitSpan gap={parts.headGap} muted={parts.headMuted}>
+        <UnitSpan
+          gap={parts.headGap}
+          muted={parts.headMuted}
+          smallCaps={parts.headSmallCaps}
+        >
           {parts.head}
         </UnitSpan>
       )}
