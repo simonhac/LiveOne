@@ -255,7 +255,7 @@ function GeneratorTile({
    * The qualifying line: what is running the engine, and how long it has left.
    *
    * The countdown sits HERE rather than in its own sub-grid row because it is a clause of the same
-   * sentence — "on request from LiveOne, stops in 23 min" — not another measurement. As a row it
+   * sentence — "LiveOne request, stops in 23 min" — not another measurement. As a row it
    * had a label in the label column and a lone value under the rpm, which read as a third number
    * the tile did not have. The minutes keep the amber they had: on a commanded run that colour is
    * the deadline WE set, and it is the one thing on this tile the reader can still change.

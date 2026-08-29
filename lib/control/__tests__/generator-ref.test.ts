@@ -114,7 +114,7 @@ describe("describeGeneratorState", () => {
       /cannot stop a run it did not start/i,
     );
     expect(describeGeneratorState("running:sp-pro", "Auto").detail).toBe(
-      "called by inverter",
+      "Inverter request",
     );
   });
 
