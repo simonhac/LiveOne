@@ -29,6 +29,13 @@ sources:
     apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)
     host: 10.0.1.244
     port: 502
+    # Remote start/stop (POST /api/usher/control/sheephouse/run). OPT-IN and fail-closed: omit this
+    # block and the route 404s, no supervisor exists, nothing can ever write to the controller.
+    # The passkey env is resolved lazily per request — a missing secret 503s the control route
+    # WITHOUT touching the collector.
+    control:
+      passkeyEnv: SHEEPHOUSE_CONTROL_KEY
+      maxRuntimeSec: 7200 # per-request cap (s); requests above it are rejected with a 400
     unitId: 10
     pollSec: 15 # read + journal
     activeSec: 15

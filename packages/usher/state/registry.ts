@@ -9,6 +9,7 @@
 
 import type { ScheduledEntry } from "../core/run";
 import type { UsherStore } from "../core/factory";
+import type { RunSupervisor } from "../core/control";
 
 export interface SourceTickState {
   siteId: string;
@@ -32,9 +33,21 @@ interface UsherRegistry {
   tickStates: Map<string, SourceTickState>;
   /** the shared on-disk store (blackbox + spool), set by startUsher */
   store?: UsherStore;
+  /**
+   * Run supervisors by siteId (control-enabled sources only). MUST live here, on globalThis: the
+   * control route runs in the request-handling bundle while the run loop lives in the
+   * instrumentation bundle — a module-level map in core/control.ts would leave the route seeing no
+   * supervisor at all in production.
+   */
+  supervisors: Map<string, RunSupervisor>;
 }
 
 const g = globalThis as unknown as { __usherRegistry?: UsherRegistry };
-g.__usherRegistry ??= { entries: [], started: false, tickStates: new Map() };
+g.__usherRegistry ??= {
+  entries: [],
+  started: false,
+  tickStates: new Map(),
+  supervisors: new Map(),
+};
 
 export const registry: UsherRegistry = g.__usherRegistry;

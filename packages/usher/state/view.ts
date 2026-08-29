@@ -5,6 +5,7 @@
 
 import { getEntries, getStore } from "../core/usher";
 import { getTickState, type SourceTickState } from "./usher-state";
+import type { ControlStatus } from "../core/control";
 import type { BlackboxStats } from "../core/blackbox";
 import type { SpoolStats } from "../core/spool";
 
@@ -19,6 +20,8 @@ export interface SourceView {
   tick?: SourceTickState;
   /** source-specific live detail (fusher: site power/energy + inverters + minutely; musher: values) */
   snapshot?: unknown;
+  /** remote-control state (control-enabled sources): latch, deadline, last error */
+  control?: ControlStatus;
 }
 
 /** On-disk store health for the inspector: journal + outage buffer + disk headroom. */
@@ -55,6 +58,7 @@ export function getUsherView(): UsherView {
         : undefined,
       tick: getTickState(e.source.siteId),
       snapshot,
+      control: e.supervisor?.status(),
     };
   });
   const s = getStore();

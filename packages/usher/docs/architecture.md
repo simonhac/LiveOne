@@ -169,6 +169,52 @@ The read needs the timeout for a concrete reason: a Modbus read on a silently-de
 forever, because the client library's read timeout does not fire on a dead socket. On timeout the
 loop also calls `source.reset()` so the next tick reconnects rather than inheriting the dead socket.
 
+## Remote control (musher only): the hub holds the latch
+
+The usher is a collector; control is a strictly separate layer bolted to the side of it, and the
+boundary is worth stating because everything about the collector's failure posture inverts here.
+
+**Why the hub owns the deadline.** DSE control keys are momentary and parameterless — Telemetry
+Start (fn 32) is a *latch* the engine runs behind until fn 33 clears it. There is no "run for N
+seconds" key, and the module cannot be configured over Modbus (DSE case #00739597), so "run for 3
+minutes" is necessarily *someone holding the latch and letting go later*. That someone must be
+always-on, restart-survivable and reachable — which is this hub, not a laptop.
+
+**Files.** `core/control.ts` (the `RunSupervisor`: deadline, persistence, resume, retries),
+`core/control-api.ts` (auth + HTTP semantics), `app/api/usher/control/[siteId]/run/route.ts` (a
+thin Next wrapper). `sources/musher.ts` gains a `control` surface only when `usher.yaml` opts in.
+
+**Invariants, each of which is a test in `core/__tests__/control.test.ts`:**
+
+- **An absolute instant, never a countdown.** `runtimeSec` becomes `stopAt` once, at request time.
+  Timers are derived wake-up hints recomputed from it; `reconcile()` is the authority. "Stop at
+  17:03:40Z" survives a restart — "180 s remaining" does not, because nothing decrements it while
+  the process is dead.
+- **Persist before writing; never roll back on a failed start.** A timed-out FC16 may still have
+  latched the engine (frame delivered, response lost), so the deadline stays armed and the caller
+  is told the start may have taken effect. State clears only after a *confirmed* fn 33.
+- **The mutex must never wedge the stop.** musher's read and control writes share one Modbus
+  socket through a promise chain, and a read on a dead socket hangs forever — so every held op is
+  internally timeout-bounded, force-closing the socket so the chain always advances. Without this,
+  a hung poll queues the deadline stop behind it indefinitely: a runaway engine.
+- **Failure posture inverts.** Elsewhere the rule is "degrade the store, never the collector"; here
+  it is "never leave an engine running unsupervised". Stop is retried indefinitely, and control
+  config problems (a missing passkey secret) degrade the *route*, never the collector — the passkey
+  is resolved lazily per request, unlike `resolveApiKey`, which throws at startup by design.
+- **Released ≠ stopped.** fn 33 clears only our latch; the SP-PRO's start (digital input A,
+  reg 3089 bit 15) is independent and cannot be cancelled by us. The two are distinct facts in the
+  state machine and in the API response.
+- **The control-plane points reach LiveOne even when the device read fails** — they are merged in
+  `tickOnce`, not produced inside `read()`, because `stop-failing` matters most during the outage
+  that blocks the poll. A control-state change also forces immediate delivery, like a run-state edge.
+
+**`noop` is the safe probe.** The full chain, FC3-only, verdict computed by the *same* `gateStart()`
+the real request path uses — so it cannot drift into reassuring you about a run that would actually
+be refused. Structurally incapable of harm: it reaches the device solely via `SourceControl.preflight()`.
+
+Overriding an SP-PRO-commanded run needs Select Stop (fn 0), which disables auto-start while held —
+designed but deliberately unbuilt: see [`docs/plans/dse-inhibit-command.md`](../../../docs/plans/dse-inhibit-command.md).
+
 ## The package boundary
 
 The usher must not import the app's `@/lib` at runtime. The only shared surface is

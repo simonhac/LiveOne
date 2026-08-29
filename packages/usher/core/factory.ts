@@ -9,6 +9,7 @@ import type { ScheduledEntry } from "./run";
 import { Pusher } from "./pusher";
 import type { Blackbox } from "./blackbox";
 import type { Spool } from "./spool";
+import { RunSupervisor } from "./control";
 import { createMusher } from "../sources/musher";
 import { createFusher } from "../sources/fusher";
 import type { SourceConfig, UsherConfig } from "./config";
@@ -35,6 +36,7 @@ export function createSource(
         unitId: sc.unitId,
         log: (m) => log(`[${sc.siteId}/musher] ${m}`),
         dataDir,
+        enableControl: sc.control != null,
       });
     case "fronius":
       return createFusher({
@@ -97,6 +99,19 @@ export function buildEntries(
       apiKey: resolveApiKey(sc.apiKeyEnv),
       log: (m) => log(`[${sc.siteId}] ${m}`),
     });
+    // Control-enabled deepsea sources get a RunSupervisor — the hub-side deadline owner. Note the
+    // passkey env is NOT resolved here: a missing control secret must degrade the control route,
+    // never brick the collector (unlike resolveApiKey above, which throws by design).
+    const supervisor =
+      sc.type === "deepsea" && sc.control && source.control
+        ? new RunSupervisor({
+            siteId: sc.siteId,
+            target: source.control,
+            config: sc.control,
+            dataDir: store?.dataDir ?? null,
+            log,
+          })
+        : null;
     // Spread, don't destructure: naming the fields here means every cadence added to `cadenceFor`
     // has to be repeated in a second place, and forgetting drops it SILENTLY — the loop just falls
     // back to its default and nothing errors. That is exactly how the push cadences were lost on
@@ -106,6 +121,7 @@ export function buildEntries(
       pusher,
       blackbox: store?.blackbox ?? null,
       spool: store?.spool ?? null,
+      supervisor,
       ...cadenceFor(sc),
       alignToBoundary: true,
     };

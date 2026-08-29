@@ -14,6 +14,7 @@ import type { Source } from "./source";
 import type { Pusher } from "./pusher";
 import type { Blackbox } from "./blackbox";
 import type { Spool } from "./spool";
+import { CONTROL_MANIFEST, type RunSupervisor } from "./control";
 
 export interface Entry {
   source: Source;
@@ -22,6 +23,13 @@ export interface Entry {
   blackbox?: Blackbox | null;
   /** durable buffer for batches whose push transiently failed (null = disabled) */
   spool?: Spool | null;
+  /**
+   * The device's run supervisor (control-enabled sources only). tickOnce feeds it each poll's
+   * observation and merges its synthetic control_* points into the reading set — HERE, not inside
+   * read(), so `control_state: "stop-failing"` still reaches LiveOne during the very Modbus outage
+   * that blocks the poll.
+   */
+  supervisor?: RunSupervisor | null;
 }
 
 /**
@@ -148,26 +156,58 @@ export async function tickOnce(
     at: measurementTime,
   };
 
+  const supervisor = entry.supervisor ?? null;
   let readings: ReturnType<typeof buildReadings>;
-  let active: boolean;
+  let active = false;
+  let readError: string | undefined;
   try {
     const values = await withTimeout(
       source.read(),
       timeoutMs,
       `tick exceeded ${timeoutMs}ms (hung read)`,
     );
+    // The supervisor learns the engine's ACTUAL state from the poll (fn 33 clears only our latch —
+    // input A can keep the engine running; only observation tells the two apart).
+    supervisor?.observeValues(values);
     active = source.isRunning?.(values) ?? false;
     readings = buildReadings(source.manifest, values);
   } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
-    log(`[${source.name}] tick error: ${error}`);
+    readError = e instanceof Error ? e.message : String(e);
+    log(`[${source.name}] tick error: ${readError}`);
     // Drop any cached connection so the next tick reconnects (a hung/dead socket won't self-heal).
     try {
       await source.reset?.();
     } catch {
       /* best-effort */
     }
-    return { ...base, count: null, active: false, error };
+    if (!supervisor)
+      return { ...base, count: null, active: false, error: readError };
+    readings = []; // fall through: the control-plane points below still get delivered
+  }
+
+  // Merge the synthetic control-plane points. Deliberately AFTER the read/catch: these must
+  // survive a failed device read (a stop-retry loop during an outage is exactly what LiveOne
+  // most needs to see).
+  if (supervisor) {
+    readings.push(
+      ...buildReadings(CONTROL_MANIFEST, supervisor.syntheticValues()),
+    );
+  }
+
+  if (readError) {
+    // Control-only tick: the device read failed but the supervisor's points still flow.
+    const result = {
+      ...base,
+      count: null as null,
+      active: false,
+      error: readError,
+    };
+    if (!shouldDeliver(false)) return { ...result, delivered: false };
+    const outcome = await pusher.store(readings, {
+      sessionLabel,
+      measurementTime,
+    });
+    return { ...result, delivered: true, pushOk: outcome === "ok" };
   }
 
   if (readings.length === 0) {
@@ -247,6 +287,9 @@ async function runEntryLoop(
   // Previous running state, for the transition push. undefined until the first successful read, so
   // process start is not itself treated as a transition (the first tick delivers anyway).
   let wasActive: boolean | undefined;
+  // Previous control stateVersion — a command (start/stop/extend/stop-failure) is an edge exactly
+  // like a genset start: it delivers within one poll rather than waiting out the push period.
+  let lastControlVersion = entry.supervisor?.stateVersion;
 
   for (;;) {
     const tickStart = Date.now();
@@ -255,10 +298,18 @@ async function runEntryLoop(
       // than we push is to catch that edge, and it would be perverse to see it within one poll and
       // then sit on it for the rest of the push period.
       if (wasActive !== undefined && active !== wasActive) return true;
+      if (
+        entry.supervisor &&
+        entry.supervisor.stateVersion !== lastControlVersion
+      )
+        return true;
       const dueMs = active ? activePushMs : idlePushMs;
       return Date.now() - lastDeliveredAt >= dueMs;
     });
-    if (result.delivered) lastDeliveredAt = Date.now();
+    if (result.delivered) {
+      lastDeliveredAt = Date.now();
+      lastControlVersion = entry.supervisor?.stateVersion;
+    }
     if (result.count !== null) wasActive = result.active;
     try {
       onTick?.(entry, result);
@@ -303,7 +354,8 @@ export async function runLoop(
         const pushMs = e.pushIntervalMs ?? e.intervalMs;
         const activePushMs = e.activePushIntervalMs ?? pushMs;
         const decoupled =
-          pushMs !== e.intervalMs || activePushMs !== (e.activeIntervalMs ?? e.intervalMs);
+          pushMs !== e.intervalMs ||
+          activePushMs !== (e.activeIntervalMs ?? e.intervalMs);
         const push = decoupled
           ? ` push ${pushMs / 1000}s` +
             (activePushMs !== pushMs ? `/${activePushMs / 1000}s active` : "")

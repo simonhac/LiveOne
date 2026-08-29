@@ -85,6 +85,21 @@ export async function startUsher(opts: StartUsherOptions = {}): Promise<void> {
   registry.store = store;
   registry.entries = buildEntries(config, log, store);
 
+  // Register + resume the run supervisors (control-enabled sources). resume() is fire-and-forget:
+  // it may need the device (defensive fn 33 / mode check) and the device may be unreachable at
+  // boot — that must not delay the collector. Its own logging is loud when something is wrong.
+  registry.supervisors.clear();
+  for (const entry of registry.entries) {
+    if (entry.supervisor) {
+      registry.supervisors.set(entry.source.siteId, entry.supervisor);
+      void entry.supervisor.resume().catch((e) => {
+        log(
+          `[control] resume failed for ${entry.source.siteId}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      });
+    }
+  }
+
   // Periodic upkeep: roll+compress the blackbox, GC to the free-space floor, refresh stats.
   // unref() so CLI --once / tests can exit without clearing it.
   const maintenance = setInterval(() => {

@@ -17,10 +17,30 @@ const InverterSchema = z.object({
   isMaster: z.boolean().optional(),
 });
 
+/**
+ * Remote-control surface for a deepsea source (`/api/usher/control/...`). Absent = no control
+ * surface at all — the route 404s, no supervisor is built, nothing can write to the controller.
+ *
+ * `passkeyEnv` names the env var / Fly secret holding the per-device passkey. Unlike `apiKeyEnv`
+ * it is resolved LAZILY, per request — never at startup — so a missing secret degrades the control
+ * route to a 503 instead of killing the whole collector (the `MUSHER_API_KEY` fat-finger failure
+ * mode, memorialised in fly.toml, must not gain a second trigger).
+ */
+const ControlConfigSchema = z.object({
+  passkeyEnv: z.string(),
+  /** hard cap on a single run request (s); schema-capped at 24 h so a YAML typo can't unbound it */
+  maxRuntimeSec: z
+    .number()
+    .positive()
+    .max(24 * 3600),
+});
+
 const DeepseaSourceSchema = z.object({
   type: z.literal("deepsea"),
   siteId: z.string(),
   apiKeyEnv: z.string(),
+  /** opt-in remote start/stop (see ControlConfigSchema); absent = read-only, fail-closed */
+  control: ControlConfigSchema.optional(),
   host: z.string(),
   port: z.number().optional(),
   unitId: z.number().optional(),
@@ -75,6 +95,7 @@ export const UsherConfigSchema = z.object({
 export type UsherConfig = z.infer<typeof UsherConfigSchema>;
 export type SourceConfig = z.infer<typeof SourceSchema>;
 export type DeepseaSourceConfig = z.infer<typeof DeepseaSourceSchema>;
+export type ControlConfig = z.infer<typeof ControlConfigSchema>;
 export type FroniusSourceConfig = z.infer<typeof FroniusSourceSchema>;
 
 /** Default config path: $USHER_CONFIG, else ./usher.yaml relative to cwd. */
