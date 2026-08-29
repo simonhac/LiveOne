@@ -10,10 +10,11 @@ import { describe, it, expect } from "@jest/globals";
 import {
   describeGeneratorState,
   firstPresentPath,
-  generatorTileLine,
   GENERATOR_RPM_PATHS,
   panelIsAuto,
+  runMinutesElapsed,
   runMinutesLeft,
+  runTimeWords,
   type GeneratorControlState,
 } from "../generator-ref";
 
@@ -33,52 +34,115 @@ describe("describeGeneratorState", () => {
 
   it("has copy for EVERY state the supervisor can report", () => {
     for (const s of ALL) {
-      const copy = describeGeneratorState(s);
+      const copy = describeGeneratorState(s, "Auto");
       expect(copy.label).toBeTruthy();
-      expect(copy.detail).toBeTruthy();
-      expect(copy.label).not.toBe("Unknown");
+      expect(copy.sentence).toBeTruthy();
+      expect(copy.label).not.toBe("—");
     }
   });
 
-  it("marks ONLY the states where a run of ours is in progress as `commanded`", () => {
+  it("🛑 splits idle into ARMED and LOCKED OUT on the panel mode", () => {
+    // The single most consequential fact this tile carries: a stopped generator in Auto will start
+    // on its own; one in Stop will not start for anybody. "Off" would hide the difference.
+    expect(describeGeneratorState("idle", "Auto")).toMatchObject({
+      label: "Auto",
+      tone: "idle",
+    });
+    expect(describeGeneratorState("idle", "Stop")).toMatchObject({
+      label: "Locked out",
+      tone: "warning",
+    });
+    expect(describeGeneratorState("idle", "Manual").label).toBe("Locked out");
+  });
+
+  it("🛑 does not claim a generator is armed when the panel cannot be seen", () => {
+    // Mode absent is not mode Auto. Saying "Auto" here would be the one lie that matters.
+    expect(describeGeneratorState("idle", null)).toMatchObject({
+      label: "Off",
+      tone: "idle",
+    });
+    expect(describeGeneratorState("idle", undefined).label).toBe("Off");
+  });
+
+  it("lets a turning engine outrank the panel state — running is the more urgent fact", () => {
+    expect(describeGeneratorState("running:hub", "Stop")).toMatchObject({
+      label: "Running",
+      isRunning: true,
+    });
+  });
+
+  it("marks ONLY the states where a run of ours is in progress as commanded", () => {
     // `stop-failing` counts: we still hold the latch (the hub is retrying fn 33), so the dialog
     // must offer Stop rather than Start.
-    const commanded = ALL.filter((s) => describeGeneratorState(s).commanded);
+    const commanded = ALL.filter(
+      (s) => describeGeneratorState(s, "Auto").isCommandedRun,
+    );
     expect(commanded).toEqual(["running:hub", "stop-failing"]);
   });
 
-  it("uses the amber `commanded` tone for our own run, and plain `running` for anyone else's", () => {
-    expect(describeGeneratorState("running:hub").tone).toBe("commanded");
-    expect(describeGeneratorState("running:sp-pro").tone).toBe("running");
-    expect(describeGeneratorState("running:other").tone).toBe("running");
-    expect(describeGeneratorState("stopping").tone).toBe("running");
+  it("marks every turning-or-cooling state as running, and no idle state", () => {
+    const running = ALL.filter(
+      (s) => describeGeneratorState(s, "Auto").isRunning,
+    );
+    expect(running).toEqual([
+      "running:hub",
+      "running:sp-pro",
+      "running:other",
+      "stopping",
+      "stop-failing",
+      "latch-released-still-running",
+    ]);
+  });
+
+  it("uses the amber commanded tone for our own run, and plain running for anyone else's", () => {
+    expect(describeGeneratorState("running:hub", "Auto").tone).toBe(
+      "commanded",
+    );
+    expect(describeGeneratorState("running:sp-pro", "Auto").tone).toBe(
+      "running",
+    );
+    expect(describeGeneratorState("running:other", "Auto").tone).toBe(
+      "running",
+    );
+    expect(describeGeneratorState("stopping", "Auto").tone).toBe("running");
   });
 
   it("🛑 says out loud that a run we did not start cannot be stopped by us", () => {
     // fn 33 clears only OUR latch; it cannot cancel the SP-PRO's input-A request. A bare
     // "Running" would imply a Stop button that works on it.
-    expect(describeGeneratorState("running:sp-pro").detail).toMatch(
+    expect(describeGeneratorState("running:sp-pro", "Auto").sentence).toMatch(
       /cannot stop a run it did not start/i,
+    );
+    expect(describeGeneratorState("running:sp-pro", "Auto").detail).toBe(
+      "called by inverter",
     );
   });
 
-  it("🛑 keeps `released` and `stopped` apart, and flags a failing stop as needing a human", () => {
-    expect(describeGeneratorState("latch-released-still-running").tone).toBe(
-      "warning",
+  it("🛑 keeps released and stopped apart, and flags a failing stop as needing a human", () => {
+    const stuck = describeGeneratorState(
+      "latch-released-still-running",
+      "Auto",
     );
-    expect(
-      describeGeneratorState("latch-released-still-running").detail,
-    ).toMatch(/still running/i);
-    expect(describeGeneratorState("stop-failing").tone).toBe("warning");
-    expect(describeGeneratorState("stop-failing").detail).toMatch(
-      /retrying every 15 seconds/i,
-    );
+    expect(stuck.tone).toBe("warning");
+    expect(stuck.sentence).toMatch(/still running/i);
+    const failing = describeGeneratorState("stop-failing", "Auto");
+    expect(failing.tone).toBe("warning");
+    expect(failing.sentence).toMatch(/retrying every 15 seconds/i);
+  });
+
+  it("keeps every hero word short enough for the tile's value slot", () => {
+    for (const s of ALL) {
+      expect(
+        describeGeneratorState(s, "Stop").label.length,
+      ).toBeLessThanOrEqual(12);
+    }
   });
 
   it("claims nothing for an unrecognised or absent state", () => {
     for (const s of ["running:martian", "", null, undefined]) {
-      expect(describeGeneratorState(s).label).toBe("Unknown");
-      expect(describeGeneratorState(s).commanded).toBe(false);
+      expect(describeGeneratorState(s, "Auto").label).toBe("—");
+      expect(describeGeneratorState(s, "Auto").isCommandedRun).toBe(false);
+      expect(describeGeneratorState(s, "Auto").isRunning).toBe(false);
     }
   });
 });
@@ -148,62 +212,84 @@ describe("panelIsAuto", () => {
   });
 });
 
-describe("generatorTileLine", () => {
-  const line = (over: Partial<Parameters<typeof generatorTileLine>[0]> = {}) =>
-    generatorTileLine({
-      state: "idle",
-      mode: "Auto",
-      stopAtEpochSec: null,
-      nowMs: NOW,
-      ...over,
-    });
-
-  it("is just the state when nothing else needs saying", () => {
-    expect(line()).toEqual({ text: "Off", tone: "idle" });
+describe("runMinutesElapsed", () => {
+  it("counts whole minutes from an ISO start", () => {
+    expect(runMinutesElapsed("2026-08-29T11:48:00.000Z", NOW)).toBe(12);
   });
 
-  it("appends the countdown to OUR run, from the absolute deadline", () => {
+  it("floors, so a run 59 s old reads 0 rather than 1", () => {
+    expect(runMinutesElapsed("2026-08-29T11:59:01.000Z", NOW)).toBe(0);
+  });
+
+  it("never goes negative on a clock skew, and is null without a start", () => {
+    expect(runMinutesElapsed("2026-08-29T12:05:00.000Z", NOW)).toBe(0);
+    expect(runMinutesElapsed(null, NOW)).toBeNull();
+    expect(runMinutesElapsed("not a date", NOW)).toBeNull();
+  });
+});
+
+describe("runTimeWords", () => {
+  const stopAt = Date.parse("2026-08-29T12:23:00.000Z") / 1000;
+  const startedAt = "2026-08-29T11:48:00.000Z";
+
+  it("prefers the REMAINING time on our own run — it is the number the user set", () => {
     expect(
-      line({
-        state: "running:hub",
-        stopAtEpochSec: sec("2026-08-29T12:23:00.000Z"),
+      runTimeWords({
+        isCommandedRun: true,
+        isRunning: true,
+        stopAtEpochSec: stopAt,
+        runStartIso: startedAt,
+        nowMs: NOW,
       }),
-    ).toEqual({ text: "Running · 23 min left", tone: "commanded" });
+    ).toEqual({ short: "Stops", long: "Stops in", value: "23 min" });
   });
 
-  it("names the inverter when the run is its, rather than showing a countdown we do not own", () => {
-    expect(line({ state: "running:sp-pro" })).toEqual({
-      text: "Running · called by inverter",
-      tone: "running",
-    });
-  });
-
-  it("drops the countdown once the deadline passes, without changing the state", () => {
-    // The state comes from the hub's next push; the clock must not invent a transition.
+  it("falls back to elapsed for a run we did not command, and so have no deadline for", () => {
     expect(
-      line({
-        state: "running:hub",
-        stopAtEpochSec: sec("2026-08-29T11:59:00.000Z"),
+      runTimeWords({
+        isCommandedRun: false,
+        isRunning: true,
+        stopAtEpochSec: null,
+        runStartIso: startedAt,
+        nowMs: NOW,
       }),
-    ).toEqual({ text: "Running", tone: "commanded" });
+    ).toEqual({ short: "Run", long: "Running", value: "12 min" });
   });
 
-  it("mentions the panel ONLY when it is not in Auto — so its presence carries the meaning", () => {
-    expect(line({ mode: "Auto" }).text).toBe("Off");
-    expect(line({ mode: "Stop" }).text).toBe("Off · panel in Stop");
+  it("🛑 falls back to elapsed when OUR deadline has already passed, rather than showing nothing", () => {
+    // The hub is late releasing the latch, or the push is stale. The run is still real.
     expect(
-      line({
-        state: "running:hub",
-        stopAtEpochSec: sec("2026-08-29T12:05:00.000Z"),
-        mode: "Manual",
-      }).text,
-    ).toBe("Running · 5 min left · panel in Manual");
+      runTimeWords({
+        isCommandedRun: true,
+        isRunning: true,
+        stopAtEpochSec: Date.parse("2026-08-29T11:59:00.000Z") / 1000,
+        runStartIso: startedAt,
+        nowMs: NOW,
+      }),
+    ).toEqual({ short: "Run", long: "Running", value: "12 min" });
   });
 
-  it("carries the warning tone through to the tile", () => {
-    expect(line({ state: "stop-failing" })).toEqual({
-      text: "Stop failing",
-      tone: "warning",
-    });
+  it("says nothing at all when the engine is stopped", () => {
+    expect(
+      runTimeWords({
+        isCommandedRun: false,
+        isRunning: false,
+        stopAtEpochSec: stopAt,
+        runStartIso: startedAt,
+        nowMs: NOW,
+      }),
+    ).toBeNull();
+  });
+
+  it("says nothing when running but with no start to count from", () => {
+    expect(
+      runTimeWords({
+        isCommandedRun: false,
+        isRunning: true,
+        stopAtEpochSec: null,
+        runStartIso: null,
+        nowMs: NOW,
+      }),
+    ).toBeNull();
   });
 });

@@ -10,7 +10,7 @@ import {
   reduceLoadProvenance,
   reduceSourceProvenance,
 } from "@/lib/energy-flow-matrix";
-import { formatDollars, formatKwh } from "@/lib/provenance-format";
+import { formatDollars, formatKwh, pricedTotal } from "@/lib/provenance-format";
 import { siteDataQuery } from "@/lib/queries";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import type { TilePlugin, TileRenderProps } from "./types";
@@ -20,23 +20,6 @@ import {
   getPointValue,
   getMeasurementTime,
 } from "./shared";
-
-/**
- * A money total is shown ONLY when essentially all of the period's energy carried a known price.
- * The provenance reducers sum whatever is priced and report the covered kWh alongside, so a
- * partially-priced period otherwise renders a confident-looking total that is silently too low —
- * which is exactly what a half-finished `flow_attr_1d` backfill produces (a 30-day window with one
- * day of `revenue_c` read "$0.08" for 54.8 kWh exported). Below full coverage we say "—" instead.
- */
-const COVERAGE_MIN = 0.995;
-function pricedTotal(
-  cents: number | null,
-  knownKwh: number,
-  energyKwh: number,
-): number | null {
-  if (cents == null) return null;
-  return knownKwh >= energyKwh * COVERAGE_MIN ? cents : null;
-}
 
 /** One sub-line: label, energy, money — the three grid cells that make both rows line up. */
 function PeriodRow({
