@@ -25,7 +25,7 @@ import ControlNotice, {
   type ControlNoticeValue,
 } from "@/components/ControlNotice";
 import TeslaChargeLimits from "@/components/TeslaChargeLimits";
-import TeslaActivityLog from "@/components/TeslaActivityLog";
+import CommandActivityLog from "@/components/CommandActivityLog";
 
 interface LatestValue {
   value: number | string | boolean;
@@ -442,7 +442,7 @@ export default function TeslaControlDialog({
             isCharging={isCharging}
           />
 
-          <TeslaActivityLog activePt={targets.active} />
+          <CommandActivityLog pt={targets.active} />
         </div>
       </DialogContent>
     </Dialog>

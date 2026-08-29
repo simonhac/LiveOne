@@ -41,6 +41,7 @@ export type CapabilityId =
   | "ev/soc"
   | "load.hws/temperature"
   | "battery/provenance"
+  | "generator/control"
   // Atomic — presence of any numeric signal (the role-free instrumentation fallback):
   | "instrumentation"
   // Compound / derived — satisfaction is a server-side predicate, not a point scan:
@@ -145,6 +146,17 @@ export const CAPABILITIES: Record<CapabilityId, CapabilityDef> = {
     tier: "atomic",
     label: "Battery provenance",
     match: exact("bidi.battery", "stored-energy"),
+  },
+  // The hub-supervised generator's WRITABLE run-request point. Atomic and exact: its presence is
+  // precisely "this area has a generator that LiveOne can command", which is a different fact from
+  // `generator-running` (an enabled run DETECTOR — a genset can be tracked without being
+  // controllable, and the Daylesford one was for months). Keep them apart: conflating them would
+  // put a Start button on a generator we can only watch.
+  "generator/control": {
+    id: "generator/control",
+    tier: "atomic",
+    label: "Generator control",
+    match: exact("source.generator.control.request", "duration"),
   },
   // instrumentation is atomic-ish (presence of ANY numeric point) but role-free — derived specially
   // in derive.ts, so it carries no `match` rule.

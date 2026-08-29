@@ -212,6 +212,16 @@ thin Next wrapper). `sources/musher.ts` gains a `control` surface only when `ush
 the real request path uses — so it cannot drift into reassuring you about a run that would actually
 be refused. Structurally incapable of harm: it reaches the device solely via `SourceControl.preflight()`.
 
+It is not only a deploy check. LiveOne's generator control dialog calls it on every open and gates
+its Start button on the answer, reaching it through `POST /api/v4/points/{pt_}/preflight` →
+`DeepSeaControlCapability.preflight` → `hubNoop`. That is why the verdict wording is a contract and
+not a log line: a refusal is rendered to the user verbatim, on the grounds that this side knows why
+and the app must not form a second opinion. Two consequences for anyone changing `noop()`: the
+response shape is mirrored in `lib/vendors/deepsea/hub-client.ts` (`HubNoopResult`) and a field added
+here is invisible until it is added there; and the 503 "device unreachable" body carries its
+explanation in `verdict`, which the app specifically digs out of the error body rather than
+reporting a bare HTTP 503.
+
 Overriding an SP-PRO-commanded run needs Select Stop (fn 0), which disables auto-start while held —
 designed but deliberately unbuilt: see [`docs/plans/dse-inhibit-command.md`](../../../docs/plans/dse-inhibit-command.md).
 

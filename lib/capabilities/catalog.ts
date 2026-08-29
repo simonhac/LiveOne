@@ -130,6 +130,16 @@ export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
     scope: "area",
     requires: { all: ["ev/soc"] },
   },
+  // AREA-scoped even though the run request belongs to ONE member device: the tile reads its state
+  // out of the area's merged latest map, exactly as `ev` does. Ownership of the device that would
+  // actually be commanded is a separate, stricter gate the tile applies at render time via
+  // `controlPaths` (see components/dashboard/tiles/types.ts) — eligibility is not authority.
+  generator: {
+    id: "generator",
+    label: "Generator",
+    scope: "area",
+    requires: { all: ["generator/control"] },
+  },
   // Solar OR grid: a solar site gets all three renewables metrics; a grid-only site still gets the
   // renewable-share metric (metrics 1 & 2 then correctly read 0 / — rather than being hidden).
   // The `renewables` id is historical — the view renders as the "Home Energy" card.
@@ -238,8 +248,11 @@ export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
 
 /**
  * Canonical tile order — the order the seed lays small cards out in its `row` group. A strict
- * subset of `NODE_CATALOG` (the 8 capability-derived tiles; `oe-grid` is appended by the seed from
+ * subset of `NODE_CATALOG` (the 9 capability-derived tiles; `oe-grid` is appended by the seed from
  * its grid-context member, not derived from the area's capabilities).
+ *
+ * `generator` sits after `ev` and before `renewables`: the tiles ahead of it are the site's
+ * continuous energy story, and `renewables` is a summary that reads best last.
  */
 export const TILE_ORDER: readonly TileId[] = [
   "solar",
@@ -249,6 +262,7 @@ export const TILE_ORDER: readonly TileId[] = [
   "house-to-grid",
   "amber",
   "ev",
+  "generator",
   "renewables",
 ];
 

@@ -37,17 +37,49 @@ export interface HubRunResult {
   stillRunning?: string | null;
 }
 
+/**
+ * The hub's `noop` body — see `handleNoopPost` in packages/usher/core/control-api.ts, which
+ * spreads the supervisor's own `noop()` result and appends `hypotheticalRuntimeSec` +
+ * `controlStatus`. Kept structurally in step with that handler: this interface is the contract
+ * between two deployables, so a field added there is only usable once it is added here.
+ */
 export interface HubNoopResult {
+  /** False ⇒ the hub could not READ the controller; `verdict` explains. Never means "refused". */
   ok: boolean;
+  /** The hub's own answer, from the same `gateStart()` a real request consults. */
   wouldStart?: boolean;
   verdict: string;
+  /** Absent when `ok` is false — there was no successful read to report. */
   preflight?: {
     ownership: {
+      /** reg 772: 0 Stop, 1 Auto, 2 Manual…; null = read n/a */
       mode: number | null;
       modeName: string | null;
+      /** the SP-PRO's demand on configurable digital input A */
       remoteStartInput: "closed" | "open" | "unknown";
       running: boolean;
     };
+    /** Which System Control Functions the module advertises (SCF map 4096–4103). */
+    scfSupported: {
+      selectAuto: boolean;
+      telemetryStart: boolean;
+      telemetryCancel: boolean;
+    };
+    scfMap: number[];
+  };
+  /** Echo of the runtime the verdict was computed FOR. */
+  hypotheticalRuntimeSec?: number;
+  /** The supervisor's live state — the authoritative deadline, and the only `maxRuntimeSec` that
+   *  is actually enforced (the point's `control` descriptor is a separate, independent bound). */
+  controlStatus?: {
+    latched: boolean;
+    state: string;
+    stopAt: string | null;
+    remainingSec: number | null;
+    requestedAt: string | null;
+    lastCommandAt: string | null;
+    lastError: string | null;
+    maxRuntimeSec: number;
   };
 }
 
@@ -122,9 +154,15 @@ async function call<T>(
   }
 
   if (!res.ok) {
+    // `verdict` is in the chain because the noop path answers 503 with a sentence and no
+    // `reason`/`error` — "device unreachable: … — the hub could not read the controller, so a real
+    // run would refuse too". That sentence IS the useful answer, and losing it to a bare
+    // "HTTP 503" would turn a diagnosis into a shrug.
     const reason =
-      (parsed as { reason?: string; error?: string }).reason ??
+      (parsed as { reason?: string; error?: string; verdict?: string })
+        .reason ??
       (parsed as { error?: string }).error ??
+      (parsed as { verdict?: string }).verdict ??
       `HTTP ${res.status}`;
     // 401/403 mean OUR credentials are wrong (a deployment problem), not the user's fault.
     if (res.status === 401 || res.status === 403) {

@@ -10,8 +10,15 @@
  * The reason vocabulary is Tesla's, pass-through and undocumented — only `not_charging` has
  * ever been observed in our own code paths, so the unknown-reason fallback is the case that
  * matters most: calm, generic, and it still shows the raw token for the curious.
+ *
+ * 🛑 NOT EVERY VENDOR SPEAKS IN TOKENS. The DeepSea generator's declines arrive from the usher hub
+ * as COMPLETE HUMAN SENTENCES, written to be read ("module is not in Auto (mode=Stop) — possible
+ * local lockout; not overridable remotely"). Rewriting one of those into house copy could only
+ * lose information, so the generator address passes them through verbatim. That is why this
+ * function takes the point ADDRESS: the right treatment for a reason depends on who wrote it.
  */
 import type { PointActionName } from "./point-control";
+import { GENERATOR_RUN_REQUEST_ADDRESS } from "./addresses";
 
 export interface DeclineCopy {
   /** The sentence to show. Always complete and calm. */
@@ -27,7 +34,20 @@ export interface DeclineCopy {
 export function describeDecline(
   action: PointActionName,
   reason: string | null,
+  /** `logicalPath/metricType` of the commanded point. Omitted ⇒ the Tesla vocabulary. */
+  address?: string | null,
 ): DeclineCopy {
+  if (address === GENERATOR_RUN_REQUEST_ADDRESS) {
+    // The hub already said it better than we could. `known: true` so the caller styles it as
+    // reassurance rather than falling through to the generic "didn't need to do that".
+    return reason
+      ? { text: reason, known: true }
+      : {
+          text: "The generator hub declined the request.",
+          known: false,
+        };
+  }
+
   const r = (reason ?? "").toLowerCase();
 
   switch (r) {

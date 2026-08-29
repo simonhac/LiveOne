@@ -7,28 +7,34 @@ import { commandLogQuery } from "@/lib/queries/commands";
 import { formatCommandEntry } from "@/lib/control/command-log";
 
 /**
- * "Recent activity" — the command audit trail (`point_commands`) as sentences, inside the
- * charge-control dialog. "Why did my car stop charging at 2am" gets answered here rather
- * than in SQL.
+ * "Recent activity" — the command audit trail (`point_commands`) as sentences, inside a control
+ * dialog. "Why did my car stop charging at 2am", or "who started the generator", gets answered here
+ * rather than in SQL.
+ *
+ * VENDOR-NEUTRAL. It was `TeslaActivityLog`, but nothing in it was ever about a car: the route is
+ * addressed by a `pt_`, and every word comes from `formatCommandEntry`, whose voice is keyed off the
+ * point's ADDRESS. So the generator dialog reuses it as-is rather than growing a second copy that
+ * would drift.
  *
  * Collapsed by default and the query is enabled only while expanded: the list is one fetch of
  * 20 rows, but there's no reason to spend it (or its 30 s refetch) on every dialog open. The
- * dialog invalidates `queryKeys.commands(activePt)` after each of its own commands, so a press
+ * dialog invalidates `queryKeys.commands(pt)` after each of its own commands, so a press
  * shows up here immediately once expanded.
  */
-export default function TeslaActivityLog({
-  activePt,
+export default function CommandActivityLog({
+  pt,
 }: {
-  /** `ev.charge/active` — the point the log route is addressed by. Null ⇒ nothing to show. */
-  activePt: string | null;
+  /** The point the log route is addressed by (`ev.charge/active`, the generator run request, …).
+   *  Null ⇒ nothing to show. */
+  pt: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const log = useQuery({
-    ...commandLogQuery(activePt),
-    enabled: !!activePt && expanded,
+    ...commandLogQuery(pt),
+    enabled: !!pt && expanded,
   });
 
-  if (!activePt) return null;
+  if (!pt) return null;
 
   const lines = (log.data?.commands ?? []).map((entry) =>
     formatCommandEntry(entry, Date.now()),

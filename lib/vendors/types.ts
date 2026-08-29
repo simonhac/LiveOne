@@ -123,8 +123,59 @@ export interface ControlInvokeResult {
   reason?: string;
 }
 
+/**
+ * A READ-ONLY answer to "what would happen if I commanded this point right now" — the write half's
+ * dry run. Optional on the capability: only a vendor whose hardware can be *interrogated* without
+ * being *moved* can honestly provide one.
+ *
+ * Why this is not just another action: a preflight writes nothing, so it takes no `point_commands`
+ * audit row and never goes through `dispatchPointAction`. It is a read, and it is gated exactly like
+ * `POST /api/v4/points/{pt_}/refresh` — owner-only, because it spends a round trip to someone's
+ * hardware.
+ *
+ * 🛑 `checks` and `verdict` come from the VENDOR, and callers must render them rather than
+ * re-deriving an opinion. For DeepSea the verdict is produced by the very same `gateStart()` the
+ * real request path consults, which is the only reason a UI may trust it as a gate — a
+ * client-side reimplementation would be free to drift into a comforting lie.
+ */
+export interface ControlPreflightResult {
+  /** False ⇒ we could not complete the probe at all (hardware unreachable); `verdict` says why. */
+  ok: boolean;
+  /** Would a command be ACCEPTED right now? Undefined when `ok` is false. */
+  wouldProceed?: boolean;
+  /** One human sentence, from the vendor. Always present, including on failure. */
+  verdict: string;
+  /** Named facts the probe read, in display order. Rendered as a checklist. */
+  checks?: ControlPreflightCheck[];
+  /** Vendor-specific extras the caller understands (DeepSea: the hub's `ControlStatus`). */
+  detail?: unknown;
+}
+
+export interface ControlPreflightCheck {
+  /** Short label, e.g. "Panel mode". */
+  label: string;
+  /** The value read, in words, e.g. "Auto". */
+  value: string;
+  /** Does this fact permit a command? `null` ⇒ informational, neither pass nor fail. */
+  ok: boolean | null;
+}
+
 export interface ControlCapability {
   invoke(ctx: ControlInvokeContext): Promise<ControlInvokeResult>;
+  /**
+   * Optional read-only dry run (see `ControlPreflightResult`). Absent ⇒ the preflight route answers
+   * 501, which is the correct answer for a vendor that cannot be asked without being poked.
+   */
+  preflight?(ctx: ControlPreflightContext): Promise<ControlPreflightResult>;
+}
+
+/** A preflight names a point and a device, but no action — there is nothing to validate. */
+export interface ControlPreflightContext {
+  device: DeviceConfigView;
+  point: PointRow;
+  /** The value the caller is CONSIDERING sending, so the vendor can answer about that specific
+   *  command ("would a 30 minute run start?"). Optional; vendors pick their own default. */
+  value?: number;
 }
 
 /**

@@ -53,6 +53,28 @@ export function getMeasurementTime(
 }
 
 /**
+ * A TEXT point's value, e.g. `source.generator.control.status/state` → `"running:hub"`.
+ *
+ * ⚠️ `LatestPointValue.value` is typed `number` (lib/types/api.ts), and for text points that type
+ * is simply wrong: `convertValueByMetadata` (lib/point/point-manager.ts) special-cases
+ * `metricUnit === "text"` and stores a string, which travels all the way to the browser as one.
+ * `TeslaSmallCard` has worked around this since the EV tile shipped, with a private `getStringValue`
+ * over its own widened local type. This is that cast, made once and named, rather than re-invented
+ * per component — widening the shared type instead would ripple through every numeric consumer for
+ * the sake of a handful of enum-ish points.
+ *
+ * Returns null for absent entries AND for numbers, so a caller cannot accidentally read `1` as the
+ * word "1".
+ */
+export function getTextValue(
+  latest: LatestPointValues,
+  pointPath: string,
+): string | null {
+  const value = latest[pointPath]?.value as unknown;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
  * Generate flow direction chevron for bidirectional power sources
  * @param powerWatts - Power value in watts (sign determines direction)
  * @param isIntoSource - true if power flows INTO the source (charge/export)

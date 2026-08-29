@@ -34,4 +34,39 @@ describe("describeDecline", () => {
       known: false,
     });
   });
+
+  describe("the generator address", () => {
+    const GEN = "source.generator.control.request/duration";
+
+    it("🛑 passes the hub's sentence through UNCHANGED", () => {
+      // The usher hub writes its refusals to be read by a human. Rewriting one into house copy
+      // could only lose information — and the information is why a diesel engine did not start.
+      const reason =
+        "engine is already running, commanded by the SP-PRO (remote-start input closed).";
+      expect(describeDecline("set_value", reason, GEN)).toEqual({
+        text: reason,
+        known: true,
+      });
+    });
+
+    it("does NOT reinterpret a reason that happens to collide with Tesla's vocabulary", () => {
+      expect(describeDecline("set_value", "not_charging", GEN)).toEqual({
+        text: "not_charging",
+        known: true,
+      });
+    });
+
+    it("has its own calm fallback when the hub said nothing", () => {
+      expect(describeDecline("set_value", null, GEN)).toEqual({
+        text: "The generator hub declined the request.",
+        known: false,
+      });
+    });
+
+    it("leaves the Tesla vocabulary alone when no address is given", () => {
+      expect(describeDecline("turn_off", "not_charging").text).toBe(
+        "Charging was already stopped.",
+      );
+    });
+  });
 });

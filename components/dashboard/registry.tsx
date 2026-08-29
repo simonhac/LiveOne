@@ -42,6 +42,7 @@ import { batteryTile } from "./tiles/battery";
 import { houseToGridTile } from "./tiles/house-to-grid";
 import { amberTile } from "./tiles/amber";
 import { evTile } from "./tiles/ev";
+import { generatorTile } from "./tiles/generator";
 import { renewablesTile } from "./tiles/renewables";
 import { oeGridTile } from "./tiles/oe-grid";
 // Card plugins (the non-tile card types).
@@ -74,6 +75,7 @@ export const CARD_RENDERERS = {
   "house-to-grid": houseToGridTile,
   amber: amberTile,
   ev: evTile,
+  generator: generatorTile,
   renewables: renewablesTile,
   "oe-grid": oeGridTile,
   // --- non-tile card types (handed the node + its inherited context) ---------------------------
