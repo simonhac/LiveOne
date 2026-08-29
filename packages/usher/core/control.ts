@@ -57,12 +57,17 @@ export type ControlState =
  * The synthetic control-plane points pushed to LiveOne alongside the device registers. Merged into
  * the reading set by tickOnce (NOT produced inside read()) so `stop-failing` still reaches LiveOne
  * during the very Modbus outage that blocks the poll.
+ *
+ * 🛑 Each entry has a UNIQUE (logicalPathStem, metricType). LiveOne's `points` table enforces
+ * uniqueness on (device_id, logical_path, metric_type), and a duplicate fails the ENTIRE batch
+ * insert — one careless shared stem takes the whole device's telemetry offline, which is exactly
+ * what happened on 2026-08-29 when these five all shared `source.generator.control`.
  */
 export const CONTROL_MANIFEST: Manifest = [
   {
     key: "controlRunActive",
     physicalPathTail: "control_run_active",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.control.run",
     metricType: "state",
     metricUnit: "bool",
     defaultName: "Commanded Run Active",
@@ -71,7 +76,7 @@ export const CONTROL_MANIFEST: Manifest = [
   {
     key: "controlInhibitActive",
     physicalPathTail: "control_inhibit_active",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.control.inhibit",
     metricType: "state",
     metricUnit: "bool",
     defaultName: "Inhibit Active",
@@ -80,7 +85,7 @@ export const CONTROL_MANIFEST: Manifest = [
   {
     key: "controlStopAt",
     physicalPathTail: "control_stop_at",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.control.stop_at",
     metricType: "time",
     metricUnit: "epoch_s",
     defaultName: "Commanded Stop At",
@@ -89,7 +94,7 @@ export const CONTROL_MANIFEST: Manifest = [
   {
     key: "controlState",
     physicalPathTail: "control_state",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.control.status",
     metricType: "state",
     metricUnit: "text",
     defaultName: "Control State",
@@ -98,7 +103,7 @@ export const CONTROL_MANIFEST: Manifest = [
   {
     key: "controlLastError",
     physicalPathTail: "control_last_error",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.control.error",
     metricType: "state",
     metricUnit: "text",
     defaultName: "Control Last Error",
@@ -115,7 +120,7 @@ export const CONTROL_MANIFEST: Manifest = [
     // is a contract, not a label.
     key: "controlRunRequestMin",
     physicalPathTail: "generator_run_request_min",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.control.request",
     metricType: "duration",
     metricUnit: "min",
     defaultName: "Generator Run Request",

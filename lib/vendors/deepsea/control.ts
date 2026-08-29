@@ -28,7 +28,7 @@ import { hubRun } from "./hub-client";
  * The point this capability commands, by LOGICAL address (`logicalPath/metricType`) so it stays
  * stable across physical field renames — same convention as Tesla's `resolveDispatch`.
  */
-const RUN_REQUEST_ADDRESS = "source.generator.control/duration";
+const RUN_REQUEST_ADDRESS = "source.generator.control.request/duration";
 
 export class DeepSeaControlCapability implements ControlCapability {
   async invoke(ctx: ControlInvokeContext): Promise<ControlInvokeResult> {

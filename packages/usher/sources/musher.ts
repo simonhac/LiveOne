@@ -104,6 +104,11 @@ export const DEEPSEA_MANIFEST: Manifest = [
   },
 
   // ── Digital I/O + mode, field-qualified by the Aug 2026 runs ─────────────
+  // 🛑 EVERY point needs a UNIQUE (logicalPathStem, metricType) pair: LiveOne's `points` table has
+  // a unique index on (device_id, logical_path, metric_type), and a collision fails the WHOLE
+  // batch insert — the device silently stops delivering, not just the offending point. That is
+  // why these five booleans each get their own stem instead of sharing a tidy-looking one.
+  // Pinned by a test in core/__tests__/manifest-addressing.test.ts.
   // These are DERIVED keys (bits pulled out of digIn/digOutUnnamed1To16, enum text from 772) that
   // read() synthesises — they make run ownership visible in LiveOne, not just in a control 409:
   // remote_start_input is the SP-PRO's demand on input A; the relays are the DSE's OWN actions
@@ -111,7 +116,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "remoteStartInput",
     physicalPathTail: "remote_start_input",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.remote_start",
     metricType: "state",
     metricUnit: "bool",
     defaultName: "Remote Start Input",
@@ -120,7 +125,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "fuelRelay",
     physicalPathTail: "fuel_relay",
-    logicalPathStem: "source.generator.engine",
+    logicalPathStem: "source.generator.fuel_relay",
     metricType: "state",
     metricUnit: "bool",
     defaultName: "Fuel Relay",
@@ -129,7 +134,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "crankRelay",
     physicalPathTail: "crank_relay",
-    logicalPathStem: "source.generator.engine",
+    logicalPathStem: "source.generator.crank_relay",
     metricType: "state",
     metricUnit: "bool",
     defaultName: "Crank Relay",
@@ -138,7 +143,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "atSpeed",
     physicalPathTail: "at_speed",
-    logicalPathStem: "source.generator.engine",
+    logicalPathStem: "source.generator.at_speed",
     metricType: "state",
     metricUnit: "bool",
     defaultName: "At Speed",
@@ -147,7 +152,7 @@ export const DEEPSEA_MANIFEST: Manifest = [
   {
     key: "controlModeName",
     physicalPathTail: "control_mode",
-    logicalPathStem: "source.generator.control",
+    logicalPathStem: "source.generator.mode",
     metricType: "state",
     metricUnit: "text",
     defaultName: "Control Mode",

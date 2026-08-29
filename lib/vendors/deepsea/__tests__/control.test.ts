@@ -26,7 +26,7 @@ function ctx(
   return {
     device: { vendorSiteId: "sheephouse" },
     point: {
-      logicalPath: "source.generator.control",
+      logicalPath: "source.generator.control.request",
       metricType: "duration",
     },
     action: "set_value",
@@ -47,7 +47,9 @@ describe("DeepSeaControlCapability", () => {
       remainingSec: 1800,
     });
   });
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
   it("converts MINUTES to SECONDS exactly once (the unit seam)", async () => {
     await cap.invoke(ctx({ value: 30 }));
