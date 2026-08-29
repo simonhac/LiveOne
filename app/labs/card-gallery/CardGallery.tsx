@@ -297,7 +297,7 @@ export default function CardGallery() {
 
         <CardSection
           title="Generator"
-          note="Tile. State copy comes from the hub's own vocabulary; the countdown is derived from the ABSOLUTE stop_at, so 'stop failing' (a deadline 2 min in the past) correctly shows no countdown. canControl is false here, so the control cog is absent by design."
+          note="Tile. Status copy comes from the hub's own vocabulary, except idle, which splits on the panel mode: Auto means ARMED, anything else means LOCKED OUT, and an unread panel says neither. The time row prefers OUR run's remaining minutes and falls back to elapsed. The Generated kWh/$ row needs a live run-periods fetch, so it is absent here (no systemId), as is the cog (canControl is false)."
           scenarios={Object.keys(GENERATOR_SCENARIOS)}
           defaultScenario="running (ours)"
           presetWidths={POWER_WIDTHS}

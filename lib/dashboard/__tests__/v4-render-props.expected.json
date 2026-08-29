@@ -684,12 +684,13 @@
           "extra": {
             "$element": "div",
             "$props": {
-              "children": ["Off", null],
-              "className": "text-xs text-gray-400"
+              "children": [false, null, false, null],
+              "className": "grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums"
             }
           },
+          "extraInfo": "ready to start",
           "icon": {
-            "$element": "Fuel",
+            "$element": "Gauge",
             "$props": {
               "className": "w-6 h-6"
             }
@@ -698,8 +699,7 @@
           "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
           "staleThresholdSeconds": 60,
           "title": "Generator",
-          "unit": "rpm",
-          "value": "0"
+          "value": "Auto"
         }
       }
     ]

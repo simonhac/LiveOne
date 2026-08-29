@@ -17,6 +17,16 @@ interface TileProps {
   measurementTime?: Date;
   extraInfo?: string;
   extra?: React.ReactNode;
+  /**
+   * Absolutely-positioned chrome drawn inside the tile's own box — the generator's control cog.
+   *
+   * 🛑 THIS EXISTS SO A TILE NEVER WRAPS ITSELF IN A POSITIONING DIV. The tile grid is
+   * `auto-rows-fr` (lib/dashboard/tile-grid.ts): every grid ITEM is stretched to the row height. A
+   * plugin that returns `<div className="relative"><Tile/></div>` makes the DIV the grid item, so
+   * the div stretches and the Tile inside it stays at content height — a visibly shorter card in a
+   * row of equal ones. The root here is already `relative`, so overlay chrome belongs in it.
+   */
+  overlay?: React.ReactNode;
 }
 
 export default function Tile({
@@ -31,6 +41,7 @@ export default function Tile({
   measurementTime,
   extraInfo,
   extra,
+  overlay,
 }: TileProps) {
   const [isStale, setIsStale] = useState(false);
   const [isTooltipVisible, setIsTooltipVisible] = useState(false);
@@ -124,6 +135,7 @@ export default function Tile({
           }}
         />
       )}
+      {overlay}
       <div className="relative z-10">
         {/* Mobile: horizontal layout (icon left of title), Desktop: vertical (icon right) */}
         <div className="flex items-start md:items-center md:justify-between mb-0.5 gap-1.5">
