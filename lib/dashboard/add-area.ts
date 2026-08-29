@@ -8,33 +8,10 @@
  * a test placed there is silently not collected).
  */
 import { collectRefs } from "./v4-validate";
-import {
-  walkNodes,
-  type DashboardNode,
-  type DashboardV4,
-  type GroupNode,
-} from "./v4";
-
-/**
- * Drop every `id` from a subtree, so the server mints fresh ones (`normalizeDocV4`).
- *
- * 🛑 NOT optional. `GET /api/v4/areas/{ar_}/default-group` builds its group inside a throwaway
- * single-group document and normalizes THAT, so the group arrives already carrying `n_1…n_9` — ids
- * that are only meaningful in the document it was never part of. Appending it verbatim to a dashboard
- * that already holds an area collides, and `validateDocV4` rejects the whole write with
- * `duplicate-node-id` (422). Measured: adding a FIRST area succeeds (the destination holds only the
- * root's `n_0`) and adding a SECOND one 422s — so a single-add test cannot see this.
- *
- * Node ids are server-assigned and positional (§8.2), so re-minting an appended subtree is the
- * defined behaviour, not a workaround; existing nodes keep their ids, which is what makes React keys
- * stable across the save.
- */
-function stripNodeIds(node: DashboardNode): DashboardNode {
-  const { id: _dropped, ...rest } = node;
-  return rest.kind === "group"
-    ? { ...rest, children: rest.children.map(stripNodeIds) }
-    : rest;
-}
+// stripNodeIds moved to node-ops.ts (the structural-op module) when the dashboard CLI landed; its
+// 🛑-NOT-optional rationale (duplicate-node-id 422 on the SECOND add) travels with it.
+import { stripNodeIds } from "./node-ops";
+import { walkNodes, type DashboardV4, type GroupNode } from "./v4";
 
 /**
  * Append a seed group to the document's root children — the whole of "add an area" in the v4 model
