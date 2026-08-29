@@ -25,6 +25,7 @@ import {
   type MyDashboardsResponse,
 } from "@/lib/queries";
 import { getDeviceDataForCache } from "@/lib/dashboard/serve-data";
+import { viewerControlFields } from "@/lib/control/ownership-server";
 import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 import {
   listReadableDevices,
@@ -148,15 +149,16 @@ async function renderCompositionDashboard(
         try {
           const value = await getDeviceDataForCache(id);
           if (value == null) return;
+          // 🛑 Reads the DISCRIMINATED payload (config-v4 Phase 13 PR 1): `device` for a real
+          // device, `area` for an Area. This is an AUTHORIZATION guard and `value` is `unknown`, so
+          // the old `system` key would have compiled clean and silently read `undefined` — failing
+          // closed (pins stop being seeded and self-fetch) but wrong.
+          const subject = value as {
+            device?: { ownerClerkUserId?: string | null };
+            area?: { ownerClerkUserId?: string | null };
+            latest?: Record<string, { sourceSystemId?: number }>;
+          };
           if (isPin) {
-            // 🛑 Reads the DISCRIMINATED payload (config-v4 Phase 13 PR 1): `device` for a real
-            // device, `area` for an Area. This is an AUTHORIZATION guard and `value` is `unknown`, so
-            // the old `system` key would have compiled clean and silently read `undefined` — failing
-            // closed (pins stop being seeded and self-fetch) but wrong.
-            const subject = value as {
-              device?: { ownerClerkUserId?: string | null };
-              area?: { ownerClerkUserId?: string | null };
-            };
             const owner = (subject.device ?? subject.area)?.ownerClerkUserId;
             const safe =
               authorizedV4Pins.has(id) ||
@@ -164,7 +166,16 @@ async function renderCompositionDashboard(
               (userId != null && owner === userId);
             if (!safe) return; // private pin we can't cheaply authorize → let the card self-fetch
           }
-          queryClient.setQueryData(queryKeys.data(id), value);
+          // The two VIEWER-relative fields `/api/data` emits. `getDeviceDataForCache` builds the
+          // payload with no viewer, so without this the seed lands in React Query carrying neither
+          // — the client reads absent as false, and every control cog (the generator's, the EV's)
+          // was missing on first paint and appeared only when the first refetch replaced the seed,
+          // up to `staleTime` (25 s) later. Same predicate as the route, off the same subject block
+          // the pin guard above reads; see the note on `viewerControlFields`.
+          queryClient.setQueryData(queryKeys.data(id), {
+            ...(value as object),
+            ...(await viewerControlFields(subject, userId ?? null)),
+          });
         } catch {
           // best-effort prefetch — the card will self-fetch on the client
         }

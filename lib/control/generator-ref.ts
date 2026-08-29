@@ -105,7 +105,7 @@ export interface GeneratorStatusCopy {
    * the same slot as the Grid tile's "Idle" and the Battery tile's "67.8%".
    */
   label: string;
-  /** The qualifying line under the hero ("called by inverter"), or null when the hero says it all. */
+  /** The qualifying line under the hero ("Inverter request"), or null when the hero says it all. */
   detail: string | null;
   /**
    * `commanded` = this run is ours and the hub is holding the deadline (the one amber state);
@@ -122,7 +122,7 @@ export interface GeneratorStatusCopy {
 
 const UNKNOWN: GeneratorStatusCopy = {
   label: "—",
-  detail: "no status reported",
+  detail: "No status reported",
   tone: "idle",
   isCommandedRun: false,
   isRunning: false,
@@ -144,7 +144,7 @@ const COPY: Record<
 > = {
   "running:hub": {
     label: "Running",
-    detail: "on LiveOne request",
+    detail: "LiveOne request",
     tone: "commanded",
     isCommandedRun: true,
     isRunning: true,
@@ -152,7 +152,7 @@ const COPY: Record<
   },
   "running:sp-pro": {
     label: "Running",
-    detail: "called by inverter",
+    detail: "Inverter request",
     tone: "running",
     isCommandedRun: false,
     isRunning: true,
@@ -171,7 +171,7 @@ const COPY: Record<
   },
   stopping: {
     label: "Cooling",
-    detail: "request released",
+    detail: "Request released",
     tone: "running",
     isCommandedRun: false,
     isRunning: true,
@@ -179,7 +179,7 @@ const COPY: Record<
   },
   "stop-failing": {
     label: "Stop failing",
-    detail: "hub is retrying",
+    detail: "Hub is retrying",
     tone: "warning",
     isCommandedRun: true,
     isRunning: true,
@@ -190,10 +190,10 @@ const COPY: Record<
   },
   "latch-released-still-running": {
     label: "Running",
-    // Just "released": the tile appends the elapsed clause to this line ("released, running
-    // 76 min"), so saying "still running" here as well produced "released, still running, running
+    // Just "Released": the tile appends the elapsed clause to this line ("Released, running
+    // 76 min"), so saying "still running" here as well produced "Released, still running, running
     // 76 min". The fact survives — the time clause is what states it.
-    detail: "released",
+    detail: "Released",
     tone: "warning",
     isCommandedRun: false,
     isRunning: true,
@@ -206,7 +206,7 @@ const COPY: Record<
 
 const AUTO: GeneratorStatusCopy = {
   label: "Auto",
-  detail: "ready to start",
+  detail: "Ready to start",
   tone: "idle",
   isCommandedRun: false,
   isRunning: false,
@@ -215,7 +215,7 @@ const AUTO: GeneratorStatusCopy = {
 
 const LOCKED_OUT: GeneratorStatusCopy = {
   label: "Locked out",
-  detail: "panel not in Auto",
+  detail: "Panel not in Auto",
   tone: "warning",
   isCommandedRun: false,
   isRunning: false,

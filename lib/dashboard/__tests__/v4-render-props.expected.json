@@ -688,7 +688,7 @@
               "className": "grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums"
             }
           },
-          "extraInfo": "ready to start",
+          "extraInfo": "Ready to start",
           "icon": {
             "$element": "Gauge",
             "$props": {
