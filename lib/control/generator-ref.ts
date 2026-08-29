@@ -30,8 +30,26 @@ export const GENERATOR_STOP_AT_PATH = "source.generator.control.stop_at/time";
 export const GENERATOR_ERROR_PATH = "source.generator.control.error/state";
 /** DSE control/operating mode as text — "Auto", "Stop", "Manual"… */
 export const GENERATOR_MODE_PATH = "source.generator.mode/state";
-/** Engine speed, rpm. */
-export const GENERATOR_RPM_PATH = "source.generator.engine/speed";
+/**
+ * Engine speed, rpm — the one number that says the engine is actually turning, independently of
+ * anything the hub believes.
+ *
+ * 🛑 TWO PATHS, MOST-CORRECT FIRST, AND BOTH ARE LIVE. `points` rows are looked up by
+ * `physical_path` (`engine_rpm`) — see `PointManager.ensurePointInfo` — and the only field the
+ * drift-heal repairs on an existing row is `control`. So when #150 renamed this signal's
+ * `logicalPathStem` from `generator.engine` to `source.generator.engine` in the musher manifest, the
+ * ALREADY-MINTED row kept its old `logical_path` and kept receiving the data. On prod today the
+ * readings arrive at `generator.engine/speed`; the manifest-correct path does not exist.
+ *
+ * A single path would therefore be wrong for one environment or the other. Read both until the point
+ * rows are migrated, at which point the legacy entry can be deleted and nothing else changes.
+ * This is the same class of half-done rename as a card `type` inside `dashboards.doc` (CLAUDE.md),
+ * except the persisted copy is a `points` row.
+ */
+export const GENERATOR_RPM_PATHS = [
+  "source.generator.engine/speed",
+  "generator.engine/speed",
+] as const;
 
 /**
  * The paths the tile's control would COMMAND, most specific first — what `datumCanControlPoint`
@@ -39,6 +57,19 @@ export const GENERATOR_RPM_PATH = "source.generator.engine/speed";
  * the tile happened to fetch under. See components/dashboard/tiles/types.ts `controlPaths`.
  */
 export const GENERATOR_CONTROL_PATHS = [GENERATOR_RUN_REQUEST_PATH] as const;
+
+/**
+ * The first of `paths` that the latest map actually carries, or null. For a signal whose logical
+ * path has been renamed without its stored `points` row being migrated — see
+ * {@link GENERATOR_RPM_PATHS}.
+ */
+export function firstPresentPath(
+  latest: Record<string, unknown> | null | undefined,
+  paths: readonly string[],
+): string | null {
+  if (!latest) return null;
+  return paths.find((p) => latest[p] != null) ?? null;
+}
 
 /** The `pt_` TypeID of the run-request point, or null when KV has not seen it yet. */
 export function generatorRunRequestTarget(
