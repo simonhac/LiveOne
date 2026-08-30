@@ -15,7 +15,7 @@
  */
 import { Client } from "pg";
 import { Dashboard } from "@/lib/ids";
-import { UsageError } from "./args";
+import { failWith, EXIT } from "@/lib/cli/cli";
 
 export async function connect(): Promise<Client> {
   let raw = process.env.MIGRATE_DATABASE_URL;
@@ -128,7 +128,13 @@ export async function resolveDashboard(
   let param: string | number;
   if (ref.startsWith("db_")) {
     const uuid = Dashboard.toUuidOrNull(ref);
-    if (!uuid) throw new UsageError(`not a valid dashboard id: ${ref}`);
+    if (!uuid)
+      throw failWith(
+        EXIT.USAGE,
+        `"${ref}"`,
+        "that is not a well-formed dashboard id",
+        "pass a db_… id, a legacy integer id, or a slug",
+      );
     where = "id = $1";
     param = uuid;
   } else if (/^\d+$/.test(ref)) {
@@ -151,13 +157,22 @@ export async function resolveDashboard(
       [ref],
     );
   }
-  if (res.rowCount === 0) throw new Error(`no dashboard matches "${ref}"`);
+  if (res.rowCount === 0)
+    throw failWith(
+      EXIT.USAGE,
+      `no dashboard matches "${ref}"`,
+      "nothing in this database has that id, legacy id or slug",
+      "run `dashboard list` — ids are per-environment, so check you are pointed at the right one",
+    );
   if ((res.rowCount ?? 0) > 1) {
     const candidates = res.rows
       .map((r) => `  ${r.owner_user_id}/${r.slug} (${Dashboard.encode(r.id)})`)
       .join("\n");
-    throw new UsageError(
-      `slug "${ref}" is ambiguous across owners — use the db_… id:\n${candidates}`,
+    throw failWith(
+      EXIT.USAGE,
+      `slug "${ref}" is ambiguous across owners`,
+      `more than one dashboard uses it:\n${candidates}`,
+      "address it by its db_… id instead",
     );
   }
   return toRow(res.rows[0]);

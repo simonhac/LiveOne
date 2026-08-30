@@ -162,7 +162,23 @@ The project has utility scripts in `/scripts`:
 
 - `/scripts/temp/` - Temporary scripts for one-off tasks
 - `/scripts/utils/` - Reusable utility scripts
-- `/scripts/ops/` - Operator CLIs (agent-facing)
+- `/scripts/ops/` - Operator CLIs (agent-facing), built on the shared kit in `lib/cli/`
+
+#### Operator CLIs
+
+Every tool under `scripts/ops/` is declared with `defineCommand()` (`lib/cli/cli.ts`), so it has
+`--help` on each subcommand, `--format human|json` (human at a terminal, json when piped), data on
+stdout with diagnostics on stderr, the shared exit vocabulary (0 ok · 1 findings · 2 usage · 3 auth
+· 5 upstream · 130 interrupted), and — for writers — dry-run by default with `--apply`, which off a
+terminal additionally requires `--yes`.
+
+- **What exists:** [docs/cli-reference.md](docs/cli-reference.md) (index) → each directory's
+  `CLI_README.md` (full `--help`) → [docs/cli-tools.json](docs/cli-tools.json) (machine catalogue,
+  one MCP-shaped entry per leaf command). All generated; regenerate with
+  `npm run cli:reference -- --apply` after changing any `defineCommand()` block.
+- **The registry is `lib/cli/tiers.ts`.** A new CLI defaults to UNLISTED, and `npm run check:cli`
+  reports it. Unlisted means unchecked and undocumented — it is a finding, not an exemption.
+  `npm run check:cli:a` is the tier-A gate and must stay green.
 
 #### Dashboard CLI
 
@@ -174,7 +190,11 @@ The project has utility scripts in `/scripts`:
   `npm run dashboard:dev -- <command>` (reads `.env.local`, refuses a prod URL). Read the printed
   `target:` line before `--apply`.
 - Mutations are **dry-run by default**; `--apply` writes (CAS on `revision`, mirrors
-  `updateDashboardDoc`).
+  `updateDashboardDoc`). Off a terminal `--apply` additionally requires `--yes` — it refuses rather
+  than prompting, because a prompt with no terminal is a hang.
+- Built on the shared CLI kit (`lib/cli/`), so every subcommand has `--help`, and output is
+  `--format human|json` (human at a terminal, **json when piped**) with data on stdout and all
+  diagnostics on stderr.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
 - 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev (environments
   drift). "Make the same edit in both" means re-running `show` in each environment first — never
