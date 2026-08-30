@@ -121,3 +121,43 @@ describe("the ambiguous statuses, disambiguated", () => {
     expect(d.next).toContain("dev server");
   });
 });
+
+describe("per-call error overrides", () => {
+  it("replaces the default mapping for one status", async () => {
+    // A 409 from cli-auth/exchange is the live-token cap, not the slug collision the default
+    // message assumes. The override is what lets that caller stay on this client.
+    const d = await failure(
+      call(respond(409, { error: "too many live CLI tokens" }), {
+        errors: {
+          409: {
+            exit: 1,
+            what: "token cap reached",
+            why: (b: Record<string, unknown>) => String(b.error),
+            next: "run `liveone auth revoke --all`",
+          },
+        },
+      }),
+    );
+    expect(d.what).toBe("token cap reached");
+    expect(d.why).toBe("too many live CLI tokens");
+    expect(d.next).toMatch(/revoke --all/);
+  });
+
+  it("leaves the shared vocabulary in place for every other status", async () => {
+    // The reason to override rather than hand-roll a second fetch: the redirect refusal and the
+    // protect-rewrite diagnosis still apply to a caller that only wanted a different 409.
+    const d = await failure(
+      call(respond(307), {
+        errors: {
+          409: {
+            exit: 1,
+            what: "unused",
+            why: () => "unused",
+            next: "unused",
+          },
+        },
+      }),
+    );
+    expect(d.what).toMatch(/redirects/);
+  });
+});

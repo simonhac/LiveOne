@@ -43,6 +43,19 @@ import { Area, Dashboard, Device } from "@/lib/ids";
  * LiveOne: nanti's `BUDGET: 4` (AI spend cap) has no analogue here. 4 is RESERVED rather than
  * reused, so the two vocabularies can never disagree about what a 4 means.
  */
+/**
+ * Typed reads of `ctx.flags`.
+ *
+ * 🛑 `k` is the DECLARATION key (camelCase `configJson`), NOT the typed flag (`--config-json`).
+ * Reading the kebab form returns undefined and the flag is silently ignored — a bug this codebase
+ * has already shipped once.
+ */
+export const str = (ctx: Ctx, k: string): string | undefined =>
+  ctx.flags[k] as string | undefined;
+export const bool = (ctx: Ctx, k: string): boolean => ctx.flags[k] === true;
+export const num = (ctx: Ctx, k: string): number | undefined =>
+  ctx.flags[k] as number | undefined;
+
 export const EXIT = {
   /** Success. */
   OK: 0,

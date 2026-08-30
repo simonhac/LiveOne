@@ -49,9 +49,12 @@ import {
 import { NodeOpError } from "@/lib/dashboard/node-ops";
 import { renderDocTree } from "@/lib/dashboard/v4-tree-text";
 import {
+  bool,
   defineCommand,
   failWith,
   kebab,
+  num,
+  str,
   EXIT,
   type CommandSpec,
   type Ctx,
@@ -67,12 +70,6 @@ import {
 // ---------------------------------------------------------------------------
 // Flag access
 // ---------------------------------------------------------------------------
-
-const str = (ctx: Ctx, k: string): string | undefined =>
-  ctx.flags[k] as string | undefined;
-const bool = (ctx: Ctx, k: string): boolean => ctx.flags[k] === true;
-const num = (ctx: Ctx, k: string): number | undefined =>
-  ctx.flags[k] as number | undefined;
 
 /**
  * At most one of `names` may be supplied. `names` are DECLARATION keys (`ctx.flags` is keyed by

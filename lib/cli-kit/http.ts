@@ -24,6 +24,24 @@ export interface ApiInit {
   ifMatch?: number;
   token?: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Per-call replacements for the default status mapping, consulted first.
+   *
+   * The defaults below are written for the dashboard verbs; a few statuses mean something else on
+   * another route (a 409 from `cli-auth/exchange` is the live-token cap, not a slug collision).
+   * An override keeps those callers on this one client — and therefore on the redirect refusal and
+   * the protect-rewrite diagnosis — instead of hand-rolling a second fetch to get one message right.
+   */
+  errors?: Partial<Record<number, ErrorOverride>>;
+}
+
+/** A caller-supplied failure for one status. Mirrors `failWith`'s arguments. */
+export interface ErrorOverride {
+  exit: number;
+  what: string;
+  /** Given the parsed body, so the server's own `error` string can be quoted. */
+  why: (body: Record<string, unknown>) => string;
+  next: string;
 }
 
 export interface ApiOk<T> {
@@ -95,6 +113,16 @@ export async function apiFetch<T = Record<string, unknown>>(
   }
 
   const serverError = typeof body.error === "string" ? body.error : undefined;
+
+  const override = init.errors?.[res.status];
+  if (override)
+    throw failWith(
+      override.exit,
+      override.what,
+      override.why(body),
+      override.next,
+    );
+
   switch (res.status) {
     case 401:
       throw failWith(

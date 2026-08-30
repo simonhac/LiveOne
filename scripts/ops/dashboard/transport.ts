@@ -23,11 +23,7 @@ import { countCardNodes, isDashboardV4 } from "@/lib/dashboard/v4";
 import { CliFailure, EXIT, failWith, type Ctx } from "@/lib/cli/cli";
 import { isAliasCollision } from "@/lib/dashboard/dashboards";
 import { apiFetch } from "@/lib/cli-kit/http";
-import {
-  normalizeOrigin,
-  readStore,
-  tokenFor,
-} from "@/lib/cli-kit/token-store";
+import { requireToken, resolveOrigin } from "@/lib/cli-kit/target";
 import {
   connect,
   listDashboards,
@@ -36,8 +32,6 @@ import {
   writeDoc,
   type DashRow,
 } from "./db";
-
-export const DEFAULT_ORIGIN = "https://www.liveone.energy";
 
 export interface ListEntry {
   id: string;
@@ -444,20 +438,11 @@ export async function makeTransport(ctx: Ctx): Promise<DashboardTransport> {
     const client = await connect();
     return makeDbTransport(client, ctx);
   }
-  const origin = normalizeOrigin(
-    (ctx.flags.baseUrl as string | undefined) ??
-      process.env.LIVEONE_BASE_URL ??
-      readStore().defaultOrigin ??
-      DEFAULT_ORIGIN,
-  );
-  const entry = tokenFor(origin);
-  if (!entry)
-    throw failWith(
-      EXIT.AUTH,
-      `not logged in to ${origin}`,
-      "the http transport needs a CLI token for the origin it calls",
-      `run \`liveone auth login --base-url=${origin}\` (or use --via=db with MIGRATE_DATABASE_URL)`,
-    );
+  const origin = resolveOrigin(ctx);
+  const entry = requireToken(origin, {
+    why: "the http transport needs a CLI token for the origin it calls",
+    alsoTry: "(or use --via=db with MIGRATE_DATABASE_URL)",
+  });
   return makeHttpTransport(origin, entry.token);
 }
 

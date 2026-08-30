@@ -31,75 +31,14 @@ import {
 } from "@/lib/cli-kit/handoff";
 import {
   listEntries,
-  normalizeOrigin,
-  readStore,
   removeToken,
   setToken,
   tokenFor,
   type StoredToken,
 } from "@/lib/cli-kit/token-store";
-
-/**
- * The default target. WWW deliberately, never the apex: the apex 307-redirects, and undici strips
- * `Authorization` on cross-origin redirects — following it would turn every call into a mystery
- * 401. A redirect is treated as a configuration error, not followed.
- */
-export const DEFAULT_ORIGIN = "https://www.liveone.energy";
-
-const str = (ctx: Ctx, k: string): string | undefined =>
-  ctx.flags[k] as string | undefined;
-const bool = (ctx: Ctx, k: string): boolean => ctx.flags[k] === true;
-const num = (ctx: Ctx, k: string): number | undefined =>
-  ctx.flags[k] as number | undefined;
-
-function resolveOrigin(ctx: Ctx): string {
-  const flag = str(ctx, "baseUrl");
-  if (flag) return normalizeOrigin(flag);
-  const env = process.env.LIVEONE_BASE_URL;
-  if (env) return normalizeOrigin(env);
-  return normalizeOrigin(readStore().defaultOrigin ?? DEFAULT_ORIGIN);
-}
-
-/** The stored bearer for `origin`, or a clean exit-3 telling the operator how to get one. */
-function requireToken(origin: string): StoredToken {
-  const entry = tokenFor(origin);
-  if (!entry)
-    throw failWith(
-      EXIT.AUTH,
-      `not logged in to ${origin}`,
-      "there is no stored CLI token for that origin",
-      `run \`liveone auth login --base-url=${origin}\``,
-    );
-  return entry;
-}
-
-async function api(
-  origin: string,
-  path: string,
-  init: { method?: string; body?: unknown; token?: string } = {},
-): Promise<Response> {
-  const headers: Record<string, string> = {};
-  if (init.body !== undefined) headers["content-type"] = "application/json";
-  if (init.token) headers.authorization = `Bearer ${init.token}`;
-  const res = await fetch(`${origin}${path}`, {
-    method: init.method ?? "GET",
-    headers,
-    body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    redirect: "manual",
-  });
-  if (res.status === 307 || res.status === 308)
-    throw failWith(
-      EXIT.USAGE,
-      `${origin} redirects`,
-      "the origin answered with a redirect, and auth headers do not survive one",
-      `use the canonical host, e.g. --base-url=${DEFAULT_ORIGIN}`,
-    );
-  return res;
-}
-
-async function bodyOf(res: Response): Promise<Record<string, unknown>> {
-  return (await res.json().catch(() => ({}))) as Record<string, unknown>;
-}
+import { apiFetch } from "@/lib/cli-kit/http";
+import { requireToken, resolveOrigin } from "@/lib/cli-kit/target";
+import { bool, num, str } from "@/lib/cli/cli";
 
 // ---------------------------------------------------------------------------
 // login
@@ -123,9 +62,7 @@ async function promptForCode(): Promise<string> {
 }
 
 async function runLogin(ctx: Ctx): Promise<number> {
-  const origin = normalizeOrigin(
-    str(ctx, "baseUrl") ?? process.env.LIVEONE_BASE_URL ?? DEFAULT_ORIGIN,
-  );
+  const origin = resolveOrigin(ctx, { useStoredDefault: false });
   const label = str(ctx, "label") ?? os.hostname();
   const verifier = newVerifier();
   const challenge = challengeFor(verifier);
@@ -172,45 +109,44 @@ async function runLogin(ctx: Ctx): Promise<number> {
   const ttl = num(ctx, "ttl");
   void ttl; // TTL is minted server-side today (90d); the flag is accepted for forward-compat and validated, but not yet sent.
 
-  const res = await api(origin, "/api/cli-auth/exchange", {
-    method: "POST",
-    body: { code, verifier },
-  });
-  const body = await bodyOf(res);
-  if (res.status === 503)
-    throw failWith(
-      EXIT.UPSTREAM,
-      `${origin} has CLI auth disabled`,
-      String(body.error ?? "CLI auth is not configured on this deployment"),
-      "set CLI_AUTH_SIGNING_SECRET on that deployment and redeploy",
-    );
-  if (res.status === 409)
-    throw failWith(
-      EXIT.FINDINGS,
-      "token cap reached",
-      String(body.error ?? "too many live CLI tokens"),
-      "run `liveone auth revoke --all` (or revoke one) and log in again",
-    );
-  if (!res.ok)
-    throw failWith(
-      EXIT.AUTH,
-      "the exchange was refused",
-      String(body.error ?? `exchange failed (${res.status})`),
-      "the code may have expired (5 minutes) — re-run `liveone auth login`",
-    );
-
-  const token = body as unknown as {
+  // The three statuses `exchange` gives its own meaning; everything else — the redirect refusal,
+  // the protect-rewrite 404 — is apiFetch's shared vocabulary, which is the point of using it.
+  const { body: token } = await apiFetch<{
     token: string;
     tokenId: string;
     label: string;
     expiresAt: string;
-  };
+  }>(origin, "/api/cli-auth/exchange", {
+    method: "POST",
+    body: { code, verifier },
+    errors: {
+      400: {
+        exit: EXIT.AUTH,
+        what: "the exchange was refused",
+        why: (b) => String(b.error ?? "the code was not accepted"),
+        next: "the code may have expired (5 minutes) — re-run `liveone auth login`",
+      },
+      409: {
+        exit: EXIT.FINDINGS,
+        what: "token cap reached",
+        why: (b) => String(b.error ?? "too many live CLI tokens"),
+        next: "run `liveone auth revoke --all` (or revoke one) and log in again",
+      },
+      503: {
+        exit: EXIT.UPSTREAM,
+        what: `${origin} has CLI auth disabled`,
+        why: (b) =>
+          String(b.error ?? "CLI auth is not configured on this deployment"),
+        next: "set CLI_AUTH_SIGNING_SECRET on that deployment and redeploy",
+      },
+    },
+  });
 
   // Enrich with whoami so the operator sees WHO and WHERE they now are — the same facts the
   // target: line will print on every later command.
-  const who = await bodyOf(
-    await api(origin, "/api/cli-auth/whoami", { token: token.token }),
-  );
+  const { body: who } = await apiFetch(origin, "/api/cli-auth/whoami", {
+    token: token.token,
+  });
 
   setToken(origin, {
     token: token.token,
@@ -260,15 +196,9 @@ async function runLogin(ctx: Ctx): Promise<number> {
 async function runWhoami(ctx: Ctx): Promise<number> {
   const origin = resolveOrigin(ctx);
   const entry = requireToken(origin);
-  const res = await api(origin, "/api/cli-auth/whoami", { token: entry.token });
-  if (res.status === 401)
-    throw failWith(
-      EXIT.AUTH,
-      `the stored token for ${origin} was rejected`,
-      "it has expired or been revoked",
-      `run \`liveone auth login --base-url=${origin}\``,
-    );
-  const who = await bodyOf(res);
+  const { body: who } = await apiFetch(origin, "/api/cli-auth/whoami", {
+    token: entry.token,
+  });
   ctx.emit({ origin, ...who }, (m: never) => {
     const w = m as Record<string, unknown>;
     return `target: ${w.origin} as ${w.email ?? w.userId}${w.isAdmin ? " (admin)" : ""} · clerk ${w.clerkInstance} · db ${w.dbHost} · build ${w.buildSha ?? "?"}`;
@@ -280,21 +210,11 @@ async function runList(ctx: Ctx): Promise<number> {
   const origin = resolveOrigin(ctx);
   const entry = requireToken(origin);
   const all = bool(ctx, "all");
-  const res = await api(
+  const { body } = await apiFetch(
     origin,
     `/api/cli-auth/tokens${all ? "?all=true" : ""}`,
-    {
-      token: entry.token,
-    },
+    { token: entry.token },
   );
-  if (res.status === 401)
-    throw failWith(
-      EXIT.AUTH,
-      `the stored token for ${origin} was rejected`,
-      "it has expired or been revoked",
-      `run \`liveone auth login --base-url=${origin}\``,
-    );
-  const body = await bodyOf(res);
   const locals = listEntries();
   ctx.emit(
     { origin, tokens: body.tokens, localOrigins: locals.map((l) => l.origin) },
@@ -337,19 +257,11 @@ async function runRevoke(ctx: Ctx): Promise<number> {
       "revoke takes exactly one target",
       "pass a token id from `liveone auth list`, or --all",
     );
-  const res = await api(
+  const { body } = await apiFetch(
     origin,
     `/api/cli-auth/tokens/${encodeURIComponent(id ?? "all")}${all ? "?all=true" : ""}`,
     { method: "DELETE", token: entry.token },
   );
-  if (res.status === 401)
-    throw failWith(
-      EXIT.AUTH,
-      `the stored token for ${origin} was rejected`,
-      "it has expired or been revoked",
-      `run \`liveone auth login --base-url=${origin}\``,
-    );
-  const body = await bodyOf(res);
   // Revoking the CURRENT token (directly or via --all) leaves a dead entry in the local store.
   if (all || id === entry.tokenId) removeToken(origin);
   ctx.emit({ origin, revoked: body.revoked ?? 0 }, (m: never) => {
@@ -371,15 +283,12 @@ async function runLogout(ctx: Ctx): Promise<number> {
   }
   let revoked = 0;
   try {
-    const res = await api(
+    const { body } = await apiFetch(
       origin,
       `/api/cli-auth/tokens/${encodeURIComponent(entry.tokenId)}`,
-      {
-        method: "DELETE",
-        token: entry.token,
-      },
+      { method: "DELETE", token: entry.token },
     );
-    revoked = Number((await bodyOf(res)).revoked ?? 0);
+    revoked = Number(body.revoked ?? 0);
   } catch (err) {
     // Best-effort: an unreachable server must not stop the local credential being forgotten.
     ctx.warn(
