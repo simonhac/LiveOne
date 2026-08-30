@@ -99,13 +99,15 @@ export const deviceCommand = defineCommand({
     show: {
       name: "show",
       summary:
-        "A device's full aggregate: metadata, config, adapter state, points.",
+        "A device's full aggregate: metadata, config, adapter state, capabilities, points.",
       when:
         "Use this to see everything the platform knows about one device — its vendor identity,\n" +
-        "config overrides and point inventory.",
+        "config overrides, derived capabilities and point inventory.",
       description:
         "The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table\n" +
-        "would only hide its shape. `points` renders the point inventory alone, as a table.",
+        "would only hide its shape. `points` renders the point inventory alone, as a table.\n" +
+        "`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains\n" +
+        "the authoritative place to read them in context — its members carry the same list.",
       args: [DEVICE_ARG],
       flags: { ...BASE_URL_FLAG },
       examples: [
@@ -140,6 +142,12 @@ export const deviceCommand = defineCommand({
       when:
         "Use this to pull a device's measured series over a window. The human rendering is a\n" +
         "per-series summary; the full payload goes to --out (or --format json).",
+      description:
+        "--start/--end are whole LOCAL days (the device's fixed day offset — the same boundaries\n" +
+        "the daily aggregates roll up on). One request regardless of span; bound long sub-daily\n" +
+        "pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n" +
+        "--out writes the RAW body; each series carries\n" +
+        "history.{firstInterval,lastInterval,interval,numIntervals,data}.",
       args: [DEVICE_ARG],
       flags: { ...BASE_URL_FLAG, ...HISTORY_FLAGS },
       exitCodes: { 1: "the window returned no series" },
@@ -186,7 +194,7 @@ async function fetchAggregate(
 ): Promise<Record<string, unknown> & { points?: WirePoint[] }> {
   const device = await resolveDevice(s, ref);
   return s.get(
-    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points`,
+    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points,capabilities`,
   );
 }
 

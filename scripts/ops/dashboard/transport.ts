@@ -71,6 +71,16 @@ export interface DashboardTransport {
   ): Promise<void>;
   /** db only. http relies on the PUT's server-side checkDocRefsReadable. */
   checkRef?(kind: "area" | "device", value: string): Promise<void>;
+  /**
+   * http only: create a dashboard (`POST /api/v4/dashboards`), through the route's full
+   * validation + ref-readability + slug rules. There is deliberately no db leg — a raw INSERT
+   * would skip all three.
+   */
+  create?(payload: {
+    name: string;
+    slug?: string;
+    doc: unknown;
+  }): Promise<{ id: string; revision: number }>;
   /** Newest-first edit history (no docs). */
   history(
     row: DashRowLike,
@@ -372,6 +382,14 @@ function makeHttpTransport(origin: string, token: string): DashboardTransport {
           token,
         },
       );
+    },
+    create: async (payload) => {
+      const { body } = await apiFetch<{ id: string; revision: number }>(
+        origin,
+        "/api/v4/dashboards",
+        { method: "POST", body: payload, token },
+      );
+      return body;
     },
     // no checkRef: the PUT's checkDocRefsReadable covers existence AND readability server-side.
     history: async (row, limit) => {

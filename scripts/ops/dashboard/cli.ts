@@ -559,6 +559,37 @@ export const dashboardCommand = defineCommand({
       ],
     },
 
+    duplicate: {
+      name: "duplicate",
+      summary: "Copy a dashboard to a NEW one — same cards, fresh node ids.",
+      when:
+        "Use this to fork a dashboard before restyling it, instead of hand-rolling a POST. The\n" +
+        "copy is created through the API's full validation and slug rules.",
+      description:
+        "http transport only. The server re-mints every node id, so n_… ids noted from the SOURCE\n" +
+        "do not address nodes in the copy — run `show` on the copy before editing it.",
+      mutates: true,
+      args: [DASH_ARG],
+      flags: {
+        ...TRANSPORT_FLAGS,
+        name: {
+          type: "string",
+          required: true,
+          placeholder: "text",
+          help: "Display name for the copy",
+        },
+        slug: {
+          type: "string",
+          placeholder: "kebab",
+          help: "Owner-unique shortname for the copy (omit for none)",
+        },
+      },
+      examples: [
+        'liveone dashboard duplicate daylesford --name="Daylesford (stacked)" --slug=daylesford-stacked',
+        'liveone dashboard duplicate kink --name="Kinkora copy" --apply',
+      ],
+    },
+
     "add-card": {
       name: "add-card",
       summary: "Insert a card node.",
@@ -1036,6 +1067,69 @@ async function runRename(ctx: Ctx): Promise<number> {
   });
 }
 
+/**
+ * Copy a dashboard through `POST /api/v4/dashboards`. Ids are stripped client-side so the server
+ * re-mints them — reusing the source's ids would let a stale note about the source address nodes
+ * in the copy, which is exactly the recycled-id hazard remint-ids exists to kill.
+ */
+async function runDuplicate(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    if (!t.create)
+      throw usage(
+        "--via=db",
+        "duplicate creates through the API's POST (validation, ref readability, slug rules)",
+        "re-run with --via=http",
+      );
+    const name = str(ctx, "name")!;
+    if (name === "")
+      throw usage(
+        "--name=",
+        "an empty name is not a name",
+        "pass a display name",
+      );
+    const slug = str(ctx, "slug");
+    if (slug !== undefined && !isValidAlias(slug)) {
+      const suggestion = normalizeAlias(slug);
+      throw usage(
+        `"${slug}" for --slug`,
+        "a slug is kebab-case: lowercase a-z/0-9 joined by single hyphens",
+        suggestion ? `try --slug=${suggestion}` : "pick a kebab-case shortname",
+      );
+    }
+
+    const row = await t.resolve(ctx.args[0]);
+    const { working } = loadWorkingDoc(row);
+    const doc = structuredClone(working);
+    walkNodes(doc, (n) => {
+      delete (n as { id?: NodeId }).id;
+    });
+
+    let created: { id: string; revision: number } | undefined;
+    if (!ctx.dryRun) created = await t.create({ name, slug, doc });
+
+    ctx.emit(
+      {
+        source: { id: row.id, name: row.name, revision: row.revision },
+        name,
+        slug: slug ?? null,
+        cards: countCardNodes(working),
+        applied: !ctx.dryRun,
+        ...(created ?? {}),
+      },
+      () =>
+        [
+          `${ctx.dryRun ? "would" : "WRITE"} duplicate ${dashLabel(row)} as "${name}"${slug ? ` (slug=${slug})` : ""}`,
+          renderDocTree(working, {}),
+          created
+            ? `created ${created.id} at revision ${created.revision} — node ids were re-minted; run \`show\` on the copy`
+            : "Re-run with --apply to create it.",
+        ].join("\n"),
+    );
+    return EXIT.OK;
+  });
+}
+
 async function runRemoveNode(ctx: Ctx): Promise<number> {
   return withTransport(ctx, async (t) => {
     await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
@@ -1310,6 +1404,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   show: runShow,
   validate: runValidate,
   rename: runRename,
+  duplicate: runDuplicate,
   "add-card": (ctx) =>
     runInsert(
       ctx,

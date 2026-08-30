@@ -93,6 +93,29 @@ imports no tools.
 5. `npm run check:cli` → zero new findings; `npm run cli:reference -- --apply`; `npm test`.
 6. Update the domain list in `CLAUDE.md`.
 
+## Troubleshooting (each entry earned in the field)
+
+- **401 vs 404 tells you which layer refused you.** A 401 whose response carries
+  `x-clerk-auth-reason: token-invalid` means the request reached the server and the **credential**
+  was rejected — CLI tokens live hashed in Clerk and can be revoked/rotated server-side regardless
+  of the local store's `expiresAt`, so a token that "looks valid" locally can still be dead; re-run
+  `liveone auth login`. A 404 diagnosed as `protect-rewrite` means the **edge** rewrote the request
+  before any handler ran — the route isn't deployed yet, or isn't in `cliTokenRoutes`. Deploy
+  first; the http layer's error messages name which case you're in.
+- **`--series` globs match the device-less path.** Patterns are matched against the path *after*
+  the device prefix (`load/energy.delta`, not `1000002/load/energy.delta`), and `*` does not cross
+  `/` — so `load/*` matches, `*/load/*` doesn't. A glob that matches nothing is an error, not an
+  empty success.
+- **Capabilities vs adapter state.** Capabilities are *derived* (point scan + compound predicates):
+  `device show` carries them via `?include=capabilities`, and `area show`'s members carry the same
+  list in context — the area aggregate is authoritative. `adapterState` (vendor-reported metadata)
+  is on `device show` only, and is often `null`.
+- **History windows are LOCAL fixed-offset days.** `--start/--end` bound whole days at the
+  subject's `dayOffsetMin` — the same boundaries the daily aggregates roll up on. Deliberately not
+  DST-aware.
+- **Piping is safe.** npm's run-script banner goes to stderr, so
+  `npm run liveone -- … --format json | jq` yields clean JSON; `--silent` merely tidies stderr.
+
 ## Deferred candidates (and why)
 
 - **Write verbs** for device/area (config patch, rename, members) — same `mutates` machinery as
@@ -103,3 +126,7 @@ imports no tools.
 - **Session / raw-vendor-payload lookup** — `sessions.response` is the first stop for "does the
   vendor actually send X?", but it is a large admin-shaped surface; decide transport when needed.
 - **`area recompute-provenance`** — the first mutating area verb, when needed.
+- **`area devices`** — inline each member's full device aggregate (the per-device-config question
+  currently takes `area show` + N × `device show`).
+- **`auth list --verify`** — ping whoami per stored origin, so a server-side-revoked token
+  surfaces before it surprises a command.

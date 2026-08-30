@@ -77,6 +77,8 @@ export const TIERS: TierManifest = {
     "scripts/ops/user/cli.ts",
     // Cross-domain plumbing (flag groups, ref resolution, the shared history verb).
     "scripts/ops/shared.ts",
+    // The `api` escape-hatch verb — composed by liveone.ts, same rules as the other modules.
+    "scripts/ops/api/cli.ts",
   ],
   lib: [],
 };

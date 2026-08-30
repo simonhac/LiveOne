@@ -26,6 +26,7 @@ import { areaCommand, runArea } from "./area/cli";
 import { userCommand, runUser } from "./user/cli";
 import { authCommand, runAuth } from "./auth/cli";
 import { findCommand, runFind } from "./find/cli";
+import { apiCommand, runApi } from "./api/cli";
 
 export const cmd = defineCommand({
   name: "liveone",
@@ -46,6 +47,8 @@ export const cmd = defineCommand({
     device: deviceCommand,
     area: areaCommand,
     user: userCommand,
+    // A root-level VERB like `find`: one raw authenticated request, for endpoints no verb covers.
+    api: apiCommand,
   },
 });
 
@@ -60,6 +63,7 @@ const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
   device: runDevice,
   area: runArea,
   user: runUser,
+  api: runApi,
 };
 
 run(

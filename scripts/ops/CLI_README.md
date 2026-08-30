@@ -36,6 +36,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard show](#liveone-dashboard-show)
     - [liveone dashboard validate](#liveone-dashboard-validate)
     - [liveone dashboard rename](#liveone-dashboard-rename)  _(writes)_
+    - [liveone dashboard duplicate](#liveone-dashboard-duplicate)  _(writes)_
     - [liveone dashboard add-card](#liveone-dashboard-add-card)  _(writes)_
     - [liveone dashboard add-group](#liveone-dashboard-add-group)  _(writes)_
     - [liveone dashboard remove-node](#liveone-dashboard-remove-node)  _(writes)_
@@ -60,6 +61,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone user](#liveone-user)
     - [liveone user list](#liveone-user-list)
     - [liveone user show](#liveone-user-show)
+  - [liveone api](#liveone-api)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
 
@@ -92,6 +94,7 @@ Subcommands:
   device                 Inspect devices — config, metadata, points, latest values, history.
   area                   Inspect areas — membership, bindings, latest values, history, flows.
   user                   The user directory — who exists, what they own. Admin-only.
+  api                    One authenticated request to the deployed API, as you.  (writes)
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
 
@@ -506,6 +509,7 @@ Subcommands:
   show                   Render a dashboard's node tree, with the n_… ids edits address.
   validate               Validate a stored dashboard doc, or a doc in a JSON file.
   rename                 Change a dashboard's name and/or slug. Metadata only — the doc is untouched.  (writes)
+  duplicate              Copy a dashboard to a NEW one — same cards, fresh node ids.  (writes)
   add-card               Insert a card node.  (writes)
   add-group              Insert an empty group node.  (writes)
   remove-node            Remove a node and its whole subtree.  (writes)
@@ -758,6 +762,68 @@ External access:
 Examples:
   liveone dashboard rename kink --slug=kinkora
   liveone dashboard rename kink --name='Kinkora' --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard duplicate
+
+Copy a dashboard to a NEW one — same cards, fresh node ids.
+
+```
+Copy a dashboard to a NEW one — same cards, fresh node ids.
+
+When to use:
+  Use this to fork a dashboard before restyling it, instead of hand-rolling a POST. The
+  copy is created through the API's full validation and slug rules.
+
+http transport only. The server re-mints every node id, so n_… ids noted from the SOURCE
+do not address nodes in the copy — run `show` on the copy before editing it.
+
+Usage:
+  liveone dashboard duplicate <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
+  --name <text>              Display name for the copy  (required)
+  --slug <kebab>             Owner-unique shortname for the copy (omit for none)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard duplicate daylesford --name="Daylesford (stacked)" --slug=daylesford-stacked
+  liveone dashboard duplicate kink --name="Kinkora copy" --apply
 
 Exit codes:
   0    success
@@ -1354,7 +1420,7 @@ Usage:
 
 Subcommands:
   list                   List the devices you can read: id, handle, vendor, status, name.
-  show                   A device's full aggregate: metadata, config, adapter state, points.
+  show                   A device's full aggregate: metadata, config, adapter state, capabilities, points.
   points                 A device's point inventory: pt_… id, path, metric, unit.
   latest                 The device's current values, from the serving cache.
   history                Time series for a device, in the OpenNEM shape /api/history serves.
@@ -1435,17 +1501,19 @@ Exit codes:
 
 #### liveone device show
 
-A device's full aggregate: metadata, config, adapter state, points.
+A device's full aggregate: metadata, config, adapter state, capabilities, points.
 
 ```
-A device's full aggregate: metadata, config, adapter state, points.
+A device's full aggregate: metadata, config, adapter state, capabilities, points.
 
 When to use:
   Use this to see everything the platform knows about one device — its vendor identity,
-  config overrides and point inventory.
+  config overrides, derived capabilities and point inventory.
 
 The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table
 would only hide its shape. `points` renders the point inventory alone, as a table.
+`capabilities` are DERIVED (a point scan + compound predicates), and `area show` remains
+the authoritative place to read them in context — its members carry the same list.
 
 Usage:
   liveone device show <device> [options]
@@ -1595,6 +1663,12 @@ When to use:
   Use this to pull a device's measured series over a window. The human rendering is a
   per-series summary; the full payload goes to --out (or --format json).
 
+--start/--end are whole LOCAL days (the device's fixed day offset — the same boundaries
+the daily aggregates roll up on). One request regardless of span; bound long sub-daily
+pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;
+--out writes the RAW body; each series carries
+history.{firstInterval,lastInterval,interval,numIntervals,data}.
+
 Usage:
   liveone device history <device> [options]
 
@@ -1605,12 +1679,12 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --interval <string>        Series resolution (range caps: 5m ≤ 7.5 days, 30m ≤ 30 days, 1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
+  --interval <string>        Series resolution (range caps per request: 5m ≤ 31 days, 30m/1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
   --last <7d>                Relative window ending now, e.g. 3h, 7d (default: 1d; the server owns the grammar)
-  --start <YYYY-MM-DD>       Window start (1d interval only; whole local days)
-  --end <YYYY-MM-DD>         Window end, inclusive (1d interval only)
-  --series <glob>            Only series matching this glob (repeatable)  (repeatable)
-  --out <path>               Write the full OpenNEM JSON to this file; stdout gets a summary
+  --start <YYYY-MM-DD>       Window start — whole LOCAL days (the subject's fixed day offset)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+  --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
+  --out <path>               Write the raw OpenNEM body to this file; stdout gets a summary
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -1851,6 +1925,12 @@ When to use:
   Use this to pull an area's measured series over a window. The human rendering is a
   per-series summary; the full payload goes to --out (or --format json).
 
+--start/--end are whole LOCAL days (the area's fixed day offset — the same boundaries
+the daily aggregates roll up on). One request regardless of span; bound long sub-daily
+pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;
+--out writes the RAW body; each series carries
+history.{firstInterval,lastInterval,interval,numIntervals,data}.
+
 Usage:
   liveone area history <area> [options]
 
@@ -1861,12 +1941,12 @@ Arguments:
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
-  --interval <string>        Series resolution (range caps: 5m ≤ 7.5 days, 30m ≤ 30 days, 1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
+  --interval <string>        Series resolution (range caps per request: 5m ≤ 31 days, 30m/1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
   --last <7d>                Relative window ending now, e.g. 3h, 7d (default: 1d; the server owns the grammar)
-  --start <YYYY-MM-DD>       Window start (1d interval only; whole local days)
-  --end <YYYY-MM-DD>         Window end, inclusive (1d interval only)
-  --series <glob>            Only series matching this glob (repeatable)  (repeatable)
-  --out <path>               Write the full OpenNEM JSON to this file; stdout gets a summary
+  --start <YYYY-MM-DD>       Window start — whole LOCAL days (the subject's fixed day offset)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+  --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
+  --out <path>               Write the raw OpenNEM body to this file; stdout gets a summary
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -2091,6 +2171,67 @@ External access:
 Examples:
   liveone user show simon@example.com
   liveone user show user_2yjTPLLmU2vMs4Vy4Q7g0Yy0abc
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone api
+
+One authenticated request to the deployed API, as you.
+
+```
+One authenticated request to the deployed API, as you.
+
+When to use:
+  The escape hatch for endpoints no verb covers yet — never extract the CLI token from the
+  store by hand. Prefer the purpose-built verbs where they exist (`liveone find <what>`).
+
+GET runs immediately (reads are the default path); any other method is dry-run by default
+and needs --apply. The edge only admits CLI tokens on the routes listed in cliTokenRoutes
+(lib/route-matchers.ts) — elsewhere this reports the middleware 404 (protect-rewrite) and
+that is by design, not a bug. The response body is the output, verbatim.
+
+Usage:
+  liveone api <path> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <path>                 The request path, starting /api/ (query string allowed)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --method <string>          HTTP method  (one of: GET, POST, PUT, PATCH, DELETE; default: GET)
+  --body <json>              Request body, inline JSON (non-GET only)
+  --body-file <path>         Request body, from a JSON file (non-GET only)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone api /api/cli-auth/whoami
+  liveone api /api/v4/dashboards --method=POST --body-file=dash.json --apply
 
 Exit codes:
   0    success

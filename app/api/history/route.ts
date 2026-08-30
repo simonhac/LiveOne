@@ -270,10 +270,16 @@ function validateTimeRange(
       };
   }
 
-  // Check time range limits
+  // Per-request range caps. These bound the IN-MEMORY cost, not the SQL: sub-daily reads are one
+  // indexed (point_rid, interval_end) range scan of agg_5m, but readings-pg.ts then densifies to a
+  // full 5m grid in JS — one object per 5m slot per series (30m has no rollup table; it re-buckets
+  // the dense 5m grid). 13 months at 30m ≈ 114k slots/series, fine for a series=-filtered request
+  // (the operator CLI's long-history path) and tolerable for an unfiltered area; if this ever
+  // hurts, the fix is a real 30m rollup table, not a lower cap. 5m stays modest because its native
+  // payload is 6× denser and no caller needs a long window at that resolution.
   const limits = {
-    "5m": { duration: 7.5 * 24 * 60 * 60 * 1000, label: "7.5 days" },
-    "30m": { duration: 30 * 24 * 60 * 60 * 1000, label: "30 days" },
+    "5m": { duration: 31 * 24 * 60 * 60 * 1000, label: "31 days" },
+    "30m": { duration: 13 * 30 * 24 * 60 * 60 * 1000, label: "13 months" },
     "1d": { duration: 13 * 30 * 24 * 60 * 60 * 1000, label: "13 months" },
   };
 
