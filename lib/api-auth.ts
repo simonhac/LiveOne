@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "./auth-utils";
+import { cliBearerToken } from "./cli-auth/bearer";
+import { verifyCliToken } from "./cli-auth/verify";
 import {
   DeviceConfigRegistry,
   type DeviceConfigView,
@@ -79,6 +81,36 @@ export async function getAuthContext(
   // Claude-dev bypasses normal auth
   if (isClaudeDev) {
     return { userId: "claude-dev", isAdmin: true, isCron, isClaudeDev };
+  }
+
+  // An operator CLI token (`Authorization: Bearer lo_cli_…`). The middleware has already let this
+  // request past the edge WITHOUT authorizing it (see isCliTokenRoute in lib/route-matchers.ts), so
+  // this branch is the single enforcement point for that path.
+  //
+  // 🛑 It RETURNS on every outcome and never falls through to `auth()`. Falling through on an
+  // invalid token would let a request that presents a garbage CLI credential still succeed on a
+  // browser session cookie — a confusing, and eventually exploitable, overlap. An invalid token
+  // yields `userId: null`, which `requireAuth` turns into a clean 401; the verifier's own reasons
+  // (unknown secret / expired / revoked) stay server-side, so the response never tells a caller
+  // which half of a guess was right.
+  const cliToken = cliBearerToken(request);
+  if (cliToken) {
+    const verified = timer
+      ? await timer.time("clerk", () => verifyCliToken(cliToken))
+      : await verifyCliToken(cliToken);
+    if (!verified)
+      return {
+        userId: null,
+        isAdmin: false,
+        isCron: false,
+        isClaudeDev: false,
+      };
+    return {
+      userId: verified.userId,
+      isAdmin: verified.isAdmin,
+      isCron: false,
+      isClaudeDev: false,
+    };
   }
 
   const { userId } = timer
