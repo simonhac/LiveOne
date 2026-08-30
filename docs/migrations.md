@@ -65,15 +65,40 @@ COMMIT;
 PostgreSQL has **transactional DDL**, so a failed migration inside `BEGIN`/`COMMIT` rolls back
 cleanly. Still verify row counts after applying.
 
+> ⚠️ **`DROP INDEX` fails on an index that backs a CONSTRAINT — read generated drop SQL before
+> applying it.** drizzle-kit models a unique as `uniqueIndex()` and emits `DROP INDEX "foo_unique"`,
+> but if the object was created by `ADD CONSTRAINT foo_unique UNIQUE (…)` — as the config-transform
+> did for several tables — Postgres refuses: _"cannot drop index foo_unique because constraint
+> foo_unique on table … requires it"_. Hand-correct the generated file to
+> `ALTER TABLE … DROP CONSTRAINT "foo_unique"`, which takes the backing index with it. Check which
+> you have before writing the migration:
+>
+> ```sql
+> SELECT conname, contype FROM pg_constraint WHERE conname = 'foo_unique';  -- a row ⇒ constraint
+> ```
+>
+> Migration 0062 (dropping `dashboards.legacy_id`) hit this on prod and failed on its first
+> statement. Two things made that cheap to recover: the drop came first, so nothing was applied, and
+> the migration had never run anywhere, so no environment had recorded its hash and the file could be
+> **corrected in place** rather than superseded. Once a migration has been applied ANYWHERE, editing
+> it is no longer safe — write a new forward migration instead.
+
 ## Pre-Migration Checklist
 
 1. **Back up production first** — PITR schedules run automatically; `pscale backup create`
    makes a one-off base backup.
 2. **Test on a copy / non-prod branch** first.
-3. **Verify row counts** before and after (`SELECT relname, n_live_tup FROM pg_stat_user_tables`
-   for instant approximate counts; never `COUNT(*)` the big time-series tables).
+3. **Verify row counts** before and after — `SELECT relname, reltuples::bigint FROM pg_class WHERE
+   relkind='r' AND relnamespace='public'::regnamespace` for instant approximate counts; never
+   `COUNT(*)` the big time-series tables. 🛑 NOT `pg_stat_user_tables.n_live_tup`: it is a counter
+   corrected only by VACUUM/ANALYZE, and the append-only tables generate no dead tuples so it is
+   never corrected — measured on prod at a 60× undercount for `point_readings`. A restore check
+   based on it would have you conclude you had lost 98% of the table.
 4. **Check indexes** are recreated if a table was rebuilt.
-5. **Sync `main` and re-check the migration number** before generating — parallel workspaces can
+5. **Read the generated SQL** before applying — drizzle-kit's diff is a starting point, not an
+   authority. It has no view of whether a unique is an index or a constraint (see the ⚠️ above), and
+   a drop it emits wrongly fails at the worst moment: against prod.
+6. **Sync `main` and re-check the migration number** before generating — parallel workspaces can
    grab the same `NNNN`. If `main` already shipped your number, regenerate so yours lands as the
    next free number.
 
@@ -85,7 +110,10 @@ of "apply the migration" vs. "merge the code" matters — and it **inverts** bet
 - **Additive** (new table/column): apply to prod `sydney` **before** merging the code, or the deployed
   build queries something that isn't there yet and prod 500s.
 - **Drop**: merge and deploy the code **first**, so nothing live still reads the table, then drop on
-  prod and finally on `liveone-dev`.
+  prod and finally on `liveone-dev`. "Nothing live" is wider than the Vercel build: **scheduled
+  GitHub Actions check out `main`**, so the 2-hourly prod→dev sync runs whatever is on `main` at the
+  time. Dropping `dashboards.legacy_id` before its PR merged would have failed that sync every two
+  hours, because the sync manifest named the column in hardcoded SQL.
 
 (Rehomed here from `architecture/areas-and-dashboards.md`, whose v3 roadmap section was retired in the
 config-v4 rewrite. The rule is general, not specific to that doc's phases.)
