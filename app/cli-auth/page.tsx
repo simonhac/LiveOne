@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import { useUser } from "@clerk/nextjs";
+import { Button } from "@/components/ui/button";
 
 export default function CliAuthPage({
   searchParams,
@@ -41,9 +42,18 @@ function CliAuth({
 
   if (!params) {
     void searchParams.then(setParams);
-    return <Shell>Loading…</Shell>;
+    return (
+      <Shell>
+        <p className="text-gray-400">Loading…</p>
+      </Shell>
+    );
   }
-  if (!isLoaded) return <Shell>Loading…</Shell>;
+  if (!isLoaded)
+    return (
+      <Shell>
+        <p className="text-gray-400">Loading…</p>
+      </Shell>
+    );
 
   const challenge = params.challenge ?? "";
   const label = params.label ?? "cli";
@@ -53,10 +63,10 @@ function CliAuth({
   if (!challenge)
     return (
       <Shell>
-        <p className="text-red-600">
+        <p className="text-red-400">
           This link is missing its challenge. Re-run{" "}
-          <code>npm run dashboard -- auth login</code> and use the URL it
-          prints.
+          <InlineCode>npm run liveone -- auth login</InlineCode> and use the URL
+          it prints.
         </p>
       </Shell>
     );
@@ -96,16 +106,24 @@ function CliAuth({
   }
 
   if (state.kind === "denied")
-    return <Shell>Denied. Nothing was issued; you can close this tab.</Shell>;
+    return (
+      <Shell>
+        <p className="text-gray-300">
+          Request denied — nothing was signed in. You can close this tab.
+        </p>
+      </Shell>
+    );
 
   if (state.kind === "code")
     return (
       <Shell>
-        <p className="mb-2">Paste this back into the waiting CLI:</p>
-        <code className="block break-all rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-800">
+        <p className="mb-3 text-gray-300">
+          Paste this back into the waiting CLI:
+        </p>
+        <code className="block select-all break-all rounded-lg border border-gray-700 bg-gray-900 p-4 font-mono text-sm tracking-wider text-gray-100">
           {state.code}
         </code>
-        <p className="mt-3 text-sm text-neutral-500">
+        <p className="mt-4 text-sm text-gray-400">
           It expires in five minutes, and is useless on its own — the CLI also
           needs the verifier it kept.
         </p>
@@ -114,41 +132,60 @@ function CliAuth({
 
   return (
     <Shell>
-      <p className="mb-4">
-        Sign in the LiveOne CLI on <strong>{label}</strong>?
+      <p className="mb-4 text-gray-300">
+        Sign in the LiveOne CLI on{" "}
+        <strong className="font-medium text-gray-100">{label}</strong>?
       </p>
-      <p className="mb-4 text-sm text-neutral-500">
-        You are <strong>{user?.primaryEmailAddress?.emailAddress}</strong>. The
-        CLI will act as you, and you can revoke it at any time with{" "}
-        <code>auth revoke</code>.
+      <p className="mb-6 text-sm text-gray-400">
+        You are{" "}
+        <strong className="font-medium text-gray-200">
+          {user?.primaryEmailAddress?.emailAddress}
+        </strong>
+        . The CLI will act as you, and you can revoke it at any time with{" "}
+        <InlineCode>auth revoke</InlineCode>.
       </p>
       {state.kind === "error" && (
-        <p className="mb-3 text-red-600">{state.message}</p>
+        <p className="mb-4 text-sm text-red-400">{state.message}</p>
       )}
       <div className="flex gap-3">
-        <button
+        <Button
           onClick={approve}
           disabled={state.kind === "working"}
-          className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+          className="flex-1"
         >
           {state.kind === "working" ? "Authorising…" : "Approve"}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="outline"
           onClick={() => setState({ kind: "denied" })}
-          className="rounded border px-4 py-2"
+          disabled={state.kind === "working"}
+          className="flex-1"
         >
           Deny
-        </button>
+        </Button>
       </div>
     </Shell>
   );
 }
 
+function InlineCode({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[0.85em] text-gray-300">
+      {children}
+    </code>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto max-w-lg p-8">
-      <h1 className="mb-4 text-xl font-semibold">LiveOne CLI</h1>
-      {children}
+    <main className="flex min-h-dvh items-center justify-center p-6">
+      <div className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-800 p-8 shadow-lg">
+        <h1 className="text-2xl font-semibold text-gray-100">
+          Live<span className="text-blue-500">One</span>
+        </h1>
+        <p className="mb-6 mt-1 text-sm text-gray-400">CLI sign-in</p>
+        {children}
+      </div>
     </main>
   );
 }
