@@ -314,20 +314,22 @@ describe("DeepSeaControlCapability", () => {
       // Verbatim: the hub derives it from the same gateStart() a real run consults, so restating
       // it here in our own words could only introduce a disagreement.
       expect(result.verdict).toBe("a 1800s run would START now");
+      // `state` and `panelMode` together are everything a caller needs to re-derive the status
+      // sentence from this LIVE read instead of from a pushed point that may be a poll behind.
       expect(result.detail).toEqual({
         maxRuntimeSec: 7200,
         latched: false,
         state: "idle",
+        panelMode: "Auto",
       });
     });
 
-    it("transcribes ownership + SCF support into the displayable checklist", async () => {
+    it("transcribes ownership into the displayable checklist", async () => {
       const { checks } = await cap.preflight(ctx());
       expect(checks).toEqual([
         { label: "Panel mode", value: "Auto", ok: true },
         { label: "Engine", value: "stopped", ok: true },
         { label: "Inverter demand", value: "not calling", ok: true },
-        { label: "Module supports", value: "start / cancel", ok: true },
       ]);
     });
 
@@ -394,11 +396,18 @@ describe("DeepSeaControlCapability", () => {
       });
     });
 
-    it("🛑 flags a module that cannot CANCEL — a run that could not be stopped", async () => {
+    /**
+     * SCF support is not a checklist row — it reads "start / cancel" on every module in service, so
+     * a row spends a line on a constant. What must NOT be lost is the failing case, and it isn't:
+     * the hub refuses and says why, which is a stronger signal than a red tick because it also
+     * disables Start.
+     */
+    it("🛑 a module that cannot CANCEL still refuses, through the verdict rather than a row", async () => {
       hubNoop.mockResolvedValue({
         ok: true,
         wouldStart: false,
-        verdict: "a run would be REFUSED: no fn 33",
+        verdict:
+          "a run would be REFUSED: the module does not advertise Cancel Telemetry Start (fn 33) — a run could not be stopped",
         preflight: {
           ownership: {
             mode: 1,
@@ -414,12 +423,12 @@ describe("DeepSeaControlCapability", () => {
           scfMap: [],
         },
       });
-      const { checks } = await cap.preflight(ctx());
-      expect(checks?.[3]).toEqual({
-        label: "Module supports",
-        value: "start / NO CANCEL",
-        ok: false,
-      });
+      const result = await cap.preflight(ctx());
+      expect(result.wouldProceed).toBe(false);
+      expect(result.verdict).toContain("could not be stopped");
+      expect(result.checks?.map((c) => c.label)).not.toContain(
+        "Module supports",
+      );
     });
 
     it("🛑 REPORTS an unreachable hub rather than throwing — bad news is the answer, not an error", async () => {

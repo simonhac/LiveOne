@@ -117,14 +117,12 @@ function preflightChecks(noop: HubNoopResult): ControlPreflightCheck[] {
       // engine already running, which the row above already reports.
       ok: own.remoteStartInput === "closed" ? null : true,
     },
-    {
-      label: "Module supports",
-      value: [
-        pre.scfSupported.telemetryStart ? "start" : "no start",
-        pre.scfSupported.telemetryCancel ? "cancel" : "NO CANCEL",
-      ].join(" / "),
-      ok: pre.scfSupported.telemetryStart && pre.scfSupported.telemetryCancel,
-    },
+    // 🛑 The module's SCF support is deliberately NOT a row. On every module in service it reads
+    // "start / cancel" forever — a constant, which is the one thing a checklist should not spend a
+    // line on — and when it is NOT true the hub says so far more usefully than a row could: `noop`
+    // appends "the module does not advertise Cancel Telemetry Start (fn 33) — a run could not be
+    // stopped" to the verdict and clears `wouldStart`, which disables Start and prints the
+    // sentence. The fact survives; only the noise is gone.
   ];
 }
 
@@ -253,7 +251,18 @@ export class DeepSeaControlCapability implements ControlCapability {
       // `verdict` stands on its own.
       verdictMessage: noop.verdictMessage,
       checks: preflightChecks(noop),
-      detail: noop.controlStatus ?? null,
+      // The hub's live `ControlStatus` — including `state`, which is `RunSupervisor.state()`, the
+      // SAME call that produces the pushed `source.generator.control.status/state` point. The panel
+      // mode rides along because reading that state into words needs it: `describeGeneratorState`
+      // uses it to tell an ARMED idle generator from a LOCKED OUT one. Together they let a caller
+      // re-derive the whole status sentence from this probe, which is a live read, rather than from
+      // a pushed value that may be a poll behind.
+      detail: noop.controlStatus
+        ? {
+            ...noop.controlStatus,
+            panelMode: noop.preflight?.ownership.modeName ?? null,
+          }
+        : null,
     };
   }
 }

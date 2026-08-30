@@ -45,6 +45,25 @@ export const RECONCILE_MS = 30_000;
 /** After a confirmed release, the engine cools down (~95 s observed); report "stopping" this long. */
 const COOLDOWN_GRACE_MS = 5 * 60_000;
 
+/**
+ * How long a start or stop counts as "in transition" — the window the run loop polls and delivers
+ * fast across (see `inTransition`).
+ *
+ * 🛑 A CEILING, not a confirmation. A start that never cranks, or the `stop-failing` retry loop
+ * (which retries every STOP_RETRY_MS indefinitely), would otherwise hold the fast cadence open
+ * forever. Three minutes clears the ~95 s observed cool-down with margin and truncates anything
+ * pathological back to the ordinary cadence.
+ */
+export const TRANSITION_MS = 3 * 60_000;
+
+/** The `bump` reasons that mean the ENGINE is about to change state — see `inTransition`. */
+const TRANSITION_REASONS = new Set([
+  "started",
+  "released",
+  "start-ambiguous",
+  "stop-failed",
+]);
+
 export type ControlState =
   | "idle"
   | "running:hub"
@@ -217,6 +236,9 @@ export class RunSupervisor {
 
   /** bumped on every state transition — the run loop's edge-triggered-delivery signal */
   stateVersion = 0;
+
+  /** When the engine last began starting or stopping. See `inTransition`. */
+  private transitionAtMs: number | null = null;
 
   private timer: ReturnType<typeof setTimeout> | null = null;
   private reconcileTimer: ReturnType<typeof setInterval> | null = null;
@@ -656,6 +678,20 @@ export class RunSupervisor {
     running: boolean;
     remoteStartInput: ControlOwnership["remoteStartInput"];
   }): void {
+    // An engine that just started or just stopped is mid-transition however it was commanded —
+    // this is the leg that catches a run the SP-PRO started on its own, which no `bump` sees.
+    //
+    // The FIRST observation is process start rather than an engine event (the same reasoning as
+    // `wasActive === undefined` in run.ts), so it is not an edge on its own — a hub that restarts
+    // mid-run must not mistake "we can see it now" for "it just started". The exception is a window
+    // a command has already opened: there, the first observation IS that command's confirmation,
+    // and dropping it would end the bracket three minutes after the press rather than three minutes
+    // after the engine actually turned.
+    const edge =
+      this.lastObs != null
+        ? this.lastObs.running !== obs.running
+        : this.inTransition();
+    if (edge) this.transitionAtMs = this.clock.now();
     this.lastObs = { ...obs, atMs: this.clock.now() };
     if (!obs.running && this.releasedAtMs != null) this.releasedAtMs = null; // stop confirmed
     this.bumpIfStateChanged();
@@ -669,6 +705,24 @@ export class RunSupervisor {
         Number(values.engineRpm ?? 0) > 0 || Number(values.genFreqHz ?? 0) > 0,
       remoteStartInput: rsi == null ? "unknown" : rsi ? "closed" : "open",
     });
+  }
+
+  /**
+   * Is the engine mid-start or mid-stop? The run loop polls and delivers fast while this holds, so
+   * LiveOne can watch a transition rather than learn about it a minute later.
+   *
+   * 🛑 An EDGE, never a disagreement. The tempting rule is `latched !== lastObs.running` ("what we
+   * commanded and what we see don't match yet"), and it is wrong for the commonest run on site: an
+   * SP-PRO-driven start has `latched === false` for its whole duration, so a disagreement rule would
+   * hold the fast cadence open for hours. Two independent edges open the window instead — a command
+   * that moves the latch (`bump`) and an observed change in the running flag (`noteObservation`) —
+   * and they compose without any confirmation logic: a LiveOne start opens it at the press, then
+   * re-opens it when the engine is actually seen to turn.
+   */
+  inTransition(now: number = this.clock.now()): boolean {
+    return (
+      this.transitionAtMs != null && now - this.transitionAtMs < TRANSITION_MS
+    );
   }
 
   state(): ControlState {
@@ -738,9 +792,14 @@ export class RunSupervisor {
     };
   }
 
-  private bump(_why: string): void {
+  private bump(why: string): void {
     this.stateVersion++;
     this.lastStateString = this.state();
+    // A command that MOVES THE LATCH opens the transition window immediately, rather than waiting
+    // for the poll that observes the engine — the whole point is to be watching while it cranks.
+    // `extended` is excluded because nothing transitions (the engine is already turning), and the
+    // `resumed*` reasons because restart recovery is a fact about this process, not the engine.
+    if (TRANSITION_REASONS.has(why)) this.transitionAtMs = this.clock.now();
   }
 
   private bumpIfStateChanged(): void {

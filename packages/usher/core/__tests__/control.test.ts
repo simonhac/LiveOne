@@ -380,4 +380,87 @@ describe("RunSupervisor", () => {
       expect(sup.stateVersion).toBeGreaterThan(v1);
     });
   });
+
+  /**
+   * The fast-cadence bracket. What matters here is not that it opens — it is what it does NOT do:
+   * an `extended` must not open one (nothing transitions), process start must not look like an
+   * engine event, and nothing may hold the window open past its ceiling.
+   */
+  describe("inTransition — the fast-cadence bracket", () => {
+    const running = { engineRpm: 1500, genFreqHz: 500, remoteStartInput: 1 };
+    const stopped = { engineRpm: 0, genFreqHz: 0, remoteStartInput: 0 };
+
+    it("is closed on a fresh supervisor that has never seen a command", () => {
+      expect(sup.inTransition()).toBe(false);
+    });
+
+    it("opens on a start and closes at the ceiling", async () => {
+      await sup.request(600);
+      expect(sup.inTransition()).toBe(true);
+      clock.tick(179_000);
+      expect(sup.inTransition()).toBe(true);
+      clock.tick(2_000);
+      expect(sup.inTransition()).toBe(false);
+    });
+
+    it("opens on a release", async () => {
+      await sup.request(600);
+      clock.tick(181_000);
+      expect(sup.inTransition()).toBe(false);
+      await sup.request(0);
+      expect(sup.inTransition()).toBe(true);
+    });
+
+    it("does NOT open on an extend — the engine is already turning", async () => {
+      await sup.request(600);
+      sup.observeValues(running);
+      clock.tick(181_000);
+      expect(sup.inTransition()).toBe(false);
+      const r = await sup.request(600);
+      expect(r.action).toBe("extended");
+      expect(sup.inTransition()).toBe(false);
+    });
+
+    it("opens on an OBSERVED start nobody commanded (the SP-PRO's own run)", () => {
+      sup.observeValues(stopped); // first observation = process start, not an engine event
+      expect(sup.inTransition()).toBe(false);
+      sup.observeValues(running);
+      expect(sup.status().state).toBe("running:sp-pro");
+      expect(sup.inTransition()).toBe(true);
+    });
+
+    it("does not stay open for the whole of an uncommanded run", () => {
+      sup.observeValues(stopped);
+      sup.observeValues(running);
+      clock.tick(181_000);
+      sup.observeValues(running); // still turning, but no EDGE — the bracket has expired
+      expect(sup.inTransition()).toBe(false);
+      sup.observeValues(stopped); // …and re-opens when it actually stops
+      expect(sup.inTransition()).toBe(true);
+    });
+
+    it("a commanded start re-opens when the engine is seen to turn", async () => {
+      sup.observeValues(stopped);
+      await sup.request(600);
+      clock.tick(20_000); // cranking
+      sup.observeValues(running);
+      clock.tick(170_000); // past 3 min from the COMMAND, but not from the engine starting
+      expect(sup.inTransition()).toBe(true);
+    });
+
+    // The same confirmation, but with no prior poll to compare against — the first ~15 s of a hub
+    // that has just come up. It must still count, or the bracket ends 3 min after the press.
+    it("confirms a commanded start even when it is the FIRST observation", async () => {
+      await sup.request(600);
+      clock.tick(20_000);
+      sup.observeValues(running);
+      clock.tick(170_000);
+      expect(sup.inTransition()).toBe(true);
+    });
+
+    it("a hub restarting mid-run does not mistake its first look for a start", async () => {
+      sup.observeValues(running); // no command, no window: just what was already true
+      expect(sup.inTransition()).toBe(false);
+    });
+  });
 });

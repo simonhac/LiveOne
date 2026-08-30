@@ -40,15 +40,16 @@ interface PreflightBody {
     maxRuntimeSec?: number;
     latched?: boolean;
     stopAt?: string | null;
+    state?: string;
+    panelMode?: string | null;
   } | null;
 }
 
-/** The four checks the DeepSea probe always returns, in order, all passing. */
+/** The three checks the DeepSea probe always returns, in order, all passing. */
 const HAPPY_CHECKS = [
   { label: "Panel mode", value: "Auto", ok: true },
   { label: "Engine", value: "stopped", ok: true },
   { label: "Inverter demand", value: "not calling", ok: true },
-  { label: "Module supports", value: "start / cancel", ok: true },
 ];
 
 /** 6 h — the hub's cap, so the slider offers every preset. */
@@ -95,6 +96,10 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
           maxRuntimeSec: MAX_RUNTIME_SEC,
           latched: false,
           stopAt: null,
+          // `state` + `panelMode` are what let the dialog re-derive its header sentence from the
+          // PROBE rather than from the pushed point — so the gallery exercises that path too.
+          state: "idle",
+          panelMode: "Auto",
         },
       };
 
@@ -112,6 +117,10 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
           maxRuntimeSec: MAX_RUNTIME_SEC,
           latched: false,
           stopAt: null,
+          // Idle + a panel out of Auto is LOCKED OUT, not armed — the probe carries both facts, so
+          // the header says so without waiting for the pushed mode point.
+          state: "idle",
+          panelMode: "Stop",
         },
       };
 
@@ -129,12 +138,13 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
             value: "calling for the generator",
             ok: null,
           },
-          HAPPY_CHECKS[3],
         ],
         detail: {
           maxRuntimeSec: MAX_RUNTIME_SEC,
           latched: false,
           stopAt: null,
+          state: "running:sp-pro",
+          panelMode: "Auto",
         },
       };
 
@@ -151,7 +161,13 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
           values: { stopAt },
         },
         checks: HAPPY_CHECKS,
-        detail: { maxRuntimeSec: MAX_RUNTIME_SEC, latched: true, stopAt },
+        detail: {
+          maxRuntimeSec: MAX_RUNTIME_SEC,
+          latched: true,
+          stopAt,
+          state: "running:hub",
+          panelMode: "Auto",
+        },
       };
     }
 
@@ -171,17 +187,7 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
 
     case "checking (skeleton)":
     default:
-      return {
-        ok: true,
-        wouldProceed: true,
-        verdict: "a 60s run would START now",
-        checks: HAPPY_CHECKS,
-        detail: {
-          maxRuntimeSec: MAX_RUNTIME_SEC,
-          latched: false,
-          stopAt: null,
-        },
-      };
+      return preflightFor("ready to start");
   }
 }
 

@@ -138,9 +138,17 @@ export async function handleRunPost(
     );
   }
 
+  const versionBefore = auth.supervisor.stateVersion;
   const result = await auth.supervisor.request(body.runtimeSec, {
     overrideRemoteStart: body.overrideRemoteStart === true,
   });
+  // Tick NOW rather than at the next boundary, so the command reaches LiveOne on the press instead
+  // of up to a poll period later. Gated on the version actually moving: a REFUSED command changed
+  // nothing, and waking for it would spend a Modbus round-trip to re-send what we already sent.
+  // Covers the ambiguous start and the failed stop too — both bump.
+  if (auth.supervisor.stateVersion !== versionBefore) {
+    registry.entries.find((e) => e.source.siteId === siteId)?.wake?.();
+  }
   const { ok, status, ...rest } = result;
   return Response.json(
     { ok, ...rest, status: auth.supervisor.status() },

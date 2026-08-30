@@ -62,6 +62,16 @@ const DeepseaSourceSchema = z.object({
   pushSec: z.number().positive().optional(),
   /** push period (s) while the genset is running; defaults to pushSec */
   activePushSec: z.number().positive().optional(),
+  /**
+   * Poll AND push period (s) while the engine is STARTING or STOPPING — the only window where
+   * both cadences are raised together. `0` disables the bracket.
+   *
+   * Defaulted rather than optional on purpose: usher.yaml is gitignored and lives on the deployed
+   * volume, so an optional key would need that file edited by hand on every host before this did
+   * anything. A default means a deploy is enough. See RunSupervisor.inTransition for what counts
+   * as a transition and TRANSITION_MS for how long one lasts.
+   */
+  transitionSec: z.number().nonnegative().default(5),
 });
 
 const FroniusSourceSchema = z.object({
