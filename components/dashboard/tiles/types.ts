@@ -8,7 +8,7 @@
  * (e.g. the hot-water sparkline query). The host (`node-view.tsx`'s V4TileCell) fetches the
  * device's `dashboardDataQuery` datum, gates mount on `isAvailable`, and passes these props.
  *
- * WHY THIS IS STILL ITS OWN CONTRACT (config-v4 Phase 14 stage 7). §8.1 unified the card and tile
+ * WHY THIS IS STILL ITS OWN CONTRACT. §8.1 unified the card and tile
  * *document* primitives — a tile is just a small card, and one registry now answers for both. It did
  * NOT unify the two RENDER contracts, which differ in substance rather than spelling: a tile is
  * DATA-DRIVEN (the host self-fetches `/api/data` in `V4TileCell` and hands the plugin a `latest` map,

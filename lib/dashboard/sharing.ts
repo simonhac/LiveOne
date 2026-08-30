@@ -50,10 +50,10 @@ export async function createDashboardShareToken(
     } catch (err: unknown) {
       // Token PK collision → SQLSTATE 23505 on `share_tokens_pkey`; retry with a fresh phrase.
       //
-      // config-v4 Phase 14 stage 2b: this read `(err as {code?: string})?.code`, which drizzle ≥0.44
-      // never populates (the SQLSTATE is on the wrapping `DrizzleQueryError`'s `cause`). So the `continue`
-      // was unreachable and the whole retry loop was DECORATIVE — a 3-word-phrase collision, the only
-      // thing it exists for, rethrew on the first attempt and 500'd the mint. See `lib/db/pg-error.ts`.
+      // 🛑 Do NOT reduce this to `(err as {code?: string})?.code` — drizzle ≥0.44 never populates it
+      // (the SQLSTATE is on the wrapping `DrizzleQueryError`'s `cause`), which makes the `continue`
+      // unreachable and the whole retry loop DECORATIVE: a 3-word-phrase collision, the only thing it
+      // exists for, would rethrow on the first attempt and 500 the mint. See `lib/db/pg-error.ts`.
       if (isUniqueViolationOn(err, "share_tokens_pkey")) continue;
       throw err;
     }
@@ -147,7 +147,7 @@ export async function listDashboardShareTokens(
 /**
  * One token, scoped to its dashboard — including a REVOKED one.
  *
- * config-v4 Phase 14 stage 11. `revoke`/`rename` return a bare boolean, which conflates three
+ * `revoke`/`rename` return a bare boolean, which conflates three
  * outcomes the `/api/v4/…/shares` surface must tell apart: no such token (404), the token exists but
  * is revoked (409 on a relabel, idempotent 200 on a re-revoke), and a real update. Sharing is the one
  * genuinely multi-party surface here, so "nothing changed" must never be reported as success without

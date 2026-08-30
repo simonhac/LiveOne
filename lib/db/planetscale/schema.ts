@@ -616,43 +616,30 @@ export const observationsOutbox = pgTable(
 // ============================================================================
 // Dashboards - moving from per-(user,device) to first-class COMPOSITION-FIRST (Phase 2b-2).
 //
-// TARGET model, and REACHED as of config-v4 Phase 14: a dashboard is a NAMED, owner-scoped
-// composition — `doc` is a node tree whose groups each bind their OWN Area, with no home device/area.
-// Addressed by id (`/dashboard/{user}/id/{id}`) or `slug` (`/dashboard/{user}/{slug}`, an owner-unique
-// shortname). (The v3 `descriptor` this paragraph originally described was dropped by migration 0054.)
-//
-// TRANSITION (additive, migration 0017): `display_name` + `alias` are added and `system_id` is made
-// NULLABLE so new composition dashboards (null system_id) coexist with the legacy per-device rows
-// while the old path is still live. `area_id` + the `(user, system_id)` unique index are retained
-// (NULLs are distinct, so many composition dashboards are allowed). Phase 2b-2's final step retires
-// the legacy path and drops `system_id`/`area_id` + the old unique (migration 0018). `display_name`
-// is nullable until then (legacy rows have none). See docs/architecture/areas-and-dashboards.md.
+// A dashboard is a NAMED, owner-scoped composition — `doc` is a node tree whose groups each bind
+// their OWN Area, with no home device/area. Addressed by id (`/dashboard/{user}/id/{id}`) or `slug`
+// (`/dashboard/{user}/{slug}`, an owner-unique shortname). The per-device `system_id`/`area_id`
+// handles were dropped by migration 0018. See docs/architecture/areas-and-dashboards.md.
 // ============================================================================
 export const dashboards = pgTable(
   "dashboards",
   {
-    // ⚠️ config-v4 CUTOVER SHAPE (see the `areas` header above for why this branch cannot reach `main`
-    // before the window). Stage 5d swaps the serial int PK for a uuid, freezing the old int in
-    // `legacy_id`, and renames clerk_user_id→owner_user_id, display_name→name, alias→slug.
-    id: uuid("id").primaryKey().defaultRandom(), // 5d sets DEFAULT gen_random_uuid() (defect D-a)
+    id: uuid("id").primaryKey().defaultRandom(),
     // 🪦 `legacy_id` (the frozen pre-cutover int) is GONE. Its only consumer was the
     // `/dashboard/id/{n}` → `/dashboard/id/{db_…}` 301; the opaque `db_…` id has been the primary
     // address since the cutover, share tokens key on `id` (uuid), and the `?systemId=N` compat alias
     // resolves through `legacy_handles` — a different mechanism entirely, still live.
     ownerUserId: text("owner_user_id").notNull(), // the owner
     // A dashboard's name + owner-unique shortname (the /dashboard/{user}/{slug} path). Nullable for
-    // an unnamed dashboard. The legacy per-device `system_id`/`area_id` handles were dropped in P6 —
-    // a dashboard is a composition whose sections each carry their own Area uuid.
+    // an unnamed dashboard.
     name: text("name"),
     slug: text("slug"), // owner-unique shortname for /dashboard/{user}/{slug}; null = unnamed
-    // 🪦 `descriptor` (the v3 document) is GONE — dropped from the database by migration 0054
-    // (config-v4 Phase 14 stage 16), having been made inert by stage 15. `doc` below is the only
-    // dashboard document there is. Do not reintroduce a second one.
-    // The v4 node-tree document (clean-sheet §8). ⚠️ config-v4 CUTOVER SHAPE — NOT NULL (transform stage 5d
-    // `ALTER COLUMN doc SET NOT NULL`); it is now the ONLY document on the row.
+    // 🪦 `descriptor` — a SECOND dashboard document — is GONE, dropped from the database by
+    // migration 0054. `doc` is the only dashboard document there is. Do not reintroduce a second one.
+    //
+    // The node-tree document (clean-sheet §8). NOT NULL.
     doc: jsonb("doc").notNull(),
-    // Whole-doc revision counter; bumped by the Phase-6 /api/v4 PUT. DEFAULT 1 so the untouched v3
-    // insert path keeps working.
+    // Whole-doc revision counter; bumped by the /api/v4 PUT. DEFAULT 1.
     revision: integer("revision").notNull().default(1),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -752,7 +739,7 @@ export const areas = pgTable(
     slug: text("slug"),
     timezoneOffsetMin: integer("timezone_offset_min").notNull(),
     displayTimezone: text("display_timezone").notNull(),
-    // --- config-v4 dark columns (Phase 4, migration 0032; nullable/unread by the v3 app) ---
+    // --- migration 0032 ---
     // Canonical fixed-offset day-bucketing key (clean-sheet §7). Backfilled = timezone_offset_min;
     // immutable after cutover except via an explicit re-bucket op. ⚠️ config-v4 CUTOVER SHAPE — NOT NULL
     // (transform + backfill); `createArea` and the mint mirror (v4-mirror.ts) both supply it = tzOffset.
@@ -861,13 +848,11 @@ export const areaBindings = pgTable(
 );
 
 // ============================================================================
-// config-v4 Phase 4 — DARK, empty v4 tables (migration 0033).
+// config-v4 tables (migration 0033).
 //
-// Pre-created behind the UNCHANGED v3 app so the cutover window's DDL shrinks to data transforms +
-// a few FK-adds. Nothing reads or writes them until the cutover-era migrations/routes land. FKs are
-// wired ONLY where the target already exists in its FINAL form (`areas.id` uuid; sibling new tables);
-// FKs to points/devices/dashboards-as-uuid are DEFERRED to cutover (those tables / uuid PKs don't
-// exist yet) and left as bare `uuid` columns. See the config-v4 clean-sheet design §4.4/§4.6/§11.
+// FKs were wired ONLY where the target already existed in its FINAL form (`areas.id` uuid; sibling
+// new tables); the rest were added later and some columns are still bare `uuid`. See the config-v4
+// clean-sheet design §4.4/§4.6/§11.
 // ============================================================================
 
 // derivations — the ONE mechanism for a derived signal (config-v4 Phase 11): config that computes a
@@ -1040,16 +1025,11 @@ export const legacyHandles = pgTable(
 );
 
 // ============================================================================
-// config-v4 registries (migration 0035, additive + DARK)
+// config-v4 registries (migration 0035)
 //
-// These are the v4 successors to systems/point_info/area_devices/polling_status. Created EMPTY by
-// 0035 and populated (idempotently) by scripts/config-v4/registry-sync.ts as a separate dark step.
-// The predecessors are COPIED, not renamed, so both sets coexist until Phase 12 drops the old ones
-// one at a time — which is what let the pre-cutover build keep running unchanged.
-//
-// No longer dark, and no longer a uniform group: `area_members` and `device_state` are now PRIMARY
-// (slices H and C dropped/froze their predecessors), while `devices` and `points` are still mirrored
-// from `systems`/`point_info` by lib/registry/v4-mirror.ts.
+// The successors to systems/point_info/area_devices/polling_status. Not a uniform group:
+// `area_members` and `device_state` are PRIMARY, while `devices` and `points` are still mirrored
+// by lib/registry/v4-mirror.ts.
 // ============================================================================
 
 // Global device rid allocator. Seeded at max(systems.id)+1 by registry-sync so devices.rid preserves

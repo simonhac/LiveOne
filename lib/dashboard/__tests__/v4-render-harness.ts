@@ -58,7 +58,7 @@ export const NodeKeyContext = React.createContext<string | null>(null);
 
 /**
  * The ONE place that knows how a node identifies itself in a plugin's props. Since the
- * `CardRenderProps` port (config-v4 Phase 14 stage 6) that is `node.id`; before it, the synthesised
+ * `CardRenderProps` port that is `node.id`; before it, the synthesised
  * `card.id`. Both carried the SAME value (the adapter copied `node.id` straight across), which is
  * why the harness key space — and therefore the snapshot's top-level keys — survived the port
  * unchanged, and why every `leaves` entry stayed byte-identical.
@@ -218,7 +218,7 @@ export function makeSiteChartsLeaf(): React.FC<LeafProps> {
 // ---------------------------------------------------------------------------
 
 interface NodePluginLike {
-  /** The registry's discriminant (config-v4 Phase 14 stage 7): "tile" | "card". */
+  /** The registry's discriminant: "tile" | "card". */
   kind: string;
   type: string;
   Render: React.FC<Record<string, unknown>>;

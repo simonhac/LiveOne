@@ -9,9 +9,9 @@
  * binds a device and no area, so `chartCapable` is unknowable — the site charts don't render there
  * either, while the standalone lines chart still does).
  *
- * config-v4 Phase 14 stage 9: both walk a `DashboardV4`. The v3 `tiles` card became a structural
- * `row` group, so its two time-travelling views (`hotWater`, `renewables`) are now ordinary sibling
- * card nodes and need no special case — the walk is uniform over card types.
+ * Both walk a `DashboardV4`. A container of small cards is a structural `row` group, so its two
+ * time-travelling views (`hotWater`, `renewables`) are ordinary sibling card nodes and need no
+ * special case — the walk is uniform over card types.
  *
  * The walk is written out rather than delegated to `walkNodes` (v4.ts) because both questions need
  * two things a bare pre-order visit does not carry: the INHERITED area binding (§8.1), and pruning
@@ -112,7 +112,7 @@ export function primaryHandle(
   walkVisible(doc, (_node, area) => {
     if (!area) return false;
     handle = areaById.get(area)?.legacySystemId;
-    return true; // first area binding wins, resolvable or not (matches the v3 first-section rule)
+    return true; // first area binding wins, resolvable or not
   });
   return handle;
 }

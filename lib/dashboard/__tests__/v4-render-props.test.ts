@@ -1,18 +1,13 @@
 /**
  * ============================================================================================
- * THE PROP-EQUIVALENCE GATE for the `CardRenderProps` port (config-v4 Phase 14).
+ * THE PROP-EQUIVALENCE GATE for `CardRenderProps`.
  * ============================================================================================
  *
  * WHAT THIS IS FOR
- * Stage 6 changed `CardRenderProps` (components/dashboard/cards/types.ts) from the v3 shape
- * `{card: CardV3, section: AreaSectionV3, handle?}` to the v4-native `{node: CardNode, context:
- * NodeContext, handle?, deviceSystemId?}`, ported all nine card plugins onto it, and deleted the
- * adapter `lib/dashboard/v4-adapt.ts` (`synthCardV3` / `synthSectionV3`). That was a pure refactor:
- * it must change NOTHING a user can see. It is kept as the standing gate on this seam.
- *
- * The stage-6 result: all 11 `card:*` `renderProps` entries changed shape (that IS the port); all
- * 22 `leaves` entries, all 10 `tile:*` `renderProps` entries and the whole key set were
- * byte-identical.
+ * A golden capture of exactly what every card and tile plugin is handed for a fixture document:
+ * `{node: CardNode, context: NodeContext, handle?, deviceSystemId?}`. It is the standing gate on
+ * this seam — a refactor of the render path must change NOTHING a user can see, and this is what
+ * says so.
  *
  * STAGE 7 then merged the two plugin registries into one `CARD_RENDERERS` keyed on `CardType`
  * (components/dashboard/registry.tsx) and moved the renderer's tile-vs-card dispatch onto the
@@ -146,8 +141,8 @@ const LEAF_MODULES: Record<string, string> = {
   "@/components/HwsSmallCard": "HwsSmallCard",
   "@/components/GridSignalsCard": "GridSignalsCard",
   "@/components/HomeEnergyCard": "HomeEnergyCard",
-  // config-v4 Phase 14 stage 20. CAPTURED as a leaf, not stubbed away like `DailyStripes` below —
-  // the two stage-19 reasons for stubbing were checked against it and only one applies:
+  // CAPTURED as a leaf, not stubbed away like `DailyStripes` below — of the two reasons for
+  // stubbing given there, only one applies here:
   //   1. Date.now()-derived props: NO. `HeatmapPanel`'s props are `systemId`/`timezone`/the two pins
   //      /`variant` — all doc- and fixture-derived, so the golden is stable across midnight. (The
   //      30-day window is computed INSIDE `HeatmapChart`, below the captured boundary.)
@@ -167,7 +162,7 @@ for (const [modulePath, name] of Object.entries(LEAF_MODULES)) {
   });
 }
 // 🛑 `DailyStripes` is stubbed OUT of the capture set rather than added to `LEAF_MODULES`, for one
-// remaining reason (config-v4 Phase 14 stage 19):
+// remaining reason:
 //   1. Its props embed a `Date.now()`-derived local-day window (`firstDayMidnightMs`, set at
 //      `components/dashboard/cards/daily-stripe.tsx:67`), so recording them would bake today's date
 //      into the checked-in golden and turn it red at the next local midnight — exactly what the
@@ -190,7 +185,7 @@ jest.mock("@/components/SiteChartsCard", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// The fixture document. Every branch of `node-view.tsx` that carries v3 coupling is represented.
+// The fixture document. Every branch of `node-view.tsx` is represented.
 // ---------------------------------------------------------------------------------------------
 const DASHBOARD_ID = "db_fixture";
 
@@ -330,7 +325,7 @@ const FIXTURE_DOC: DashboardV4 = {
           },
           // ---- must NOT render ------------------------------------------------------------------
           { id: "n_hidden", kind: "card", type: "amber-now", hidden: true },
-          // `tiles` is a v3 card type but NOT a v4 one (it became a group) → placeholder branch.
+          // `tiles` is not a card type (it is a `row` group) → placeholder branch.
           { id: "n_tiles_legacy", kind: "card", type: "tiles" },
           { id: "n_future", kind: "card", type: "future-card" },
           {
@@ -374,7 +369,7 @@ const EXPECTED_KEYS = [
   "tile:oe-grid@13",
   "tile:renewables@1",
   "tile:solar@1",
-  // v3 card plugins (keyed by node id)
+  // card plugins (keyed by node id)
   "n_amber_now",
   "n_amber_timeline",
   "n_b_dm",

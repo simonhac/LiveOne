@@ -87,8 +87,8 @@ function insertionIndex(children: DashboardNode[]): number {
 }
 
 /**
- * A tile row: a `row` group whose children are ALL tile-view cards. That is the shape §8.1 turned
- * the v3 `tiles` card into, and the only place a tile belongs.
+ * A tile row: a `row` group whose children are ALL tile-view cards (§8.1) — the only place a tile
+ * belongs.
  */
 function isTileRow(node: DashboardNode): node is GroupNode {
   return (

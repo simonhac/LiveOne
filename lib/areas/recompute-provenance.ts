@@ -3,7 +3,7 @@
  * route (deleted in stage 13) and its config-v4 twin
  * (`app/api/v4/areas/[id]/recompute-provenance`).
  *
- * 🛑 EXTRACTED, NOT COPIED (config-v4 Phase 14 stage 10). This handler is ~150 lines of batch/date/learn
+ * 🛑 EXTRACTED, NOT COPIED. This handler is ~150 lines of batch/date/learn
  * sequencing whose correctness is not locally checkable — the first batch (re)learns η before recomputing
  * so every later batch reads the same reproducible parameters, and a second copy that drifted on that
  * ordering would produce a discontinuous stored-energy series at the batch seams rather than an error.

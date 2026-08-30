@@ -6,10 +6,9 @@ import {
 } from "@/lib/dashboard/v4-seed";
 
 /**
- * config-v4 area default-group (§9.2), DARK — the capability-derived v4 seed GROUP for an area, the v4
- * analogue of `GET /api/areas/{id}/default-section` (returns a v4 `group` node instead of a v3 section).
- * Preview and persisted seeds use the same authoritative legacy-handle → `dv_` registry, so every
- * device-pinned card is safe to save and survives cutover unchanged.
+ * Area default-group (§9.2) — the capability-derived seed GROUP for an area. Preview and persisted
+ * seeds use the same authoritative legacy-handle → `dv_` registry, so every device-pinned card is
+ * safe to save.
  *   GET → { group: <area-bound GroupNode> }
  */
 export async function GET(

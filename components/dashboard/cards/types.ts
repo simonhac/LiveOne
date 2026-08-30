@@ -3,18 +3,15 @@
  * alongside the tile plugins in the single `CARD_RENDERERS` (components/dashboard/registry.tsx).
  * See ../tiles/types.ts for why the two contracts stayed distinct when the registries merged.
  *
- * A card plugin bundles the render component (ex-`AreaXxx` wrapper from the deleted v3 renderer) with the
+ * A card plugin bundles the render component with the
  * host-facing render policy: how it behaves while the section's Area handle is unresolved
  * (`pending`) and whether it collapses into the section's single SiteChartsGroup (`collapseKey`).
  * The declarative catalog data (label, capability requirements, scope) stays server-safe in
  * `lib/capabilities/catalog.ts` — this layer is client-only render binding.
  *
- * v4-NATIVE (config-v4 Phase 14 stage 6): a plugin is handed the `CardNode` and its inherited §8.1
- * `NodeContext` directly. The v4→v3 adapter (`lib/dashboard/v4-adapt.ts`'s `synthCardV3` /
- * `synthSectionV3`), which used to fabricate a `CardV3`/`AreaSectionV3` per render, is GONE — the
- * per-type config that used to be spread onto named `CardV3` fields (`chart`, `variant`) is read
- * from `node.config` (schemas in lib/dashboard/card-types.ts), and the section's area ref is read
- * from `context.area` (an `ar_` TypeID, where the adapter downgraded it to a raw uuid).
+ * A plugin is handed the `CardNode` and its inherited §8.1 `NodeContext` DIRECTLY — nothing is
+ * fabricated per render. Per-type config is read from `node.config` (schemas in
+ * lib/dashboard/card-types.ts), and the section's area ref from `context.area` (an `ar_` TypeID).
  */
 import type React from "react";
 import type { CardNode } from "@/lib/dashboard/v4";

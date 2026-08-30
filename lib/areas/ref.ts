@@ -1,12 +1,11 @@
 /**
  * Area-ref helpers. **The decode leg is STRICT; the encode leg is not — and the asymmetry is the
- * whole content of this file.** (config-v4 Phase 14; the dual-accept decode dates from Phase 9 PR2.)
+ * whole content of this file.**
  *
- * The Phase-9 rationale was that the persisted v3 descriptor and the deployed code did not migrate in
- * lockstep, so a reader written against `ar_` had to still resolve an unmigrated (raw-uuid) descriptor.
- * **That window is closed.** Measured 2026-07-31 directly against prod `sydney` and `liveone-dev`:
- * 16/16 `descriptor.sections[].areaId` and 16/16 `doc` area refs are `ar_` on BOTH, zero raw uuids,
- * and the newest dashboard predates the check. So `areaRefToUuid` no longer accepts a raw uuid.
+ * Decode was dual-accept while stored documents and deployed code did not migrate in lockstep, so a
+ * reader written against `ar_` still had to resolve an unmigrated raw-uuid ref. **That window is
+ * closed.** Measured 2026-07-31 directly against prod `sydney` and `liveone-dev`: every stored area
+ * ref is `ar_` on BOTH, zero raw uuids. So `areaRefToUuid` no longer accepts a raw uuid.
  *
  * 🛑 **Strictness here is SILENT at the call sites that matter.** `areaRefToUuid` returns null and
  * `dashboardAreaUuids` (lib/dashboard/composition.ts) `.filter()`s nulls away. A raw uuid therefore
@@ -14,20 +13,13 @@
  * not a leak, but also not visible). That is why the write paths must reject a non-`ar_` ref
  * explicitly instead of relying on decode to catch it.
  *
- * ⚠️ **`areaRefToArId` REMAINS dual-accept — but it is down to ONE producer** (config-v4 Phase 14,
- * reconciled at the stage-15 rebase). Of the three the original note listed, all three are now gone:
- *   * `buildAreaStrategyForHandle` died with **stage 13** (both legacy route trees deleted).
- *   * `lib/dashboard/v3-to-v4.ts`'s `pureAreaRef` lost its last caller in **stage 15**, and the
- *     module itself was deleted in **stage 16** — nothing rewrites a v3 descriptor any more.
- *   * The helper-device `vendorSiteId` was retired at the source in **stage 17**: `helperSiteId`
- *     mints `helper:area:ar_…`, migration **0053** rewrote every stored row (applied to prod AND
- *     dev), and `parentAreaIdFromHelperSiteId` now always returns `ar_`.
- * The one that remains:
- *   1. `buildSeedDoc` (lib/dashboard/v4-seed.ts) passes the area's raw uuid straight in — a
- *      machine-built seed, so neither form is a user error.
- * So it **still cannot be tightened**: that one alone would break dashboard creation. Encoding is a
- * widening operation and cannot lose information; decoding is where the guarantee has to hold. Hence
- * strict decode + tolerant encode.
+ * ⚠️ **`areaRefToArId` REMAINS dual-accept, and is down to ONE raw-uuid producer:** `buildSeedDoc`
+ * (lib/dashboard/v4-seed.ts) passes the area's raw uuid straight in — a machine-built seed, so
+ * neither form is a user error. (The helper-device `vendorSiteId` was the other one until migration
+ * **0053** rewrote every stored row; `parentAreaIdFromHelperSiteId` always returns `ar_` now.)
+ * So it **still cannot be tightened**: that one producer alone would break dashboard creation.
+ * Encoding is a widening operation and cannot lose information; decoding is where the guarantee has
+ * to hold. Hence strict decode + tolerant encode.
  *
  * Client-safe (no server imports).
  */
@@ -50,6 +42,5 @@ export function areaRefToArId(ref: string): AreaId | null {
   return isCanonicalUuid(ref) ? Area.encode(ref) : null;
 }
 
-// `descriptorAreaRefsAreStrict` and `encodeDescriptorAreaRefs` were DELETED by config-v4 Phase 14
-// stage 15. Both operated on `dashboards.descriptor`; nothing reads or writes that column any more,
-// so the last thing either could normalize was a value no code produces.
+// `descriptorAreaRefsAreStrict` / `encodeDescriptorAreaRefs` are gone: both operated on
+// `dashboards.descriptor`, which migration 0054 dropped.

@@ -33,7 +33,7 @@
  * `cursor`, so the first-batch η re-learn and `updateLatest` are both skipped and the write is a
  * recomputation of values that already exist.
  *
- * 🛑 It also MINTS SHARE TOKENS (Phase 14 stage 11). Those live on a scratch dashboard and
+ * 🛑 It also MINTS SHARE TOKENS. Those live on a scratch dashboard and
  * `share_tokens.dashboard_id`/`dashboard_grants.dashboard_id` are both ON DELETE CASCADE, so deleting
  * the dashboard is what removes them — the run asserts that anonymously rather than assuming it. A
  * leftover token is a live anonymous credential, not untidiness, which is why the sweep at the top
@@ -89,11 +89,11 @@ const BASE = process.env.V4_SMOKE_BASE ?? "http://localhost:3001";
  * prefix *plus* a sweep that adopts only its own — and it must be paired with some other answer for
  * crashed-run debris, or it is a straight regression. (`AREA_PREFIX` has always had this property;
  * extending the sweep to dashboards is what moved the blast radius onto the rows carrying the share
- * tokens. Raised by the stage-7 agent, config-v4 Phase 14.)
+ * tokens.)
  */
 const SCRATCH_PREFIX = "v4-smoke ·";
 const SCRATCH_SLUG = `v4-smoke-${Math.random().toString(36).slice(2, 8)}`;
-/** Scratch AREAS carry their own prefix — the ledger's namespace for Phase 14 stage 10. */
+/** Scratch AREAS carry their own prefix. */
 const AREA_PREFIX = "p14-areaw ·";
 const AREA_SLUG = `p14-areaw-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -119,17 +119,15 @@ function skip(label: string, why: string): void {
 }
 
 /*
- * 🛑 `compareKeyByKey` LIVED HERE UNTIL config-v4 Phase 14 stage 13, and its removal is a deliberate
- * loss of oracle, not an oversight. It diffed a v4 payload against its LEGACY TWIN key-by-key — the
- * check that caught STEP 0's D2 (`GET /api/v4/areas` silently dropping `legacySystemId`, which renders
- * every card as a permanent skeleton with no error anywhere). Stage 13 deleted both legacy trees, so
- * there is no twin left to diff against.
+ * 🛑 THERE IS NO DIFFERENTIAL ORACLE HERE, and that is a deliberate loss rather than an oversight.
+ * A `compareKeyByKey` once diffed each payload against its LEGACY TWIN — the check that caught
+ * `GET /api/v4/areas` silently dropping `legacySystemId`, which renders every card as a permanent
+ * skeleton with no error anywhere. Both legacy trees are deleted, so there is no twin left to diff.
  *
- * What replaces it: each moved client's exact key set is now asserted DIRECTLY, at the section for the
- * route that serves it, naming the client module and what breaks if the key goes. That is weaker than a
- * differential check — it cannot notice a field neither side has — but it is what the wire contract has
- * become now that the legacy shape is gone, and it is stronger in one way: it states what the CLIENT
- * reads rather than what a retired route happened to emit.
+ * What replaces it: each client's exact key set is asserted DIRECTLY, at the section for the route
+ * that serves it, naming the client module and what breaks if the key goes. That is weaker — it
+ * cannot notice a field neither side has — but it states what the CLIENT reads rather than what a
+ * retired route happened to emit.
  */
 
 // --- auth -------------------------------------------------------------------
@@ -230,13 +228,12 @@ async function call(
 /**
  * The same request WITHOUT a Clerk session — how an anonymous share-token holder reaches the app.
  *
- * config-v4 Phase 14 stage 11. `call()` cannot answer the questions that matter most about sharing:
- * whether a token actually reaches the data, whether a revoked one is actually refused, and whether
- * the owner-side management routes are actually unreachable. All three need NO Authorization header,
- * because `middleware.ts` decides at the edge and a session would mask the answer entirely.
+ * `call()` cannot answer the questions that matter most about sharing: whether a token actually
+ * reaches the data, whether a revoked one is actually refused, and whether the owner-side management
+ * routes are actually unreachable. All three need NO Authorization header, because `middleware.ts`
+ * decides at the edge and a session would mask the answer entirely.
  *
- * A thin alias over `request({ as: "anon" })` — stage 12 landed the `as` parameter first, so the
- * anonymous leg has one implementation rather than two.
+ * A thin alias over `request({ as: "anon" })`, so the anonymous leg has one implementation.
  */
 async function raw(
   method: string,
@@ -531,7 +528,7 @@ async function findBindingFixture(
 /** Keys `b` has that `a` does not — the "silent narrowing" check STEP 0's D2 was found by. */
 /**
  * Every handler of the two deleted legacy trees, as (method, path) — 28 handlers across 15 route files,
- * measured on `origin/main` before the deletion (config-v4 Phase 14 stage 13).
+ * measured on `origin/main` before the deletion.
  *
  * 🛑 This is the ONLY proof that the deletion actually reached the server. `tsc` cannot see a URL in a
  * template literal, so a client left behind on a legacy path compiles clean; and a route file left
@@ -676,7 +673,7 @@ async function main(): Promise<void> {
       "every entry carries `legacySystemId` (the handle every card binds its data to)",
       list[0],
     );
-    // 🛑 THE `readableAreasQuery` CONTRACT, pinned exactly (config-v4 Phase 14 stage 13). Until now this
+    // 🛑 THE `readableAreasQuery` CONTRACT, pinned exactly. Until now this
     // was diffed against `GET /api/areas/readable`; that route is deleted, so the contract is stated
     // directly against `ReadableArea` — the type `lib/queries/areas.ts` casts the body to, unchecked.
     ok(
@@ -697,7 +694,7 @@ async function main(): Promise<void> {
     console.log(`  using area ${area.id} (${area.displayName})`);
 
     // ------------------------------------------------------------- 1b. GET /devices
-    // The area builder's member picker (config-v4 Phase 14 stage 13). Never driven over HTTP before —
+    // The area builder's member picker. Never driven over HTTP before —
     // stage 12 covered it with route tests only, and it had no client until this stage.
     section("GET /api/v4/devices — the area builder's member picker");
     const devicesRes = await call("GET", "/api/v4/devices");
@@ -803,7 +800,7 @@ async function main(): Promise<void> {
       "{ areaCards, deviceCards }",
       elig.body,
     );
-    // Stage 7: ONE catalog ⇒ no separate `tiles` list, and the v3 `tiles` container is not a card.
+    // ONE catalog ⇒ no separate `tiles` list, and a tile container is not a card.
     ok(
       elig.body?.tiles === undefined,
       "no `tiles` key (the tile views are area-scoped cards now)",
@@ -811,7 +808,7 @@ async function main(): Promise<void> {
     );
     ok(
       elig.body.areaCards.every((c: any) => c.id !== "tiles" && !!c.label),
-      "every areaCard is a v4 card type with a label (never the v3 `tiles` container)",
+      "every areaCard is a known card type with a label (never a `tiles` container)",
       elig.body.areaCards,
     );
     ok(
@@ -1591,7 +1588,7 @@ async function main(): Promise<void> {
       "list speaks v4 vocabulary (name/slug, never displayName/alias)",
       dashboards.body.dashboards?.[0],
     );
-    // 🛑 THE `DashboardSummaryDTO` CONTRACT (config-v4 Phase 14 stage 13). `myDashboardsQuery` casts the
+    // 🛑 THE `DashboardSummaryDTO` CONTRACT. `myDashboardsQuery` casts the
     // body to this unchecked, and `app/dashboard/[...slug]/page.tsx` SSR-SEEDS THE SAME CACHE KEY from
     // the DAO — which spells these `displayName`/`alias`. If the seed and the fetch disagree the
     // switcher paints "Untitled" until the first refetch quietly replaces it.

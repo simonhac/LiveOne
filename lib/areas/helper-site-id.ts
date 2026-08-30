@@ -3,7 +3,7 @@
  * helper device is minted with `helper:area:<areaId>` (lib/areas/helper.ts); mint and parse both
  * go through here so the two directions can never drift.
  *
- * ## config-v4 Phase 14 stage 17 — the area id in here is the `ar_` TypeID, not a raw uuid
+ * ## The area id in here is the `ar_` TypeID, not a raw uuid
  *
  * 🛑 **This string reaches an ANONYMOUS wire.** `devices.vendor_site_id` is emitted verbatim as
  * `DeviceBlock.vendorSiteId` by `/api/data` (lib/dashboard/serve-data.ts), and `/api/data` is

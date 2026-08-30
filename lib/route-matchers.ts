@@ -77,9 +77,7 @@ const shareableRoutes = [
   // publicRoutes because its caller is an anonymous `?access=` viewer, not a CRON_SECRET bearer: a
   // publicRoutes entry would hand every unauthenticated request past the edge, where the handler's own
   // share-token check is the only thing left. Deliberately the ONLY shareable route on the /api/v4
-  // tree; everything else there is owner-facing management. (The legacy `/api/areas/(.*)`
-  // twin of this line went with its route in Phase 14 stage 13 — the panel's client moved in the same
-  // commit, so nothing anonymous is left addressing the old path.)
+  // tree; everything else there is owner-facing management.
   "/api/v4/areas/(.*)/provenance-daily",
 ];
 

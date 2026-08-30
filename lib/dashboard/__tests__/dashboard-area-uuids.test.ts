@@ -3,17 +3,11 @@ import { Area, newUuidV7 } from "@/lib/ids";
 import { isDashboardV4, type DashboardV4 } from "../v4";
 import { dashboardAreaUuids } from "../composition";
 
-// config-v4 Phase 14 stage 15: `dashboardAreaUuids` used to be DUAL-SHAPE — a v4 `doc` if it passed
-// the guard, else the v3 `descriptor`. `dashboards.descriptor` is now inert (dropped at stage 16), so
-// the fallback is gone and this is a v4-only resolver. The v3 cases below were deleted with it; what
-// replaced them is the assertion that NO second shape is consulted.
-//
-// `composition.test.ts` was folded in here at the same time: its two subjects
-// (`emptyCompositionDescriptor`, `descriptorAreaIds`) were deleted with the column, leaving
-// `dashboardAreaUuids` as the module's only export — and this is the file named for it.
+// `dashboardAreaUuids` reads the `doc` and nothing else. The cases below assert that NO second shape
+// is consulted when the guard fails — it resolves to an empty scope, not to a fallback document.
 
 describe("isDashboardV4", () => {
-  it("accepts a v4 doc, rejects v3 / malformed", () => {
+  it("accepts a v4 doc, rejects a wrong-version doc / malformed", () => {
     const doc: DashboardV4 = {
       version: 4,
       root: { kind: "group", children: [] },
@@ -54,9 +48,9 @@ describe("dashboardAreaUuids — the v4 envelope walk", () => {
 
   // 🛑 The most important test in this file, because BOTH failure modes here are silent.
   //
-  // (a) No second shape. A doc that fails the guard used to fall back to the v3 descriptor; now it
-  //     resolves to nothing. That is fail-closed — the dashboard authorizes no device rather than
-  //     authorizing whatever a stale, divergent descriptor happened to name.
+  // (a) No second shape. A doc that fails the guard resolves to nothing. That is fail-closed — the
+  //     dashboard authorizes no device rather than authorizing whatever a stale, divergent second
+  //     document happened to name.
   it("returns [] for anything that is not a valid v4 doc — no fallback shape is consulted", () => {
     const staleV3 = {
       version: 3,

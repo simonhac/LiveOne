@@ -1,5 +1,5 @@
 /**
- * The pure half of the `daily-stripe` card (config-v4 Phase 14 stage 19) — config resolution, the
+ * The pure half of the `daily-stripe` card — config resolution, the
  * fixed-offset local-day window, the OpenNEM → `Map<intervalEndMs, value>` parse, and the colour
  * domain.
  *

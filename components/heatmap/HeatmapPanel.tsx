@@ -29,7 +29,7 @@ import { resolveHeatmapPin } from "@/lib/dashboard/heatmap-card";
  *  - `pinnedSeries` / `pinnedPalette` override the local selection AND hide the matching `<Select>`;
  *    pin both for a chart-only view. A pinned series the device does NOT have is treated as stale
  *    rather than authoritative: the selector comes back, a note says so, and the unknown path is
- *    never fed to the chart (`resolveHeatmapPin`, config-v4 Phase 14 stage 20).
+ *    never fed to the chart (`resolveHeatmapPin`).
  *  - `initialSeries` / `initialPalette` seed the local selection ONCE on mount (matching the
  *    standalone page's read-the-URL-on-mount-only behaviour); `onSelectionChange` fires on USER
  *    changes only — never on the auto-select-first-point — so the page can persist to the URL

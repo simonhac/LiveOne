@@ -9,7 +9,7 @@
  * (already `ar_`, §8.1). Both are normalized to `ar_` before reaching the panel, so no raw uuid
  * reaches the `/api/v4/areas/*` wire.
  *
- * 🛑 The `device-` SENTINEL BRANCH IS GONE (config-v4 Phase 14 stage 9). Its only producer was
+ * 🛑 The `device-` SENTINEL BRANCH IS GONE. Its only producer was
  * `/device/{id}`, which synthesised `device-{id}` as a stand-in `section.areaId` when a device had no
  * Area; that page now renders a DEVICE-bound v4 document with no area envelope at all, so this card
  * sees `context.area === undefined` — the same "no area" outcome the sentinel branch produced, so

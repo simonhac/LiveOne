@@ -1,5 +1,5 @@
 /**
- * `mintPoint`'s derived-uid collision fallback (config-v4 Phase 14 stage 2b) — the LIVE INGEST PATH.
+ * `mintPoint`'s derived-uid collision fallback — the LIVE INGEST PATH.
  *
  * `points.id` is derived deterministically from (vendor_type, vendor_site_id, physical_path_tail) so a
  * re-onboarded physical point reproduces its uid. Two distinct devices sharing a vendor site id therefore

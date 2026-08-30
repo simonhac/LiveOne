@@ -24,17 +24,15 @@ interface DocSnapshot {
 /**
  * Add an Area to an EXISTING dashboard — the app's only dashboard-authoring surface.
  *
- * config-v4 Phase 14 stage 14: this writes the **v4 document**, not the v3 `descriptor`. It fetches
- * the Area's capability-derived default GROUP from the server (`GET /api/v4/areas/{ar_…}/default-group`
+ * It fetches the Area's capability-derived default GROUP from the server (`GET /api/v4/areas/{ar_…}/default-group`
  * — the same builder the "seed from area" create path persists, so a previewed seed is byte-identical
  * to a saved one), splices it into `doc.root.children`, and `PUT`s the whole document back with
  * `If-Match: "<revision>"` (clean-sheet §9.1). Add-only; remove/reorder is a later follow-up. The
  * picker excludes areas the document already references.
  *
- * 🛑 `If-Match` is not decoration. The whole-doc `PUT` is the document's ONLY author — stage 15
- * deleted the last alternative (`updateDashboard`'s descriptor path, which regenerated `doc` from
- * `descriptor` unconditionally) — so a lost update here silently discards structure with nothing
- * downstream to notice. On a **412** we re-read the current document and
+ * 🛑 `If-Match` is not decoration. The whole-doc `PUT` is the document's ONLY author, so a lost
+ * update here silently discards structure with nothing downstream to notice. On a **412** we re-read
+ * the current document and
  * re-splice onto THAT — never re-send the stale tree — and a second conflict is reported to the user
  * rather than swallowed.
  */
