@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { handleNoopPost, handleRunGet, handleRunPost } from "../control-api";
+import { handleProbePost, handleRunGet, handleRunPost } from "../control-api";
 import { RunSupervisor } from "../control";
 import { registry } from "../../state/registry";
 import type {
@@ -161,9 +161,9 @@ describe("control route handlers", () => {
     expect(body.maxRuntimeSec).toBe(3600);
   });
 
-  describe("noop probe", () => {
-    const noop = (headers: Record<string, string> = {}, body?: unknown) =>
-      handleNoopPost(
+  describe("probe", () => {
+    const probe = (headers: Record<string, string> = {}, body?: unknown) =>
+      handleProbePost(
         new Request("http://localhost/x", {
           method: "POST",
           headers,
@@ -173,35 +173,38 @@ describe("control route handlers", () => {
       );
 
     it("requires the passkey like every other control call", async () => {
-      expect((await noop()).status).toBe(401);
-      expect((await noop({}, { passkey: "wrong" })).status).toBe(401);
+      expect((await probe()).status).toBe(401);
+      expect((await probe({}, { passkey: "wrong" })).status).toBe(401);
     });
 
     it("accepts the passkey in a header (no body needed) and reports the verdict", async () => {
-      const res = await noop({ "x-usher-passkey": PASSKEY });
+      const res = await probe({ "x-usher-passkey": PASSKEY });
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         ok: boolean;
         wouldStart: boolean;
         verdict: string;
-        hypotheticalRuntimeSec: number;
-        preflight: { ownership: { modeName: string } };
+        modeName: string;
+        latched: boolean;
+        maxRuntimeSec: number;
       };
       expect(body.ok).toBe(true);
       expect(body.wouldStart).toBe(true);
-      expect(body.hypotheticalRuntimeSec).toBe(60);
-      expect(body.preflight.ownership.modeName).toBe("Auto");
-      expect(body.verdict).toContain("would START");
+      expect(body.verdict).toBe("Ready to start");
+      // One flat object: the controller read and the supervisor's own state, no nesting to graft.
+      expect(body.modeName).toBe("Auto");
+      expect(body.latched).toBe(false);
+      expect(body.maxRuntimeSec).toBe(3600);
     });
 
     it("leaves the supervisor completely untouched", async () => {
       const before = JSON.stringify(sup.status());
-      await noop({ "x-usher-passkey": PASSKEY }, { runtimeSec: 300 });
+      await probe({ "x-usher-passkey": PASSKEY });
       expect(JSON.stringify(sup.status())).toBe(before);
     });
 
     it("404s an unknown site, like the run route", async () => {
-      const res = await handleNoopPost(
+      const res = await handleProbePost(
         new Request("http://localhost/x", {
           method: "POST",
           headers: { "x-usher-passkey": PASSKEY },

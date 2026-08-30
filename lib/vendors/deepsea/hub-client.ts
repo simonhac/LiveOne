@@ -42,52 +42,56 @@ export interface HubRunResult {
 }
 
 /**
- * The hub's `noop` body — see `handleNoopPost` in packages/usher/core/control-api.ts, which
- * spreads the supervisor's own `noop()` result and appends `hypotheticalRuntimeSec` +
- * `controlStatus`. Kept structurally in step with that handler: this interface is the contract
- * between two deployables, so a field added there is only usable once it is added here.
+ * The hub's `probe` body — the mirror of `ControlProbeResult` in packages/usher/core/control.ts,
+ * which `handleProbePost` returns untouched. This interface is the contract between two
+ * deployables, so a field added there is only usable once it is added here.
+ *
+ * ONE FLAT OBJECT. It used to arrive as `preflight: {ownership, …}` beside `controlStatus: {…}`,
+ * which every consumer then had to graft together. The bands below carry what the nesting used to
+ * say for free — the first group is read fresh off the controller and is absent when the read
+ * failed; the second is the hub's own bookkeeping and survives an unreachable device.
  */
-export interface HubNoopResult {
+export interface HubProbeResult {
   /** False ⇒ the hub could not READ the controller; `verdict` explains. Never means "refused". */
   ok: boolean;
   /** The hub's own answer, from the same `gateStart()` a real request consults. */
   wouldStart?: boolean;
+  /**
+   * A sentence written to be read by a person. 🛑 Rendered VERBATIM, acceptance and refusal alike —
+   * this side of the wire knows why, and nothing here forms a second opinion or writes its own.
+   */
   verdict: string;
-  /** `verdict` unrendered — see `reasonMessage`. Only the already-latched verdict names an instant,
+  /** `verdict` unrendered — see `reasonMessage`. Only the already-running verdict names an instant,
    *  so this is absent for every other outcome and the flat `verdict` is the answer. */
   verdictMessage?: StructuredMessage;
-  /** Absent when `ok` is false — there was no successful read to report. */
-  preflight?: {
-    ownership: {
-      /** reg 772: 0 Stop, 1 Auto, 2 Manual…; null = read n/a */
-      mode: number | null;
-      modeName: string | null;
-      /** the SP-PRO's demand on configurable digital input A */
-      remoteStartInput: "closed" | "open" | "unknown";
-      running: boolean;
-    };
-    /** Which System Control Functions the module advertises (SCF map 4096–4103). */
-    scfSupported: {
-      selectAuto: boolean;
-      telemetryStart: boolean;
-      telemetryCancel: boolean;
-    };
-    scfMap: number[];
+
+  // ── the controller, read fresh over Modbus (FC3 only). Absent when `ok` is false. ──
+  /** reg 772: 0 Stop, 1 Auto, 2 Manual…; null = read n/a */
+  mode?: number | null;
+  modeName?: string | null;
+  /** the SP-PRO's demand on configurable digital input A */
+  remoteStartInput?: "closed" | "open" | "unknown";
+  running?: boolean;
+  /** Which System Control Functions the module advertises (SCF map 4096–4103). */
+  scfSupported?: {
+    selectAuto: boolean;
+    telemetryStart: boolean;
+    telemetryCancel: boolean;
   };
-  /** Echo of the runtime the verdict was computed FOR. */
-  hypotheticalRuntimeSec?: number;
-  /** The supervisor's live state — the authoritative deadline, and the only `maxRuntimeSec` that
-   *  is actually enforced (the point's `control` descriptor is a separate, independent bound). */
-  controlStatus?: {
-    latched: boolean;
-    state: string;
-    stopAt: string | null;
-    remainingSec: number | null;
-    requestedAt: string | null;
-    lastCommandAt: string | null;
-    lastError: string | null;
-    maxRuntimeSec: number;
-  };
+  scfMap?: number[];
+
+  // ── the supervisor's own state, in memory. Present even when the read failed. ──
+  latched: boolean;
+  state: string;
+  stopAt: string | null;
+  remainingSec: number | null;
+  requestedAt: string | null;
+  lastCommandAt: string | null;
+  lastError: string | null;
+  /** The authoritative deadline bound — the only `maxRuntimeSec` actually enforced (the point's
+   *  `control` descriptor is a separate, independent bound). A caller sizes its own offer against
+   *  this rather than proposing a length and asking the hub whether it fits. */
+  maxRuntimeSec: number;
 }
 
 function hubUrl(): string {
@@ -114,7 +118,7 @@ function accessHeaders(): Record<string, string> {
 async function call<T>(
   siteId: string,
   passkey: string,
-  path: "run" | "noop",
+  path: "run" | "probe",
   body: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<T> {
@@ -161,10 +165,10 @@ async function call<T>(
   }
 
   if (!res.ok) {
-    // `verdict` is in the chain because the noop path answers 503 with a sentence and no
-    // `reason`/`error` — "device unreachable: … — the hub could not read the controller, so a real
-    // run would refuse too". That sentence IS the useful answer, and losing it to a bare
-    // "HTTP 503" would turn a diagnosis into a shrug.
+    // `verdict` is in the chain because the probe path answers 503 with a sentence and no
+    // `reason`/`error` — "The hub could not read the controller: connect ETIMEDOUT … — a run would
+    // be refused too." That sentence IS the useful answer, and losing it to a bare "HTTP 503"
+    // would turn a diagnosis into a shrug.
     const reason =
       (parsed as { reason?: string; error?: string; verdict?: string })
         .reason ??
@@ -199,11 +203,17 @@ export function hubRun(
   return call<HubRunResult>(siteId, passkey, "run", { runtimeSec }, 20_000);
 }
 
-/** The safe probe: full chain, FC3 reads only, cannot move the engine. */
-export function hubNoop(
+/**
+ * The safe probe: full chain, FC3 reads only, cannot move the engine.
+ *
+ * 🛑 No runtime argument, deliberately. A probe asks about the MOMENT, and the only length-sensitive
+ * term in a start decision is the hub's cap — which comes back in the answer as `maxRuntimeSec`, so
+ * a caller sizes its own offer against that. This used to default to 60 s, which meant the hub
+ * evaluated and then named a 60-second run that existed nowhere but in this default.
+ */
+export function hubProbe(
   siteId: string,
   passkey: string,
-  runtimeSec = 60,
-): Promise<HubNoopResult> {
-  return call<HubNoopResult>(siteId, passkey, "noop", { runtimeSec }, 15_000);
+): Promise<HubProbeResult> {
+  return call<HubProbeResult>(siteId, passkey, "probe", {}, 15_000);
 }

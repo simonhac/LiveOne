@@ -67,7 +67,7 @@ export interface SourceControl {
   readOwnership(): Promise<ControlOwnership>;
   /**
    * READ-ONLY (FC3 only): everything a start decision consults — ownership + the SCF support map.
-   * Backs the `noop` command, which exercises the whole chain (Access → passkey → registry →
+   * Backs the `probe` command, which exercises the whole chain (Access → passkey → registry →
    * supervisor → mutex → Modbus over WireGuard → the DSE) while being structurally incapable of
    * moving the engine.
    */

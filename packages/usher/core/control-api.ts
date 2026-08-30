@@ -157,17 +157,22 @@ export async function handleRunPost(
 }
 
 /**
- * `noop` — the safe end-to-end probe. Same auth, same supervisor, same device mutex, same Modbus
+ * `probe` — the safe end-to-end read. Same auth, same supervisor, same device mutex, same Modbus
  * path as a real run; FC3 reads only. Use it to prove the chain works after a deploy, or before
  * committing to a run, without any possibility of moving the engine.
  *
- * Accepts an optional `runtimeSec` (default 60) purely to answer "would THAT run be accepted?".
+ * Takes no `runtimeSec`: a probe asks about the MOMENT, and the cap it would be measured against is
+ * in the answer as `maxRuntimeSec`. See `RunSupervisor.probe()`.
+ *
+ * The body IS the probe result — one flat object, passed through untouched. The HTTP status is the
+ * only thing derived here, and it is derived from `ok`, which is false for exactly one reason: the
+ * controller could not be read.
  */
-export async function handleNoopPost(
+export async function handleProbePost(
   req: Request,
   siteId: string,
 ): Promise<Response> {
-  let body: { passkey?: unknown; runtimeSec?: unknown } = {};
+  let body: { passkey?: unknown } = {};
   try {
     const text = await req.text();
     if (text) body = JSON.parse(text);
@@ -184,17 +189,8 @@ export async function handleNoopPost(
   );
   if ("response" in auth) return auth.response;
 
-  const runtimeSec = typeof body.runtimeSec === "number" ? body.runtimeSec : 60;
-  const result = await auth.supervisor.noop(runtimeSec);
-  const { status, status_: _drop, ...rest } = result;
-  return Response.json(
-    {
-      ...rest,
-      hypotheticalRuntimeSec: runtimeSec,
-      controlStatus: auth.supervisor.status(),
-    },
-    { status },
-  );
+  const result = await auth.supervisor.probe();
+  return Response.json(result, { status: result.ok ? 200 : 503 });
 }
 
 export async function handleRunGet(

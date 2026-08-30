@@ -186,6 +186,51 @@ export interface ControlStatus {
   maxRuntimeSec: number;
 }
 
+/**
+ * The `probe` answer: one flat object, because it is read as one fact.
+ *
+ * It used to arrive in two nests — `preflight: {ownership, scfSupported, scfMap}` beside
+ * `controlStatus: {...}` — which meant every consumer grafted one onto the other before it could
+ * use either. Flat costs one thing, and the bands below are how it is paid back: the optional `?`
+ * on a single `preflight` wrapper used to say "this half is a live device read, and it is absent
+ * when the read failed" in one character. Six optional fields say it more quietly, so the comment
+ * bands say it in words. Keep them.
+ */
+export interface ControlProbeResult {
+  /** False ⇒ the controller could not be READ; `verdict` explains. NEVER means "refused". */
+  ok: boolean;
+  /** Absent when `ok` is false — there was nothing to decide on. */
+  wouldStart?: boolean;
+  /** A sentence written to be read by a person. Rendered verbatim; nothing rewrites it. */
+  verdict: string;
+  /** `verdict`, unrendered, when it carries an instant. See message.ts. */
+  verdictMessage?: StructuredMessage;
+
+  // ── the controller, READ FRESH over Modbus (FC3 only). Absent when `ok` is false. ──
+  /** control/operating mode (reg 772): 0 Stop, 1 Auto, 2 Manual…; null = read n/a */
+  mode?: number | null;
+  modeName?: string | null;
+  /** the SP-PRO's remote-start command — configurable digital input A */
+  remoteStartInput?: "closed" | "open" | "unknown";
+  /** engine turning / producing */
+  running?: boolean;
+  /** which System Control Functions this module advertises (SCF map 4096–4103) */
+  scfSupported?: ControlPreflight["scfSupported"];
+  scfMap?: number[];
+
+  // ── the supervisor's OWN state, in memory. Present even when the read failed. ──
+  latched: boolean;
+  state: ControlState;
+  stopAt: string | null;
+  remainingSec: number | null;
+  requestedAt: string | null;
+  lastCommandAt: string | null;
+  lastError: string | null;
+  /** The cap actually ENFORCED on a run. A caller sizes its own offer against this rather than
+   *  proposing a length and asking whether it fits — see `RunSupervisor.probe()`. */
+  maxRuntimeSec: number;
+}
+
 /** Injectable clock: wall (ms epoch) + monotonic (ns). Tests drive both. */
 export interface ControlClock {
   now(): number;
@@ -297,7 +342,7 @@ export class RunSupervisor {
       return this.result({
         ok: false,
         status: 400,
-        reason: `runtimeSec ${runtimeSec} exceeds the configured maximum ${this.config.maxRuntimeSec}`,
+        reason: `a ${runtimeSec}s run is longer than this generator's ${this.config.maxRuntimeSec}s limit`,
       });
     }
 
@@ -320,7 +365,7 @@ export class RunSupervisor {
       return this.result({
         ok: false,
         status: 503,
-        reason: `pre-flight read failed: ${msg(e)} — refusing to command blind`,
+        reason: `the controller could not be read (${msg(e)}), so the hub refused to command it blind`,
       });
     }
 
@@ -429,69 +474,71 @@ export class RunSupervisor {
   }
 
   /**
-   * The `noop` command: exercise the ENTIRE chain — Access, passkey, registry lookup, supervisor,
-   * musher's device mutex, Modbus over WireGuard, the DSE itself — and report exactly what a real
-   * run would decide, WITHOUT writing anything.
+   * The `probe` command: exercise the ENTIRE chain — Access, passkey, registry lookup, supervisor,
+   * musher's device mutex, Modbus over WireGuard, the DSE itself — and report what a real run would
+   * decide, WITHOUT writing anything.
    *
    * It reaches the device only through `target.preflight()`, which is FC3-only; there is no code
    * path from here to `writeControlKey`. The verdict comes from the same `gateStart()` the real
    * request path uses, so this cannot drift into telling you a comforting lie.
+   *
+   * 🛑 It takes NO proposed runtime, and that is the point: a probe asks about the MOMENT. The only
+   * length-sensitive term in a start decision is the cap, and the cap is reported right here as
+   * `maxRuntimeSec` — so a caller compares against it rather than proposing a number and asking
+   * whether it fits. It used to default to 60 s, which meant every answer named a 60-second run
+   * nobody had asked about, and the browser then had to throw the sentence away and write its own.
    */
-  async noop(runtimeSec = 60): Promise<{
-    ok: boolean;
-    status: 200 | 503;
-    preflight?: ControlPreflight;
-    wouldStart?: boolean;
-    verdict: string;
-    /** `verdict`, unrendered, when it carries an instant. See message.ts. */
-    verdictMessage?: StructuredMessage;
-    status_?: ControlStatus;
-  }> {
+  async probe(): Promise<ControlProbeResult> {
+    // Read BEFORE the device round-trip so the two halves describe the same moment as closely as
+    // they can, and so the unreachable leg still carries it — our own latch is knowable even when
+    // the controller is not.
+    const supervisor = this.status();
+
     let pre: ControlPreflight;
     try {
       pre = await this.target.preflight();
     } catch (e) {
       return {
         ok: false,
-        status: 503,
-        verdict: `device unreachable: ${msg(e)} — the hub could not read the controller, so a real run would refuse too`,
+        verdict: `The hub could not read the controller: ${msg(e)} — a run would be refused too.`,
+        ...supervisor,
       };
     }
 
     const reasons: string[] = [];
-    if (runtimeSec > this.config.maxRuntimeSec) {
-      reasons.push(
-        `runtimeSec ${runtimeSec} exceeds the configured maximum ${this.config.maxRuntimeSec}`,
-      );
-    }
     const gate = gateStart(pre.ownership, false);
     if (gate) reasons.push(gate);
     if (!pre.scfSupported.telemetryStart)
       reasons.push("the module does not advertise Telemetry Start (fn 32)");
     if (!pre.scfSupported.telemetryCancel)
       reasons.push(
-        "the module does not advertise Cancel Telemetry Start (fn 33) — a run could not be stopped",
+        "the module does not advertise Cancel Telemetry Start (fn 33), so a run could not be stopped",
       );
 
     const wouldStart = reasons.length === 0 && !this.latched;
     return {
       ok: true,
-      status: 200,
-      preflight: pre,
       wouldStart,
+      // 🛑 Written to be READ, by a person, in a browser — these sentences are rendered verbatim and
+      // nothing downstream rewrites them. The acceptance names no run length because none was
+      // proposed (see above); the refusal is `gateStart()`'s clause framed for standing alone.
       verdict: this.latched
-        ? `a run is already latched (stop at ${this.stopAtIso()}); a request would EXTEND it`
+        ? `Already running until ${this.stopAtIso()} — starting again would extend the run.`
         : wouldStart
-          ? `a ${runtimeSec}s run would START now`
-          : `a run would be REFUSED: ${reasons.join("; ")}`,
-      // Only the latched verdict names an instant, so only it needs spelling by the reader.
+          ? "Ready to start"
+          : `A run would be refused: ${reasons.join("; ")}`,
+      // Only the already-running verdict names an instant, so only it needs spelling by the reader.
       verdictMessage: this.latched
         ? {
             template:
-              "a run is already latched (stop at {stopAt, time, short}); a request would EXTEND it",
+              "Already running until {stopAt, time, short} — starting again would extend the run.",
             values: { stopAt: this.stopAtIso() },
           }
         : undefined,
+      ...pre.ownership,
+      scfSupported: pre.scfSupported,
+      scfMap: pre.scfMap,
+      ...supervisor,
     };
   }
 
@@ -812,8 +859,18 @@ export class RunSupervisor {
 }
 
 /**
- * The start gate, shared by the real request path and `noop` so the two can never disagree.
+ * The start gate, shared by the real request path and `probe` so the two can never disagree.
  * Returns a refusal reason, or null when a start may proceed.
+ *
+ * 🛑 The reason is a CLAUSE: lower-case, no trailing full stop. It has two surfaces and neither may
+ * rewrite it — `probe()` frames it standing alone ("A run would be refused: …"), and the browser's
+ * activity log frames it as a clause after "but" ("You asked to run the generator for 30 min, but
+ * the module is not in Auto …"). A capitalised sentence reads wrong in the second; a bare fragment
+ * reads wrong in the first. This form reads right in both.
+ *
+ * For the same reason it carries no developer instruction. `overrideRemoteStart` is an ops escape
+ * hatch documented in the README — telling a user about a flag they cannot reach is noise in the
+ * one sentence they need.
  *
  * Panel lockout: mode ≠ Auto means someone may have deliberately taken the module out of service
  * (refuelling, hands in the engine bay). No override is offered — remote requests do not get to
@@ -825,14 +882,14 @@ export function gateStart(
   overrideRemoteStart: boolean,
 ): string | null {
   if (ownership.mode !== 1) {
-    return `module is not in Auto (mode=${ownership.modeName ?? ownership.mode ?? "unreadable"}) — possible local lockout; not overridable remotely`;
+    return `the module is not in Auto (mode=${ownership.modeName ?? ownership.mode ?? "unreadable"}) — a possible local lockout at the panel, and not overridable remotely`;
   }
   if (ownership.running && !overrideRemoteStart) {
     const who =
       ownership.remoteStartInput === "closed"
         ? "the SP-PRO (remote-start input closed)"
         : "an unknown source (remote-start input open — possibly its cool-down tail)";
-    return `engine is already running, commanded by ${who}. Pass overrideRemoteStart to layer our latch on top — note our stop can only release OUR latch, never theirs.`;
+    return `the engine is already running, commanded by ${who}`;
   }
   return null;
 }
