@@ -374,7 +374,15 @@ export function parse(
   spec: CommandSpec,
   argv: string[],
   tty: Tty,
+  /**
+   * Names of the commands ABOVE `spec`, root-first. Used only to build error messages that name a
+   * command the caller can actually run: the recursion descends into a subcommand's own spec, so
+   * without this a failure inside `liveone dashboard` recommended `dashboard --help` — a command
+   * that does not exist, since only the root has an entrypoint.
+   */
+  ancestors: string[] = [],
 ): ParseResult {
+  const invocation = [...ancestors, spec.name].join(" ");
   // Subcommand dispatch happens before anything else: `dashboard show --node x` is a request to
   // parse `show`, and the parent's flag table has nothing to say about --node. A sibling's flag
   // must not quietly succeed here.
@@ -389,7 +397,7 @@ export function parse(
         return fail(
           EXIT.USAGE,
           `unknown subcommand "${first}"`,
-          `${spec.name} has no subcommand "${first}"`,
+          `${invocation} has no subcommand "${first}"`,
           near
             ? `did you mean "${near}"? Subcommands: ${names.join(", ")}`
             : `subcommands: ${names.join(", ")}`,
@@ -397,7 +405,7 @@ export function parse(
       }
       // Inherit the parent's declared access unless the subcommand states its own.
       const effective = sub.uses ? sub : { ...sub, uses: spec.uses };
-      const r = parse(effective, argv.slice(1), tty);
+      const r = parse(effective, argv.slice(1), tty, [...ancestors, spec.name]);
       return r.ok ? { ...r, subcommandPath: [first, ...r.subcommandPath] } : r;
     }
 
@@ -417,8 +425,8 @@ export function parse(
     return fail(
       EXIT.USAGE,
       first === undefined ? "no subcommand given" : `"${first}"`,
-      `${spec.name} requires a subcommand`,
-      `subcommands: ${names.join(", ")} — run \`${spec.name} --help\` for what each does`,
+      `${invocation} requires a subcommand`,
+      `subcommands: ${names.join(", ")} — run \`${invocation} --help\` for what each does`,
     );
   }
 
@@ -482,9 +490,9 @@ export function parse(
       return fail(
         EXIT.USAGE,
         `unknown flag "${tok}"`,
-        `${spec.name} does not accept ${tok}`,
+        `${invocation} does not accept ${tok}`,
         near
-          ? `did you mean ${near}? Run \`${spec.name} --help\` for all flags.`
+          ? `did you mean ${near}? Run \`${invocation} --help\` for all flags.`
           : `valid flags: ${knownCli.sort().join(", ")}`,
       );
     }
@@ -625,7 +633,7 @@ export function parse(
         EXIT.USAGE,
         `missing <${a.name}>`,
         `${a.name} is required`,
-        `run \`${spec.name} --help\` for the argument order`,
+        `run \`${invocation} --help\` for the argument order`,
       );
   }
   const last = argSpecs[argSpecs.length - 1];
@@ -633,8 +641,8 @@ export function parse(
     return fail(
       EXIT.USAGE,
       `unexpected argument "${positional[argSpecs.length]}"`,
-      `${spec.name} takes ${argSpecs.length} positional argument(s)`,
-      `quote the whole value if it contains spaces, or run \`${spec.name} --help\``,
+      `${invocation} takes ${argSpecs.length} positional argument(s)`,
+      `quote the whole value if it contains spaces, or run \`${invocation} --help\``,
     );
 
   // Format precedence: --format, then the --json alias, then LIVEONE_FORMAT, then TTY detection.
@@ -674,7 +682,7 @@ export function parse(
       return fail(
         EXIT.USAGE,
         "--apply without --yes",
-        `${spec.name} will not write without confirmation, and stdin is not a terminal so it cannot ask`,
+        `${invocation} will not write without confirmation, and stdin is not a terminal so it cannot ask`,
         `pass --yes to confirm non-interactively, or drop --apply to preview the change`,
       );
   }

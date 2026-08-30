@@ -27,14 +27,15 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## `scripts/ops`
 
 - [liveone](../scripts/ops/CLI_README.md#liveone) — The LiveOne operator CLI.
-  - [liveone dashboard list](../scripts/ops/CLI_README.md#liveone-dashboard-list) — List dashboards: id, owner, name, slug, revision and card count.
-  - [liveone dashboard show](../scripts/ops/CLI_README.md#liveone-dashboard-show) — Render a dashboard's node tree, with the n_… ids edits address.
-  - [liveone dashboard validate](../scripts/ops/CLI_README.md#liveone-dashboard-validate) — Validate a stored dashboard doc, or a doc in a JSON file.
-  - [liveone dashboard rename](../scripts/ops/CLI_README.md#liveone-dashboard-rename) — Change a dashboard's name and/or slug. Metadata only — the doc is untouched.  _(writes)_
-  - [liveone dashboard add-card](../scripts/ops/CLI_README.md#liveone-dashboard-add-card) — Insert a card node.  _(writes)_
-  - [liveone dashboard add-group](../scripts/ops/CLI_README.md#liveone-dashboard-add-group) — Insert an empty group node.  _(writes)_
-  - [liveone dashboard remove-node](../scripts/ops/CLI_README.md#liveone-dashboard-remove-node) — Remove a node and its whole subtree.  _(writes)_
-  - [liveone dashboard move-node](../scripts/ops/CLI_README.md#liveone-dashboard-move-node) — Move a node, subtree intact and ids preserved.  _(writes)_
-  - [liveone dashboard set-prop](../scripts/ops/CLI_README.md#liveone-dashboard-set-prop) — Set or clear a node's envelope props, and a card's type/config.  _(writes)_
-- [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.
+  - [liveone dashboard](../scripts/ops/CLI_README.md#liveone-dashboard) — Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+    - [liveone dashboard list](../scripts/ops/CLI_README.md#liveone-dashboard-list) — List dashboards: id, owner, name, slug, revision and card count.
+    - [liveone dashboard show](../scripts/ops/CLI_README.md#liveone-dashboard-show) — Render a dashboard's node tree, with the n_… ids edits address.
+    - [liveone dashboard validate](../scripts/ops/CLI_README.md#liveone-dashboard-validate) — Validate a stored dashboard doc, or a doc in a JSON file.
+    - [liveone dashboard rename](../scripts/ops/CLI_README.md#liveone-dashboard-rename) — Change a dashboard's name and/or slug. Metadata only — the doc is untouched.  _(writes)_
+    - [liveone dashboard add-card](../scripts/ops/CLI_README.md#liveone-dashboard-add-card) — Insert a card node.  _(writes)_
+    - [liveone dashboard add-group](../scripts/ops/CLI_README.md#liveone-dashboard-add-group) — Insert an empty group node.  _(writes)_
+    - [liveone dashboard remove-node](../scripts/ops/CLI_README.md#liveone-dashboard-remove-node) — Remove a node and its whole subtree.  _(writes)_
+    - [liveone dashboard move-node](../scripts/ops/CLI_README.md#liveone-dashboard-move-node) — Move a node, subtree intact and ids preserved.  _(writes)_
+    - [liveone dashboard set-prop](../scripts/ops/CLI_README.md#liveone-dashboard-set-prop) — Set or clear a node's envelope props, and a card's type/config.  _(writes)_
+- [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.

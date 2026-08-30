@@ -615,7 +615,7 @@ export const dashboardCommand = defineCommand({
       },
       examples: [
         "liveone dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a",
-        'dashboard add-card 6 --type=chart --config-json=\'{"variant":"lines"}\' --apply',
+        'liveone dashboard add-card 6 --type=chart --config-json=\'{"variant":"lines"}\' --apply',
       ],
     },
 

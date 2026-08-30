@@ -30,7 +30,7 @@ export async function connect(): Promise<Client> {
     const prodToken = process.env.PLANETSCALE_PROD_BRANCH_ID;
     if (dev && prodToken && dev.includes(prodToken)) {
       throw new Error(
-        "dashboard:dev refuses to run: PLANETSCALE_DATABASE_URL carries the prod branch id",
+        "liveone:dev refuses to run: PLANETSCALE_DATABASE_URL carries the prod branch id",
       );
     }
     raw = dev;

@@ -24,7 +24,17 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## Contents
 
 - [liveone](#liveone)
-- [cli-reference](#cli-reference)
+  - [liveone dashboard](#liveone-dashboard)
+    - [liveone dashboard list](#liveone-dashboard-list)
+    - [liveone dashboard show](#liveone-dashboard-show)
+    - [liveone dashboard validate](#liveone-dashboard-validate)
+    - [liveone dashboard rename](#liveone-dashboard-rename)  _(writes)_
+    - [liveone dashboard add-card](#liveone-dashboard-add-card)  _(writes)_
+    - [liveone dashboard add-group](#liveone-dashboard-add-group)  _(writes)_
+    - [liveone dashboard remove-node](#liveone-dashboard-remove-node)  _(writes)_
+    - [liveone dashboard move-node](#liveone-dashboard-move-node)  _(writes)_
+    - [liveone dashboard set-prop](#liveone-dashboard-set-prop)  _(writes)_
+- [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
 
 ## liveone
@@ -75,7 +85,78 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard list
+### liveone dashboard
+
+Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+
+```
+Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+
+When to use:
+  Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and
+  which area or device each is bound to — directly in the database. For a card-type rename
+  across every stored document use `scripts/utils/migrate-card-type.ts` instead; for the
+  areas and devices a dashboard refers to, edit those through the app.
+
+The connection comes from MIGRATE_DATABASE_URL and nothing else — deliberately NOT the
+ambient PLANETSCALE_DATABASE_URL, because the durable target is PROD and 'which database am
+I pointed at' must never be answered by whatever happens to be in .env.local. Every command
+prints `target: database as user @ host` on stderr before doing anything: READ THAT LINE
+before you pass --apply. There is deliberately no 'am I on prod' auto-detection — a freshly
+minted `pscale role` connects as pscale_api_… and carries no branch id, so the usual check
+would report a confident 'not prod' for the exact connection this tool normally targets. A
+false reassurance is worse than none; the printed identity is the check.
+
+🛑 Durable edits go to PROD. `dashboards` is a config table the 2-hourly prod→dev sync
+refreshes, so a dev-only edit is reverted within the hour. Rehearse against dev freely.
+🛑 n_… node ids are minted per-document per-ENVIRONMENT, so prod and dev drift. Making the
+same edit in both means re-running `show` in each — never reuse an id across environments.
+
+Usage:
+  liveone dashboard <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   List dashboards: id, owner, name, slug, revision and card count.
+  show                   Render a dashboard's node tree, with the n_… ids edits address.
+  validate               Validate a stored dashboard doc, or a doc in a JSON file.
+  rename                 Change a dashboard's name and/or slug. Metadata only — the doc is untouched.  (writes)
+  add-card               Insert a card node.  (writes)
+  add-group              Insert an empty group node.  (writes)
+  remove-node            Remove a node and its whole subtree.  (writes)
+  move-node              Move a node, subtree intact and ids preserved.  (writes)
+  set-prop               Set or clear a node's envelope props, and a card's type/config.  (writes)
+
+Run `liveone dashboard <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard list
+
+List dashboards: id, owner, name, slug, revision and card count.
 
 ```
 List dashboards: id, owner, name, slug, revision and card count.
@@ -84,7 +165,7 @@ When to use:
   Start here when you do not yet know a dashboard's id.
 
 Usage:
-  liveone list [options]
+  liveone dashboard list [options]
 
   Read-only. This command changes nothing.
 
@@ -119,7 +200,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard show
+#### liveone dashboard show
+
+Render a dashboard's node tree, with the n_… ids edits address.
 
 ```
 Render a dashboard's node tree, with the n_… ids edits address.
@@ -133,7 +216,7 @@ Always renders the NORMALIZED document, so the ids shown are the ids a write wou
 persist. --format json emits the same normalized doc (or one subtree with --node).
 
 Usage:
-  liveone show <dash> [options]
+  liveone dashboard show <dash> [options]
 
   Read-only. This command changes nothing.
 
@@ -171,7 +254,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard validate
+#### liveone dashboard validate
+
+Validate a stored dashboard doc, or a doc in a JSON file.
 
 ```
 Validate a stored dashboard doc, or a doc in a JSON file.
@@ -181,7 +266,7 @@ When to use:
   to write from a file.
 
 Usage:
-  liveone validate [dash] [options]
+  liveone dashboard validate [dash] [options]
 
   Read-only. This command changes nothing.
 
@@ -219,7 +304,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard rename
+#### liveone dashboard rename
+
+Change a dashboard's name and/or slug. Metadata only — the doc is untouched.
 
 ```
 Change a dashboard's name and/or slug. Metadata only — the doc is untouched.
@@ -228,7 +315,7 @@ When to use:
   Use this for the dashboard's own name or its /dashboard/{user}/{slug} shortname.
 
 Usage:
-  liveone rename <dash> [options]
+  liveone dashboard rename <dash> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
@@ -270,7 +357,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard add-card
+#### liveone dashboard add-card
+
+Insert a card node.
 
 ```
 Insert a card node.
@@ -279,7 +368,7 @@ When to use:
   Use this to put a new card on a dashboard; `add-group` makes a container instead.
 
 Usage:
-  liveone add-card <dash> [options]
+  liveone dashboard add-card <dash> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
@@ -321,7 +410,7 @@ External access:
 
 Examples:
   liveone dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a
-  dashboard add-card 6 --type=chart --config-json='{"variant":"lines"}' --apply
+  liveone dashboard add-card 6 --type=chart --config-json='{"variant":"lines"}' --apply
 
 Exit codes:
   0    success
@@ -331,7 +420,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard add-group
+#### liveone dashboard add-group
+
+Insert an empty group node.
 
 ```
 Insert an empty group node.
@@ -341,7 +432,7 @@ When to use:
   heading is what used to be called a section; a row group is what used to be a tiles card.
 
 Usage:
-  liveone add-group <dash> [options]
+  liveone dashboard add-group <dash> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
@@ -392,7 +483,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard remove-node
+#### liveone dashboard remove-node
+
+Remove a node and its whole subtree.
 
 ```
 Remove a node and its whole subtree.
@@ -401,7 +494,7 @@ When to use:
   Removes the node AND everything under it — check `show` first if it is a group.
 
 Usage:
-  liveone remove-node <dash> <node> [options]
+  liveone dashboard remove-node <dash> <node> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
@@ -440,7 +533,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard move-node
+#### liveone dashboard move-node
+
+Move a node, subtree intact and ids preserved.
 
 ```
 Move a node, subtree intact and ids preserved.
@@ -450,7 +545,7 @@ When to use:
   address the node by the id `show` printed before it.
 
 Usage:
-  liveone move-node <dash> <node> [options]
+  liveone dashboard move-node <dash> <node> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
@@ -495,7 +590,9 @@ Exit codes:
   130  interrupted
 ```
 
-### liveone dashboard set-prop
+#### liveone dashboard set-prop
+
+Set or clear a node's envelope props, and a card's type/config.
 
 ```
 Set or clear a node's envelope props, and a card's type/config.
@@ -505,7 +602,7 @@ When to use:
   hide it, or replace a card's config. Pass `none` to any property to DELETE that key.
 
 Usage:
-  liveone set-prop <dash> <node> [options]
+  liveone dashboard set-prop <dash> <node> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
