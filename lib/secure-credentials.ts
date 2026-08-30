@@ -7,6 +7,16 @@
  * - Only accessible server-side
  * - Encrypted at rest
  * - Never exposed to the frontend
+ *
+ * 🛑 WRITE WITH `updateUserMetadata`, NEVER `updateUser`. They hit different Clerk endpoints:
+ * `updateUserMetadata` is PATCH /users/{id}/metadata, which MERGES top-level keys, while
+ * `updateUser` is PATCH /users/{id}, which REPLACES `privateMetadata` wholesale. This module builds
+ * `{version, credentials}` from scratch, so writing it with `updateUser` silently deleted every
+ * OTHER top-level key — in particular `cliTokens` (lib/cli-auth/store.ts), whose records are the
+ * operator CLI's credential. A Tesla/Enphase token refresh would therefore log the CLI out a few
+ * times a day, reported as "expired" because the presented token no longer matched any record.
+ * Verified against a live Clerk instance: after `updateUser({privateMetadata:{version,credentials}})`
+ * the stored keys are exactly `[version, credentials]` and `cliTokens` is gone.
  */
 
 import { clerkClient } from "@clerk/nextjs/server";
@@ -81,7 +91,7 @@ export async function storeDeviceCredentials(
       credentials: [...filteredCredentials, credentialsWithMetadata],
     };
 
-    await client.users.updateUser(userId, {
+    await client.users.updateUserMetadata(userId, {
       privateMetadata: updatedMetadata as unknown as Record<string, unknown>,
     });
 
@@ -166,7 +176,7 @@ export async function removeDeviceCredentials(
       credentials: filteredCredentials,
     };
 
-    await client.users.updateUser(userId, {
+    await client.users.updateUserMetadata(userId, {
       privateMetadata: updatedMetadata as unknown as Record<string, unknown>,
     });
 
