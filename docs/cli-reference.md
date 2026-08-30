@@ -27,6 +27,12 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## `scripts/ops`
 
 - [liveone](../scripts/ops/CLI_README.md#liveone) — The LiveOne operator CLI.
+  - [liveone auth](../scripts/ops/CLI_README.md#liveone-auth) — Sign the CLI in as you, and manage its tokens.
+    - [liveone auth login](../scripts/ops/CLI_README.md#liveone-auth-login) — Sign in via the browser and store a token for one origin.
+    - [liveone auth whoami](../scripts/ops/CLI_README.md#liveone-auth-whoami) — Who and where the stored token makes you — the target line, on demand.
+    - [liveone auth list](../scripts/ops/CLI_README.md#liveone-auth-list) — The live tokens on your account (server-side), plus this machine's logins.
+    - [liveone auth revoke](../scripts/ops/CLI_README.md#liveone-auth-revoke) — Revoke one token by id, or all of them.
+    - [liveone auth logout](../scripts/ops/CLI_README.md#liveone-auth-logout) — Revoke this origin's token server-side and forget it locally.
   - [liveone dashboard](../scripts/ops/CLI_README.md#liveone-dashboard) — Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
     - [liveone dashboard list](../scripts/ops/CLI_README.md#liveone-dashboard-list) — List dashboards: id, owner, name, slug, revision and card count.
     - [liveone dashboard show](../scripts/ops/CLI_README.md#liveone-dashboard-show) — Render a dashboard's node tree, with the n_… ids edits address.

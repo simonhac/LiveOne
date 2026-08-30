@@ -21,6 +21,7 @@
  */
 import { defineCommand, run, failWith, EXIT, type Ctx } from "@/lib/cli/cli";
 import { dashboardCommand, runDashboard } from "./dashboard/cli";
+import { authCommand, runAuth } from "./auth/cli";
 
 export const cmd = defineCommand({
   name: "liveone",
@@ -33,6 +34,7 @@ export const cmd = defineCommand({
     "Connection and credentials are per-domain; each domain's --help states what it reaches and\n" +
     "what a failure means. Mutating commands change nothing without --apply.",
   subcommands: {
+    auth: authCommand,
     dashboard: dashboardCommand,
   },
 });
@@ -42,6 +44,7 @@ export const cmd = defineCommand({
  * itself, so adding one is a line here plus a module, with no dispatch logic to keep in step.
  */
 const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
+  auth: runAuth,
   dashboard: runDashboard,
 };
 

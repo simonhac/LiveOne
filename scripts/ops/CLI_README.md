@@ -24,6 +24,12 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## Contents
 
 - [liveone](#liveone)
+  - [liveone auth](#liveone-auth)
+    - [liveone auth login](#liveone-auth-login)
+    - [liveone auth whoami](#liveone-auth-whoami)
+    - [liveone auth list](#liveone-auth-list)
+    - [liveone auth revoke](#liveone-auth-revoke)
+    - [liveone auth logout](#liveone-auth-logout)
   - [liveone dashboard](#liveone-dashboard)
     - [liveone dashboard list](#liveone-dashboard-list)
     - [liveone dashboard show](#liveone-dashboard-show)
@@ -61,6 +67,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Subcommands:
+  auth                   Sign the CLI in as you, and manage its tokens.
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
@@ -83,6 +90,301 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  130  interrupted
+```
+
+### liveone auth
+
+Sign the CLI in as you, and manage its tokens.
+
+```
+Sign the CLI in as you, and manage its tokens.
+
+When to use:
+  Run `auth login` once per machine per environment before using any domain over the API.
+  Everything here manages the lo_cli_ credential; the dashboard domain USES it.
+
+Tokens are stored per-origin in ~/.config/liveone/cli-auth.json (mode 600) — prod, preview
+and localhost logins coexist, and a command only ever uses the token for the origin it calls.
+The login itself happens in your browser, where you are already signed in; the CLI never sees
+your password, and the code shown there is useless without the verifier this process keeps.
+
+Usage:
+  liveone auth <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  login                  Sign in via the browser and store a token for one origin.
+  whoami                 Who and where the stored token makes you — the target line, on demand.
+  list                   The live tokens on your account (server-side), plus this machine's logins.
+  revoke                 Revoke one token by id, or all of them.
+  logout                 Revoke this origin's token server-side and forget it locally.
+
+Run `liveone auth <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone auth login
+
+Sign in via the browser and store a token for one origin.
+
+```
+Sign in via the browser and store a token for one origin.
+
+When to use:
+  The first command to run on a new machine, and the fix for any exit-3 'not logged in'.
+  Use --base-url to log in to dev/preview alongside prod.
+
+Usage:
+  liveone auth login [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --label <text>             How this machine appears in `auth list` (default: hostname)
+  --ttl <days>               Requested token lifetime (server currently mints 90d; accepted for forward-compat)  (1–365 days)
+  --no-browser               Print the URL and paste the code by hand (SSH / non-mac)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone auth login
+  liveone auth login --base-url=http://localhost:3001 --label=dev-laptop
+  liveone auth login --no-browser
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone auth whoami
+
+Who and where the stored token makes you — the target line, on demand.
+
+```
+Who and where the stored token makes you — the target line, on demand.
+
+When to use:
+  Run this when unsure which deployment or database a command would hit; it names the
+  origin, the user, the Clerk instance and the DB host in one line.
+
+Usage:
+  liveone auth whoami [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone auth whoami
+  liveone auth whoami --base-url=http://localhost:3001
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone auth list
+
+The live tokens on your account (server-side), plus this machine's logins.
+
+```
+The live tokens on your account (server-side), plus this machine's logins.
+
+When to use:
+  Answers 'what can currently access my account'. --all includes dead records.
+
+Usage:
+  liveone auth list [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --all                      Include revoked/expired records not yet swept
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone auth list
+  liveone auth list --all
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone auth revoke
+
+Revoke one token by id, or all of them.
+
+```
+Revoke one token by id, or all of them.
+
+When to use:
+  Lost a machine, or `list` shows something unexpected. Revocation takes effect on the
+  next request. Revoking the token you are using also forgets it locally.
+
+Usage:
+  liveone auth revoke [tokenId] [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  [tokenId]              A token id from `auth list` (omit when using --all)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --all                      Revoke every live token on the account
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone auth revoke cli_Rf-c6ac5
+  liveone auth revoke --all
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone auth logout
+
+Revoke this origin's token server-side and forget it locally.
+
+```
+Revoke this origin's token server-side and forget it locally.
+
+When to use:
+  Leaving a machine or handing it over. Best-effort server revoke, then local removal.
+
+Usage:
+  liveone auth logout [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone auth logout
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
   130  interrupted
 ```
 
