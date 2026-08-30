@@ -39,6 +39,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard show](../scripts/ops/CLI_README.md#liveone-dashboard-show) — Render a dashboard's node tree, with the n_… ids edits address.
     - [liveone dashboard validate](../scripts/ops/CLI_README.md#liveone-dashboard-validate) — Validate a stored dashboard doc, or a doc in a JSON file.
     - [liveone dashboard rename](../scripts/ops/CLI_README.md#liveone-dashboard-rename) — Change a dashboard's name and/or slug. Metadata only — the doc is untouched.  _(writes)_
+    - [liveone dashboard duplicate](../scripts/ops/CLI_README.md#liveone-dashboard-duplicate) — Copy a dashboard to a NEW one — same cards, fresh node ids.  _(writes)_
     - [liveone dashboard add-card](../scripts/ops/CLI_README.md#liveone-dashboard-add-card) — Insert a card node.  _(writes)_
     - [liveone dashboard add-group](../scripts/ops/CLI_README.md#liveone-dashboard-add-group) — Insert an empty group node.  _(writes)_
     - [liveone dashboard remove-node](../scripts/ops/CLI_README.md#liveone-dashboard-remove-node) — Remove a node and its whole subtree.  _(writes)_
@@ -50,7 +51,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard backfill-history](../scripts/ops/CLI_README.md#liveone-dashboard-backfill-history) — Seed a history row for every dashboard whose current revision has none.  _(writes)_
   - [liveone device](../scripts/ops/CLI_README.md#liveone-device) — Inspect devices — config, metadata, points, latest values, history.
     - [liveone device list](../scripts/ops/CLI_README.md#liveone-device-list) — List the devices you can read: id, handle, vendor, status, name.
-    - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, points.
+    - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, capabilities, points.
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
     - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
@@ -63,5 +64,6 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone user](../scripts/ops/CLI_README.md#liveone-user) — The user directory — who exists, what they own. Admin-only.
     - [liveone user list](../scripts/ops/CLI_README.md#liveone-user-list) — List users: Clerk id, email, devices owned.
     - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.
+  - [liveone api](../scripts/ops/CLI_README.md#liveone-api) — One authenticated request to the deployed API, as you.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.

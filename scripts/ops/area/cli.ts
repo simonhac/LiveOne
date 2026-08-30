@@ -115,6 +115,12 @@ export const areaCommand = defineCommand({
       when:
         "Use this to pull an area's measured series over a window. The human rendering is a\n" +
         "per-series summary; the full payload goes to --out (or --format json).",
+      description:
+        "--start/--end are whole LOCAL days (the area's fixed day offset — the same boundaries\n" +
+        "the daily aggregates roll up on). One request regardless of span; bound long sub-daily\n" +
+        "pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n" +
+        "--out writes the RAW body; each series carries\n" +
+        "history.{firstInterval,lastInterval,interval,numIntervals,data}.",
       args: [AREA_ARG],
       flags: { ...BASE_URL_FLAG, ...HISTORY_FLAGS },
       exitCodes: { 1: "the window returned no series" },

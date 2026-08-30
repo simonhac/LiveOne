@@ -7,6 +7,7 @@ import {
   points as pointsTable,
 } from "@/lib/db/planetscale/schema";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { Area, Device, Point } from "@/lib/ids";
 
 /**
@@ -24,6 +25,10 @@ import { Area, Device, Point } from "@/lib/ids";
  *
  * `config` and `adapterState` are the jsonb columns AS-IS. Neither holds credentials — vendor creds
  * live in Clerk privateMetadata, not `devices.config` — which is what makes a plain pass-through safe.
+ *
+ * `?include=capabilities` adds the DERIVED capability list (`capabilitiesForDevice` — the same walk
+ * the area aggregate runs per member). Opt-in because each entry costs a point scan + compound
+ * predicates; the area aggregate remains the authoritative place to read capabilities in context.
  *
  * The `points` leg reads the `points` table directly rather than going through
  * `PointManager.getActivePointsForDevice`: the manager serves `PointInfo`, a wire shape that predates
@@ -84,6 +89,10 @@ export async function GET(
       }))
     : undefined;
 
+  const capabilities = include.includes("capabilities")
+    ? [...(await capabilitiesForDevice(row.rid))].sort()
+    : undefined;
+
   return NextResponse.json({
     id: Device.encode(row.id),
     legacySystemId: row.rid,
@@ -101,6 +110,7 @@ export async function GET(
     updatedAt: row.updatedAt.toISOString(),
     config: row.config ?? null,
     adapterState: row.adapterState ?? null,
+    ...(capabilities ? { capabilities } : {}),
     ...(points ? { points } : {}),
   });
 }
