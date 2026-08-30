@@ -35,6 +35,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard add-card](../scripts/ops/CLI_README.md#liveone-dashboard-add-card) — Insert a card node.  _(writes)_
     - [liveone dashboard add-group](../scripts/ops/CLI_README.md#liveone-dashboard-add-group) — Insert an empty group node.  _(writes)_
     - [liveone dashboard remove-node](../scripts/ops/CLI_README.md#liveone-dashboard-remove-node) — Remove a node and its whole subtree.  _(writes)_
+    - [liveone dashboard remint-ids](../scripts/ops/CLI_README.md#liveone-dashboard-remint-ids) — Re-mint every node id in a document (one-time migration).  _(writes)_
     - [liveone dashboard move-node](../scripts/ops/CLI_README.md#liveone-dashboard-move-node) — Move a node, subtree intact and ids preserved.  _(writes)_
     - [liveone dashboard set-prop](../scripts/ops/CLI_README.md#liveone-dashboard-set-prop) — Set or clear a node's envelope props, and a card's type/config.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_

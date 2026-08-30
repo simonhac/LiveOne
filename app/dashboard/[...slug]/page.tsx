@@ -1,11 +1,10 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { redirect, permanentRedirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import {
   getDashboard,
   getDashboardByOwnerAlias,
-  getDashboardIdByLegacyId,
   listAccessibleDashboards,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
@@ -331,13 +330,9 @@ export default async function DashboardPage({
         ? slug[2]
         : null;
   if (compositionId) {
-    // config-v4: the legacy `/dashboard/id/{n}` (int) form redirects permanently to the opaque-id form
-    // via dashboards.legacy_id → id; the primary address is the opaque `db_…` id (the DAO owns id↔uuid).
-    if (/^\d+$/.test(compositionId)) {
-      const dbId = await getDashboardIdByLegacyId(parseInt(compositionId, 10));
-      if (!dbId) redirect("/dashboard");
-      permanentRedirect(`/dashboard/id/${dbId}`);
-    }
+    // 🪦 The legacy `/dashboard/id/{n}` (int) form is GONE, along with `dashboards.legacy_id` that
+    // backed its 301. The opaque `db_…` id has been the primary address since the config-v4 cutover;
+    // an int now simply doesn't resolve and falls through to /dashboard.
     const dashboard = await timer.time("dashboard", () =>
       getDashboard(compositionId),
     );

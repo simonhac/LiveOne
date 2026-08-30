@@ -165,25 +165,54 @@ describe("validateDocV4 — depth cap", () => {
 
 describe("normalizeDocV4", () => {
   it("is idempotent and preserves existing ids", () => {
+    // Under the random minter this is a REAL regeneration alarm: if normalize re-minted anything,
+    // the second pass could not reproduce the first pass's ids (it could under the old counter).
     const once = normalizeDocV4(validDoc());
     const twice = normalizeDocV4(once);
     expect(twice).toEqual(once);
   });
 
-  it("mints ids that skip ids already present (no collision)", () => {
+  it("never touches a fully-idded doc", () => {
+    const doc = normalizeDocV4(validDoc()); // every node now carries an id
+    expect(normalizeDocV4(doc)).toEqual(doc);
+  });
+
+  it("mints n_XXXX (Crockford base32) and skips ids already present", () => {
+    // Force the first candidate to collide with a supplied id: the retry loop must skip it.
+    const candidates = ["n_TAKE", "n_TAKE", "n_FRE5"];
     const doc: DashboardV4 = {
       version: 4,
       root: {
-        id: "n_0", // deliberately collides with the mint counter's first candidate
+        id: "n_TAKE", // deliberately collides with the injected minter's first candidates
         kind: "group",
         children: [{ kind: "card", type: "solar" }],
       },
     };
-    const out = normalizeDocV4(doc);
+    const out = normalizeDocV4(doc, () => candidates.shift()!);
+    expect(out.root.id).toBe("n_TAKE"); // preserved
+    expect((out.root.children[0] as { id?: string }).id).toBe("n_FRE5"); // retried past the collision
+
+    // And the production minter's format: 4 chars, no I/L/O/U.
+    const minted = normalizeDocV4(validDoc());
+    walkNodes(minted, (n) => {
+      expect(n.id).toMatch(/^n_[0-9A-HJKMNP-TV-Z]{4}$/);
+    });
+  });
+
+  it("mints distinct ids at volume (retry loop under the real RNG)", () => {
+    const doc: DashboardV4 = {
+      version: 4,
+      root: {
+        kind: "group",
+        children: Array.from({ length: 1000 }, () => ({
+          kind: "card" as const,
+          type: "solar",
+        })),
+      },
+    };
     const ids = new Set<string>();
-    walkNodes(out, (n) => ids.add(n.id!));
-    expect(out.root.id).toBe("n_0"); // preserved
-    expect(ids.size).toBe(2); // no collision → both nodes distinct
+    walkNodes(normalizeDocV4(doc), (n) => ids.add(n.id!));
+    expect(ids.size).toBe(1001); // root + 1000 cards, all distinct
   });
 });
 

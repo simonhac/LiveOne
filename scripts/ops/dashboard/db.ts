@@ -71,7 +71,6 @@ export async function printTarget(client: Client, mode: string): Promise<void> {
 
 export interface DashRow {
   id: string; // raw uuid (stays inside the script; display via Dashboard.encode)
-  legacyId: number | null;
   ownerUserId: string;
   name: string | null;
   slug: string | null;
@@ -80,13 +79,11 @@ export interface DashRow {
   updatedAt: Date;
 }
 
-const ROW_COLUMNS =
-  "id, legacy_id, owner_user_id, name, slug, revision, doc, updated_at";
+const ROW_COLUMNS = "id, owner_user_id, name, slug, revision, doc, updated_at";
 
 function toRow(r: Record<string, unknown>): DashRow {
   return {
     id: r.id as string,
-    legacyId: r.legacy_id as number | null,
     ownerUserId: r.owner_user_id as string,
     name: r.name as string | null,
     slug: r.slug as string | null,
@@ -117,8 +114,12 @@ export function dashLabel(row: DashRow): string {
 }
 
 /**
- * Resolve `<dash>` — a `db_…` TypeID, a bare integer (`legacy_id`), or a slug. A slug that matches
- * more than one owner's dashboard is ambiguous → usage error listing the candidates.
+ * Resolve `<dash>` — a `db_…` TypeID or a slug. A slug that matches more than one owner's dashboard
+ * is ambiguous → usage error listing the candidates.
+ *
+ * 🪦 The bare-integer form (`legacy_id`) is GONE with the column. An all-digit ref is now only ever
+ * a slug — `isValidAlias` permits all-digit slugs (e.g. "2025") — so it no longer needs the
+ * legacy-id-then-slug fallback that used to sit here.
  */
 export async function resolveDashboard(
   client: Client,
@@ -133,35 +134,23 @@ export async function resolveDashboard(
         EXIT.USAGE,
         `"${ref}"`,
         "that is not a well-formed dashboard id",
-        "pass a db_… id, a legacy integer id, or a slug",
+        "pass a db_… id or a slug",
       );
     where = "id = $1";
     param = uuid;
-  } else if (/^\d+$/.test(ref)) {
-    where = "legacy_id = $1";
-    param = Number(ref);
   } else {
     where = "slug = $1";
     param = ref;
   }
-  let res = await client.query(
+  const res = await client.query(
     `select ${ROW_COLUMNS} from dashboards where ${where}`,
     [param],
   );
-  // An all-digit ref is tried as legacy_id first, but `isValidAlias` permits all-digit slugs
-  // (e.g. "2025") — on a legacy_id miss, fall through to the slug lookup so such a dashboard is
-  // still addressable. (If BOTH exist, legacy_id wins; use the db_… id to disambiguate.)
-  if (res.rowCount === 0 && where === "legacy_id = $1") {
-    res = await client.query(
-      `select ${ROW_COLUMNS} from dashboards where slug = $1`,
-      [ref],
-    );
-  }
   if (res.rowCount === 0)
     throw failWith(
       EXIT.USAGE,
       `no dashboard matches "${ref}"`,
-      "nothing in this database has that id, legacy id or slug",
+      "nothing in this database has that id or slug",
       "run `dashboard list` — ids are per-environment, so check you are pointed at the right one",
     );
   if ((res.rowCount ?? 0) > 1) {

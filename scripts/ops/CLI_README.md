@@ -32,6 +32,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard add-card](#liveone-dashboard-add-card)  _(writes)_
     - [liveone dashboard add-group](#liveone-dashboard-add-group)  _(writes)_
     - [liveone dashboard remove-node](#liveone-dashboard-remove-node)  _(writes)_
+    - [liveone dashboard remint-ids](#liveone-dashboard-remint-ids)  _(writes)_
     - [liveone dashboard move-node](#liveone-dashboard-move-node)  _(writes)_
     - [liveone dashboard set-prop](#liveone-dashboard-set-prop)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
@@ -125,6 +126,7 @@ Subcommands:
   add-card               Insert a card node.  (writes)
   add-group              Insert an empty group node.  (writes)
   remove-node            Remove a node and its whole subtree.  (writes)
+  remint-ids             Re-mint every node id in a document (one-time migration).  (writes)
   move-node              Move a node, subtree intact and ids preserved.  (writes)
   set-prop               Set or clear a node's envelope props, and a card's type/config.  (writes)
 
@@ -221,7 +223,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
 
 Options:
   --node <n_id>              Render only this node's subtree
@@ -243,8 +245,8 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard show 6
-  liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_1
+  liveone dashboard show kink
+  liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_2XRX
 
 Exit codes:
   0    success
@@ -271,7 +273,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Arguments:
-  [dash]                 A dashboard: its db_… id, its legacy integer id, or its slug
+  [dash]                 A dashboard: its db_… id or its slug
 
 Options:
   --file <path>              Validate this JSON file instead of a stored dashboard
@@ -293,7 +295,7 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard validate 6
+  liveone dashboard validate kink
   liveone dashboard validate --file=doc.json
 
 Exit codes:
@@ -320,7 +322,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
 
 Options:
   --name <text>              New display name, or "none" to clear it
@@ -346,8 +348,8 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard rename 6 --slug=daylesford
-  liveone dashboard rename 6 --name='Daylesford' --apply
+  liveone dashboard rename kink --slug=kinkora
+  liveone dashboard rename kink --name='Kinkora' --apply
 
 Exit codes:
   0    success
@@ -373,7 +375,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
 
 Options:
   --type <cardType>          The card type, e.g. solar, chart, heatmap  (required)
@@ -409,8 +411,8 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a
-  liveone dashboard add-card 6 --type=chart --config-json='{"variant":"lines"}' --apply
+  liveone dashboard add-card kink --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_2VF4
+  liveone dashboard add-card kink --type=chart --config-json='{"variant":"lines"}' --apply
 
 Exit codes:
   0    success
@@ -437,7 +439,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
 
 Options:
   --direction <string>       Flex direction (default: column)  (one of: row, column)
@@ -472,8 +474,8 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard add-group 6 --direction=row --wrap --after=n_2
-  liveone dashboard add-group 6 --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply
+  liveone dashboard add-group kink --direction=row --wrap --after=n_CBEX
+  liveone dashboard add-group kink --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply
 
 Exit codes:
   0    success
@@ -499,7 +501,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
   <node>                 The n_… id of the node, as printed by `show`
 
 Common options:
@@ -522,8 +524,60 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard remove-node 6 n_6
-  liveone dashboard remove-node 6 n_6 --apply
+  liveone dashboard remove-node kink n_5CKF
+  liveone dashboard remove-node kink n_5CKF --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard remint-ids
+
+Re-mint every node id in a document (one-time migration).
+
+```
+Re-mint every node id in a document (one-time migration).
+
+When to use:
+  A MIGRATION, not an edit: run it once per document to move ids off the retired sequential
+  form (n_0, n_1, …) onto the random form. Every id changes, so any id noted from an earlier
+  `show` stops resolving — which is the point, because a sequential id could be RECYCLED onto
+  a different node after a removal. Structure, refs and config are untouched.
+
+Usage:
+  liveone dashboard remint-ids <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm
+  liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm --apply
 
 Exit codes:
   0    success
@@ -550,7 +604,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
   <node>                 The n_… id of the node, as printed by `show`
 
 Options:
@@ -579,8 +633,8 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard move-node 6 n_8 --before=n_7
-  liveone dashboard move-node 6 n_8 --parent=n_2 --index=0 --apply
+  liveone dashboard move-node kink n_FS02 --before=n_E7Z1
+  liveone dashboard move-node kink n_FS02 --parent=n_CBEX --index=0 --apply
 
 Exit codes:
   0    success
@@ -607,7 +661,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <dash>                 A dashboard: its db_… id or its slug
   <node>                 The n_… id of the node, as printed by `show`
 
 Options:
@@ -644,8 +698,8 @@ External access:
             role and the host. A connection or query failure is exit 5.
 
 Examples:
-  liveone dashboard set-prop 6 n_3 --columns=6
-  liveone dashboard set-prop 6 n_3 --hidden=none --apply
+  liveone dashboard set-prop kink n_VX15 --columns=6
+  liveone dashboard set-prop kink n_VX15 --hidden=none --apply
 
 Exit codes:
   0    success

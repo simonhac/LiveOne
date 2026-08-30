@@ -29,7 +29,9 @@ import type { CardType } from "./card-types";
 export const DASHBOARD_DOC_VERSION = 4 as const;
 
 /** A node's local id — an opaque `n_…` string, NOT a scope-bearing TypeID (§8.3). Assigned by
- *  `normalizeDocV4` when absent, so it is optional on input and PRESENT on any normalized/stored doc. */
+ *  `normalizeDocV4` when absent (random 4-char base32; never recycled, never twinned across
+ *  environments), so it is optional on input and PRESENT on any normalized/stored doc. Older docs
+ *  carry counter-era ids (`n_0`…) — the id is opaque, so both forms coexist. */
 export type NodeId = string;
 
 /** Optional 12-column grid sizing hint. */

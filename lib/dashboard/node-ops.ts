@@ -19,6 +19,7 @@ import {
   type NodeId,
   walkNodes,
 } from "./v4";
+import { normalizeDocV4 } from "./v4-validate";
 
 export type NodeOpErrorCode =
   | "node-not-found"
@@ -86,18 +87,37 @@ export function findNode(doc: DashboardV4, id: NodeId): FoundNode | null {
  *
  * 🛑 NOT optional when inserting a subtree built elsewhere. `GET /api/v4/areas/{ar_}/default-group`
  * builds its group inside a throwaway single-group document and normalizes THAT, so the group arrives
- * already carrying `n_1…n_9` — ids that are only meaningful in the document it was never part of.
- * Appending it verbatim to a dashboard that already holds an area collides, and `validateDocV4`
- * rejects the whole write with `duplicate-node-id` (422). Measured: adding a FIRST area succeeds (the
- * destination holds only the root's `n_0`) and adding a SECOND one 422s — so a single-add test cannot
- * see this. Node ids are server-assigned and positional (§8.2), so re-minting an appended subtree is
- * the defined behaviour; existing nodes keep their ids, which keeps React keys stable across a save.
+ * carrying ids that are only meaningful in the document it was never part of. Appending it verbatim
+ * can collide with the destination's own ids, and `validateDocV4` then rejects the whole write with
+ * `duplicate-node-id` (422).
+ *
+ * Under the old sequential minter that collision was CERTAIN (every document minted `n_1, n_2, …`,
+ * so a first add succeeded and a second 422'd — a single-add test could not see it). Ids are random
+ * now, so the collision is rare rather than certain: less likely to be caught by a test, and no less
+ * wrong. An id belongs to the document that minted it, so an appended subtree is always re-minted;
+ * existing nodes keep their ids, which keeps React keys stable across a save.
  */
 export function stripNodeIds(node: DashboardNode): DashboardNode {
   const { id: _dropped, ...rest } = node;
   return rest.kind === "group"
     ? { ...rest, children: rest.children.map(stripNodeIds) }
     : rest;
+}
+
+/**
+ * Re-mint EVERY node id in a document — a one-time migration off the retired sequential ids
+ * (`n_0`, `n_1`, …) onto the random form. Structure, refs and config are untouched; only ids change.
+ *
+ * 🛑 This is the one operation that deliberately breaks the stable-key contract every other path
+ * upholds, so it is a migration and not an edit: every `n_…` a person or an agent noted from a
+ * previous `show` stops resolving. That is the point — a stale sequential id could silently address
+ * a DIFFERENT node, because the old minter recycled a deleted node's id on the next insert.
+ */
+export function remintNodeIds(doc: DashboardV4): DashboardV4 {
+  return normalizeDocV4({
+    ...doc,
+    root: stripNodeIds(doc.root) as GroupNode,
+  });
 }
 
 export interface NodeOpResult {
