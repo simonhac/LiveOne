@@ -8,7 +8,9 @@ import { X, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { useModalContext } from "@/contexts/ModalContext";
 import { readableAreasQuery, MY_DASHBOARDS_KEY } from "@/lib/queries";
+import { useUser } from "@clerk/nextjs";
 import { normalizeAlias, isValidAlias } from "@/lib/dashboard/alias";
+import { dashboardHref } from "@/lib/dashboard/href";
 
 /**
  * Create a composition-first dashboard (Phase 2b-2): a name + an optional "seed from an Area" choice.
@@ -31,6 +33,7 @@ export default function NewDashboardDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const { user } = useUser();
   const { data: areasResp } = useQuery(readableAreasQuery(isOpen));
   const areas = areasResp?.areas ?? [];
   const aliasValid = isValidAlias(alias.trim());
@@ -84,7 +87,13 @@ export default function NewDashboardDialog({
       await queryClient.invalidateQueries({ queryKey: MY_DASHBOARDS_KEY });
       toast.success(`Created “${name}”`);
       onClose();
-      router.push(`/dashboard/id/${id}`);
+      router.push(
+        dashboardHref({
+          id,
+          slug: cleanAlias || null,
+          ownerUsername: user?.username ?? null,
+        }),
+      );
     } finally {
       setBusy(false);
     }

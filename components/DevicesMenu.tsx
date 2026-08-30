@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, Layers } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
+import { dashboardHref } from "@/lib/dashboard/href";
 
 interface AvailableDevice {
   id: number;
@@ -53,9 +55,13 @@ export default function DevicesMenu({
   const { data: prefs } = useQuery(userPreferencesQuery(enabled));
   const dashboards = dashData?.dashboards ?? [];
   const defaultDashboardId = prefs?.preferences.defaultDashboardId ?? null;
-  const goToDashboardId = dashboards.some((d) => d.id === defaultDashboardId)
-    ? defaultDashboardId
-    : (dashboards[0]?.id ?? null);
+  const goToDashboard =
+    dashboards.find((d) => d.id === defaultDashboardId) ??
+    dashboards[0] ??
+    null;
+  // Pretty link for an OWN dashboard (`/dashboard/{me}/{slug}`); granted → id form.
+  const { user } = useUser();
+  const myUsername = user?.username ?? null;
   // Physical devices. Areas-backed virtual devices are already excluded upstream (never in the
   // systems/devices lists); public grid-data sources (e.g. OpenElectricity) count as physical and stay.
   const devices = availableDevices;
@@ -182,11 +188,16 @@ export default function DevicesMenu({
       </Link>
 
       {/* Cross-nav back to the dashboards world — symmetric with DashboardsMenu's "Go to Devices". */}
-      {goToDashboardId != null && (
+      {goToDashboard != null && (
         <>
           <div className="border-t border-gray-700 my-1"></div>
           <Link
-            href={`/dashboard/id/${goToDashboardId}`}
+            href={dashboardHref({
+              id: goToDashboard.id,
+              slug: goToDashboard.slug,
+              ownerUsername:
+                goToDashboard.access === "owner" ? myUsername : null,
+            })}
             onClick={onNavigate}
             className={`${itemClassName} flex items-center gap-2 text-gray-300 hover:text-white ${
               isMobile ? "first:rounded-t-lg last:rounded-b-lg" : ""
