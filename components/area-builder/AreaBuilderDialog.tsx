@@ -43,7 +43,7 @@ type EditTab = "general" | "location" | "members" | "bindings";
  * Location / Members / Bindings tabs backed by the `/api/v4/areas/{ar_…}` routes. Mirrors
  * NewDashboardDialog's portal modal conventions (ModalContext, sonner, gray-800/700, z-[10000]/[10001]).
  *
- * Four things about the v4 surface this dialog had to absorb (config-v4 Phase 14 stage 13):
+ * Four things about the v4 surface this dialog had to absorb:
  *  - **members is a `PUT` full replace**, not the `POST`/`DELETE /devices` pair. Add and remove are both
  *    expressed as the whole list. The list sent is always the CURRENT member list with one edit applied
  *    — including the server-managed `helper` members, which the route would not evict by omission
@@ -141,7 +141,9 @@ export default function AreaBuilderDialog({
           ?.id ?? null);
   useEffect(() => {
     if (!isOpen || isEdit || !lockedDeviceId) return;
-    setMembers((m) => (m.includes(lockedDeviceId) ? m : [lockedDeviceId, ...m]));
+    setMembers((m) =>
+      m.includes(lockedDeviceId) ? m : [lockedDeviceId, ...m],
+    );
   }, [isOpen, isEdit, lockedDeviceId]);
 
   /** Create-mode member chips, joined from the candidate list (its only possible source there). */

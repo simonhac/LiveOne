@@ -1,13 +1,15 @@
 import { eq } from "drizzle-orm";
+import { clerkClient } from "@clerk/nextjs/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { users as pgUsers } from "@/lib/db/planetscale/schema";
 import { getDashboard } from "@/lib/dashboard/dashboards";
+import { dashboardHref } from "@/lib/dashboard/href";
 import { Dashboard } from "@/lib/ids";
 
 /**
  * User preferences (the `users` config table) — Postgres only.
  *
- * The default landing page is a composition **dashboard** (`default_dashboard_id` → `/dashboard/id/{id}`).
+ * The default landing page is a composition **dashboard** (`default_dashboard_id` → `/dashboard/{id}`).
  * The legacy per-device default (`default_system_id`) was retired in P6: a device is no longer a
  * default target — you star a dashboard, and every area already has one.
  */
@@ -110,8 +112,10 @@ export async function clearDefaultDashboard(
 
 /**
  * The path the `/dashboard` landing should redirect to for this user's default, or null when there's
- * no valid default. Always a composition dashboard → `/dashboard/id/{id}`. Defensively auto-clears a
- * pointer whose dashboard has vanished (the FK is ON DELETE SET NULL, so this is belt-and-braces).
+ * no valid default. Always a composition dashboard — pretty `/dashboard/{user}/{slug}` when the dash
+ * is slugged and owned by the user (defaults always are; `setDefaultDashboard` enforces ownership),
+ * else `/dashboard/{db_…}`. Defensively auto-clears a pointer whose dashboard has vanished (the FK
+ * is ON DELETE SET NULL, so this is belt-and-braces).
  */
 export async function resolveDefaultDashboardRoute(
   clerkUserId: string,
@@ -124,5 +128,22 @@ export async function resolveDefaultDashboardRoute(
     return null;
   }
   // config-v4: dash.id is already the opaque `db_…` id (the DAO owns the uuid↔TypeID translation).
-  return `/dashboard/id/${dash.id}`;
+  return dashboardHref({
+    id: dash.id,
+    slug: dash.alias,
+    ownerUsername:
+      dash.alias && dash.ownerClerkUserId === clerkUserId
+        ? await resolveOwnUsername(clerkUserId)
+        : null,
+  });
+}
+
+/** The user's own Clerk username, or null (no username set / Clerk unreachable → id-form links). */
+async function resolveOwnUsername(clerkUserId: string): Promise<string | null> {
+  try {
+    const clerk = await clerkClient();
+    return (await clerk.users.getUser(clerkUserId)).username ?? null;
+  } catch {
+    return null;
+  }
 }

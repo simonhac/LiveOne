@@ -14,7 +14,7 @@ import { Point } from "@/lib/ids";
 /**
  * Actuate a writable point — the generic command plane's one entry point.
  *
- *   POST /api/v4/points/{pt_…}/action  { action, value? }  → 200 { ok, reason }
+ *   POST /api/v4/points/{pt_…}/action  { action, value? }  → 200 { ok, reason, reasonMessage? }
  *
  * `action` is the closed vocabulary `turn_on | turn_off | set_value | press`; what a given
  * point accepts is declared by its own `points.control` descriptor (switch / number / button),
@@ -124,7 +124,12 @@ export async function POST(
         // decline too: "not_charging" back from a Stop proves the caller's view of the car was
         // stale, and the confirmation read is exactly what re-syncs it.
         scheduleRepoll(auth.device);
-        return NextResponse.json({ ok: outcome.ok, reason: outcome.reason });
+        return NextResponse.json({
+          ok: outcome.ok,
+          reason: outcome.reason,
+          // Present only when the sentence names an instant the client must spell locally.
+          reasonMessage: outcome.reasonMessage,
+        });
     }
   } catch (error) {
     console.error("[control] point action route failed:", error);

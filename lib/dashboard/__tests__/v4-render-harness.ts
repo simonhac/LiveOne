@@ -58,7 +58,7 @@ export const NodeKeyContext = React.createContext<string | null>(null);
 
 /**
  * The ONE place that knows how a node identifies itself in a plugin's props. Since the
- * `CardRenderProps` port (config-v4 Phase 14 stage 6) that is `node.id`; before it, the synthesised
+ * `CardRenderProps` port that is `node.id`; before it, the synthesised
  * `card.id`. Both carried the SAME value (the adapter copied `node.id` straight across), which is
  * why the harness key space — and therefore the snapshot's top-level keys — survived the port
  * unchanged, and why every `leaves` entry stayed byte-identical.
@@ -218,7 +218,7 @@ export function makeSiteChartsLeaf(): React.FC<LeafProps> {
 // ---------------------------------------------------------------------------
 
 interface NodePluginLike {
-  /** The registry's discriminant (config-v4 Phase 14 stage 7): "tile" | "card". */
+  /** The registry's discriminant: "tile" | "card". */
   kind: string;
   type: string;
   Render: React.FC<Record<string, unknown>>;
@@ -283,7 +283,26 @@ function pt(
   };
 }
 
-/** A `latest` map rich enough that all 9 tile plugins report `isAvailable`. */
+/**
+ * A TEXT point. `LatestPointValue.value` is typed `number`, but `convertValueByMetadata` stores a
+ * string for `metricUnit === "text"` and it travels to the browser as one — see `getTextValue` in
+ * components/dashboard/tiles/shared.tsx. The fixture has to reproduce the wire, not the type.
+ */
+function ptText(
+  logicalPath: string,
+  value: string,
+  displayName: string,
+): LatestPointValues[string] {
+  return {
+    value: value as unknown as number,
+    logicalPath,
+    measurementTime: FIXTURE_TIME,
+    metricUnit: "text",
+    displayName,
+  };
+}
+
+/** A `latest` map rich enough that all 10 tile plugins report `isAvailable`. */
 export const FIXTURE_LATEST: LatestPointValues = {
   "source.solar/power": pt("source.solar/power", 4200, "W", "Solar"),
   "source.solar.local/power": pt(
@@ -320,6 +339,31 @@ export const FIXTURE_LATEST: LatestPointValues = {
     "Renewables",
   ),
   "grid.demand/power": pt("grid.demand/power", 7200, "MW", "Demand"),
+  // The hub-supervised generator's control plane (packages/usher/core/control.ts CONTROL_MANIFEST)
+  // plus the one engine register the tile shows. `idle` is the resting state, so the fixture
+  // exercises the tile's ordinary appearance rather than a run in progress.
+  "source.generator.control.status/state": ptText(
+    "source.generator.control.status/state",
+    "idle",
+    "Control State",
+  ),
+  "source.generator.control.request/duration": pt(
+    "source.generator.control.request/duration",
+    0,
+    "min",
+    "Generator Run Request",
+  ),
+  "source.generator.mode/state": ptText(
+    "source.generator.mode/state",
+    "Auto",
+    "Control Mode",
+  ),
+  "source.generator.engine/speed": pt(
+    "source.generator.engine/speed",
+    0,
+    "rpm",
+    "Engine Speed",
+  ),
 };
 
 interface FixtureDevice {

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDashboardAccess } from "@/lib/api-auth";
-import { ownsSubject } from "@/lib/control/ownership";
-import { DeviceConfigRegistry } from "@/lib/registry/device-config";
+import { viewerControllableDevices } from "@/lib/control/ownership-server";
 import { jsonResponse, transformDates } from "@/lib/json";
 import { buildDevicePayload } from "@/lib/dashboard/serve-data";
 import {
@@ -14,13 +13,13 @@ import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 /**
  * Live values (+ optional readings table) for one serving subject.
  *
- * ## Addressing (config-v4 Phase 13 PR 1)
+ * ## Addressing
  *
  * - `?areaId=ar_…`   — an Area, served AS an area (`{area, latest}`).
  * - `?deviceId=dv_…` — a device (`{device, latest}`).
- * - `?systemId=N`    — the **permanent** legacy alias. Resolved DEVICE-FIRST, which is the v3 order and
- *   the only order that preserves handle 13 (a real Sigenergy device AND a 3-member Area) at its
- *   device's own 12 points. See `lib/dashboard/subject.ts` for the precedence table (trap D-l).
+ * - `?systemId=N`    — the **permanent** legacy alias. Resolved DEVICE-FIRST — the only order that
+ *   preserves handle 13 (a real Sigenergy device AND a 3-member Area) at its device's own 12 points.
+ *   See `lib/dashboard/subject.ts` for the precedence table.
  *
  * Exactly one of the three. A comma-separated `systemId` list is a BATCH request: one request instead
  * of N, response shaped `{data: {[systemId]: <the single-subject payload>}}`. Any id that fails auth is
@@ -159,42 +158,6 @@ export async function GET(request: NextRequest) {
  */
 function viewerCanControl(auth: { isOwner: boolean }): boolean {
   return auth.isOwner === true;
-}
-
-/**
- * The DEVICES inside this payload that the viewer strictly owns — i.e. the ones they may command.
- *
- * 🛑 Why this exists next to `canControl`. `canControl` is about the SUBJECT the payload was
- * fetched under, and for an AREA that is the area, not the car: an area owner who does not own a
- * member device would see the EV cog and get a 403 on press. A control that visibly exists and then
- * refuses is a defect, so the client must gate on the device that would ACTUALLY be commanded.
- *
- * There is deliberately no second authorization path here. Every latest-map entry already carries
- * `sourceSystemId` (the producing `devices.rid` — see `lib/latest-values-store.ts`), so the set of
- * devices in play is read off the payload we just built; ownership is then the SAME predicate the
- * server gate itself uses, `ownsSubject`, against the same registry row `requireDeviceAccess`
- * resolves. It is still courtesy, never authority — `POST /api/v4/points/{pt_}/action`
- * re-authorizes with `requireOwner` regardless of what this said.
- *
- * A share-token viewer arrives `userId: null` and so owns nothing, exactly as `canControl` does.
- */
-async function viewerControllableDevices(
-  auth: { userId: string | null },
-  payload: { latest?: Record<string, { sourceSystemId?: number }> },
-): Promise<number[]> {
-  if (auth.userId == null) return [];
-  const handles = new Set<number>();
-  for (const entry of Object.values(payload.latest ?? {})) {
-    if (typeof entry?.sourceSystemId === "number")
-      handles.add(entry.sourceSystemId);
-  }
-  const owned = await Promise.all(
-    [...handles].map(async (handle) => {
-      const device = await DeviceConfigRegistry.deviceByHandle(handle);
-      return ownsSubject(auth.userId, device?.ownerClerkUserId) ? handle : null;
-    }),
-  );
-  return owned.filter((h): h is number => h !== null);
 }
 
 /**

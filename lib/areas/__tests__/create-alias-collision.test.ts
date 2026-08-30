@@ -1,13 +1,13 @@
 /**
  * `createArea` / `updateAreaMeta` must turn an alias collision into `AreaAliasTakenError` (→ 409).
  *
- * config-v4 Phase 14 stage 2b. This site was broken TWICE OVER, and either half alone was fatal:
+ * This site has been broken TWICE OVER, and either half alone is fatal:
  *
- *   `isUniqueViolation(err)`                       — read `err.code`, which drizzle ≥0.44 leaves undefined
- *   `constraintOf(err) === "areas_owner_alias_unique"` — read `err.constraint`, which PlanetScale strips
+ *   `isUniqueViolation(err)`                       — reads `err.code`, which drizzle ≥0.44 leaves undefined
+ *   `constraintOf(err) === "areas_owner_alias_unique"` — reads `err.constraint`, which PlanetScale strips
  *
- * So `POST /api/areas` with a taken shortname 500'd where it documents a 409. The second half is why
- * unwrapping the cause chain (the STEP 0 fix) was not enough on its own, and it is what these cases
+ * With either in place, creating an area with a taken shortname 500s where it documents a 409. The
+ * second half is why unwrapping the cause chain is not enough on its own, and it is what these cases
  * exist to pin: every injected error has `constraint: undefined` and names its index in the `message`
  * only, which is precisely what the database sends.
  *

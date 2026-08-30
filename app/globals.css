@@ -57,9 +57,77 @@
   animation: shimmer-sweep 1.4s ease-in-out infinite;
 }
 
+/* Text shimmer — a highlight sweeping THROUGH the letters, for a value that is live right now.
+   Unlike `.shimmer` (a placeholder for a value we do not have yet) this one is painted into the
+   glyphs via background-clip, so the word stays fully legible while it moves. The 2s period is
+   deliberately slow: it should read as a pulse on a running machine, not as a loading state.
+
+   🛑 The gradient TILES (`repeat-x`) and is sized in `em`, not `no-repeat` at `300%`. With
+   no-repeat the painted band is finite, so once the animation carried it past the element there
+   was nothing behind the glyphs at all — and with `-webkit-text-fill-color: transparent` that
+   renders the word INVISIBLE. It read as "Running" blanking out, redrawing, then shimmering. A
+   repeating tile always has paint under every glyph, and because the gradient starts and ends on
+   the same colour, shifting by exactly one tile width is a seamless loop. */
+@keyframes shimmer-text {
+  from {
+    background-position: 0em 0;
+  }
+  to {
+    background-position: 12em 0;
+  }
+}
+
+.shimmer-text {
+  /* The word rests at FULL strength and a DIMMED band travels through it — the inverse of the
+     original, which rested at 80% and swept a 100% band. That was a 20% swing against an already
+     near-white hero, and on a phone in daylight it was imperceptible; it also forced the generator
+     tile to override its hero to pure white purely to buy the band somewhere to go, making it the
+     one hero on the dashboard that did not match its neighbours.
+
+     Resting at 100% means the tile keeps the ordinary `text-gray-100` hero, and the animation has
+     the whole range below it to work in: the band bottoms out near 45%, a swing more than twice the
+     old one. `color-mix` on `currentColor` rather than a literal colour, so it stays a brightness
+     ramp within one hue — a red "Stop failing" dims in red rather than flashing white through a
+     warning.
+
+     The band is wider than the old glint and raked FORWARD — 125deg, so the band line runs
+     bottom-left to top-right ("/", leaning the way italics do). A gradient's bands are
+     perpendicular to its angle, so the intuition inverts: 35deg looks like it should lean forward
+     and in fact produces a backward "\" band. 125deg (a quarter turn clockwise) is the one that
+     leans the way you expect, and reads as a shadow passing across the letters rather than a
+     sliver clipping their tops. */
+  background-image: linear-gradient(
+    125deg,
+    currentColor 0%,
+    currentColor 30%,
+    color-mix(in srgb, currentColor 65%, transparent) 42%,
+    color-mix(in srgb, currentColor 45%, transparent) 50%,
+    color-mix(in srgb, currentColor 65%, transparent) 58%,
+    currentColor 70%,
+    currentColor 100%
+  );
+  /* One tile is much wider than any hero word, so the band crosses it as a periodic glint rather
+     than sitting on it permanently. */
+  background-size: 12em 100%;
+  background-repeat: repeat-x;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-text 2s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shimmer {
     animation: none;
+  }
+
+  /* Falls back to the resting FULL strength, in the hero's own hue — never a transparent glyph,
+     and now identical to a non-shimmering hero, so nothing is dimmed for a reader who asked for
+     less motion. */
+  .shimmer-text {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
   }
 }
 

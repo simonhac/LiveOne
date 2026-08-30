@@ -7,7 +7,7 @@
  * "use client" components.
  *
  * 🛑 `fetchJson<T>` is an UNCHECKED CAST — nothing here is validated at runtime. Each interface below
- * was diffed field-by-field against the handler that emits it (config-v4 Phase 14 stage 13); a wrong
+ * was diffed field-by-field against the handler that emits it; a wrong
  * key here compiles clean and renders empty.
  */
 

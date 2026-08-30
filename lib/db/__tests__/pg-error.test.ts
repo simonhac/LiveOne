@@ -103,11 +103,11 @@ describe("hasPgErrorCode / isPgUniqueViolation", () => {
 });
 
 /**
- * `violatedUniqueName` / `isUniqueViolationOn` — config-v4 Phase 14 stage 2b.
+ * `violatedUniqueName` / `isUniqueViolationOn`.
  *
- * Unwrapping the cause chain is NECESSARY BUT NOT SUFFICIENT: three of the four sites this stage fixed
- * also needed to tell WHICH unique was violated, and every one of them asked `err.constraint`, which is
- * always undefined here. These cases pin the message fallback that replaces it.
+ * Unwrapping the cause chain is NECESSARY BUT NOT SUFFICIENT: most callers also need to tell WHICH
+ * unique was violated, and the obvious way to ask — `err.constraint` — is always undefined here.
+ * These cases pin the message fallback that replaces it.
  */
 describe("violatedUniqueName / isUniqueViolationOn", () => {
   // Each fixture is a violation actually forced against `liveone-dev`.

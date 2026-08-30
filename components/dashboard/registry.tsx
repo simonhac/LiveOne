@@ -4,7 +4,7 @@
  * THE node render registry — one plugin per `KnownCardType`, tiles and cards together.
  *
  * §8.1 unified the card and tile primitives: a v4 `card` node is the ONLY leaf, and a tile is just a
- * small card. This module is the render-side consequence of that (config-v4 Phase 14 stage 7): the
+ * small card. This module is the render-side consequence of that: the
  * two registries it replaces (`cards/registry.tsx` + `tiles/registry.tsx`) meant `node-view.tsx` had
  * to decide *which map to consult* before it could look a type up. Now there is ONE lookup, and the
  * plugin it returns says how to mount itself (`kind`).
@@ -22,11 +22,9 @@
  * Adding a card = one module in ./cards or ./tiles + one line below (+ its `NODE_CATALOG` entry in
  * lib/capabilities/catalog.ts, forced by that catalog's `Record<KnownCardType, …>` type).
  *
- * ABSENT STRUCTURALLY: `tiles`. It was a v3 `descriptor` card type, never a v4 one — it became a
- * `row` group (§8.1). So it never appears here, the lookup misses, and it takes the §8.4 labelled-
- * placeholder branch like any other unknown type. Its plugin (`tiles-card.tsx`) died with the v3
- * renderer that was its only mount (stage 9), and stage 15 stopped anything reading the descriptors
- * that hold those cards at all.
+ * ABSENT STRUCTURALLY: `tiles`. A container of small cards is a `row` group (§8.1), not a card
+ * type, so `tiles` never appears here — the lookup misses and it takes the §8.4 labelled-placeholder
+ * branch like any other unknown type. Do not add it back as a plugin.
  *
  * Client-only: never import this (or any plugin module) from lib/ or server code — the shared,
  * server-safe card vocabulary lives in lib/dashboard/card-types.ts + lib/capabilities/catalog.ts.
@@ -42,6 +40,7 @@ import { batteryTile } from "./tiles/battery";
 import { houseToGridTile } from "./tiles/house-to-grid";
 import { amberTile } from "./tiles/amber";
 import { evTile } from "./tiles/ev";
+import { generatorTile } from "./tiles/generator";
 import { renewablesTile } from "./tiles/renewables";
 import { oeGridTile } from "./tiles/oe-grid";
 // Card plugins (the non-tile card types).
@@ -74,6 +73,7 @@ export const CARD_RENDERERS = {
   "house-to-grid": houseToGridTile,
   amber: amberTile,
   ev: evTile,
+  generator: generatorTile,
   renewables: renewablesTile,
   "oe-grid": oeGridTile,
   // --- non-tile card types (handed the node + its inherited context) ---------------------------

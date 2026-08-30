@@ -3,6 +3,7 @@
 import { Battery } from "lucide-react";
 import Tile from "@/components/Tile";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
+import { formatPercent } from "@/lib/point/format-value";
 import type { TilePlugin, TileRenderProps } from "./types";
 import {
   formatPowerValue,
@@ -29,7 +30,7 @@ function BatteryTile({ latest, staleThresholdSeconds }: TileRenderProps) {
   return (
     <Tile
       title="Battery"
-      value={(batterySoc ?? 0).toFixed(1)}
+      value={formatPercent(batterySoc ?? 0)}
       unit="%"
       icon={
         <span className="inline-flex items-center h-6 flex-row-reverse md:flex-row">

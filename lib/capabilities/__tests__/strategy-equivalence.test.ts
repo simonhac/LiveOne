@@ -1,12 +1,12 @@
 /**
  * Golden test for buildAreaStrategy — the capability-driven default-dashboard builder.
  *
- * The goldens are v4 `GroupNode`s (config-v4 Phase 14 stage 8: the strategy emits v4 natively). They
- * descend, unbroken, from the descriptors captured off the vendor-keyed `buildDefaultDashboardV3` at
- * the P4 cutover: stage 8 landed a one-shot assertion that the v4 builder reproduced
- * `rewriteV3ToV4(<that v3 golden>)` for every case below, ran it, and deleted it with the v3 goldens
- * in the same PR — there is only one producer now, so a second address to disagree with no longer
- * exists. Each case pairs a capability context with the exact group it must produce.
+ * WHY THESE GOLDENS CAN BE TRUSTED. They are `GroupNode`s, and they descend unbroken from the
+ * descriptors captured off the earlier vendor-keyed builder: when the strategy moved to emitting
+ * groups natively, a one-shot assertion checked that the new builder reproduced the rewritten old
+ * golden for every case below, and was deleted along with those old goldens once it passed. So these
+ * values were not hand-authored from the implementation they now guard. Each case pairs a capability
+ * context with the exact group it must produce.
  *
  * Node ids are absent by design: `normalizeDocV4` mints the `n_…` ids when the seed path wraps this
  * group into a document (lib/dashboard/v4-seed.ts).

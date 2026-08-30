@@ -303,6 +303,7 @@ describe("PUT /api/v4/dashboards/{id}", () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       DASHBOARD_ID,
       expect.anything(),
+      expect.any(String), // savedBy: the caller's userId
       7,
     );
   });
@@ -312,6 +313,7 @@ describe("PUT /api/v4/dashboards/{id}", () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       DASHBOARD_ID,
       expect.anything(),
+      expect.any(String), // savedBy: the caller's userId
       undefined,
     );
   });
@@ -456,6 +458,7 @@ describe("GET /api/v4/dashboards", () => {
         displayName: "Home",
         alias: "home",
         cardCount: 3,
+        revision: 7,
         updatedAt: new Date(0),
         access: "owner",
       },
@@ -469,6 +472,7 @@ describe("GET /api/v4/dashboards", () => {
       id: DASHBOARD_ID,
       name: "Home",
       slug: "home",
+      revision: 7,
       cardCount: 3,
       access: "owner",
     });
@@ -542,10 +546,9 @@ describe("POST /api/v4/dashboards", () => {
     );
   });
 
-  // config-v4 Phase 14 stage 15: this route used to pass `descriptor: emptyDashboardV3()`, purely
-  // because the column was NOT NULL. It is the last thing that made a *v4* route touch the v3 shape.
-  // Asserted on the exact argument (not `objectContaining`) so a re-added key fails here.
-  it("passes NO descriptor to createDashboard — the v4 route never names the v3 shape", async () => {
+  // Asserted on the exact argument (not `objectContaining`) so a re-added key fails here — this
+  // route once passed a `descriptor`, purely because the dropped column was NOT NULL.
+  it("passes NO descriptor to createDashboard — the route never names a second shape", async () => {
     await post({ name: "Home", doc: docBoundTo() });
     expect(mockCreate).toHaveBeenCalledWith({
       ownerClerkUserId: OWNER,

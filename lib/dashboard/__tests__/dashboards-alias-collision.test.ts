@@ -2,17 +2,13 @@
  * `createDashboard` / `updateDashboard` must turn a SLUG collision — and ONLY a slug collision — into
  * `DashboardAliasTakenError` (→ 409).
  *
- * config-v4 Phase 14 stage 11, discharging the follow-up stage 2b left behind. STEP 0 fixed half of
- * this: the predicate read `err.code`, which drizzle ≥0.44 leaves undefined, so the 409 branch never
- * fired and both write paths answered a bare 500 with an empty body. Its replacement was
- * `isPgUniqueViolation` — "any 23505 here is an alias collision" — which is too lenient, because
- * `dashboards` carries a SECOND unique index (`dashboards_legacy_id_unique`, over the frozen
- * pre-cutover int). A clash there would have surfaced to the user as "That shortname is already in
- * use": a plausible message, a plausible status, and a real defect hidden behind both.
- *
- * BOTH branches are driven here, because tightening the predicate is a behaviour change on a path
- * STEP 0 verified — the alias case must still 409 with the same error, and the non-alias case must now
- * propagate instead of masquerading.
+ * Two ways this has been got wrong, and both are driven here. A predicate reading `err.code` never
+ * fires (drizzle ≥0.44 leaves it undefined), so both write paths answer a bare 500 with an empty
+ * body. A predicate reading "any 23505 here is an alias collision" is too lenient, because
+ * `dashboards` carries other unique constraints (here `dashboards_pkey`; there was also a `legacy_id`
+ * unique until migration 0062 dropped that column) — a clash on one of those surfaces to the user as
+ * "That shortname is already in use": a plausible message, a plausible status, and a real defect
+ * hidden behind both. So the alias case must 409, and the non-alias case must propagate.
  *
  * 🛑 Every injected error is the MEASURED shape: a drizzle wrapper whose `cause` is the `pg` error,
  * with `constraint` UNDEFINED and the index name in the `message` only. That is what PlanetScale
@@ -27,12 +23,16 @@ let nextFailure: unknown = null;
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb() {
     return {
-      // config-v4 Phase 14 stage 16: `createDashboard` is back on `db.insert(dashboards)` now that
-      // migration 0054 has dropped `descriptor` (stage 15 had to hand-roll the SQL because that column
-      // was NOT NULL but deliberately undeclared in schema.ts). The error path is unchanged —
-      // `isUniqueViolationOn` walks the `cause` chain and never inspects which drizzle API raised it —
-      // but the mock must follow the call that is actually made, or every assertion below would pass
-      // against nothing. That is not hypothetical: this suite went red on exactly this swap.
+      // `createDashboard` runs in a transaction (row + revision-1 history in one commit). The tx
+      // object exposes the same chains, so the error-path measurements below are unchanged — the
+      // failure still surfaces through `returning()`.
+      async transaction(fn: (tx: unknown) => Promise<unknown>) {
+        return fn(this);
+      },
+      // 🛑 The mock must follow the drizzle call `createDashboard` actually makes, or every
+      // assertion below passes against nothing. The error path itself does not care which API raised
+      // it — `isUniqueViolationOn` walks the `cause` chain — but this suite has gone red on exactly
+      // that swap before.
       insert() {
         return {
           values() {
@@ -117,16 +117,16 @@ describe("dashboards — alias collision vs every other unique violation", () =>
   });
 
   describe("a NON-alias unique violation no longer masquerades as one", () => {
-    it("createDashboard rethrows a dashboards_legacy_id_unique clash", async () => {
-      nextFailure = wrappedUniqueViolation("dashboards_legacy_id_unique");
+    it("createDashboard rethrows a dashboards_pkey clash", async () => {
+      nextFailure = wrappedUniqueViolation("dashboards_pkey");
       await expect(create()).rejects.toThrow(/Failed query/);
       await expect(create()).rejects.not.toBeInstanceOf(
         DashboardAliasTakenError,
       );
     });
 
-    it("updateDashboard rethrows a dashboards_legacy_id_unique clash", async () => {
-      nextFailure = wrappedUniqueViolation("dashboards_legacy_id_unique");
+    it("updateDashboard rethrows a dashboards_pkey clash", async () => {
+      nextFailure = wrappedUniqueViolation("dashboards_pkey");
       await expect(
         updateDashboard(DASH_ID, { alias: "taken" }),
       ).rejects.toThrow(/Failed query/);

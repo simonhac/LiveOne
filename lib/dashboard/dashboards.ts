@@ -1,12 +1,10 @@
 /**
- * Composition-first dashboard CRUD (Phase 2b-2) — first-class, owner-scoped, id/alias-addressed.
+ * Composition-first dashboard CRUD — first-class, owner-scoped, id/alias-addressed.
  *
- * Distinct from the legacy per-(user,device) `store.ts` (retired with the old path). A row here has
- * `display_name`, an optional owner-unique `alias`, and a v4 `doc` (the node-tree document, every
- * scope ref on the envelope); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
- *
- * config-v4 Phase 14 stage 16: `dashboards.descriptor` (the retired v3 shape) is GONE — made inert by
- * stage 15, dropped from the database by migration 0054. `doc` is the only dashboard document.
+ * A row has `display_name`, an optional owner-unique `alias`, and a `doc` (the node-tree document,
+ * every scope ref on the envelope); `system_id`/`area_id` are left null. Addressed by `id` or
+ * `(owner, alias)`. `doc` is the ONLY dashboard document — the `descriptor` column that once held a
+ * second shape was dropped from the database by migration 0054.
  *
  * config-v4 id boundary: the `dashboards` PK is a uuid, but this module's PUBLIC surface speaks the
  * opaque `db_…` TypeID (the `id` field of every returned object; every id PARAM). The raw uuid is decoded
@@ -17,7 +15,7 @@
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
-import { dashboards } from "@/lib/db/planetscale/schema";
+import { dashboardRevisions, dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
 import {
   countCardNodes,
@@ -32,7 +30,7 @@ export interface CompositionDashboard {
   ownerClerkUserId: string;
   displayName: string | null;
   alias: string | null;
-  /** The v4 node-tree document — the ONLY shape a dashboard has (config-v4 Phase 14 stage 15).
+  /** The v4 node-tree document — the ONLY shape a dashboard has.
    *  `dashboards.doc` is NOT NULL, so this is null only for a jsonb that fails the shape guard. */
   doc: DashboardV4 | null;
   /** Whole-doc revision counter (default 1); the optimistic-concurrency token for the v4 doc PUT. */
@@ -46,6 +44,9 @@ export interface DashboardSummary {
   displayName: string | null;
   alias: string | null;
   cardCount: number;
+  /** The optimistic-concurrency token — surfaced so an API client (the liveone CLI) can list and
+   *  then write without a second read per row. Additive, 2026-08-30. */
+  revision: number;
   updatedAt: Date;
   /** How the caller reaches this dashboard: "owner" = they own it, "shared" = granted via a membership. */
   access: "owner" | "shared";
@@ -65,23 +66,22 @@ const ALIAS_UNIQUE = "dashboards_owner_alias_unique";
 /**
  * Is this the SLUG collision, as opposed to any other unique violation on `dashboards`?
  *
- * Two corrections, in order:
+ * Two things this must NOT be, both of which it has been:
  *
- *  - config-v4 Phase 14 STEP 0: this used to read `(err as {code?: string})?.code`, which drizzle ≥0.44
- *    never populates — the SQLSTATE lives on the wrapping `DrizzleQueryError`'s `cause`. The alias 409 on
- *    BOTH write paths below was therefore an unhandled 500 with an empty body (measured on the previously
- *    dark `/api/v4/dashboards` POST + PATCH).
- *  - config-v4 Phase 14 stage 11: STEP 0's replacement was `isPgUniqueViolation`, i.e. "ANY 23505 on this
- *    statement is an alias collision". `dashboards` carries a SECOND unique — `dashboards_legacy_id_unique`
- *    over the frozen pre-cutover int — so a clash there would have been reported to the user as
- *    "That shortname is already in use", with a 409 and a plausible message hiding a real defect. Now the
- *    name is matched, and `lib/db/pg-error.ts` is deliberately strict: a 23505 whose name cannot be
- *    determined does NOT match, and the error propagates as a 500 rather than being mislabelled.
+ *  - Reading `(err as {code?: string})?.code`. Drizzle ≥0.44 never populates it — the SQLSTATE lives
+ *    on the wrapping `DrizzleQueryError`'s `cause` — so the alias 409 on both write paths below came
+ *    out as an unhandled 500 with an empty body.
+ *  - Treating ANY 23505 on the statement as an alias collision. When `dashboards` carried a second
+ *    unique, a clash there was reported to the user as "That shortname is already in use": a 409 and
+ *    a plausible message hiding a real defect. The slug unique is the only one again today, but the
+ *    name is still matched deliberately — it is what makes the NEXT unique added here fail loudly
+ *    instead of masquerading as a slug collision. `lib/db/pg-error.ts` is strict to match: a 23505
+ *    whose name cannot be determined does NOT match, and propagates as a 500 rather than a mislabel.
  *
  * On this database the name arrives only in the pg `message` (PlanetScale's proxy strips `constraint`);
  * `violatedUniqueName` handles that. Read `lib/db/pg-error.ts` before touching this.
  */
-function isAliasCollision(err: unknown): boolean {
+export function isAliasCollision(err: unknown): boolean {
   return isUniqueViolationOn(err, ALIAS_UNIQUE);
 }
 
@@ -91,15 +91,7 @@ function isAliasCollision(err: unknown): boolean {
  * The row is created EMPTY — an `emptyDashboardV4()` doc. Content arrives immediately afterwards via
  * `updateDashboardDoc` (`POST /api/v4/dashboards` seeds, then PUTs), which is the document's only author.
  *
- * ✅ **Back on drizzle as of config-v4 Phase 14 stage 16.** Stage 15 had to write this as one
- * hand-rolled `INSERT` because `dashboards.descriptor` was retired but still `NOT NULL` with no DB
- * default, and it was deliberately absent from `schema.ts` (so a projection-less `.select()` could
- * never name a column about to disappear) — which also meant drizzle could not supply it. Migration
- * 0054 drops the column, so the statement is a plain typed insert again and there is exactly one
- * dashboard shape on the row.
- *
- * (No `id` is supplied — the uuid PK carries DEFAULT gen_random_uuid(); defect D-a was it inheriting
- * no default and 23502-ing on the first POST.)
+ * (No `id` is supplied — the uuid PK carries DEFAULT gen_random_uuid().)
  */
 export async function createDashboard(args: {
   ownerClerkUserId: string;
@@ -107,17 +99,30 @@ export async function createDashboard(args: {
   alias?: string | null;
 }): Promise<string> {
   try {
-    const [row] = await requirePlanetscaleDb()
-      .insert(dashboards)
-      .values({
-        ownerUserId: args.ownerClerkUserId,
-        name: args.displayName,
-        slug: args.alias ?? null,
-        doc: emptyDashboardV4(),
-      })
-      .returning({ id: dashboards.id });
-    if (!row?.id) throw new Error("createDashboard: INSERT returned no id");
-    return Dashboard.encode(row.id);
+    // One transaction: the row AND its revision-1 history entry, so history starts at creation
+    // rather than at the first edit.
+    const id = await requirePlanetscaleDb().transaction(async (tx) => {
+      const doc = emptyDashboardV4();
+      const [row] = await tx
+        .insert(dashboards)
+        .values({
+          ownerUserId: args.ownerClerkUserId,
+          name: args.displayName,
+          slug: args.alias ?? null,
+          doc,
+        })
+        .returning({ id: dashboards.id });
+      if (!row?.id) throw new Error("createDashboard: INSERT returned no id");
+      await tx.insert(dashboardRevisions).values({
+        dashboardId: row.id,
+        revision: 1,
+        doc,
+        savedBy: args.ownerClerkUserId,
+        savedAt: new Date(),
+      });
+      return row.id;
+    });
+    return Dashboard.encode(id);
   } catch (err) {
     if (isAliasCollision(err)) throw new DashboardAliasTakenError();
     throw err;
@@ -170,36 +175,31 @@ export async function getDashboard(
   return row ? rowToDashboard(row) : null;
 }
 
-/**
- * config-v4: the opaque `db_…` id of the dashboard carrying this frozen pre-cutover int (`legacy_id`),
- * or null. Backs the permanent `/dashboard/id/{n}` (int) → `/dashboard/id/{db_…}` redirect.
- */
-export async function getDashboardIdByLegacyId(
-  legacyId: number,
-): Promise<string | null> {
-  const [row] = await requirePlanetscaleDb()
-    .select({ id: dashboards.id })
-    .from(dashboards)
-    .where(eq(dashboards.legacyId, legacyId))
-    .limit(1);
-  return row ? Dashboard.encode(row.id) : null;
-}
-
 export type DocUpdateResult =
   | { ok: true; revision: number; doc: DashboardV4 }
   | { ok: false; conflict: number };
 
 /**
  * config-v4 whole-doc write (§9.1). One tx: `SELECT … FOR UPDATE`, optimistic-concurrency check
- * against `expectedRevision` (the `If-Match` value), then set `doc` + bump `revision`. Returns the new
- * revision + doc, or a conflict carrying the current revision. `doc` MUST already be validated +
- * normalized by the caller (`validateDocV4`). Revision-history (`dashboard_revisions`) is keyed by the
- * FUTURE uuid dashboard id (bare uuid column, FK deferred to cutover), so it is NOT written for a
- * serial-id dashboard pre-cutover — history starts at cutover.
+ * against `expectedRevision` (the `If-Match` value), then set `doc` + bump `revision` + append the
+ * POST-IMAGE row to `dashboard_revisions`. Returns the new revision + doc, or a conflict carrying
+ * the current revision. `doc` MUST already be validated + normalized by the caller
+ * (`validateDocV4`).
+ *
+ * The other writers of `dashboard_revisions` are the CLI/scripts' shared `writeDoc`
+ * (scripts/ops/dashboard/db.ts, `saved_by` sentinels "cli"/"script:<name>"/"backfill") and
+ * `createDashboard` above (the revision-1 row). The table is NOT carried by the prod→dev sync —
+ * dev history is dev-local, and the sync's drift-delete + FK CASCADE would wipe it anyway.
  */
 export async function updateDashboardDoc(
   id: string,
   doc: DashboardV4,
+  /**
+   * Who to record in `dashboard_revisions.saved_by` — the CALLER's Clerk userId (an admin editing
+   * someone else's dashboard attributes to the admin, not the owner). Required: an unattributed
+   * write is exactly what history exists to prevent.
+   */
+  savedBy: string,
   expectedRevision?: number,
 ): Promise<DocUpdateResult> {
   const uuid = Dashboard.toUuidOrNull(id);
@@ -220,6 +220,15 @@ export async function updateDashboardDoc(
       .update(dashboards)
       .set({ doc, revision, updatedAt: new Date() })
       .where(eq(dashboards.id, uuid));
+    // POST-IMAGE history in the SAME transaction: row (dashboard, N) IS version N, so `revision`
+    // means one thing in both tables and the current version always has a row.
+    await tx.insert(dashboardRevisions).values({
+      dashboardId: uuid,
+      revision,
+      doc,
+      savedBy,
+      savedAt: new Date(),
+    });
     return { ok: true, revision, doc };
   });
 }
@@ -265,18 +274,17 @@ function rowToSummary(
     displayName: string | null;
     alias: string | null;
     doc: unknown;
+    revision: number;
     updatedAt: Date;
   },
   access: "owner" | "shared",
 ): DashboardSummary {
   return {
     id: Dashboard.encode(r.id),
+    revision: r.revision,
     displayName: r.displayName,
     alias: r.alias,
-    // config-v4 Phase 14 stage 15: counted off the v4 `doc`, which is where a dashboard's content
-    // actually lives. This used to count v3 `descriptor` cards, and stage 13 measured the resulting
-    // regression: a dashboard created through the UI reported `cardCount: 0`, because the seed was
-    // written to `doc` while `descriptor` stayed empty.
+    // Counted off `doc`, which is where a dashboard's content lives.
     cardCount: isDashboardV4(r.doc) ? countCardNodes(r.doc) : 0,
     updatedAt: r.updatedAt,
     access,
@@ -320,13 +328,10 @@ export async function listAccessibleDashboards(
 /**
  * Rename / re-slug a dashboard. **Metadata only** — there is no structural patch here.
  *
- * config-v4 Phase 14 stage 15 deleted this function's `descriptor` branch, and with it the last
- * clobber hazard in the dashboard write path. That branch regenerated `doc` from `descriptor` on
- * every PATCH, which was safe only while `doc` had no independent author; `PUT /api/v4/dashboards/{id}`
- * is that author (and since stage 14 `AddAreaDialog` calls it), so a descriptor PATCH would have
- * silently overwritten v4-authored structure with a rewrite of a shape nothing maintains any more.
- * Stage 13 deleted the last route that could reach it and stage 14 the last client; this deletes the
- * capability. Structure is changed ONLY through `updateDashboardDoc`, under an `If-Match` revision.
+ * 🛑 Keep it that way. This function once regenerated `doc` wholesale on every PATCH, which is a
+ * clobber: `PUT /api/v4/dashboards/{id}` is the document's author (via `AddAreaDialog`), so a
+ * metadata PATCH that also rewrote structure would silently overwrite authored content. Structure is
+ * changed ONLY through `updateDashboardDoc`, under an `If-Match` revision.
  */
 export async function updateDashboard(
   id: string,

@@ -665,6 +665,45 @@
       }
     ]
   },
+  "tile:generator@1": {
+    "plugin": "tile:generator",
+    "renderProps": {
+      "canControl": false,
+      "data": "<fixture data@1>",
+      "latest": "<fixture latest>",
+      "showGrid": true,
+      "staleThresholdSeconds": 60,
+      "systemId": 1
+    },
+    "leaves": [
+      {
+        "component": "Tile",
+        "props": {
+          "bgColor": "bg-gray-900/20",
+          "borderColor": "border-gray-700",
+          "extra": {
+            "$element": "div",
+            "$props": {
+              "children": [false, false, null],
+              "className": "grid grid-cols-[auto_1fr_auto] gap-x-1.5 text-[10px] md:text-xs text-gray-400 tabular-nums"
+            }
+          },
+          "extraInfo": "Ready to start",
+          "icon": {
+            "$element": "Gauge",
+            "$props": {
+              "className": "w-6 h-6"
+            }
+          },
+          "iconColor": "text-gray-400",
+          "measurementTime": "<Date 2026-07-30T04:05:00.000Z>",
+          "staleThresholdSeconds": 60,
+          "title": "Generator",
+          "value": "Auto"
+        }
+      }
+    ]
+  },
   "tile:hotWater@1": {
     "plugin": "tile:hotWater",
     "renderProps": {

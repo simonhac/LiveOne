@@ -1,0 +1,960 @@
+/**
+ * RunSupervisor — the hub-side owner of a commanded generator run.
+ *
+ * The DSE's control keys are momentary and parameterless: Telemetry Start (fn 32) is a LATCH the
+ * engine runs behind until fn 33 clears it, so "run for N seconds" is whoever holds the latch
+ * enforcing a deadline. That holder is this class. The safety invariants live here:
+ *
+ *  - 🔑 The authority is an ABSOLUTE INSTANT, never a countdown. `runtimeSec` becomes `stopAt`
+ *    (epoch ms, persisted ISO) once, at request time. Every timer is a derived wake-up hint
+ *    recomputed from `stopAt`; "stop at 17:03:40Z" survives a restart, "180 s remaining" does not.
+ *  - Deadline enforcement is doubled: the derived timer AND a 30 s reconcile that stops when
+ *    `now >= stopAt`. Neither needs a Modbus read — deadline enforcement is clock + write only.
+ *    A monotonic backstop (hrtime-elapsed >= runtime) rides along so an NTP step backward cannot
+ *    extend a run within one process lifetime.
+ *  - State is persisted (atomically: tmp → fsync → rename) BEFORE the start key is written, and is
+ *    NEVER rolled back on a failed start — a timed-out FC16 may still have latched the engine
+ *    (frame delivered, response lost). Cleared only after a CONFIRMED fn 33.
+ *  - Stop is retried indefinitely (every 15 s, loudly). A failed stop is the only truly bad
+ *    outcome; it is never a single best-effort attempt.
+ *  - resume(): future `stopAt` → re-arm (a deploy mid-run doesn't cut the run short); past →
+ *    stop immediately. Missing/corrupt state with control configured → defensive fn 33 (harmless
+ *    when not latched) + a mode check that flags a module stuck in Stop.
+ *  - Panel lockout respected: mode ≠ Auto refuses with no override, and Select Auto (fn 1) is
+ *    never written as a routine precondition — with input A asserted, fn 1 ALONE starts the engine.
+ *  - Never stops a run it didn't start: the only stop this class issues is fn 33, which clears OUR
+ *    latch and cannot cancel the SP-PRO's input-A request. Releasing the latch ≠ the engine
+ *    stopping, and the two are tracked as distinct facts.
+ */
+
+import path from "node:path";
+import { promises as fs } from "node:fs";
+import type {
+  SourceControl,
+  ControlOwnership,
+  ControlPreflight,
+  Values,
+} from "./source";
+import type { Manifest } from "./source";
+import type { ControlConfig } from "./config";
+import type { StructuredMessage } from "./message";
+
+/** Retry cadence for a failed stop, and the passive deadline reconcile. */
+export const STOP_RETRY_MS = 15_000;
+export const RECONCILE_MS = 30_000;
+/** After a confirmed release, the engine cools down (~95 s observed); report "stopping" this long. */
+const COOLDOWN_GRACE_MS = 5 * 60_000;
+
+/**
+ * How long a start or stop counts as "in transition" — the window the run loop polls and delivers
+ * fast across (see `inTransition`).
+ *
+ * 🛑 A CEILING, not a confirmation. A start that never cranks, or the `stop-failing` retry loop
+ * (which retries every STOP_RETRY_MS indefinitely), would otherwise hold the fast cadence open
+ * forever. Three minutes clears the ~95 s observed cool-down with margin and truncates anything
+ * pathological back to the ordinary cadence.
+ */
+export const TRANSITION_MS = 3 * 60_000;
+
+/** The `bump` reasons that mean the ENGINE is about to change state — see `inTransition`. */
+const TRANSITION_REASONS = new Set([
+  "started",
+  "released",
+  "start-ambiguous",
+  "stop-failed",
+]);
+
+export type ControlState =
+  | "idle"
+  | "running:hub"
+  | "running:sp-pro"
+  | "running:other"
+  | "stopping"
+  | "stop-failing"
+  | "latch-released-still-running";
+
+/**
+ * The synthetic control-plane points pushed to LiveOne alongside the device registers. Merged into
+ * the reading set by tickOnce (NOT produced inside read()) so `stop-failing` still reaches LiveOne
+ * during the very Modbus outage that blocks the poll.
+ *
+ * 🛑 Each entry has a UNIQUE (logicalPathStem, metricType). LiveOne's `points` table enforces
+ * uniqueness on (device_id, logical_path, metric_type), and a duplicate fails the ENTIRE batch
+ * insert — one careless shared stem takes the whole device's telemetry offline, which is exactly
+ * what happened on 2026-08-29 when these five all shared `source.generator.control`.
+ */
+export const CONTROL_MANIFEST: Manifest = [
+  {
+    key: "controlRunActive",
+    physicalPathTail: "control_run_active",
+    logicalPathStem: "source.generator.control.run",
+    metricType: "state",
+    metricUnit: "bool",
+    defaultName: "Commanded Run Active",
+    subsystem: "generator",
+  },
+  {
+    key: "controlInhibitActive",
+    physicalPathTail: "control_inhibit_active",
+    logicalPathStem: "source.generator.control.inhibit",
+    metricType: "state",
+    metricUnit: "bool",
+    defaultName: "Inhibit Active",
+    subsystem: "generator",
+  },
+  {
+    key: "controlStopAt",
+    physicalPathTail: "control_stop_at",
+    logicalPathStem: "source.generator.control.stop_at",
+    metricType: "time",
+    metricUnit: "epoch_s",
+    defaultName: "Commanded Stop At",
+    subsystem: "generator",
+  },
+  {
+    key: "controlState",
+    physicalPathTail: "control_state",
+    logicalPathStem: "source.generator.control.status",
+    metricType: "state",
+    metricUnit: "text",
+    defaultName: "Control State",
+    subsystem: "generator",
+  },
+  {
+    key: "controlLastError",
+    physicalPathTail: "control_last_error",
+    logicalPathStem: "source.generator.control.error",
+    metricType: "state",
+    metricUnit: "text",
+    defaultName: "Control Last Error",
+    subsystem: "generator",
+  },
+  {
+    // The WRITABLE point (LiveOne mints its control descriptor server-side — see
+    // lib/control/control-registry.ts; a pusher never asserts its own writability).
+    //
+    // Value = minutes REMAINING on the commanded run, 0 when idle. Command and readback share one
+    // unit deliberately: you set it to 30 to run for 30 minutes, and it counts down to 0. The
+    // logicalPathStem + metricType here are the address lib/vendors/deepsea/control.ts dispatches
+    // on ("source.generator.control/duration"), so renaming either breaks the command — that pair
+    // is a contract, not a label.
+    key: "controlRunRequestMin",
+    physicalPathTail: "generator_run_request_min",
+    logicalPathStem: "source.generator.control.request",
+    metricType: "duration",
+    metricUnit: "min",
+    defaultName: "Generator Run Request",
+    subsystem: "generator",
+  },
+];
+
+/** What resume() finds on disk. `stopAt` is ISO — the absolute instant is the ONLY authority. */
+interface PersistedControlState {
+  latched: boolean;
+  stopAt: string | null;
+  requestedAt: string | null;
+  /** display/audit only — NEVER used for arithmetic (a countdown doesn't survive a dead process) */
+  requestedRuntimeSec: number | null;
+  startedByUs: boolean;
+}
+
+export interface RunRequestResult {
+  ok: boolean;
+  /** HTTP-ish status the route maps 1:1 */
+  status: 200 | 400 | 409 | 500 | 503;
+  action?: "started" | "extended" | "released";
+  reason?: string;
+  /** `reason`, unrendered, when it carries an instant the reader must spell locally. See message.ts.
+   *  The flat `reason` above is always populated too — it is the compatibility leg. */
+  reasonMessage?: StructuredMessage;
+  stopAt: string | null;
+  remainingSec: number | null;
+  ownership?: ControlOwnership;
+  /** the released-vs-stopped distinction: fn 33 clears OUR latch; input A may keep it running */
+  released?: boolean;
+  stillRunning?: "remote-start-input" | "cool-down" | "unknown" | null;
+}
+
+export interface ControlStatus {
+  latched: boolean;
+  state: ControlState;
+  stopAt: string | null;
+  remainingSec: number | null;
+  requestedAt: string | null;
+  lastCommandAt: string | null;
+  lastError: string | null;
+  maxRuntimeSec: number;
+}
+
+/**
+ * The `probe` answer: one flat object, because it is read as one fact.
+ *
+ * It used to arrive in two nests — `preflight: {ownership, scfSupported, scfMap}` beside
+ * `controlStatus: {...}` — which meant every consumer grafted one onto the other before it could
+ * use either. Flat costs one thing, and the bands below are how it is paid back: the optional `?`
+ * on a single `preflight` wrapper used to say "this half is a live device read, and it is absent
+ * when the read failed" in one character. Six optional fields say it more quietly, so the comment
+ * bands say it in words. Keep them.
+ */
+export interface ControlProbeResult {
+  /** False ⇒ the controller could not be READ; `verdict` explains. NEVER means "refused". */
+  ok: boolean;
+  /** Absent when `ok` is false — there was nothing to decide on. */
+  wouldStart?: boolean;
+  /** A sentence written to be read by a person. Rendered verbatim; nothing rewrites it. */
+  verdict: string;
+  /** `verdict`, unrendered, when it carries an instant. See message.ts. */
+  verdictMessage?: StructuredMessage;
+
+  // ── the controller, READ FRESH over Modbus (FC3 only). Absent when `ok` is false. ──
+  /** control/operating mode (reg 772): 0 Stop, 1 Auto, 2 Manual…; null = read n/a */
+  mode?: number | null;
+  modeName?: string | null;
+  /** the SP-PRO's remote-start command — configurable digital input A */
+  remoteStartInput?: "closed" | "open" | "unknown";
+  /** engine turning / producing */
+  running?: boolean;
+  /** which System Control Functions this module advertises (SCF map 4096–4103) */
+  scfSupported?: ControlPreflight["scfSupported"];
+  scfMap?: number[];
+
+  // ── the supervisor's OWN state, in memory. Present even when the read failed. ──
+  latched: boolean;
+  state: ControlState;
+  stopAt: string | null;
+  remainingSec: number | null;
+  requestedAt: string | null;
+  lastCommandAt: string | null;
+  lastError: string | null;
+  /** The cap actually ENFORCED on a run. A caller sizes its own offer against this rather than
+   *  proposing a length and asking whether it fits — see `RunSupervisor.probe()`. */
+  maxRuntimeSec: number;
+}
+
+/** Injectable clock: wall (ms epoch) + monotonic (ns). Tests drive both. */
+export interface ControlClock {
+  now(): number;
+  mono(): bigint;
+}
+
+const realClock: ControlClock = {
+  now: () => Date.now(),
+  mono: () => process.hrtime.bigint(),
+};
+
+export interface RunSupervisorOptions {
+  siteId: string;
+  target: SourceControl;
+  config: ControlConfig;
+  /** store root (Fly volume); null = in-memory only, loudly degraded */
+  dataDir: string | null;
+  log?: (m: string) => void;
+  clock?: ControlClock;
+}
+
+export class RunSupervisor {
+  readonly siteId: string;
+  private readonly target: SourceControl;
+  private readonly config: ControlConfig;
+  private readonly stateFile: string | null;
+  private readonly log: (m: string) => void;
+  private readonly clock: ControlClock;
+
+  // ── the authoritative state ──────────────────────────────────────────────
+  private latched = false;
+  private stopAtMs: number | null = null;
+  private requestedAt: string | null = null;
+  private requestedRuntimeSec: number | null = null;
+  /** monotonic backstop: mono() at request + runtime ns; null across restarts (wall clock rules) */
+  private monoDeadline: bigint | null = null;
+
+  // ── derived / observational ──────────────────────────────────────────────
+  private stopFailing = false;
+  private lastError: string | null = null;
+  private lastCommandAt: string | null = null;
+  private releasedAtMs: number | null = null;
+  private lastObs: {
+    running: boolean;
+    remoteStartInput: ControlOwnership["remoteStartInput"];
+    atMs: number;
+  } | null = null;
+
+  /** bumped on every state transition — the run loop's edge-triggered-delivery signal */
+  stateVersion = 0;
+
+  /** When the engine last began starting or stopping. See `inTransition`. */
+  private transitionAtMs: number | null = null;
+
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastStateString: string | null = null;
+
+  constructor(opts: RunSupervisorOptions) {
+    this.siteId = opts.siteId;
+    this.target = opts.target;
+    this.config = opts.config;
+    this.log = opts.log ?? (() => {});
+    this.clock = opts.clock ?? realClock;
+    this.stateFile = opts.dataDir
+      ? path.join(opts.dataDir, "control", `${opts.siteId}.json`)
+      : null;
+    if (!this.stateFile) {
+      this.log(
+        `[control] ⚠️ no dataDir — run state is IN-MEMORY ONLY; a restart mid-run loses the deadline`,
+      );
+    }
+    // The passive reconcile: clock + (at worst) a stop write. Never a Modbus read.
+    this.reconcileTimer = setInterval(
+      () => void this.reconcile(),
+      RECONCILE_MS,
+    );
+    this.reconcileTimer.unref?.();
+  }
+
+  get maxRuntimeSec(): number {
+    return this.config.maxRuntimeSec;
+  }
+
+  get passkeyEnv(): string {
+    return this.config.passkeyEnv;
+  }
+
+  // ── request handling ─────────────────────────────────────────────────────
+
+  /**
+   * The one entry point: `runtimeSec > 0` starts (or extends) a supervised run; `0` releases our
+   * latch. Validation, pre-flight, persistence and the write are all here so the route stays thin.
+   */
+  async request(
+    runtimeSec: number,
+    opts: { overrideRemoteStart?: boolean } = {},
+  ): Promise<RunRequestResult> {
+    if (!Number.isFinite(runtimeSec) || runtimeSec < 0) {
+      return this.result({
+        ok: false,
+        status: 400,
+        reason: "runtimeSec must be a non-negative number",
+      });
+    }
+    if (runtimeSec === 0) return this.release("requested");
+    if (runtimeSec > this.config.maxRuntimeSec) {
+      return this.result({
+        ok: false,
+        status: 400,
+        reason: `a ${runtimeSec}s run is longer than this generator's ${this.config.maxRuntimeSec}s limit`,
+      });
+    }
+
+    // Extension: already latched → recompute stopAt from NOW. (This makes maxRuntimeSec a
+    // per-request cap — repeated requests can chain runs. Intended; the response says "extended"
+    // so an HTTP retry / double-click is observable rather than silent.)
+    if (this.latched) {
+      this.setDeadline(runtimeSec);
+      await this.persist();
+      this.armTimer();
+      this.bump("extended");
+      return this.result({ ok: true, status: 200, action: "extended" });
+    }
+
+    // Pre-flight: FRESH reads, never a cached poll (a decision must not ride on 15 s old data).
+    let ownership: ControlOwnership;
+    try {
+      ownership = await this.target.readOwnership();
+    } catch (e) {
+      return this.result({
+        ok: false,
+        status: 503,
+        reason: `the controller could not be read (${msg(e)}), so the hub refused to command it blind`,
+      });
+    }
+
+    const gate = gateStart(ownership, opts.overrideRemoteStart === true, {
+      inCooldownGrace: this.inCooldownGrace(),
+    });
+    if (gate)
+      return this.result({ ok: false, status: 409, reason: gate, ownership });
+
+    // Persist BEFORE the write: a crash between "engine latched" and "state recorded" must not
+    // orphan a running engine.
+    this.latched = true;
+    this.releasedAtMs = null;
+    this.stopFailing = false;
+    this.setDeadline(runtimeSec);
+    this.lastCommandAt = new Date(this.clock.now()).toISOString();
+    await this.persist();
+
+    try {
+      await this.target.start();
+      this.lastError = null;
+    } catch (e) {
+      // Ambiguous outcome: the FC16 may have been actioned with only the response lost. State is
+      // NOT rolled back — stopAt stays armed, the next poll reveals the truth, and the deadline
+      // stop fires either way (fn 33 is harmless if the start never took).
+      this.lastError = `start write failed (may still have taken effect): ${msg(e)}`;
+      this.log(
+        `[control] ⚠️ ${this.lastError} — deadline stays armed for ${this.stopAtIso()}`,
+      );
+      this.armTimer();
+      this.bump("start-ambiguous");
+      return this.result({
+        ok: false,
+        status: 500,
+        reason: `start may have taken effect (write failed after delivery was possible); a stop is scheduled for ${this.stopAtIso()}`,
+        reasonMessage: {
+          template:
+            "start may have taken effect (write failed after delivery was possible); a stop is scheduled for {stopAt, time, short}",
+          values: { stopAt: this.stopAtIso() },
+        },
+        ownership,
+      });
+    }
+
+    this.armTimer();
+    this.bump("started");
+    this.log(
+      `[control] ▶ run started — stop at ${this.stopAtIso()} (${runtimeSec}s)`,
+    );
+    return this.result({ ok: true, status: 200, action: "started", ownership });
+  }
+
+  /** Clear OUR latch (fn 33). Never touches anyone else's start request. */
+  private async release(why: string): Promise<RunRequestResult> {
+    this.log(`[control] ■ releasing telemetry latch (${why})`);
+    this.lastCommandAt = new Date(this.clock.now()).toISOString();
+    try {
+      await this.target.stop();
+    } catch (e) {
+      // Could not confirm the release — keep everything armed and enter the retry loop.
+      this.lastError = `stop write failed: ${msg(e)}`;
+      this.stopFailing = true;
+      this.log(
+        `[control] 🛑 ${this.lastError} — retrying every ${STOP_RETRY_MS / 1000}s`,
+      );
+      this.scheduleStopRetry();
+      this.bump("stop-failed");
+      return this.result({
+        ok: false,
+        status: 500,
+        reason: `stop failed (${msg(e)}) — retrying every ${STOP_RETRY_MS / 1000}s until confirmed`,
+        released: false,
+      });
+    }
+
+    // Confirmed: only now is the persisted latch cleared.
+    this.latched = false;
+    this.stopFailing = false;
+    this.lastError = null;
+    this.stopAtMs = null;
+    this.monoDeadline = null;
+    this.requestedAt = null;
+    this.requestedRuntimeSec = null;
+    this.releasedAtMs = this.clock.now();
+    this.clearTimers();
+    await this.persist();
+    this.bump("released");
+
+    // What is STILL turning the engine now that our latch is gone — and, crucially, whether that
+    // needs a human. We have just confirmed our own fn 33, so a turning engine with input A open is
+    // the cool-down we caused; reporting it as "an unknown source, which this control cannot
+    // override" was alarming about the most ordinary outcome there is.
+    //
+    // 🛑 `lastObs` is a CACHED poll (up to a poll period old) and carries no engineState, so this
+    // leans on the fact we know for certain instead: we released, one moment ago. Only an
+    // unreadable input — where we cannot even tell whether the SP-PRO is calling — stays "unknown".
+    const obs = this.lastObs;
+    const stillRunning =
+      obs?.running === true
+        ? obs.remoteStartInput === "closed"
+          ? ("remote-start-input" as const)
+          : obs.remoteStartInput === "open"
+            ? ("cool-down" as const)
+            : ("unknown" as const)
+        : null;
+    if (stillRunning) {
+      this.log(
+        `[control] released our latch but the engine is still commanded by ${stillRunning} — it will NOT stop until that request clears`,
+      );
+    }
+    return this.result({
+      ok: true,
+      status: 200,
+      action: "released",
+      released: true,
+      stillRunning,
+    });
+  }
+
+  /**
+   * The `probe` command: exercise the ENTIRE chain — Access, passkey, registry lookup, supervisor,
+   * musher's device mutex, Modbus over WireGuard, the DSE itself — and report what a real run would
+   * decide, WITHOUT writing anything.
+   *
+   * It reaches the device only through `target.preflight()`, which is FC3-only; there is no code
+   * path from here to `writeControlKey`. The verdict comes from the same `gateStart()` the real
+   * request path uses, so this cannot drift into telling you a comforting lie.
+   *
+   * 🛑 It takes NO proposed runtime, and that is the point: a probe asks about the MOMENT. The only
+   * length-sensitive term in a start decision is the cap, and the cap is reported right here as
+   * `maxRuntimeSec` — so a caller compares against it rather than proposing a number and asking
+   * whether it fits. It used to default to 60 s, which meant every answer named a 60-second run
+   * nobody had asked about, and the browser then had to throw the sentence away and write its own.
+   */
+  async probe(): Promise<ControlProbeResult> {
+    // Read BEFORE the device round-trip so the two halves describe the same moment as closely as
+    // they can, and so the unreachable leg still carries it — our own latch is knowable even when
+    // the controller is not.
+    const supervisor = this.status();
+
+    let pre: ControlPreflight;
+    try {
+      pre = await this.target.preflight();
+    } catch (e) {
+      return {
+        ok: false,
+        verdict: `The hub could not read the controller: ${msg(e)} — a run would be refused too.`,
+        ...supervisor,
+      };
+    }
+
+    const reasons: string[] = [];
+    const gate = gateStart(pre.ownership, false, {
+      inCooldownGrace: this.inCooldownGrace(),
+    });
+    if (gate) reasons.push(gate);
+    if (!pre.scfSupported.telemetryStart)
+      reasons.push("the module does not advertise Telemetry Start (fn 32)");
+    if (!pre.scfSupported.telemetryCancel)
+      reasons.push(
+        "the module does not advertise Cancel Telemetry Start (fn 33), so a run could not be stopped",
+      );
+
+    const wouldStart = reasons.length === 0 && !this.latched;
+    return {
+      ok: true,
+      wouldStart,
+      // 🛑 Written to be READ, by a person, in a browser — these sentences are rendered verbatim and
+      // nothing downstream rewrites them. The acceptance names no run length because none was
+      // proposed (see above); the refusal is `gateStart()`'s clause framed for standing alone.
+      //
+      // The already-latched sentence STATES rather than warns. "Already running … would extend"
+      // read as a complaint about a run the reader had just deliberately started; it is not a
+      // refusal at all, just what is true when you open the dialog mid-run. (The browser pairs it
+      // with an info icon rather than a warning triangle for the same reason.)
+      verdict: this.latched
+        ? `Running until ${this.stopAtIso()} — starting again extends the run.`
+        : wouldStart
+          ? "Ready to start"
+          : `A run would be refused: ${reasons.join("; ")}`,
+      // Only the already-running verdict names an instant, so only it needs spelling by the reader.
+      verdictMessage: this.latched
+        ? {
+            template:
+              "Running until {stopAt, time, short} — starting again extends the run.",
+            values: { stopAt: this.stopAtIso() },
+          }
+        : undefined,
+      ...pre.ownership,
+      scfSupported: pre.scfSupported,
+      scfMap: pre.scfMap,
+      ...supervisor,
+    };
+  }
+
+  // ── deadline machinery ───────────────────────────────────────────────────
+
+  private setDeadline(runtimeSec: number): void {
+    const now = this.clock.now();
+    this.stopAtMs = now + runtimeSec * 1000;
+    this.requestedAt = new Date(now).toISOString();
+    this.requestedRuntimeSec = runtimeSec; // audit only
+    this.monoDeadline =
+      this.clock.mono() + BigInt(Math.round(runtimeSec * 1e9));
+  }
+
+  /** (Re)arm the derived wake-up hint from stopAt. Never the source of truth. */
+  private armTimer(): void {
+    if (this.timer) clearTimeout(this.timer);
+    if (this.stopAtMs == null) return;
+    const delay = Math.max(0, this.stopAtMs - this.clock.now());
+    this.timer = setTimeout(() => void this.reconcile(), delay);
+    this.timer.unref?.();
+  }
+
+  /**
+   * The doubled enforcement: called by the derived timer, the 30 s interval, and tests. Purely
+   * clock + write — no Modbus reads. Stops iff the wall deadline OR the monotonic backstop has
+   * passed (whichever fires first wins; an NTP step backward cannot extend a run).
+   */
+  async reconcile(): Promise<void> {
+    if (!this.latched || this.stopAtMs == null) return;
+    const wallDue = this.clock.now() >= this.stopAtMs;
+    const monoDue =
+      this.monoDeadline != null && this.clock.mono() >= this.monoDeadline;
+    if (wallDue || monoDue) {
+      await this.release(wallDue ? "deadline reached" : "monotonic backstop");
+    }
+  }
+
+  private scheduleStopRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.stopFailing) void this.release("stop retry");
+    }, STOP_RETRY_MS);
+    this.retryTimer.unref?.();
+  }
+
+  private clearTimers(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  /** Tear down interval + timers (tests / shutdown). */
+  dispose(): void {
+    this.clearTimers();
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer);
+    this.reconcileTimer = null;
+  }
+
+  // ── boot ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Recover after a restart. The persisted `stopAt` is the only authority:
+   *  - future → re-arm and stop at the ORIGINALLY intended time (a deploy mid-run doesn't cut the
+   *    run short);
+   *  - past → stop immediately (the hub was down through the deadline);
+   *  - missing/corrupt → defensive: fn 33 (harmless when not latched) + a mode check that flags a
+   *    module inexplicably sitting in Stop, the signature of a crash mid-inhibit.
+   */
+  async resume(): Promise<void> {
+    let state: PersistedControlState | null = null;
+    let readable = false;
+    if (this.stateFile) {
+      try {
+        const raw = await fs.readFile(this.stateFile, "utf8");
+        state = JSON.parse(raw) as PersistedControlState;
+        readable = true;
+      } catch (e) {
+        const missing = (e as NodeJS.ErrnoException).code === "ENOENT";
+        if (!missing)
+          this.log(
+            `[control] ⚠️ state file unreadable (${msg(e)}) — treating as unknown`,
+          );
+      }
+    }
+
+    if (readable && state && typeof state.latched === "boolean") {
+      if (state.latched && state.stopAt) {
+        const stopAtMs = Date.parse(state.stopAt);
+        if (Number.isFinite(stopAtMs)) {
+          this.latched = true;
+          this.stopAtMs = stopAtMs;
+          this.requestedAt = state.requestedAt;
+          this.requestedRuntimeSec = state.requestedRuntimeSec;
+          this.monoDeadline = null; // the wall instant rules across restarts
+          if (stopAtMs > this.clock.now()) {
+            this.log(
+              `[control] resume: run in progress, stop at ${state.stopAt} — re-armed`,
+            );
+            this.armTimer();
+          } else {
+            this.log(
+              `[control] resume: deadline ${state.stopAt} passed while down — stopping now`,
+            );
+            await this.release("resume: deadline passed while hub was down");
+          }
+          this.bump("resumed");
+          return;
+        }
+        this.log(
+          `[control] ⚠️ persisted stopAt unparseable (${state.stopAt}) — falling through to defensive path`,
+        );
+      } else {
+        // Clean idle state — nothing to do.
+        return;
+      }
+    }
+
+    // Unknown state (first boot, corrupt file, unparseable deadline). Defensive: clear any latch we
+    // might hold (harmless otherwise), and look for a module stuck in Stop.
+    this.log(
+      `[control] resume: no readable state — defensive fn 33 + mode check`,
+    );
+    try {
+      await this.target.stop();
+    } catch (e) {
+      this.lastError = `defensive stop at boot failed: ${msg(e)}`;
+      this.log(`[control] ⚠️ ${this.lastError}`);
+    }
+    try {
+      const own = await this.target.readOwnership();
+      if (own.mode === 0) {
+        this.lastError =
+          "module is in STOP mode at boot with no persisted reason — auto-start is DISABLED; check the panel (possible crash mid-inhibit)";
+        this.log(`[control] 🛑 ${this.lastError}`);
+      }
+    } catch {
+      /* device unreachable at boot — the collector's polls will surface it */
+    }
+    await this.persist();
+    this.bump("resumed-defensive");
+  }
+
+  // ── persistence ──────────────────────────────────────────────────────────
+
+  /** Atomic: tmp → fsync → rename. The spool is designed to fill this volume to 75 %. */
+  private async persist(): Promise<void> {
+    if (!this.stateFile) return;
+    const state: PersistedControlState = {
+      latched: this.latched,
+      stopAt: this.stopAtIso(),
+      requestedAt: this.requestedAt,
+      requestedRuntimeSec: this.requestedRuntimeSec,
+      startedByUs: this.latched,
+    };
+    try {
+      await fs.mkdir(path.dirname(this.stateFile), { recursive: true });
+      const tmp = `${this.stateFile}.tmp`;
+      const fh = await fs.open(tmp, "w");
+      try {
+        await fh.writeFile(JSON.stringify(state, null, 2));
+        await fh.sync();
+      } finally {
+        await fh.close();
+      }
+      await fs.rename(tmp, this.stateFile);
+    } catch (e) {
+      // A persistence failure must not block the command path — but it must be LOUD, because it
+      // reopens the restart hole the file exists to close.
+      this.log(`[control] 🛑 could not persist control state: ${msg(e)}`);
+    }
+  }
+
+  // ── observation + reporting ──────────────────────────────────────────────
+
+  /**
+   * Fed by the run loop after each successful poll. This is how the supervisor knows whether the
+   * engine ACTUALLY stopped after a release (fn 33 clears only our latch — input A can keep it
+   * running), without issuing reads of its own.
+   */
+  noteObservation(obs: {
+    running: boolean;
+    remoteStartInput: ControlOwnership["remoteStartInput"];
+  }): void {
+    // An engine that just started or just stopped is mid-transition however it was commanded —
+    // this is the leg that catches a run the SP-PRO started on its own, which no `bump` sees.
+    //
+    // The FIRST observation is process start rather than an engine event (the same reasoning as
+    // `wasActive === undefined` in run.ts), so it is not an edge on its own — a hub that restarts
+    // mid-run must not mistake "we can see it now" for "it just started". The exception is a window
+    // a command has already opened: there, the first observation IS that command's confirmation,
+    // and dropping it would end the bracket three minutes after the press rather than three minutes
+    // after the engine actually turned.
+    const edge =
+      this.lastObs != null
+        ? this.lastObs.running !== obs.running
+        : this.inTransition();
+    if (edge) this.transitionAtMs = this.clock.now();
+    this.lastObs = { ...obs, atMs: this.clock.now() };
+    if (!obs.running && this.releasedAtMs != null) this.releasedAtMs = null; // stop confirmed
+    this.bumpIfStateChanged();
+  }
+
+  /** Adapter for the run loop: extract the observation from a poll's Values (musher's derived keys). */
+  observeValues(values: Values): void {
+    const rsi = values.remoteStartInput;
+    this.noteObservation({
+      running:
+        Number(values.engineRpm ?? 0) > 0 || Number(values.genFreqHz ?? 0) > 0,
+      remoteStartInput: rsi == null ? "unknown" : rsi ? "closed" : "open",
+    });
+  }
+
+  /**
+   * Is the engine mid-start or mid-stop? The run loop polls and delivers fast while this holds, so
+   * LiveOne can watch a transition rather than learn about it a minute later.
+   *
+   * 🛑 An EDGE, never a disagreement. The tempting rule is `latched !== lastObs.running` ("what we
+   * commanded and what we see don't match yet"), and it is wrong for the commonest run on site: an
+   * SP-PRO-driven start has `latched === false` for its whole duration, so a disagreement rule would
+   * hold the fast cadence open for hours. Two independent edges open the window instead — a command
+   * that moves the latch (`bump`) and an observed change in the running flag (`noteObservation`) —
+   * and they compose without any confirmation logic: a LiveOne start opens it at the press, then
+   * re-opens it when the engine is actually seen to turn.
+   */
+  inTransition(now: number = this.clock.now()): boolean {
+    return (
+      this.transitionAtMs != null && now - this.transitionAtMs < TRANSITION_MS
+    );
+  }
+
+  /**
+   * Are we inside the window after OUR OWN confirmed release where a still-turning engine is
+   * explained by the cool-down we caused? The same fact `state()` renders as "stopping", exposed so
+   * the start gate can stop calling it an unknown source. Cleared the moment the engine is observed
+   * stopped (see noteObservation), so it cannot outlive the run it describes.
+   */
+  inCooldownGrace(now: number = this.clock.now()): boolean {
+    return (
+      this.releasedAtMs != null && now - this.releasedAtMs < COOLDOWN_GRACE_MS
+    );
+  }
+
+  state(): ControlState {
+    if (this.stopFailing) return "stop-failing";
+    if (this.latched) return "running:hub";
+    if (this.lastObs?.running) {
+      if (this.releasedAtMs != null) {
+        return this.inCooldownGrace()
+          ? "stopping"
+          : "latch-released-still-running";
+      }
+      return this.lastObs.remoteStartInput === "closed"
+        ? "running:sp-pro"
+        : "running:other";
+    }
+    return "idle";
+  }
+
+  status(): ControlStatus {
+    return {
+      latched: this.latched,
+      state: this.state(),
+      stopAt: this.stopAtIso(),
+      remainingSec: this.remainingSec(),
+      requestedAt: this.requestedAt,
+      lastCommandAt: this.lastCommandAt,
+      lastError: this.lastError,
+      maxRuntimeSec: this.config.maxRuntimeSec,
+    };
+  }
+
+  /** The synthetic points (CONTROL_MANIFEST keys). Available even when the device read failed. */
+  syntheticValues(): Values {
+    return {
+      controlRunActive: this.latched ? 1 : 0,
+      controlInhibitActive: 0, // inhibit is a designed-but-deferred state; see docs/plans/dse-inhibit-command.md
+      controlStopAt:
+        this.stopAtMs != null ? Math.round(this.stopAtMs / 1000) : null,
+      controlState: this.state(),
+      controlLastError: this.lastError,
+      // Minutes remaining, rounded UP so a run with 20 s left reads 1 rather than 0 — 0 is the
+      // command value for "stop" and must mean "no run in progress", never "nearly done".
+      controlRunRequestMin:
+        this.remainingSec() != null
+          ? Math.ceil((this.remainingSec() as number) / 60)
+          : 0,
+    };
+  }
+
+  private remainingSec(): number | null {
+    if (!this.latched || this.stopAtMs == null) return null;
+    return Math.max(0, Math.round((this.stopAtMs - this.clock.now()) / 1000));
+  }
+
+  private stopAtIso(): string | null {
+    return this.stopAtMs != null ? new Date(this.stopAtMs).toISOString() : null;
+  }
+
+  private result(
+    partial: Omit<RunRequestResult, "stopAt" | "remainingSec"> &
+      Partial<RunRequestResult>,
+  ): RunRequestResult {
+    return {
+      stopAt: this.stopAtIso(),
+      remainingSec: this.remainingSec(),
+      ...partial,
+    };
+  }
+
+  private bump(why: string): void {
+    this.stateVersion++;
+    this.lastStateString = this.state();
+    // A command that MOVES THE LATCH opens the transition window immediately, rather than waiting
+    // for the poll that observes the engine — the whole point is to be watching while it cranks.
+    // `extended` is excluded because nothing transitions (the engine is already turning), and the
+    // `resumed*` reasons because restart recovery is a fact about this process, not the engine.
+    if (TRANSITION_REASONS.has(why)) this.transitionAtMs = this.clock.now();
+  }
+
+  private bumpIfStateChanged(): void {
+    const s = this.state();
+    if (s !== this.lastStateString) {
+      this.lastStateString = s;
+      this.stateVersion++;
+    }
+  }
+}
+
+/**
+ * The start gate, shared by the real request path and `probe` so the two can never disagree.
+ * Returns a refusal reason, or null when a start may proceed.
+ *
+ * 🛑 The reason is a CLAUSE: lower-case, no trailing full stop. It has two surfaces and neither may
+ * rewrite it — `probe()` frames it standing alone ("A run would be refused: …"), and the browser's
+ * activity log frames it as a clause after "but" ("You asked to run the generator for 30 min, but
+ * the module is not in Auto …"). A capitalised sentence reads wrong in the second; a bare fragment
+ * reads wrong in the first. This form reads right in both.
+ *
+ * For the same reason it carries no developer instruction. `overrideRemoteStart` is an ops escape
+ * hatch documented in the README — telling a user about a flag they cannot reach is noise in the
+ * one sentence they need.
+ *
+ * Panel lockout: mode ≠ Auto means someone may have deliberately taken the module out of service
+ * (refuelling, hands in the engine bay). No override is offered — remote requests do not get to
+ * force a module back to Auto; with input A asserted, the fn 1 write ALONE would start the engine
+ * before any of our bookkeeping existed.
+ */
+export function gateStart(
+  ownership: ControlOwnership,
+  overrideRemoteStart: boolean,
+  opts: { inCooldownGrace?: boolean } = {},
+): string | null {
+  if (ownership.mode !== 1) {
+    return `the module is not in Auto (mode=${ownership.modeName ?? ownership.mode ?? "unreadable"}) — a possible local lockout at the panel, and not overridable remotely`;
+  }
+  if (ownership.running && !overrideRemoteStart) {
+    if (ownership.remoteStartInput === "closed") {
+      return "the engine is already running, commanded by the SP-PRO (remote-start input closed)";
+    }
+    // 🛑 A turning engine with input A open is NOT automatically a mystery. It is most often the
+    // tail of a run that just ended — and we can say so instead of guessing, from two independent
+    // sources, in order of authority:
+    //
+    //  1. the CONTROLLER's own operating state. `isCoolingDown` reads the DSE's word for it, which
+    //     covers a cool-down we did not start (an SP-PRO run that just dropped its input) as well
+    //     as our own.
+    //  2. the HUB's memory of its own release (`releasedAtMs` within COOLDOWN_GRACE_MS), for a
+    //     module whose engineState is unreadable — the case this hedged about before.
+    //
+    // Only when neither can account for it is "an unknown source" the honest answer. It used to be
+    // the ONLY answer, hedged in prose ("possibly its cool-down tail") because the code could not
+    // tell; the hedge is gone because the distinction is now made rather than described.
+    if (isCoolingDown(ownership)) {
+      return "the engine is cooling down after its last run and will stop shortly";
+    }
+    if (opts.inCooldownGrace) {
+      return "the engine is cooling down after the run that just stopped";
+    }
+    return "the engine is already running, commanded by an unknown source (remote-start input open)";
+  }
+  return null;
+}
+
+/**
+ * Does the CONTROLLER say the engine is winding down? DSE engine states 4 (Cooling down) and
+ * 6 (Post-run) are the two that mean "this run is ending on its own".
+ *
+ * Null-safe by construction: an unreadable register, a sentinel, or a module that does not populate
+ * it all answer `false`, which is the pre-existing behaviour.
+ */
+function isCoolingDown(ownership: ControlOwnership): boolean {
+  return ownership.engineState === 4 || ownership.engineState === 6;
+}
+
+function msg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}

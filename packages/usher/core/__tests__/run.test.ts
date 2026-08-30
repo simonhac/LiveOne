@@ -1,5 +1,10 @@
 import { describe, it, expect } from "@jest/globals";
-import { msUntilNextBoundary, tickOnce, type Entry } from "../run";
+import {
+  msUntilNextBoundary,
+  shouldDeliverTick,
+  tickOnce,
+  type Entry,
+} from "../run";
 import type { Source, Values } from "../source";
 
 const MANIFEST = [
@@ -64,6 +69,28 @@ describe("tickOnce", () => {
     const r = await tickOnce(entry, () => {});
     expect(r).toMatchObject({ name: "test", count: 1, active: true });
     expect(captured.readings).toHaveLength(1);
+  });
+
+  it("reports deliveryActive separately when the source distinguishes them", async () => {
+    // musher's shape: `isRunning` stays true through a diagnostic post-run hold so the LOCAL
+    // journal keeps sampling finely, while delivery follows the engine. Before the two were split
+    // that hold pushed active-rate data to LiveOne for an hour after every run.
+    const { entry } = makeEntry(async () => ({ x: 0 }));
+    (entry.source as { isRunning: (v: Values) => boolean }).isRunning = () =>
+      true; // the hold
+    (
+      entry.source as unknown as { isDeliveryActive: (v: Values) => boolean }
+    ).isDeliveryActive = (v) => Number(v.x ?? 0) > 0;
+    const r = await tickOnce(entry, () => {});
+    expect(r.active).toBe(true); // poll cadence stays fast
+    expect(r.deliveryActive).toBe(false); // push cadence goes back to idle
+  });
+
+  it("defaults deliveryActive to active when the source says nothing", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    const r = await tickOnce(entry, () => {});
+    expect(r.active).toBe(true);
+    expect(r.deliveryActive).toBe(true);
   });
 
   it("reports NOT active when the running signal is zero (still pushes the 0)", async () => {
@@ -190,5 +217,222 @@ describe("tickOnce store wiring (blackbox + spool)", () => {
     const r = await tickOnce(entry, () => {});
     expect(r).toMatchObject({ count: 1, pushOk: true });
     expect(captured.readings).toHaveLength(1);
+  });
+});
+
+describe("tickOnce delivery gating (poll ≠ push)", () => {
+  function makeStore() {
+    const journalled: unknown[] = [];
+    return {
+      journalled,
+      blackbox: {
+        append: async (r: unknown) => {
+          journalled.push(r);
+        },
+      },
+    };
+  }
+
+  it("reads the device but neither blackboxes nor pushes on a poll-only tick", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, { blackbox: store.blackbox });
+
+    const r = await tickOnce(
+      entry,
+      () => {},
+      undefined,
+      () => false,
+    );
+
+    expect(r).toMatchObject({ count: 1, active: true, delivered: false });
+    expect(r.pushOk).toBeUndefined();
+    expect(captured.readings).toBeUndefined(); // never reached the pusher
+    expect(store.journalled).toHaveLength(0); // blackbox records DELIVERIES, not polls
+  });
+
+  it("delivers normally when the gate allows it", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const store = makeStore();
+    Object.assign(entry, { blackbox: store.blackbox });
+
+    const r = await tickOnce(
+      entry,
+      () => {},
+      undefined,
+      () => true,
+    );
+
+    expect(r).toMatchObject({ count: 1, delivered: true, pushOk: true });
+    expect(captured.readings).toHaveLength(1);
+    expect(store.journalled).toHaveLength(1);
+  });
+
+  it("gives the gate the source's running state, so push cadence can differ when active", async () => {
+    const seen: boolean[] = [];
+    const gate = (active: boolean) => {
+      seen.push(active);
+      return false;
+    };
+    await tickOnce(
+      makeEntry(async () => ({ x: 5 })).entry,
+      () => {},
+      undefined,
+      gate,
+    ); // running
+    await tickOnce(
+      makeEntry(async () => ({ x: 0 })).entry,
+      () => {},
+      undefined,
+      gate,
+    ); // idle
+    expect(seen).toEqual([true, false]);
+  });
+
+  it("delivers by default, so callers that ignore the gate are unaffected", async () => {
+    const { entry, captured } = makeEntry(async () => ({ x: 5 }));
+    const r = await tickOnce(entry, () => {});
+    expect(r).toMatchObject({ delivered: true, pushOk: true });
+    expect(captured.readings).toHaveLength(1);
+  });
+
+  it("never consults the gate when there is nothing to send", async () => {
+    let consulted = false;
+    const { entry } = makeEntry(async () => ({}));
+    const r = await tickOnce(
+      entry,
+      () => {},
+      undefined,
+      () => {
+        consulted = true;
+        return true;
+      },
+    );
+    expect(r).toMatchObject({ count: 0 });
+    expect(r.delivered).toBeUndefined();
+    expect(consulted).toBe(false);
+  });
+});
+
+describe("shouldDeliverTick", () => {
+  // A source with no supervisor, freshly delivered, nothing transitioning: the boring case.
+  const base = {
+    active: false,
+    wasActive: false,
+    controlVersion: undefined,
+    lastControlVersion: undefined,
+    inTransition: false,
+    sinceDeliveredMs: 0,
+    idlePushMs: 300_000,
+    activePushMs: 60_000,
+  };
+
+  it("holds a tick that is not due", () => {
+    expect(shouldDeliverTick(base)).toBe(false);
+  });
+
+  describe("tolerance — the one-tick overshoot", () => {
+    // Measured on prod 2026-08-30: a 60s push cadence on a 15s poll delivered every 75s, and a
+    // 300s one every 315s, because `sinceDeliveredMs` is measured from the END of the previous
+    // delivery (a second or two past its tick boundary) while ticks arrive ON the boundary.
+    const TICK = 15_000;
+    const tol = { toleranceMs: TICK / 2 };
+
+    it("delivers on the due tick despite the read+push cost of the last one", () => {
+      // The tick that SHOULD deliver arrives 1.8s short of the nominal period.
+      expect(
+        shouldDeliverTick({ ...base, ...tol, sinceDeliveredMs: 298_200 }),
+      ).toBe(true);
+      expect(
+        shouldDeliverTick({
+          ...base,
+          ...tol,
+          active: true,
+          sinceDeliveredMs: 58_200,
+        }),
+      ).toBe(true);
+    });
+
+    it("never delivers a whole tick early", () => {
+      // Half a period of slack is by construction less than the gap to the previous tick, so the
+      // tick BEFORE the due one is still refused.
+      expect(
+        shouldDeliverTick({
+          ...base,
+          ...tol,
+          sinceDeliveredMs: 300_000 - TICK - 1_800,
+        }),
+      ).toBe(false);
+    });
+
+    it("is opt-in: without a tolerance the comparison is exact, as before", () => {
+      expect(shouldDeliverTick({ ...base, sinceDeliveredMs: 298_200 })).toBe(
+        false,
+      );
+    });
+  });
+
+  it("delivers once the idle push period has elapsed", () => {
+    expect(shouldDeliverTick({ ...base, sinceDeliveredMs: 299_999 })).toBe(
+      false,
+    );
+    expect(shouldDeliverTick({ ...base, sinceDeliveredMs: 300_000 })).toBe(
+      true,
+    );
+  });
+
+  it("uses the ACTIVE period while the genset runs", () => {
+    const running = { ...base, active: true, wasActive: true };
+    expect(shouldDeliverTick({ ...running, sinceDeliveredMs: 60_000 })).toBe(
+      true,
+    );
+    expect(shouldDeliverTick({ ...running, sinceDeliveredMs: 59_999 })).toBe(
+      false,
+    );
+  });
+
+  it("delivers on the running edge, in both directions", () => {
+    expect(shouldDeliverTick({ ...base, active: true })).toBe(true);
+    expect(shouldDeliverTick({ ...base, active: false, wasActive: true })).toBe(
+      true,
+    );
+  });
+
+  it("does not treat process start as an edge (wasActive undefined)", () => {
+    expect(
+      shouldDeliverTick({ ...base, active: true, wasActive: undefined }),
+    ).toBe(false);
+  });
+
+  it("delivers when a command moved the supervisor's state", () => {
+    expect(
+      shouldDeliverTick({
+        ...base,
+        controlVersion: 4,
+        lastControlVersion: 3,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeliverTick({
+        ...base,
+        controlVersion: 3,
+        lastControlVersion: 3,
+      }),
+    ).toBe(false);
+  });
+
+  // The bracket's whole point: mid-start/mid-stop every tick goes, however recently we delivered
+  // and whatever the push period says.
+  it("delivers every tick while the engine is starting or stopping", () => {
+    expect(shouldDeliverTick({ ...base, inTransition: true })).toBe(true);
+    expect(
+      shouldDeliverTick({
+        ...base,
+        active: true,
+        wasActive: true,
+        inTransition: true,
+        sinceDeliveredMs: 5_000,
+      }),
+    ).toBe(true);
   });
 });

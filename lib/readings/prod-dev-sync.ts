@@ -170,29 +170,34 @@ const FULL: FullTable[] = [
   // are already synced below. The manifest is not type-checked against the schema — a stale entry here
   // would fail at RUNTIME on the next dispatch, not at build.
   // dashboards' uuid PK is minted independently by each environment's own config-transform run at
-  // cutover, so dev and prod hold different uuids for "the same" dashboard (matched only by the frozen
-  // legacy_id). A plain by-PK upsert would leave dev's own (divergent) row in place and never touch it,
-  // and any FK that copies verbatim afterward (users.default_dashboard_id, share_tokens.dashboard_id)
-  // would reference a prod uuid absent from dev. `idDrift` makes dev ADOPT prod's uuid: clear the dev
-  // row colliding on legacy_id (or on owner+slug for legacy_id=NULL rows) before the by-PK upsert. Every
-  // FK to dashboards.id is CASCADE/SET NULL (users, share_tokens, dashboard_grants, dashboard_revisions),
-  // so no manual child clears are needed (children: []). Runs FIRST of the FK-bearing full tables so
-  // users/share_tokens (synced next) land on uuids that already exist in dev.
+  // cutover, so dev and prod can hold different uuids for "the same" dashboard. A plain by-PK upsert
+  // would leave dev's own (divergent) row in place and never touch it, and any FK that copies verbatim
+  // afterward (users.default_dashboard_id, share_tokens.dashboard_id) would reference a prod uuid
+  // absent from dev. `idDrift` makes dev ADOPT prod's uuid: clear the colliding dev row before the
+  // by-PK upsert. Every FK to dashboards.id is CASCADE/SET NULL (users, share_tokens,
+  // dashboard_grants, dashboard_revisions — the latter DELIBERATELY unsynced: dev history is
+  // dev-local, and this drift-delete + CASCADE wipes it, which is accepted), so no manual child
+  // clears are needed (children: []). Runs
+  // FIRST of the FK-bearing full tables so users/share_tokens (synced next) land on uuids that already
+  // exist in dev.
+  //
+  // 🛑 `slug` is now the ONLY cross-environment identity, so EVERY dashboard must carry one. The
+  // frozen `legacy_id` used to be the primary key here and was dropped (migration 0062) — the two
+  // dashboards that had a NULL slug (Daylesford, Kew) were given one in the same change, precisely
+  // because a NULL slug matches nothing (NULL = NULL is never true) and would have left those rows
+  // with no correlation key at all. A new dashboard with a NULL slug is invisible to this drift
+  // resolution: it will be adopted only if its uuid already agrees.
   {
     name: "dashboards",
     mode: "full",
     onConflict: "update",
     idDrift: {
       uniqueKeys: [
-        ["legacy_id"], // dashboards_legacy_id_unique
         ["owner_user_id", "slug"], // dashboards_owner_alias_unique
-        // Not an index — the stable CROSS-ENVIRONMENT identity, needed because neither key above can
-        // see a drifted `legacy-share-*` dashboard. Those are minted from a share-token phrase by each
-        // environment's own cutover, so legacy_id is NULL on both sides (NULL = NULL never matches) and
-        // reown-dev-data.ts has already rewritten dev's owner_user_id, so owner+slug can't match either.
-        // The pair then survives to collide in reown's remap (dashboards_owner_alias_unique), which is
-        // what failed the sync's last leg once the areas fix let it get that far. The slug is derived
-        // from the token phrase and so is identical in both environments.
+        // Not an index — the stable CROSS-ENVIRONMENT identity, and the only key that survives
+        // reown-dev-data.ts having rewritten dev's owner_user_id (which is what defeats the pair
+        // above). For a `legacy-share-*` dashboard the slug is derived from the share-token phrase
+        // and so is identical in both environments; for the rest it is the shortname the owner set.
         ["slug"],
       ],
       children: [],

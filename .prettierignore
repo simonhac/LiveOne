@@ -5,3 +5,11 @@
 # signal table in docs/operations.md rewrites the whole table and buries the change in 36 lines of
 # whitespace. The docs here carry the *why* — they are meant to be read in diffs.
 *.md
+
+# GENERATED — owned byte-for-byte by scripts/ops/cli-reference.ts, which compares the file on disk
+# against what it would emit. Letting prettier reformat it makes the generator and the committed
+# file disagree permanently: `cli-reference --check` fails immediately after every commit, because
+# lint-staged rewrites the file the generator just wrote. (Measured, not theoretical — this
+# happened on the commit that introduced the catalogue.) Regenerate with
+# `npm run cli:reference -- --apply` instead.
+docs/cli-tools.json

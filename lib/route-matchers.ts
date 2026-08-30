@@ -29,6 +29,14 @@ const publicRoutes = [
   // stage 13). They were never redundant with these: the middleware runs BEFORE next.config's rewrites
   // and matches the ORIGINAL path, so `/api/v4/...` is simply a different path and inherited nothing
   // from them — which is also why removing them cannot affect these.
+  // The CLI hand-off exchange: self-authenticating on a code this server signed plus the PKCE
+  // verifier, with no session by design (the CLI has no cookie — that is the problem being solved).
+  // Same rationale as /api/cron: public-listed so a headless call reaches the handler that can
+  // actually check its credential, instead of being 404'd at the edge.
+  //
+  // 🛑 ONLY `exchange`. `/api/cli-auth/authorize` is deliberately NOT here: it is what BINDS a code
+  // to a user, so it must require a real browser session.
+  "/api/cli-auth/exchange",
   "/api/v4/areas/(.*)/recompute-provenance",
   "/api/v4/areas/(.*)/provenance-summary",
   "/api/v4/areas/by-handle/(.*)",
@@ -69,9 +77,7 @@ const shareableRoutes = [
   // publicRoutes because its caller is an anonymous `?access=` viewer, not a CRON_SECRET bearer: a
   // publicRoutes entry would hand every unauthenticated request past the edge, where the handler's own
   // share-token check is the only thing left. Deliberately the ONLY shareable route on the /api/v4
-  // tree; everything else there is owner-facing management. (The legacy `/api/areas/(.*)`
-  // twin of this line went with its route in Phase 14 stage 13 — the panel's client moved in the same
-  // commit, so nothing anonymous is left addressing the old path.)
+  // tree; everything else there is owner-facing management.
   "/api/v4/areas/(.*)/provenance-daily",
 ];
 
@@ -84,3 +90,53 @@ export function hasAccessToken(request: Request): boolean {
   const url = new URL(request.url);
   return url.searchParams.has("access");
 }
+
+// ---------------------------------------------------------------------------
+// CLI tokens
+// ---------------------------------------------------------------------------
+
+// Routes an operator CLI may reach with an `Authorization: Bearer lo_cli_…` token instead of a
+// Clerk session cookie. This list BOUNDS the edge bypass below, exactly as `shareableRoutes` bounds
+// the `?access=` one — a stray `lo_cli_` bearer can never skip the edge on admin, control or
+// vendor routes.
+//
+// 🛑 THESE ARE NOT PUBLIC ROUTES, and must never be moved into `publicRoutes`. The bypass is
+// PRESENCE-ONLY: it declines to 404 a request that *claims* to be a CLI request, and the handler's
+// own `requireAuth`/`loadOwnedDashboard` is the single enforcement point — `getAuthContext`
+// resolves the token there and yields `userId: null` for anything invalid, which is a clean 401.
+// Every handler under this matcher MUST authorize; adding a route here without checking that is
+// how a bypass becomes a hole.
+//
+// Why bypass at the edge at all: `auth.protect()` REWRITES an unauthenticated /api request to a
+// 404 before the handler runs, so a credential the handler understands never gets the chance to be
+// understood. This is the same reason `/api/cron` and `/api/gush` are listed elsewhere.
+const cliTokenRoutes = [
+  "/api/v4/dashboards(.*)", // the dashboard CLI
+  "/api/v4/devices(.*)", // device list + per-device aggregate — every handler requireAuth's
+  "/api/v4/areas", // the readable-areas list — requireAuth (POST create authorizes the same way)
+  // The area aggregate — a NAMED single segment, deliberately NOT `(.*)`: the sub-resources
+  // (members, bindings, derivations, eligibility, by-handle, …) stay OUTSIDE the bypass until each
+  // is judged on its own, rather than inheriting it by being a sibling.
+  "/api/v4/areas/:id",
+  // Judged on its own (the first sub-resource to be): both GET and POST authorize in-handler via
+  // `loadAreaForOwner`. Again a named segment — `/derivations/:dxid` (PATCH) stays outside.
+  "/api/v4/areas/:id/derivations",
+  "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
+  // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
+  // independently (each only declines to 404 its own credential shape) and the handler's
+  // `requireDashboardAccess` is the enforcement point either way — a CLI token here reaches nothing
+  // a browser session couldn't.
+  "/api/data",
+  "/api/history",
+  "/api/cli-auth/tokens(.*)", // `auth list` / `auth revoke`, so a CLI can manage its own credential
+  "/api/cli-auth/whoami", // the `target:` line — which deployment, as whom, against which database
+  // 🛑 Enumerated, NOT `/api/cli-auth(.*)`. A wildcard would sweep in `authorize`, and a CLI token
+  // must not be able to mint its own successor without a fresh human approval in a browser.
+];
+
+export const isCliTokenRoute = createRouteMatcher(cliTokenRoutes);
+
+// Presence-only detection lives in lib/cli-auth/bearer.ts — CRYPTO-FREE on purpose, because this
+// module is imported by middleware.ts on the EDGE runtime and the verification path
+// (lib/cli-auth/verify.ts) uses node:crypto. Re-exported here so middleware has one import.
+export { cliBearerToken, hasCliBearer } from "./cli-auth/bearer";

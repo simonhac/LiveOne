@@ -1,5 +1,5 @@
 /**
- * The membership DIFF behind `PUT /api/v4/areas/{id}/members` (config-v4 Phase 14 stage 10).
+ * The membership DIFF behind `PUT /api/v4/areas/{id}/members`.
  *
  * 🛑 Why this exists rather than leaning on the live smoke run: a wrong removal set is SILENT in both
  * directions. Under-delete and a ghost member survives; over-delete and bindings that should have

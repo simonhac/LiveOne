@@ -16,6 +16,7 @@ import {
   formatKgCo2,
 } from "@/lib/provenance-format";
 import { ShimmerBar } from "@/components/ui/skeleton";
+import { formatPercent } from "@/lib/point/format-value";
 
 /**
  * What the table's last column shows. `pct` is each row's share of the total (the original, and the
@@ -656,7 +657,7 @@ export default function EnergyTable({
                 </div>
                 <span className="text-gray-100 font-mono w-20 text-right">
                   {socValue !== null && socValue !== undefined
-                    ? `${socValue.toFixed(1)}%`
+                    ? `${formatPercent(socValue)}%`
                     : "—"}
                 </span>
                 <span

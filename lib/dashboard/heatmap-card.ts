@@ -1,5 +1,5 @@
 /**
- * The pure half of the `heatmap` card (config-v4 Phase 14 stage 20) — config resolution and the
+ * The pure half of the `heatmap` card — config resolution and the
  * PIN RESOLUTION that decides, for a given device's point set, whether a pinned series is honoured,
  * whether the point selector is shown, and whether the "pinned series unavailable" note appears.
  *

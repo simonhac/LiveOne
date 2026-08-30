@@ -72,6 +72,20 @@ export const queryKeys = {
     ["runPeriods", sid(systemId), role, modeKey] as const,
 
   /**
+   * Every run-periods read for ONE device — all roles, all modes — as an invalidation prefix.
+   *
+   * The generator tile holds two of them (its dashboard-period range and its one-row "now" read),
+   * and a `RunsCard` on the same dashboard holds a third. They describe the same runs, so anything
+   * that changes one changes all three; sweeping the prefix is the only way to keep them agreeing.
+   *
+   * 🛑 The systemId here is the DETECTOR's device, which is not the tile's subject — see the note
+   * on `invalidateRunPeriods` in GeneratorControlDialog. A caller that does not know it must use
+   * {@link RUN_PERIODS_PREFIX} instead of guessing.
+   */
+  runPeriodsForDevice: (systemId: SystemIdLike) =>
+    ["runPeriods", sid(systemId)] as const,
+
+  /**
    * Charge-limit automations for one AREA (`/api/v4/automations?area=ar_…`), keyed by the `ar_`
    * TypeID the request itself uses. Deliberately NOT in `SYSTEM_RESOURCES` below: it is not
    * handle-keyed, so `invalidateDevice` must not sweep it.
@@ -89,6 +103,15 @@ export const queryKeys = {
   provenanceDaily: (areaId: string, rangeKey: string) =>
     ["provenanceDaily", areaId, rangeKey] as const,
 } as const;
+
+/**
+ * EVERY run-periods query, whatever device, role or mode — the widest run-periods sweep there is.
+ *
+ * For the caller that cannot name the detector's device (the control dialog commands a DeepSea
+ * controller while the runs hang off the SP-PRO beside it). Prefer
+ * `queryKeys.runPeriodsForDevice` wherever the device IS known.
+ */
+export const RUN_PERIODS_PREFIX = ["runPeriods"] as const;
 
 /**
  * Resource keys that represent a device's live/historical data — used to invalidate

@@ -3,10 +3,9 @@
  * authoritative area/device identities. Preview and persistence intentionally share the exact same
  * resolution, so a previewed seed is byte-identical to the one that gets saved.
  *
- * Phase 14 stage 8: `buildAreaStrategy` now emits a v4 `GroupNode` natively, so there is no
- * v3-descriptor detour through `rewriteV3ToV4` here any more. This module's remaining job is the two
- * IDENTITY hops the pure builder cannot do: the area uuid → `ar_` ref, and the strategy's one device
- * pin (the `oe-grid` card's OE region device) legacy handle → `dv_`.
+ * `buildAreaStrategy` emits a `GroupNode` natively, so this module's job is just the two IDENTITY
+ * hops the pure builder cannot do: the area uuid → `ar_` ref, and the strategy's one device pin
+ * (the `oe-grid` card's OE region device) legacy handle → `dv_`.
  */
 import { DeviceRegistry } from "@/lib/registry";
 import { resolveAreaStrategyInputs } from "@/lib/capabilities/server";

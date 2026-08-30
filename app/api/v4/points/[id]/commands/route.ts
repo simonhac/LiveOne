@@ -11,7 +11,12 @@ import { Automation, Point } from "@/lib/ids";
  * The command AUDIT TRAIL, readable — "why did my car stop charging at 2am", answered over HTTP
  * instead of SQL.
  *
- *   GET /api/v4/points/{pt_…}/commands?limit=20  → 200 { commands: [...] }
+ *   GET /api/v4/points/{pt_…}/commands?limit=20&offset=0
+ *     → 200 { commands: [...], hasMore, offset, limit }
+ *
+ * Offset paging rather than a cursor: the trail is append-only at the HEAD, so a page boundary can
+ * only shift when a new command lands while the reader is paging — which shows them a row twice at
+ * worst, in a read-only log they opened to skim. A cursor would buy nothing for that.
  *
  * Point-addressed like its `action`/`refresh` siblings (a point id names its device, so the
  * resolver and the owner-only gate are shared machinery), but the response is DEVICE-scoped:
@@ -59,14 +64,24 @@ export async function GET(
     const limit = Number.isFinite(rawLimit)
       ? Math.min(Math.max(Math.trunc(rawLimit), 1), 50)
       : 20;
+    const rawOffset = Number(request.nextUrl.searchParams.get("offset") ?? "0");
+    const offset =
+      Number.isFinite(rawOffset) && rawOffset > 0 ? Math.trunc(rawOffset) : 0;
 
+    // Fetch one MORE than asked for: `hasMore` then costs nothing, where a COUNT(*) over a table
+    // that only grows would cost a second query to answer a question the caller only needs
+    // yes/no to. The extra row is dropped before it reaches the wire.
     const rows = await requirePlanetscaleDb()
       .select({ command: pointCommands, point: points })
       .from(pointCommands)
       .innerJoin(points, eq(points.id, pointCommands.pointId))
       .where(eq(pointCommands.deviceId, resolved.point.deviceId))
       .orderBy(desc(pointCommands.requestedAt))
-      .limit(limit);
+      .limit(limit + 1)
+      .offset(offset);
+
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
 
     // Resolve automation names in one batch; a deleted rule is simply absent → name: null.
     const automationUuids = [
@@ -118,7 +133,7 @@ export async function GET(
       };
     });
 
-    return NextResponse.json({ commands });
+    return NextResponse.json({ commands, hasMore, offset, limit });
   } catch (error) {
     console.error("[control] point commands route failed:", error);
     return NextResponse.json(

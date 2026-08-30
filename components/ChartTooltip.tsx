@@ -2,6 +2,7 @@ import React from "react";
 import Value from "@/components/ui/value";
 import { CHART_COLORS } from "@/lib/chart-colors";
 import { SOC_DASH } from "@/lib/charts/line-series";
+import { formatPercent } from "@/lib/point/format-value";
 
 /**
  * A legend swatch. Solid series get a filled square; a dashed series gets a dashed rule, so the
@@ -187,7 +188,7 @@ export default function ChartTooltip({
           {batterySOC !== null && batterySOC !== undefined ? (
             <Value
               className="text-white"
-              value={batterySOC.toFixed(1)}
+              value={formatPercent(batterySOC)}
               unit={"%"}
             />
           ) : null}

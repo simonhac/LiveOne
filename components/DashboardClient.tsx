@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -64,6 +64,13 @@ interface DashboardClientProps {
   initialReadableAreas?: ReadableArea[];
   /** Device refs already resolved and authorized by the server render path. */
   resolvedDevices?: ReadableDevice[];
+  /**
+   * The dashboard's canonical URL path (`/dashboard/{user}/{slug}` when slugged, else
+   * `/dashboard/{db_…}`). On mount the address bar is replaceStated to it, so a legacy
+   * `/dashboard/id/…` arrival ends up showing the canonical form without a redirect round-trip.
+   * Omitted on the `?access=` shared view (the token URL is left alone).
+   */
+  canonicalPath?: string;
 }
 
 export default function DashboardClient({
@@ -72,8 +79,21 @@ export default function DashboardClient({
   sharedAreas,
   initialReadableAreas,
   resolvedDevices = [],
+  canonicalPath,
 }: DashboardClientProps) {
   const router = useRouter();
+
+  // Canonicalise the address bar (see the prop note). `replaceState` — never a push — so
+  // back/forward history is untouched; query + hash survive the rewrite.
+  useEffect(() => {
+    if (canonicalPath && window.location.pathname !== canonicalPath) {
+      window.history.replaceState(
+        null,
+        "",
+        canonicalPath + window.location.search + window.location.hash,
+      );
+    }
+  }, [canonicalPath]);
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [addAreaOpen, setAddAreaOpen] = useState(false);
@@ -260,9 +280,8 @@ export default function DashboardClient({
             />
           ) : (
             // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally
-            // nothing for it. The v3 renderer used to own this state; Phase 8/10 made it unreachable
-            // and stage 9's deletion of that renderer made it permanent, so it lives here now — the
-            // shell owns the empty case because the shell owns the dialog it opens.
+            // nothing for it. The shell owns the empty case, because the shell owns the dialog it
+            // opens.
             <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
               <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
               <p className="text-sm">

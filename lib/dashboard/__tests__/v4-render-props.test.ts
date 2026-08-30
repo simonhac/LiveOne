@@ -1,18 +1,13 @@
 /**
  * ============================================================================================
- * THE PROP-EQUIVALENCE GATE for the `CardRenderProps` port (config-v4 Phase 14).
+ * THE PROP-EQUIVALENCE GATE for `CardRenderProps`.
  * ============================================================================================
  *
  * WHAT THIS IS FOR
- * Stage 6 changed `CardRenderProps` (components/dashboard/cards/types.ts) from the v3 shape
- * `{card: CardV3, section: AreaSectionV3, handle?}` to the v4-native `{node: CardNode, context:
- * NodeContext, handle?, deviceSystemId?}`, ported all nine card plugins onto it, and deleted the
- * adapter `lib/dashboard/v4-adapt.ts` (`synthCardV3` / `synthSectionV3`). That was a pure refactor:
- * it must change NOTHING a user can see. It is kept as the standing gate on this seam.
- *
- * The stage-6 result: all 11 `card:*` `renderProps` entries changed shape (that IS the port); all
- * 22 `leaves` entries, all 10 `tile:*` `renderProps` entries and the whole key set were
- * byte-identical.
+ * A golden capture of exactly what every card and tile plugin is handed for a fixture document:
+ * `{node: CardNode, context: NodeContext, handle?, deviceSystemId?}`. It is the standing gate on
+ * this seam — a refactor of the render path must change NOTHING a user can see, and this is what
+ * says so.
  *
  * STAGE 7 then merged the two plugin registries into one `CARD_RENDERERS` keyed on `CardType`
  * (components/dashboard/registry.tsx) and moved the renderer's tile-vs-card dispatch onto the
@@ -56,6 +51,7 @@
  *                           under a bare `renderToStaticMarkup`. Replaced by a fixed payload.
  *   - `useQuery`          — the two tiles and the one card that query directly (hot-water,
  *                           renewables, ev-provenance).
+ *   - `useQueryClient`    — the generator tile takes one to invalidate its run-period reads.
  *   - `useSearchParams`   — `useTemporalRange` reads it during render.
  *   - `next/font/local`   — only Next's compiler can evaluate it.
  *   - the leaf components — so we capture props rather than markup.
@@ -108,6 +104,10 @@ jest.mock("@tanstack/react-query", () => {
       isError: false,
       isSuccess: false,
     }),
+    // Same reason as `useQuery` above: there is no provider in a bare static render. A no-op client
+    // is faithful here rather than a shortcut — the only caller (the generator tile) uses it from an
+    // effect, and `renderToStaticMarkup` runs no effects, so nothing can invoke this.
+    useQueryClient: () => ({ invalidateQueries: () => Promise.resolve() }),
   };
 });
 jest.mock("@/components/dashboard/cards/shared", () => {
@@ -146,8 +146,8 @@ const LEAF_MODULES: Record<string, string> = {
   "@/components/HwsSmallCard": "HwsSmallCard",
   "@/components/GridSignalsCard": "GridSignalsCard",
   "@/components/HomeEnergyCard": "HomeEnergyCard",
-  // config-v4 Phase 14 stage 20. CAPTURED as a leaf, not stubbed away like `DailyStripes` below —
-  // the two stage-19 reasons for stubbing were checked against it and only one applies:
+  // CAPTURED as a leaf, not stubbed away like `DailyStripes` below — of the two reasons for
+  // stubbing given there, only one applies here:
   //   1. Date.now()-derived props: NO. `HeatmapPanel`'s props are `systemId`/`timezone`/the two pins
   //      /`variant` — all doc- and fixture-derived, so the golden is stable across midnight. (The
   //      30-day window is computed INSIDE `HeatmapChart`, below the captured boundary.)
@@ -167,7 +167,7 @@ for (const [modulePath, name] of Object.entries(LEAF_MODULES)) {
   });
 }
 // 🛑 `DailyStripes` is stubbed OUT of the capture set rather than added to `LEAF_MODULES`, for one
-// remaining reason (config-v4 Phase 14 stage 19):
+// remaining reason:
 //   1. Its props embed a `Date.now()`-derived local-day window (`firstDayMidnightMs`, set at
 //      `components/dashboard/cards/daily-stripe.tsx:67`), so recording them would bake today's date
 //      into the checked-in golden and turn it red at the next local midnight — exactly what the
@@ -190,7 +190,7 @@ jest.mock("@/components/SiteChartsCard", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// The fixture document. Every branch of `node-view.tsx` that carries v3 coupling is represented.
+// The fixture document. Every branch of `node-view.tsx` is represented.
 // ---------------------------------------------------------------------------------------------
 const DASHBOARD_ID = "db_fixture";
 
@@ -207,7 +207,7 @@ const FIXTURE_DOC: DashboardV4 = {
         area: AREA_1, // handle 1, chartCapable
         heading: true,
         children: [
-          // ---- the tile path (V4TileCell): all 9 promoted tile views -------------------------
+          // ---- the tile path (V4TileCell): all 10 promoted tile views ------------------------
           {
             id: "n_row",
             kind: "group",
@@ -220,6 +220,7 @@ const FIXTURE_DOC: DashboardV4 = {
               { id: "n_t_grid", kind: "card", type: "house-to-grid" },
               { id: "n_t_amber", kind: "card", type: "amber" },
               { id: "n_t_ev", kind: "card", type: "ev" },
+              { id: "n_t_generator", kind: "card", type: "generator" },
               { id: "n_t_renewables", kind: "card", type: "renewables" },
               // device-bound tile: `V4TileCell` must fetch the DEVICE's handle (13), not the area's.
               {
@@ -329,7 +330,7 @@ const FIXTURE_DOC: DashboardV4 = {
           },
           // ---- must NOT render ------------------------------------------------------------------
           { id: "n_hidden", kind: "card", type: "amber-now", hidden: true },
-          // `tiles` is a v3 card type but NOT a v4 one (it became a group) → placeholder branch.
+          // `tiles` is not a card type (it is a `row` group) → placeholder branch.
           { id: "n_tiles_legacy", kind: "card", type: "tiles" },
           { id: "n_future", kind: "card", type: "future-card" },
           {
@@ -366,13 +367,14 @@ const EXPECTED_KEYS = [
   "tile:battery@1",
   "tile:battery@11",
   "tile:ev@1",
+  "tile:generator@1",
   "tile:hotWater@1",
   "tile:house-to-grid@1",
   "tile:load@1",
   "tile:oe-grid@13",
   "tile:renewables@1",
   "tile:solar@1",
-  // v3 card plugins (keyed by node id)
+  // card plugins (keyed by node id)
   "n_amber_now",
   "n_amber_timeline",
   "n_b_dm",
@@ -476,7 +478,7 @@ beforeAll(() => {
 });
 
 describe("v4 renderer — coverage and arity", () => {
-  it("exercises every one of the 20 known v4 card types", () => {
+  it("exercises every one of the 21 known v4 card types", () => {
     const covered = new Set<string>();
     for (const c of pluginCaptures)
       covered.add(c.plugin.replace(/^(card|tile):/, ""));

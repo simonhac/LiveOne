@@ -11,6 +11,7 @@ import {
   STRIPE_DAY_GAP as DAY_GAP,
   dailyStripeSvgHeight,
 } from "@/lib/dashboard/daily-stripe";
+import { formatPercent } from "@/lib/point/format-value";
 
 /**
  * A day-per-row gradient stripe timeline for one point.
@@ -433,7 +434,13 @@ function Tooltip({
       <div className="font-medium">
         {dayLabel} {time}
       </div>
-      <div>{value === null ? "—" : `${value.toFixed(1)}${unitSuffix}`}</div>
+      <div>
+        {value === null
+          ? "—"
+          : // Percentages drop the decimal at 100 (SoC is a stripe metric); everything else
+            // keeps its fixed 1dp.
+            `${unitSuffix.trim() === "%" ? formatPercent(value) : value.toFixed(1)}${unitSuffix}`}
+      </div>
     </div>
   );
 }

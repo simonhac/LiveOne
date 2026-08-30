@@ -1,5 +1,5 @@
 /**
- * The `heatmap` card's pure core (config-v4 Phase 14 stage 20) — the strict config schema as the v4
+ * The `heatmap` card's pure core — the strict config schema as the v4
  * doc validator sees it, plus the pin resolution the panel and the card both go through.
  */
 import { describe, it, expect } from "@jest/globals";
@@ -149,13 +149,13 @@ describe("resolveHeatmapPin", () => {
    * the selector comes back, the note goes up, and the drawn series is the local selection.
    */
   it("falls back to the selector when the pinned series is missing", () => {
-    expect(resolveHeatmapPin(PATHS, "source.solar/power", "load/power")).toEqual(
-      {
-        series: "load/power",
-        showPointSelect: true,
-        pinUnavailable: true,
-      },
-    );
+    expect(
+      resolveHeatmapPin(PATHS, "source.solar/power", "load/power"),
+    ).toEqual({
+      series: "load/power",
+      showPointSelect: true,
+      pinUnavailable: true,
+    });
   });
 
   it("never returns the unavailable pin as the series to draw", () => {

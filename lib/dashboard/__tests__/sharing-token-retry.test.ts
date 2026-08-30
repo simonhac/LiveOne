@@ -1,5 +1,5 @@
 /**
- * `createDashboardShareToken`'s collision RETRY (config-v4 Phase 14 stage 2b).
+ * `createDashboardShareToken`'s collision RETRY.
  *
  * The loop was decorative. `continue` was gated on `(err as {code?: string})?.code === "23505"`, which
  * drizzle ≥0.44 never populates, so the one event the loop exists for — two 3-word phrases colliding on

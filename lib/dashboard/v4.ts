@@ -1,12 +1,12 @@
 /**
  * config-v4 dashboard document — the recursive node tree (clean-sheet §8).
  *
- * Card and tile unify into one primitive. A document is `{version:4, root}` where the tree is built
- * from two node kinds:
- *   - `group`: a first-class flex layout node (`{direction, wrap, heading, size, children}`). A group
- *     bound to an `area` with `heading:true` IS a v3 "section"; a `direction:"row"` group IS a v3
- *     "tiles" card. "Sections" and "tiles containers" stop being special cases.
- *   - `card`: the leaf. A "tile" is just a small card (`size.columns` low); the registries merge.
+ * Card and tile are ONE primitive. A document is `{version:4, root}` where the tree is built from
+ * two node kinds:
+ *   - `group`: a first-class flex layout node (`{direction, wrap, heading, size, children}`). An
+ *     area-bound `heading:true` group is what renders as a titled section; a `direction:"row"` group
+ *     is what renders as a strip of small cards. Neither is a special case in the model.
+ *   - `card`: the leaf. A "tile" is just a small card (`size.columns` low); there is one registry.
  *
  * INVARIANTS baked into the shape:
  *   - §8.3 security: scope-bearing refs live ONLY in the envelope fields `node.area` / `node.device`,
@@ -17,11 +17,8 @@
  *   - Layout = child order + optional `size:{columns:1–12}` on a 12-col grid + group flex. No (x,y).
  *
  * This module is PURE TYPES (no zod, client-safe). Runtime validation/normalization lives in
- * v4-validate.ts. (The v3→v4 rewriter that seeded these documents, v3-to-v4.ts, was deleted at Phase 14
- * stage 16 with the rest of the v3 island.) Refs are the branded `AreaId`/`DeviceId` from
- * lib/ids — the security invariant is expressed in the type, not just prose.
- *
- * DARK: the v3 app does not read `dashboards.doc`; this ships behind the unchanged renderer.
+ * v4-validate.ts. Refs are the branded `AreaId`/`DeviceId` from lib/ids — the security invariant is
+ * expressed in the type, not just prose.
  */
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { CardType } from "./card-types";
@@ -29,7 +26,9 @@ import type { CardType } from "./card-types";
 export const DASHBOARD_DOC_VERSION = 4 as const;
 
 /** A node's local id — an opaque `n_…` string, NOT a scope-bearing TypeID (§8.3). Assigned by
- *  `normalizeDocV4` when absent, so it is optional on input and PRESENT on any normalized/stored doc. */
+ *  `normalizeDocV4` when absent (random 4-char base32; never recycled, never twinned across
+ *  environments), so it is optional on input and PRESENT on any normalized/stored doc. Older docs
+ *  carry counter-era ids (`n_0`…) — the id is opaque, so both forms coexist. */
 export type NodeId = string;
 
 /** Optional 12-column grid sizing hint. */
@@ -48,8 +47,8 @@ interface NodeBase {
   size?: NodeSize;
 }
 
-/** A first-class flex layout node. A group with `area`+`heading` is a v3 "section"; a `row` group is
- *  a v3 "tiles" card. */
+/** A first-class flex layout node. A group with `area`+`heading` renders as a titled section; a
+ *  `row` group renders as a strip of small cards. */
 export interface GroupNode extends NodeBase {
   kind: "group";
   direction?: "row" | "column"; // default "column" (clean-sheet §15 decision)
@@ -73,7 +72,7 @@ export interface DashboardV4 {
   root: GroupNode;
 }
 
-/** An empty document — a bare root group with no children (mirrors `emptyDashboardV3`). */
+/** An empty document — a bare root group with no children. */
 export function emptyDashboardV4(): DashboardV4 {
   return {
     version: DASHBOARD_DOC_VERSION,
@@ -90,8 +89,8 @@ export function isCardNode(n: DashboardNode): n is CardNode {
 }
 
 /**
- * Cheap runtime guard for a v4 document (mirrors `isDashboardV3`) — used to branch the dual-shape
- * render window. Full structural validation is `validateDocV4` (v4-validate.ts).
+ * Cheap runtime guard for a document — a corrupt-jsonb check at the read boundary, not validation.
+ * Full structural validation is `validateDocV4` (v4-validate.ts).
  */
 export function isDashboardV4(x: unknown): x is DashboardV4 {
   if (typeof x !== "object" || x === null) return false;
@@ -122,15 +121,13 @@ export function walkNodes(
  * How many LEAF CARD nodes a document holds — "how much is on this dashboard", for the dashboard
  * list and the admin table. Groups are structure, not content, so they are not counted; the walk is
  * over the whole tree, so a card nested inside a `row` inside a section group still counts once.
- *
- * config-v4 Phase 14 stage 15: this replaces `allCardsV3(descriptor).length`. The v3 count went to
- * zero for every dashboard created after the v4 cutover, because the seed is written to `doc` while
- * `descriptor` stayed empty (measured at stage 13 on `/admin/dashboards`).
  */
 export function countCardNodes(doc: DashboardV4): number {
-  let n = 0;
-  walkNodes(doc, (node) => {
-    if (node.kind === "card") n++;
-  });
-  return n;
+  return countCardsInNode(doc.root);
+}
+
+/** Leaf-card count of a single subtree (the node itself included) — `countCardNodes` for a branch. */
+export function countCardsInNode(node: DashboardNode): number {
+  if (node.kind === "card") return 1;
+  return node.children.reduce((n, child) => n + countCardsInNode(child), 0);
 }

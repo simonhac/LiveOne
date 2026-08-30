@@ -16,6 +16,17 @@
 /** Units that fuse to the number and are NOT muted. */
 const TIGHT_UNITS = new Set(["%", "°", "°C", "°F", "¢", "$", "c"]);
 
+/**
+ * Units set in SMALL CAPS.
+ *
+ * An INITIALISM — a unit whose letters stand for words rather than for a defined symbol — is
+ * lowercase by convention and reads as a stray word next to a number. Small caps give it the
+ * weight of a unit without shouting. `rpm` is revolutions per minute; `Hz`, `kW` and `°C` are
+ * defined SI/derived symbols whose case is load-bearing (`mW` is not `MW`), so they are never
+ * touched — which is why this is an allow-list of initialisms and not a rule about letter case.
+ */
+const SMALL_CAPS_UNITS = new Set(["rpm"]);
+
 export type UnitGap = "none" | "hair" | "word";
 
 export interface UnitParts {
@@ -25,6 +36,8 @@ export interface UnitParts {
   tail: string;
   headGap: UnitGap;
   headMuted: boolean;
+  /** Set the head in small caps — see `SMALL_CAPS_UNITS`. */
+  headSmallCaps: boolean;
 }
 
 export function isTightUnit(unit: string): boolean {
@@ -49,6 +62,7 @@ export function classifyUnit(unit: string): UnitParts {
     tail,
     headGap: tight ? "none" : "hair",
     headMuted: !tight && head !== "",
+    headSmallCaps: SMALL_CAPS_UNITS.has(head),
   };
 }
 
@@ -68,3 +82,5 @@ export const GAP_CLASS: Record<UnitGap, string> = {
 /** Shared typography for every non-number part of a hero value. */
 export const UNIT_CLASS = "text-[0.72em] font-semibold";
 export const UNIT_MUTED_CLASS = "text-gray-400";
+/** `all-small-caps` so the already-lowercase source text needs no transform to render as caps. */
+export const UNIT_SMALL_CAPS_CLASS = "[font-variant-caps:all-small-caps]";

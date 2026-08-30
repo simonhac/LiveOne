@@ -1,6 +1,5 @@
 /**
- * ROUTE-level tests for the four config-v4 Phase 14 stage-12 reads — the last legacy reads to get a
- * `/api/v4` address:
+ * ROUTE-level tests for the four reads that were the last to get a `/api/v4` address:
  *
  *   GET /api/v4/devices                              ← GET /api/areas/candidate-devices
  *   GET /api/v4/areas/by-handle/{handle}             ← GET /api/areas/by-handle/{legacySystemId}

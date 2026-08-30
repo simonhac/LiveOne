@@ -154,6 +154,7 @@ npm run type-check       # Check TypeScript types
 npm test                 # Run unit tests
 npm run db:pg:generate   # Diff PG schema.ts -> new migration in /drizzle-planetscale/
 npm run db:pg:migrate    # Apply pending PG migrations
+npm run knip             # Unused files / dependencies / exports (config: knip.json)
 ```
 
 ### Scripts Directory
@@ -162,6 +163,46 @@ The project has utility scripts in `/scripts`:
 
 - `/scripts/temp/` - Temporary scripts for one-off tasks
 - `/scripts/utils/` - Reusable utility scripts
+- `/scripts/ops/` - Operator CLIs (agent-facing), built on the shared kit in `lib/cli/`
+
+#### Operator CLIs
+
+Every tool under `scripts/ops/` is declared with `defineCommand()` (`lib/cli/cli.ts`), so it has
+`--help` on each subcommand, `--format human|json` (human at a terminal, json when piped), data on
+stdout with diagnostics on stderr, the shared exit vocabulary (0 ok · 1 findings · 2 usage · 3 auth
+· 5 upstream · 130 interrupted), and — for writers — dry-run by default with `--apply`, which off a
+terminal additionally requires `--yes`.
+
+- **What exists:** [docs/cli-reference.md](docs/cli-reference.md) (index) → each directory's
+  `CLI_README.md` (full `--help`) → [docs/cli-tools.json](docs/cli-tools.json) (machine catalogue,
+  one MCP-shaped entry per leaf command). All generated; regenerate with
+  `npm run cli:reference -- --apply` after changing any `defineCommand()` block.
+- **The registry is `lib/cli/tiers.ts`.** A new CLI defaults to UNLISTED, and `npm run check:cli`
+  reports it. Unlisted means unchecked and undocumented — it is a finding, not an exemption.
+  `npm run check:cli:a` is the tier-A gate and must stay green.
+
+#### The liveone CLI
+
+`npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
+`auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), and the read-only
+`device` / `area` / `user` (list, show, latest values, history; `area flows` downloads the
+rolled-up Sankey matrix for a period). Run `-- <domain> --help` for verbs; the generated
+reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
+
+- **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
+  stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
+  coexist; commands resolve their token strictly by the origin they call.
+- **Default transport is `--via=http`**: the deployed API, as you, through the same validation and
+  readability checks the web app uses. The `target:` line (origin, user, Clerk instance, DB host)
+  prints on stderr before any work — read it before `--apply`.
+- **`--via=db` is the explicit escape hatch** (connection from `MIGRATE_DATABASE_URL` only; dev:
+  `npm run liveone:dev -- dashboard <command>`): required for repairing a doc whose refs the owner
+  cannot read (the repairing PUT would itself be 403'd), bulk sweeps, and outages.
+- Mutations are **dry-run by default**; `--apply` writes (CAS on `revision` both ways). Off a
+  terminal `--apply` additionally requires `--yes`.
+- 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
+- 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev. "Make the same
+  edit in both" means re-running `show` in each environment first.
 
 #### Development API Authentication
 
@@ -209,11 +250,13 @@ npm run db:psql -- -c "select now()"   # wrapper sets PGSSLROOTCERT=system (veri
 PG uses **native UTC timestamps** (no epoch-ms conversion needed):
 
 ```sql
--- Latest point readings
-SELECT pr.measurement_time, pi.display_name, pr.value
+-- Latest point readings. `point_readings` keys on `point_rid` (FK -> points.rid); there is no
+-- (system_id, point_id) address and no `point_info` table (dropped by migration 0051).
+SELECT pr.measurement_time, d.name AS device, p.name AS point, pr.value
 FROM point_readings pr
-JOIN point_info pi ON pr.system_id = pi.system_id AND pr.point_id = pi.id
-WHERE pr.system_id = 1
+JOIN points p ON p.rid = pr.point_rid
+JOIN devices d ON d.id = p.device_id
+WHERE d.rid = 1
 ORDER BY pr.measurement_time DESC
 LIMIT 10;
 
@@ -240,13 +283,13 @@ ORDER BY reltuples DESC;
 > - **Approximate row counts:** `SELECT relname, reltuples::bigint FROM pg_class WHERE relkind='r' AND relnamespace='public'::regnamespace ORDER BY reltuples DESC` (the planner's own estimate, instant).
 >   **Do NOT use `pg_stat_user_tables.n_live_tup`** — it is not the planner estimate, and on the append-only tables it is wildly low. `n_live_tup` is a running counter that is only corrected when VACUUM/ANALYZE touches the table; `point_readings` and `sessions` take inserts only, so they generate no dead tuples, autovacuum never has anything to do, and their `n_live_tup` never gets corrected — it just equals "rows inserted since this branch's stats began". Measured on prod 2026-08-01: `point_readings` `reltuples` 15.6M (correct, matches 2.2 GB on disk) vs `n_live_tup` 205,902 — a 60× undercount. Nothing is wrong with the database; the number is just the wrong number.
 > - **Presence / recency / "is it current":** use an indexed `ORDER BY <indexed col> DESC LIMIT 1` — e.g. `SELECT MAX(measurement_time) FROM point_readings` or `SELECT 1 FROM <table> LIMIT 1`. This is how you verify a snapshot/backup has data, too — and note that a restore check based on `n_live_tup` would have you conclude you'd lost 98% of `point_readings`.
-> - **Exact `COUNT(*)` is fine** only on the small config tables: `systems`, `point_info`, `users`, `polling_status`, `share_tokens`.
+> - **Exact `COUNT(*)` is fine** only on the small config tables: `devices`, `points`, `areas`, `users`, `share_tokens`.
 
 ```sql
--- Check for duplicate timestamps in point_readings
+-- Check for duplicate timestamps in point_readings (find the rid via the join above)
 SELECT measurement_time, COUNT(*) as count
 FROM point_readings
-WHERE system_id = 1 AND point_id = 0
+WHERE point_rid = 1
 GROUP BY measurement_time
 HAVING COUNT(*) > 1;
 
@@ -257,7 +300,7 @@ WITH time_diffs AS (
     LAG(measurement_time) OVER (ORDER BY measurement_time) as prev_time,
     measurement_time - LAG(measurement_time) OVER (ORDER BY measurement_time) as diff
   FROM point_readings
-  WHERE system_id = 1 AND point_id = 0
+  WHERE point_rid = 1
 )
 SELECT prev_time AS gap_start, measurement_time AS gap_end,
        EXTRACT(EPOCH FROM diff) / 60 AS gap_minutes
@@ -379,7 +422,7 @@ vercel --prod
 vercel ls
 
 # View build logs
-./scripts/vercel-build-log.sh
+npx tsx tools/read-vercel-build-log.ts
 ```
 
 ### Troubleshooting
@@ -388,7 +431,7 @@ vercel ls
 
 1. Check TypeScript: `npm run type-check`
 2. Test build locally: `npm run build`
-3. View logs: `./scripts/vercel-build-log.sh`
+3. View logs: `npx tsx tools/read-vercel-build-log.ts`
 
 **Type Errors with Drizzle**
 

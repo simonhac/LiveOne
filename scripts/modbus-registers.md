@@ -25,8 +25,9 @@ do **not** touch. Read the CLI live output with `npm run deepsea:poll` (Teleport
 - **Addresses/scaling can be right in the spec yet still read `n/a` on this hardware.** A plain
   DSE7410 MkII has **no mains monitoring** and no mains CTs, so the whole Mains block is expected
   to be `null`. See [What won't populate](#what-wont-populate-on-a-plain-dse7410-mkii).
-- **The control page (16) is a WRITE path that physically starts/stops the generator.** We do not
-  write it. See [Control / write path](#control--write-path-page-16--not-used) for the safety notes.
+- **The control page (16) is a WRITE path that physically starts/stops the generator.** We DO now
+  write it — see [Control / write path](#control--write-path-page-16--in-use-the-only-write-path)
+  for who writes, and the safety notes.
 - `057-004` is **not** the GenComm spec (it's the DSE CAN guide). DSE does not publish the full
   register map under a public number — it's supplied by DSE Technical Support on request. SP-228
   REV A (hosted by Winco) is a verbatim distribution of the standard.
@@ -276,11 +277,22 @@ named alarm is at that severity._ (Confidence for this word is only medium — c
   nibble output as "which channels are lit and at what severity" and map to real conditions by
   observing the live panel, rather than trusting a hard-coded name list.
 
-## Control / write path (Page 16) — **not used**
+## Control / write path (Page 16) — **IN USE** (the only write path)
 
-We map and read nothing here beyond documenting it. **These are the registers that remotely start
-and stop the physical generator and change its operating mode.** GenComm effects control **only**
-through this page — you cannot start/stop or change mode by writing page 3.
+**These are the registers that remotely start and stop the physical generator and change its
+operating mode.** GenComm effects control **only** through this page — you cannot start/stop or
+change mode by writing page 3.
+
+As of 2026-08-29 we DO write here, from exactly two places:
+
+- **`packages/usher/core/control.ts`** — `RunSupervisor`, the hub-side owner of a commanded run.
+  This is the supported path: `POST /api/usher/control/<siteId>/run` with a passkey and a runtime,
+  behind Cloudflare Access. It holds the telemetry latch (fn 32) and enforces the deadline itself,
+  because GenComm has no "run for N seconds" key.
+- **`scripts/deepsea/run-generator.ts`** — the on-LAN manual tool (first live run 2026-08-29).
+
+The register MAP (`REGISTERS` in dse-client) remains FC3-read-only; `writeControlKey()` is the sole
+write, and the collector path never calls it.
 
 ### How it works
 
@@ -313,18 +325,26 @@ through this page — you cannot start/stop or change mode by writing page 3.
 |  76 | Select Off mode               | 35776 |      29759 |
 |  80 | Lamp test                     | 35780 |      29755 |
 
+> ✅ **Confirmed against the official DSE document** `056-051` Issue 4, _Gencomm Control Keys and
+> Remote Control Outputs_ (**not redistributed here — DSE's document; request a copy from DSE
+> Technical Support, support@deepseaplc.com**).
+> Registers 4104/4105, the FC16-in-one-transaction rule and every key/complement above match it
+> exactly. That doc adds no password requirement (our "access-level-2" note came from SP-228) and
+> also documents **Remote Control Outputs 1–10** — page 193, `49408–49417`, write `0`/`1` — a second,
+> softer control surface (drives a configured output rather than the engine directly).
+
 - **Remote start** = Auto (1) + Telemetry start (32), _or_ Manual (2) + Start engine (5).
 - **Remote stop** = Stop (0).
 - Example FC16 write for "Select Auto": write `[35701, 29834]` to registers `4104..4105`.
 
-### ⚠️ Warnings before ever enabling writes
+### ⚠️ Warnings that still apply now writes ARE enabled
 
 - **Safety first.** Writing these can crank and run an engine with no local warning. Never wire this
   up without confirming the physical set is safe to remote-start (no one servicing it, exhaust/fuel
   OK, transfer logic understood). This is an operational-safety change, not just a code change.
-- **Separate initiative, not a monitoring feature.** The current integration is a read-only push
-  vendor; adding writes means FC16, the SCF support-map pre-check, password handling, rate-limit
-  backoff, and an authenticated/authorised command channel from the app to the LAN reader.
+- **Separate initiative, not a monitoring feature.** Writes live in their own layer
+  (`core/control.ts` + `core/control-api.ts`), never in the collector: FC16, the SCF support-map
+  pre-check, an authenticated command channel, and a hub-held deadline with durable state.
 - **Check the support map first.** Read `4096–4103` and confirm the function's bit is set before
   writing its key; not all functions exist on all modules.
 - **The complement is mandatory and paired.** Always write key + `65535−key` in one FC16; never
@@ -377,5 +397,9 @@ Run `npm run deepsea:poll` (add `--raw` to see raw words). Confirm:
 - **Victron `dbus-modbus-client` `dse.py`** (github.com/victronenergy/dbus-modbus-client): an
   independent code cross-check for the mode (772), engine-state (1408), energy ×0.1 scaling (1800),
   run time (1798), starts (1808), and the control-key pair (35701/35732/35733).
+- **DSE `056-051` Issue 4 — Gencomm Control Keys and Remote Control Outputs** (official DSE
+  application note, obtained 2026-08-29 from DSE Technical Support). **Not checked in** — it is
+  DSE's document to distribute; request it from support@deepseaplc.com. It is the authoritative
+  source for the Page-16 control keys and confirms the whole key table above verbatim.
 - **DSE7410 MkII & DSE7420 MkII Operator Manual** `057-263`; **Configuration Suite manual** `057-262`.
 - Ground truth: `packages/usher/clients/dse-client.ts` (Page-4 offsets 0–7, proven live 2026-07-10).

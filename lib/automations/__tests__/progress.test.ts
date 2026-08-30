@@ -312,7 +312,7 @@ describe("formatChargeLimitLine", () => {
       T0 + 26 * MIN,
     );
     expect(formatChargeLimitLine(desc)).toBe(
-      "Stopping in 34 min · at 20.0 kWh (12.4 so far)",
+      "Stopping in 34\u00A0min · at 20.0 kWh (12.4 so far)",
     );
   });
 
@@ -329,8 +329,8 @@ describe("formatChargeLimitLine", () => {
       ADDED_PT,
       T0 + 26 * MIN,
     );
-    expect(formatChargeLimitLine(desc)).toBe("Stopping in 34 min");
-    expect(formatChargeLimitCompact(desc)).toBe("→ 34 min");
+    expect(formatChargeLimitLine(desc)).toBe("Stopping in 34\u00A0min");
+    expect(formatChargeLimitCompact(desc)).toBe("→ 34\u00A0min");
   });
 
   it("keeps one decimal on kWh", () => {
@@ -348,9 +348,9 @@ describe("formatChargeLimitLine", () => {
 
 describe("targetWords / summaryWords", () => {
   it.each([
-    [30, undefined, "30 min"],
+    [30, undefined, "30\u00A0min"],
     [undefined, 20, "20 kWh"],
-    [30, 20, "30 min or 20 kWh"],
+    [30, 20, "30\u00A0min or 20 kWh"],
     [undefined, undefined, ""],
   ] as const)("targetWords(%p, %p) → %p", (min, k, expected) => {
     expect(targetWords(min, k)).toBe(expected);
@@ -358,13 +358,13 @@ describe("targetWords / summaryWords", () => {
 
   it("summaryWords promises this charge for a once rule", () => {
     expect(summaryWords("once", 15, 6)).toBe(
-      "Will stop this charge after 15 min or 6 kWh.",
+      "Will stop this charge after 15\u00A0min or 6 kWh.",
     );
   });
 
   it("summaryWords promises every charge for a standing rule", () => {
     expect(summaryWords("standing", 30, undefined)).toBe(
-      "Will stop every charge after 30 min.",
+      "Will stop every charge after 30\u00A0min.",
     );
   });
 

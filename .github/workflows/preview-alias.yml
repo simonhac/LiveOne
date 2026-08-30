@@ -14,6 +14,14 @@ name: Preview alias
 # NOTE (GitHub quirk): `delete`-event workflows run ONLY from the DEFAULT branch's copy of this file.
 # The cleanup job therefore does nothing until this file is merged to `main`. The alias (push) job
 # runs from the pushed branch's own copy, so it works on a feature branch immediately.
+#
+# 🛑 STEP ORDER IS THE PERFORMANCE DESIGN, not an accident. Everything that does NOT depend on the
+# deployment — the npx download, and the per-host TLS certificate, which is a property of the
+# HOSTNAME and so is knowable from the branch ref at t=0 — runs BEFORE the wait for READY, where
+# Vercel's ~75 s build absorbs it for free. What is left on the critical path is one REST call.
+# Measured before this ordering: the alias landed ~30 s after the build went ready (≈18 s npx +
+# ≈10 s cert + ≈1 s assign, all of it serial and all of it after the wait). Moving work back below
+# the wait puts that 30 s back.
 
 on:
   push:
@@ -36,7 +44,9 @@ jobs:
   alias:
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12          # polling budget is ~10 min + slack
+    # 10 min polling budget + the (bounded) 90 s cert pre-issue ahead of it + slack, so the loop's
+    # own DEADLINE stays the thing that decides a timeout — not the job cap silently beating it to it.
+    timeout-minutes: 14
     permissions:
       contents: read
     steps:
@@ -69,6 +79,38 @@ jobs:
           echo "branch='$BRANCH_REF' label='$LABEL' domain='$DOMAIN'"
           { echo "LABEL=$LABEL"; echo "DOMAIN=$DOMAIN"; } >> "$GITHUB_ENV"
 
+      - name: Ensure the alias host has a certificate (BEFORE the wait — the build pays for this)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+        run: |
+          set -euo pipefail
+          # An EXISTING alias for this host proves a cert was already issued for it (the alias could
+          # not have been created otherwise), so a repeat push to the same branch skips this whole
+          # step and costs nothing. Same GET the cleanup job uses.
+          INFO="$(curl -sS --max-time 30 -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "https://api.vercel.com/v4/aliases/${DOMAIN}?teamId=${VERCEL_ORG_ID}" || true)"
+          if [ -n "$(printf '%s' "${INFO:-}" | jq -r '.uid // empty' 2>/dev/null || true)" ]; then
+            echo "alias ${DOMAIN} already exists — its certificate does too; nothing to do."
+            exit 0
+          fi
+
+          # First push on this branch: no host, no cert. Only the CLI can issue one — it drives the
+          # HTTP-01 challenge, which works because *.preview.liveone.energy is a DNS-only CNAME to
+          # Vercel, so the host already resolves there. (A wildcard cert is NOT an option: that needs
+          # DNS-01, which needs Vercel to run the nameservers, and this zone is on Cloudflare.)
+          #
+          # Best-effort by design — `|| true`. If issuance fails, the assign step below simply falls
+          # through to the CLI and we are no worse off than before this step existed. A cert problem
+          # must not fail the job here, where it would fail it BEFORE we have even looked for the
+          # deployment.
+          #
+          # `timeout` bounds it because this now runs BEFORE the deadline-managed poll loop: a hung
+          # CLI here would burn the whole job budget without ever having looked for the deployment,
+          # which is a worse failure than not having a cert.
+          timeout 90 npx --yes vercel@50 certs issue "$DOMAIN" \
+            --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID" || true
+
       - name: Discover the preview deployment for this commit and wait until READY
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -77,7 +119,11 @@ jobs:
         run: |
           set -euo pipefail
           API="https://api.vercel.com/v6/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_ORG_ID}&target=preview&limit=50"
-          INTERVAL=15
+          # 5s, not 15s: this interval is pure latency on top of the build — the deployment goes
+          # READY at some uniformly random point inside one interval, so the average cost of it is
+          # half. At 600 s that is at most 120 polls of a list endpoint, comfortably inside Vercel's
+          # rate limits, and it buys back ~5 s of the ~7.5 s that 15 s was costing on average.
+          INTERVAL=5
           DEADLINE=$(( $(date +%s) + 600 ))
           while :; do
             RESP="$(curl -sS --max-time 30 -H "Authorization: Bearer ${VERCEL_TOKEN}" "$API" || true)"
@@ -108,20 +154,36 @@ jobs:
             sleep "$INTERVAL"
           done
 
-      - name: Assign the stable alias to that deployment (Vercel CLI — provisions the per-host cert)
+      - name: Assign the stable alias to that deployment (REST; CLI only if the cert is missing)
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
         run: |
           set -euo pipefail
-          # Use the CLI, not the REST alias endpoint. POST /v2/deployments/{id}/aliases requires a
-          # PRE-EXISTING SSL cert and fails "cert_missing" for a fresh host; `vercel alias set`
-          # provisions the per-host cert via HTTP-01 (the *.preview.liveone.energy CNAME is DNS-only,
-          # so the host resolves to Vercel) and THEN assigns — reassigning if already in use.
-          # --scope takes the team id; no .vercel link is needed in CI.
+          # THE ONLY THING ON THE CRITICAL PATH. One request, ~1s, no npx: by now the host has a
+          # cert (it either already had one, or the step above issued it while Vercel was building),
+          # which is the single thing REST cannot do for itself.
+          RESP="$(curl -sS --max-time 30 -X POST \
+            -H "Authorization: Bearer ${VERCEL_TOKEN}" -H 'content-type: application/json' \
+            -d "$(jq -nc --arg a "$DOMAIN" '{alias: $a}')" \
+            "https://api.vercel.com/v2/deployments/${DEPLOY_ID}/aliases?teamId=${VERCEL_ORG_ID}" \
+            || true)"
+          ERR="$(printf '%s' "${RESP:-}" | jq -r '.error.code // empty' 2>/dev/null || true)"
+
+          if [ -z "${ERR:-}" ] && [ -n "$(printf '%s' "${RESP:-}" | jq -r '.uid // empty' 2>/dev/null || true)" ]; then
+            echo "Aliased https://${DOMAIN} -> https://${DEPLOY_URL} (REST)"
+            exit 0
+          fi
+
+          # 🛑 The fallback is not decoration. `cert_missing` is the documented failure of this
+          # endpoint on a host that has never been aliased, and it is exactly what we get if the
+          # pre-issue step above was skipped, raced, or silently failed — so the slow path that
+          # always worked has to stay reachable. Anything else that went wrong lands here too, on
+          # the same reasoning: an alias is the point of this job, and 30s beats not having one.
+          echo "REST assign did not succeed (error='${ERR:-none}') — falling back to the CLI."
           npx --yes vercel@50 alias set "$DEPLOY_URL" "$DOMAIN" \
             --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
-          echo "Aliased https://${DOMAIN} -> https://${DEPLOY_URL}"
+          echo "Aliased https://${DOMAIN} -> https://${DEPLOY_URL} (CLI)"
 
   cleanup:
     if: ${{ github.event_name == 'delete' && github.event.ref_type == 'branch' }}

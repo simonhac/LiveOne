@@ -3,6 +3,21 @@ import { getUnitDisplay } from "@/lib/point/unit-display";
 import { applyExcelFormat } from "@/lib/point/display/excel-format";
 import { classifyUnit } from "@/lib/point/unit-typography";
 
+/**
+ * A percentage: one decimal below 100, none AT 100 — "99.5" / "100".
+ *
+ * 100% is exact by definition (a full battery is not 100.0-and-a-bit full), so the trailing ".0"
+ * is four significant digits of nothing. Rounding happens BEFORE the >= test, otherwise 99.96
+ * takes the one-decimal branch and prints the "100.0" this exists to remove.
+ *
+ * 🛑 Shared so the SoC surfaces cannot drift: the battery tile, the chart tooltip, the energy
+ * table, the daily-stripe tooltip and the connection-test modal all render the same number.
+ */
+export function formatPercent(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Math.abs(rounded) >= 100 ? rounded.toFixed(0) : rounded.toFixed(1);
+}
+
 export interface ValueParts {
   /** The formatted number, with NO unit. A React element for complex blobs (e.g. a location). */
   value: string | React.ReactElement;
@@ -76,7 +91,7 @@ export function formatValueParts(
       // Display raw values without scaling
       return { value: value.toLocaleString(), unit: displayUnit };
     case "%":
-      return { value: value.toFixed(1), unit: "%" };
+      return { value: formatPercent(value), unit: "%" };
     case "cents_kWh":
       return { value: value.toFixed(2), unit: displayUnit };
     case "cents":

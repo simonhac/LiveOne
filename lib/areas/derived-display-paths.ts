@@ -49,7 +49,7 @@ export const SOLAR_TOTAL_PATH = "source.solar/power";
 
 /**
  * For each derived path, the BOUND inputs whose presence means the display layer is actually
- * deriving it here. Empty ⇒ purely synthetic; no device should ever publish it, so withhold always.
+ * deriving it here. Every entry has inputs — there is deliberately no "withhold always" case.
  *
  * 🛑 The suppression is conditional on these, not on "the Area has some binding". An Area whose only
  * binding is unrelated (or stemless) is deriving nothing, so withholding its member's own
@@ -71,8 +71,15 @@ const DERIVATION_INPUTS: ReadonlyMap<string, readonly string[]> = new Map([
   ],
   // `solarValueFrom` falls back to local+remote only when no total exists.
   [SOLAR_TOTAL_PATH, ["source.solar.local/power", "source.solar.remote/power"]],
-  // Synthesized from the master minus the child loads; never a vendor point.
-  [REST_OF_HOUSE_PATH, []],
+  // `synthesizeRestOfHouse` = master − the child loads, so the computation exists only where a
+  // master load is bound. 🛑 This was `[]` ("purely synthetic, never a vendor point, withhold
+  // always") for one deploy, and that was WRONG: Kutis (device rid 13) genuinely PUBLISHES
+  // `load.rest-of-house/power` as a measured point (rid 99), so the unconditional rule withheld a
+  // real value and the area-hash GC deleted it from that dashboard. The empty-inputs shape bypassed
+  // the very curation check the other two paths use. There is no "always withhold" case: a vendor
+  // that measures a quantity outranks our synthesis of it, and only a BOUND master means we are
+  // synthesizing here at all.
+  [REST_OF_HOUSE_PATH, [MASTER_LOAD_PATH]],
 ]);
 
 /** Paths the display layer can derive. Membership alone does NOT mean "withhold" — see below. */
@@ -94,6 +101,8 @@ export function isDisplayDerivedHere(
 ): boolean {
   const inputs = DERIVATION_INPUTS.get(path);
   if (inputs === undefined) return false;
-  if (inputs.length === 0) return true; // purely synthetic
+  // No unconditional case by design — see the REST_OF_HOUSE_PATH note. A path is withheld only
+  // where the Area binds an input the display layer derives it FROM; anywhere else the member's
+  // own point is the real measurement and must be served.
   return inputs.some((i) => boundPaths.has(i));
 }

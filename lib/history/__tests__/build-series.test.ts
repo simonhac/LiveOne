@@ -134,6 +134,98 @@ describe("buildSeriesFromAggRows", () => {
     expect(out[0].history.data).toEqual([20]); // (10+20+30)/3
   });
 
+  it("30m: reduces each aggregation field by its own semantics", async () => {
+    // One point with six 5m rows carrying delta/min/max/last; four series over the
+    // same rows. delta must SUM (the 6×-too-small bug), min/max take the extreme,
+    // last takes the most recent non-null value — never the mean.
+    const point = fakePoint({ index: 6, systemId: 1, metricType: "energy" });
+    const allRows: AggRow[] = [1, 2, 3, 4, 5, 6].map((i) => ({
+      system_id: 1,
+      point_id: 6,
+      interval_end: i * FIVE,
+      delta: 0.5,
+      min: 7 - i, // mins 6..1 → bucket min 1
+      max: i * 10, // maxes 10..60 → bucket max 60
+      last: i * 100, // lasts 100..600 → bucket last 600
+    }));
+    const fields = ["delta", "min", "max", "last"] as const;
+    const out = await buildSeriesFromAggRows(
+      allRows,
+      fields.map((f) => seriesInfo(point, f)),
+      "30m",
+      device,
+      0,
+      30 * 60 * 1000,
+    );
+    const byField = Object.fromEntries(fields.map((f, i) => [f, out[i]]));
+    expect(byField.delta.history.data).toEqual([3]); // 6 × 0.5 summed, not averaged
+    expect(byField.min.history.data).toEqual([1]);
+    expect(byField.max.history.data).toEqual([60]);
+    expect(byField.last.history.data).toEqual([600]);
+  });
+
+  it("30m: delta sum is invariant across bucketing (sum of 30m == sum of 5m)", async () => {
+    // Two 30m buckets, ragged values, one null row — the total energy served at 30m
+    // must equal the total of the underlying 5m deltas.
+    const point = fakePoint({ index: 7, systemId: 1, metricType: "energy" });
+    const deltas = [
+      0.1,
+      0.25,
+      null,
+      0.4,
+      0.05,
+      0.2,
+      0.3,
+      null,
+      0.15,
+      0.1,
+      0.5,
+      0.05,
+    ];
+    const allRows: AggRow[] = deltas.map((d, i) => ({
+      system_id: 1,
+      point_id: 7,
+      interval_end: (i + 1) * FIVE,
+      delta: d,
+    }));
+    const out = await buildSeriesFromAggRows(
+      allRows,
+      [seriesInfo(point, "delta")],
+      "30m",
+      device,
+      0,
+      60 * 60 * 1000,
+    );
+    const sum30m = (out[0].history.data as (number | null)[]).reduce<number>(
+      (s, v) => s + (v ?? 0),
+      0,
+    );
+    const sum5m = deltas.reduce<number>((s, v) => s + (v ?? 0), 0);
+    expect(sum30m).toBeCloseTo(sum5m, 10);
+    expect(out[0].history.data).toEqual([1, 1.1]);
+  });
+
+  it("30m: a bucket with only null rows yields null, and 'last' skips trailing nulls", async () => {
+    const point = fakePoint({ index: 10, systemId: 1, metricType: "soc" });
+    const allRows: AggRow[] = [
+      { system_id: 1, point_id: 10, interval_end: FIVE, last: 55 },
+      { system_id: 1, point_id: 10, interval_end: 2 * FIVE, last: 60 },
+      { system_id: 1, point_id: 10, interval_end: 3 * FIVE, last: null },
+      // second bucket: all null
+      { system_id: 1, point_id: 10, interval_end: 7 * FIVE, last: null },
+      { system_id: 1, point_id: 10, interval_end: 8 * FIVE, last: null },
+    ];
+    const out = await buildSeriesFromAggRows(
+      allRows,
+      [seriesInfo(point, "last")],
+      "30m",
+      device,
+      0,
+      60 * 60 * 1000,
+    );
+    expect(out[0].history.data).toEqual([60, null]);
+  });
+
   it("1d: builds a series from day rows", async () => {
     const point = fakePoint({ index: 2, systemId: 1, metricType: "energy" });
     const dayMs = new Date("2026-01-15T00:00:00Z").getTime();

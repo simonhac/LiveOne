@@ -67,3 +67,27 @@ export function formatCarbonTotal(grams: number): string {
     ? `${(grams / 1000).toFixed(1)} kg`
     : `${Math.round(grams)} g`;
 }
+
+/**
+ * A money total is shown ONLY when essentially all of the period's energy carried a known price.
+ * Below that, callers must render "—" rather than a total.
+ *
+ * 🛑 THIS IS A CORRECTNESS RULE, NOT A STYLE ONE, and it is shared so two tiles cannot drift on it.
+ * The provenance reducers and the run-periods endpoint both sum whatever is priced and report the
+ * covered kWh alongside, so a partially-priced period otherwise renders a confident-looking total
+ * that is silently too low — exactly what a half-finished `flow_attr_1d` backfill produces (a
+ * 30-day window with one day of `revenue_c` read "$0.08" for 54.8 kWh exported).
+ *
+ * `cents` is nullable because "nothing was priced" and "genuinely cost $0" are different facts and
+ * the sums cannot tell them apart: pass null when `knownKwh` is 0.
+ */
+export const PRICE_COVERAGE_MIN = 0.995;
+
+export function pricedTotal(
+  cents: number | null,
+  knownKwh: number,
+  energyKwh: number,
+): number | null {
+  if (cents == null) return null;
+  return knownKwh >= energyKwh * PRICE_COVERAGE_MIN ? cents : null;
+}

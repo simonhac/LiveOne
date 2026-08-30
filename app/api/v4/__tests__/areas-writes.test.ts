@@ -1,5 +1,5 @@
 /**
- * ROUTE-level tests for the SIX `/api/v4/areas*` mutation handlers (config-v4 Phase 14 stage 10).
+ * ROUTE-level tests for the SIX `/api/v4/areas*` mutation handlers.
  *
  * Companion to `scripts/utils/v4-surface-smoke.ts`, which drives the same handlers end-to-end against a
  * live dev server and a real Postgres. This file covers what only a mock can reach cheaply — every

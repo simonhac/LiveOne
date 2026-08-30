@@ -143,14 +143,13 @@ function toMintedRow(
  * Matches `points_pkey` only — `pi_point_uid_unique` died with `point_info`. A non-uid unique error
  * (e.g. `points_device_logical_metric_unique`) is deliberately NOT matched and is rethrown unchanged.
  *
- * 🛑 config-v4 Phase 14 stage 2b — this is on the LIVE INGEST PATH and it was dead. The predicate read
- * `err.code`, which drizzle ≥0.44 leaves undefined (the `pg` error is on `.cause`), so it returned false
- * on the first line and a derived-uid collision failed the mint hard instead of retrying with a random
- * uuid. The `message.includes("points_pkey")` fallback below it — written precisely because
- * `err.constraint` is unreliable — was therefore UNREACHABLE, which is why nothing caught this: the
- * belt-and-braces line was correct and never ran. Both halves now go through
+ * 🛑 This is on the LIVE INGEST PATH, and it has been silently dead before. A predicate reading
+ * `err.code` returns false on its first line — drizzle ≥0.44 leaves it undefined, the pg error is on
+ * `.cause` — so a derived-uid collision fails the mint hard instead of retrying with a random uuid,
+ * and any `message.includes("points_pkey")` fallback written below it is UNREACHABLE. That is why
+ * nothing caught it last time: the belt-and-braces line was correct and never ran. Go through
  * `isUniqueViolationOn` (lib/db/pg-error.ts), which unwraps the cause chain and reads the index name
- * from the `message` when PlanetScale strips `constraint` (always, measured).
+ * from the `message` — PlanetScale strips `constraint` (always, measured).
  */
 export function isPointUidCollision(e: unknown): boolean {
   return isUniqueViolationOn(e, "points_pkey");

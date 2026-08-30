@@ -1,16 +1,13 @@
 /**
  * The area "strategy" — the default dashboard for an area, generated from its CAPABILITIES (the HA
- * Lovelace-strategy idea). Capability-driven replacement for the vendor-keyed `buildDefaultDashboardV3`
- * in the retired lib/dashboard/v3.ts (deleted at Phase 14 stage 16): no `vendorType`, no `getLayout`,
- * no `availableViews`/`hasGenerator` opts —
- * the card set falls out of the capability set + one structural `aggregate` flag.
+ * Lovelace-strategy idea). There is no `vendorType`, no `getLayout`, no `availableViews`/
+ * `hasGenerator` opts: the card set falls out of the capability set + one structural `aggregate` flag.
  *
- * config-v4 Phase 14: this emits a **v4 `GroupNode` natively** (clean-sheet §8.1) — an area-bound
- * `heading` group whose children are leaf `card` nodes plus, when the area has tiles, one
- * `direction:"row"` group of small cards. There is no v3 detour: the seed path
- * (`lib/dashboard/v4-seed.ts`) wraps this group straight into a document. The §8.3 invariant holds by
- * construction — the only scope refs emitted are `group.area` and the `oe-grid` card's `device`, both
- * envelope fields; `config` never carries a ref.
+ * This emits a **`GroupNode` natively** (clean-sheet §8.1) — an area-bound `heading` group whose
+ * children are leaf `card` nodes plus, when the area has tiles, one `direction:"row"` group of small
+ * cards. The seed path (`lib/dashboard/v4-seed.ts`) wraps this group straight into a document. The
+ * §8.3 invariant holds by construction — the only scope refs emitted are `group.area` and the
+ * `oe-grid` card's `device`, both envelope fields; `config` never carries a ref.
  *
  * Layout is DERIVED, never stored:
  *  - amber      ⇐ `isPricingOnly(caps)` (a grid rate/price with no actual power/energy roles).
@@ -20,9 +17,7 @@
  * A never-seen vendor that advertises solar+load power auto-gets tiles + chart with ZERO code — its
  * vendor string never appears here.
  *
- * The remaining v3 consumers (the two legacy dashboard routes) read this through the temporary
- * projection in `strategy-v3.ts`, which stage 13 deletes. `/device/{id}` reads the v4 group directly
- * (`buildDeviceStrategyDoc`, lib/capabilities/server.ts) since stage 9.
+ * `/device/{id}` reads the group directly (`buildDeviceStrategyDoc`, lib/capabilities/server.ts).
  */
 import type { AreaId, DeviceId } from "@/lib/ids";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
@@ -38,7 +33,7 @@ export interface AreaStrategyContext {
   /**
    * The area this group binds — the §8.3 envelope ref every child inherits. Omitted by `/device/{id}`,
    * whose document is DEVICE-bound instead (`buildDeviceStrategyDoc` puts the `dv_` on the root, so
-   * this group inherits it), and by the area-less legacy v3 projection.
+   * this group inherits it).
    */
   area?: AreaId;
   /** The area's capability set (server: from point_info+config; viewer: from latest). */
@@ -67,7 +62,7 @@ export function isPricingOnly(caps: CapabilitySet): boolean {
   return caps.has("grid/rate") && !POWER_ROLE_CAPS.some((c) => caps.has(c));
 }
 
-/** The area-bound section group (§8.1: an `area` + `heading:true` group IS a v3 "section"). */
+/** The area-bound section group (§8.1: an `area` + `heading:true` group renders a titled section). */
 function sectionGroup(
   ctx: AreaStrategyContext,
   children: DashboardNode[],
@@ -142,7 +137,7 @@ export function buildAreaStrategy(ctx: AreaStrategyContext): GroupNode {
   // mirrors `battery-contents`/`ev-provenance`, which an area opts into via the card gallery rather
   // than getting by default. Revisit if/when this card graduates to the default composition.
 
-  // The v3 `tiles` container is a structural `row` group in v4 — every tile is just a small card.
+  // The tile strip is a structural `row` group — every tile is just a small card.
   const tiles: CardNode[] = supported.map((view) => card(view));
   if (ctx.gridDevice != null) {
     tiles.push(card("oe-grid", { device: ctx.gridDevice }));

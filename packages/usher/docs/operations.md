@@ -90,20 +90,28 @@ value, raw words and sentinel reason — on every poll, one JSON line per poll.
 
 - Written to `<dataDir>/diag/YYYY-MM-DD.jsonl` (`/data/usher/diag/` on the hub), gzipped on the day
   roll, and also logged to stdout tagged `[musher-diag]`.
-- **There is no GC on the diag directory.** It is a temporary debugging aid: roughly 2.3 MB/day
-  uncompressed, ~0.25 MB/day once rolled. Turn it off and prune the directory when the investigation
-  ends.
+- **The diag directory is capped at 100 MB**, oldest purged first, swept at boot and roughly hourly;
+  the day being written is never purged. At the hub's temporary 15 s poll cadence that is ~52 MB/day
+  uncompressed but only ~0.5 MB/day rolled — these records are near-identical, so gzip measures
+  ~106:1 — leaving roughly three months of history. Still a temporary debugging aid: turn it off and
+  prune the directory when the investigation ends.
 - It is declared in `fly.toml` `[env]`, deliberately visible in the repo — an earlier out-of-band
   setting meant nobody knew capture was off, and a generator run was lost. A `fly secrets set` value
   of the same name would override it.
-- `MUSHER_DIAG_POSTRUN_TICKS` (default 6, set to 60 on the hub) holds the fast 1-minute cadence for
-  that many ticks after a run ends, giving a fine-resolution cool-down baseline. It does **not** gate
-  capture.
+- `MUSHER_DIAG_POSTRUN_SECONDS` (default 3600, set to 3600 on the hub) holds the fast cadence for
+  that long after a run ends, giving a fine-resolution cool-down baseline. It does **not** gate
+  capture. It replaced `MUSHER_DIAG_POSTRUN_TICKS`, a tick COUNT — which silently rescaled itself
+  whenever the poll cadence changed.
 
-**Structural limit:** capture is gated on the engine already turning (`engineRpm > 0 ||
-genFreqHz > 0`), so the first record is always of an already-running machine. The diag journal can
-therefore never explain what _started_ a generator. Answering that needs a pre-trigger ring buffer or
-continuous idle-cadence logging.
+**Capture is no longer run-gated.** It used to be, so the first record was always of an
+already-running machine and the journal could never explain what _started_ a generator. Since
+2026-07-28 every poll is captured, idle included, which is what makes the pre-start state
+observable at all.
+
+**Poll ≠ push.** `pollSec` is the read (and therefore journal) cadence; `pushSec`/`activePushSec`
+are what reaches LiveOne. On the hub that is 15 s poll against 300 s/60 s push, so the diagnostic
+resolution costs disk but does not multiply what the receiver stores. A start or stop delivers
+immediately regardless of the push cadence.
 
 ## Related
 

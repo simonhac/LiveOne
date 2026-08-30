@@ -1,20 +1,17 @@
 /**
  * config-v4 dashboard card types — the unified card vocabulary + per-type config schemas.
  *
- * v4 merges the v3 card registry and tile registry into ONE `card` primitive (clean-sheet §8.1):
- * every tile view is a first-class card type, and the v3 `tiles` container becomes a
- * structural `group` (so it is NOT a card type here). This module also OWNS the tile vocabulary
- * (`TileView`/`TileId`), which the tile plugins and the capability catalog read directly — the v3
- * descriptor types (v3.ts, cards.ts) no longer define it. `type` is an OPEN string at the document level
- * (§8.4 — unknown types persist with opaque config and render as a placeholder); `KnownCardType` is the
- * closed set this build knows how to render + validate.
- *
- * DARK: nothing renders v4 yet; this is the Phase-5 pure core behind the unchanged v3 app.
+ * There is ONE `card` primitive (clean-sheet §8.1): every tile view is a first-class card type, and
+ * a container of small cards is a structural `group` (so it is NOT a card type here). This module
+ * OWNS the tile vocabulary (`TileView`/`TileId`), which the tile plugins and the capability catalog
+ * read directly. `type` is an OPEN string at the document level (§8.4 — unknown types persist with
+ * opaque config and render as a placeholder); `KnownCardType` is the closed set this build knows how
+ * to render + validate.
  */
 import { z } from "zod";
 
 /**
- * The 9 tile views — the SINGLE source of the tile vocabulary. The node render registry
+ * The 10 tile views — the SINGLE source of the tile vocabulary. The node render registry
  * (components/dashboard/registry.tsx) is total over `KnownCardType` and maps every tile view to a
  * TILE plugin, so adding a view here is a compile error until a plugin exists; the capability
  * catalog (`NODE_CATALOG`) is likewise total, and keys its tile-order helper off `TileId`.
@@ -27,23 +24,22 @@ export const V4_TILE_TYPES = [
   "house-to-grid",
   "amber",
   "ev",
+  // Engine state + the run-control cog for a hub-supervised generator (DeepSea).
+  "generator",
   "renewables",
   "oe-grid",
 ] as const;
 
-/** A tile view — the render vocabulary of the tile plugins (8 device tiles + `oe-grid`). */
+/** A tile view — the render vocabulary of the tile plugins (9 device tiles + `oe-grid`). */
 export type TileView = (typeof V4_TILE_TYPES)[number];
 
 /**
- * The capability-catalog subset of `TileView`: the 8 tiles derived from a device's capabilities.
+ * The capability-catalog subset of `TileView`: the 9 tiles derived from a device's capabilities.
  * `oe-grid` is excluded — it is bound to an OpenElectricity region device, not capability-derived.
  */
 export type TileId = Exclude<TileView, "oe-grid">;
 
-/**
- * The 11 known card types that are NOT tile views (v3 `DashboardCardType` minus `tiles` → group,
- * plus the v4-native cards that never had a v3 form — `daily-stripe`, `heatmap`).
- */
+/** The 11 known card types that are NOT tile views. */
 export const V4_NON_TILE_CARD_TYPES = [
   "chart",
   "sankey",
@@ -62,7 +58,7 @@ export const V4_NON_TILE_CARD_TYPES = [
 ] as const;
 
 /**
- * The 20 known card types = the 9 promoted tile views + the 11 non-tile card types.
+ * The 21 known card types = the 10 promoted tile views + the 11 non-tile card types.
  * Kept as a const tuple so it doubles as the runtime set and the literal union.
  */
 export const V4_CARD_TYPES = [
@@ -72,7 +68,7 @@ export const V4_CARD_TYPES = [
 
 export type KnownCardType = (typeof V4_CARD_TYPES)[number];
 
-/** The 9 promoted tile views — v4 card types that render via a tile plugin, not a card plugin. */
+/** The 10 promoted tile views — v4 card types that render via a tile plugin, not a card plugin. */
 export const TILE_VIEW_TYPES: ReadonlySet<string> = new Set<TileView>(
   V4_TILE_TYPES,
 );
@@ -89,8 +85,8 @@ export function isKnownCardType(t: string): t is KnownCardType {
 
 /**
  * A known card type that renders through a CARD plugin (components/dashboard/cards/) rather than a
- * tile plugin — i.e. the 9 non-tile types. The v3 `tiles` container is absent from
- * `V4_CARD_TYPES` STRUCTURALLY (it became a `row` group, §8.1), so it is not one of these either.
+ * tile plugin — i.e. the 11 non-tile types. A container of small cards is absent from
+ * `V4_CARD_TYPES` STRUCTURALLY (it is a `row` group, §8.1), so it is not one of these either.
  */
 export type NonTileCardType = (typeof V4_NON_TILE_CARD_TYPES)[number];
 
@@ -120,7 +116,7 @@ export type CardType = KnownCardType | (string & {});
 // may carry an (inert) `features` list, preserved verbatim. Every other known type is BARE.
 // ---------------------------------------------------------------------------
 
-/** The `chart` card config — mirrors v3 `ChartCardConfig` (lib/dashboard/v3.ts). */
+/** The `chart` card config. */
 export const chartConfigSchema = z
   .strictObject({
     variant: z.enum(["lines", "stacked-areas"]),
@@ -130,7 +126,7 @@ export const chartConfigSchema = z
   .describe("chart");
 export type ChartConfig = z.infer<typeof chartConfigSchema>;
 
-/** The `device-metrics` card config — mirrors v3 `CardV3.variant`. */
+/** The `device-metrics` card config. */
 export const deviceMetricsConfigSchema = z
   .strictObject({
     variant: z.enum(["grid", "table"]).optional(),

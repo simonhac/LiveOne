@@ -59,19 +59,19 @@ export class AreaValidationError extends Error {
 }
 
 /**
- * config-v4 Phase 14 stage 2b: the alias 409 on BOTH write paths below was DOUBLY broken, and only the
- * private copies of these two predicates are gone — the shape of the check is unchanged.
+ * 🛑 The alias 409 on BOTH write paths below goes through `isUniqueViolationOn`
+ * (lib/db/pg-error.ts). Do NOT inline a private predicate: the two obvious ones are both dead on
+ * this stack, and together they once turned every alias collision — the one thing `/api/v4/areas`
+ * documents a 409 for — into a 500.
  *
- *  1. `(err as {code?: string}).code === "23505"` never matched, because drizzle ≥0.44 re-throws a failed
- *     query as a `DrizzleQueryError` whose own `code` is undefined and whose `cause` is the `pg` error
- *     (the STEP 0 finding, #311).
- *  2. `constraintOf(err) === "areas_owner_alias_unique"` never matched EITHER, and fixing (1) alone would
- *     not have helped: PlanetScale's proxy strips `constraint` from every error it forwards. The index
+ *  1. `(err as {code?: string}).code === "23505"` never matches: drizzle ≥0.44 re-throws a failed
+ *     query as a `DrizzleQueryError` whose own `code` is undefined and whose `cause` is the pg error.
+ *  2. `constraintOf(err) === "areas_owner_alias_unique"` never matches either, and fixing (1) alone
+ *     does not help: PlanetScale's proxy strips `constraint` from every error it forwards. The index
  *     name arrives in the `message` text only.
  *
- * So an alias collision — the one thing `/api/v4/areas` documents a 409 for — 500'd. `isUniqueViolationOn`
- * (lib/db/pg-error.ts) closes both halves; that module's docstring carries the measurement, including why
- * a migration restating the `uniqueIndex` as a named constraint would NOT have fixed (2).
+ * `lib/db/pg-error.ts`'s docstring carries the measurement, including why a migration restating the
+ * `uniqueIndex` as a named constraint would NOT fix (2).
  */
 const AREA_ALIAS_UNIQUE = "areas_owner_alias_unique";
 

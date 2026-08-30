@@ -48,7 +48,7 @@ truth for every column; these are roles, not schemas.
 | Table                 | One-liner                                                                                             |
 | --------------------- | ----------------------------------------------------------------------------------------------------- |
 | `dashboards`          | A named view. Structure lives in the v4 node-tree `doc` (jsonb) — see below.                          |
-| `dashboard_revisions` | Append-only history of `doc` writes, for optimistic concurrency and rollback.                         |
+| `dashboard_revisions` | Post-image edit history: row (dashboard, N) IS version N, written in the same transaction as every doc write (wired 2026-08-30; `saved_by` is a provenance string — Clerk userId from routes, `cli`/`script:<name>`/`backfill` sentinels elsewhere). NOT carried by the prod→dev sync. |
 | `dashboard_grants`    | Per-user access to a dashboard.                                                                       |
 | `share_tokens`        | View-only share links (3-word phrases), scoped to ONE dashboard (`dashboard_id`) — never to a device. |
 
@@ -247,8 +247,11 @@ out. See [areas-and-dashboards.md](areas-and-dashboards.md) for the full model a
 A dashboard's structure is a **recursive node tree** in `dashboards.doc` (jsonb) — groups containing
 groups or cards, to a depth cap of 4. There is exactly one shape; the v3 `descriptor` column, the
 rewriter and the adapter were all deleted in config-v4 Phase 14 (migration 0054). Edits are a
-**whole-doc `PUT` with optimistic concurrency** (`If-Match` on `revision`), with every write appended to
-`dashboard_revisions`.
+**whole-doc `PUT` with optimistic concurrency** (`If-Match` on `revision`). Every write — the route's
+`updateDashboardDoc`, the CLI/scripts' shared `writeDoc`, and `createDashboard`'s revision-1 row —
+appends a post-image row to `dashboard_revisions` in the same transaction (wired 2026-08-30; before
+that the table existed with no writer). `liveone dashboard history|restore` read it; a restore is a
+normal new revision, never a counter rewind.
 
 - **Store choices and structure only.** Display names, headers, capability sets, availability, default
   layout and timezone are **derived at render, never stored**. This is what keeps docs small and
@@ -260,7 +263,7 @@ rewriter and the adapter were all deleted in config-v4 Phase 14 (migration 0054)
   card simply 403s on fetch. **Do not add a scope-bearing ref to a card's `config`** — that is the one
   change that would silently break sharing.
 - **Validation is asymmetric on purpose.** The envelope is strict (zod; malformed ⇒ 422, never
-  persisted) and node ids are server-assigned `n_…`. But `type` is an **open string, warn-not-reject**:
+  persisted) and node ids are server-assigned `n_…` (random 4-char base32, minted per document and never recycled). But `type` is an **open string, warn-not-reject**:
   an unknown card type persists with its opaque `config` intact and renders a labelled placeholder, so
   an older validator cannot destroy a newer client's config. Known types get strict per-type `config`
   schemas, and references are **always** strict.

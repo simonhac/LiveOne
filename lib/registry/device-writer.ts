@@ -36,7 +36,7 @@ import { DeviceRegistry, type DeviceRegistryExec } from "./device-registry";
 /**
  * A patch for {@link updateDevice}.
  *
- * ⚠️ **The field names are deliberately the v3 `systems` ones** (`displayName`, `alias`,
+ * ⚠️ **The field names are deliberately the old `systems` ones** (`displayName`, `alias`,
  * `ownerClerkUserId`, `metadata`, …) even though each now writes a differently-named `devices`/`areas`
  * column. That is not laziness: these names are the vocabulary of all ten call sites and of the JSON
  * request bodies those routes parse, so renaming them here would churn ten unrelated files and their
@@ -240,12 +240,12 @@ async function insertDeviceToPg(
   } catch (e) {
     // Diagnostic only — the error is rethrown either way and `POST /api/devices` renders it as a 500.
     //
-    // config-v4 Phase 14 stage 2b: this was a private `(e as {code?}).code === "23505"` predicate, which
-    // drizzle ≥0.44 never satisfies, so the warning NEVER fired and a create that died on a unique
-    // violation reached the log with no hint of which one. It now names the violated index, because on
-    // this database that name lives in the pg `message` and nowhere else (see `lib/db/pg-error.ts`);
-    // `insertDeviceToPg` can trip `devices_owner_slug_unique`, `devices_rid_unique`, `areas_pkey` and
-    // both `legacy_handles` uniques, and the old message asserted the first of those unconditionally.
+    // 🛑 Names the violated index, and must keep doing both halves of that. A private
+    // `(e as {code?}).code === "23505"` predicate is never satisfied by drizzle ≥0.44, so the warning
+    // silently never fires; and the name lives in the pg `message` and nowhere else on this database
+    // (see `lib/db/pg-error.ts`). `insertDeviceToPg` can trip `devices_owner_slug_unique`,
+    // `devices_rid_unique`, `areas_pkey` and both `legacy_handles` uniques, so asserting one of them
+    // unconditionally — as this once did — is a misleading log line.
     const violated = violatedUniqueName(e);
     if (violated) {
       console.warn(
@@ -259,8 +259,8 @@ async function insertDeviceToPg(
 /**
  * Create a new device.
  *
- * Unlike v3's `createDevice` this DOES mint an area (the area-of-one), because `devices.primary_area_id`
- * is `NOT NULL` — a device with no area is not a representable shape. That is a structural requirement,
+ * This DOES mint an area (the area-of-one), because `devices.primary_area_id` is `NOT NULL` — a
+ * device with no area is not a representable shape. That is a structural requirement,
  * not a reversal of the "areas are explicit" model, which governs whether a device gets a user-visible
  * grouping and a flow matrix.
  */
@@ -418,9 +418,9 @@ async function deleteDevice(systemId: number): Promise<void> {
 /**
  * The four device writers. A plain object, like `DeviceRegistry` / `DeviceConfigRegistry`.
  *
- * The names keep their v3 spelling (`createDevice`, `updateDevice`, `deleteDevice`) for the same reason
- * {@link DevicePatch} keeps its field names: renaming them is churn across ten call sites that says
- * nothing about storage. Phase 13 re-grammars the whole handle vocabulary at once.
+ * The names keep their original spelling (`createDevice`, `updateDevice`, `deleteDevice`) for the
+ * same reason {@link DevicePatch} keeps its field names: renaming them is churn across ten call
+ * sites that says nothing about storage.
  */
 export const DeviceWriter = {
   createDevice,

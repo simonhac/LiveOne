@@ -120,7 +120,7 @@ revisions plus a whole-document PUT.
 
 **Editing is whole-doc PUT with optimistic concurrency.** `GET` returns an ETag of the revision;
 `PUT` with `If-Match` returns 412 on a stale revision and echoes the normalized canonical document so
-client state can't drift. `dashboard_revisions` keeps the recent history for cross-session undo;
+client state can't drift. `dashboard_revisions` keeps the edit history for cross-session undo (post-image rows, written since 2026-08-30 — the table predates its writers);
 restore copies forward, never rewinds. `POST …/validate` is a dry-run for live linting.
 
 **Validation posture.** The envelope is strict (zod; malformed ⇒ 422, never persisted, `id` assigned

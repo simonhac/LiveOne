@@ -5,10 +5,14 @@
  * (components/dashboard/tiles/) from a
  * LatestPointValues map, the Amber/Tesla cards take a Record<string, LatestValue|null>, and
  * GridSignalsCard takes a typed GridLiveValues. These fixtures cover the interesting states
- * (charging/discharging, stale, high/low/zero, missing) so the cards can be eyeballed at size.
+ * (charging/discharging, high/low/zero, missing) so the cards can be eyeballed at size.
  *
- * Timestamps are stamped at module import; "fresh" states sit well inside the staleness window
- * and "stale" states are aged past it (Tile/Tesla threshold ~300s, GridSignals ~900s).
+ * Every fixture here is FRESH. Staleness is orthogonal to what a card is showing, so it is not a
+ * scenario — the gallery has a stale checkbox that runs any scenario through `makeStale` below.
+ *
+ * Timestamps are stamped at module import, which makes them relative to page load and is why the
+ * gallery renders client-side only (see CardGallery's mounted gate): an SSR pass would bake a
+ * different "now" into the HTML than the browser computes, and every relative time would mismatch.
  */
 import type { LatestPointValue, LatestPointValues } from "@/lib/types/api";
 import type { LatestValue } from "@/lib/amber-utils";
@@ -26,6 +30,53 @@ import {
 
 const FRESH = 30; // seconds old — comfortably fresh
 const STALE = 1200; // seconds old — past every threshold here
+
+/**
+ * Age every measurement in a fixture, whatever shape the fixture is.
+ *
+ * Staleness is ORTHOGONAL to what a card is showing — a generator can be stale while running, while
+ * locked out, or while cooling down — but it used to be modelled as one more mutually-exclusive
+ * scenario ("stale") in every section's picker. That could only ever express ONE stale state per
+ * card, and it was always the least interesting one (a stale idle generator), because the scenario
+ * had to be hand-written and nobody writes eight of them. The gallery now carries a stale CHECKBOX
+ * instead, and this is what it applies.
+ *
+ * Structural rather than per-shape on purpose: the fixtures below are five different shapes
+ * (`LatestPointValues`, the loose Amber/Tesla `LatestValue`, `GridLiveValues` under a `values` key,
+ * `BatteryContentsValues`, and the HWS card's flat object), and they nest their timestamps at
+ * different depths. The one thing they all agree on is the KEY — every measurement instant in this
+ * file is called `measurementTime` — so walk the tree and shift those, and a shape added later is
+ * handled without touching this function.
+ *
+ * Both spellings are shifted because both are in use here: `Date` for the card fixtures and an ISO
+ * `string` for `gm()`'s grid metrics. Non-mutating — these fixtures are module-level and shared, so
+ * ageing one in place would leak into every other section that renders it.
+ */
+export function makeStale<T>(fixture: T): T {
+  const shiftMs = (STALE - FRESH) * 1000;
+  const walk = (node: unknown): unknown => {
+    if (node instanceof Date) return node;
+    if (Array.isArray(node)) return node.map(walk);
+    if (node === null || typeof node !== "object") return node;
+    return Object.fromEntries(
+      Object.entries(node as Record<string, unknown>).map(([k, v]) => {
+        if (k === "measurementTime") {
+          if (v instanceof Date) return [k, new Date(v.getTime() - shiftMs)];
+          if (typeof v === "string") {
+            const t = Date.parse(v);
+            return [
+              k,
+              Number.isFinite(t) ? new Date(t - shiftMs).toISOString() : v,
+            ];
+          }
+          return [k, v];
+        }
+        return [k, walk(v)];
+      }),
+    );
+  };
+  return walk(fixture) as T;
+}
 
 /** Build a LatestPointValue (the numeric power/energy shape Tile nodes consume). */
 function mk(
@@ -73,10 +124,204 @@ export const SOLAR_SCENARIOS: Record<string, LatestPointValues> = {
   zero: {
     "source.solar/power": mk(0, "source.solar/power", "W", "Solar"),
   },
-  stale: {
-    "source.solar/power": mk(4500, "source.solar/power", "W", "Solar", STALE),
+};
+
+// ---------------------------------------------------------------------------
+// Tile — Generator (the usher hub's control-plane points + engine speed)
+// ---------------------------------------------------------------------------
+
+/** A TEXT point. Text values travel as strings even though the type says number — see
+ *  `getTextValue` in components/dashboard/tiles/shared.tsx. */
+function mkText(
+  value: string,
+  logicalPath: string,
+  displayName: string,
+  ageSeconds: number = FRESH,
+): LatestPointValue {
+  return {
+    value: value as unknown as number,
+    logicalPath,
+    measurementTime: new Date(Date.now() - ageSeconds * 1000),
+    metricUnit: "text",
+    displayName,
+  };
+}
+
+/** `stop_at` as the hub pushes it: epoch SECONDS, `minutesAhead` from now. */
+const stopAt = (minutesAhead: number): LatestPointValue =>
+  mk(
+    Math.round((Date.now() + minutesAhead * 60_000) / 1000),
+    "source.generator.control.stop_at/time",
+    "epoch_s",
+    "Commanded Stop At",
+  );
+
+const genState = (state: string, ageSeconds?: number) =>
+  mkText(
+    state,
+    "source.generator.control.status/state",
+    "Control State",
+    ageSeconds,
+  );
+const genMode = (mode: string, ageSeconds?: number) =>
+  mkText(mode, "source.generator.mode/state", "Control Mode", ageSeconds);
+
+// 🛑 The LEGACY logical paths on purpose — they are the ones prod actually carries. #150 renamed
+// the musher manifest's stems, but `points` rows are keyed on `physical_path` and only `control` is
+// drift-healed, so the already-minted rows kept `generator.engine` / `generator.output`. A fixture
+// that used the manifest-correct paths would be testing a shape no environment has.
+const genRpm = (rpm: number) =>
+  mk(rpm, "generator.engine/speed", "rpm", "Engine Speed");
+const genHz = (hz: number) =>
+  mk(hz, "generator.output/frequency", "Hz", "Generator Frequency");
+
+/** The engine, turning: rpm + Hz together, since the tile shows them as one row. */
+const engine = (rpm: number, hz: number) => ({
+  "generator.engine/speed": genRpm(rpm),
+  "generator.output/frequency": genHz(hz),
+});
+
+/**
+ * The DERIVED run-detector point — "is a run period open right now", 1/0.
+ *
+ * 🛑 It is NOT the hub's status point restated, and the scenarios below are where the difference is
+ * visible. `control.status/state` is the hub's live opinion, pushed every 15 s while running but
+ * only every 300 s idle; this one is written every minute by our own reconcile from the open
+ * `derived_intervals` row, and it is what the tile's "Since …" row must obey. They disagree for
+ * about four minutes after every stop — the detector's cool-down tail plus its anti-flap deadband —
+ * which is exactly the window "run just ended" reproduces.
+ *
+ * Also the row the tile reads `sourceSystemId` off to find the DETECTOR's device, so a scenario
+ * without it exercises a different (and less interesting) fallback.
+ */
+const genRunning = (running: 0 | 1) =>
+  mk(running, "source.generator/running", "bool", "Generator");
+
+export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
+  "auto (armed)": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(0),
+    ...engine(0, 0),
+  },
+  // The first ~10 s of our own run: the hub has latched, so it reports `running:hub`, but the
+  // starter is still turning the engine. Below CRANK_RPM the hero must read "Starting" — this used
+  // to say "Running" over an "Engine 0 rpm 0.0 Hz" row, which read as a fault.
+  "starting (ours)": {
+    "source.generator.control.status/state": genState("running:hub"),
+    "source.generator.control.stop_at/time": stopAt(30),
+    "source.generator.mode/state": genMode("Auto"),
+    // 0, and correctly so: the detector needs a sample or two above threshold before it opens a
+    // run, which is the tile's deliberate third state — hero "Starting", no "Since …" row yet.
+    "source.generator/running": genRunning(0),
+    ...engine(0, 0),
+  },
+  "running (ours)": {
+    "source.generator.control.status/state": genState("running:hub"),
+    "source.generator.control.stop_at/time": stopAt(23),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
+    ...engine(1502, 50.1),
+  },
+  "running (inverter)": {
+    "source.generator.control.status/state": genState("running:sp-pro"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
+    ...engine(1497, 49.9),
+  },
+  "cooling down": {
+    "source.generator.control.status/state": genState("stopping"),
+    "source.generator.mode/state": genMode("Auto"),
+    // Still 1: the cool-down tail belongs to the run that caused it, so the period stays open.
+    "source.generator/running": genRunning(1),
+    ...engine(980, 32.4),
+  },
+  "locked out": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Stop"),
+    "source.generator/running": genRunning(0),
+    ...engine(0, 0),
+  },
+  "running, panel locked": {
+    "source.generator.control.status/state": genState("running:sp-pro"),
+    "source.generator.mode/state": genMode("Stop"),
+    "source.generator/running": genRunning(1),
+    ...engine(1499, 50.0),
+  },
+  "stop failing": {
+    "source.generator.control.status/state": genState("stop-failing"),
+    "source.generator.control.stop_at/time": stopAt(-2),
+    "source.generator.control.error/state": mkText(
+      "stop write failed: timeout — retrying every 15s until confirmed",
+      "source.generator.control.error/state",
+      "Control Last Error",
+    ),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
+    ...engine(1502, 50.0),
+  },
+  "still running after release": {
+    "source.generator.control.status/state": genState(
+      "latch-released-still-running",
+    ),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
+    ...engine(1488, 49.8),
+  },
+  // The panel has not been read at all — must NOT claim the generator is armed. Named for BOTH
+  // facts, because the hero shows both: the ENGINE is known stopped (the hub's `idle`), and only
+  // the PANEL is unreadable, so the tile can say "Stopped" while withholding armed-vs-locked-out.
+  "stopped, mode unknown": {
+    "source.generator.control.status/state": genState("idle"),
+  },
+  /**
+   * The bug of 2026-08-30, frozen: a five-minute run started at 9:40pm and stopped at 9:45pm, seen
+   * at 9:48pm. The hub says `idle` and the derived point says 0 — the detector closed the run — but
+   * the gallery's fetch stub still answers the run-periods read with an OPEN run, which is exactly
+   * what a real browser's un-polled cache was doing.
+   *
+   * Must render "This period", not "Since 9:40pm". If it ever says "Since …" again the live flag
+   * has stopped vetoing the cache (`openRunIsLive`), and the tile is back to disagreeing with its
+   * own hero for as long as the tab stays focused.
+   */
+  "run just ended (stale runs cache)": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(0),
+    ...engine(0, 0),
   },
 };
+
+/**
+ * The WRITABLE run-request point, carrying a `pointReference`.
+ *
+ * `GeneratorControlDialog` resolves its command target through `generatorRunRequestTarget` →
+ * `pointIdOf`, which reads `pointReference` off this entry and validates it with `Point.parse`. A
+ * fixture without it renders the dialog's "Waiting for the generator to report in." branch — a real
+ * state, but not the one you usually want to look at. The id is a well-formed `pt_` so the parse
+ * succeeds; nothing dereferences it, because the gallery's fetch stub answers every control route.
+ */
+const RUN_REQUEST: LatestPointValue = {
+  value: 0,
+  logicalPath: "source.generator.control.request",
+  measurementTime: new Date(Date.now() - FRESH * 1000),
+  metricUnit: "min",
+  displayName: "Run Request",
+  pointReference: "pt_01kybrhzkmfyxvz63d15rscj19",
+  sourceSystemId: 14,
+};
+
+/**
+ * Every generator scenario again, with the control point added — the shape a viewer who OWNS the
+ * generator sees. Derived rather than hand-written so the two can never describe different engines.
+ */
+export const GENERATOR_CONTROL_SCENARIOS: Record<string, LatestPointValues> =
+  Object.fromEntries(
+    Object.entries(GENERATOR_SCENARIOS).map(([name, latest]) => [
+      name,
+      { ...latest, "source.generator.control.request/duration": RUN_REQUEST },
+    ]),
+  );
 
 // ---------------------------------------------------------------------------
 // Tile — Load (load/power + load.* children + synthesized rest-of-house)
@@ -89,9 +334,6 @@ export const LOAD_SCENARIOS: Record<string, LatestPointValues> = {
   },
   "master only": {
     "load/power": mk(3500, "load/power", "W", "Load"),
-  },
-  stale: {
-    "load/power": mk(3500, "load/power", "W", "Load", STALE),
   },
 };
 
@@ -115,15 +357,10 @@ export const BATTERY_SCENARIOS: Record<string, LatestPointValues> = {
     "bidi.battery/soc": mk(8, "bidi.battery/soc", "%", "Battery"),
     "bidi.battery/power": mk(-500, "bidi.battery/power", "W", "Battery"),
   },
-  stale: {
-    "bidi.battery/soc": mk(65, "bidi.battery/soc", "%", "Battery", STALE),
-    "bidi.battery/power": mk(
-      -3200,
-      "bidi.battery/power",
-      "W",
-      "Battery",
-      STALE,
-    ),
+  // The one SoC that renders with no decimal — 100 is exact, so "100.0%" is noise.
+  full: {
+    "bidi.battery/soc": mk(100, "bidi.battery/soc", "%", "Battery"),
+    "bidi.battery/power": mk(200, "bidi.battery/power", "W", "Battery"),
   },
 };
 
@@ -142,9 +379,6 @@ export const GRID_SCENARIOS: Record<string, LatestPointValues> = {
   },
   idle: {
     "bidi.grid/power": mk(50, "bidi.grid/power", "W", "Grid"),
-  },
-  stale: {
-    "bidi.grid/power": mk(4200, "bidi.grid/power", "W", "Grid", STALE),
   },
 };
 
@@ -193,7 +427,8 @@ export const AMBER_SCENARIOS: Record<
 // ---------------------------------------------------------------------------
 // TeslaSmallCard (ev.battery/soc, ev.charge/state|power|remaining|engaged,
 // limit/soc, ev/shift)
-// (TeslaSmallCard has no staleness UI, so no stale scenario.)
+// (TeslaSmallCard has no staleness UI at all — ticking the gallery's stale box changes
+//  nothing here, which is itself the thing worth knowing.)
 //
 // `ev.charge/engaged` is a boolean point but reaches the client as 1/0 —
 // convertValueByMetadata only special-cases metricUnit "text" — so it is
@@ -263,6 +498,57 @@ export const TESLA_SCENARIOS: Record<
   },
 };
 
+/**
+ * A control point as the CARD sees it: a value plus the `pt_` the dialog posts to.
+ *
+ * The scenarios above are the card's read-only shape and carry no `pointReference`, so
+ * `teslaChargeControlTargets` resolves every target to null and the dialog renders with all three
+ * commands disabled — a real state (a car that has not polled since the deploy), but not the one
+ * you want to look at. Same reasoning, and the same well-formed-but-inert ids, as `RUN_REQUEST`:
+ * the parse succeeds and nothing dereferences them, because the fetch stub answers every control
+ * route.
+ */
+type ControlLatestValue = LatestValue & {
+  pointReference: string;
+  sourceSystemId: number;
+};
+
+const evControl = (value: number, pt: string): ControlLatestValue => ({
+  value,
+  measurementTime: new Date(Date.now() - FRESH * 1000),
+  pointReference: pt,
+  sourceSystemId: 6,
+});
+
+/**
+ * Every Tesla scenario again, with the three charge-control points added — the shape a viewer who
+ * OWNS the car sees. Derived from the read-only set rather than hand-written, so the card and the
+ * dialog can never describe different cars (the same trick `GENERATOR_CONTROL_SCENARIOS` uses).
+ *
+ * `ev.charge/active` is the switch the Start/Stop buttons command; its value mirrors the scenario's
+ * own charge state so the dialog's buttons agree with the words above them.
+ */
+export const TESLA_CONTROL_SCENARIOS: Record<
+  string,
+  Record<string, (LatestValue & Partial<ControlLatestValue>) | null>
+> = Object.fromEntries(
+  Object.entries(TESLA_SCENARIOS).map(([name, latest]) => [
+    name,
+    {
+      ...latest,
+      "ev.charge/active": evControl(
+        latest["ev.charge/state"]?.value === "Charging" ? 1 : 0,
+        "pt_01kybrhzkmfyxvz63d15rscj20",
+      ),
+      "ev.charge.limit/soc": evControl(
+        Number(latest["ev.charge.limit/soc"]?.value ?? 80),
+        "pt_01kybrhzkmfyxvz63d15rscj21",
+      ),
+      "ev.charge.limit/current": evControl(32, "pt_01kybrhzkmfyxvz63d15rscj22"),
+    },
+  ]),
+);
+
 // ---------------------------------------------------------------------------
 // GridSignalsCard (GridLiveValues — price $/MWh, emissions tCO2e/MWh, %, demand MW)
 // Card shows: price as "$N/MWh", emissions*1000 -> g CO₂/kWh, renewables as %, demand as MW.
@@ -312,15 +598,6 @@ export const GRID_SIGNALS_SCENARIOS: Record<
       emissionsIntensity: null,
       renewables: gm(40),
       demand: gm(7240),
-    },
-  },
-  stale: {
-    regionLabel: "NSW1",
-    values: {
-      price: gm(50, STALE),
-      emissionsIntensity: gm(0.12, STALE),
-      renewables: gm(78, STALE),
-      demand: gm(6850, STALE),
     },
   },
 };
@@ -389,17 +666,6 @@ export const BATTERY_CONTENTS_SCENARIOS: Record<
     [CP.priceOpportunity]: 7.0,
   }),
   "empty battery": bc({ [CP.storedEnergy]: 0 }),
-  stale: bc(
-    {
-      [CP.storedEnergy]: 9.2,
-      [CP.carbonIntensity]: 210,
-      [CP.renewableFraction]: 62,
-      [CP.priceActual]: 8.4,
-      [CP.priceOpportunity]: 14.1,
-      [CP.exportRate]: -5.5,
-    },
-    STALE,
-  ),
 };
 
 // ---------------------------------------------------------------------------
@@ -538,12 +804,6 @@ export const HWS_SCENARIOS: Record<string, HwsScenario> = {
     faucetC: 9.5,
     sparkValues: hwsSpark(9.5),
     measurementTime: new Date(Date.now() - FRESH * 1000),
-    heating: false,
-  },
-  stale: {
-    faucetC: 40.0,
-    sparkValues: hwsSpark(40),
-    measurementTime: new Date(Date.now() - STALE * 1000),
     heating: false,
   },
   // The live value is current but the history series has not caught up. The line MUST stop short of

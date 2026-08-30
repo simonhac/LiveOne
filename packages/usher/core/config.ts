@@ -17,17 +17,61 @@ const InverterSchema = z.object({
   isMaster: z.boolean().optional(),
 });
 
+/**
+ * Remote-control surface for a deepsea source (`/api/usher/control/...`). Absent = no control
+ * surface at all — the route 404s, no supervisor is built, nothing can write to the controller.
+ *
+ * `passkeyEnv` names the env var / Fly secret holding the per-device passkey. Unlike `apiKeyEnv`
+ * it is resolved LAZILY, per request — never at startup — so a missing secret degrades the control
+ * route to a 503 instead of killing the whole collector (the `MUSHER_API_KEY` fat-finger failure
+ * mode, memorialised in fly.toml, must not gain a second trigger).
+ */
+const ControlConfigSchema = z.object({
+  passkeyEnv: z.string(),
+  /** hard cap on a single run request (s); schema-capped at 24 h so a YAML typo can't unbound it */
+  maxRuntimeSec: z
+    .number()
+    .positive()
+    .max(24 * 3600),
+});
+
 const DeepseaSourceSchema = z.object({
   type: z.literal("deepsea"),
   siteId: z.string(),
   apiKeyEnv: z.string(),
+  /** opt-in remote start/stop (see ControlConfigSchema); absent = read-only, fail-closed */
+  control: ControlConfigSchema.optional(),
   host: z.string(),
   port: z.number().optional(),
   unitId: z.number().optional(),
-  /** idle push period (s); the run-loop reads + pushes on this cadence */
+  /**
+   * Idle POLL period (s) — how often the run-loop reads the controller, and therefore the
+   * diagnostic journal's cadence, since a journal record IS a read. Delivery to gusher is now a
+   * SEPARATE cadence (`pushSec`); this key used to mean "push period" as well, back when the two
+   * were welded together.
+   */
   pollSec: z.number().positive().default(300),
-  /** faster push period (s) while the genset is running; defaults to pollSec (no speed-up) */
+  /** faster poll period (s) while the genset is running; defaults to pollSec (no speed-up) */
   activeSec: z.number().positive().optional(),
+  /**
+   * Idle PUSH period (s) — how often a poll is actually delivered to gusher. Defaults to `pollSec`,
+   * i.e. deliver every poll, which is the historical behaviour and what every other deployment
+   * still gets. Set it LONGER than `pollSec` to poll (and journal) at high resolution without
+   * multiplying what LiveOne stores.
+   */
+  pushSec: z.number().positive().optional(),
+  /** push period (s) while the genset is running; defaults to pushSec */
+  activePushSec: z.number().positive().optional(),
+  /**
+   * Poll AND push period (s) while the engine is STARTING or STOPPING — the only window where
+   * both cadences are raised together. `0` disables the bracket.
+   *
+   * Defaulted rather than optional on purpose: usher.yaml is gitignored and lives on the deployed
+   * volume, so an optional key would need that file edited by hand on every host before this did
+   * anything. A default means a deploy is enough. See RunSupervisor.inTransition for what counts
+   * as a transition and TRANSITION_MS for how long one lasts.
+   */
+  transitionSec: z.number().nonnegative().default(5),
 });
 
 const FroniusSourceSchema = z.object({
@@ -61,6 +105,7 @@ export const UsherConfigSchema = z.object({
 export type UsherConfig = z.infer<typeof UsherConfigSchema>;
 export type SourceConfig = z.infer<typeof SourceSchema>;
 export type DeepseaSourceConfig = z.infer<typeof DeepseaSourceSchema>;
+export type ControlConfig = z.infer<typeof ControlConfigSchema>;
 export type FroniusSourceConfig = z.infer<typeof FroniusSourceSchema>;
 
 /** Default config path: $USHER_CONFIG, else ./usher.yaml relative to cwd. */

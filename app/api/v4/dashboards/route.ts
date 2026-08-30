@@ -17,7 +17,7 @@ import { findReadableArea } from "@/lib/areas/http";
 
 /**
  * config-v4 dashboards collection (§9.2). Owner-scoped.
- *   GET  → { dashboards: [{ id, name, slug, cardCount, updatedAt, access }] }
+ *   GET  → { dashboards: [{ id, name, slug, cardCount, revision, updatedAt, access }] }
  *        · v4 wire vocabulary (`name`/`slug`), not the DAO's legacy `displayName`/`alias` — the same
  *          keys `GET/PATCH /dashboards/{id}` speak, so a list entry is directly patchable.
  *   POST { name?, slug?, doc? | seedArea? } → 201 { id, revision }
@@ -26,7 +26,7 @@ import { findReadableArea } from "@/lib/areas/http";
  *        · 400 (no name and no seedArea / both seedArea and doc / malformed seedArea)
  *        · 422 (doc invalid) · 403 (doc/seedArea refs an unreadable area) · 409 (slug taken)
  * An explicit/seeded `doc` is validated + written through the same DAO the PUT uses; omit both for an
- * empty (v3-shaped) dashboard the owner fills later.
+ * empty dashboard the owner fills later.
  */
 export async function GET(request: NextRequest) {
   const auth = await requireAuth(request);
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       name: d.displayName,
       slug: d.alias,
       cardCount: d.cardCount,
+      revision: d.revision,
       updatedAt: d.updatedAt,
       access: d.access,
     })),
@@ -143,7 +144,7 @@ export async function POST(request: NextRequest) {
 
   let revision = 1;
   if (normalized) {
-    const upd = await updateDashboardDoc(id, normalized);
+    const upd = await updateDashboardDoc(id, normalized, auth.userId);
     if (upd.ok) revision = upd.revision;
   }
   // `id` is already the opaque `db_…` id (the DAO owns the uuid↔TypeID translation).

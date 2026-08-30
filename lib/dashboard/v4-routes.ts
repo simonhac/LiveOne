@@ -1,9 +1,9 @@
 /**
- * config-v4 `/api/v4/dashboards/*` route helpers (Phase 6, DARK — writes go live at cutover).
+ * `/api/v4/dashboards/*` route helpers.
  *
- * Shared owner-load + the §8.4 reference-readability check. config-v4: dashboards are addressed by their
- * opaque `db_…` id, which is passed straight to the DAO (`lib/dashboard/dashboards.ts` owns the id↔uuid
- * translation); a malformed/foreign id reads as not-found. Auth mirrors the v3 `/api/dashboards/[id]` route.
+ * Shared owner-load + the §8.4 reference-readability check. Dashboards are addressed by their opaque
+ * `db_…` id, which is passed straight to the DAO (`lib/dashboard/dashboards.ts` owns the id↔uuid
+ * translation); a malformed/foreign id reads as not-found.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-auth";
@@ -14,7 +14,7 @@ import { getDashboard, type CompositionDashboard } from "./dashboards";
 import { collectRefs } from "./v4-validate";
 import type { DashboardV4 } from "./v4";
 
-/** Authenticate + load a dashboard the caller owns (or is admin for). Mirrors the v3 route's loadOwned. */
+/** Authenticate + load a dashboard the caller owns (or is admin for). */
 export async function loadOwnedDashboard(
   request: NextRequest,
   idStr: string,

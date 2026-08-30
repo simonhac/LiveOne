@@ -40,8 +40,10 @@ Standard status codes: 400/401/403/404/409/412/422/500.
 `liveone.1.source.solar.power.avg`).
 
 **Time-series queries** (`/api/history`, `/api/device/[id]/series`): `interval` = `5m`/`30m`/`1d`;
-range via `last=7d` style relative or `startTime`+`endTime` absolute. Range caps: 7.5 days @5m,
-30 days @30m, 13 months @1d. `series=` accepts glob patterns (micromatch).
+range via `last=7d` style relative or `startTime`+`endTime` absolute. Range caps per request:
+31 days @5m, 13 months @30m and @1d (the caps bound the in-memory 5m densify, not the SQL — see
+`validateTimeRange` in the route). `series=` accepts glob patterns (micromatch) matched against
+the device-less path.
 
 **Identity on the wire.** Config resources are addressed by **TypeID** (`ar_…`, `db_…`, `pt_…`,
 `dv_…`) — the `/api/v4` tree speaks these exclusively. The integer `?systemId=N` handle survives as a

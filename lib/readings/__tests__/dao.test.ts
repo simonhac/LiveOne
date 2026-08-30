@@ -588,6 +588,7 @@ describe("ReadingsDao operational readers", () => {
         pointRid: 11,
         first: new Date("2026-01-01T00:00:00Z"),
         last: new Date("2026-01-02T00:00:00Z"),
+        samples: 288,
       },
     ]);
 
@@ -595,6 +596,7 @@ describe("ReadingsDao operational readers", () => {
     expect(out.get(p1)).toEqual({
       firstMs: Date.parse("2026-01-01T00:00:00Z"),
       lastMs: Date.parse("2026-01-02T00:00:00Z"),
+      samples: 288,
     });
     expect(out.get(p2)).toBeNull();
     await expect(ReadingsDao.agg5mCoverageForPoints([], exec)).resolves.toEqual(

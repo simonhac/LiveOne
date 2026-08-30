@@ -9,15 +9,53 @@ gushEndpoint: https://www.liveone.energy/api/gush
 
 sources:
   # DeepSea generator at the primary site (musher). Reached over the sheephouse WireGuard tunnel on Fly,
-  # or directly on the LAN from a Pi. Poll==push: 5 min idle, 1 min while the genset is running.
+  # or directly on the LAN from a Pi. Poll 15 s; push 5 min idle / 1 min running.
+  #
+  # ⚠️ TEMPORARY high-resolution POLL cadence (2026-08-10). It was 300 s idle / 60 s running. The open
+  # question is WHICH digital input the SP-PRO closes to command a start (see the Daylesford
+  # generator-run-accounting write-up), and that is a transition we need bracketed tightly — at 300 s
+  # the pre-start snapshot is up to five minutes stale and useless for attributing the edge. Costs
+  # ~52 MB/day of diag journal (~0.5 MB/day once rolled — see diag-journal.ts on why gzip gets
+  # ~106:1), which is why the journal now has a 100 MB cap. Put pollSec back to 300 once the start
+  # trigger is identified.
+  #
+  # The BASELINE push cadence is deliberately NOT raised with it. Before the two were split, a
+  # faster poll dragged deliveries with it — 288 → 5,760 pushes/day, a 20× increase in what LiveOne
+  # stores, for a change only ever meant to buy local diagnostic resolution. LiveOne keeps receiving
+  # what it always did between transitions; the extra resolution stays on the Fly volume.
+  #
+  # `transitionSec` (2026-08-30) is the one deliberate exception to that rule, and it is bounded on
+  # purpose. While the engine is STARTING or STOPPING, poll and push both drop to 5 s so LiveOne can
+  # watch the transition rather than learn about it a minute later — the tile used to sit unchanged
+  # for up to 45 s after a Start was pressed. The window is opened by a command or by an observed
+  # change in the running flag and closed by a hard 3-minute ceiling (TRANSITION_MS in
+  # core/control.ts), so nothing can hold it open: a bracket is ~36 pushes, a run is ~2 brackets,
+  # and the idle cadence below is untouched. Set transitionSec: 0 to switch the bracket off.
+  #
+  # These periods are now HONOURED rather than approximated (2026-08-30). Two things used to inflate
+  # them, both measured on prod: the due tick was compared against the wall time at the END of the
+  # last delivery, so every period landed one poll late (60 s → 75 s, 300 s → 315 s), and the
+  # diagnostic post-run hold (MUSHER_DIAG_POSTRUN_SECONDS, an hour) drove the PUSH cadence as well
+  # as the poll — so a run was followed by an hour of active-rate deliveries of a flat zero. The
+  # hold now sets the local sampling rate only, which is what it was always meant to mean.
   - type: deepsea
     siteId: sheephouse
     apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)
     host: 10.0.1.244
     port: 502
+    # Remote start/stop (POST /api/usher/control/sheephouse/run). OPT-IN and fail-closed: omit this
+    # block and the route 404s, no supervisor exists, nothing can ever write to the controller.
+    # The passkey env is resolved lazily per request — a missing secret 503s the control route
+    # WITHOUT touching the collector.
+    control:
+      passkeyEnv: SHEEPHOUSE_CONTROL_KEY
+      maxRuntimeSec: 21600 # per-request cap (s) = 6 h; requests above it are rejected with a 400
     unitId: 10
-    pollSec: 300
-    activeSec: 60
+    pollSec: 15 # read + journal
+    activeSec: 15
+    pushSec: 300 # deliver to gusher — unchanged from pre-2026-08-10
+    activePushSec: 60
+    transitionSec: 5 # poll AND push this fast while the engine is starting or stopping (0 = off)
 
   # Fronius at Kinkora (fusher) — one site, two inverters (master + slave), aggregated. The Site
   # self-polls each inverter every 2 s; the run-loop pushes the minutely report once per minute.

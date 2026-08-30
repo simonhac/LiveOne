@@ -1,11 +1,10 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { redirect, permanentRedirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { isUserAdmin } from "@/lib/auth-utils";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import {
   getDashboard,
   getDashboardByOwnerAlias,
-  getDashboardIdByLegacyId,
   listAccessibleDashboards,
   type CompositionDashboard,
 } from "@/lib/dashboard/dashboards";
@@ -25,6 +24,7 @@ import {
   type MyDashboardsResponse,
 } from "@/lib/queries";
 import { getDeviceDataForCache } from "@/lib/dashboard/serve-data";
+import { viewerControlFields } from "@/lib/control/ownership-server";
 import { makeTimer, type ServerTimer } from "@/lib/server-timing";
 import {
   listReadableDevices,
@@ -32,6 +32,7 @@ import {
   type ReadableDevice,
 } from "@/lib/devices/list";
 import { collectRefs } from "@/lib/dashboard/v4-validate";
+import { dashboardHref } from "@/lib/dashboard/href";
 
 interface PageProps {
   params: Promise<{
@@ -57,6 +58,32 @@ async function resolveClerkUserIdByUsername(
 }
 
 /**
+ * The canonical URL path for a dashboard: `/dashboard/{ownerUsername}/{slug}` when slugged and the
+ * owner's Clerk username resolves, else `/dashboard/{db_…}`. `knownOwnerUsername` skips the Clerk
+ * lookup when the arriving URL already carried it (the pretty form).
+ */
+async function canonicalDashboardPath(
+  dashboard: CompositionDashboard,
+  knownOwnerUsername: string | null,
+): Promise<string> {
+  let ownerUsername = knownOwnerUsername;
+  if (!ownerUsername && dashboard.alias && dashboard.ownerClerkUserId) {
+    try {
+      const clerk = await clerkClient();
+      const owner = await clerk.users.getUser(dashboard.ownerClerkUserId);
+      ownerUsername = owner.username ?? null;
+    } catch {
+      ownerUsername = null;
+    }
+  }
+  return dashboardHref({
+    id: dashboard.id,
+    slug: dashboard.alias,
+    ownerUsername,
+  });
+}
+
+/**
  * Render a composition dashboard. The v4 document is opaque JSONB; every card/tile self-resolves
  * client-side against its Area's handle or a named member device (the `oe-grid` tile reads the OE
  * region member directly — no server-side region derivation).
@@ -76,13 +103,18 @@ async function renderCompositionDashboard(
   // The signed-in viewer (owner/admin authed path). When present with no `sharedAreas`, the header
   // switcher's two queries are SSR-seeded (SP1.4). Omitted on the read-only shared (`?access=`) path.
   userId?: string | null,
+  // The canonical URL path for this dashboard (`/dashboard/{user}/{slug}` when slugged, else
+  // `/dashboard/{db_…}`). The client replaceStates the address bar to it after hydration, so a
+  // legacy `/dashboard/id/…` arrival ends up showing the canonical form. Omitted on the `?access=`
+  // path — the token is the identity there and the URL is left alone.
+  canonicalPath?: string,
 ) {
-  // The v4 node tree is what renders (DashboardV4View, inside DashboardClient), and as of config-v4
-  // Phase 14 stage 16 it is the ONLY shape: `descriptor` was made inert at stage 15 and dropped from
-  // the database by migration 0054. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and its one write path validates it,
-  // so this guard is a defence against a corrupt jsonb only — and a failed guard renders an EMPTY
-  // document. That is deliberate: quietly serving a second, divergent shape from a shape-guard
-  // failure is exactly the drift the cutover set out to end.
+  // The node tree is what renders (DashboardV4View, inside DashboardClient), and it is the ONLY
+  // shape — the `descriptor` column that held a second one was dropped by migration 0054.
+  // `dashboards.doc` is NOT NULL and its one write path validates it, so this guard is a defence
+  // against a corrupt jsonb only — and a failed guard renders an EMPTY document. That is deliberate:
+  // quietly serving a second, divergent shape from a shape-guard failure is exactly the drift this
+  // is here to prevent.
   const v4doc = isDashboardV4(dashboard.doc)
     ? dashboard.doc
     : emptyDashboardV4();
@@ -118,11 +150,9 @@ async function renderCompositionDashboard(
   const queryClient = getQueryClient();
   // A tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a public NEM
   // region device; a member device for `device-metrics`). Those pins are NOT section handles, so
-  // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
-  // config-v4 Phase 14 stage 15: the v3 walk that also collected `deviceSystemId` off descriptor
-  // cards/tiles is gone. It was a duplicate, not a second source — `rewriteV3ToV4` carried every one
-  // of those pins into the doc as a `dv_` device ref, which is exactly what `v4DeviceIds` below
-  // resolves. Worst case it would only cost an SSR seed, since an unseeded pin self-fetches.
+  // without seeding they self-fetch /api/data on the client. Every pin reaches the document as a
+  // `dv_` device ref, which is what `v4DeviceIds` below resolves — there is no second source to
+  // collect from. Worst case a missed pin only costs an SSR seed, since an unseeded pin self-fetches.
   const pins = new Set<number>();
   for (const id of v4DeviceIds) {
     const device = deviceById.get(id);
@@ -148,15 +178,16 @@ async function renderCompositionDashboard(
         try {
           const value = await getDeviceDataForCache(id);
           if (value == null) return;
+          // 🛑 Reads the DISCRIMINATED payload (config-v4 Phase 13 PR 1): `device` for a real
+          // device, `area` for an Area. This is an AUTHORIZATION guard and `value` is `unknown`, so
+          // the old `system` key would have compiled clean and silently read `undefined` — failing
+          // closed (pins stop being seeded and self-fetch) but wrong.
+          const subject = value as {
+            device?: { ownerClerkUserId?: string | null };
+            area?: { ownerClerkUserId?: string | null };
+            latest?: Record<string, { sourceSystemId?: number }>;
+          };
           if (isPin) {
-            // 🛑 Reads the DISCRIMINATED payload (config-v4 Phase 13 PR 1): `device` for a real
-            // device, `area` for an Area. This is an AUTHORIZATION guard and `value` is `unknown`, so
-            // the old `system` key would have compiled clean and silently read `undefined` — failing
-            // closed (pins stop being seeded and self-fetch) but wrong.
-            const subject = value as {
-              device?: { ownerClerkUserId?: string | null };
-              area?: { ownerClerkUserId?: string | null };
-            };
             const owner = (subject.device ?? subject.area)?.ownerClerkUserId;
             const safe =
               authorizedV4Pins.has(id) ||
@@ -164,7 +195,16 @@ async function renderCompositionDashboard(
               (userId != null && owner === userId);
             if (!safe) return; // private pin we can't cheaply authorize → let the card self-fetch
           }
-          queryClient.setQueryData(queryKeys.data(id), value);
+          // The two VIEWER-relative fields `/api/data` emits. `getDeviceDataForCache` builds the
+          // payload with no viewer, so without this the seed lands in React Query carrying neither
+          // — the client reads absent as false, and every control cog (the generator's, the EV's)
+          // was missing on first paint and appeared only when the first refetch replaced the seed,
+          // up to `staleTime` (25 s) later. Same predicate as the route, off the same subject block
+          // the pin guard above reads; see the note on `viewerControlFields`.
+          queryClient.setQueryData(queryKeys.data(id), {
+            ...(value as object),
+            ...(await viewerControlFields(subject, userId ?? null)),
+          });
         } catch {
           // best-effort prefetch — the card will self-fetch on the client
         }
@@ -235,6 +275,7 @@ async function renderCompositionDashboard(
             // of a lost update — so it must come from the same read as `doc`, not a second fetch.
             revision: dashboard.revision,
           }}
+          canonicalPath={canonicalPath}
           canEdit={canEdit}
           // Encode ar_ at the wire boundary — sharedAreas/initialReadableAreas are raw-uuid
           // (below the seam) up to this point; the client's areaById must match the read-normalized
@@ -255,9 +296,9 @@ async function renderCompositionDashboard(
 }
 
 /**
- * `/dashboard/*` serves only composition (v3) dashboards now. Per-device "device" views live at
- * `/device/*`; any device-shaped slug here 301s there. A composition is shareable via `?access=`
- * (read-only, no sign-in); the legacy per-device share path is retired.
+ * `/dashboard/*` serves composition dashboards only. Per-device "device" views live at `/device/*`;
+ * any device-shaped slug here 301s there. A composition is shareable via `?access=` (read-only, no
+ * sign-in); there is no per-device share path.
  */
 export default async function DashboardPage({
   params,
@@ -311,26 +352,50 @@ export default async function DashboardPage({
 
   const validSubPages = ["heatmap", "generator", "amber", "latest"] as const;
 
-  // Composition dashboards (Phase 2b-2), addressed by id: `/dashboard/id/{id}` or
-  // `/dashboard/{user}/id/{id}` (the {user} segment is cosmetic; access is by ownership/admin).
+  // Composition dashboards, addressed by id — canonical `/dashboard/{db_…}` or the legacy
+  // `/dashboard/id/{id}` / `/dashboard/{user}/id/{id}` forms (the {user} segment is cosmetic;
+  // access is by ownership/grant/admin, decided below).
   const compositionId =
-    slug.length === 2 && slug[0] === "id"
-      ? slug[1]
-      : slug.length === 3 && slug[1] === "id"
-        ? slug[2]
-        : null;
+    slug.length === 1 && slug[0].startsWith("db_")
+      ? slug[0]
+      : slug.length === 2 && slug[0] === "id"
+        ? slug[1]
+        : slug.length === 3 && slug[1] === "id"
+          ? slug[2]
+          : null;
+
+  // Resolve a dashboard from whichever URL shape matched; both funnel into ONE authorize block so
+  // id and pretty URLs grant identical access. `urlOwnerUsername` records a username the URL itself
+  // carried, so canonicalisation needn't re-ask Clerk for it.
+  let dashboard: CompositionDashboard | null = null;
+  let urlOwnerUsername: string | null = null;
   if (compositionId) {
-    // config-v4: the legacy `/dashboard/id/{n}` (int) form redirects permanently to the opaque-id form
-    // via dashboards.legacy_id → id; the primary address is the opaque `db_…` id (the DAO owns id↔uuid).
-    if (/^\d+$/.test(compositionId)) {
-      const dbId = await getDashboardIdByLegacyId(parseInt(compositionId, 10));
-      if (!dbId) redirect("/dashboard");
-      permanentRedirect(`/dashboard/id/${dbId}`);
-    }
-    const dashboard = await timer.time("dashboard", () =>
+    // 🪦 The legacy `/dashboard/id/{n}` (int) form is GONE, along with `dashboards.legacy_id` that
+    // backed its 301. The opaque `db_…` id has been the primary address since the config-v4 cutover;
+    // an int now simply doesn't resolve and falls through to /dashboard.
+    dashboard = await timer.time("dashboard", () =>
       getDashboard(compositionId),
     );
     if (!dashboard) redirect("/dashboard");
+  } else if (
+    // Pretty owner-scoped alias: `/dashboard/{user}/{shortname}`. A matching composition dashboard
+    // wins; otherwise it's a device-shaped slug → the device redirect below.
+    slug.length === 2 &&
+    !/^\d+$/.test(slug[0]) &&
+    slug[0] !== "id" &&
+    slug[1] !== "id" &&
+    !validSubPages.includes(slug[1] as (typeof validSubPages)[number])
+  ) {
+    const ownerId = await resolveClerkUserIdByUsername(slug[0]);
+    if (ownerId) {
+      dashboard = await timer.time("dashboard", () =>
+        getDashboardByOwnerAlias(ownerId, slug[1]),
+      );
+      if (dashboard) urlOwnerUsername = slug[0];
+    }
+  }
+
+  if (dashboard) {
     const canEdit = dashboard.ownerClerkUserId === userId || isAdmin;
     // A signed-in non-owner with a grant views read-only; a true stranger is bounced (a public,
     // sign-in-free share still arrives via ?access=). Grantees get the document's Areas resolved
@@ -356,36 +421,8 @@ export default async function DashboardPage({
       initialReadableAreas,
       timer,
       userId,
+      await canonicalDashboardPath(dashboard, urlOwnerUsername),
     );
-  }
-
-  // Pretty owner-scoped alias: `/dashboard/{user}/{shortname}`. A composition dashboard the caller
-  // can edit wins; otherwise it's a device-shaped slug → redirect to the device view.
-  if (
-    slug.length === 2 &&
-    !/^\d+$/.test(slug[0]) &&
-    slug[0] !== "id" &&
-    slug[1] !== "id" &&
-    !validSubPages.includes(slug[1] as (typeof validSubPages)[number])
-  ) {
-    const ownerId = await resolveClerkUserIdByUsername(slug[0]);
-    if (ownerId) {
-      const dash = await getDashboardByOwnerAlias(ownerId, slug[1]);
-      if (dash && (dash.ownerClerkUserId === userId || isAdmin)) {
-        const initialReadableAreas = await timer.time("areas", () =>
-          listReadableAreas(userId, { withChartCapability: true }),
-        );
-        return await renderCompositionDashboard(
-          dash,
-          true,
-          undefined,
-          initialReadableAreas,
-          timer,
-          userId,
-        );
-      }
-    }
-    // No matching composition dashboard → fall through to the device redirect below.
   }
 
   // Everything else is a per-device "device" slug (numeric id, user/alias, or a sub-page). Devices

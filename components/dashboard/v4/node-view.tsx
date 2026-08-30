@@ -1,19 +1,18 @@
 "use client";
 
 /**
- * config-v4 dashboard renderer — the recursive v4 node tree. This is the LIVE renderer: since the
- * Phase 8/10 cutover `dashboards.doc` is NOT NULL, so `DashboardClient` always takes this branch.
+ * config-v4 dashboard renderer — the recursive node tree. This is the ONLY renderer:
+ * `dashboards.doc` is NOT NULL, so `DashboardClient` always takes this branch.
  *
- * `<DashboardV4View doc>` renders a v4 document (clean-sheet §8) by recursing `<NodeView>`:
+ * `<DashboardV4View doc>` renders a document (clean-sheet §8) by recursing `<NodeView>`:
  *   - `group` → a layout container; a group with `heading` + a resolved `area` renders the area
- *     header (a v3 "section"); a `row` group is a v3 "tiles" grid — an `@container` grid of equal
- *     columns (lib/dashboard/tile-grid.ts). Its direct card children that are chart/sankey collapse
- *     into ONE <SiteChartsGroup> (the v3 two-pass collapse, ported here and keyed on the GROUP's
- *     area handle).
+ *     header; a `row` group renders as a tile grid — an `@container` grid of equal columns
+ *     (lib/dashboard/tile-grid.ts). Its direct card children that are chart/sankey collapse into ONE
+ *     <SiteChartsGroup> (a two-pass collapse, keyed on the GROUP's area handle).
  *   - `card` → ONE registry lookup (components/dashboard/registry.tsx), then dispatch on the
  *     plugin's own `kind`: a tile plugin renders a self-fetching tile cell, a card plugin is handed
- *     the node + its inherited context. A type with NO plugin — an unknown/future type, or the v3
- *     `tiles` container that became a group — renders a labelled placeholder (§8.4).
+ *     the node + its inherited context. A type with NO plugin — an unknown or future type — renders
+ *     a labelled placeholder (§8.4).
  *
  * Context (`area`/`device`) inherits down the tree (§8.1) and is handed to the plugins verbatim.
  * `GroupNode.size` (the 12-column hint) is still unread here — layout is child order + group flow.
@@ -112,7 +111,7 @@ function nodeKey(node: DashboardNode, i: number): string {
 }
 
 /**
- * One tile-view card — mirrors the v3 TilesCard cell (self-fetch, availability gate, plugin mount).
+ * One tile-view card: self-fetch, availability gate, plugin mount.
  * The plugin arrives already resolved: the single registry lookup happens once, in `CardNodeView`.
  */
 function V4TileCell({
@@ -178,9 +177,9 @@ function CardNodeView({
   // node inherits no area at all — the inherited DEVICE's. The device fallback is what makes a
   // device-scoped subtree work: `/device/{id}` binds only `device` on its root (there is no area
   // envelope for a device page), and without this every `pending: "host-skeleton"` plugin would be
-  // gated off by `handle == null` and render nothing. Area wins where both are bound, which is the
-  // v3 rule (the per-card device pin was never the section handle) — see `systemId` below and the
-  // plugins' `deviceSystemId`, both of which DO prefer the device.
+  // gated off by `handle == null` and render nothing. Area wins where both are bound — a per-card
+  // device pin is not the section handle. See `systemId` below and the plugins' `deviceSystemId`,
+  // both of which DO prefer the device.
   const handle = area?.handle ?? device?.systemId ?? null;
   const systemId = context.device ? (device?.systemId ?? null) : handle;
 
@@ -263,8 +262,8 @@ function GroupNodeView({
 
   if (nodeContext.device && device == null) return <DeviceUnavailable />;
 
-  // A heading group bound to an area that can't be resolved (removed / not readable) → clear notice
-  // (matches the v3 "Area unavailable" behaviour), but only once areas are known.
+  // A heading group bound to an area that can't be resolved (removed / not readable) → clear
+  // notice, but only once areas are known.
   if (node.heading && nodeContext.area && area == null && areasResolved) {
     return (
       <section className="rounded-lg border border-gray-700/70 bg-gray-900/30 p-2 sm:p-3">
@@ -276,8 +275,8 @@ function GroupNodeView({
     );
   }
 
-  // Collapse pass 1: gather the site-charts keys of every direct chart/sankey child (v3 collapse,
-  // keyed on this group's area handle). Reuses each plugin's own collapseKey, called on the NODE.
+  // Collapse pass 1: gather the site-charts keys of every direct chart/sankey child, keyed on this
+  // group's area handle. Reuses each plugin's own collapseKey, called on the NODE.
   const chartKeys = new Set<string>();
   for (const child of node.children) {
     const k = collapseKeyOf(child);
