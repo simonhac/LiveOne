@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -64,6 +64,13 @@ interface DashboardClientProps {
   initialReadableAreas?: ReadableArea[];
   /** Device refs already resolved and authorized by the server render path. */
   resolvedDevices?: ReadableDevice[];
+  /**
+   * The dashboard's canonical URL path (`/dashboard/{user}/{slug}` when slugged, else
+   * `/dashboard/{db_…}`). On mount the address bar is replaceStated to it, so a legacy
+   * `/dashboard/id/…` arrival ends up showing the canonical form without a redirect round-trip.
+   * Omitted on the `?access=` shared view (the token URL is left alone).
+   */
+  canonicalPath?: string;
 }
 
 export default function DashboardClient({
@@ -72,8 +79,21 @@ export default function DashboardClient({
   sharedAreas,
   initialReadableAreas,
   resolvedDevices = [],
+  canonicalPath,
 }: DashboardClientProps) {
   const router = useRouter();
+
+  // Canonicalise the address bar (see the prop note). `replaceState` — never a push — so
+  // back/forward history is untouched; query + hash survive the rewrite.
+  useEffect(() => {
+    if (canonicalPath && window.location.pathname !== canonicalPath) {
+      window.history.replaceState(
+        null,
+        "",
+        canonicalPath + window.location.search + window.location.hash,
+      );
+    }
+  }, [canonicalPath]);
   const [renameOpen, setRenameOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [addAreaOpen, setAddAreaOpen] = useState(false);

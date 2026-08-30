@@ -40,6 +40,14 @@ jest.mock("@/lib/dashboard/dashboards", () => ({
   getDashboard: (...a: unknown[]) => mockGetDashboard(...a),
 }));
 
+// Only consulted when the default dashboard is slugged (pretty-URL owner username lookup).
+const mockGetUser = jest.fn<(...a: unknown[]) => Promise<unknown>>();
+jest.mock("@clerk/nextjs/server", () => ({
+  clerkClient: async () => ({
+    users: { getUser: (...a: unknown[]) => mockGetUser(...a) },
+  }),
+}));
+
 import {
   resolveDefaultDashboardRoute,
   setDefaultDashboardById,
@@ -64,17 +72,48 @@ beforeEach(() => {
 });
 
 describe("resolveDefaultDashboardRoute (landing redirect target)", () => {
-  it("a set default → /dashboard/id/{id} (no write)", async () => {
+  it("a slug-less default → /dashboard/{id}, no Clerk lookup (no write)", async () => {
     usersRow!.defaultDashboardId = DASH_UUID;
     mockGetDashboard.mockResolvedValue({
       id: DASH_ID,
       ownerClerkUserId: USER,
       displayName: "Home",
+      alias: null,
     });
     expect(await resolveDefaultDashboardRoute(USER)).toBe(
-      `/dashboard/id/${DASH_ID}`,
+      `/dashboard/${DASH_ID}`,
+    );
+    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("a slugged default → pretty /dashboard/{user}/{slug} (no write)", async () => {
+    usersRow!.defaultDashboardId = DASH_UUID;
+    mockGetDashboard.mockResolvedValue({
+      id: DASH_ID,
+      ownerClerkUserId: USER,
+      displayName: "Home",
+      alias: "home",
+    });
+    mockGetUser.mockResolvedValue({ username: "simon" });
+    expect(await resolveDefaultDashboardRoute(USER)).toBe(
+      "/dashboard/simon/home",
     );
     expect(updates).toHaveLength(0);
+  });
+
+  it("a slugged default with no Clerk username → id form", async () => {
+    usersRow!.defaultDashboardId = DASH_UUID;
+    mockGetDashboard.mockResolvedValue({
+      id: DASH_ID,
+      ownerClerkUserId: USER,
+      displayName: "Home",
+      alias: "home",
+    });
+    mockGetUser.mockResolvedValue({ username: null });
+    expect(await resolveDefaultDashboardRoute(USER)).toBe(
+      `/dashboard/${DASH_ID}`,
+    );
   });
 
   it("no default → null (no write)", async () => {

@@ -61,11 +61,13 @@ export default function DashboardSettingsDialog({
   const aliasValid = isValidAlias(alias.trim());
 
   // Read-only public share links for THIS dashboard (keyed by dashboard id). A holder opens
-  // `/dashboard/id/{id}?access=<token>` with no sign-in, scoped to exactly what the dashboard shows.
+  // `/dashboard/{id}?access=<token>` with no sign-in, scoped to exactly what the dashboard shows.
+  // Deliberately the id form, not the pretty slug one: slugs are renameable, and the id is what
+  // keeps an already-sent link durable (the token resolves the dashboard regardless).
   const shareUrl = (token: string) =>
     typeof window === "undefined"
       ? ""
-      : `${window.location.origin}/dashboard/id/${id}?access=${token}`;
+      : `${window.location.origin}/dashboard/${id}?access=${token}`;
   //
   // ⚠️ Three deliberate wire differences from the legacy `/share` twin, none of which `tsc` can see:
   //  - the response CONTAINER key is still `tokens` (§9.2 renames the route, not the payload) — a

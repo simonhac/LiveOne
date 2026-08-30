@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { useUser } from "@clerk/nextjs";
 import { Star, Plus, HardDrive, Layers, Users } from "lucide-react";
 import { myDashboardsQuery, userPreferencesQuery } from "@/lib/queries";
+import { dashboardHref } from "@/lib/dashboard/href";
 
 interface DashboardsMenuProps {
   /** The composition dashboard currently being viewed, to highlight it (undefined on legacy pages). */
@@ -34,7 +36,7 @@ export function usePrefetchDashboardsMenu(enabled = true) {
 
 /**
  * The contents of the header title dropdown — the signed-in user's composition dashboards. A drop-in
- * repurpose of `DevicesMenu`: same row styling + default star, but rows link to `/dashboard/id/{id}`
+ * repurpose of `DevicesMenu`: same row styling + default star, but rows link to the dashboard URL
  * and the data is client-fetched (react-query, invalidated by create/rename/delete) rather than passed
  * in. A footer "New dashboard…" row creates one (its dialog is owned by the parent, reached via onNew).
  */
@@ -50,6 +52,10 @@ export default function DashboardsMenu({
 }: DashboardsMenuProps) {
   const { data, isLoading } = useQuery(myDashboardsQuery(enabled));
   const { data: prefs } = useQuery(userPreferencesQuery(enabled));
+  // For pretty links on OWN dashboards (`/dashboard/{me}/{slug}`); granted rows fall back to the
+  // id form (the DTO doesn't carry the other owner's username).
+  const { user } = useUser();
+  const myUsername = user?.username ?? null;
 
   const dashboards = data?.dashboards ?? [];
   const defaultId = prefs?.preferences.defaultDashboardId ?? null;
@@ -67,7 +73,11 @@ export default function DashboardsMenu({
         return (
           <Link
             key={d.id}
-            href={`/dashboard/id/${d.id}`}
+            href={dashboardHref({
+              id: d.id,
+              slug: d.slug,
+              ownerUsername: d.access === "owner" ? myUsername : null,
+            })}
             onClick={onNavigate}
             className={`${itemClassName} ${isActive ? activeItemClassName : ""} flex items-center gap-2`}
           >
