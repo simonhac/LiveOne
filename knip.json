@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreWorkspaces": ["packages/*"],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "config.ts",
+        "drizzle-planetscale.config.ts",
+        "lib/db/planetscale/schema.ts",
+        "scripts/**/*.{ts,mjs,js}",
+        "tools/**/*.ts",
+        "e2e/**/*.spec.ts",
+        "**/__tests__/**/*.ts"
+      ],
+      "project": ["**/*.{ts,tsx,mjs,js}"],
+      "ignore": ["scripts/perf/sydney-lambda/**"],
+      "ignoreDependencies": [
+        "eslint",
+        "eslint-config-next",
+        "@liveone/protocol"
+      ]
+    }
+  }
+}
