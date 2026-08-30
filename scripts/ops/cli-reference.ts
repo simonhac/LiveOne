@@ -156,7 +156,7 @@ function renderDirReadme(dir: string, tools: Loaded[]): string {
         `### ${leaf.path.join(" ")}`,
         "",
         "```",
-        renderHelp(leaf.spec, t.spec),
+        renderHelp(leaf.spec, [t.spec]),
         "```",
         "",
       );
