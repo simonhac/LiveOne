@@ -24,6 +24,8 @@ function fakeTarget(): SourceControl {
     modeName: "Auto",
     remoteStartInput: "open",
     running: false,
+    engineState: null,
+    engineStateName: null,
   };
   const preflight: ControlPreflight = {
     ownership,

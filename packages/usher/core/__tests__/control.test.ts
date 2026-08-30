@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from "@jest/globals";
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { RunSupervisor, type ControlClock } from "../control";
+import { RunSupervisor, gateStart, type ControlClock } from "../control";
 import type {
   SourceControl,
   ControlOwnership,
@@ -44,6 +44,8 @@ class FakeTarget implements SourceControl {
     modeName: "Auto",
     remoteStartInput: "open",
     running: false,
+    engineState: null,
+    engineStateName: null,
   };
   ownershipError: Error | null = null;
 
@@ -162,6 +164,8 @@ describe("RunSupervisor", () => {
       modeName: "Stop",
       remoteStartInput: "open",
       running: false,
+      engineState: null,
+      engineStateName: null,
     };
     const r = await sup.request(600);
     expect(r.status).toBe(409);
@@ -175,6 +179,8 @@ describe("RunSupervisor", () => {
       modeName: "Auto",
       remoteStartInput: "closed",
       running: true,
+      engineState: null,
+      engineStateName: null,
     };
     const refused = await sup.request(600);
     expect(refused.status).toBe(409);
@@ -228,6 +234,107 @@ describe("RunSupervisor", () => {
     expect(r.stillRunning).toBe("remote-start-input");
   });
 
+  it("released and still turning with input A OPEN is our cool-down, not a mystery", async () => {
+    await sup.request(600);
+    // The engine is turning and the SP-PRO is NOT calling: we are the only thing that commanded
+    // this run, so what keeps it spinning after fn 33 is the DSE's own cool-down.
+    sup.observeValues({ engineRpm: 1500, genFreqHz: 500, remoteStartInput: 0 });
+    const r = await sup.request(0);
+    expect(r.ok).toBe(true);
+    expect(r.released).toBe(true);
+    expect(r.stillRunning).toBe("cool-down");
+  });
+
+  it("an UNREADABLE input stays 'unknown' — we cannot account for it", async () => {
+    await sup.request(600);
+    sup.observeValues({
+      engineRpm: 1500,
+      genFreqHz: 500,
+      remoteStartInput: null,
+    });
+    const r = await sup.request(0);
+    expect(r.stillRunning).toBe("unknown");
+  });
+
+  describe("cool-down is named, not guessed", () => {
+    it("the CONTROLLER's own engineState answers first", () => {
+      const clause = gateStart(
+        {
+          mode: 1,
+          modeName: "Auto",
+          remoteStartInput: "open",
+          running: true,
+          engineState: 4,
+          engineStateName: "Cooling down",
+        },
+        false,
+      );
+      expect(clause).toBe(
+        "the engine is cooling down after its last run and will stop shortly",
+      );
+    });
+
+    it("our own recent release answers when the register cannot", async () => {
+      await sup.request(600);
+      sup.observeValues({
+        engineRpm: 1500,
+        genFreqHz: 500,
+        remoteStartInput: 0,
+      });
+      await sup.request(0); // release — starts the cool-down grace
+      expect(sup.inCooldownGrace()).toBe(true);
+
+      target.ownership = {
+        mode: 1,
+        modeName: "Auto",
+        remoteStartInput: "open",
+        running: true,
+        engineState: null, // unreadable module
+        engineStateName: null,
+      };
+      const r = await sup.request(600);
+      expect(r.ok).toBe(false);
+      expect(r.reason).toBe(
+        "the engine is cooling down after the run that just stopped",
+      );
+    });
+
+    it("neither can account for it → still an unknown source, unhedged", () => {
+      const clause = gateStart(
+        {
+          mode: 1,
+          modeName: "Auto",
+          remoteStartInput: "open",
+          running: true,
+          engineState: 3, // Running — the controller says this is a RUN, not a wind-down
+          engineStateName: "Running",
+        },
+        false,
+      );
+      expect(clause).toBe(
+        "the engine is already running, commanded by an unknown source (remote-start input open)",
+      );
+    });
+
+    it("the SP-PRO still outranks both — it is a fact, not an inference", () => {
+      const clause = gateStart(
+        {
+          mode: 1,
+          modeName: "Auto",
+          remoteStartInput: "closed",
+          running: true,
+          engineState: 4,
+          engineStateName: "Cooling down",
+        },
+        false,
+        { inCooldownGrace: true },
+      );
+      expect(clause).toBe(
+        "the engine is already running, commanded by the SP-PRO (remote-start input closed)",
+      );
+    });
+  });
+
   it("state machine: sp-pro run is visible without any latch of ours", () => {
     sup.observeValues({ engineRpm: 1500, genFreqHz: 500, remoteStartInput: 1 });
     expect(sup.status().state).toBe("running:sp-pro");
@@ -274,6 +381,8 @@ describe("RunSupervisor", () => {
         modeName: "Stop",
         remoteStartInput: "open",
         running: false,
+        engineState: null,
+        engineStateName: null,
       };
 
       const sup2 = make();
@@ -336,6 +445,8 @@ describe("RunSupervisor", () => {
         modeName: "Stop",
         remoteStartInput: "open",
         running: false,
+        engineState: null,
+        engineStateName: null,
       };
       const probe = await sup.probe();
       const real = await sup.request(120);
@@ -369,10 +480,10 @@ describe("RunSupervisor", () => {
       const r = await sup.probe();
       expect(r.wouldStart).toBe(false);
       expect(r.verdict).toMatch(
-        /^Already running until .+ — starting again would extend the run\.$/,
+        /^Running until .+ — starting again extends the run\.$/,
       );
       expect(r.verdictMessage?.template).toBe(
-        "Already running until {stopAt, time, short} — starting again would extend the run.",
+        "Running until {stopAt, time, short} — starting again extends the run.",
       );
     });
 

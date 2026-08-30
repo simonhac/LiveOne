@@ -196,3 +196,82 @@ describe("detectRunPeriods", () => {
     ).toThrow();
   });
 });
+
+/**
+ * Boundary events — a control signal cutting runs that the deadband would otherwise merge.
+ *
+ * The shape under test is the one observed on prod (2026-08-30, Daylesford): a commanded stop, the
+ * engine coasting through its cool-down, a restart 45 s later. `delayOffMs` is 120 s, so the engine
+ * signal alone cannot tell that apart from a blink.
+ */
+describe("detectRunPeriods — boundary events", () => {
+  const SEC = 1_000;
+
+  /** on … off for 45s … on again, all inside the 120s deadband. */
+  const stopRestart: Sample[] = [
+    s(T0, -1000),
+    s(T0 + 30 * SEC, -1000),
+    s(T0 + 60 * SEC, 0), // engine stopped
+    s(T0 + 75 * SEC, 0),
+    s(T0 + 105 * SEC, -1000), // restarted, 45s after it stopped
+    s(T0 + 135 * SEC, -1000),
+  ];
+
+  it("merges a stop-and-restart with no boundary event (unchanged behaviour)", () => {
+    const periods = detectRunPeriods(stopRestart, cfg());
+    expect(periods).toHaveLength(1);
+    expect(periods[0].startMs).toBe(T0);
+  });
+
+  it("splits at a control edge that falls in the off-gap", () => {
+    const periods = detectRunPeriods(
+      stopRestart,
+      cfg({ boundaryEventsMs: [T0 + 90 * SEC] }),
+    );
+    expect(periods).toHaveLength(2);
+    expect(periods[0].startMs).toBe(T0);
+    expect(periods[0].endMs).toBe(T0 + 30 * SEC); // closed at its last on-sample
+    expect(periods[0].closeReason).toBe("boundary");
+    expect(periods[1].startMs).toBe(T0 + 105 * SEC);
+    expect(periods[1].endMs).toBe(T0 + 135 * SEC);
+  });
+
+  it("does NOT split at an edge between two consecutive on-samples", () => {
+    // The stop command lands while the engine is still turning — its cool-down tail belongs to the
+    // run that caused it, not to a second run nobody started.
+    const running: Sample[] = [
+      s(T0, -1000),
+      s(T0 + 30 * SEC, -1000),
+      s(T0 + 60 * SEC, -1000),
+      s(T0 + 90 * SEC, -1000),
+    ];
+    const periods = detectRunPeriods(
+      running,
+      cfg({ boundaryEventsMs: [T0 + 45 * SEC], nowMs: FAR_FUTURE }),
+    );
+    expect(periods).toHaveLength(1);
+    expect(periods[0].startMs).toBe(T0);
+  });
+
+  it("ignores an edge outside the off-gap", () => {
+    const periods = detectRunPeriods(
+      stopRestart,
+      cfg({ boundaryEventsMs: [T0 - 10 * SEC, T0 + 200 * SEC] }),
+    );
+    expect(periods).toHaveLength(1);
+  });
+
+  it("still closes on a real gap, and a boundary in it changes nothing", () => {
+    const gapped: Sample[] = [
+      s(T0, -1000),
+      s(T0 + 30 * SEC, -1000),
+      s(T0 + 300 * SEC, -1000), // 270s > delayOff
+    ];
+    const periods = detectRunPeriods(
+      gapped,
+      cfg({ boundaryEventsMs: [T0 + 150 * SEC] }),
+    );
+    expect(periods).toHaveLength(2);
+    expect(periods[0].closeReason).toBe("gap");
+  });
+});

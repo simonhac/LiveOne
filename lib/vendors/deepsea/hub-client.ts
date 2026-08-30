@@ -38,7 +38,9 @@ export interface HubRunResult {
   stopAt: string | null;
   remainingSec: number | null;
   released?: boolean;
-  stillRunning?: string | null;
+  /** What is still turning the engine after our latch was released: the SP-PRO's own demand, the
+   *  cool-down we just caused, or something we genuinely cannot account for. */
+  stillRunning?: "remote-start-input" | "cool-down" | "unknown" | null;
 }
 
 /**
@@ -72,6 +74,10 @@ export interface HubProbeResult {
   /** the SP-PRO's demand on configurable digital input A */
   remoteStartInput?: "closed" | "open" | "unknown";
   running?: boolean;
+  /** The DSE's own engine operating state (4 = Cooling down, 6 = Post-run). A hint, not a gate:
+   *  the register is not field-qualified, so it is absent on any module that does not answer. */
+  engineState?: number | null;
+  engineStateName?: string | null;
   /** Which System Control Functions the module advertises (SCF map 4096–4103). */
   scfSupported?: {
     selectAuto: boolean;

@@ -38,6 +38,19 @@ export interface ControlOwnership {
   remoteStartInput: "closed" | "open" | "unknown";
   /** engine turning / producing (rpm or frequency nonzero) */
   running: boolean;
+  /**
+   * The DSE's OWN engine operating state (page 5 offset 128 / reg 1408) — 4 = Cooling down,
+   * 6 = Post-run, 3 = Running, 2 = Warming up. The controller's own word for what the engine is
+   * doing, which is the only source that can distinguish a cool-down tail from a fresh run nobody
+   * here commanded.
+   *
+   * 🛑 Nullable and treated as a HINT, never a gate. The register is not yet field-qualified (it is
+   * deliberately absent from DEEPSEA_MANIFEST for that reason), so an unreadable value, a sentinel,
+   * or a module that does not populate it must degrade to the behaviour that existed before it —
+   * never to a refusal or an acceptance that depends on it.
+   */
+  engineState: number | null;
+  engineStateName: string | null;
 }
 
 /** Result of a READ-ONLY control pre-flight — what a run would see before deciding. */
@@ -87,6 +100,17 @@ export interface Source {
    * faster cadence. Given the just-read values; return false when unknown.
    */
   isRunning?(values: Values): boolean;
+  /**
+   * Optional: is the device active for DELIVERY purposes? Defaults to `isRunning`.
+   *
+   * 🛑 The two are the same question for every source but musher, and musher is why the seam
+   * exists. Its `isRunning` deliberately stays true for a diagnostic post-run hold (an hour by
+   * default) so the local journal samples the cool-down finely — but that hold was also driving the
+   * PUSH cadence, so LiveOne kept receiving active-rate deliveries for an hour after every run,
+   * long after the engine had stopped and there was nothing left to see. Local resolution and what
+   * we send upstream are different decisions; a source that wants them to differ says so here.
+   */
+  isDeliveryActive?(values: Values): boolean;
   /**
    * Optional: drop any cached connection so the next read() reconnects. Called by the run loop after
    * a failed/timed-out tick so a silently-dead socket can't keep hanging future reads.

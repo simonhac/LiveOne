@@ -72,6 +72,7 @@ export type ControlScenarioName =
   | "checking (skeleton)"
   | "refused: panel not in Auto"
   | "refused: engine already running"
+  | "refused: engine cooling down"
   | "already running (ISO instant)"
   | "hub unreachable"
   | "no control passkey";
@@ -153,16 +154,39 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
         },
       };
 
+    case "refused: engine cooling down":
+      // The commonest reason a start is refused, and the one that used to read as an alarm: the
+      // engine we just stopped is still turning through its cool-down. The controller's own word
+      // for it (engineState 4) is what makes this a statement rather than a guess.
+      return {
+        ok: true,
+        wouldProceed: false,
+        verdict:
+          "A run would be refused: the engine is cooling down after its last run and will stop shortly",
+        checks: [
+          HAPPY_CHECKS[0],
+          { label: "Engine", value: "cooling down", ok: false },
+          { label: "Inverter demand", value: "not calling", ok: true },
+        ],
+        detail: {
+          maxRuntimeSec: MAX_RUNTIME_SEC,
+          latched: false,
+          stopAt: null,
+          state: "stopping",
+          modeName: "Auto",
+        },
+      };
+
     case "already running (ISO instant)": {
       const stopAt = stopAtIso(23);
       return {
         ok: true,
         wouldProceed: false,
         // The flat leg keeps the ISO on purpose — this is what an older hub sends.
-        verdict: `Already running until ${stopAt} — starting again would extend the run.`,
+        verdict: `Running until ${stopAt} — starting again extends the run.`,
         verdictMessage: {
           template:
-            "Already running until {stopAt, time, short} — starting again would extend the run.",
+            "Running until {stopAt, time, short} — starting again extends the run.",
           values: { stopAt },
         },
         checks: HAPPY_CHECKS,
