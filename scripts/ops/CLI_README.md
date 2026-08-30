@@ -41,6 +41,9 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard remint-ids](#liveone-dashboard-remint-ids)  _(writes)_
     - [liveone dashboard move-node](#liveone-dashboard-move-node)  _(writes)_
     - [liveone dashboard set-prop](#liveone-dashboard-set-prop)  _(writes)_
+    - [liveone dashboard history](#liveone-dashboard-history)
+    - [liveone dashboard restore](#liveone-dashboard-restore)  _(writes)_
+    - [liveone dashboard backfill-history](#liveone-dashboard-backfill-history)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
 
@@ -431,6 +434,9 @@ Subcommands:
   remint-ids             Re-mint every node id in a document (one-time migration).  (writes)
   move-node              Move a node, subtree intact and ids preserved.  (writes)
   set-prop               Set or clear a node's envelope props, and a card's type/config.  (writes)
+  history                The dashboard's edit history — who changed it, when, revision by revision.
+  restore                Restore a recorded revision — as a NEW revision, never a counter rewind.  (writes)
+  backfill-history       Seed a history row for every dashboard whose current revision has none.  (writes)
 
 Run `liveone dashboard <subcommand> --help` for a subcommand's own options.
 
@@ -1058,6 +1064,185 @@ External access:
 Examples:
   liveone dashboard set-prop kink n_VX15 --columns=6
   liveone dashboard set-prop kink n_VX15 --hidden=none --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard history
+
+The dashboard's edit history — who changed it, when, revision by revision.
+
+```
+The dashboard's edit history — who changed it, when, revision by revision.
+
+When to use:
+  Run this before `restore`, and any time an edit surprises you. Every write records a
+  post-image row, so revision N here IS version N of the document.
+
+savedBy is a provenance string, not always a person: routes record the caller's Clerk
+userId, the CLI records `cli`, scripts `script:<name>`, and the backfill `backfill`.
+History is per-environment — the prod→dev sync deliberately does not carry it.
+
+Usage:
+  liveone dashboard history <dash> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
+  --limit <number>           How many revisions to show, newest first  (default: 20; 1–500)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard history kink
+  liveone dashboard history kink --limit=5
+
+Exit codes:
+  0    success
+  1    no history recorded (run backfill-history)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard restore
+
+Restore a recorded revision — as a NEW revision, never a counter rewind.
+
+```
+Restore a recorded revision — as a NEW revision, never a counter rewind.
+
+When to use:
+  The undo. Find the revision with `history`, preview the restore dry, then --apply. The
+  restore itself is recorded, so history shows what happened and is itself restorable.
+
+The recorded doc is re-validated against TODAY'S card vocabulary before writing — a
+months-old snapshot may name a type this build no longer knows, and restoring it blindly
+would write a grey box. A doc that no longer validates is refused with its issues.
+
+Usage:
+  liveone dashboard restore <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
+  --revision <number>        The recorded revision to restore  (a revision number from `history`; required)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard restore kink --revision=3
+  liveone dashboard restore kink --revision=3 --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard backfill-history
+
+Seed a history row for every dashboard whose current revision has none.
+
+```
+Seed a history row for every dashboard whose current revision has none.
+
+When to use:
+  Run ONCE per environment after the revisions writers land, so `restore` has a floor for
+  documents that predate them. Idempotent — a dashboard already recorded is skipped.
+
+db transport only: it writes rows the API deliberately has no endpoint for (history is
+server-written, not client-supplied). Rows are inserted with savedBy=backfill at each
+dashboard's CURRENT revision, ON CONFLICT DO NOTHING.
+
+Usage:
+  liveone dashboard backfill-history [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  npm run liveone:dev -- dashboard backfill-history
+  liveone dashboard backfill-history --via=db --apply
 
 Exit codes:
   0    success

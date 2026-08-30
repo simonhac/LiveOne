@@ -126,7 +126,12 @@ async function main() {
       touched++;
 
       if (!args.apply) continue;
-      await writeDoc(client, row, result.normalized ?? doc);
+      await writeDoc(
+        client,
+        row,
+        result.normalized ?? doc,
+        "script:migrate-card-type",
+      );
     }
 
     console.log(

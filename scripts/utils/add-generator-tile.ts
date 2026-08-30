@@ -269,7 +269,12 @@ async function main() {
       touched++;
 
       if (!args.apply) continue;
-      await writeDoc(client, row, result.normalized ?? doc);
+      await writeDoc(
+        client,
+        row,
+        result.normalized ?? doc,
+        "script:add-generator-tile",
+      );
     }
 
     console.log(

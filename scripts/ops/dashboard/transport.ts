@@ -20,7 +20,7 @@
 import type { Client } from "pg";
 import { Dashboard } from "@/lib/ids";
 import { countCardNodes, isDashboardV4 } from "@/lib/dashboard/v4";
-import { EXIT, failWith, type Ctx } from "@/lib/cli/cli";
+import { CliFailure, EXIT, failWith, type Ctx } from "@/lib/cli/cli";
 import { isAliasCollision } from "@/lib/dashboard/dashboards";
 import { apiFetch } from "@/lib/cli-kit/http";
 import {
@@ -76,6 +76,28 @@ export interface DashboardTransport {
   ): Promise<void>;
   /** db only. http relies on the PUT's server-side checkDocRefsReadable. */
   checkRef?(kind: "area" | "device", value: string): Promise<void>;
+  /** Newest-first edit history (no docs). */
+  history(
+    row: DashRowLike,
+    limit: number,
+  ): Promise<Array<{ revision: number; savedBy: string; savedAt: string }>>;
+  /** One recorded revision WITH its doc, or null. */
+  getRevision(
+    row: DashRowLike,
+    revision: number,
+  ): Promise<{
+    revision: number;
+    savedBy: string;
+    savedAt: string;
+    doc: unknown;
+  } | null>;
+  /**
+   * db only: seed a history row for every dashboard whose CURRENT revision has none — the floor
+   * under `restore` for documents that predate the writers. Idempotent (ON CONFLICT DO NOTHING).
+   */
+  backfillHistory?(
+    apply: boolean,
+  ): Promise<{ inserted: string[]; skipped: string[] }>;
   close(): Promise<void>;
 }
 
@@ -122,7 +144,7 @@ function makeDbTransport(client: Client, ctx: Ctx): DashboardTransport {
       const raw = rawIds.get(row);
       if (!raw)
         throw new Error("writeDoc: row did not come from this transport");
-      await writeDoc(client, { id: raw, revision: row.revision }, doc);
+      await writeDoc(client, { id: raw, revision: row.revision }, doc, "cli");
       return { revision: row.revision + 1 };
     },
     patchMeta: async (row, patch) => {
@@ -184,6 +206,77 @@ function makeDbTransport(client: Client, ctx: Ctx): DashboardTransport {
         `warning: readability of ${value} is NOT checked — on a shared dashboard this ref widens what ` +
           `anonymous viewers can query, and a ref the owner cannot read locks the doc out of the web editor`,
       );
+    },
+    history: async (row, limit) => {
+      const raw = rawIds.get(row);
+      if (!raw)
+        throw new Error("history: row did not come from this transport");
+      // 🛑 Format the timestamp IN SQL. `saved_at` is a naive `timestamp` holding UTC, and the raw
+      // `pg` client parses that as LOCAL time — so `.toISOString()` on the resulting Date shifts it
+      // by the machine's offset. Measured: the db transport reported r4 as 19:50Z while the http
+      // transport (drizzle → JSON) reported the correct 05:50Z, ten hours apart in AEST. The
+      // transports must agree, and UTC-everywhere is the house rule.
+      const res = await client.query<{
+        revision: number;
+        saved_by: string;
+        saved_at: string;
+      }>(
+        `select revision, saved_by,
+                to_char(saved_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as saved_at
+           from dashboard_revisions where dashboard_id = $1 order by revision desc limit $2`,
+        [raw, limit],
+      );
+      return res.rows.map((r) => ({
+        revision: r.revision,
+        savedBy: r.saved_by,
+        savedAt: r.saved_at,
+      }));
+    },
+    getRevision: async (row, revision) => {
+      const raw = rawIds.get(row);
+      if (!raw)
+        throw new Error("getRevision: row did not come from this transport");
+      const res = await client.query<{
+        revision: number;
+        saved_by: string;
+        saved_at: Date;
+        doc: unknown;
+      }>(
+        "select revision, saved_by, saved_at, doc from dashboard_revisions where dashboard_id = $1 and revision = $2",
+        [raw, revision],
+      );
+      const r = res.rows[0];
+      return r
+        ? {
+            revision: r.revision,
+            savedBy: r.saved_by,
+            savedAt: r.saved_at.toISOString(),
+            doc: r.doc,
+          }
+        : null;
+    },
+    backfillHistory: async (apply) => {
+      const rows = await listDashboards(client);
+      const inserted: string[] = [];
+      const skipped: string[] = [];
+      for (const r of rows) {
+        const have = await client.query(
+          "select 1 from dashboard_revisions where dashboard_id = $1 and revision = $2",
+          [r.id, r.revision],
+        );
+        const label = `${r.name ?? "(unnamed)"} (${Dashboard.encode(r.id)}, rev ${r.revision})`;
+        if ((have.rowCount ?? 0) > 0) {
+          skipped.push(label);
+          continue;
+        }
+        if (apply)
+          await client.query(
+            "insert into dashboard_revisions (dashboard_id, revision, doc, saved_by, saved_at) values ($1, $2, $3, $4, now()) on conflict (dashboard_id, revision) do nothing",
+            [r.id, r.revision, JSON.stringify(r.doc), "backfill"],
+          );
+        inserted.push(label);
+      }
+      return { inserted, skipped };
     },
     close: () => client.end(),
   };
@@ -299,6 +392,40 @@ function makeHttpTransport(origin: string, token: string): DashboardTransport {
       );
     },
     // no checkRef: the PUT's checkDocRefsReadable covers existence AND readability server-side.
+    history: async (row, limit) => {
+      const { body } = await get<{
+        revisions: Array<{
+          revision: number;
+          savedBy: string;
+          savedAt: string;
+        }>;
+      }>(
+        `/api/v4/dashboards/${encodeURIComponent(row.id)}/revisions?limit=${limit}`,
+      );
+      return body.revisions;
+    },
+    getRevision: async (row, revision) => {
+      try {
+        const { body } = await get<{
+          revision: number;
+          savedBy: string;
+          savedAt: string;
+          doc: unknown;
+        }>(
+          `/api/v4/dashboards/${encodeURIComponent(row.id)}/revisions?revision=${revision}`,
+        );
+        return body;
+      } catch (err) {
+        // The mapper turns a plain 404 into a FINDINGS CliFailure; here absence is an answer.
+        if (
+          err instanceof CliFailure &&
+          err.detail.code === EXIT.FINDINGS &&
+          /no revision/.test(err.detail.what)
+        )
+          return null;
+        throw err;
+      }
+    },
     close: async () => {},
   };
 }

@@ -144,7 +144,7 @@ export async function POST(request: NextRequest) {
 
   let revision = 1;
   if (normalized) {
-    const upd = await updateDashboardDoc(id, normalized);
+    const upd = await updateDashboardDoc(id, normalized, auth.userId);
     if (upd.ok) revision = upd.revision;
   }
   // `id` is already the opaque `db_…` id (the DAO owns the uuid↔TypeID translation).

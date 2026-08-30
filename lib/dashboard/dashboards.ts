@@ -17,7 +17,7 @@
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { isUniqueViolationOn } from "@/lib/db/pg-error";
-import { dashboards } from "@/lib/db/planetscale/schema";
+import { dashboardRevisions, dashboards } from "@/lib/db/planetscale/schema";
 import { Dashboard } from "@/lib/ids";
 import {
   countCardNodes,
@@ -113,17 +113,30 @@ export async function createDashboard(args: {
   alias?: string | null;
 }): Promise<string> {
   try {
-    const [row] = await requirePlanetscaleDb()
-      .insert(dashboards)
-      .values({
-        ownerUserId: args.ownerClerkUserId,
-        name: args.displayName,
-        slug: args.alias ?? null,
-        doc: emptyDashboardV4(),
-      })
-      .returning({ id: dashboards.id });
-    if (!row?.id) throw new Error("createDashboard: INSERT returned no id");
-    return Dashboard.encode(row.id);
+    // One transaction: the row AND its revision-1 history entry, so history starts at creation
+    // rather than at the first edit.
+    const id = await requirePlanetscaleDb().transaction(async (tx) => {
+      const doc = emptyDashboardV4();
+      const [row] = await tx
+        .insert(dashboards)
+        .values({
+          ownerUserId: args.ownerClerkUserId,
+          name: args.displayName,
+          slug: args.alias ?? null,
+          doc,
+        })
+        .returning({ id: dashboards.id });
+      if (!row?.id) throw new Error("createDashboard: INSERT returned no id");
+      await tx.insert(dashboardRevisions).values({
+        dashboardId: row.id,
+        revision: 1,
+        doc,
+        savedBy: args.ownerClerkUserId,
+        savedAt: new Date(),
+      });
+      return row.id;
+    });
+    return Dashboard.encode(id);
   } catch (err) {
     if (isAliasCollision(err)) throw new DashboardAliasTakenError();
     throw err;
@@ -182,15 +195,25 @@ export type DocUpdateResult =
 
 /**
  * config-v4 whole-doc write (§9.1). One tx: `SELECT … FOR UPDATE`, optimistic-concurrency check
- * against `expectedRevision` (the `If-Match` value), then set `doc` + bump `revision`. Returns the new
- * revision + doc, or a conflict carrying the current revision. `doc` MUST already be validated +
- * normalized by the caller (`validateDocV4`). Revision-history (`dashboard_revisions`) is keyed by the
- * FUTURE uuid dashboard id (bare uuid column, FK deferred to cutover), so it is NOT written for a
- * serial-id dashboard pre-cutover — history starts at cutover.
+ * against `expectedRevision` (the `If-Match` value), then set `doc` + bump `revision` + append the
+ * POST-IMAGE row to `dashboard_revisions`. Returns the new revision + doc, or a conflict carrying
+ * the current revision. `doc` MUST already be validated + normalized by the caller
+ * (`validateDocV4`).
+ *
+ * The other writers of `dashboard_revisions` are the CLI/scripts' shared `writeDoc`
+ * (scripts/ops/dashboard/db.ts, `saved_by` sentinels "cli"/"script:<name>"/"backfill") and
+ * `createDashboard` above (the revision-1 row). The table is NOT carried by the prod→dev sync —
+ * dev history is dev-local, and the sync's drift-delete + FK CASCADE would wipe it anyway.
  */
 export async function updateDashboardDoc(
   id: string,
   doc: DashboardV4,
+  /**
+   * Who to record in `dashboard_revisions.saved_by` — the CALLER's Clerk userId (an admin editing
+   * someone else's dashboard attributes to the admin, not the owner). Required: an unattributed
+   * write is exactly what history exists to prevent.
+   */
+  savedBy: string,
   expectedRevision?: number,
 ): Promise<DocUpdateResult> {
   const uuid = Dashboard.toUuidOrNull(id);
@@ -211,6 +234,15 @@ export async function updateDashboardDoc(
       .update(dashboards)
       .set({ doc, revision, updatedAt: new Date() })
       .where(eq(dashboards.id, uuid));
+    // POST-IMAGE history in the SAME transaction: row (dashboard, N) IS version N, so `revision`
+    // means one thing in both tables and the current version always has a row.
+    await tx.insert(dashboardRevisions).values({
+      dashboardId: uuid,
+      revision,
+      doc,
+      savedBy,
+      savedAt: new Date(),
+    });
     return { ok: true, revision, doc };
   });
 }

@@ -769,6 +769,80 @@ export const dashboardCommand = defineCommand({
         "liveone dashboard set-prop kink n_VX15 --hidden=none --apply",
       ],
     },
+    history: {
+      name: "history",
+      summary:
+        "The dashboard's edit history — who changed it, when, revision by revision.",
+      when:
+        "Run this before `restore`, and any time an edit surprises you. Every write records a\n" +
+        "post-image row, so revision N here IS version N of the document.",
+      description:
+        "savedBy is a provenance string, not always a person: routes record the caller's Clerk\n" +
+        "userId, the CLI records `cli`, scripts `script:<name>`, and the backfill `backfill`.\n" +
+        "History is per-environment — the prod→dev sync deliberately does not carry it.",
+      args: [DASH_ARG],
+      flags: {
+        ...TRANSPORT_FLAGS,
+        limit: {
+          type: "number",
+          default: 20,
+          schema: z.number().int().min(1).max(500),
+          hint: "1–500",
+          help: "How many revisions to show, newest first",
+        },
+      },
+      exitCodes: { 1: "no history recorded (run backfill-history)" },
+      examples: [
+        "liveone dashboard history kink",
+        "liveone dashboard history kink --limit=5",
+      ],
+    },
+    restore: {
+      name: "restore",
+      summary:
+        "Restore a recorded revision — as a NEW revision, never a counter rewind.",
+      when:
+        "The undo. Find the revision with `history`, preview the restore dry, then --apply. The\n" +
+        "restore itself is recorded, so history shows what happened and is itself restorable.",
+      description:
+        "The recorded doc is re-validated against TODAY'S card vocabulary before writing — a\n" +
+        "months-old snapshot may name a type this build no longer knows, and restoring it blindly\n" +
+        "would write a grey box. A doc that no longer validates is refused with its issues.",
+      mutates: true,
+      args: [DASH_ARG],
+      flags: {
+        ...TRANSPORT_FLAGS,
+        revision: {
+          type: "number",
+          required: true,
+          schema: z.number().int().min(1),
+          hint: "a revision number from `history`",
+          help: "The recorded revision to restore",
+        },
+      },
+      examples: [
+        "liveone dashboard restore kink --revision=3",
+        "liveone dashboard restore kink --revision=3 --apply",
+      ],
+    },
+    "backfill-history": {
+      name: "backfill-history",
+      summary:
+        "Seed a history row for every dashboard whose current revision has none.",
+      when:
+        "Run ONCE per environment after the revisions writers land, so `restore` has a floor for\n" +
+        "documents that predate them. Idempotent — a dashboard already recorded is skipped.",
+      description:
+        "db transport only: it writes rows the API deliberately has no endpoint for (history is\n" +
+        "server-written, not client-supplied). Rows are inserted with savedBy=backfill at each\n" +
+        "dashboard's CURRENT revision, ON CONFLICT DO NOTHING.",
+      mutates: true,
+      flags: { ...TRANSPORT_FLAGS },
+      examples: [
+        "npm run liveone:dev -- dashboard backfill-history",
+        "liveone dashboard backfill-history --via=db --apply",
+      ],
+    },
   },
 } satisfies CommandSpec);
 
@@ -1154,6 +1228,109 @@ async function runSetProp(ctx: Ctx): Promise<number> {
   });
 }
 
+async function runHistory(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget("read-only");
+    const row = await t.resolve(ctx.args[0]);
+    const limit = (ctx.flags.limit as number | undefined) ?? 20;
+    const revisions = await t.history(row, limit);
+    ctx.emit(
+      {
+        dashboard: { id: row.id, name: row.name, revision: row.revision },
+        revisions,
+      },
+      (m: never) => {
+        const model = m as {
+          revisions: Array<{
+            revision: number;
+            savedBy: string;
+            savedAt: string;
+          }>;
+        };
+        if (!model.revisions.length)
+          return `No history recorded for ${dashLabel(row)} — run \`liveone dashboard backfill-history\`.`;
+        return [
+          `${dashLabel(row)}:`,
+          ...model.revisions.map(
+            (r) =>
+              `  r${String(r.revision).padEnd(4)} ${r.savedAt}  ${r.savedBy}` +
+              (r.revision === row.revision ? "  <- current" : ""),
+          ),
+        ].join("\n");
+      },
+    );
+    return revisions.length ? EXIT.OK : EXIT.FINDINGS;
+  });
+}
+
+async function runRestore(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await t.resolve(ctx.args[0]);
+    const revision = ctx.flags.revision as number;
+    if (revision === row.revision)
+      throw usage(
+        `--revision=${revision}`,
+        "that IS the current revision — restoring it would change nothing",
+        "pick an earlier revision from `liveone dashboard history`",
+      );
+    const rec = await t.getRevision(row, revision);
+    if (!rec)
+      throw failWith(
+        EXIT.FINDINGS,
+        `no revision ${revision} recorded for ${dashLabel(row)}`,
+        "history only reaches back to when the writers (or the backfill) started recording",
+        "run `liveone dashboard history` to see what exists",
+      );
+    // Re-validate under TODAY'S vocabulary: a snapshot may predate a card-type change, and
+    // restoring it blindly would write a grey box.
+    const result = validateDocV4(rec.doc);
+    if (!result.valid)
+      throw failWith(
+        EXIT.FINDINGS,
+        `revision ${revision} no longer validates`,
+        issueLines(result.errors, "error").join("\n").trim(),
+        "it predates a schema change — restore a newer revision, or repair via --via=db",
+      );
+    const { working, missingIds } = loadWorkingDoc(row);
+    return runDocMutation(ctx, t, row, working, missingIds, {
+      next: result.normalized!,
+      action: `restore revision ${revision} (saved ${rec.savedAt} by ${rec.savedBy})`,
+    });
+  });
+}
+
+async function runBackfillHistory(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    if (!t.backfillHistory)
+      throw usage(
+        "--via=http",
+        "the backfill writes history rows directly, and the API deliberately has no endpoint for that",
+        "re-run with --via=db (dev: `npm run liveone:dev -- dashboard backfill-history`)",
+      );
+    const { inserted, skipped } = await t.backfillHistory(!ctx.dryRun);
+    ctx.emit({ applied: !ctx.dryRun, inserted, skipped }, (m: never) => {
+      const model = m as {
+        applied: boolean;
+        inserted: string[];
+        skipped: string[];
+      };
+      return [
+        ...model.inserted.map(
+          (l) => `  ${model.applied ? "SEEDED" : "would seed"} ${l}`,
+        ),
+        ...model.skipped.map((l) => `  skip (already recorded) ${l}`),
+        `${model.inserted.length} seeded, ${model.skipped.length} already recorded.`,
+        ...(model.applied || !model.inserted.length
+          ? []
+          : ["Re-run with --apply to write."]),
+      ].join("\n");
+    });
+    return EXIT.OK;
+  });
+}
+
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   list: runList,
   show: runShow,
@@ -1192,6 +1369,9 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   "remint-ids": runRemintIds,
   "move-node": runMoveNode,
   "set-prop": runSetProp,
+  history: runHistory,
+  restore: runRestore,
+  "backfill-history": runBackfillHistory,
 };
 
 /**

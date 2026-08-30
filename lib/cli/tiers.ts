@@ -56,6 +56,9 @@ export const TIERS: TierManifest = {
     // the shared harness — they predate it, and they are on the conversion list.
     "scripts/utils/migrate-card-type.ts",
     "scripts/utils/add-generator-tile.ts",
+    // Found by the revisions tranche: a FOURTH hand-rolled CAS writer that escaped both the dedup
+    // and the census (whose root is scripts/ops). Folded onto writeDoc; listed so it stays seen.
+    "scripts/utils/remove-card.ts",
   ],
   c: [
     // The `dashboard` domain and its plumbing — composed by scripts/ops/liveone.ts, and

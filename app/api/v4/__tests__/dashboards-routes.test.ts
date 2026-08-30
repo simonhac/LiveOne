@@ -303,6 +303,7 @@ describe("PUT /api/v4/dashboards/{id}", () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       DASHBOARD_ID,
       expect.anything(),
+      expect.any(String), // savedBy: the caller's userId
       7,
     );
   });
@@ -312,6 +313,7 @@ describe("PUT /api/v4/dashboards/{id}", () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       DASHBOARD_ID,
       expect.anything(),
+      expect.any(String), // savedBy: the caller's userId
       undefined,
     );
   });

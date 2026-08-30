@@ -80,6 +80,8 @@ export async function PUT(
   const upd = await updateDashboardDoc(
     r.dashboard.id,
     normalized,
+    // The CALLER, not the owner — an admin edit attributes to the admin.
+    r.userId,
     ifMatch.kind === "revision" ? ifMatch.revision : undefined,
   );
   if (!upd.ok) {
