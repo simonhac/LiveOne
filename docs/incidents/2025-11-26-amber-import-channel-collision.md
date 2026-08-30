@@ -16,9 +16,15 @@ Import **price** (pt 2), **cost** (pt 7) and **energy** (pt 8) died; only export
 price (pt 4) and renewables (pt 3) survived, because their post-strip keys are already unique.
 
 This is a **silent data-loss** incident (no error, no availability impact). Roughly **7.5 months**
-of grid-import price/cost/energy (2025-11-26 → 2026-07-12) is missing, degrading cost/emissions
-attribution for the **Kinkora Unified area (area 8)**. **Not yet resolved** — the fix and backfill
-are planned; this report will be updated once they land.
+of grid-import price/cost/energy (2025-11-26 → 2026-07-12) went missing, degrading cost/emissions
+attribution for the **Kinkora Unified area (area 8)**.
+
+**Resolved.** The `derivePointKey` fix shipped in `a9f1cf7c` (PR #159) and live import data resumes
+at **2026-07-12 14:30 UTC**; the backfill ran 2026-07-12 → 07-16 and restored the whole gap. Prod
+was re-verified on **2026-07-25**: points 1/2/3/4/7/8 have **zero missing and zero partial AEST
+days** from account start (2025-10-20) to 2026-07-24. The only residual hole is export cost + energy
+(pts 5/6) on **2026-04-15/16/17**, which is out of Amber's ~90-day `/usage` window and recoverable
+only from an Amber-support CSV.
 
 ## What Went Wrong
 
@@ -118,9 +124,18 @@ where the 5-min-native Amber readings actually live.
 
 ## Resolution
 
-**Not yet implemented — planned.** This report will be updated once the fix and backfill land.
+**Shipped.** Fix in `a9f1cf7c` (PR #159, "Fix Amber import-channel key collision + add import
+backfill tooling"); backfill tooling in `scripts/amber/` (`backfill-import-fetch.ts` →
+`backfill-import-insert.ts`, plus `backfill-import-csv-to-chunks.ts` for history older than the
+`/usage` window). Two backfill runs landed on prod:
 
-### The planned fix
+- **2026-07-12** — `/usage` over its ~90-day window: 4,128 rows per import point covering
+  2026-04-14 → 2026-07-12 (plus the matching 91 `point_readings_agg_1d` days).
+- **2026-07-15/16** — the Amber-support CSV leg, covering 2025-11-26 → present.
+
+Verified complete on prod 2026-07-25 (see Summary).
+
+### The fix (as planned, and as shipped)
 
 1. Fix `derivePointKey` in `lib/vendors/amber/amber-readings-batch.ts` to **keep all segments**
    (join on `"."` instead of dropping the first): `"E1/perKwh"` → `"E1.perKwh"`. This restores
@@ -131,7 +146,7 @@ where the 5-min-native Amber readings actually live.
    the real production tail `"E1/perKwh"` and add a regression test — an interval carrying both
    `E1/perKwh` and `B1/perKwh` must yield **two** stored readings, not one.
 
-### The planned backfill
+### The backfill
 
 3. Backfill the lost import history for system 9, points 2/7/8, from **2025-11-26 14:00 UTC →
    present**, sourced from Amber's `/usage` endpoint (retained to account start) via the existing
@@ -157,8 +172,15 @@ where the 5-min-native Amber readings actually live.
   `a,f` → `f`.
 - **2025-11-28 → 2026-07-12** — ~7.5 months of missing grid-import price/cost/energy; the live KV
   import-price card likely still showed a current value, masking the gap.
-- **2026-07-12** — investigation identifies the `derivePointKey` collision as root cause; fix +
-  backfill planned.
+- **2026-07-12** — investigation identifies the `derivePointKey` collision as root cause; fix
+  (`a9f1cf7c`) shipped and the `/usage` 90-day backfill run. Live import data resumes **14:30**.
+- **2026-07-15/16** — CSV backfill leg closes the pre-`/usage`-window history (2025-11-26 onward).
+- **2026-07-25** — prod re-verified complete (0 missing / 0 partial AEST days for pts 1/2/3/4/7/8).
+  A second look at the same question _on the `liveone-dev` mirror_ appeared to show the gap still
+  open — a mirror artifact, not prod: the prod→dev sync watermarks on `max(updated_at) − overlap`
+  read from dev and only moves forward, so the 2026-07-12 prod backfill (stamped `updated_at =
+  2026-07-12`) was stranded and could never be copied. 12,888 system-9 rows were reseeded into dev
+  by hand.
 
 _(All times UTC; deploy times marked "approx" are approximate.)_
 
@@ -183,27 +205,38 @@ _(All times UTC; deploy times marked "approx" are approximate.)_
    because a second source kept it alive; the staggered death was a clue, but it also delayed a
    clean signal. Provenance (`data_quality`) is what made the two-stage failure legible after the
    fact.
+6. **Close the report when the fix lands.** The fix and backfill shipped on 2026-07-12/16 but this
+   document still read "Not yet resolved" on 2026-07-25. A stale doc plus a short dev mirror was
+   enough to re-open a solved incident and burn an investigation cycle.
+7. **The dev mirror is not evidence about prod.** `liveone-dev` is eventually consistent for _new_
+   data only: the sync's watermark (`max(updated_at) − overlap`, read from dev) never looks
+   backwards, so a historical backfill applied to prod is invisible to dev forever. Any
+   "is the data there?" question must be answered against prod.
 
 ## Action Items
 
-- [ ] Ship the `derivePointKey` fix (keep all segments; join on `"."`) plus the regression test that
-      a two-channel interval yields two stored readings.
-- [ ] Update `point-reading-group.test.ts` fixtures to the real production tail (`"E1/perKwh"`, not
+- [x] Ship the `derivePointKey` fix (keep all segments; join on `"."`) plus the regression test that
+      a two-channel interval yields two stored readings. — `a9f1cf7c` (PR #159)
+- [x] Update `point-reading-group.test.ts` fixtures to the real production tail (`"E1/perKwh"`, not
       `"amber/E1/perKwh"`).
-- [ ] Run the backfill (`scripts/temp/backfill-amber-import.ts`) for system 9 pts 2/7/8,
-      2025-11-26 14:00 UTC → present — **after** the fix is deployed/branched.
-- [ ] Recompute `point_readings_agg_1d` for system 9 import points and re-run flow /
+- [x] Run the backfill for system 9 pts 2/7/8, 2025-11-26 14:00 UTC → present — **after** the fix is
+      deployed/branched. — `scripts/amber/backfill-import-*.ts`, 2026-07-12 and 07-15/16.
+- [x] Recompute `point_readings_agg_1d` for system 9 import points and re-run flow /
       battery-provenance / cost-attribution for area 8.
+- [ ] Recover export cost + energy (pts 5/6) for **2026-04-15/16/17** — outside the `/usage` window,
+      needs an Amber-support CSV.
 - [ ] Add a **silent-death monitor**: alert when a previously-live point stops receiving new
-      intervals.
+      intervals. _(Still open — this is what would have caught the incident in November.)_
 - [ ] Add a test asserting **every distinct Amber physical tail maps to a distinct batch key**.
-- [ ] Verify recovery once backfill + recompute complete, and update this report.
+- [ ] Give the prod→dev sync a reconcile leg so a prod-side historical backfill reaches the mirror
+      (see Timeline 2026-07-25 and `docs/sync-prod-to-dev.md`).
 
 ## Status
 
 - [x] Issue identified
 - [x] Root cause determined
-- [ ] Fix implemented
-- [ ] Backfill executed
-- [ ] Downstream recompute (agg_1d + area-8 cost/emissions)
-- [ ] Verified
+- [x] Fix implemented — `a9f1cf7c` (PR #159)
+- [x] Backfill executed — 2026-07-12, 2026-07-15/16
+- [x] Downstream recompute (agg_1d + area-8 cost/emissions)
+- [x] Verified — prod, 2026-07-25: 0 missing / 0 partial AEST days for pts 1/2/3/4/7/8
+      (2025-10-20 → 2026-07-24); residual 3-day hole on pts 5/6

@@ -69,6 +69,19 @@ the username and the `PLANETSCALE_PROD_BRANCH_ID` token), so a mis-pasted URL ca
 Needs `PG_PROD_RO_DATABASE_URL` (read-only prod role) and `LIVEONE_DEV_DATABASE_URL` (dev write
 role) as GitHub secrets.
 
+> **The watermark never looks backwards.** For incremental tables the watermark is
+> `max(<watermark col>) − overlap` read from **dev**, and live writes push dev's max forward
+> continuously. So a row written to prod with an `updated_at` _below_ dev's current high-water mark
+> can never be copied — most importantly, **a historical backfill applied to prod is invisible to
+> the mirror forever** (and a single failed leg strands everything written during it). This bit us
+> on 2026-07-12: the Amber import backfill left `liveone-dev` 12,888 rows short for system 9 while
+> prod was complete, and dev had to be reseeded by hand — see
+> `docs/incidents/2025-11-26-amber-import-channel-collision.md`. As of 2026-07-25 the whole
+> `point_readings_agg_5m` table is ~560k rows (~9%) short on dev for the same reason.
+>
+> **Corollary: never use the mirror as evidence about prod.** "Is the data there?" must be answered
+> against `sydney`. After any prod-side backfill, reseed the affected rows into dev explicitly.
+
 > **Schema drift caveat.** The sync derives its column list from the **dev** schema and selects
 > those columns from prod. If `liveone-dev` has columns prod lacks (a migration applied to dev
 > but not prod, or out-of-band experimentation), the copy aborts on that table. Fix by realigning
