@@ -43,6 +43,7 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/dashboards/db_x/grants",
       "/api/cli-auth/tokens",
       "/api/cli-auth/tokens/cli_abc",
+      "/api/cli-auth/whoami",
     ])
       expect(isCliTokenRoute(req(p))).toBe(true);
   });
@@ -63,6 +64,9 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/devices",
       "/dashboard/simon/kink",
       "/",
+      // 🛑 A CLI token must not be able to mint its own successor: `authorize` is what binds a code
+      // to a user, so it requires a real browser session and is NOT reachable with a token.
+      "/api/cli-auth/authorize",
     ])
       expect(isCliTokenRoute(req(p))).toBe(false);
   });
@@ -75,6 +79,12 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
     expect(isPublicRoute(req("/api/v4/dashboards/db_x"))).toBe(false);
     expect(isShareableRoute(req("/api/v4/dashboards"))).toBe(false);
     expect(isPublicRoute(req("/api/cli-auth/tokens"))).toBe(false);
+    // `authorize` is the session-bound half of the hand-off — public would defeat the entire flow.
+    expect(isPublicRoute(req("/api/cli-auth/authorize"))).toBe(false);
+    // `exchange` IS public: it authenticates on the signed code plus the PKCE verifier.
+    expect(isPublicRoute(req("/api/cli-auth/exchange"))).toBe(true);
+    // …but public must not also mean CLI-token-eligible, or the bypass would be pointless there.
+    expect(isCliTokenRoute(req("/api/cli-auth/exchange"))).toBe(false);
   });
 });
 
@@ -140,6 +150,11 @@ describe("every route the bypass exposes authorizes for itself", () => {
   // isCliTokenRoute that forgets to authorize is reachable by ANY caller who sends a `lo_cli_`
   // string — no valid token needed, because nothing would ever check it. A new sibling route
   // inherits the bypass automatically; this is what stops it inheriting it silently.
+  //
+  // The set is derived by asking isCliTokenRoute itself, not from a directory list, so widening the
+  // matcher automatically widens this check. (A directory list got this wrong first time: it swept
+  // in /api/cli-auth/exchange, which is deliberately public and self-authenticating rather than
+  // session-authorized, and is NOT under the bypass.)
   const AUTH_CALLS = [
     "loadOwnedDashboard",
     "requireAuth",
@@ -147,34 +162,57 @@ describe("every route the bypass exposes authorizes for itself", () => {
     "requireDashboardAccess",
   ];
 
-  const routesUnder = (dir: string): string[] => {
-    const out: string[] = [];
+  /** Every route.ts under app/api, with the URL path it serves. */
+  const routes = (): Array<{ file: string; urlPath: string }> => {
+    const out: Array<{ file: string; urlPath: string }> = [];
     const walk = (d: string) => {
       if (!fs.existsSync(d)) return;
       for (const e of fs.readdirSync(d, { withFileTypes: true })) {
         const p = path.join(d, e.name);
         if (e.isDirectory()) walk(p);
-        else if (e.name === "route.ts") out.push(p);
+        else if (e.name === "route.ts")
+          out.push({
+            file: p,
+            // app/api/x/[id]/route.ts -> /api/x/placeholder
+            urlPath:
+              "/" +
+              path
+                .dirname(p)
+                .replace(/^app\//, "")
+                .replace(/\[[^\]]+\]/g, "placeholder"),
+          });
       }
     };
-    walk(dir);
+    walk("app/api");
     return out;
   };
 
-  // Mirrors cliTokenRoutes in lib/route-matchers.ts. Kept as a literal list so that widening the
-  // matcher without widening this check is a visible omission rather than an invisible one.
-  const dirs = ["app/api/v4/dashboards", "app/api/cli-auth"];
+  const exposed = routes().filter((r) => isCliTokenRoute(req(r.urlPath)));
 
-  it("finds the dashboard routes (so the check cannot silently cover nothing)", () => {
-    const found = dirs.flatMap(routesUnder);
-    expect(found.length).toBeGreaterThanOrEqual(5);
+  it("finds the exposed routes (so the check cannot silently cover nothing)", () => {
+    // The dashboard surface plus the CLI's own token management and whoami.
+    expect(exposed.length).toBeGreaterThanOrEqual(7);
+    expect(exposed.map((r) => r.file)).toEqual(
+      expect.arrayContaining([
+        "app/api/v4/dashboards/route.ts",
+        "app/api/cli-auth/whoami/route.ts",
+      ]),
+    );
   });
 
   it("has an authorization call in every one of them", () => {
-    for (const file of dirs.flatMap(routesUnder)) {
-      const src = fs.readFileSync(file, "utf8");
+    for (const r of exposed) {
+      const src = fs.readFileSync(r.file, "utf8");
       const has = AUTH_CALLS.some((c) => src.includes(c));
-      expect(has ? "ok" : `${file} has no authorization call`).toBe("ok");
+      expect(has ? "ok" : `${r.file} has no authorization call`).toBe("ok");
     }
+  });
+
+  it("does not expose the self-authenticating exchange endpoint", () => {
+    // It authenticates on a signed code plus the PKCE verifier and has no session, so it is public
+    // rather than bypassed — and must stay outside this set.
+    expect(exposed.map((r) => r.file)).not.toContain(
+      "app/api/cli-auth/exchange/route.ts",
+    );
   });
 });
