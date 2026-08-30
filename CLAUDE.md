@@ -385,7 +385,26 @@ pscale role create liveone sydney <name> --inherited-roles postgres --ttl 1h --f
 # then: PLANETSCALE_DATABASE_URL_MIGRATIONS="<that database_url>" npm run db:pg:migrate
 ```
 
-**⚠️ Table-ownership trap (learned the hard way).** A migration applied via a freshly-minted `pscale role` makes that role the **owner** of the tables it creates. Consequences: (a) the app connects as `postgres` and will get _"permission denied"_ on a non-`postgres`-owned table; (b) the temp role **cannot be dropped while it owns objects** (`DROP ROLE` is refused — Postgres does NOT cascade-drop owned tables, so the data is safe, but the role lingers and the TTL delete fails the same way). Every normal table here is owned by `postgres`. So either:
+🛑 **A minted `database_url` carries `sslmode=verify-full` and NOTHING ELSE, so libpq refuses it**
+anywhere without an on-disk CA (`~/.postgresql/root.crt`) — a GitHub runner, a fresh laptop. Append
+`&sslrootcert=system`. Node's `pg` is unaffected (`getPoolConfig` strips the ssl params), so this
+bites psql/pg_dump only, and it bit the backup cutover.
+
+**The four persistent roles on `sydney`, and what each one IS** (there is no other record of this; a
+role's auto-generated `sydney-<date>-<suffix>` name says nothing, and one of them is prod itself):
+
+| role | inherits | used by |
+| --- | --- | --- |
+| `sydney-2026-07-14-depvs9` | `pg_read_all_data`, `pg_write_all_data` | 🛑 **the production app's pool** (Vercel `DB_*`). Deleting it is a prod outage. |
+| `sydney-2026-6-9-yg69mt` (`postgres`) | `pscale_superuser` | migrations, restores, anything DDL |
+| `liveone-dev-sync-ro` | `pg_read_all_data` | the 2-hourly prod→dev sync (`PG_PROD_RO_DATABASE_URL`) |
+| `liveone-pg-backup-ro` | `pg_read_all_data` | the R2 backup + durable-verify (`PG_BACKUP_DATABASE_URL`) |
+
+Both `-ro` roles inherit **`pg_read_all_data`**, not `postgres`: nothing that only reads should hold
+a credential that can write. Verify what a role actually is by watching `pg_stat_activity` (usename
++ `application_name`) rather than by reading its name.
+
+**⚠️ Table-ownership trap (learned the hard way).** A migration applied via a freshly-minted `pscale role` makes that role the **owner** of the tables it creates. Consequences: (a) DDL and role cleanup break — and note the app itself does NOT connect as `postgres`, it connects as a `pg_read_all_data`+`pg_write_all_data` role, so its DML survives a foreign owner and will NOT warn you that ownership is wrong; (b) the temp role **cannot be dropped while it owns objects** (`DROP ROLE` is refused — Postgres does NOT cascade-drop owned tables, so the data is safe, but the role lingers and the TTL delete fails the same way). Every normal table here is owned by `postgres`. So either:
 
 - Apply as the persistent `postgres` role (`pscale role reset-default liveone <branch>` to get its creds), **or**
 - After applying with a temp role, reassign + clean up:
