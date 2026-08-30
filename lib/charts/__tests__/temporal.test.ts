@@ -230,3 +230,89 @@ describe("isDateOnlyPeriod", () => {
     expect(isDateOnlyPeriod("W")).toBe(false);
   });
 });
+
+/**
+ * Malformed params. The URL is user-editable and links get mangled in transit, so an unreadable
+ * `?start` is routine input — it must degrade to the default window, never throw. (It used to throw
+ * a RangeError out of `useTemporalRange`'s useMemo, blanking the entire dashboard.)
+ */
+describe("decodeRangeFromParams — malformed params", () => {
+  // The reported URL: `_00:00` where the format wants `_00.00`.
+  it("degrades a colon-separated ?start to the live window and reports it dropped", () => {
+    const qs = "period=D&start=2026-07-21_00:00&offset=600m";
+    expect(() => decodeRangeFromParams(params(qs), OFFSET)).not.toThrow();
+
+    const r = decodeRangeFromParams(params(qs), OFFSET);
+    expect(r.period).toBe("D");
+    expect(r.isHistoricalMode).toBe(false);
+    expect(r.isLatest).toBe(true);
+    expect(r.start).toBeUndefined();
+    expect(r.end).toBeUndefined();
+    // The orphaned ?offset goes too — it means nothing without the window it qualified.
+    expect(r.droppedParams).toEqual([
+      { param: "start", value: "2026-07-21_00:00" },
+      { param: "offset", value: "600m" },
+    ]);
+  });
+
+  it.each(["period=D&start=garbage", "period=W&end=garbage"])(
+    "degrades %s to the live window",
+    (qs) => {
+      const r = decodeRangeFromParams(params(qs), OFFSET);
+      expect(r.isHistoricalMode).toBe(false);
+      expect(r.isLatest).toBe(true);
+      expect(r.droppedParams).toHaveLength(1);
+      expect(r.droppedParams?.[0].value).toBe("garbage");
+    },
+  );
+
+  // A bad offset costs you the offset, never the date.
+  it("keeps the window when only ?offset is unreadable, falling back to the area timezone", () => {
+    const r = decodeRangeFromParams(
+      params("period=D&start=2026-07-21_00.00&offset=abc"),
+      OFFSET,
+    );
+    const good = decodeRangeFromParams(
+      params("period=D&start=2026-07-21_00.00"),
+      OFFSET,
+    );
+    expect(r.start).toBe(good.start);
+    expect(r.end).toBe(good.end);
+    expect(r.isHistoricalMode).toBe(true);
+    expect(r.droppedParams).toEqual([{ param: "offset", value: "abc" }]);
+  });
+
+  // M/Y used to ignore a non-date-only ?end in SILENCE, so the URL claimed one month and the page
+  // showed another.
+  it("drops an unreadable M/Y ?end instead of silently snapping to latest", () => {
+    for (const bad of ["2026-06-21_00:00", "potato", "2026-02-31"]) {
+      const r = decodeRangeFromParams(params(`period=M&end=${bad}`), OFFSET);
+      const dflt = decodeRangeFromParams(params("period=M"), OFFSET);
+      expect(r.start).toBe(dflt.start);
+      expect(r.end).toBe(dflt.end);
+      expect(r.isLatest).toBe(true);
+      expect(r.droppedParams).toEqual([{ param: "end", value: bad }]);
+    }
+  });
+
+  it("leaves canonical params alone — no droppedParams on the happy path", () => {
+    for (const qs of [
+      "period=D",
+      "period=D&start=2026-07-21_00.00&offset=600m",
+      "period=W&start=2026-07-14_00.00&offset=600m",
+      "period=M&end=2026-06-21",
+      "period=Y&end=2026-06-21",
+    ]) {
+      expect(
+        decodeRangeFromParams(params(qs), OFFSET).droppedParams,
+      ).toBeUndefined();
+    }
+  });
+
+  it("still honours a canonical M ?end (the regression guard for the new decoder)", () => {
+    const r = decodeRangeFromParams(params("period=M&end=2026-06-21"), OFFSET);
+    expect(r.isLatest).toBe(false);
+    expect(dayOf(r.end)).toBe("2026-06-21");
+    expect(dayOf(r.start)).toBe("2026-05-22"); // 22 Jun minus one calendar month
+  });
+});

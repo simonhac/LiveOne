@@ -15,6 +15,35 @@ import {
 } from "@internationalized/date";
 
 /**
+ * The canonical URL grammars — the single source of truth for what {@link decodeUrlDate} and
+ * {@link decodeUrlOffset} will accept, and exactly what {@link encodeUrlDate} /
+ * {@link encodeUrlOffset} emit.
+ */
+const CANONICAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const CANONICAL_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})\.(\d{2})$/;
+const CANONICAL_OFFSET_RE = /^(-?\d{1,4})m$/;
+
+/** Largest sane timezone offset in minutes (UTC+14 .. UTC-12, with room for half-hour zones). */
+const MAX_OFFSET_MIN = 14 * 60;
+
+/**
+ * A URL param that isn't in the canonical grammar — i.e. bad INPUT, not a bug in our code.
+ *
+ * Typed so that `decodeRangeFromParams` can degrade gracefully on this and ONLY this: a malformed
+ * `?start=` is a user handing us a mangled link (drop the param, show the default window), whereas
+ * any other throw is a fault on our side and must keep propagating to the error boundary.
+ */
+export class UrlDateFormatError extends Error {
+  readonly value: string;
+
+  constructor(value: string, what = "URL date") {
+    super(`Invalid ${what} format: ${value}`);
+    this.name = "UrlDateFormatError";
+    this.value = value;
+  }
+}
+
+/**
  * Encode an ISO timestamp and timezone offset into a URL-friendly format
  *
  * @param isoTimestamp - ISO 8601 timestamp (e.g., "2025-11-02T14:15:00Z")
@@ -78,31 +107,60 @@ export function encodeUrlDateFromEpoch(
 /**
  * Decode a URL-friendly date string back to ISO timestamp
  *
+ * Strict: the string must match the canonical grammar exactly AND name a real instant. Near misses
+ * are NOT repaired — `"2025-11-02_14:15"` (colon) and `"2025-11-02T14.15"` both throw rather than
+ * being coerced, because guessing at the intent risks silently showing the WRONG window. Note this
+ * also catches inputs that used to parse into nonsense: `"2025-11-2_9.5"` previously coerced to hour
+ * 9.5, and `"garbage"` produced an Invalid Date whose `.toISOString()` threw a bare RangeError.
+ *
  * @param urlDate - URL-friendly date string (e.g., "2025-11-02_14.15" or "2025-11-07")
  * @param timezoneOffsetMin - Timezone offset in minutes (e.g., 600 for AEST)
  * @returns ISO 8601 timestamp string
+ * @throws {UrlDateFormatError} if `urlDate` is not canonical — bad input, recoverable by the caller
+ * @throws {Error} if `timezoneOffsetMin` is not finite — that comes from area config, not the URL,
+ *   so it is a fault on our side and deliberately NOT a `UrlDateFormatError`
  */
 export function decodeUrlDate(
   urlDate: string,
   timezoneOffsetMin: number,
 ): string {
+  if (!Number.isFinite(timezoneOffsetMin)) {
+    throw new Error(
+      `Invalid timezoneOffsetMin: ${timezoneOffsetMin}. Must be a finite number.`,
+    );
+  }
+
   let year: number, month: number, day: number, hours: number, minutes: number;
 
-  // Check if it's date-only format (YYYY-MM-DD without time)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
-    // Parse YYYY-MM-DD
+  if (CANONICAL_DATE_RE.test(urlDate)) {
+    // YYYY-MM-DD — start of the local day
     [year, month, day] = urlDate.split("-").map(Number);
-    hours = 0; // Start of day
+    hours = 0;
     minutes = 0;
   } else {
-    // Parse YYYY-MM-DD_HH.MM
-    const [datePart, timePart] = urlDate.split("_");
-    [year, month, day] = datePart.split("-").map(Number);
-    [hours, minutes] = timePart.split(".").map(Number);
+    // YYYY-MM-DD_HH.MM
+    const match = urlDate.match(CANONICAL_DATETIME_RE);
+    if (!match) throw new UrlDateFormatError(urlDate);
+    year = Number(match[1]);
+    month = Number(match[2]);
+    day = Number(match[3]);
+    hours = Number(match[4]);
+    minutes = Number(match[5]);
+    if (hours > 23 || minutes > 59) throw new UrlDateFormatError(urlDate);
   }
 
   // Create date in UTC representing the local time
   const localTime = new Date(Date.UTC(year, month - 1, day, hours, minutes, 0));
+
+  // Reject dates that don't exist (2026-02-31, 2026-13-01): Date.UTC silently rolls them over, so
+  // compare the components back rather than trusting it.
+  if (
+    localTime.getUTCFullYear() !== year ||
+    localTime.getUTCMonth() !== month - 1 ||
+    localTime.getUTCDate() !== day
+  ) {
+    throw new UrlDateFormatError(urlDate);
+  }
 
   // Convert back to UTC by subtracting the timezone offset
   const utcTime = new Date(localTime.getTime() - timezoneOffsetMin * 60 * 1000);
@@ -143,11 +201,22 @@ export function encodeUrlOffset(offsetMinutes: number): string {
 /**
  * Decode timezone offset from URL
  *
+ * Strict, and for the same reason as {@link decodeUrlDate}: this used to be a bare `parseInt`, so
+ * `?offset=abc` yielded NaN and blew up at the caller's `.toISOString()` rather than here.
+ *
  * @param urlOffset - URL offset string (e.g., "600m")
  * @returns Offset in minutes
+ * @throws {UrlDateFormatError} if not a canonical, in-range offset
  */
 export function decodeUrlOffset(urlOffset: string): number {
-  return parseInt(urlOffset.replace("m", ""), 10);
+  const match = urlOffset.match(CANONICAL_OFFSET_RE);
+  if (!match) throw new UrlDateFormatError(urlOffset, "URL offset");
+
+  const minutes = Number(match[1]);
+  if (Math.abs(minutes) > MAX_OFFSET_MIN) {
+    throw new UrlDateFormatError(urlOffset, "URL offset");
+  }
+  return minutes;
 }
 
 /**
