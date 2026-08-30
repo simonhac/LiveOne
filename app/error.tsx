@@ -14,7 +14,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AlertTriangle } from "lucide-react";
+import { ErrorPanel } from "@/components/ErrorPanel";
 
 const BUTTON_CLASS =
   "px-3 py-1.5 text-sm font-medium border rounded-lg bg-gray-700 text-gray-300 border-gray-600 hover:bg-gray-600 hover:text-white transition-none";
@@ -32,19 +32,13 @@ export default function Error({
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-lg">
-        {/* Same amber vocabulary as the "Area/Device unavailable" panels in the dashboard, so an
-            error reads as part of the app rather than as a browser failure. */}
-        <div className="flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-          <div className="min-w-0">
-            <p className="font-medium text-amber-200">Something went wrong</p>
-            <p className="mt-0.5 text-amber-200/70">
-              This page hit an unexpected error. Trying again usually clears it
-              — if the link came from somewhere else, it may be pointing at
-              something that no longer exists.
-            </p>
-          </div>
-        </div>
+        {/* The same panel the dashboard uses for an unresolvable area or device, so a crash reads as
+            part of the app rather than as a browser failure. */}
+        <ErrorPanel title="Something went wrong">
+          This page hit an unexpected error. Trying again usually clears it — if
+          the link came from somewhere else, it may be pointing at something
+          that no longer exists.
+        </ErrorPanel>
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button onClick={reset} className={BUTTON_CLASS}>
