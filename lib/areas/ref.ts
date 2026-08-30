@@ -13,13 +13,14 @@
  * not a leak, but also not visible). That is why the write paths must reject a non-`ar_` ref
  * explicitly instead of relying on decode to catch it.
  *
- * ⚠️ **`areaRefToArId` REMAINS dual-accept, and is down to ONE raw-uuid producer:** `buildSeedDoc`
- * (lib/dashboard/v4-seed.ts) passes the area's raw uuid straight in — a machine-built seed, so
- * neither form is a user error. (The helper-device `vendorSiteId` was the other one until migration
- * **0053** rewrote every stored row; `parentAreaIdFromHelperSiteId` always returns `ar_` now.)
- * So it **still cannot be tightened**: that one producer alone would break dashboard creation.
- * Encoding is a widening operation and cannot lose information; decoding is where the guarantee has
- * to hold. Hence strict decode + tolerant encode.
+ * ⚠️ **`areaRefToArId` REMAINS dual-accept, and has two raw-uuid producers,** both machine-fed, so
+ * neither form is a user error:
+ *   1. `buildSeedDoc` (lib/dashboard/v4-seed.ts) passes the area's raw uuid straight in.
+ *   2. `helperSiteId` (lib/areas/helper-site-id.ts) mints from the raw `areas.id` every server
+ *      caller holds. Its INVERSE is dual-accept for a different reason — pre-0053 stored rows.
+ * So it **cannot be tightened**: either producer alone would break. Encoding is a widening operation
+ * and cannot lose information; decoding is where the guarantee has to hold. Hence strict decode +
+ * tolerant encode.
  *
  * Client-safe (no server imports).
  */
