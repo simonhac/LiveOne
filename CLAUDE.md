@@ -180,28 +180,26 @@ terminal additionally requires `--yes`.
   reports it. Unlisted means unchecked and undocumented — it is a finding, not an exemption.
   `npm run check:cli:a` is the tier-A gate and must stay green.
 
-#### Dashboard CLI
+#### The liveone CLI
 
-`npm run liveone -- dashboard <command>` (`scripts/ops/liveone.ts`) edits stored dashboard documents
-(`dashboards.doc`) directly in Postgres: `list` / `show` / `validate` / `rename` / `add-card` /
-`add-group` / `remove-node` / `move-node` / `set-prop` / `remint-ids`. Run `-- <command> --help` for
-options.
+`npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
+`auth` (sign the CLI in as you) and `dashboard` (edit `dashboards.doc`), with more coming. Run
+`-- <domain> --help` for verbs; the generated reference is `docs/cli-reference.md`.
 
-- Connection from **`MIGRATE_DATABASE_URL` only** (prod: short-TTL `pscale role` url); for dev use
-  `npm run liveone:dev -- dashboard <command>` (reads `.env.local`, refuses a prod URL). Read the printed
-  `target:` line before `--apply`.
-- Mutations are **dry-run by default**; `--apply` writes (CAS on `revision`, mirrors
-  `updateDashboardDoc`). Off a terminal `--apply` additionally requires `--yes` — it refuses rather
-  than prompting, because a prompt with no terminal is a hang.
-- Built on the shared CLI kit (`lib/cli/`), so every subcommand has `--help`, and output is
-  `--format human|json` (human at a terminal, **json when piped**) with data on stdout and all
-  diagnostics on stderr.
+- **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
+  stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
+  coexist; commands resolve their token strictly by the origin they call.
+- **Default transport is `--via=http`**: the deployed API, as you, through the same validation and
+  readability checks the web app uses. The `target:` line (origin, user, Clerk instance, DB host)
+  prints on stderr before any work — read it before `--apply`.
+- **`--via=db` is the explicit escape hatch** (connection from `MIGRATE_DATABASE_URL` only; dev:
+  `npm run liveone:dev -- dashboard <command>`): required for repairing a doc whose refs the owner
+  cannot read (the repairing PUT would itself be 403'd), bulk sweeps, and outages.
+- Mutations are **dry-run by default**; `--apply` writes (CAS on `revision` both ways). Off a
+  terminal `--apply` additionally requires `--yes`.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
-- 🛑 `n_…` node ids are minted **per document, per environment** — random 4-char base32, so the same
-  node has different ids in prod and dev. Never reuse one across environments: re-run `show` against
-  the database you intend to edit. (A foreign id now simply fails to resolve. Before the ids were
-  randomised they were a shared counter — `n_0`, `n_1`, … — so a prod id silently addressed a
-  DIFFERENT node in dev, and a deleted node's id was recycled onto the next node added.)
+- 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev. "Make the same
+  edit in both" means re-running `show` in each environment first.
 
 #### Development API Authentication
 

@@ -449,11 +449,14 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -474,6 +477,8 @@ Usage:
   Read-only. This command changes nothing.
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --owner <userId>           Only this owner's dashboards
 
 Common options:
@@ -491,6 +496,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard list
@@ -500,6 +507,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -528,6 +536,8 @@ Arguments:
   <dash>                 A dashboard: its db_… id or its slug
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --node <n_id>              Render only this node's subtree
 
 Common options:
@@ -545,6 +555,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard show kink
@@ -554,6 +566,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -578,6 +591,8 @@ Arguments:
   [dash]                 A dashboard: its db_… id or its slug
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --file <path>              Validate this JSON file instead of a stored dashboard
 
 Common options:
@@ -595,6 +610,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard validate kink
@@ -604,6 +621,7 @@ Exit codes:
   0    success
   1    the document is invalid
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -627,6 +645,8 @@ Arguments:
   <dash>                 A dashboard: its db_… id or its slug
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --name <text>              New display name, or "none" to clear it
   --slug <kebab>             New owner-unique shortname, or "none" to clear it
 
@@ -648,6 +668,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard rename kink --slug=kinkora
@@ -657,6 +679,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -680,6 +703,8 @@ Arguments:
   <dash>                 A dashboard: its db_… id or its slug
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --type <cardType>          The card type, e.g. solar, chart, heatmap  (required)
   --config-json <json>       The card's config, inline
   --config-file <path>       The card's config, from a JSON file
@@ -711,6 +736,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard add-card kink --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_2VF4
@@ -720,6 +747,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -744,6 +772,8 @@ Arguments:
   <dash>                 A dashboard: its db_… id or its slug
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --direction <string>       Flex direction (default: column)  (one of: row, column)
   --wrap                     Allow children to wrap
   --heading                  Render the bound area's header
@@ -774,6 +804,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard add-group kink --direction=row --wrap --after=n_CBEX
@@ -783,6 +815,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -806,6 +839,10 @@ Arguments:
   <dash>                 A dashboard: its db_… id or its slug
   <node>                 The n_… id of the node, as printed by `show`
 
+Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
+
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
   --quiet                    Suppress non-essential output on stderr
@@ -824,6 +861,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard remove-node kink n_5CKF
@@ -833,6 +872,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -858,6 +898,10 @@ Usage:
 Arguments:
   <dash>                 A dashboard: its db_… id or its slug
 
+Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
+
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
   --quiet                    Suppress non-essential output on stderr
@@ -876,6 +920,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm
@@ -885,6 +931,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -910,6 +957,8 @@ Arguments:
   <node>                 The n_… id of the node, as printed by `show`
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --parent <n_id>            Insert inside this group (default: the root)
   --index <k>                Position within the parent (default: append)  (0-based position among the parent's children)
   --before <n_id>            Insert immediately before this sibling
@@ -933,6 +982,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard move-node kink n_FS02 --before=n_E7Z1
@@ -942,6 +993,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```
@@ -967,6 +1019,8 @@ Arguments:
   <node>                 The n_… id of the node, as printed by `show`
 
 Options:
+  --via <string>             How to reach the data: the deployed API (http) or Postgres directly (db)  (one of: http, db; default: http)
+  --base-url <origin>        http only: target origin (default: your stored default, else https://www.liveone.energy)
   --area <ar_id|none>        Bind to an area, or none to clear (readability is NOT checked)
   --device <dv_id|none>      Bind to a device, or none to clear (readability is NOT checked)
   --hidden <string>          Set or clear the hidden flag  (one of: true, false, none)
@@ -998,6 +1052,8 @@ External access:
   Database  Connects DIRECTLY to Postgres using the connection string in the environment.
             Read the printed `target:` line before writing — it names the database, the
             role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
   liveone dashboard set-prop kink n_VX15 --columns=6
@@ -1007,6 +1063,7 @@ Exit codes:
   0    success
   1    completed, with findings or no results
   2    usage error
+  3    authentication failure
   5    upstream failure
   130  interrupted
 ```

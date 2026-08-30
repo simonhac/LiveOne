@@ -294,13 +294,26 @@
       "summary": "Insert a card node.",
       "when": "Use this to put a new card on a dashboard; `add-group` makes a container instead.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard add-card — Insert a card node.\n\nUse this to put a new card on a dashboard; `add-group` makes a container instead.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard add-card kink --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_2VF4\n  liveone dashboard add-card kink --type=chart --config-json='{\"variant\":\"lines\"}' --apply",
+      "description": "npm run liveone -- dashboard add-card — Insert a card node.\n\nUse this to put a new card on a dashboard; `add-group` makes a container instead.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard add-card kink --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_2VF4\n  liveone dashboard add-card kink --type=chart --config-json='{\"variant\":\"lines\"}' --apply",
       "input_schema": {
         "type": "object",
         "properties": {
           "dash": {
             "type": "string",
             "description": "A dashboard: its db_… id or its slug"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "type": {
             "type": "string",
@@ -372,7 +385,7 @@
           "type"
         ]
       },
-      "signature": "liveone dashboard add-card <dash> { --type: string; --config-json?: string; --config-file?: string; --allow-unknown-type?: boolean; --area?: string; --device? …",
+      "signature": "liveone dashboard add-card <dash> { --via?: \"http\"|\"db\"; --base-url?: string; --type: string; --config-json?: string; --config-file?: string; --allow-unknown- …",
       "invocation": "npm run liveone -- dashboard add-card",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -380,6 +393,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -389,13 +403,26 @@
       "summary": "Insert an empty group node.",
       "when": "Use this for structure — a row of tiles, or an area section. A group with an area and\nheading is what used to be called a section; a row group is what used to be a tiles card.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard add-group — Insert an empty group node.\n\nUse this for structure — a row of tiles, or an area section. A group with an area and\nheading is what used to be called a section; a row group is what used to be a tiles card.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard add-group kink --direction=row --wrap --after=n_CBEX\n  liveone dashboard add-group kink --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply",
+      "description": "npm run liveone -- dashboard add-group — Insert an empty group node.\n\nUse this for structure — a row of tiles, or an area section. A group with an area and\nheading is what used to be called a section; a row group is what used to be a tiles card.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard add-group kink --direction=row --wrap --after=n_CBEX\n  liveone dashboard add-group kink --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply",
       "input_schema": {
         "type": "object",
         "properties": {
           "dash": {
             "type": "string",
             "description": "A dashboard: its db_… id or its slug"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "direction": {
             "type": "string",
@@ -466,7 +493,7 @@
           "dash"
         ]
       },
-      "signature": "liveone dashboard add-group <dash> { --direction?: \"row\"|\"column\"; --wrap?: boolean; --heading?: boolean; --area?: string; --device?: string; --hidden?: boole …",
+      "signature": "liveone dashboard add-group <dash> { --via?: \"http\"|\"db\"; --base-url?: string; --direction?: \"row\"|\"column\"; --wrap?: boolean; --heading?: boolean; --area?: s …",
       "invocation": "npm run liveone -- dashboard add-group",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -474,6 +501,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -483,10 +511,23 @@
       "summary": "List dashboards: id, owner, name, slug, revision and card count.",
       "when": "Start here when you do not yet know a dashboard's id.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard list — List dashboards: id, owner, name, slug, revision and card count.\n\nStart here when you do not yet know a dashboard's id.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nRead-only. This command changes nothing.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard list\n  liveone dashboard list --format json",
+      "description": "npm run liveone -- dashboard list — List dashboards: id, owner, name, slug, revision and card count.\n\nStart here when you do not yet know a dashboard's id.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nRead-only. This command changes nothing.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard list\n  liveone dashboard list --format json",
       "input_schema": {
         "type": "object",
         "properties": {
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
+          },
           "owner": {
             "type": "string",
             "description": "Only this owner's dashboards (userId)"
@@ -501,7 +542,7 @@
           }
         }
       },
-      "signature": "liveone dashboard list { --owner?: string }",
+      "signature": "liveone dashboard list { --via?: \"http\"|\"db\"; --base-url?: string; --owner?: string }",
       "invocation": "npm run liveone -- dashboard list",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -509,6 +550,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -518,7 +560,7 @@
       "summary": "Move a node, subtree intact and ids preserved.",
       "when": "Use this to reorder or re-parent. Ids survive the move, so a later edit can still\naddress the node by the id `show` printed before it.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard move-node — Move a node, subtree intact and ids preserved.\n\nUse this to reorder or re-parent. Ids survive the move, so a later edit can still\naddress the node by the id `show` printed before it.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard move-node kink n_FS02 --before=n_E7Z1\n  liveone dashboard move-node kink n_FS02 --parent=n_CBEX --index=0 --apply",
+      "description": "npm run liveone -- dashboard move-node — Move a node, subtree intact and ids preserved.\n\nUse this to reorder or re-parent. Ids survive the move, so a later edit can still\naddress the node by the id `show` printed before it.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard move-node kink n_FS02 --before=n_E7Z1\n  liveone dashboard move-node kink n_FS02 --parent=n_CBEX --index=0 --apply",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -529,6 +571,19 @@
           "node": {
             "type": "string",
             "description": "The n_… id of the node, as printed by `show`"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "parent": {
             "type": "string",
@@ -568,7 +623,7 @@
           "node"
         ]
       },
-      "signature": "liveone dashboard move-node <dash> <node> { --parent?: string; --index?: number; --before?: string; --after?: string }",
+      "signature": "liveone dashboard move-node <dash> <node> { --via?: \"http\"|\"db\"; --base-url?: string; --parent?: string; --index?: number; --before?: string; --after?: string }",
       "invocation": "npm run liveone -- dashboard move-node",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -576,6 +631,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -585,13 +641,26 @@
       "summary": "Re-mint every node id in a document (one-time migration).",
       "when": "A MIGRATION, not an edit: run it once per document to move ids off the retired sequential\nform (n_0, n_1, …) onto the random form. Every id changes, so any id noted from an earlier\n`show` stops resolving — which is the point, because a sequential id could be RECYCLED onto\na different node after a removal. Structure, refs and config are untouched.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard remint-ids — Re-mint every node id in a document (one-time migration).\n\nA MIGRATION, not an edit: run it once per document to move ids off the retired sequential\nform (n_0, n_1, …) onto the random form. Every id changes, so any id noted from an earlier\n`show` stops resolving — which is the point, because a sequential id could be RECYCLED onto\na different node after a removal. Structure, refs and config are untouched.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm\n  liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm --apply",
+      "description": "npm run liveone -- dashboard remint-ids — Re-mint every node id in a document (one-time migration).\n\nA MIGRATION, not an edit: run it once per document to move ids off the retired sequential\nform (n_0, n_1, …) onto the random form. Every id changes, so any id noted from an earlier\n`show` stops resolving — which is the point, because a sequential id could be RECYCLED onto\na different node after a removal. Structure, refs and config are untouched.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm\n  liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm --apply",
       "input_schema": {
         "type": "object",
         "properties": {
           "dash": {
             "type": "string",
             "description": "A dashboard: its db_… id or its slug"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "format": {
             "type": "string",
@@ -614,7 +683,7 @@
           "dash"
         ]
       },
-      "signature": "liveone dashboard remint-ids <dash>",
+      "signature": "liveone dashboard remint-ids <dash> { --via?: \"http\"|\"db\"; --base-url?: string }",
       "invocation": "npm run liveone -- dashboard remint-ids",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -622,6 +691,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -631,7 +701,7 @@
       "summary": "Remove a node and its whole subtree.",
       "when": "Removes the node AND everything under it — check `show` first if it is a group.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard remove-node — Remove a node and its whole subtree.\n\nRemoves the node AND everything under it — check `show` first if it is a group.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard remove-node kink n_5CKF\n  liveone dashboard remove-node kink n_5CKF --apply",
+      "description": "npm run liveone -- dashboard remove-node — Remove a node and its whole subtree.\n\nRemoves the node AND everything under it — check `show` first if it is a group.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard remove-node kink n_5CKF\n  liveone dashboard remove-node kink n_5CKF --apply",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -642,6 +712,19 @@
           "node": {
             "type": "string",
             "description": "The n_… id of the node, as printed by `show`"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "format": {
             "type": "string",
@@ -665,7 +748,7 @@
           "node"
         ]
       },
-      "signature": "liveone dashboard remove-node <dash> <node>",
+      "signature": "liveone dashboard remove-node <dash> <node> { --via?: \"http\"|\"db\"; --base-url?: string }",
       "invocation": "npm run liveone -- dashboard remove-node",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -673,6 +756,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -682,13 +766,26 @@
       "summary": "Change a dashboard's name and/or slug. Metadata only — the doc is untouched.",
       "when": "Use this for the dashboard's own name or its /dashboard/{user}/{slug} shortname.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard rename — Change a dashboard's name and/or slug. Metadata only — the doc is untouched.\n\nUse this for the dashboard's own name or its /dashboard/{user}/{slug} shortname.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard rename kink --slug=kinkora\n  liveone dashboard rename kink --name='Kinkora' --apply",
+      "description": "npm run liveone -- dashboard rename — Change a dashboard's name and/or slug. Metadata only — the doc is untouched.\n\nUse this for the dashboard's own name or its /dashboard/{user}/{slug} shortname.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard rename kink --slug=kinkora\n  liveone dashboard rename kink --name='Kinkora' --apply",
       "input_schema": {
         "type": "object",
         "properties": {
           "dash": {
             "type": "string",
             "description": "A dashboard: its db_… id or its slug"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "name": {
             "type": "string",
@@ -719,7 +816,7 @@
           "dash"
         ]
       },
-      "signature": "liveone dashboard rename <dash> { --name?: string; --slug?: string }",
+      "signature": "liveone dashboard rename <dash> { --via?: \"http\"|\"db\"; --base-url?: string; --name?: string; --slug?: string }",
       "invocation": "npm run liveone -- dashboard rename",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -727,6 +824,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -736,7 +834,7 @@
       "summary": "Set or clear a node's envelope props, and a card's type/config.",
       "when": "Use this to change an existing node in place — bind it to a different device, resize it,\nhide it, or replace a card's config. Pass `none` to any property to DELETE that key.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard set-prop — Set or clear a node's envelope props, and a card's type/config.\n\nUse this to change an existing node in place — bind it to a different device, resize it,\nhide it, or replace a card's config. Pass `none` to any property to DELETE that key.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard set-prop kink n_VX15 --columns=6\n  liveone dashboard set-prop kink n_VX15 --hidden=none --apply",
+      "description": "npm run liveone -- dashboard set-prop — Set or clear a node's envelope props, and a card's type/config.\n\nUse this to change an existing node in place — bind it to a different device, resize it,\nhide it, or replace a card's config. Pass `none` to any property to DELETE that key.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard set-prop kink n_VX15 --columns=6\n  liveone dashboard set-prop kink n_VX15 --hidden=none --apply",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -747,6 +845,19 @@
           "node": {
             "type": "string",
             "description": "The n_… id of the node, as printed by `show`"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "area": {
             "type": "string",
@@ -841,7 +952,7 @@
           "node"
         ]
       },
-      "signature": "liveone dashboard set-prop <dash> <node> { --area?: string; --device?: string; --hidden?: \"true\"|\"false\"|\"none\"; --wrap?: \"true\"|\"false\"|\"none\"; --heading?: \" …",
+      "signature": "liveone dashboard set-prop <dash> <node> { --via?: \"http\"|\"db\"; --base-url?: string; --area?: string; --device?: string; --hidden?: \"true\"|\"false\"|\"none\"; --w …",
       "invocation": "npm run liveone -- dashboard set-prop",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -849,6 +960,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -858,13 +970,26 @@
       "summary": "Render a dashboard's node tree, with the n_… ids edits address.",
       "when": "Run this before any edit: the n_… ids it prints are the handles every other subcommand\ntakes, and they are per-environment so they must be read from the database you intend\nto change.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard show — Render a dashboard's node tree, with the n_… ids edits address.\n\nRun this before any edit: the n_… ids it prints are the handles every other subcommand\ntakes, and they are per-environment so they must be read from the database you intend\nto change.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nAlways renders the NORMALIZED document, so the ids shown are the ids a write would\npersist. --format json emits the same normalized doc (or one subtree with --node).\n\nRead-only. This command changes nothing.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130.\n\nExamples:\n  liveone dashboard show kink\n  liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_2XRX",
+      "description": "npm run liveone -- dashboard show — Render a dashboard's node tree, with the n_… ids edits address.\n\nRun this before any edit: the n_… ids it prints are the handles every other subcommand\ntakes, and they are per-environment so they must be read from the database you intend\nto change.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nAlways renders the NORMALIZED document, so the ids shown are the ids a write would\npersist. --format json emits the same normalized doc (or one subtree with --node).\n\nRead-only. This command changes nothing.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone dashboard show kink\n  liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_2XRX",
       "input_schema": {
         "type": "object",
         "properties": {
           "dash": {
             "type": "string",
             "description": "A dashboard: its db_… id or its slug"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "node": {
             "type": "string",
@@ -883,7 +1008,7 @@
           "dash"
         ]
       },
-      "signature": "liveone dashboard show <dash> { --node?: string }",
+      "signature": "liveone dashboard show <dash> { --via?: \"http\"|\"db\"; --base-url?: string; --node?: string }",
       "invocation": "npm run liveone -- dashboard show",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -891,6 +1016,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]
@@ -900,13 +1026,26 @@
       "summary": "Validate a stored dashboard doc, or a doc in a JSON file.",
       "when": "Use this to find out WHY an edit is being refused, or to check a document you are about\nto write from a file.",
       "parentWhen": "Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.",
-      "description": "npm run liveone -- dashboard validate — Validate a stored dashboard doc, or a doc in a JSON file.\n\nUse this to find out WHY an edit is being refused, or to check a document you are about\nto write from a file.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nRead-only. This command changes nothing.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nExit codes: 0, 1, 2, 5, 130. For this command, 1 = the document is invalid.\n\nExamples:\n  liveone dashboard validate kink\n  liveone dashboard validate --file=doc.json",
+      "description": "npm run liveone -- dashboard validate — Validate a stored dashboard doc, or a doc in a JSON file.\n\nUse this to find out WHY an edit is being refused, or to check a document you are about\nto write from a file.\n\nAbout `dashboard` generally: Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and\nwhich area or device each is bound to — directly in the database. For a card-type rename\nacross every stored document use `scripts/utils/migrate-card-type.ts` instead; for the\nareas and devices a dashboard refers to, edit those through the app.\n\nRead-only. This command changes nothing.\n\nConnects DIRECTLY to Postgres using the connection string in the environment. The printed `target:` line names the database, role and host — read it before writing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = the document is invalid.\n\nExamples:\n  liveone dashboard validate kink\n  liveone dashboard validate --file=doc.json",
       "input_schema": {
         "type": "object",
         "properties": {
           "dash": {
             "type": "string",
             "description": "A dashboard: its db_… id or its slug"
+          },
+          "via": {
+            "type": "string",
+            "description": "How to reach the data: the deployed API (http) or Postgres directly (db)",
+            "enum": [
+              "http",
+              "db"
+            ],
+            "default": "http"
+          },
+          "base-url": {
+            "type": "string",
+            "description": "http only: target origin (default: your stored default, else https://www.liveone.energy) (origin)"
           },
           "file": {
             "type": "string",
@@ -922,7 +1061,7 @@
           }
         }
       },
-      "signature": "liveone dashboard validate [dash] { --file?: string }",
+      "signature": "liveone dashboard validate [dash] { --via?: \"http\"|\"db\"; --base-url?: string; --file?: string }",
       "invocation": "npm run liveone -- dashboard validate",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -930,6 +1069,7 @@
         0,
         1,
         2,
+        3,
         5,
         130
       ]

@@ -46,6 +46,9 @@ export interface DashboardSummary {
   displayName: string | null;
   alias: string | null;
   cardCount: number;
+  /** The optimistic-concurrency token — surfaced so an API client (the liveone CLI) can list and
+   *  then write without a second read per row. Additive, 2026-08-30. */
+  revision: number;
   updatedAt: Date;
   /** How the caller reaches this dashboard: "owner" = they own it, "shared" = granted via a membership. */
   access: "owner" | "shared";
@@ -253,12 +256,14 @@ function rowToSummary(
     displayName: string | null;
     alias: string | null;
     doc: unknown;
+    revision: number;
     updatedAt: Date;
   },
   access: "owner" | "shared",
 ): DashboardSummary {
   return {
     id: Dashboard.encode(r.id),
+    revision: r.revision,
     displayName: r.displayName,
     alias: r.alias,
     // config-v4 Phase 14 stage 15: counted off the v4 `doc`, which is where a dashboard's content

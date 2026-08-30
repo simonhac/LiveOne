@@ -17,7 +17,7 @@ import { findReadableArea } from "@/lib/areas/http";
 
 /**
  * config-v4 dashboards collection (§9.2). Owner-scoped.
- *   GET  → { dashboards: [{ id, name, slug, cardCount, updatedAt, access }] }
+ *   GET  → { dashboards: [{ id, name, slug, cardCount, revision, updatedAt, access }] }
  *        · v4 wire vocabulary (`name`/`slug`), not the DAO's legacy `displayName`/`alias` — the same
  *          keys `GET/PATCH /dashboards/{id}` speak, so a list entry is directly patchable.
  *   POST { name?, slug?, doc? | seedArea? } → 201 { id, revision }
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       name: d.displayName,
       slug: d.alias,
       cardCount: d.cardCount,
+      revision: d.revision,
       updatedAt: d.updatedAt,
       access: d.access,
     })),
