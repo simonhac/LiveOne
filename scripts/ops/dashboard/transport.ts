@@ -23,6 +23,7 @@ import { countCardNodes, isDashboardV4 } from "@/lib/dashboard/v4";
 import { CliFailure, EXIT, failWith, type Ctx } from "@/lib/cli/cli";
 import { isAliasCollision } from "@/lib/dashboard/dashboards";
 import { apiFetch } from "@/lib/cli-kit/http";
+import { printApiTarget } from "@/lib/cli-kit/api-session";
 import { requireToken, resolveOrigin } from "@/lib/cli-kit/target";
 import {
   connect,
@@ -312,22 +313,9 @@ function makeHttpTransport(origin: string, token: string): DashboardTransport {
 
   return {
     kind: "http",
-    describeTarget: async (mode) => {
-      const { body: who } = await get<Record<string, unknown>>(
-        "/api/cli-auth/whoami",
-      );
-      process.stderr.write(
-        `target: ${origin} as ${who.email ?? who.userId}${who.isAdmin ? " (admin)" : ""} · ` +
-          `clerk ${who.clerkInstance} · db ${who.dbHost} · build ${who.buildSha ?? "?"}   mode: ${mode}\n`,
-      );
-      if (
-        mode === "APPLY" &&
-        /\.vercel\.app$|\.preview\.liveone\.energy$/.test(new URL(origin).host)
-      )
-        process.stderr.write(
-          "note: preview build — writes land in the dev database and are reverted by the prod→dev sync\n",
-        );
-    },
+    // One implementation with the api-session domains — the target line is the operator's only
+    // "which server, as whom" check, and two copies is how they drift.
+    describeTarget: (mode) => printApiTarget(origin, token, mode),
     list: async (owner) => {
       if (owner !== undefined)
         throw failWith(

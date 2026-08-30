@@ -101,6 +101,112 @@ export function sumDailyFlowMatrices(
   return matrixWithTotals(d.sources, d.loads, summed);
 }
 
+/** One nullable metric leg folded over the window: per-cell sums plus the per-cell known-energy
+ *  denominators behind any average built on top. */
+export interface MetricMatrixFold {
+  /** [sourceIdx][loadIdx] = Σ of that cell across the days where it was non-null; null when NO day
+   *  contributed (unknown intensity all window, or every day lacked the leg). */
+  matrix: (number | null)[][];
+  /** [sourceIdx][loadIdx] = Σ of that cell's ENERGY (kWh) over exactly the days whose metric cell was
+   *  non-null — the FILTERED averaging denominator (divide the metric sum by this, never by the raw
+   *  energy; see {@link LoadProvenanceSummary.costKnownKwh} for why). */
+  knownKwh: number[][];
+}
+
+/** The metric legs of a window fold — one {@link MetricMatrixFold} per nullable leg, sharing the
+ *  payload's [sourceIdx][loadIdx] axes, plus the plain-additive `estimatedKwh` confidence grid. */
+export interface FlowMatrixMetrics {
+  emissionsG: MetricMatrixFold; // attributed gCO2
+  renewableKwh: MetricMatrixFold; // attributed renewable energy (kWh)
+  selfRenewableKwh: MetricMatrixFold; // attributed self-renewable energy (kWh)
+  costC: MetricMatrixFold; // attributed cost (cents, signed)
+  revenueC: MetricMatrixFold; // attributed feed-in revenue (cents, positive = money in)
+  /** Energy attributed with an estimated/unknown intensity (kWh) — non-null by contract (the emitter
+   *  fills 0, see `toDailyFlowMatrices` in lib/aggregation/flow-node-meta.ts), so this is a plain sum:
+   *  a day lacking the leg contributes 0, and the grid is always dense numbers. */
+  estimatedKwh: number[][];
+}
+
+/** {@link EnergyFlowMatrix} plus the folded metric legs; `metrics` is undefined for a legacy payload. */
+export interface EnergyFlowMatrixWithMetrics extends EnergyFlowMatrix {
+  metrics?: FlowMatrixMetrics;
+}
+
+/** The nullable metric legs a {@link DailyFlowMatrix} can carry (everything but `estimatedKwh`). */
+const NULLABLE_METRIC_LEGS = [
+  "emissionsG",
+  "renewableKwh",
+  "selfRenewableKwh",
+  "costC",
+  "revenueC",
+] as const;
+
+/**
+ * {@link sumDailyFlowMatrices} plus the metric legs: fold a modern window into one energy matrix AND
+ * per-cell metric sums with their known-energy denominators — the matrix-shaped generalisation of
+ * {@link reduceLoadProvenance}/{@link reduceSourceProvenance}, for callers that need EVERY cell's
+ * provenance in one pass.
+ *
+ * The energy fields come from {@link sumDailyFlowMatrices} itself, so they agree exactly. `metrics` is
+ * undefined when no day carries any metric leg (a legacy payload). Per cell, the same discipline as the
+ * reducers: a day contributes to a metric's sum — and its energy to that metric's `knownKwh`
+ * denominator — only when that day's metric cell is non-null; a day lacking a leg entirely counts as
+ * all-null for it, and zero-energy day cells are skipped outright (matching the reducers' `e === 0`
+ * guard). A cell with no contributing day at all stays null.
+ */
+export function sumDailyFlowMatricesWithMetrics(
+  d: DailyFlowMatrices,
+): EnergyFlowMatrixWithMetrics | null {
+  const energy = sumDailyFlowMatrices(d);
+  if (!energy) return null;
+
+  const hasAnyLeg = d.days.some(
+    (day) =>
+      day.estimatedKwh !== undefined ||
+      NULLABLE_METRIC_LEGS.some((k) => day[k] !== undefined),
+  );
+  if (!hasAnyLeg) return energy; // legacy payload — energy only, no `metrics`
+
+  const loadCount = d.loads.length;
+  const nullGrid = () =>
+    d.sources.map(() => new Array<number | null>(loadCount).fill(null));
+  const numGrid = () =>
+    d.sources.map(() => new Array<number>(loadCount).fill(0));
+  const fold = (): MetricMatrixFold => ({
+    matrix: nullGrid(),
+    knownKwh: numGrid(),
+  });
+
+  const metrics: FlowMatrixMetrics = {
+    emissionsG: fold(),
+    renewableKwh: fold(),
+    selfRenewableKwh: fold(),
+    costC: fold(),
+    revenueC: fold(),
+    estimatedKwh: numGrid(),
+  };
+
+  for (const day of d.days) {
+    for (let s = 0; s < d.sources.length; s++) {
+      for (let l = 0; l < loadCount; l++) {
+        const e = day.matrix[s]?.[l] ?? 0;
+        if (e === 0) continue;
+        for (const key of NULLABLE_METRIC_LEGS) {
+          const v = day[key]?.[s]?.[l];
+          if (v != null) {
+            const leg = metrics[key];
+            leg.matrix[s][l] = (leg.matrix[s][l] ?? 0) + v;
+            leg.knownKwh[s][l] += e;
+          }
+        }
+        metrics.estimatedKwh[s][l] += day.estimatedKwh?.[s]?.[l] ?? 0;
+      }
+    }
+  }
+
+  return { ...energy, metrics };
+}
+
 /** That single day's energy matrix (the hovered 30D Sankey), or null if the day isn't in range. */
 export function pickDailyFlowMatrix(
   d: DailyFlowMatrices,

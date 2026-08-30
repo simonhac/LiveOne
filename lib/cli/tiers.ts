@@ -71,6 +71,12 @@ export const TIERS: TierManifest = {
     // The `find` verb, likewise composed rather than an entrypoint.
     "scripts/ops/find/cli.ts",
     "scripts/ops/dashboard/transport.ts",
+    // The read-only http domains — composed by liveone.ts, same rules as the dashboard module.
+    "scripts/ops/device/cli.ts",
+    "scripts/ops/area/cli.ts",
+    "scripts/ops/user/cli.ts",
+    // Cross-domain plumbing (flag groups, ref resolution, the shared history verb).
+    "scripts/ops/shared.ts",
   ],
   lib: [],
 };

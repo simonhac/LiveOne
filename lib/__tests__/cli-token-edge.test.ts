@@ -36,11 +36,20 @@ const req = (path: string, headers: Record<string, string> = {}): any => {
 const withAuth = (v: string) => req("/api/v4/dashboards", { authorization: v });
 
 describe("isCliTokenRoute — what the bypass is bounded to", () => {
-  it("covers the dashboard surface and the CLI's own token management", () => {
+  it("covers the dashboard surface, the read routes, and the CLI's own token management", () => {
     for (const p of [
       "/api/v4/dashboards",
       "/api/v4/dashboards/db_01kyf18tp3e5brm474zf0fzvkm",
       "/api/v4/dashboards/db_x/grants",
+      // The operator-CLI read surface: devices/areas/users aggregates plus the card-data reads.
+      "/api/v4/devices",
+      "/api/v4/devices/dv_x",
+      "/api/v4/areas",
+      "/api/v4/areas/ar_x",
+      "/api/v4/users",
+      "/api/v4/users/user_x",
+      "/api/data",
+      "/api/history",
       "/api/cli-auth/tokens",
       "/api/cli-auth/tokens/cli_abc",
       "/api/cli-auth/whoami",
@@ -53,15 +62,17 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
     // are the surfaces a stray or stolen token must not reach at the edge.
     for (const p of [
       "/api/admin/storage",
+      "/api/admin/users",
       "/api/admin/devices/1/config",
       "/api/control/command",
       "/api/auth/tesla/callback",
       "/api/cron/db-stats",
-      "/api/data",
-      "/api/history",
       "/api/device/1/latest",
+      // The areas matcher is a single named segment (`:id`), NOT `(.*)` — the sub-resources and the
+      // control surface stay outside the bypass, each to be judged on its own.
       "/api/v4/areas/ar_x/members",
-      "/api/v4/devices",
+      "/api/v4/areas/ar_x/bindings",
+      "/api/v4/points/pt_x/action",
       "/dashboard/simon/kink",
       "/",
       // 🛑 A CLI token must not be able to mint its own successor: `authorize` is what binds a code
@@ -160,6 +171,11 @@ describe("every route the bypass exposes authorizes for itself", () => {
     "requireAuth",
     "requireAdmin",
     "requireDashboardAccess",
+    // The `/api/v4/areas/{id}` loader (lib/areas/http.ts): it WRAPS requireAuth and then resolves
+    // the id within the caller's readable set, so it is an authorization call, not a shortcut past
+    // one. Exactly this one widening — a new wrapper does not belong here until it provably calls
+    // requireAuth on every path.
+    "loadReadableArea",
   ];
 
   /** Every route.ts under app/api, with the URL path it serves. */
@@ -190,11 +206,17 @@ describe("every route the bypass exposes authorizes for itself", () => {
   const exposed = routes().filter((r) => isCliTokenRoute(req(r.urlPath)));
 
   it("finds the exposed routes (so the check cannot silently cover nothing)", () => {
-    // The dashboard surface plus the CLI's own token management and whoami.
-    expect(exposed.length).toBeGreaterThanOrEqual(7);
+    // The dashboard surface, the devices/areas/users read surface, the card-data reads, plus the
+    // CLI's own token management and whoami.
+    expect(exposed.length).toBeGreaterThanOrEqual(15);
     expect(exposed.map((r) => r.file)).toEqual(
       expect.arrayContaining([
         "app/api/v4/dashboards/route.ts",
+        "app/api/v4/devices/[id]/route.ts",
+        "app/api/v4/areas/[id]/route.ts",
+        "app/api/v4/users/[id]/route.ts",
+        "app/api/data/route.ts",
+        "app/api/history/route.ts",
         "app/api/cli-auth/whoami/route.ts",
       ]),
     );

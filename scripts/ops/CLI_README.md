@@ -45,6 +45,21 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard history](#liveone-dashboard-history)
     - [liveone dashboard restore](#liveone-dashboard-restore)  _(writes)_
     - [liveone dashboard backfill-history](#liveone-dashboard-backfill-history)  _(writes)_
+  - [liveone device](#liveone-device)
+    - [liveone device list](#liveone-device-list)
+    - [liveone device show](#liveone-device-show)
+    - [liveone device points](#liveone-device-points)
+    - [liveone device latest](#liveone-device-latest)
+    - [liveone device history](#liveone-device-history)
+  - [liveone area](#liveone-area)
+    - [liveone area list](#liveone-area-list)
+    - [liveone area show](#liveone-area-show)
+    - [liveone area latest](#liveone-area-latest)
+    - [liveone area history](#liveone-area-history)
+    - [liveone area flows](#liveone-area-flows)
+  - [liveone user](#liveone-user)
+    - [liveone user list](#liveone-user-list)
+    - [liveone user show](#liveone-user-show)
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
 
@@ -74,6 +89,9 @@ Subcommands:
   find                   Find the command for a job, in plain English.
   auth                   Sign the CLI in as you, and manage its tokens.
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+  device                 Inspect devices — config, metadata, points, latest values, history.
+  area                   Inspect areas — membership, bindings, latest values, history, flows.
+  user                   The user directory — who exists, what they own. Admin-only.
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
 
@@ -1303,6 +1321,776 @@ External access:
 Examples:
   npm run liveone:dev -- dashboard backfill-history
   liveone dashboard backfill-history --via=db --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone device
+
+Inspect devices — config, metadata, points, latest values, history.
+
+```
+Inspect devices — config, metadata, points, latest values, history.
+
+When to use:
+  Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the
+  semantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use
+  `dashboard`.
+
+Read-only, and http-only: every verb calls the deployed API as you (`liveone auth login`),
+and prints `target: <origin> as <you>` on stderr first — read it to know which environment
+answered. Ids are per-environment.
+
+Usage:
+  liveone device <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   List the devices you can read: id, handle, vendor, status, name.
+  show                   A device's full aggregate: metadata, config, adapter state, points.
+  points                 A device's point inventory: pt_… id, path, metric, unit.
+  latest                 The device's current values, from the serving cache.
+  history                Time series for a device, in the OpenNEM shape /api/history serves.
+
+Run `liveone device <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device list
+
+List the devices you can read: id, handle, vendor, status, name.
+
+```
+List the devices you can read: id, handle, vendor, status, name.
+
+When to use:
+  Start here when you do not yet know a device's id.
+
+Usage:
+  liveone device list [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --vendor <vendor>          Only this vendor's devices
+  --status <status>          Only devices with this status (active, disabled, removed)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device list
+  liveone device list --vendor=amber
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device show
+
+A device's full aggregate: metadata, config, adapter state, points.
+
+```
+A device's full aggregate: metadata, config, adapter state, points.
+
+When to use:
+  Use this to see everything the platform knows about one device — its vendor identity,
+  config overrides and point inventory.
+
+The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table
+would only hide its shape. `points` renders the point inventory alone, as a table.
+
+Usage:
+  liveone device show <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device show daylesford
+  liveone device show dv_01kybrhzkmfyxvz63d15rscj19
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device points
+
+A device's point inventory: pt_… id, path, metric, unit.
+
+```
+A device's point inventory: pt_… id, path, metric, unit.
+
+When to use:
+  Use this to find a point's id or path — e.g. before wiring a binding or reading a
+  specific series.
+
+Usage:
+  liveone device points <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device points daylesford
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device latest
+
+The device's current values, from the serving cache.
+
+```
+The device's current values, from the serving cache.
+
+When to use:
+  Use this for 'what is it doing NOW' — the same latest map every dashboard card reads.
+  For anything with a time axis use `history`.
+
+Usage:
+  liveone device latest <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device latest daylesford
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device history
+
+Time series for a device, in the OpenNEM shape /api/history serves.
+
+```
+Time series for a device, in the OpenNEM shape /api/history serves.
+
+When to use:
+  Use this to pull a device's measured series over a window. The human rendering is a
+  per-series summary; the full payload goes to --out (or --format json).
+
+Usage:
+  liveone device history <device> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --interval <string>        Series resolution (range caps: 5m ≤ 7.5 days, 30m ≤ 30 days, 1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
+  --last <7d>                Relative window ending now, e.g. 3h, 7d (default: 1d; the server owns the grammar)
+  --start <YYYY-MM-DD>       Window start (1d interval only; whole local days)
+  --end <YYYY-MM-DD>         Window end, inclusive (1d interval only)
+  --series <glob>            Only series matching this glob (repeatable)  (repeatable)
+  --out <path>               Write the full OpenNEM JSON to this file; stdout gets a summary
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device history daylesford --last=3h
+  liveone device history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31
+
+Exit codes:
+  0    success
+  1    the window returned no series
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone area
+
+Inspect areas — membership, bindings, latest values, history, flows.
+
+```
+Inspect areas — membership, bindings, latest values, history, flows.
+
+When to use:
+  Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the
+  physical/vendor layer use `device`; for what a dashboard shows use `dashboard`.
+
+Read-only, and http-only: every verb calls the deployed API as you (`liveone auth login`),
+and prints `target: <origin> as <you>` on stderr first — read it to know which environment
+answered. Ids are per-environment.
+
+Usage:
+  liveone area <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   List the areas you can read: id, handle, name.
+  show                   An area's full aggregate: meta, members, bindings, capabilities.
+  latest                 The area's current values, from the serving cache.
+  history                Time series for an area, in the OpenNEM shape /api/history serves.
+  flows                  The rolled-up source×load energy-flow matrix (the Sankey) for a period.
+
+Run `liveone area <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area list
+
+List the areas you can read: id, handle, name.
+
+```
+List the areas you can read: id, handle, name.
+
+When to use:
+  Start here when you do not yet know an area's id.
+
+Usage:
+  liveone area list [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area list
+  liveone area list --format json
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area show
+
+An area's full aggregate: meta, members, bindings, capabilities.
+
+```
+An area's full aggregate: meta, members, bindings, capabilities.
+
+When to use:
+  Use this to see how an area is put together — which devices, which role→point bindings.
+
+The aggregate is an OBJECT, so the human rendering is the pretty-printed JSON — a table
+would only hide its shape.
+
+Usage:
+  liveone area show <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area show daylesford
+  liveone area show ar_01kx8km3a3fh5v2csryvhskzep
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area latest
+
+The area's current values, from the serving cache.
+
+```
+The area's current values, from the serving cache.
+
+When to use:
+  Use this for 'what is it doing NOW' — the same latest map every dashboard card reads.
+  For anything with a time axis use `history`.
+
+Usage:
+  liveone area latest <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area latest daylesford
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area history
+
+Time series for an area, in the OpenNEM shape /api/history serves.
+
+```
+Time series for an area, in the OpenNEM shape /api/history serves.
+
+When to use:
+  Use this to pull an area's measured series over a window. The human rendering is a
+  per-series summary; the full payload goes to --out (or --format json).
+
+Usage:
+  liveone area history <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --interval <string>        Series resolution (range caps: 5m ≤ 7.5 days, 30m ≤ 30 days, 1d ≤ 13 months)  (one of: 5m, 30m, 1d; default: 5m)
+  --last <7d>                Relative window ending now, e.g. 3h, 7d (default: 1d; the server owns the grammar)
+  --start <YYYY-MM-DD>       Window start (1d interval only; whole local days)
+  --end <YYYY-MM-DD>         Window end, inclusive (1d interval only)
+  --series <glob>            Only series matching this glob (repeatable)  (repeatable)
+  --out <path>               Write the full OpenNEM JSON to this file; stdout gets a summary
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area history daylesford --last=3d --interval=30m
+  liveone area history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31 --out=july.json
+
+Exit codes:
+  0    success
+  1    the window returned no series
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area flows
+
+The rolled-up source×load energy-flow matrix (the Sankey) for a period.
+
+```
+The rolled-up source×load energy-flow matrix (the Sankey) for a period.
+
+When to use:
+  Use this to download WHERE an area's energy came from and went to over a period, with the
+  attributed cost/emissions/renewable legs — the multi-day rollup of the per-day Sankey.
+
+Reads the materialized per-day matrices (`flow_attr_1d` via /api/history) and folds them:
+energy is a plain sum; each metric leg sums only the days where it is known, and carries a
+known-kWh denominator so averages divide by known energy only. Windows are capped at 13
+months (the 1d serving cap). The matrix is per-AREA — never sum a multi-device area with
+its member devices.
+
+Usage:
+  liveone area flows <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --last <30d>               Relative window ending today (default: 30d)
+  --start <YYYY-MM-DD>       Window start (local days)
+  --end <YYYY-MM-DD>         Window end, inclusive
+  --per-day                  Also carry the raw per-day matrices (CSV: one row per day×edge)
+  --csv                      Serialise as CSV, one row per source×load edge (to pipe raw CSV, add --format=human or --out)
+  --out <path>               Write the CSV/JSON to this file; stdout gets a summary
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area flows daylesford --last=90d
+  liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --csv --out=flows.csv
+
+Exit codes:
+  0    success
+  1    no attributed flow for the window (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone user
+
+The user directory — who exists, what they own. Admin-only.
+
+```
+The user directory — who exists, what they own. Admin-only.
+
+When to use:
+  Reach for this to see the platform's users and their device ownership. ADMIN-ONLY: a
+  non-admin CLI token is refused server-side.
+
+Read-only, and http-only: identity lives in Clerk, and the API joins it with device
+ownership server-side. Prints `target: <origin> as <you>` on stderr first.
+
+Usage:
+  liveone user <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   List users: Clerk id, email, devices owned.
+  show                   One user's directory entry, with their owned devices.
+
+Run `liveone user <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone user list
+
+List users: Clerk id, email, devices owned.
+
+```
+List users: Clerk id, email, devices owned.
+
+When to use:
+  Start here when you do not know a user's id.
+
+Usage:
+  liveone user list [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone user list
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone user show
+
+One user's directory entry, with their owned devices.
+
+```
+One user's directory entry, with their owned devices.
+
+When to use:
+  Use this for one user's detail — devices, admin flag, default dashboard.
+
+Usage:
+  liveone user show <user> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <user>                 A user: their user_… Clerk id, email, or username
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone user show simon@example.com
+  liveone user show user_2yjTPLLmU2vMs4Vy4Q7g0Yy0abc
 
 Exit codes:
   0    success

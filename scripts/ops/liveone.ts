@@ -21,6 +21,9 @@
  */
 import { defineCommand, run, failWith, EXIT, type Ctx } from "@/lib/cli/cli";
 import { dashboardCommand, runDashboard } from "./dashboard/cli";
+import { deviceCommand, runDevice } from "./device/cli";
+import { areaCommand, runArea } from "./area/cli";
+import { userCommand, runUser } from "./user/cli";
 import { authCommand, runAuth } from "./auth/cli";
 import { findCommand, runFind } from "./find/cli";
 
@@ -40,6 +43,9 @@ export const cmd = defineCommand({
     find: findCommand,
     auth: authCommand,
     dashboard: dashboardCommand,
+    device: deviceCommand,
+    area: areaCommand,
+    user: userCommand,
   },
 });
 
@@ -51,6 +57,9 @@ const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
   find: runFind,
   auth: runAuth,
   dashboard: runDashboard,
+  device: runDevice,
+  area: runArea,
+  user: runUser,
 };
 
 run(

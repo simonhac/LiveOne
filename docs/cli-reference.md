@@ -48,5 +48,20 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard history](../scripts/ops/CLI_README.md#liveone-dashboard-history) — The dashboard's edit history — who changed it, when, revision by revision.
     - [liveone dashboard restore](../scripts/ops/CLI_README.md#liveone-dashboard-restore) — Restore a recorded revision — as a NEW revision, never a counter rewind.  _(writes)_
     - [liveone dashboard backfill-history](../scripts/ops/CLI_README.md#liveone-dashboard-backfill-history) — Seed a history row for every dashboard whose current revision has none.  _(writes)_
+  - [liveone device](../scripts/ops/CLI_README.md#liveone-device) — Inspect devices — config, metadata, points, latest values, history.
+    - [liveone device list](../scripts/ops/CLI_README.md#liveone-device-list) — List the devices you can read: id, handle, vendor, status, name.
+    - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, points.
+    - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
+    - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
+    - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
+  - [liveone area](../scripts/ops/CLI_README.md#liveone-area) — Inspect areas — membership, bindings, latest values, history, flows.
+    - [liveone area list](../scripts/ops/CLI_README.md#liveone-area-list) — List the areas you can read: id, handle, name.
+    - [liveone area show](../scripts/ops/CLI_README.md#liveone-area-show) — An area's full aggregate: meta, members, bindings, capabilities.
+    - [liveone area latest](../scripts/ops/CLI_README.md#liveone-area-latest) — The area's current values, from the serving cache.
+    - [liveone area history](../scripts/ops/CLI_README.md#liveone-area-history) — Time series for an area, in the OpenNEM shape /api/history serves.
+    - [liveone area flows](../scripts/ops/CLI_README.md#liveone-area-flows) — The rolled-up source×load energy-flow matrix (the Sankey) for a period.
+  - [liveone user](../scripts/ops/CLI_README.md#liveone-user) — The user directory — who exists, what they own. Admin-only.
+    - [liveone user list](../scripts/ops/CLI_README.md#liveone-user-list) — List users: Clerk id, email, devices owned.
+    - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.

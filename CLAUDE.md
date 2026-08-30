@@ -184,8 +184,10 @@ terminal additionally requires `--yes`.
 #### The liveone CLI
 
 `npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
-`auth` (sign the CLI in as you) and `dashboard` (edit `dashboards.doc`), with more coming. Run
-`-- <domain> --help` for verbs; the generated reference is `docs/cli-reference.md`.
+`auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), and the read-only
+`device` / `area` / `user` (list, show, latest values, history; `area flows` downloads the
+rolled-up Sankey matrix for a period). Run `-- <domain> --help` for verbs; the generated
+reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
 
 - **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
   stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
