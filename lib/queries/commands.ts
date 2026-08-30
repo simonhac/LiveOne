@@ -12,8 +12,15 @@ export interface CommandLogResponse {
   limit?: number;
 }
 
-/** The inline peek under "Recent activity" — the newest two, and whether there are more. */
-export const INLINE_LOG_LIMIT = 2;
+/**
+ * The inline peek under "Last activity" — the newest ONE, and whether there are more.
+ *
+ * One row, because the peek answers "did my last press land?" and nothing else; the whole trail is
+ * one tap away in the "Show more" modal. It was two, which cost this dialog a line it needed on a
+ * phone. `hasMore` is what drives that button, so shrinking this makes the button appear sooner
+ * rather than hiding anything.
+ */
+export const INLINE_LOG_LIMIT = 1;
 /** One page of the "Show more" modal. The route caps `limit` at 50, so this is its ceiling too. */
 export const LOG_PAGE_SIZE = 50;
 

@@ -116,8 +116,6 @@ export interface GeneratorStatusCopy {
   isCommandedRun: boolean;
   /** True ⇒ the engine is turning (or cooling), so the rpm/Hz row is worth showing. */
   isRunning: boolean;
-  /** A fuller sentence for the dialog header, where there is room to be explicit. */
-  sentence: string;
 }
 
 const UNKNOWN: GeneratorStatusCopy = {
@@ -126,7 +124,35 @@ const UNKNOWN: GeneratorStatusCopy = {
   tone: "idle",
   isCommandedRun: false,
   isRunning: false,
-  sentence: "The generator's state has not been reported.",
+};
+
+/**
+ * Crank-disconnect speed, rpm — below this the starter motor may still be doing the work, and the
+ * engine is STARTING rather than running.
+ *
+ * 500 is the conventional threshold for a 1500 rpm genset. The hub's own `running` flag is
+ * deliberately a different, looser test (`rpm > 0 || hz > 0`, four places in packages/usher): it
+ * feeds SAFETY decisions — "is something already turning that our start would collide with", "did
+ * the engine actually stop after we let go" — where any shaft motion must count. This constant is
+ * about what to CALL the state on screen, which is a different question, so the two are not shared.
+ */
+export const CRANK_RPM = 500;
+
+/**
+ * The first seconds of a run of ours: latched, but the engine has not reached crank-disconnect.
+ *
+ * The hub reports `running:hub` the instant it closes the latch, which is correct — it IS holding a
+ * run request — but the tile was rendering the hero "Running" over an `Engine 0 rpm 0.0 Hz` row.
+ * Both facts were true and together they read as a fault.
+ */
+const STARTING: GeneratorStatusCopy = {
+  label: "Starting",
+  detail: "LiveOne request",
+  tone: "commanded",
+  isCommandedRun: true,
+  // True: the engine is being started, so the vitals row is worth showing — watching rpm climb is
+  // precisely the point of naming this state.
+  isRunning: true,
 };
 
 /**
@@ -148,18 +174,16 @@ const COPY: Record<
     tone: "commanded",
     isCommandedRun: true,
     isRunning: true,
-    sentence: "Running on a request from LiveOne.",
   },
   "running:sp-pro": {
     label: "Running",
+    // 🛑 The detail line is load-bearing, not decoration: this run is the INVERTER's, and our Stop
+    // cannot end it — fn 33 clears only OUR latch. A bare "Running" would imply a Stop button that
+    // works on it, and `isCommandedRun: false` below is what actually withholds that button.
     detail: "Inverter request",
     tone: "running",
     isCommandedRun: false,
     isRunning: true,
-    // Worth spelling out: this run is the inverter's, and our Stop cannot end it — fn 33 clears
-    // only OUR latch. Saying "running" alone would imply a stop button that works.
-    sentence:
-      "Running at the inverter's request. LiveOne cannot stop a run it did not start.",
   },
   "running:other": {
     label: "Running",
@@ -167,7 +191,6 @@ const COPY: Record<
     tone: "running",
     isCommandedRun: false,
     isRunning: true,
-    sentence: "Running, but not at LiveOne's request.",
   },
   stopping: {
     label: "Cooling",
@@ -175,18 +198,17 @@ const COPY: Record<
     tone: "running",
     isCommandedRun: false,
     isRunning: true,
-    sentence: "The run request was released; the engine is cooling down.",
   },
   "stop-failing": {
     label: "Stop failing",
+    // The one truly bad outcome — and the detail is what keeps it from reading as abandonment: the
+    // hub retries every 15 s indefinitely, which is the difference between "something is broken"
+    // and "something is broken and is being handled".
     detail: "Hub is retrying",
     tone: "warning",
+    // We still hold the latch, so the dialog must offer Stop rather than Start.
     isCommandedRun: true,
     isRunning: true,
-    // The one truly bad outcome. The hub retries every 15 s indefinitely, and saying so is the
-    // difference between "something is broken" and "something is broken and being handled".
-    sentence:
-      "The hub could not confirm the stop and is retrying every 15 seconds. Check the generator.",
   },
   "latch-released-still-running": {
     label: "Running",
@@ -194,13 +216,12 @@ const COPY: Record<
     // 76 min"), so saying "still running" here as well produced "Released, still running, running
     // 76 min". The fact survives — the time clause is what states it.
     detail: "Released",
+    // 🛑 Released ≠ stopped: we let go and it kept turning past the cool-down grace, so something
+    // else is commanding it. That is a state needing a human, hence `warning` rather than the
+    // ordinary `running`.
     tone: "warning",
     isCommandedRun: false,
     isRunning: true,
-    // 🛑 Released ≠ stopped. We let go and it kept turning past the cool-down grace, so something
-    // else is commanding it.
-    sentence:
-      "LiveOne released its run request, but the engine is still running — something else is commanding it.",
   },
 };
 
@@ -210,7 +231,6 @@ const AUTO: GeneratorStatusCopy = {
   tone: "idle",
   isCommandedRun: false,
   isRunning: false,
-  sentence: "Stopped, and armed to start automatically.",
 };
 
 const LOCKED_OUT: GeneratorStatusCopy = {
@@ -219,8 +239,6 @@ const LOCKED_OUT: GeneratorStatusCopy = {
   tone: "warning",
   isCommandedRun: false,
   isRunning: false,
-  sentence:
-    "The panel is not in Auto, so the generator will not start — locally or remotely. Someone may have taken it out of service deliberately.",
 };
 
 /**
@@ -233,13 +251,39 @@ const LOCKED_OUT: GeneratorStatusCopy = {
 export function describeGeneratorState(
   state: string | null | undefined,
   mode?: string | null,
+  opts?: {
+    /**
+     * Engine speed, rpm, when the caller has it. Splits a commanded run into STARTING and RUNNING —
+     * see {@link CRANK_RPM}. Omitted or null ⇒ "Running", because a phase we cannot see is one we
+     * must not claim.
+     */
+    rpm?: number | null;
+  },
 ): GeneratorStatusCopy {
   if (!state) return UNKNOWN;
   if (state === "idle") {
     // Mode unknown (the point has not arrived) is NOT the same as "in Auto" — claiming a generator
     // is armed when we cannot see the panel would be the one lie that matters here.
-    if (mode == null) return { ...AUTO, label: "Off", detail: null };
+    //
+    // 🛑 "Stopped", not "Off". Both describe the ENGINE, which the hub's `idle` positively tells us
+    // is not turning — the unknown is the PANEL, i.e. whether this stopped generator is armed to
+    // start on its own or locked out of starting at all. "Off" leans toward "switched off / out of
+    // service", which is what LOCKED_OUT means, so it quietly asserts the very thing we cannot see.
+    // "Stopped" states what is known and stops there; the blank detail line is the withheld claim.
+    if (mode == null) return { ...AUTO, label: "Stopped", detail: null };
     return panelIsAuto(mode) ? AUTO : LOCKED_OUT;
+  }
+  // 🛑 OUR run only. `running:sp-pro` and `running:other` are runs we did not start and whose start
+  // instant we do not know, so a low rpm there is as likely to be a cool-down tail as a start —
+  // calling it "Starting" would be a guess. For `running:hub` the latch tells us the run began just
+  // now, which is what makes the inference sound.
+  if (
+    state === "running:hub" &&
+    opts?.rpm != null &&
+    Number.isFinite(opts.rpm) &&
+    opts.rpm < CRANK_RPM
+  ) {
+    return STARTING;
   }
   return COPY[state as Exclude<GeneratorControlState, "idle">] ?? UNKNOWN;
 }
