@@ -12,10 +12,12 @@
  * matters most: calm, generic, and it still shows the raw token for the curious.
  *
  * 🛑 NOT EVERY VENDOR SPEAKS IN TOKENS. The DeepSea generator's declines arrive from the usher hub
- * as COMPLETE HUMAN SENTENCES, written to be read ("module is not in Auto (mode=Stop) — possible
- * local lockout; not overridable remotely"). Rewriting one of those into house copy could only
- * lose information, so the generator address passes them through verbatim. That is why this
- * function takes the point ADDRESS: the right treatment for a reason depends on who wrote it.
+ * as COMPLETE HUMAN CLAUSES, written to be read ("the module is not in Auto (mode=Stop) — a
+ * possible local lockout at the panel, and not overridable remotely"). Rewriting one of those into
+ * house copy could only lose information, so the generator address passes them through verbatim.
+ * That is why this function takes the point ADDRESS: the right treatment for a reason depends on
+ * who wrote it. (`gateStart()` on the hub writes them lower-case and unpunctuated on purpose, so
+ * the same clause reads correctly here after "but" and standing alone in the probe's verdict.)
  */
 import type { PointActionName } from "./point-control";
 import { GENERATOR_RUN_REQUEST_ADDRESS } from "./addresses";

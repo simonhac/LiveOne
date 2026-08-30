@@ -1,8 +1,8 @@
 /**
- * The `noop` probe — exercises the full control chain, writes nothing. See core/control-api.ts.
+ * The `probe` — exercises the full control chain, writes nothing. See core/control-api.ts.
  * GET and POST behave identically (GET for convenience with the passkey in a header).
  */
-import { handleNoopPost } from "@/core/control-api";
+import { handleProbePost } from "@/core/control-api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export async function POST(
   ctx: { params: Promise<{ siteId: string }> },
 ): Promise<Response> {
   const { siteId } = await ctx.params;
-  return handleNoopPost(req, siteId);
+  return handleProbePost(req, siteId);
 }
 
 export async function GET(
@@ -20,5 +20,5 @@ export async function GET(
   ctx: { params: Promise<{ siteId: string }> },
 ): Promise<Response> {
   const { siteId } = await ctx.params;
-  return handleNoopPost(req, siteId);
+  return handleProbePost(req, siteId);
 }

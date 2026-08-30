@@ -15,13 +15,11 @@ const hubRun =
   jest.fn<
     (siteId: string, passkey: string, runtimeSec: number) => Promise<unknown>
   >();
-const hubNoop =
-  jest.fn<
-    (siteId: string, passkey: string, runtimeSec?: number) => Promise<unknown>
-  >();
+const hubProbe =
+  jest.fn<(siteId: string, passkey: string) => Promise<unknown>>();
 jest.mock("../hub-client", () => ({
   hubRun: (...args: [string, string, number]) => hubRun(...args),
-  hubNoop: (...args: [string, string, number | undefined]) => hubNoop(...args),
+  hubProbe: (...args: [string, string]) => hubProbe(...args),
 }));
 
 const getDeviceCredentials =
@@ -55,26 +53,24 @@ describe("DeepSeaControlCapability", () => {
   beforeEach(() => {
     getDeviceCredentials.mockReset();
     getDeviceCredentials.mockResolvedValue({ controlPasskey: "pk-secret" });
-    hubNoop.mockReset();
-    hubNoop.mockResolvedValue({
+    hubProbe.mockReset();
+    hubProbe.mockResolvedValue({
       ok: true,
       wouldStart: true,
-      verdict: "a 1800s run would START now",
-      preflight: {
-        ownership: {
-          mode: 1,
-          modeName: "Auto",
-          remoteStartInput: "open",
-          running: false,
-        },
-        scfSupported: {
-          selectAuto: true,
-          telemetryStart: true,
-          telemetryCancel: true,
-        },
-        scfMap: [0, 0],
+      verdict: "Ready to start",
+      mode: 1,
+      modeName: "Auto",
+      remoteStartInput: "open",
+      running: false,
+      scfSupported: {
+        selectAuto: true,
+        telemetryStart: true,
+        telemetryCancel: true,
       },
-      controlStatus: { maxRuntimeSec: 7200, latched: false, state: "idle" },
+      scfMap: [0, 0],
+      maxRuntimeSec: 7200,
+      latched: false,
+      state: "idle",
     });
     hubRun.mockReset();
     hubRun.mockResolvedValue({
@@ -284,43 +280,46 @@ describe("DeepSeaControlCapability", () => {
   // ── preflight — the read-only dry run behind the dialog's Start gate ─────────────────────────
 
   describe("preflight", () => {
-    it("converts minutes to seconds on the SAME seam invoke() uses", async () => {
-      await cap.preflight({ ...ctx(), value: 30 });
-      expect(hubNoop).toHaveBeenCalledWith("sheephouse", "pk-secret", 1800);
-    });
-
-    it("asks about the hub's DEFAULT when the caller names no runtime (or names 0)", async () => {
-      // 0 is the command value for STOP, which is not a start decision at all — asking "would a
-      // 0-second run be accepted" would produce a meaningless verdict.
-      await cap.preflight({ ...ctx(), value: 0 });
-      expect(hubNoop).toHaveBeenCalledWith(
-        "sheephouse",
-        "pk-secret",
-        undefined,
-      );
-      hubNoop.mockClear();
-      await cap.preflight({ ...ctx(), value: undefined });
-      expect(hubNoop).toHaveBeenCalledWith(
-        "sheephouse",
-        "pk-secret",
-        undefined,
-      );
+    it("🛑 proposes NO runtime, whatever the caller names", async () => {
+      // A probe asks about the MOMENT. The only length-sensitive term in a start decision is the
+      // hub's cap, and the cap comes back in the answer — so proposing a length would only put a
+      // number in a verdict nobody asked about, which is exactly what forced the browser to throw
+      // the hub's sentence away and write its own.
+      for (const value of [30, 0, undefined]) {
+        hubProbe.mockClear();
+        await cap.preflight({ ...ctx(), value });
+        expect(hubProbe).toHaveBeenCalledWith("sheephouse", "pk-secret");
+      }
     });
 
     it("passes the hub's verdict and wouldStart through UNCHANGED", async () => {
       const result = await cap.preflight(ctx());
       expect(result.ok).toBe(true);
       expect(result.wouldProceed).toBe(true);
-      // Verbatim: the hub derives it from the same gateStart() a real run consults, so restating
-      // it here in our own words could only introduce a disagreement.
-      expect(result.verdict).toBe("a 1800s run would START now");
-      // `state` and `panelMode` together are everything a caller needs to re-derive the status
+      // Verbatim, and this is the central invariant: the hub derives the sentence from the same
+      // gateStart() a real run consults, so restating it here in our own words could only
+      // introduce a disagreement. The ACCEPTANCE is included — it used to be the exception.
+      expect(result.verdict).toBe("Ready to start");
+    });
+
+    it("hands the whole probe on as `detail`, flat, minus the verdict fields", async () => {
+      // `state` and `modeName` together are everything a caller needs to re-derive the status
       // sentence from this LIVE read instead of from a pushed point that may be a poll behind.
+      const result = await cap.preflight(ctx());
       expect(result.detail).toEqual({
+        mode: 1,
+        modeName: "Auto",
+        remoteStartInput: "open",
+        running: false,
+        scfSupported: {
+          selectAuto: true,
+          telemetryStart: true,
+          telemetryCancel: true,
+        },
+        scfMap: [0, 0],
         maxRuntimeSec: 7200,
         latched: false,
         state: "idle",
-        panelMode: "Auto",
       });
     });
 
@@ -334,24 +333,24 @@ describe("DeepSeaControlCapability", () => {
     });
 
     it("🛑 fails the panel-mode check for any mode but Auto — the one thing not overridable remotely", async () => {
-      hubNoop.mockResolvedValue({
+      hubProbe.mockResolvedValue({
         ok: true,
         wouldStart: false,
-        verdict: "a run would be REFUSED: module is not in Auto (mode=Stop)",
-        preflight: {
-          ownership: {
-            mode: 0,
-            modeName: "Stop",
-            remoteStartInput: "open",
-            running: false,
-          },
-          scfSupported: {
-            selectAuto: true,
-            telemetryStart: true,
-            telemetryCancel: true,
-          },
-          scfMap: [],
+        verdict:
+          "A run would be refused: the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely",
+        mode: 0,
+        modeName: "Stop",
+        remoteStartInput: "open",
+        running: false,
+        scfSupported: {
+          selectAuto: true,
+          telemetryStart: true,
+          telemetryCancel: true,
         },
+        scfMap: [],
+        latched: false,
+        state: "idle",
+        maxRuntimeSec: 7200,
       });
       const result = await cap.preflight(ctx());
       expect(result.wouldProceed).toBe(false);
@@ -363,24 +362,24 @@ describe("DeepSeaControlCapability", () => {
     });
 
     it("reports a running engine and an inverter that is calling for it", async () => {
-      hubNoop.mockResolvedValue({
+      hubProbe.mockResolvedValue({
         ok: true,
         wouldStart: false,
-        verdict: "a run would be REFUSED: engine is already running",
-        preflight: {
-          ownership: {
-            mode: 1,
-            modeName: "Auto",
-            remoteStartInput: "closed",
-            running: true,
-          },
-          scfSupported: {
-            selectAuto: true,
-            telemetryStart: true,
-            telemetryCancel: true,
-          },
-          scfMap: [],
+        verdict:
+          "A run would be refused: the engine is already running, commanded by the SP-PRO (remote-start input closed)",
+        mode: 1,
+        modeName: "Auto",
+        remoteStartInput: "closed",
+        running: true,
+        scfSupported: {
+          selectAuto: true,
+          telemetryStart: true,
+          telemetryCancel: true,
         },
+        scfMap: [],
+        latched: false,
+        state: "running:sp-pro",
+        maxRuntimeSec: 7200,
       });
       const { checks } = await cap.preflight(ctx());
       expect(checks?.[1]).toEqual({
@@ -403,25 +402,24 @@ describe("DeepSeaControlCapability", () => {
      * disables Start.
      */
     it("🛑 a module that cannot CANCEL still refuses, through the verdict rather than a row", async () => {
-      hubNoop.mockResolvedValue({
+      hubProbe.mockResolvedValue({
         ok: true,
         wouldStart: false,
         verdict:
-          "a run would be REFUSED: the module does not advertise Cancel Telemetry Start (fn 33) — a run could not be stopped",
-        preflight: {
-          ownership: {
-            mode: 1,
-            modeName: "Auto",
-            remoteStartInput: "open",
-            running: false,
-          },
-          scfSupported: {
-            selectAuto: true,
-            telemetryStart: true,
-            telemetryCancel: false,
-          },
-          scfMap: [],
+          "A run would be refused: the module does not advertise Cancel Telemetry Start (fn 33), so a run could not be stopped",
+        mode: 1,
+        modeName: "Auto",
+        remoteStartInput: "open",
+        running: false,
+        scfSupported: {
+          selectAuto: true,
+          telemetryStart: true,
+          telemetryCancel: false,
         },
+        scfMap: [],
+        latched: false,
+        state: "idle",
+        maxRuntimeSec: 7200,
       });
       const result = await cap.preflight(ctx());
       expect(result.wouldProceed).toBe(false);
@@ -432,9 +430,9 @@ describe("DeepSeaControlCapability", () => {
     });
 
     it("🛑 REPORTS an unreachable hub rather than throwing — bad news is the answer, not an error", async () => {
-      hubNoop.mockRejectedValue(
+      hubProbe.mockRejectedValue(
         new Error(
-          "device unreachable: timeout — the hub could not read the controller, so a real run would refuse too",
+          "The hub could not read the controller: timeout — a run would be refused too.",
         ),
       );
       const result = await cap.preflight(ctx());
@@ -446,7 +444,7 @@ describe("DeepSeaControlCapability", () => {
     it("still THROWS for a configuration failure — a missing passkey is not a state report", async () => {
       getDeviceCredentials.mockResolvedValue({ apiKey: "gk_only" });
       await expect(cap.preflight(ctx())).rejects.toThrow(/no control passkey/i);
-      expect(hubNoop).not.toHaveBeenCalled();
+      expect(hubProbe).not.toHaveBeenCalled();
     });
 
     it("refuses a point it has no command for, exactly as invoke() does", async () => {
@@ -459,7 +457,7 @@ describe("DeepSeaControlCapability", () => {
           } as never,
         }),
       ).rejects.toThrow(/no command for/);
-      expect(hubNoop).not.toHaveBeenCalled();
+      expect(hubProbe).not.toHaveBeenCalled();
     });
   });
 });

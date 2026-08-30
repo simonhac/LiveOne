@@ -48,11 +48,12 @@ import { formatSecondsAsDuration, formatTime12h } from "@/lib/fe-date-format";
 interface PreflightJson {
   ok: boolean;
   wouldProceed?: boolean;
+  /** The hub's own sentence. Rendered VERBATIM — see the 🛑 on the verdict line below. */
   verdict: string;
   /** `verdict` unrendered, when it names an instant — see lib/control/message-format.ts. */
   verdictMessage?: StructuredMessage;
   checks?: { label: string; value: string; ok: boolean | null }[];
-  /** DeepSea puts the hub's `ControlStatus` here — the freshest word on the run in progress. */
+  /** DeepSea puts everything the probe read here, flat — the freshest word on the generator. */
   detail?: {
     maxRuntimeSec?: number;
     latched?: boolean;
@@ -64,7 +65,7 @@ interface PreflightJson {
     state?: string;
     /** The DSE panel mode as a word ("Auto", "Stop"), which `describeGeneratorState` needs to tell
      *  an ARMED idle generator from a LOCKED OUT one. */
-    panelMode?: string | null;
+    modeName?: string | null;
   } | null;
 }
 
@@ -219,11 +220,12 @@ export default function GeneratorControlDialog({
   const preflight = useQuery({
     queryKey: ["generator-preflight", target ?? ""],
     queryFn: async (): Promise<PreflightJson> => {
-      // 🛑 Deliberately NO `value`, and the chosen duration is deliberately NOT in the query key.
-      // Every runtime this dialog can offer is already clamped to the hub's `maxRuntimeSec`, and
-      // that cap is the ONLY runtime-dependent term in `gateStart()` — so the verdict cannot
-      // change with the slider, and keying on it would fire a Modbus round-trip over WireGuard
-      // per slider step. The probe asks about the moment, not about a particular length of run.
+      // 🛑 No `value`, and the chosen duration is deliberately NOT in the query key. The probe
+      // asks about the MOMENT: every runtime this dialog can offer is already clamped to the hub's
+      // `maxRuntimeSec` (see `maxMin` below), and that cap was the only runtime-dependent term in
+      // `gateStart()` — so the verdict cannot change with the slider, and keying on it would fire
+      // a Modbus round-trip over WireGuard per slider step. The hub no longer accepts a proposed
+      // runtime at all, which is what lets its verdict be shown as written.
       const res = await fetch(`/api/v4/points/${target}/preflight`, {
         method: "POST",
       });
@@ -258,7 +260,7 @@ export default function GeneratorControlDialog({
   const status = useProbe
     ? describeGeneratorState(
         preflight.data!.detail!.state,
-        preflight.data!.detail!.panelMode ?? mode,
+        preflight.data!.detail!.modeName ?? mode,
       )
     : describeGeneratorState(state, mode);
 
@@ -488,14 +490,21 @@ export default function GeneratorControlDialog({
                     </li>
                   ))}
                 </ul>
-                {/* 🛑 A REFUSAL is shown VERBATIM: it is the hub's own sentence, produced by the
-                    same `gateStart()` a real run consults, and it is written to be read by a human
-                    ("module is not in Auto (mode=Stop) — possible local lockout; not overridable
-                    remotely"). Nothing here forms a second opinion about it.
+                {/* 🛑 THE HUB'S SENTENCE, VERBATIM — acceptance and refusal alike. It is produced
+                    by the same `gateStart()` a real run consults, and it is written to be read by a
+                    human ("Ready to start"; "A run would be refused: the module is not in Auto
+                    (mode=Stop) — a possible local lockout at the panel, and not overridable
+                    remotely"). This dialog forms no second opinion and writes no sentence of its own.
 
-                    The ACCEPTANCE is not, because there the hub's wording is mechanical log voice
-                    about a runtime we did not ask it about ("a 60s run would START now"), and
-                    repeating that under a slider set to 30 minutes would be actively misleading. */}
+                    The acceptance used to be an exception: the dialog threw the hub's verdict away
+                    and printed "Ready — a 15m run would start now." That was not a wording
+                    preference. The hub was being asked about a 60-second run invented by three
+                    layers of default, so its answer named a length nobody had proposed, and the
+                    only way to show it was to replace it. The probe now asks about the MOMENT
+                    (see the query above), so the hub's own answer is the true one and the chosen
+                    length lives where it belongs — on the selected chip and on the Start button.
+
+                    Colour and icon still key off `wouldProceed`. That is presentation, not words. */}
                 {preflight.data && (
                   <p
                     className={`mt-2 flex min-h-[2rem] items-start gap-1.5 text-xs ${
@@ -508,12 +517,9 @@ export default function GeneratorControlDialog({
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     )}
                     <span>
-                      {canStart
-                        ? `Ready — a ${runWords(minutes)} run would start now.`
-                        : (renderMessageLike(
-                            preflight.data.verdictMessage ??
-                              preflight.data.verdict,
-                          ) ?? preflight.data.verdict)}
+                      {renderMessageLike(
+                        preflight.data.verdictMessage ?? preflight.data.verdict,
+                      ) ?? preflight.data.verdict}
                     </span>
                   </p>
                 )}
@@ -660,20 +666,25 @@ export default function GeneratorControlDialog({
  *
  * The box used to paint one line ("Reading the controller…") and then grow to its rows plus a
  * verdict, which moved every control below it just as the user reached for one. The height is
- * knowable: `preflightChecks` (lib/vendors/deepsea/control.ts) returns exactly three checks, always
+ * knowable: `probeChecks` (lib/vendors/deepsea/control.ts) returns exactly three checks, always
  * — one per fact the DSE is asked about — so the skeleton is three rows and not a guess. Move that
  * count and this must move with it, or the jump comes back.
  *
  * It mirrors the real `<li>` markup rather than approximating it, so the two cannot drift out of
  * alignment: same `space-y-1`, same `h-3.5 w-3.5` status glyph, same `w-32` label column, and the
  * same `min-h` on the verdict line that the loaded state carries.
+ *
+ * `h-4` on the rows is the one thing that is NOT mirrored, and has to be stated: a real row takes
+ * its height from its `text-xs` line box (16px), where the tallest thing in a skeleton row is a
+ * 14px glyph. Without it this box shrank 6px as the probe landed — small, but shrinking is the one
+ * thing this component exists to prevent.
  */
 function EngineCheckSkeleton() {
   return (
     <div aria-busy="true" aria-label="Reading the controller">
       <ul className="space-y-1 text-xs">
         {[0, 1, 2].map((i) => (
-          <li key={i} className="flex items-center gap-2">
+          <li key={i} className="flex h-4 items-center gap-2">
             <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-gray-700" />
             <span className="w-32 shrink-0">
               <span className="block h-3 w-20 animate-pulse rounded bg-gray-700/70" />

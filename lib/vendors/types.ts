@@ -164,7 +164,8 @@ export interface ControlPreflightResult {
   verdictMessage?: StructuredMessage;
   /** Named facts the probe read, in display order. Rendered as a checklist. */
   checks?: ControlPreflightCheck[];
-  /** Vendor-specific extras the caller understands (DeepSea: the hub's `ControlStatus`). */
+  /** Vendor-specific extras the caller understands (DeepSea: everything the probe read, flat —
+   *  the controller as of a live FC3 read, plus the hub's own run bookkeeping). */
   detail?: unknown;
 }
 

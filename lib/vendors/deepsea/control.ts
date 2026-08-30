@@ -33,7 +33,7 @@ import type {
 } from "../types";
 import { ControlDispatchError } from "@/lib/control/errors";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
-import { hubNoop, hubRun, type HubNoopResult } from "./hub-client";
+import { hubProbe, hubRun, type HubProbeResult } from "./hub-client";
 
 /**
  * The point this capability commands, by LOGICAL address (`logicalPath/metricType`) so it stays
@@ -88,40 +88,41 @@ async function resolveTarget(ctx: {
  * are passed through rather than recomputed, because the hub derives them from the same
  * `gateStart()` a real request consults.
  */
-function preflightChecks(noop: HubNoopResult): ControlPreflightCheck[] {
-  const pre = noop.preflight;
-  if (!pre) return [];
-  const own = pre.ownership;
+function probeChecks(probe: HubProbeResult): ControlPreflightCheck[] {
+  // `ok:false` means the controller could not be read, so there are no facts to transcribe. The
+  // hub's `verdict` says why, and it is the whole answer in that case.
+  if (!probe.ok) return [];
   return [
     {
       label: "Panel mode",
-      value: own.modeName ?? (own.mode == null ? "unreadable" : `${own.mode}`),
+      value:
+        probe.modeName ?? (probe.mode == null ? "unreadable" : `${probe.mode}`),
       // Mode 1 is Auto. Anything else may be a deliberate local lockout (refuelling, hands in the
       // engine bay) and is NOT overridable remotely — see gateStart() on the hub.
-      ok: own.mode === 1,
+      ok: probe.mode === 1,
     },
     {
       label: "Engine",
-      value: own.running ? "running" : "stopped",
-      ok: !own.running,
+      value: probe.running ? "running" : "stopped",
+      ok: !probe.running,
     },
     {
       label: "Inverter demand",
       value:
-        own.remoteStartInput === "closed"
+        probe.remoteStartInput === "closed"
           ? "calling for the generator"
-          : own.remoteStartInput === "open"
+          : probe.remoteStartInput === "open"
             ? "not calling"
             : "unknown",
       // Informational, not a gate: the SP-PRO calling is only a refusal in combination with the
       // engine already running, which the row above already reports.
-      ok: own.remoteStartInput === "closed" ? null : true,
+      ok: probe.remoteStartInput === "closed" ? null : true,
     },
     // 🛑 The module's SCF support is deliberately NOT a row. On every module in service it reads
     // "start / cancel" forever — a constant, which is the one thing a checklist should not spend a
-    // line on — and when it is NOT true the hub says so far more usefully than a row could: `noop`
-    // appends "the module does not advertise Cancel Telemetry Start (fn 33) — a run could not be
-    // stopped" to the verdict and clears `wouldStart`, which disables Start and prints the
+    // line on — and when it is NOT true the hub says so far more usefully than a row could: the
+    // probe appends "the module does not advertise Cancel Telemetry Start (fn 33), so a run could
+    // not be stopped" to the verdict and clears `wouldStart`, which disables Start and prints the
     // sentence. The fact survives; only the noise is gone.
   ];
 }
@@ -204,7 +205,7 @@ export class DeepSeaControlCapability implements ControlCapability {
   }
 
   /**
-   * The read-only dry run, backed by the hub's `noop`: Access → passkey → registry → supervisor →
+   * The read-only dry run, backed by the hub's `probe`: Access → passkey → registry → supervisor →
    * device mutex → Modbus over WireGuard → the DSE, using FC3 READS ONLY. There is no code path
    * from here to a control-key write, and the verdict comes from the same `gateStart()` the real
    * request path uses — which is the only reason a UI may use it as a gate.
@@ -213,56 +214,51 @@ export class DeepSeaControlCapability implements ControlCapability {
    * Stop" are both things the user asked to be told; turning either into a 500 would hide the one
    * fact they opened the dialog for. Only a resolution failure (wrong point, no owner, no passkey)
    * propagates, because that is a configuration bug rather than a state report.
+   *
+   * 🛑 `ctx.value` is IGNORED, and that is not an oversight. A probe asks about the moment: the only
+   * length-sensitive term in a start decision is the hub's cap, and the cap comes back in the answer
+   * (`maxRuntimeSec`) for the caller to size its own offer against. Proposing a length and asking
+   * whether it fits would put a number in the hub's verdict that nobody asked about — and a verdict
+   * this app renders verbatim has no room for one. The generic seam keeps `value` for a vendor whose
+   * answer genuinely depends on the command.
    */
   async preflight(
     ctx: ControlPreflightContext,
   ): Promise<ControlPreflightResult> {
     const { siteId, passkey } = await resolveTarget(ctx);
 
-    // The minutes the caller is considering. 0 ("stop") is not a start decision at all, so probe
-    // the hub's default rather than asking "would a 0-second run be accepted".
-    const minutes = ctx.value;
-    const runtimeSec =
-      typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
-        ? Math.round(minutes * 60) // ← the same unit seam as invoke()
-        : undefined;
-
-    let noop: HubNoopResult;
+    let probe: HubProbeResult;
     try {
-      noop = await hubNoop(siteId, passkey, runtimeSec);
+      probe = await hubProbe(siteId, passkey);
     } catch (e) {
-      // Includes the hub's own "device unreachable: … a real run would refuse too" sentence, which
-      // `call()` preserves out of the 503 body's `verdict`.
+      // Includes the hub's own "The hub could not read the controller: … — a run would be refused
+      // too." sentence, which `call()` preserves out of the 503 body's `verdict`.
       return {
         ok: false,
         verdict:
           e instanceof Error
             ? e.message
-            : "the generator hub could not be reached",
+            : "The generator hub could not be reached.",
       };
     }
 
+    const { ok, wouldStart, verdict, verdictMessage, ...state } = probe;
     return {
-      ok: noop.ok,
-      wouldProceed: noop.wouldStart,
-      verdict: noop.verdict,
-      // Passed through, never synthesised here: when the hub sends a template it is because the
-      // sentence names an instant only the reader can spell. An older hub sends none and the flat
-      // `verdict` stands on its own.
-      verdictMessage: noop.verdictMessage,
-      checks: preflightChecks(noop),
-      // The hub's live `ControlStatus` — including `state`, which is `RunSupervisor.state()`, the
-      // SAME call that produces the pushed `source.generator.control.status/state` point. The panel
-      // mode rides along because reading that state into words needs it: `describeGeneratorState`
-      // uses it to tell an ARMED idle generator from a LOCKED OUT one. Together they let a caller
-      // re-derive the whole status sentence from this probe, which is a live read, rather than from
-      // a pushed value that may be a poll behind.
-      detail: noop.controlStatus
-        ? {
-            ...noop.controlStatus,
-            panelMode: noop.preflight?.ownership.modeName ?? null,
-          }
-        : null,
+      ok,
+      wouldProceed: wouldStart,
+      // 🛑 Passed through, never rewritten — acceptance and refusal alike. The hub decided; it also
+      // said why, in words meant for a reader. `verdictMessage` rides along for the one sentence
+      // that names an instant, which only the browser can spell in the reader's own clock.
+      verdict,
+      verdictMessage,
+      checks: probeChecks(probe),
+      // Everything the probe read, flat: the controller as of a live FC3 read, plus the hub's own
+      // bookkeeping. `state` here is `RunSupervisor.state()` — the SAME call that produces the
+      // pushed `source.generator.control.status/state` point, which is what lets a caller re-derive
+      // the whole status sentence from this live read rather than from a push that may be a poll
+      // behind. `modeName` is the panel mode that reading takes to tell an ARMED idle generator
+      // from a LOCKED OUT one.
+      detail: state,
     };
   }
 }

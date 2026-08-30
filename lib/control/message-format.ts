@@ -3,9 +3,9 @@
  *
  * ## The problem
  *
- * The usher hub writes sentences that are read by a human in a browser ("a run is already latched
- * (stop at 2026-08-29T14:03:38.346Z); a request would EXTEND it"). The words are the hub's, and the
- * control dialog renders a refusal VERBATIM on purpose — it must never form a second opinion about
+ * The usher hub writes sentences that are read by a human in a browser ("Already running until
+ * 2026-08-29T14:03:38.346Z — starting again would extend the run."). The words are the hub's, and
+ * the control dialog renders them VERBATIM on purpose — it must never form a second opinion about
  * whether a start is safe. But an instant is not words. The hub has no locale and no timezone to
  * render one in, so it emitted ISO-8601, and the user read `...T14:03:38.346Z` in a dialog.
  *
@@ -15,7 +15,7 @@
  * locale and zone — turns it into words:
  *
  *   {
- *     template: "a run is already latched (stop at {stopAt, time, short}); a request would EXTEND it",
+ *     template: "Already running until {stopAt, time, short} — starting again would extend the run.",
  *     values:   { stopAt: "2026-08-29T14:03:38.346Z" }
  *   }
  *

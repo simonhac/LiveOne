@@ -75,8 +75,13 @@ export default function CommandActivityLog({
     <div className="pt-1">
       {/* Heading and "Show more" share one line, and the list below it is a single row. Three lines
           of history was what tipped this dialog past a phone screen, and the trail itself is one
-          tap away — the peek only has to answer "did my last press land?". */}
-      <div className="mb-1 flex items-center justify-between gap-2">
+          tap away — the peek only has to answer "did my last press land?".
+
+          🛑 `min-h-7` holds the row at the height of the `h-7` button whether or not the button is
+          there. It is absent twice — while the fetch is in flight, and forever when there is no
+          history behind it — and without this the row was 20px in both cases and 28px otherwise,
+          so the button's arrival shoved the dialog. */}
+      <div className="mb-1 flex min-h-7 items-center justify-between gap-2">
         <div className="flex items-center gap-1 text-sm text-gray-400">
           Last activity
           {log.isLoading && (
@@ -96,7 +101,7 @@ export default function CommandActivityLog({
         )}
       </div>
 
-      {!log.isLoading && <EntryList entries={entries} />}
+      {log.isLoading ? <PeekSkeleton /> : <EntryList entries={entries} />}
 
       <AllActivityDialog
         pt={pt}
@@ -165,6 +170,37 @@ function AllActivityDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The peek at its FINAL height, before the fetch answers.
+ *
+ * It used to render nothing at all, so the dialog grew by a row the moment the log landed — and
+ * this dialog is centre-anchored, so growing moves the title and the Start button too, right as
+ * the open animation finishes and the reader is looking at them.
+ *
+ * ONE row, because `INLINE_LOG_LIMIT` is 1 (lib/queries/commands.ts). Move that constant and this
+ * must move with it, or the jump comes back. `h-4` is the 16px line box a `text-xs` row occupies —
+ * taken from the line box and not from the pulse bars inside, which are shorter.
+ *
+ * 🛑 A LONG sentence still wraps to two lines and will still shift the dialog by 16px. That is a
+ * deliberate trade, not an oversight: reserving two lines would cost every ordinary one-line entry
+ * ("You ran the generator for 5 min") a permanent blank line on a dialog that was sized to fit a
+ * phone, and clamping would truncate the one sentence a reader is looking for right after a press.
+ */
+function PeekSkeleton() {
+  return (
+    <ul
+      aria-busy="true"
+      aria-label="Reading the activity log"
+      className="mt-2 space-y-1.5 text-xs"
+    >
+      <li className="flex h-4 items-center gap-2">
+        <span className="block h-3 w-12 shrink-0 animate-pulse rounded bg-gray-700/70" />
+        <span className="block h-3 w-40 animate-pulse rounded bg-gray-700/70" />
+      </li>
+    </ul>
   );
 }
 

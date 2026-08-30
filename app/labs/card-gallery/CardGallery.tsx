@@ -669,7 +669,7 @@ function GeneratorDialogSection({
     "checking (skeleton)",
     "refused: panel not in Auto",
     "refused: engine already running",
-    "already latched (ISO instant)",
+    "already running (ISO instant)",
     "hub unreachable",
     "no control passkey",
   ];
@@ -690,21 +690,21 @@ function GeneratorDialogSection({
       <p className="text-xs text-gray-500 mb-3">
         Every hub answer, without hardware. &ldquo;checking&rdquo; holds the
         preflight open so the engine-check skeleton can be inspected — the box
-        must not change height when it resolves. &ldquo;already latched&rdquo;
+        must not change height when it resolves. &ldquo;already running&rdquo;
         is the ICU case: the hub sends both a flat sentence carrying an ISO
         instant and a template, and the dialog must show a local time either
         way. Start writes nothing; the action route is stubbed too.
       </p>
       {/*
         TWO axes, because the dialog genuinely has two sources and they can disagree.
-        The engine state used to be DERIVED from the hub answer ("already latched" ⇒ running, else
+        The engine state used to be DERIVED from the hub answer ("already running" ⇒ running, else
         idle), which meant you could not tell what you were about to get and could not reach the
         combinations that matter most.
 
         🛑 The interesting picks are the MISMATCHED ones. `latest` is a pushed point up to a poll
         old; the preflight is a live Modbus read. When they disagree the dialog prefers the probe
         (see `useProbe` in GeneratorControlDialog) — so "engine: auto (armed)" + "hub: already
-        latched" is the tile-says-stopped-but-it-is-running case, and choosing it here is the only
+        running" is the tile-says-stopped-but-it-is-running case, and choosing it here is the only
         way to see that precedence actually holds.
       */}
       <p className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">

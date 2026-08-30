@@ -36,12 +36,13 @@ interface PreflightBody {
   verdict: string;
   verdictMessage?: StructuredMessage;
   checks?: { label: string; value: string; ok: boolean | null }[];
+  /** Flat, as `DeepSeaControlCapability.preflight` passes the hub's probe through. */
   detail?: {
     maxRuntimeSec?: number;
     latched?: boolean;
     stopAt?: string | null;
     state?: string;
-    panelMode?: string | null;
+    modeName?: string | null;
   } | null;
 }
 
@@ -71,15 +72,19 @@ export type ControlScenarioName =
   | "checking (skeleton)"
   | "refused: panel not in Auto"
   | "refused: engine already running"
-  | "already latched (ISO instant)"
+  | "already running (ISO instant)"
   | "hub unreachable"
   | "no control passkey";
 
 /**
  * The canned preflight per scenario.
  *
- * "already latched" is the one that motivated the ICU work: the hub's sentence names a deadline, and
- * before the change it reached the reader as `stop at 2026-08-29T14:03:38.346Z`. Both forms are sent
+ * 🛑 Every `verdict` here is copied from `RunSupervisor.probe()` (packages/usher/core/control.ts),
+ * because the dialog renders them VERBATIM. A sentence invented in this file would make the gallery
+ * a review of copy that does not exist.
+ *
+ * "already running" is the one that motivated the ICU work: the hub's sentence names a deadline, and
+ * before the change it reached the reader as `until 2026-08-29T14:03:38.346Z`. Both forms are sent
  * here — the flat `verdict` with its ISO (what an older hub sends) and the `verdictMessage`
  * template — so the gallery shows that the dialog prefers the template and that the fallback still
  * localizes the flat one.
@@ -90,16 +95,16 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
       return {
         ok: true,
         wouldProceed: true,
-        verdict: "a 60s run would START now",
+        verdict: "Ready to start",
         checks: HAPPY_CHECKS,
         detail: {
           maxRuntimeSec: MAX_RUNTIME_SEC,
           latched: false,
           stopAt: null,
-          // `state` + `panelMode` are what let the dialog re-derive its header sentence from the
+          // `state` + `modeName` are what let the dialog re-derive its header sentence from the
           // PROBE rather than from the pushed point — so the gallery exercises that path too.
           state: "idle",
-          panelMode: "Auto",
+          modeName: "Auto",
         },
       };
 
@@ -108,7 +113,7 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
         ok: true,
         wouldProceed: false,
         verdict:
-          "a run would be REFUSED: module is not in Auto (mode=Stop) — possible local lockout; not overridable remotely",
+          "A run would be refused: the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely",
         checks: [
           { label: "Panel mode", value: "Stop", ok: false },
           ...HAPPY_CHECKS.slice(1),
@@ -120,7 +125,7 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
           // Idle + a panel out of Auto is LOCKED OUT, not armed — the probe carries both facts, so
           // the header says so without waiting for the pushed mode point.
           state: "idle",
-          panelMode: "Stop",
+          modeName: "Stop",
         },
       };
 
@@ -129,7 +134,7 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
         ok: true,
         wouldProceed: false,
         verdict:
-          "a run would be REFUSED: engine is already running, commanded by the remote start input",
+          "A run would be refused: the engine is already running, commanded by the SP-PRO (remote-start input closed)",
         checks: [
           HAPPY_CHECKS[0],
           { label: "Engine", value: "running", ok: false },
@@ -144,20 +149,20 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
           latched: false,
           stopAt: null,
           state: "running:sp-pro",
-          panelMode: "Auto",
+          modeName: "Auto",
         },
       };
 
-    case "already latched (ISO instant)": {
+    case "already running (ISO instant)": {
       const stopAt = stopAtIso(23);
       return {
         ok: true,
         wouldProceed: false,
         // The flat leg keeps the ISO on purpose — this is what an older hub sends.
-        verdict: `a run is already latched (stop at ${stopAt}); a request would EXTEND it`,
+        verdict: `Already running until ${stopAt} — starting again would extend the run.`,
         verdictMessage: {
           template:
-            "a run is already latched (stop at {stopAt, time, short}); a request would EXTEND it",
+            "Already running until {stopAt, time, short} — starting again would extend the run.",
           values: { stopAt },
         },
         checks: HAPPY_CHECKS,
@@ -166,7 +171,7 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
           latched: true,
           stopAt,
           state: "running:hub",
-          panelMode: "Auto",
+          modeName: "Auto",
         },
       };
     }
@@ -175,7 +180,7 @@ export function preflightFor(scenario: ControlScenarioName): PreflightBody {
       return {
         ok: false,
         verdict:
-          "device unreachable: connect ETIMEDOUT 10.0.1.244:502 — the hub could not read the controller, so a real run would refuse too",
+          "The hub could not read the controller: connect ETIMEDOUT 10.0.1.244:502 — a run would be refused too.",
       };
 
     case "no control passkey":

@@ -232,13 +232,15 @@ describe("formatCommandEntry", () => {
       ).toBe("‘Low battery’ ran the generator for 30\u00A0min");
     });
 
-    it("🛑 passes the hub's own decline through verbatim — it is already a sentence", () => {
+    it("🛑 passes the hub's own decline through verbatim — it is already a clause", () => {
+      // `gateStart()` writes it lower-case and unpunctuated precisely so it can be embedded here
+      // after "but" AND stand alone in the probe's verdict, without either surface rewriting it.
       const reason =
-        "module is not in Auto (mode=Stop) — possible local lockout; not overridable remotely";
+        "the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely";
       expect(
         formatCommandEntry(gen({ status: "rejected", reason }), NOW),
       ).toMatchObject({
-        sentence: `You asked to run the generator for 30\u00A0min, but ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`,
+        sentence: `You asked to run the generator for 30\u00A0min, but ${reason}`,
         tone: "benign",
       });
     });

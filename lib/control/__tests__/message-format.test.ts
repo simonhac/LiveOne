@@ -22,20 +22,20 @@ const STOP_AT = "2026-08-29T14:03:38.346Z";
 
 describe("localizeInstants", () => {
   it("replaces the instant and leaves every other character alone", () => {
-    const sentence = `a run is already latched (stop at ${STOP_AT}); a request would EXTEND it`;
+    const sentence = `Already running until ${STOP_AT} — starting again would extend the run.`;
     const out = localizeInstants(sentence);
     expect(out).toBe(
-      `a run is already latched (stop at ${expected(STOP_AT)}); a request would EXTEND it`,
+      `Already running until ${expected(STOP_AT)} — starting again would extend the run.`,
     );
     // The hub's own words, punctuation and case survive byte-for-byte.
-    expect(out.startsWith("a run is already latched (stop at ")).toBe(true);
-    expect(out.endsWith("); a request would EXTEND it")).toBe(true);
+    expect(out.startsWith("Already running until ")).toBe(true);
+    expect(out.endsWith(" — starting again would extend the run.")).toBe(true);
     expect(out).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
   it("returns a sentence with no instant unchanged", () => {
     const s =
-      "module is not in Auto (mode=Stop) — possible local lockout; not overridable remotely";
+      "the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely";
     expect(localizeInstants(s)).toBe(s);
   });
 
@@ -67,11 +67,11 @@ describe("renderMessage", () => {
     expect(
       renderMessage({
         template:
-          "a run is already latched (stop at {stopAt, time, short}); a request would EXTEND it",
+          "Already running until {stopAt, time, short} — starting again would extend the run.",
         values: { stopAt: STOP_AT },
       }),
     ).toBe(
-      `a run is already latched (stop at ${expected(STOP_AT)}); a request would EXTEND it`,
+      `Already running until ${expected(STOP_AT)} — starting again would extend the run.`,
     );
   });
 
@@ -87,10 +87,10 @@ describe("renderMessage", () => {
   it("interpolates a bare {name}", () => {
     expect(
       renderMessage({
-        template: "a {runtime}s run would START now",
-        values: { runtime: 60 },
+        template: "a {runtime}s run is longer than this generator's limit",
+        values: { runtime: 3660 },
       }),
-    ).toBe("a 60s run would START now");
+    ).toBe("a 3660s run is longer than this generator's limit");
   });
 
   it("leaves an unsupplied slot visible rather than writing 'undefined'", () => {

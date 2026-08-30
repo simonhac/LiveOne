@@ -303,15 +303,31 @@ describe("RunSupervisor", () => {
     });
   });
 
-  describe("noop — the safe end-to-end probe", () => {
+  describe("probe — the safe end-to-end read", () => {
     it("writes NOTHING and reports that a run would start", async () => {
-      const r = await sup.noop(120);
+      const r = await sup.probe();
       expect(r.ok).toBe(true);
       expect(r.wouldStart).toBe(true);
-      expect(r.verdict).toContain("would START");
+      expect(r.verdict).toBe("Ready to start");
       expect(target.starts).toBe(0);
       expect(target.stops).toBe(0); // the whole point
-      expect(r.preflight?.scfSupported.telemetryStart).toBe(true);
+      expect(r.scfSupported?.telemetryStart).toBe(true);
+    });
+
+    it("names no run length, and reports the cap a caller sizes against", async () => {
+      // The probe asks about the MOMENT. It used to default to a 60 s run nobody had proposed and
+      // then say so, which is what forced the browser to write its own sentence.
+      const r = await sup.probe();
+      expect(r.verdict).not.toMatch(/\d+\s*s\b/);
+      expect(r.maxRuntimeSec).toBe(CONFIG.maxRuntimeSec);
+    });
+
+    it("answers as ONE flat object — device read and supervisor state side by side", async () => {
+      const r = await sup.probe();
+      expect(r.modeName).toBe("Auto"); // read fresh off the controller
+      expect(r.running).toBe(false);
+      expect(r.latched).toBe(false); // the supervisor's own, in memory
+      expect(r.state).toBe("idle");
     });
 
     it("predicts the SAME refusal the real request path gives (shared gate)", async () => {
@@ -321,32 +337,43 @@ describe("RunSupervisor", () => {
         remoteStartInput: "open",
         running: false,
       };
-      const probe = await sup.noop(120);
+      const probe = await sup.probe();
       const real = await sup.request(120);
       expect(probe.wouldStart).toBe(false);
-      expect(probe.verdict).toContain("not in Auto");
-      expect(real.reason).toContain("not in Auto"); // same wording, one implementation
+      expect(probe.verdict).toBe(
+        "A run would be refused: the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely",
+      );
+      // Same clause, one implementation — and lower-case, because the activity log embeds it
+      // after "but".
+      expect(real.reason).toBe(
+        "the module is not in Auto (mode=Stop) — a possible local lockout at the panel, and not overridable remotely",
+      );
       expect(target.starts).toBe(0);
     });
 
-    it("flags an over-max hypothetical runtime without touching the device state", async () => {
-      const r = await sup.noop(CONFIG.maxRuntimeSec + 1);
-      expect(r.wouldStart).toBe(false);
-      expect(r.verdict).toContain(String(CONFIG.maxRuntimeSec));
-    });
-
-    it("reports an unreachable device as a 503, exactly as a real run would refuse", async () => {
+    it("reports an unreadable controller as not-ok, still carrying our own state", async () => {
       target.ownershipError = new Error("connect ETIMEDOUT");
-      const r = await sup.noop();
-      expect(r.status).toBe(503);
-      expect(r.verdict).toContain("unreachable");
+      const r = await sup.probe();
+      expect(r.ok).toBe(false);
+      expect(r.verdict).toBe(
+        "The hub could not read the controller: connect ETIMEDOUT — a run would be refused too.",
+      );
+      // The device half is gone; the supervisor half is knowable regardless and must survive.
+      expect(r.modeName).toBeUndefined();
+      expect(r.latched).toBe(false);
+      expect(r.maxRuntimeSec).toBe(CONFIG.maxRuntimeSec);
     });
 
-    it("says a latched run would be EXTENDED rather than started", async () => {
+    it("says a run in progress would be extended rather than started", async () => {
       await sup.request(600);
-      const r = await sup.noop(120);
-      expect(r.verdict).toContain("EXTEND");
+      const r = await sup.probe();
       expect(r.wouldStart).toBe(false);
+      expect(r.verdict).toMatch(
+        /^Already running until .+ — starting again would extend the run\.$/,
+      );
+      expect(r.verdictMessage?.template).toBe(
+        "Already running until {stopAt, time, short} — starting again would extend the run.",
+      );
     });
 
     it("warns when the module does not advertise the stop function", async () => {
@@ -355,7 +382,7 @@ describe("RunSupervisor", () => {
         telemetryStart: true,
         telemetryCancel: false,
       };
-      const r = await sup.noop(120);
+      const r = await sup.probe();
       expect(r.wouldStart).toBe(false);
       expect(r.verdict).toContain("could not be stopped");
     });

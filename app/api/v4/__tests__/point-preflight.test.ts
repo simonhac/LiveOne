@@ -65,7 +65,7 @@ const pointRow = {
 const OK_RESULT = {
   ok: true,
   wouldProceed: true,
-  verdict: "a 1800s run would START now",
+  verdict: "Ready to start",
   checks: [{ label: "Panel mode", value: "Auto", ok: true }],
   detail: { maxRuntimeSec: 7200 },
 };
@@ -176,7 +176,7 @@ describe("the probe", () => {
     preflight.mockResolvedValue({
       ok: false,
       verdict:
-        "device unreachable: timeout — the hub could not read the controller, so a real run would refuse too",
+        "The hub could not read the controller: timeout — a run would be refused too.",
     });
     const res = await call({});
     expect(res.status).toBe(200);

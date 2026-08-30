@@ -165,19 +165,26 @@ device is read-only, permanently and structurally.
 
 Only for sources with a `control` block; only musher implements it.
 
-**Start with `noop`.** It runs the entire chain — Access → passkey → registry → supervisor →
-device mutex → Modbus over WireGuard → the DSE — and reports exactly what a real run would decide,
-using the same gate function, while issuing **FC3 reads only**. There is no code path from the noop
-handler to `writeControlKey`. Use it after every deploy, and before any run you're unsure about.
+**Start with `probe`.** It runs the entire chain — Access → passkey → registry → supervisor →
+device mutex → Modbus over WireGuard → the DSE — and reports what a real run would decide, using the
+same gate function, while issuing **FC3 reads only**. There is no code path from the probe handler to
+`writeControlKey`. Use it after every deploy, and before any run you're unsure about.
+
+It takes no arguments: a probe asks about the moment, not about a length of run. The only cap a run
+is measured against comes back in the answer as `maxRuntimeSec`.
 
 ```bash
-curl -X POST https://usher.liveone.energy/api/usher/control/sheephouse/noop \
+curl -X POST https://usher.liveone.energy/api/usher/control/sheephouse/probe \
   -H "CF-Access-Client-Id: $CF_ID" -H "CF-Access-Client-Secret: $CF_SECRET" \
   -H "x-usher-passkey: …"
-# → { wouldStart: true, verdict: "a 60s run would START now",
-#     preflight: { ownership: { modeName: "Auto", remoteStartInput: "open", running: false },
-#                  scfSupported: { telemetryStart: true, telemetryCancel: true } } }
+# → { ok: true, wouldStart: true, verdict: "Ready to start",
+#     modeName: "Auto", remoteStartInput: "open", running: false,
+#     scfSupported: { telemetryStart: true, telemetryCancel: true },
+#     latched: false, state: "idle", stopAt: null, maxRuntimeSec: 21600 }
 ```
+
+The `verdict` is a sentence written to be read by a person, and LiveOne renders it verbatim — see
+[docs/architecture.md § Remote control](docs/architecture.md#remote-control-musher-only-the-hub-holds-the-latch).
 
 ```bash
 # start a 3-minute supervised run (runtimeSec: 0 stops)
@@ -185,6 +192,10 @@ curl -X POST https://usher.liveone.energy/api/usher/control/sheephouse/run \
   -H "CF-Access-Client-Id: $CF_ID" -H "CF-Access-Client-Secret: $CF_SECRET" \
   -H 'content-type: application/json' \
   -d '{"passkey": "…", "runtimeSec": 180}'
+
+# …and `overrideRemoteStart: true` to layer our latch on top of a run the SP-PRO is already
+# commanding. Ops-only, and rarely what you want: our stop can then release only OUR latch, never
+# theirs, so the engine keeps running until the inverter's own request clears.
 
 # status
 curl https://usher.liveone.energy/api/usher/control/sheephouse/run \
@@ -200,7 +211,7 @@ before touching this; the invariants there are load-bearing, not stylistic.
 
 Notable responses: **409** the module is not in Auto (possible local lockout at the panel) or the
 engine is already running under someone else's command; **400** over `maxRuntimeSec`; **503** the
-passkey secret is missing on the hub.
+passkey secret is missing on the hub, or the controller could not be read.
 
 ## Deploy
 
