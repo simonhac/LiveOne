@@ -71,6 +71,28 @@ describe("tickOnce", () => {
     expect(captured.readings).toHaveLength(1);
   });
 
+  it("reports deliveryActive separately when the source distinguishes them", async () => {
+    // musher's shape: `isRunning` stays true through a diagnostic post-run hold so the LOCAL
+    // journal keeps sampling finely, while delivery follows the engine. Before the two were split
+    // that hold pushed active-rate data to LiveOne for an hour after every run.
+    const { entry } = makeEntry(async () => ({ x: 0 }));
+    (entry.source as { isRunning: (v: Values) => boolean }).isRunning = () =>
+      true; // the hold
+    (
+      entry.source as unknown as { isDeliveryActive: (v: Values) => boolean }
+    ).isDeliveryActive = (v) => Number(v.x ?? 0) > 0;
+    const r = await tickOnce(entry, () => {});
+    expect(r.active).toBe(true); // poll cadence stays fast
+    expect(r.deliveryActive).toBe(false); // push cadence goes back to idle
+  });
+
+  it("defaults deliveryActive to active when the source says nothing", async () => {
+    const { entry } = makeEntry(async () => ({ x: 5 }));
+    const r = await tickOnce(entry, () => {});
+    expect(r.active).toBe(true);
+    expect(r.deliveryActive).toBe(true);
+  });
+
   it("reports NOT active when the running signal is zero (still pushes the 0)", async () => {
     const { entry, captured } = makeEntry(async () => ({ x: 0 }));
     const r = await tickOnce(entry, () => {});
@@ -307,6 +329,47 @@ describe("shouldDeliverTick", () => {
 
   it("holds a tick that is not due", () => {
     expect(shouldDeliverTick(base)).toBe(false);
+  });
+
+  describe("tolerance — the one-tick overshoot", () => {
+    // Measured on prod 2026-08-30: a 60s push cadence on a 15s poll delivered every 75s, and a
+    // 300s one every 315s, because `sinceDeliveredMs` is measured from the END of the previous
+    // delivery (a second or two past its tick boundary) while ticks arrive ON the boundary.
+    const TICK = 15_000;
+    const tol = { toleranceMs: TICK / 2 };
+
+    it("delivers on the due tick despite the read+push cost of the last one", () => {
+      // The tick that SHOULD deliver arrives 1.8s short of the nominal period.
+      expect(
+        shouldDeliverTick({ ...base, ...tol, sinceDeliveredMs: 298_200 }),
+      ).toBe(true);
+      expect(
+        shouldDeliverTick({
+          ...base,
+          ...tol,
+          active: true,
+          sinceDeliveredMs: 58_200,
+        }),
+      ).toBe(true);
+    });
+
+    it("never delivers a whole tick early", () => {
+      // Half a period of slack is by construction less than the gap to the previous tick, so the
+      // tick BEFORE the due one is still refused.
+      expect(
+        shouldDeliverTick({
+          ...base,
+          ...tol,
+          sinceDeliveredMs: 300_000 - TICK - 1_800,
+        }),
+      ).toBe(false);
+    });
+
+    it("is opt-in: without a tolerance the comparison is exact, as before", () => {
+      expect(shouldDeliverTick({ ...base, sinceDeliveredMs: 298_200 })).toBe(
+        false,
+      );
+    });
   });
 
   it("delivers once the idle push period has elapsed", () => {

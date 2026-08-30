@@ -31,6 +31,13 @@ sources:
   # change in the running flag and closed by a hard 3-minute ceiling (TRANSITION_MS in
   # core/control.ts), so nothing can hold it open: a bracket is ~36 pushes, a run is ~2 brackets,
   # and the idle cadence below is untouched. Set transitionSec: 0 to switch the bracket off.
+  #
+  # These periods are now HONOURED rather than approximated (2026-08-30). Two things used to inflate
+  # them, both measured on prod: the due tick was compared against the wall time at the END of the
+  # last delivery, so every period landed one poll late (60 s → 75 s, 300 s → 315 s), and the
+  # diagnostic post-run hold (MUSHER_DIAG_POSTRUN_SECONDS, an hour) drove the PUSH cadence as well
+  # as the poll — so a run was followed by an hour of active-rate deliveries of a flat zero. The
+  # hold now sets the local sampling rate only, which is what it was always meant to mean.
   - type: deepsea
     siteId: sheephouse
     apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)

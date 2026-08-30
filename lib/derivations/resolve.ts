@@ -62,6 +62,11 @@ export interface RunDetectorParams {
 export interface RunDetectorSourcePoints {
   signal: string;
   energy?: string | null;
+  /**
+   * Optional CONTROL point whose edges cut runs apart (`DetectConfig.boundaryEventsMs`) — for the
+   * generator, the hub's commanded-run point. Absent = detection behaves exactly as before.
+   */
+  boundary?: string | null;
 }
 
 /** `derivations.params` for kind='hws-model'. Sparse overrides on the model constants. */
@@ -95,6 +100,8 @@ export interface ResolvedRunDetector {
    */
   signalUnit: string | null;
   energyPoint: PointId | null;
+  /** Control point whose edges force a run boundary (see RunDetectorSourcePoints.boundary). */
+  boundaryPoint: PointId | null;
   detect: DetectConfig;
   detectorVersion: number;
   timezoneOffsetMin: number;
@@ -194,6 +201,7 @@ function resolveRunDetector(
     signalPoint: Point.encode(src.signal),
     signalUnit: null, // filled by attachSignalUnits — one batched read for the whole result set
     energyPoint: src.energy ? Point.encode(src.energy) : null,
+    boundaryPoint: src.boundary ? Point.encode(src.boundary) : null,
     detect: mergeDetectConfig(params, row.role),
     detectorVersion: row.detectorVersion,
     timezoneOffsetMin: area.tzOffset,

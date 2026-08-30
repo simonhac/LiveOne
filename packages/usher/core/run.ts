@@ -95,8 +95,10 @@ export interface TickResult {
   siteId: string;
   /** readings COLLECTED this tick (0 = all n/a), or null on read error — see `delivered` */
   count: number | null;
-  /** whether the source reported itself "running"/active this tick */
+  /** whether the source reported itself "running"/active this tick — drives the POLL cadence */
   active: boolean;
+  /** the same question for delivery (see Source.isDeliveryActive); defaults to `active` */
+  deliveryActive: boolean;
   /** ISO time of the tick */
   at: string;
   /**
@@ -173,6 +175,7 @@ export async function tickOnce(
   const supervisor = entry.supervisor ?? null;
   let readings: ReturnType<typeof buildReadings>;
   let active = false;
+  let deliveryActive = false;
   let readError: string | undefined;
   try {
     const values = await withTimeout(
@@ -184,6 +187,7 @@ export async function tickOnce(
     // input A can keep the engine running; only observation tells the two apart).
     supervisor?.observeValues(values);
     active = source.isRunning?.(values) ?? false;
+    deliveryActive = source.isDeliveryActive?.(values) ?? active;
     readings = buildReadings(source.manifest, values);
   } catch (e) {
     readError = e instanceof Error ? e.message : String(e);
@@ -195,7 +199,13 @@ export async function tickOnce(
       /* best-effort */
     }
     if (!supervisor)
-      return { ...base, count: null, active: false, error: readError };
+      return {
+        ...base,
+        count: null,
+        active: false,
+        deliveryActive: false,
+        error: readError,
+      };
     readings = []; // fall through: the control-plane points below still get delivered
   }
 
@@ -214,6 +224,7 @@ export async function tickOnce(
       ...base,
       count: null as null,
       active: false,
+      deliveryActive: false,
       error: readError,
     };
     if (!shouldDeliver(false)) return { ...result, delivered: false };
@@ -226,15 +237,21 @@ export async function tickOnce(
 
   if (readings.length === 0) {
     log(`[${source.name}] no readings this tick (all n/a)`);
-    return { ...base, count: 0, active };
+    return { ...base, count: 0, active, deliveryActive };
   }
 
   // Poll-only tick: the device was read (and the source journalled whatever it journals), but the
   // push cadence says this one isn't delivered. Return before the blackbox so the flight recorder
   // stays a record of DELIVERIES — otherwise a fast poll cadence would inflate it just as much as
   // it would inflate the receiver, which is the thing we are avoiding.
-  if (!shouldDeliver(active)) {
-    return { ...base, count: readings.length, active, delivered: false };
+  if (!shouldDeliver(deliveryActive)) {
+    return {
+      ...base,
+      count: readings.length,
+      active,
+      deliveryActive,
+      delivered: false,
+    };
   }
 
   // Journal BEFORE pushing — the blackbox records what was collected, not what was delivered.
@@ -267,6 +284,7 @@ export async function tickOnce(
     ...base,
     count: readings.length,
     active,
+    deliveryActive,
     delivered: true,
     pushOk: outcome === "ok",
     spooled,
@@ -308,13 +326,25 @@ export function shouldDeliverTick(input: {
   sinceDeliveredMs: number;
   idlePushMs: number;
   activePushMs: number;
+  /**
+   * Slack on the "is it due yet" comparison, normally half a poll period.
+   *
+   * 🛑 Without it a push period that is an exact multiple of the poll period lands one whole tick
+   * late, every time. `sinceDeliveredMs` is measured from the END of the previous delivery (after
+   * the read and the push, ~1–2 s past its tick boundary) while ticks arrive ON the boundary, so
+   * the due tick is always a second or two short and delivery slips to the next one: a 60 s push
+   * cadence on a 15 s poll delivered every 75 s, and a 300 s one every 315 s. Half a period is
+   * comfortably more than any plausible tick cost and comfortably less than a whole tick, so it
+   * corrects the slip without ever delivering a tick early.
+   */
+  toleranceMs?: number;
 }): boolean {
   if (input.wasActive !== undefined && input.active !== input.wasActive)
     return true;
   if (input.controlVersion !== input.lastControlVersion) return true;
   if (input.inTransition) return true;
   const dueMs = input.active ? input.activePushMs : input.idlePushMs;
-  return input.sinceDeliveredMs >= dueMs;
+  return input.sinceDeliveredMs >= dueMs - (input.toleranceMs ?? 0);
 }
 
 /** Run one scheduled entry's independent loop forever: tick → wait its own period → repeat. */
@@ -359,13 +389,19 @@ async function runEntryLoop(
         sinceDeliveredMs: Date.now() - lastDeliveredAt,
         idlePushMs,
         activePushMs,
+        // Half a poll period of slack — see `shouldDeliverTick`. Measured against the poll cadence
+        // that produced THIS tick, so it is always smaller than the gap to the next one.
+        toleranceMs: Math.floor((active ? activeMs : idleMs) / 2),
       }),
     );
     if (result.delivered) {
       lastDeliveredAt = Date.now();
       lastControlVersion = entry.supervisor?.stateVersion;
     }
-    if (result.count !== null) wasActive = result.active;
+    // 🛑 The DELIVERY sense, because `wasActive` exists to feed the edge test in
+    // `shouldDeliverTick` — comparing it against a differently-defined `active` would manufacture a
+    // phantom edge (and an extra push) at the moment musher's diagnostic hold expires.
+    if (result.count !== null) wasActive = result.deliveryActive;
     try {
       onTick?.(entry, result);
     } catch {

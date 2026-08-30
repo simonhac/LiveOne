@@ -161,11 +161,35 @@ function GeneratorTile({
     enabled: runsSystemId != null,
   });
 
+  /**
+   * The current run, asked for SEPARATELY from the period totals — and deliberately not through the
+   * query above.
+   *
+   * 🛑 That query follows the dashboard's temporal range, and on Month or Year the range ENDS
+   * before now. A run in progress falls outside its own window, `running` comes back false, and the
+   * tile silently loses the three things that describe the run happening right now: the "Since …"
+   * row, its energy and cost, and (via `runStartIso` below) the countdown clause under the hero.
+   * The hero still said "Running", so the tile disagreed with itself.
+   *
+   * A one-row paged read is the smallest question that always means "now" — the endpoint's paged
+   * mode is most-recent-first and carries the same `running` flag — and `modeKey` keys it apart from
+   * the range read, so the two coexist rather than evicting each other.
+   */
+  const { data: currentRuns } = useQuery({
+    ...runPeriodsQuery({
+      systemId: runsSystemId ?? 0,
+      role: "generator",
+      limit: 1,
+      offset: 0,
+    }),
+    enabled: runsSystemId != null,
+  });
+
   // The OPEN run, if there is one. `running` is the server's own open-period flag; the event it
   // points at carries the whole run — its start, and its energy/cost accumulated so far (the
   // minutely reconcile allocates an open run over [start, now], so this is live, not zero).
-  const openRun = runs?.running
-    ? (runs.events?.find((e) => e.running) ?? null)
+  const openRun = currentRuns?.running
+    ? (currentRuns.events?.find((e) => e.running) ?? null)
     : null;
   const openRunStart = openRun?.startTimeISO ?? null;
   const openRunFor = compactElapsed(openRunStart, nowMs);

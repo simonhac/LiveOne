@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { formatValue, formatValuePair } from "@/lib/energy-formatting";
 import { formatDateTime } from "@/lib/fe-date-format";
+import { formatPercent } from "@/lib/point/format-value";
 import JsonViewer from "@/components/JsonViewer";
 
 // Helper to format value with unit as JSX with proper styling
@@ -268,7 +269,7 @@ export default function TestConnectionModal({
                       <p className="text-lg font-semibold text-green-400">
                         {data.latest.batterySOC !== null &&
                         data.latest.batterySOC !== undefined
-                          ? `${data.latest.batterySOC.toFixed(1)}%`
+                          ? `${formatPercent(data.latest.batterySOC)}%`
                           : "—"}
                       </p>
                       <p className="text-xs text-gray-400">

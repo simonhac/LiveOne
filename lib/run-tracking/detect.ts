@@ -43,9 +43,26 @@ export interface DetectConfig {
    * duration; the end always falls back to the last on-sample (runs close on a gap, not an edge).
    */
   boundaryMode?: "edge" | "midpoint";
+  /**
+   * Times (epoch-ms, any order) at which the CONTROL signal changed — for a generator, the edges of
+   * the hub's commanded-run point. A run is cut at one of these rather than being bridged.
+   *
+   * Why this exists: `delayOffMs` is anti-flap, and it cannot tell a sensor blink from a deliberate
+   * stop-and-restart. On 2026-08-30 a commanded stop and a commanded restart 45 s apart (the engine
+   * genuinely off in between) were merged into one run by the 120 s deadband, so the tile reported
+   * a run that had just been started as already 3 minutes old and charged the new run's energy to
+   * the old one. The engine's own signal cannot resolve that — two identical off-gaps, one a blink
+   * and one a stop, look the same. The command does resolve it, which is why it is an input here.
+   *
+   * 🛑 An edge only splits across an off-gap — never between two consecutive on-samples. The DSE
+   * cools down for ~90 s AFTER the stop command, so the stop edge lands mid-run while the engine is
+   * still turning; splitting there would file the cool-down tail as a second run that nobody
+   * started. The tail belongs to the run that caused it; only the next start opens a new one.
+   */
+  boundaryEventsMs?: number[];
 }
 
-export type CloseReason = "gap" | null;
+export type CloseReason = "gap" | "boundary" | null;
 
 export interface DetectedPeriod {
   startMs: number;
@@ -124,7 +141,9 @@ function finalize(
  * Rules: a run opens on the first on-sample and stays open while on-samples keep arriving within
  * `delayOffMs` of each other (brief off/null samples within the gap are bridged). A sample (on,
  * off, or null) arriving more than `delayOffMs` after the last on-sample closes the run at that
- * last on-sample; an on-sample beyond the gap starts a new run. The final run is left open
+ * last on-sample; an on-sample beyond the gap starts a new run. An on-sample that resumes after an
+ * OFF stretch containing a control edge (`boundaryEventsMs`) also starts a new run, however short
+ * that stretch was. The final run is left open
  * (endMs = null) iff `now − lastOn ≤ delayOffMs`. Closed runs shorter than `delayOnMs` are
  * dropped (the open run is exempt). Metrics are over the raw on-sample values.
  */
@@ -139,11 +158,17 @@ export function detectRunPeriods(
   }
   const midpoint = cfg.boundaryMode === "midpoint";
   const rows = normalizeSamples(samples);
+  const boundaries = [...(cfg.boundaryEventsMs ?? [])].sort((a, b) => a - b);
+  const hasBoundaryIn = (afterMs: number, throughMs: number): boolean =>
+    boundaries.some((b) => b > afterMs && b <= throughMs);
 
   const periods: DetectedPeriod[] = [];
   let state = false; // latched on/off
   let run: OpenRun | null = null;
   let prevSampleMs: number | null = null; // for midpoint start boundary
+  // Has the signal actually been OFF since the last on-sample? The guard that keeps a control edge
+  // from splitting a continuously-running engine — see `boundaryEventsMs`.
+  let offSinceLastOn = false;
 
   for (const s of rows) {
     // Gap-close: any sample beyond delayOff from the last on-sample ends the open run.
@@ -151,6 +176,7 @@ export function detectRunPeriods(
       periods.push(finalize(run, run.lastOnMs, "gap"));
       run = null;
       state = false;
+      offSinceLastOn = false;
     }
 
     if (s.value === null) {
@@ -163,6 +189,12 @@ export function detectRunPeriods(
     state = on;
 
     if (on) {
+      // Boundary split: the engine stopped and started again inside the anti-flap window, and the
+      // control signal moved in that gap — so these are two runs however brief the gap was.
+      if (run && offSinceLastOn && hasBoundaryIn(run.lastOnMs, s.tMs)) {
+        periods.push(finalize(run, run.lastOnMs, "boundary"));
+        run = null;
+      }
       if (!run) {
         const startMs =
           midpoint && prevSampleMs != null ? (prevSampleMs + s.tMs) / 2 : s.tMs;
@@ -182,6 +214,9 @@ export function detectRunPeriods(
         if (s.value > run.max) run.max = s.value;
         if (s.value < run.min) run.min = s.value;
       }
+      offSinceLastOn = false;
+    } else {
+      offSinceLastOn = true;
     }
     // off-sample: leave the run open (delay_off bridging); the gap-close above will end it.
     prevSampleMs = s.tMs;

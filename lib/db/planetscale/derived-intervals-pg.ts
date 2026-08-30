@@ -73,6 +73,24 @@ async function readPointSeries(
 }
 
 /**
+ * The times a series CHANGED value — the edges of a control point, which is all the detector wants
+ * from it (a level says nothing a run boundary can be placed on; a transition does).
+ *
+ * Nulls are skipped rather than treated as a value, so a dropped reading in the middle of a latched
+ * run does not manufacture two edges out of nothing.
+ */
+function edgeTimes(samples: Sample[]): number[] {
+  const out: number[] = [];
+  let prev: number | null = null;
+  for (const s of samples) {
+    if (s.value === null) continue;
+    if (prev !== null && s.value !== prev) out.push(s.tMs);
+    prev = s.value;
+  }
+  return out;
+}
+
+/**
  * Recompute one detector's intervals over [winStartMs, winEndMs], "as of" nowMs. Bounded,
  * idempotent, and safe to re-run. Returns how many rows were deleted/inserted and whether the
  * window ends with an open (running-now) period.
@@ -124,6 +142,16 @@ export async function recomputeIntervalsForWindow(
       if (sEnd === null || sEnd >= winStartMs - det.detect.delayOffMs) {
         anchorMs = straddler.startTime.getTime();
       }
+      // 🛑 Re-anchoring is what makes a stored run absorb the next one when they are close
+      // together, so a boundary between them has to veto it — otherwise the detector's split is
+      // undone by the very stitch that exists to repair chunk edges. Cheap because it only runs
+      // when a straddler was found AND this detector has a control point.
+      if (anchorMs !== winStartMs && det.boundaryPoint && sEnd !== null) {
+        const between = edgeTimes(
+          await readPointSeries(tx, det.boundaryPoint, sEnd, winStartMs),
+        );
+        if (between.length > 0) anchorMs = winStartMs;
+      }
     }
 
     const readStartMs = anchorMs - det.detect.delayOffMs; // margin for the straddler's lead-in
@@ -154,6 +182,16 @@ export async function recomputeIntervalsForWindow(
       readEndMs,
     );
 
+    // The control point's edges, when this detector is bound to one — the times a run may be cut at
+    // even though the signal never stayed off long enough to close it (see `boundaryEventsMs`).
+    // Read over the SAME widened span as the signal, so a boundary in a straddler's lead-in is seen
+    // by the pass that rebuilds it.
+    const boundaryEventsMs = det.boundaryPoint
+      ? edgeTimes(
+          await readPointSeries(tx, det.boundaryPoint, readStartMs, readEndMs),
+        )
+      : undefined;
+
     const periods = detectRunPeriods(samples, {
       lowerW: det.detect.lowerW,
       upperW: det.detect.upperW,
@@ -162,6 +200,7 @@ export async function recomputeIntervalsForWindow(
       delayOffMs: det.detect.delayOffMs,
       nowMs,
       boundaryMode: det.detect.boundaryMode,
+      boundaryEventsMs,
     }).filter((p) => p.startMs >= anchorMs && p.startMs <= winEndMs);
 
     // Batched energy (one read for the whole window) — replaces the legacy per-event N+1.

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { loadAreaForOwner } from "@/lib/areas/http";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { derivations } from "@/lib/db/planetscale/schema";
+import { derivations, points } from "@/lib/db/planetscale/schema";
 import { derivationWire } from "@/lib/derivations/v4-shapes";
 import { Derivation } from "@/lib/ids";
 
@@ -25,6 +25,13 @@ import { Derivation } from "@/lib/ids";
  * correct handling was a deliberate, scoped recompute, not a config edit that quietly leaves a
  * mixed-provenance table behind. When that becomes routine it needs its own endpoint that also
  * schedules the rebuild; until then it stays a considered manual operation.
+ *
+ * The ONE exception carved out of that is `boundaryPointUid`, which sets `sourcePoints.boundary` —
+ * the control point whose edges cut runs apart (see `DetectConfig.boundaryEventsMs`). It is safe in
+ * exactly the way re-pointing `signal` is not: it does not change what the stored numbers MEASURE
+ * (no unit, no signal, no provenance moves), it only changes where two adjacent runs are divided.
+ * A recompute rewrites the affected rows into the same units they already had. Sending `null`
+ * clears it.
  *
  * `enabled` IS patchable and is the safe lever: a disabled derivation stops being recomputed and
  * stops advertising its capability, while its intervals stay exactly as they were.
@@ -57,6 +64,7 @@ export async function PATCH(
     enabled?: boolean;
     name?: string;
     params?: unknown;
+    sourcePoints?: unknown;
     updatedAt?: Date;
   } = {};
   if (body.enabled !== undefined) {
@@ -90,6 +98,42 @@ export async function PATCH(
       );
     patch.params = body.params;
   }
+  if (body.boundaryPointUid !== undefined) {
+    // Narrow by construction: this reads the CURRENT sourcePoints and replaces one key, so it can
+    // never re-point `signal` or `energy` no matter what the caller sends.
+    const uid = body.boundaryPointUid;
+    if (uid !== null && (typeof uid !== "string" || uid.trim() === ""))
+      return NextResponse.json(
+        { error: "boundaryPointUid must be a point uuid or null" },
+        { status: 422 },
+      );
+    if (uid !== null) {
+      const [pt] = await requirePlanetscaleDb()
+        .select({ id: points.id })
+        .from(points)
+        .where(eq(points.id, uid))
+        .limit(1);
+      if (!pt)
+        return NextResponse.json(
+          { error: `Unknown boundary point: ${uid}` },
+          { status: 422 },
+        );
+    }
+    const [current] = await requirePlanetscaleDb()
+      .select({ sourcePoints: derivations.sourcePoints })
+      .from(derivations)
+      .where(eq(derivations.id, uuid))
+      .limit(1);
+    if (!current)
+      return NextResponse.json(
+        { error: `Unknown derivation: ${dxid}` },
+        { status: 404 },
+      );
+    patch.sourcePoints = {
+      ...((current.sourcePoints as Record<string, unknown>) ?? {}),
+      boundary: uid,
+    };
+  }
   for (const forbidden of [
     "kind",
     "role",
@@ -107,7 +151,9 @@ export async function PATCH(
   }
   if (Object.keys(patch).length === 0)
     return NextResponse.json(
-      { error: "Nothing to patch (enabled | name | params)" },
+      {
+        error: "Nothing to patch (enabled | name | params | boundaryPointUid)",
+      },
       { status: 422 },
     );
   patch.updatedAt = new Date();

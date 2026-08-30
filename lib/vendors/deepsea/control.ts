@@ -103,7 +103,14 @@ function probeChecks(probe: HubProbeResult): ControlPreflightCheck[] {
     },
     {
       label: "Engine",
-      value: probe.running ? "running" : "stopped",
+      // The controller's own word when it has one: an engine winding down after a run is a
+      // different fact from one someone is commanding, and it is the difference between a reader
+      // waiting a minute and a reader going to look at the shed.
+      value: !probe.running
+        ? "stopped"
+        : probe.engineState === 4 || probe.engineState === 6
+          ? "cooling down"
+          : "running",
       ok: !probe.running,
     },
     {
@@ -170,16 +177,28 @@ export class DeepSeaControlCapability implements ControlCapability {
       // 🛑 Released ≠ stopped. Clearing our telemetry latch cannot cancel a run the SP-PRO is
       // commanding on its own digital input, and saying "stopped" when the engine is still turning
       // would be a lie the user acts on.
-      return result.stillRunning
-        ? {
-            ok: true,
-            reason: `Released the hub's run request, but the engine is still running — it is being commanded by ${result.stillRunning === "remote-start-input" ? "the SP-PRO inverter" : "an unknown source"}, which this control cannot override.`,
-          }
-        : {
-            ok: true,
-            reason:
-              "Run request released; the generator will cool down and stop.",
-          };
+      if (!result.stillRunning) {
+        return {
+          ok: true,
+          reason:
+            "Run request released; the generator will cool down and stop.",
+        };
+      }
+      // 🛑 Three outcomes, not two. "Still running" used to collapse the ORDINARY one — our own
+      // cool-down, which is what a stop looks like for the next minute or two — into the alarming
+      // sentence written for a run we cannot end, so every successful stop read like a failure.
+      // The hub now distinguishes them (see RunSupervisor.release); this only spells them.
+      if (result.stillRunning === "cool-down") {
+        return {
+          ok: true,
+          reason:
+            "Run request released; the engine is cooling down and will stop shortly.",
+        };
+      }
+      return {
+        ok: true,
+        reason: `Released the hub's run request, but the engine is still running — it is being commanded by ${result.stillRunning === "remote-start-input" ? "the SP-PRO inverter" : "an unknown source"}, which this control cannot override.`,
+      };
     }
 
     // 🛑 The AUDIT sentence keeps the instant in ISO, and the DISPLAY sentence is a template the

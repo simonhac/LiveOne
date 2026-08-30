@@ -22,14 +22,14 @@ const STOP_AT = "2026-08-29T14:03:38.346Z";
 
 describe("localizeInstants", () => {
   it("replaces the instant and leaves every other character alone", () => {
-    const sentence = `Already running until ${STOP_AT} — starting again would extend the run.`;
+    const sentence = `Running until ${STOP_AT} — starting again extends the run.`;
     const out = localizeInstants(sentence);
     expect(out).toBe(
-      `Already running until ${expected(STOP_AT)} — starting again would extend the run.`,
+      `Running until ${expected(STOP_AT)} — starting again extends the run.`,
     );
     // The hub's own words, punctuation and case survive byte-for-byte.
-    expect(out.startsWith("Already running until ")).toBe(true);
-    expect(out.endsWith(" — starting again would extend the run.")).toBe(true);
+    expect(out.startsWith("Running until ")).toBe(true);
+    expect(out.endsWith(" — starting again extends the run.")).toBe(true);
     expect(out).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
@@ -67,11 +67,11 @@ describe("renderMessage", () => {
     expect(
       renderMessage({
         template:
-          "Already running until {stopAt, time, short} — starting again would extend the run.",
+          "Running until {stopAt, time, short} — starting again extends the run.",
         values: { stopAt: STOP_AT },
       }),
     ).toBe(
-      `Already running until ${expected(STOP_AT)} — starting again would extend the run.`,
+      `Running until ${expected(STOP_AT)} — starting again extends the run.`,
     );
   });
 

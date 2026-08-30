@@ -669,6 +669,7 @@ function GeneratorDialogSection({
     "checking (skeleton)",
     "refused: panel not in Auto",
     "refused: engine already running",
+    "refused: engine cooling down",
     "already running (ISO instant)",
     "hub unreachable",
     "no control passkey",

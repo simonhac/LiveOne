@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import {
   AlertTriangle,
   CheckCircle2,
+  Info,
   Loader2,
   Minus,
   Play,
@@ -299,9 +300,22 @@ export default function GeneratorControlDialog({
           void queryClient.invalidateQueries({
             queryKey: queryKeys.data(systemId),
           });
+          void invalidateRunPeriods();
         }, delay),
       );
     }
+  }
+
+  /**
+   * Sweep the run-period reads after a command.
+   *
+   * 🛑 By PREFIX, not by device. Run periods are keyed at the DETECTOR's device (the SP-PRO here),
+   * which is not this dialog's `systemId`, so the ordinary per-device invalidation misses them
+   * entirely — the tile's "Since …" row then rode a 60 s-stale cache across the very start or stop
+   * that changed it, showing the previous run (or none) under a hero that had already moved.
+   */
+  function invalidateRunPeriods() {
+    return queryClient.invalidateQueries({ queryKey: ["runPeriods"] });
   }
 
   const mutation = useMutation({
@@ -348,6 +362,7 @@ export default function GeneratorControlDialog({
       await queryClient.invalidateQueries({
         queryKey: queryKeys.data(systemId),
       });
+      await invalidateRunPeriods();
       if (target) {
         await queryClient.invalidateQueries({
           queryKey: queryKeys.commands(target),
@@ -508,11 +523,22 @@ export default function GeneratorControlDialog({
                 {preflight.data && (
                   <p
                     className={`mt-2 flex min-h-[2rem] items-start gap-1.5 text-xs ${
-                      canStart ? "text-green-500/90" : "text-amber-400/90"
+                      canStart
+                        ? "text-green-500/90"
+                        : runInProgress
+                          ? "text-gray-400"
+                          : "text-amber-400/90"
                     }`}
                   >
                     {canStart ? (
                       <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    ) : runInProgress ? (
+                      // 🛑 THREE outcomes, not two. `canStart` is false for a run already in
+                      // progress just as it is for a genuine refusal, so keying the icon off it
+                      // alone put a warning triangle on the most ordinary thing the dialog can
+                      // say — "Running until 5:22pm" — and made a healthy run look like a fault.
+                      // Start is still disabled either way; only the alarm is withdrawn.
+                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     ) : (
                       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     )}

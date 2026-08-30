@@ -5,7 +5,7 @@
  * can write is ISO-8601, and a browser then shows a human "until 2026-08-29T14:03:38.346Z". So a
  * sentence carrying an instant travels UNRENDERED and the reader's client spells it:
  *
- *   { template: "Already running until {stopAt, time, short} — starting again would extend …",
+ *   { template: "Running until {stopAt, time, short} — starting again extends …",
  *     values:   { stopAt: "2026-08-29T14:03:38.346Z" } }
  *
  * `template` is ICU MessageFormat — the grammar behind java.text.MessageFormat, FormatJS/react-intl

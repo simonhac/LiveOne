@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   CONTROL_MODE,
   DseClient,
+  ENGINE_STATE,
   SCF,
   scfSupports,
   sentinelReason,
@@ -422,22 +423,39 @@ export function createMusher(opts: MusherOptions): Source {
     };
   }
 
+  /** Is the engine turning / producing right now? The one definition, used by both cadences. */
+  function engineTurning(values: Values): boolean {
+    return (
+      Number(values.engineRpm ?? 0) > 0 || Number(values.genFreqHz ?? 0) > 0
+    );
+  }
+
   /** The ownership reads themselves — callers hold the lock and own the close(). */
   async function ownershipInner(): Promise<ControlOwnership> {
+    // 🛑 `engineState` rides along as a HINT, not a gate — see ControlOwnership. It is the DSE's
+    // own word for what the engine is doing ("Cooling down"), which is the only way to tell a
+    // cool-down tail from a run nobody here commanded. It is NOT in DEEPSEA_MANIFEST (not yet
+    // field-qualified), so it is read for decisions and never published as a point; a sentinel or
+    // an absent value degrades to exactly the behaviour that existed before it was read.
     const f = await dse.readFields([
       "controlMode",
       "digInUnnamed1To16",
       "engineRpm",
       "genFreqHz",
+      "engineState",
     ]);
     const mode = f.controlMode;
     const digIn = f.digInUnnamed1To16;
+    const engineState = f.engineState;
     return {
       mode,
       modeName: mode != null ? (CONTROL_MODE[mode] ?? String(mode)) : null,
       remoteStartInput:
         digIn == null ? "unknown" : (digIn >> 15) & 1 ? "closed" : "open",
       running: (f.engineRpm ?? 0) > 0 || (f.genFreqHz ?? 0) > 0,
+      engineState,
+      engineStateName:
+        engineState != null ? (ENGINE_STATE[engineState] ?? null) : null,
     };
   }
 
@@ -454,9 +472,20 @@ export function createMusher(opts: MusherOptions): Source {
     // (Capture itself is unconditional in diag mode; this only sets the sampling rate.)
     isRunning(values: Values): boolean {
       if (DIAG) return lastActive;
-      return (
-        Number(values.engineRpm ?? 0) > 0 || Number(values.genFreqHz ?? 0) > 0
-      );
+      return engineTurning(values);
+    },
+    /**
+     * What LiveOne's push cadence follows: the ENGINE, never the diagnostic hold.
+     *
+     * 🛑 The hold above (MUSHER_DIAG_POSTRUN_SECONDS, an hour by default) exists to keep the local
+     * journal sampling finely through a cool-down. It was also reaching the push decision, so every
+     * run was followed by an hour of active-rate deliveries to LiveOne — measured on prod, still
+     * at the 1-minute cadence more than an hour after the engine stopped, for an engine reading a
+     * flat zero the whole time. The extra resolution was always meant to stay on the Fly volume;
+     * this is the line that keeps it there.
+     */
+    isDeliveryActive(values: Values): boolean {
+      return engineTurning(values);
     },
     // Drop the socket after a failed/timed-out tick so the next read reconnects (the DSE client
     // otherwise reuses a `connected=true` handle whose socket may have silently died). Runs through

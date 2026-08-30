@@ -313,6 +313,11 @@ export const BATTERY_SCENARIOS: Record<string, LatestPointValues> = {
     "bidi.battery/soc": mk(8, "bidi.battery/soc", "%", "Battery"),
     "bidi.battery/power": mk(-500, "bidi.battery/power", "W", "Battery"),
   },
+  // The one SoC that renders with no decimal — 100 is exact, so "100.0%" is noise.
+  full: {
+    "bidi.battery/soc": mk(100, "bidi.battery/soc", "%", "Battery"),
+    "bidi.battery/power": mk(200, "bidi.battery/power", "W", "Battery"),
+  },
 };
 
 // ---------------------------------------------------------------------------

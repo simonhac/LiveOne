@@ -172,7 +172,7 @@ export interface RunRequestResult {
   ownership?: ControlOwnership;
   /** the released-vs-stopped distinction: fn 33 clears OUR latch; input A may keep it running */
   released?: boolean;
-  stillRunning?: "remote-start-input" | "unknown" | null;
+  stillRunning?: "remote-start-input" | "cool-down" | "unknown" | null;
 }
 
 export interface ControlStatus {
@@ -369,7 +369,9 @@ export class RunSupervisor {
       });
     }
 
-    const gate = gateStart(ownership, opts.overrideRemoteStart === true);
+    const gate = gateStart(ownership, opts.overrideRemoteStart === true, {
+      inCooldownGrace: this.inCooldownGrace(),
+    });
     if (gate)
       return this.result({ ok: false, status: 409, reason: gate, ownership });
 
@@ -452,12 +454,22 @@ export class RunSupervisor {
     await this.persist();
     this.bump("released");
 
+    // What is STILL turning the engine now that our latch is gone — and, crucially, whether that
+    // needs a human. We have just confirmed our own fn 33, so a turning engine with input A open is
+    // the cool-down we caused; reporting it as "an unknown source, which this control cannot
+    // override" was alarming about the most ordinary outcome there is.
+    //
+    // 🛑 `lastObs` is a CACHED poll (up to a poll period old) and carries no engineState, so this
+    // leans on the fact we know for certain instead: we released, one moment ago. Only an
+    // unreadable input — where we cannot even tell whether the SP-PRO is calling — stays "unknown".
     const obs = this.lastObs;
     const stillRunning =
       obs?.running === true
         ? obs.remoteStartInput === "closed"
           ? ("remote-start-input" as const)
-          : ("unknown" as const)
+          : obs.remoteStartInput === "open"
+            ? ("cool-down" as const)
+            : ("unknown" as const)
         : null;
     if (stillRunning) {
       this.log(
@@ -506,7 +518,9 @@ export class RunSupervisor {
     }
 
     const reasons: string[] = [];
-    const gate = gateStart(pre.ownership, false);
+    const gate = gateStart(pre.ownership, false, {
+      inCooldownGrace: this.inCooldownGrace(),
+    });
     if (gate) reasons.push(gate);
     if (!pre.scfSupported.telemetryStart)
       reasons.push("the module does not advertise Telemetry Start (fn 32)");
@@ -522,8 +536,13 @@ export class RunSupervisor {
       // 🛑 Written to be READ, by a person, in a browser — these sentences are rendered verbatim and
       // nothing downstream rewrites them. The acceptance names no run length because none was
       // proposed (see above); the refusal is `gateStart()`'s clause framed for standing alone.
+      //
+      // The already-latched sentence STATES rather than warns. "Already running … would extend"
+      // read as a complaint about a run the reader had just deliberately started; it is not a
+      // refusal at all, just what is true when you open the dialog mid-run. (The browser pairs it
+      // with an info icon rather than a warning triangle for the same reason.)
       verdict: this.latched
-        ? `Already running until ${this.stopAtIso()} — starting again would extend the run.`
+        ? `Running until ${this.stopAtIso()} — starting again extends the run.`
         : wouldStart
           ? "Ready to start"
           : `A run would be refused: ${reasons.join("; ")}`,
@@ -531,7 +550,7 @@ export class RunSupervisor {
       verdictMessage: this.latched
         ? {
             template:
-              "Already running until {stopAt, time, short} — starting again would extend the run.",
+              "Running until {stopAt, time, short} — starting again extends the run.",
             values: { stopAt: this.stopAtIso() },
           }
         : undefined,
@@ -772,12 +791,24 @@ export class RunSupervisor {
     );
   }
 
+  /**
+   * Are we inside the window after OUR OWN confirmed release where a still-turning engine is
+   * explained by the cool-down we caused? The same fact `state()` renders as "stopping", exposed so
+   * the start gate can stop calling it an unknown source. Cleared the moment the engine is observed
+   * stopped (see noteObservation), so it cannot outlive the run it describes.
+   */
+  inCooldownGrace(now: number = this.clock.now()): boolean {
+    return (
+      this.releasedAtMs != null && now - this.releasedAtMs < COOLDOWN_GRACE_MS
+    );
+  }
+
   state(): ControlState {
     if (this.stopFailing) return "stop-failing";
     if (this.latched) return "running:hub";
     if (this.lastObs?.running) {
       if (this.releasedAtMs != null) {
-        return this.clock.now() - this.releasedAtMs < COOLDOWN_GRACE_MS
+        return this.inCooldownGrace()
           ? "stopping"
           : "latch-released-still-running";
       }
@@ -880,18 +911,48 @@ export class RunSupervisor {
 export function gateStart(
   ownership: ControlOwnership,
   overrideRemoteStart: boolean,
+  opts: { inCooldownGrace?: boolean } = {},
 ): string | null {
   if (ownership.mode !== 1) {
     return `the module is not in Auto (mode=${ownership.modeName ?? ownership.mode ?? "unreadable"}) — a possible local lockout at the panel, and not overridable remotely`;
   }
   if (ownership.running && !overrideRemoteStart) {
-    const who =
-      ownership.remoteStartInput === "closed"
-        ? "the SP-PRO (remote-start input closed)"
-        : "an unknown source (remote-start input open — possibly its cool-down tail)";
-    return `the engine is already running, commanded by ${who}`;
+    if (ownership.remoteStartInput === "closed") {
+      return "the engine is already running, commanded by the SP-PRO (remote-start input closed)";
+    }
+    // 🛑 A turning engine with input A open is NOT automatically a mystery. It is most often the
+    // tail of a run that just ended — and we can say so instead of guessing, from two independent
+    // sources, in order of authority:
+    //
+    //  1. the CONTROLLER's own operating state. `isCoolingDown` reads the DSE's word for it, which
+    //     covers a cool-down we did not start (an SP-PRO run that just dropped its input) as well
+    //     as our own.
+    //  2. the HUB's memory of its own release (`releasedAtMs` within COOLDOWN_GRACE_MS), for a
+    //     module whose engineState is unreadable — the case this hedged about before.
+    //
+    // Only when neither can account for it is "an unknown source" the honest answer. It used to be
+    // the ONLY answer, hedged in prose ("possibly its cool-down tail") because the code could not
+    // tell; the hedge is gone because the distinction is now made rather than described.
+    if (isCoolingDown(ownership)) {
+      return "the engine is cooling down after its last run and will stop shortly";
+    }
+    if (opts.inCooldownGrace) {
+      return "the engine is cooling down after the run that just stopped";
+    }
+    return "the engine is already running, commanded by an unknown source (remote-start input open)";
   }
   return null;
+}
+
+/**
+ * Does the CONTROLLER say the engine is winding down? DSE engine states 4 (Cooling down) and
+ * 6 (Post-run) are the two that mean "this run is ending on its own".
+ *
+ * Null-safe by construction: an unreadable register, a sentinel, or a module that does not populate
+ * it all answer `false`, which is the pre-existing behaviour.
+ */
+function isCoolingDown(ownership: ControlOwnership): boolean {
+  return ownership.engineState === 4 || ownership.engineState === 6;
 }
 
 function msg(e: unknown): string {
