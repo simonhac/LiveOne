@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-extract.py — pull the confirmed Kinkora (Area 8) timeseries from the liveone-dev mirror into Parquet.
+extract.py — pull the confirmed Kinkora (Area 8) timeseries into Parquet.
 
 READ-ONLY. Mirrors scripts/openelectricity/publication-lag.py's psql --csv access (no psycopg dep).
-Resolves each point's (system_id, point_id) from point_info by (system, logical_path_stem, metric_type)
-so it self-verifies against the live schema rather than trusting hard-coded indices.
+Auto-detects the DB schema and resolves each series against it, so it self-verifies rather than trusting
+hard-coded indices:
+  • config-v4 (PROD `sydney`): points/devices/point_rid, area via legacy_handles. Set PG_EXTRACT_DB_URL
+    to a short-TTL read-only sydney role (pscale role create … --inherited-roles pg_read_all_data).
+  • legacy (dev mirror): point_info/systems/(system_id, point_id), area via areas.legacy_system_id.
+The output Parquet is identical for both, so nothing downstream changes.
 
 Outputs (ml/lnn-battery/data/):
   kinkora_5min.parquet        wide 5-min series (interval_end UTC index) + derived solar/load/SoC-proxy
@@ -48,6 +52,13 @@ EXPECTED_PID = {
     "amber_import_val_c": (9, 7), "amber_export_val_c": (9, 5),
     "amber_import_wh_m": (9, 8), "amber_export_wh_m": (9, 6),
 }
+# config-v4 (prod) point rids, confirmed against sydney on 2026-08-16 (warn on drift, do not fail).
+EXPECTED_PRID = {
+    "solar_local_w": 65, "solar_remote_w": 55, "batt_power_w": 57, "grid_power_w": 61,
+    "soc_pct_meas": 42, "stored_kwh": 115, "amber_import_c": 69, "amber_export_c": 68,
+    "amber_import_val_c": 74, "amber_export_val_c": 72, "amber_import_wh_m": 75,
+    "amber_export_wh_m": 73, "oe_intensity": 91,
+}
 
 
 def db_url() -> str:
@@ -78,6 +89,74 @@ def psql_df(url: str, sql: str) -> pd.DataFrame:
         sys.exit(f"psql failed:\n{out.stderr}")
     return pd.read_csv(io.StringIO(out.stdout))
 
+
+def detect_schema(url: str) -> str:
+    df = psql_df(url, "SELECT to_regclass('public.points') AS v4, to_regclass('public.point_info') AS legacy;")
+    v4 = df["v4"].iloc[0]
+    return "v4" if isinstance(v4, str) and v4 else "legacy"
+
+
+# ---------------- config-v4 (prod) resolvers: points/devices/point_rid ----------------
+
+def resolve_points_v4(url: str) -> dict[str, int]:
+    tuples = ",".join(f"({s},'{stem}','{m}')" for _, s, stem, m, _ in SERIES_SPEC)
+    df = psql_df(url, f"""
+        SELECT d.rid AS device_rid, p.rid AS point_rid, p.logical_path AS stem,
+               p.metric_type AS metric, p.transform
+        FROM points p JOIN devices d ON d.id = p.device_id
+        WHERE (d.rid, p.logical_path, p.metric_type) IN ({tuples});
+    """)
+    by_key = {(int(r.device_rid), r.stem, r.metric): (int(r.point_rid), r.transform)
+              for r in df.itertuples()}
+    resolved: dict[str, int] = {}
+    print("Resolved points (config-v4; device_rid → point_rid):")
+    for name, s, stem, m, _ in SERIES_SPEC:
+        hit = by_key.get((s, stem, m))
+        if hit is None:
+            print(f"  ! {name:18s} (dev{s},{stem},{m}) NOT FOUND — skipping")
+            continue
+        prid, xform = hit
+        resolved[name] = int(prid)
+        exp = EXPECTED_PRID.get(name)
+        flag = f"  <-- DRIFT (expected rid {exp})" if exp and exp != prid else ""
+        xf = f" transform={xform}" if isinstance(xform, str) and xform else ""
+        print(f"  . {name:18s} -> dev{s}/rid{prid}{xf}{flag}")
+    return resolved
+
+
+def pull_series_v4(url: str, resolved: dict[str, int], start: str, end: str) -> pd.DataFrame:
+    rids = ",".join(str(r) for r in resolved.values())
+    df = psql_df(url, f"""
+        SELECT point_rid, interval_end, avg, delta, data_quality
+        FROM point_readings_agg_5m
+        WHERE point_rid IN ({rids})
+          AND interval_end >= '{start}' AND interval_end < '{end}'
+        ORDER BY interval_end;
+    """)
+    df["interval_end"] = pd.to_datetime(df["interval_end"], utc=True)
+    name_of = {rid: name for name, rid in resolved.items()}
+    aggcol_of = {name: agg for name, _, _, _, agg in SERIES_SPEC}
+    df["series"] = df["point_rid"].astype(int).map(name_of)
+    use_delta = df["series"].map(aggcol_of).eq("delta")
+    df["val"] = df["avg"].where(~use_delta, df["delta"])
+    wide = df.pivot_table(index="interval_end", columns="series", values="val", aggfunc="last")
+    dq = df[df.series == "amber_import_c"].set_index("interval_end")["data_quality"].rename("amber_dq")
+    wide = wide.join(dq).sort_index()
+    return wide
+
+
+def pull_params_v4(url: str, start: str, end: str) -> pd.DataFrame:
+    return psql_df(url, f"""
+        SELECT bpd.day, bpd.capacity_kwh, bpd.eta, bpd.charge_eff, bpd.idle_loss_kwh_day,
+               bpd.reserve_floor_pct, bpd.soc_samples, bpd.charge_kwh, bpd.discharge_kwh
+        FROM battery_provenance_daily bpd
+        JOIN legacy_handles lh ON lh.area_id = bpd.area_id
+        WHERE lh.handle = {AREA_HANDLE} AND bpd.day >= '{start[:10]}' AND bpd.day < '{end[:10]}'
+        ORDER BY bpd.day;
+    """)
+
+
+# ---------------- legacy (dev mirror) resolvers: point_info/systems ----------------
 
 def resolve_points(url: str) -> dict[str, tuple[int, int]]:
     tuples = ",".join(f"({s},'{stem}','{m}')" for _, s, stem, m, _ in SERIES_SPEC)
@@ -151,10 +230,15 @@ def main() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     url = db_url()
     host = re.sub(r"^.*@", "", normalize_ssl(url)).split("/")[0]
-    print(f"DB host: {host}   window: {args.start} .. {args.end}\n")
+    schema = detect_schema(url)
+    print(f"DB host: {host}   schema: {schema}   window: {args.start} .. {args.end}\n")
 
-    resolved = resolve_points(url)
-    wide = pull_series(url, resolved, args.start, args.end)
+    if schema == "v4":
+        resolved = resolve_points_v4(url)
+        wide = pull_series_v4(url, resolved, args.start, args.end)
+    else:
+        resolved = resolve_points(url)
+        wide = pull_series(url, resolved, args.start, args.end)
 
     # --- derived quantities ---
     wide["solar_w"] = wide.get("solar_local_w", 0).fillna(0) + wide.get("solar_remote_w", 0).fillna(0)
@@ -171,7 +255,7 @@ def main() -> None:
         wide["amber_billed_net_c"] = wide["amber_import_val_c"].fillna(0) - wide["amber_export_val_c"].fillna(0)
 
     # --- SoC proxy from derived stored-energy (kWh) / per-day capacity ---
-    params = pull_params(url, args.start, args.end)
+    params = pull_params_v4(url, args.start, args.end) if schema == "v4" else pull_params(url, args.start, args.end)
     params["day"] = params["day"].astype(str)
     cap_by_day = params.set_index("day")["capacity_kwh"].to_dict()
     local_day = (wide.index + pd.Timedelta(hours=AEST_OFFSET_H)).strftime("%Y-%m-%d")

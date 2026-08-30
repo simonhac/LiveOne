@@ -266,8 +266,8 @@ Price inversions are scored at their realised rates, but the convex planning pro
 export price to import price on those rare intervals. Counterfactual strategies may curtail available
 solar, cannot export while the export tariff is negative, obey a 12.5 kW site export cap, and share one
 8.5 kW throughput limit between charge and discharge. Recorded actual dispatch is left untouched. The
-Mondo cash frame differs from Amber's meter by about $0.26/day in daily absolute terms and is $0.11/day
-lower on average; strategy differences are all scored consistently in the Mondo frame.
+Mondo cash frame differs from Amber's meter by about $0.14/day in daily absolute terms (correlation
+0.999) with negligible average bias; strategy differences are all scored consistently in the Mondo frame.
 """
     with open(os.path.join(HERE, "RESULTS.md"), "w") as f:
         f.write(text)

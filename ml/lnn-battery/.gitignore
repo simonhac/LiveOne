@@ -12,3 +12,7 @@ out/*.csv
 out/*.npz
 out/*.pt
 out/*.parquet
+
+# Generated brief (source is BRIEF.md; regenerate via make_pdf.py)
+BRIEF.html
+BRIEF.pdf
