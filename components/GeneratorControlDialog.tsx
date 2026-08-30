@@ -58,6 +58,14 @@ interface PreflightJson {
     maxRuntimeSec?: number;
     latched?: boolean;
     stopAt?: string | null;
+    /**
+     * `RunSupervisor.state()` — byte-identical to the pushed `…control.status/state` point, because
+     * it is the same call. This is what lets a probe re-answer the header's question.
+     */
+    state?: string;
+    /** The DSE panel mode as a word ("Auto", "Stop"), which `describeGeneratorState` needs to tell
+     *  an ARMED idle generator from a LOCKED OUT one. */
+    panelMode?: string | null;
   } | null;
 }
 
@@ -169,8 +177,6 @@ export default function GeneratorControlDialog({
   const stopAtSec = num(latest, GENERATOR_STOP_AT_PATH);
   const statusMs = measurementMsOf(latest, GENERATOR_STATUS_PATH);
 
-  const status = describeGeneratorState(state, mode);
-
   const [minutes, setMinutes] = useState<number>(DEFAULT_MIN);
   const [notice, setNotice] = useState<ControlNoticeValue | null>(null);
   const [pending, setPending] = useState<"start" | "extend" | "stop" | null>(
@@ -222,6 +228,29 @@ export default function GeneratorControlDialog({
     retry: false,
     refetchOnWindowFocus: false,
   });
+
+  // ── whose picture of the generator wins ──────────────────────────────────
+  //
+  // `latest` is a pushed point: up to one hub poll old, behind a 30 s browser refetch. The probe is
+  // a live Modbus read that answers the SAME question — its `detail.state` is `RunSupervisor.
+  // state()`, the very call that produces the pushed point. So "Check again" was returning a fresher
+  // answer to the question the header asks and then throwing it away: press it on a generator that
+  // had since started, and the sentence still read "Stopped, and armed to start automatically · as
+  // of 3 min ago".
+  //
+  // `dataUpdatedAt` is React Query's own receipt time, so it is right after a refetch that returned
+  // identical bytes, and it needs no state of its own.
+  const probeMs = preflight.data?.detail?.state
+    ? preflight.dataUpdatedAt
+    : null;
+  const useProbe = probeMs != null && (statusMs == null || probeMs > statusMs);
+  const status = useProbe
+    ? describeGeneratorState(
+        preflight.data!.detail!.state,
+        preflight.data!.detail!.panelMode ?? mode,
+      )
+    : describeGeneratorState(state, mode);
+  const asOfMs = useProbe ? probeMs : statusMs;
 
   // The ceiling that is actually enforced, once the hub has told us. Until then the point's own
   // descriptor bound stands. `Math.min` on purpose: whichever is lower wins, always.
@@ -340,13 +369,18 @@ export default function GeneratorControlDialog({
   const busy = mutation.isPending;
   // Only the runtimes the hub would actually accept — see `maxMin`.
   const presets = PRESETS.filter((p) => p.min <= maxMin);
-  const freshness = freshnessWords(statusMs, nowMs);
+  const freshness = freshnessWords(asOfMs, nowMs);
   // The house 12-hour spelling ("12:03am"), in the BROWSER's zone — the clock the reader is looking
-  // at while the engine runs. `stopAtSec` is an absolute instant, so no offset arithmetic is needed.
+  // at while the engine runs. An absolute instant, so no offset arithmetic is needed.
+  //
+  // Reads the PROBE's deadline first for the same reason `minsLeft` does, and reading a different
+  // one would be worse than either: the two sit in one sentence ("stops at 3:05pm (12 min left)"),
+  // so sourcing them differently lets them contradict each other.
+  const deadlineSec = probeStopAtSec ?? stopAtSec;
   const stopsAtWords =
-    stopAtSec != null
+    deadlineSec != null
       ? (() => {
-          const d = new Date(stopAtSec * 1000);
+          const d = new Date(deadlineSec * 1000);
           return formatTime12h({ hour: d.getHours(), minute: d.getMinutes() });
         })()
       : null;
@@ -532,7 +566,7 @@ export default function GeneratorControlDialog({
                   ) : (
                     <Play className="mr-2 h-4 w-4" />
                   )}
-                  Extend to {runWords(minutes)}
+                  Extend · {runWords(minutes)}
                 </Button>
                 {/* 🛑 Never disabled on the preflight. Letting go of the latch must stay reachable
                     when our picture is stale or the probe itself failed. */}
@@ -547,14 +581,14 @@ export default function GeneratorControlDialog({
                   ) : (
                     <Square className="mr-2 h-4 w-4" />
                   )}
-                  Stop now
+                  Stop
                 </Button>
               </div>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="flex gap-2">
               <Button
-                className="w-full"
+                className="flex-1"
                 disabled={busy || !target || !canStart}
                 onClick={() =>
                   mutation.mutate({ key: "start", value: minutes })
@@ -565,14 +599,21 @@ export default function GeneratorControlDialog({
                 ) : (
                   <Play className="mr-2 h-4 w-4" />
                 )}
-                Start generator · {runWords(minutes)}
+                Start · {runWords(minutes)}
               </Button>
-              {/* The engine may be running without US having started it (the inverter's own
-                  request, or a cool-down tail). Our stop cannot end that run, but it CAN clear a
-                  latch we are somehow still holding, so the affordance stays. */}
+              {/* Same command as the Stop above (`value: 0`), and the same 🛑: never gated on the
+                  preflight, because a start whose response was LOST leaves the hub latched while
+                  this dialog still shows the idle branch, and this is the only way out of that.
+                  It is normally a no-op, which is why it is not a peer of Start visually.
+
+                  🛑 The label says "Stop", but this branch also renders during a `running:sp-pro`
+                  run, where our command clears only OUR latch and cannot end the inverter's run.
+                  Nothing is hidden — the header sentence above says exactly that, and the vendor's
+                  own reply after the press says it again — but the LABEL no longer carries it, so
+                  it is written here instead. */}
               <Button
-                variant="ghost"
-                className="w-full text-gray-400"
+                variant="outline"
+                className="flex-1"
                 disabled={busy || !target}
                 onClick={() => mutation.mutate({ key: "stop", value: 0 })}
               >
@@ -581,7 +622,7 @@ export default function GeneratorControlDialog({
                 ) : (
                   <Square className="mr-2 h-4 w-4" />
                 )}
-                Release any run request
+                Stop
               </Button>
             </div>
           )}
@@ -596,10 +637,11 @@ export default function GeneratorControlDialog({
 /**
  * The engine check at its FINAL height, before the probe answers.
  *
- * The box used to paint one line ("Reading the controller…") and then grow to four rows plus a
+ * The box used to paint one line ("Reading the controller…") and then grow to its rows plus a
  * verdict, which moved every control below it just as the user reached for one. The height is
- * knowable: `preflightChecks` (lib/vendors/deepsea/control.ts) returns exactly four checks, always
- * — one per fact the DSE is asked about — so the skeleton is four rows and not a guess.
+ * knowable: `preflightChecks` (lib/vendors/deepsea/control.ts) returns exactly three checks, always
+ * — one per fact the DSE is asked about — so the skeleton is three rows and not a guess. Move that
+ * count and this must move with it, or the jump comes back.
  *
  * It mirrors the real `<li>` markup rather than approximating it, so the two cannot drift out of
  * alignment: same `space-y-1`, same `h-3.5 w-3.5` status glyph, same `w-32` label column, and the
@@ -609,7 +651,7 @@ function EngineCheckSkeleton() {
   return (
     <div aria-busy="true" aria-label="Reading the controller">
       <ul className="space-y-1 text-xs">
-        {[0, 1, 2, 3].map((i) => (
+        {[0, 1, 2].map((i) => (
           <li key={i} className="flex items-center gap-2">
             <span className="h-3.5 w-3.5 shrink-0 animate-pulse rounded-full bg-gray-700" />
             <span className="w-32 shrink-0">

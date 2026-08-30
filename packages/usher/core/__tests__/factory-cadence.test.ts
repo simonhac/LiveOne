@@ -72,4 +72,18 @@ describe("buildEntries cadence wiring", () => {
     expect(entry.pushIntervalMs).toBe(300_000);
     expect(entry.activePushIntervalMs).toBe(300_000);
   });
+
+  // Defaulted, not optional: usher.yaml lives on the deployed volume and is gitignored, so an
+  // opt-in key would need every host edited by hand before the bracket did anything.
+  it("the transition bracket defaults to 5 s without appearing in the config", () => {
+    const [entry] = buildEntries(UsherConfigSchema.parse(base), () => {});
+    expect(entry.transitionIntervalMs).toBe(5_000);
+  });
+
+  it("transitionSec: 0 disables the bracket rather than setting a 0 ms period", () => {
+    const cfg = structuredClone(base);
+    (cfg.sources[0] as Record<string, unknown>).transitionSec = 0;
+    const [entry] = buildEntries(UsherConfigSchema.parse(cfg), () => {});
+    expect(entry.transitionIntervalMs).toBeUndefined();
+  });
 });

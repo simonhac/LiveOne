@@ -63,6 +63,7 @@ function cadenceFor(sc: SourceConfig): {
   activeIntervalMs?: number;
   pushIntervalMs?: number;
   activePushIntervalMs?: number;
+  transitionIntervalMs?: number;
 } {
   if (sc.type === "deepsea") {
     const pushSec = sc.pushSec ?? sc.pollSec;
@@ -71,6 +72,9 @@ function cadenceFor(sc: SourceConfig): {
       activeIntervalMs: (sc.activeSec ?? sc.pollSec) * 1000,
       pushIntervalMs: pushSec * 1000,
       activePushIntervalMs: (sc.activePushSec ?? pushSec) * 1000,
+      // The transition bracket raises poll AND push together — the one cadence that does. 0 leaves
+      // it undefined, which the run loop reads as "no bracket".
+      transitionIntervalMs: sc.transitionSec * 1000 || undefined,
     };
   }
   return { intervalMs: sc.pushSec * 1000 };

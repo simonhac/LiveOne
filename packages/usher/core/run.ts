@@ -56,8 +56,24 @@ export interface ScheduledEntry extends Entry {
   pushIntervalMs?: number;
   /** push period while the source reports isRunning (defaults to pushIntervalMs) */
   activePushIntervalMs?: number;
+  /**
+   * Poll AND push period while the supervisor reports `inTransition()` — the engine is starting or
+   * stopping. Undefined or 0 disables the fast bracket entirely.
+   *
+   * 🛑 Both cadences, deliberately. It is not enough to deliver faster: a transition is only worth
+   * watching at 5 s if the rpm being delivered was READ 5 s ago, and the observation is also what
+   * opens and closes the window in the first place.
+   */
+  transitionIntervalMs?: number;
   /** wake on wall-clock multiples of the period (default true) */
   alignToBoundary?: boolean;
+  /**
+   * Set BY `runEntryLoop`: end the current sleep and tick now. Lets the control route turn a
+   * command into a delivery immediately rather than waiting out the boundary (0–15 s at musher's
+   * cadence), which is the difference between a tile that moves on the press and one that doesn't.
+   * Absent until the loop is running, so every caller must treat it as optional.
+   */
+  wake?: () => void;
 }
 
 export interface RunOptions {
@@ -96,8 +112,6 @@ export interface TickResult {
   /** error message if the tick failed (read/build/push threw or timed out) */
   error?: string;
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Reject after `ms` if `p` hasn't settled. Guards the loop against a read/push that hangs forever
@@ -267,6 +281,42 @@ export async function tickOnce(
   };
 }
 
+/**
+ * Is this tick delivered to gusher, or read-only?
+ *
+ * Three edges beat the ordinary push period, and each exists because sitting on the fact for the
+ * rest of that period would be perverse:
+ *  1. the genset started or stopped — the whole reason for polling faster than we push;
+ *  2. a command moved the supervisor's state — a start, stop, extend, or failed stop;
+ *  3. the engine is mid-transition, where EVERY tick goes (the 5 s bracket).
+ * Otherwise it is wall-clock elapsed time since the last delivery, never "every Nth tick": a slow,
+ * timed-out or errored poll must not drag the push schedule with it.
+ *
+ * Pure, and separate from the loop, because it is the piece with interacting clauses — the loop
+ * around it is just a timer.
+ */
+export function shouldDeliverTick(input: {
+  /** whether the source reported itself running THIS tick */
+  active: boolean;
+  /** …and last tick. `undefined` = no successful read yet, so there is no edge to see. */
+  wasActive: boolean | undefined;
+  /** the supervisor's stateVersion now, and at the last delivery. Both undefined = no supervisor. */
+  controlVersion: number | undefined;
+  lastControlVersion: number | undefined;
+  /** the supervisor says the engine is starting or stopping (and a bracket is configured) */
+  inTransition: boolean;
+  sinceDeliveredMs: number;
+  idlePushMs: number;
+  activePushMs: number;
+}): boolean {
+  if (input.wasActive !== undefined && input.active !== input.wasActive)
+    return true;
+  if (input.controlVersion !== input.lastControlVersion) return true;
+  if (input.inTransition) return true;
+  const dueMs = input.active ? input.activePushMs : input.idlePushMs;
+  return input.sinceDeliveredMs >= dueMs;
+}
+
 /** Run one scheduled entry's independent loop forever: tick → wait its own period → repeat. */
 async function runEntryLoop(
   entry: ScheduledEntry,
@@ -278,6 +328,7 @@ async function runEntryLoop(
   const activeMs = entry.activeIntervalMs ?? idleMs;
   const idlePushMs = entry.pushIntervalMs ?? idleMs;
   const activePushMs = entry.activePushIntervalMs ?? idlePushMs;
+  const transitionMs = entry.transitionIntervalMs ?? 0;
   const align = entry.alignToBoundary ?? true;
 
   // Delivery is scheduled on WALL-CLOCK elapsed time, not "every Nth tick": a slow, timed-out or
@@ -291,21 +342,25 @@ async function runEntryLoop(
   // like a genset start: it delivers within one poll rather than waiting out the push period.
   let lastControlVersion = entry.supervisor?.stateVersion;
 
+  // Ends the current sleep early. Published on the entry so the control route can reach it through
+  // the globalThis registry — see `ScheduledEntry.wake`.
+  let wakeResolve: (() => void) | null = null;
+  entry.wake = () => wakeResolve?.();
+
   for (;;) {
     const tickStart = Date.now();
-    const result = await tickOnce(entry, log, tickTimeoutMs, (active) => {
-      // Deliver immediately when the genset starts or stops. The whole reason for polling faster
-      // than we push is to catch that edge, and it would be perverse to see it within one poll and
-      // then sit on it for the rest of the push period.
-      if (wasActive !== undefined && active !== wasActive) return true;
-      if (
-        entry.supervisor &&
-        entry.supervisor.stateVersion !== lastControlVersion
-      )
-        return true;
-      const dueMs = active ? activePushMs : idlePushMs;
-      return Date.now() - lastDeliveredAt >= dueMs;
-    });
+    const result = await tickOnce(entry, log, tickTimeoutMs, (active) =>
+      shouldDeliverTick({
+        active,
+        wasActive,
+        controlVersion: entry.supervisor?.stateVersion,
+        lastControlVersion,
+        inTransition: Boolean(transitionMs && entry.supervisor?.inTransition()),
+        sinceDeliveredMs: Date.now() - lastDeliveredAt,
+        idlePushMs,
+        activePushMs,
+      }),
+    );
     if (result.delivered) {
       lastDeliveredAt = Date.now();
       lastControlVersion = entry.supervisor?.stateVersion;
@@ -330,12 +385,44 @@ async function runEntryLoop(
         /* drain must never break the loop */
       }
     }
-    const periodMs = result.active ? activeMs : idleMs;
+    // The transition bracket outranks both ordinary cadences: it is the one window where the
+    // interesting thing is happening between ticks rather than at them.
+    const periodMs =
+      transitionMs && entry.supervisor?.inTransition()
+        ? transitionMs
+        : result.active
+          ? activeMs
+          : idleMs;
     const waitMs = align
       ? msUntilNextBoundary(periodMs, Date.now())
       : Math.max(0, periodMs - (Date.now() - tickStart));
-    await sleep(waitMs);
+    await sleepOrWake(waitMs, (resolve) => {
+      wakeResolve = resolve;
+    });
+    wakeResolve = null;
   }
+}
+
+/**
+ * Sleep `ms`, or until whoever holds the resolver ends it early — `publish` hands the resolver out
+ * before the wait begins. A plain `sleep` cannot be cut short, and the timer is cleared on an early
+ * wake so a woken loop leaves nothing pending behind it.
+ */
+function sleepOrWake(
+  ms: number,
+  publish: (resolve: () => void) => void,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return; // a wake racing the timer must not resolve twice
+      done = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    publish(finish);
+  });
 }
 
 export async function runLoop(
@@ -360,7 +447,12 @@ export async function runLoop(
           ? ` push ${pushMs / 1000}s` +
             (activePushMs !== pushMs ? `/${activePushMs / 1000}s active` : "")
           : "";
-        return `${e.source.name} poll ${poll}${push}`;
+        // Named on its own, because it is the one cadence that is neither the poll nor the push but
+        // both — and this line is where an operator confirms a deploy actually armed the bracket.
+        const transition = e.transitionIntervalMs
+          ? ` transition ${e.transitionIntervalMs / 1000}s`
+          : "";
+        return `${e.source.name} poll ${poll}${push}${transition}`;
       })
       .join(", ")}]`,
   );
