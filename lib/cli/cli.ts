@@ -102,11 +102,15 @@ export type Capability = "db" | "api" | "clerk";
 const AUTHED: ReadonlySet<Capability> = new Set<Capability>(["api", "clerk"]);
 
 /**
- * LiveOne: `human | json` today. `gcf` (Graph Compact Format — the same data with 30–50% fewer
- * tokens, and nanti's default off a terminal) is a deliberate follow-up: it is one dependency
- * (`@blackwell-systems/gcf`) and one branch in `serialise()`. Adding a value here is additive.
+ * LiveOne: `human | json` everywhere, plus `csv` on the commands that declare it (`spec.formats`)
+ * — the data-download verbs, where rows are the natural shape. `FORMATS` stays the DEFAULT set: it
+ * feeds the global flag's `values` and the LIVEONE_FORMAT validation, and a session-wide env
+ * preference of `csv` would break every non-declaring command, so the env var never accepts it.
+ * `gcf` (Graph Compact Format — the same data with 30–50% fewer tokens, and nanti's default off a
+ * terminal) is a deliberate follow-up: it is one dependency (`@blackwell-systems/gcf`) and one
+ * branch in `serialise()`. Adding a value here is additive.
  */
-export type Format = "human" | "json";
+export type Format = "human" | "json" | "csv";
 export const FORMATS: readonly Format[] = ["human", "json"];
 
 /**
@@ -220,6 +224,12 @@ export interface CommandSpec {
   examples?: string[];
   /** Overrides/extends the default exit-code documentation. */
   exitCodes?: Record<number, string>;
+  /**
+   * Output formats this command accepts. Default: human|json. Declared on the LEAF (not
+   * inherited): a command listing `csv` here must pass a csv renderer to `ctx.emit` on its data
+   * path — a model emitted without one serialises as JSON with a stderr warning.
+   */
+  formats?: readonly Format[];
   /** External systems this tool reaches. Governs documented exit codes and `classify()`. */
   uses?: readonly Capability[];
   /**
@@ -293,7 +303,7 @@ function globalFlags(spec: CommandSpec): Record<string, FlagSpec> {
   const g: Record<string, FlagSpec> = {
     format: {
       type: "string",
-      values: FORMATS,
+      values: spec.formats ?? FORMATS,
       help: "Output format (default: human on a terminal, json otherwise)",
     },
     json: { type: "boolean", help: "Alias for --format json", hidden: true },
@@ -661,7 +671,9 @@ export function parse(
   // Format precedence: --format, then the --json alias, then LIVEONE_FORMAT, then TTY detection.
   // The env var exists because a pipe is ambiguous — it could be `| jq` in a shell script or an
   // agent reading the payload, and the tool cannot tell. Rather than guess, the caller declares
-  // its preference once. A bad value fails loudly; it never falls back silently.
+  // its preference once. A bad value fails loudly; it never falls back silently. `csv` is
+  // deliberately NOT an env value: it is per-command (`spec.formats`), and a session-wide csv
+  // would break every command that doesn't declare it — request it with `--format csv`.
   let format: Format;
   const envFormat = process.env.LIVEONE_FORMAT?.trim();
   if (envFormat && !FORMATS.includes(envFormat as Format))
@@ -819,13 +831,20 @@ export function renderHelp(
   );
   out.push("Common options:", ...render(common), "");
 
-  out.push(
-    "Output:",
-    `  --format human   aligned text — the default at a terminal`,
-    `  --format json    JSON on stdout — the default when stdout is not a terminal`,
-    `  Data goes to stdout; all diagnostics go to stderr.`,
-    "",
-  );
+  out.push("Output:");
+  for (const f of spec.formats ?? FORMATS) {
+    if (f === "human")
+      out.push(`  --format human   aligned text — the default at a terminal`);
+    else if (f === "json")
+      out.push(
+        `  --format json    JSON on stdout — the default when stdout is not a terminal`,
+      );
+    else if (f === "csv")
+      out.push(
+        `  --format csv     comma-separated rows on stdout — the columns are documented above`,
+      );
+  }
+  out.push(`  Data goes to stdout; all diagnostics go to stderr.`, "");
 
   // Stated outright rather than left to be inferred from the exit codes. A caller deciding whether
   // a run will touch the production database should not have to reason about what the absence of
@@ -884,10 +903,16 @@ export function serialise(
   model: unknown,
   format: Format,
   human: (m: never) => string,
+  csv?: (m: never) => string,
 ): string {
-  // Each format ends in exactly one newline: JSON.stringify supplies none, and a human renderer
-  // may do either.
-  if (format === "json") return JSON.stringify(model, null, 2) + "\n";
+  // Each format ends in exactly one newline: JSON.stringify supplies none, and a human or csv
+  // renderer may do either.
+  if (format === "csv" && csv)
+    return (csv as (m: unknown) => string)(model).replace(/\n*$/, "\n");
+  // `csv` without a renderer (a summary/diagnostic emit on a csv-capable command) falls back to
+  // JSON, not human: a csv caller is scripted by definition, and JSON is the parseable fallback.
+  if (format === "json" || format === "csv")
+    return JSON.stringify(model, null, 2) + "\n";
   return (human as (m: unknown) => string)(model).replace(/\n*$/, "\n");
 }
 
@@ -914,8 +939,14 @@ export async function flushStdout(): Promise<void> {
 }
 
 /** The only path from a tool to stdout. */
-export function emit(model: unknown, human: (m: never) => string): void {
-  writeStdout(serialise(model, activeFormat, human));
+export function emit(
+  model: unknown,
+  human: (m: never) => string,
+  csv?: (m: never) => string,
+): void {
+  if (activeFormat === "csv" && !csv)
+    warn("this output has no CSV rendering; emitting JSON");
+  writeStdout(serialise(model, activeFormat, human, csv));
 }
 
 /** Progress and commentary. stderr, and silent under --quiet. */
@@ -979,7 +1010,11 @@ export interface Ctx {
   format: Format;
   dryRun: boolean;
   quiet: boolean;
-  emit: (model: unknown, human: (m: never) => string) => void;
+  emit: (
+    model: unknown,
+    human: (m: never) => string,
+    csv?: (m: never) => string,
+  ) => void;
   note: (msg: string) => void;
   warn: (msg: string) => void;
   /** Prompt at a terminal; returns immediately when --yes was passed. */

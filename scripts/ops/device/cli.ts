@@ -147,12 +147,20 @@ export const deviceCommand = defineCommand({
         "the daily aggregates roll up on). One request regardless of span; bound long sub-daily\n" +
         "pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n" +
         "--out writes the RAW body; each series carries\n" +
-        "history.{firstInterval,lastInterval,interval,numIntervals,data}.",
+        "history.{firstInterval,lastInterval,interval,numIntervals,data}.\n" +
+        "--format csv emits WIDE rows — timestamp_local, timestamp_utc, then one column per\n" +
+        "series with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.\n" +
+        "With --out the CSV goes to the file and stdout gets the summary (as JSON).",
       args: [DEVICE_ARG],
       flags: { ...BASE_URL_FLAG, ...HISTORY_FLAGS },
-      exitCodes: { 1: "the window returned no series" },
+      formats: ["human", "json", "csv"],
+      exitCodes: {
+        1: "no series matched (the window, or the --list-series subject)",
+      },
       examples: [
+        "liveone device history daylesford --list-series",
         "liveone device history daylesford --last=3h",
+        'liveone device history daylesford --last=7d --series="load/*" --format=csv --out=load.csv',
         "liveone device history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31",
       ],
     },

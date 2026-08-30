@@ -112,7 +112,8 @@ async function loadTools(): Promise<{ loaded: Loaded[]; skipped: Skipped[] }> {
 // ---------------------------------------------------------------------------
 
 const COMMON_PREAMBLE = [
-  "Every command takes `--help` and `--format human|json` (human at a terminal, json when piped).",
+  "Every command takes `--help` and `--format human|json` (human at a terminal, json when piped);",
+  "the data-download commands also accept `--format csv` — their help says so.",
   "Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —",
   "`--apply` writes, and off a terminal `--apply` additionally requires `--yes`.",
   "",

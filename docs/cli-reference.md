@@ -11,7 +11,8 @@ An **index only** — the full `--help` for each tool lives beside it in that di
 command does X*, because a wall of prose is the wrong place to look that up. For that, read
 the machine catalogue at [cli-tools.json](cli-tools.json).
 
-Every command takes `--help` and `--format human|json` (human at a terminal, json when piped).
+Every command takes `--help` and `--format human|json` (human at a terminal, json when piped);
+the data-download commands also accept `--format csv` — their help says so.
 Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —
 `--apply` writes, and off a terminal `--apply` additionally requires `--yes`.
 

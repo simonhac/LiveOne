@@ -6,8 +6,11 @@
  * `AggRow[]` it produces the served `OpenNEMDataSeries[]`, independent of where those rows came
  * from.
  *
- * Behavior must stay byte-identical to the pre-extraction route: dense-timeline handling, 30m
- * bucketing (numeric avg / quality last-in-bucket), transform inversion, `toPrecision(4)`.
+ * Behavior must stay byte-identical to the pre-extraction route — with one deliberate fix: 30m
+ * bucketing reduces each field by its own semantics (avg mean / delta sum / min-max extreme /
+ * last + quality last-in-bucket). The extracted code averaged every numeric field, which made a
+ * 30m energy.delta exactly one sixth of the truth. Dense-timeline handling, transform inversion
+ * and `toPrecision(4)` are unchanged.
  */
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
@@ -178,12 +181,17 @@ export async function buildSeriesFromAggRows(
         aggregated.sort((a, b) => a.interval_end - b.interval_end);
         rows = aggregated;
       } else {
-        // For numeric values, average them
+        // For numeric values, reduce each bucket by the field's own semantics: a
+        // cumulative delta must be summed, min/max take the extreme, last takes the
+        // most recent non-null value, and only avg is a mean of the 5m values.
         const aggregated: Array<{
           interval_end: number;
           value: number | null;
         }> = [];
-        const buckets = new Map<number, number[]>();
+        const buckets = new Map<
+          number,
+          Array<{ interval_end: number; value: number }>
+        >();
 
         for (const row of rows) {
           // Align bucketing to request boundaries
@@ -198,16 +206,36 @@ export async function buildSeriesFromAggRows(
           }
 
           if (row.value !== null) {
-            buckets.get(bucketEnd)!.push(row.value as number);
+            buckets.get(bucketEnd)!.push({
+              interval_end: row.interval_end,
+              value: row.value as number,
+            });
           }
         }
 
-        for (const [bucketEnd, values] of buckets.entries()) {
-          const avg =
-            values.length > 0
-              ? values.reduce((sum, v) => sum + v, 0) / values.length
-              : null;
-          aggregated.push({ interval_end: bucketEnd, value: avg });
+        for (const [bucketEnd, entries] of buckets.entries()) {
+          let value: number | null = null;
+          if (entries.length > 0) {
+            const values = entries.map((e) => e.value);
+            switch (series.aggregationField) {
+              case "delta":
+                value = values.reduce((sum, v) => sum + v, 0);
+                break;
+              case "min":
+                value = Math.min(...values);
+                break;
+              case "max":
+                value = Math.max(...values);
+                break;
+              case "last":
+                entries.sort((a, b) => a.interval_end - b.interval_end);
+                value = entries[entries.length - 1].value;
+                break;
+              default:
+                value = values.reduce((sum, v) => sum + v, 0) / values.length;
+            }
+          }
+          aggregated.push({ interval_end: bucketEnd, value });
         }
 
         aggregated.sort((a, b) => a.interval_end - b.interval_end);

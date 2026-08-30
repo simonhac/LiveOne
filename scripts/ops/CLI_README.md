@@ -8,7 +8,8 @@
 
 3 tool(s). Indexed from [docs/cli-reference.md](../../docs/cli-reference.md).
 
-Every command takes `--help` and `--format human|json` (human at a terminal, json when piped).
+Every command takes `--help` and `--format human|json` (human at a terminal, json when piped);
+the data-download commands also accept `--format csv` — their help says so.
 Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —
 `--apply` writes, and off a terminal `--apply` additionally requires `--yes`.
 
@@ -1668,6 +1669,9 @@ the daily aggregates roll up on). One request regardless of span; bound long sub
 pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;
 --out writes the RAW body; each series carries
 history.{firstInterval,lastInterval,interval,numIntervals,data}.
+--format csv emits WIDE rows — timestamp_local, timestamp_utc, then one column per
+series with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.
+With --out the CSV goes to the file and stdout gets the summary (as JSON).
 
 Usage:
   liveone device history <device> [options]
@@ -1684,10 +1688,11 @@ Options:
   --start <YYYY-MM-DD>       Window start — whole LOCAL days (the subject's fixed day offset)
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
   --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
-  --out <path>               Write the raw OpenNEM body to this file; stdout gets a summary
+  --out <path>               Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary
+  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals, data extents and sample count; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
 
 Common options:
-  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
@@ -1695,6 +1700,7 @@ Common options:
 Output:
   --format human   aligned text — the default at a terminal
   --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
   Data goes to stdout; all diagnostics go to stderr.
 
 External access:
@@ -1702,12 +1708,14 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
+  liveone device history daylesford --list-series
   liveone device history daylesford --last=3h
+  liveone device history daylesford --last=7d --series="load/*" --format=csv --out=load.csv
   liveone device history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31
 
 Exit codes:
   0    success
-  1    the window returned no series
+  1    no series matched (the window, or the --list-series subject)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -1930,6 +1938,9 @@ the daily aggregates roll up on). One request regardless of span; bound long sub
 pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;
 --out writes the RAW body; each series carries
 history.{firstInterval,lastInterval,interval,numIntervals,data}.
+--format csv emits WIDE rows — timestamp_local, timestamp_utc, then one column per
+series with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.
+With --out the CSV goes to the file and stdout gets the summary (as JSON).
 
 Usage:
   liveone area history <area> [options]
@@ -1946,10 +1957,11 @@ Options:
   --start <YYYY-MM-DD>       Window start — whole LOCAL days (the subject's fixed day offset)
   --end <YYYY-MM-DD>         Window end, inclusive (local days)
   --series <glob>            Only series matching this glob, matched against the DEVICE-LESS path, e.g. "load/*", "**/energy.delta" (repeatable; `*` does not cross `/`)  (repeatable)
-  --out <path>               Write the raw OpenNEM body to this file; stdout gets a summary
+  --out <path>               Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary
+  --list-series              List series METADATA only — id, unit, metric type, stat suffix, declared intervals, data extents and sample count; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)
 
 Common options:
-  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
@@ -1957,6 +1969,7 @@ Common options:
 Output:
   --format human   aligned text — the default at a terminal
   --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
   Data goes to stdout; all diagnostics go to stderr.
 
 External access:
@@ -1964,12 +1977,14 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
+  liveone area history daylesford --list-series
   liveone area history daylesford --last=3d --interval=30m
+  liveone area history daylesford --interval=30m --last=7d --series="load/*" --format=csv --out=load.csv
   liveone area history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31 --out=july.json
 
 Exit codes:
   0    success
-  1    the window returned no series
+  1    no series matched (the window, or the --list-series subject)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -2007,11 +2022,10 @@ Options:
   --start <YYYY-MM-DD>       Window start (local days)
   --end <YYYY-MM-DD>         Window end, inclusive
   --per-day                  Also carry the raw per-day matrices (CSV: one row per day×edge)
-  --csv                      Serialise as CSV, one row per source×load edge (to pipe raw CSV, add --format=human or --out)
   --out <path>               Write the CSV/JSON to this file; stdout gets a summary
 
 Common options:
-  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json, csv)
   --quiet                    Suppress non-essential output on stderr
   --color                    Colourise human output (default: on a terminal)
   --help                     Show this help and exit
@@ -2019,6 +2033,7 @@ Common options:
 Output:
   --format human   aligned text — the default at a terminal
   --format json    JSON on stdout — the default when stdout is not a terminal
+  --format csv     comma-separated rows on stdout — the columns are documented above
   Data goes to stdout; all diagnostics go to stderr.
 
 External access:
@@ -2027,7 +2042,7 @@ External access:
 
 Examples:
   liveone area flows daylesford --last=90d
-  liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --csv --out=flows.csv
+  liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --format=csv --out=flows.csv
 
 Exit codes:
   0    success
