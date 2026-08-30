@@ -182,12 +182,12 @@ terminal additionally requires `--yes`.
 
 #### Dashboard CLI
 
-`npm run dashboard -- <command>` (`scripts/ops/dashboard/cli.ts`) edits stored dashboard documents
+`npm run liveone -- dashboard <command>` (`scripts/ops/liveone.ts`) edits stored dashboard documents
 (`dashboards.doc`) directly in Postgres: `list` / `show` / `validate` / `rename` / `add-card` /
 `add-group` / `remove-node` / `move-node` / `set-prop`. Run `-- <command> --help` for options.
 
 - Connection from **`MIGRATE_DATABASE_URL` only** (prod: short-TTL `pscale role` url); for dev use
-  `npm run dashboard:dev -- <command>` (reads `.env.local`, refuses a prod URL). Read the printed
+  `npm run liveone:dev -- dashboard <command>` (reads `.env.local`, refuses a prod URL). Read the printed
   `target:` line before `--apply`.
 - Mutations are **dry-run by default**; `--apply` writes (CAS on `revision`, mirrors
   `updateDashboardDoc`). Off a terminal `--apply` additionally requires `--yes` — it refuses rather

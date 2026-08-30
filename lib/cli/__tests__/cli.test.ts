@@ -241,7 +241,7 @@ describe("parse — subcommands", () => {
 
   it("dispatches to the subcommand and reports which ran", () => {
     const r = ok(parent, ["list"]);
-    expect(r.subcommand).toBe("list");
+    expect(r.subcommandPath).toEqual(["list"]);
   });
 
   it("refuses a missing or unknown subcommand, suggesting the nearest", () => {
@@ -257,6 +257,72 @@ describe("parse — subcommands", () => {
 
   it("answers --help for the bare parent", () => {
     expect(ok(parent, ["--help"]).help).toBe(true);
+  });
+});
+
+describe("parse — nested subcommands (three levels)", () => {
+  // The shape `liveone dashboard show` needs: a PATH out of parse (the old single field was
+  // overwritten by each outer level on the way back up, so the leaf was silently lost), and help
+  // that resolves along it.
+  const root = defineCommand({
+    name: "liveone",
+    summary: "Root.",
+    uses: ["db"],
+    subcommands: {
+      dashboard: {
+        name: "dashboard",
+        summary: "Dashboard things.",
+        subcommands: {
+          show: { name: "show", summary: "Show one." },
+          "set-prop": {
+            name: "set-prop",
+            summary: "Change one.",
+            mutates: true,
+          },
+        },
+      },
+    },
+  });
+
+  it("reports the whole path, not just the outermost name", () => {
+    expect(ok(root, ["dashboard", "show"]).subcommandPath).toEqual([
+      "dashboard",
+      "show",
+    ]);
+  });
+
+  it("applies the leaf's own write gate, not the root's", () => {
+    expect(ok(root, ["dashboard", "show"]).dryRun).toBe(true);
+    expect(ok(root, ["dashboard", "set-prop", "--apply"]).dryRun).toBe(false);
+    // `show` is read-only, so it has no --apply to accept even though a sibling does.
+    expect(err(root, ["dashboard", "show", "--apply"]).what).toMatch(
+      /unknown flag/,
+    );
+  });
+
+  it("suggests a sibling at the level where the typo happened", () => {
+    expect(err(root, ["dashboard", "shwo"]).next).toMatch(
+      /did you mean "show"/,
+    );
+    expect(err(root, ["dashbord"]).next).toMatch(/did you mean "dashboard"/);
+  });
+
+  it("renders the full invocation on a leaf's usage line", () => {
+    const help = renderHelp(root.subcommands!.dashboard.subcommands!.show, [
+      root,
+      root.subcommands!.dashboard,
+    ]);
+    expect(help).toContain("liveone dashboard show");
+  });
+
+  it("inherits `uses` from the nearest ancestor that declares it", () => {
+    // The middle level declares nothing, so the leaf must still pick up the root's access rather
+    // than reporting none.
+    const help = renderHelp(root.subcommands!.dashboard.subcommands!.show, [
+      root,
+      root.subcommands!.dashboard,
+    ]);
+    expect(help).toMatch(/Database {2}Connects DIRECTLY to Postgres/);
   });
 });
 
@@ -298,7 +364,7 @@ describe("renderHelp", () => {
   it("lets a subcommand inherit the parent's declared access", () => {
     const parent = { name: "t", summary: "p", uses: ["api"] } as CommandSpec;
     const child = { name: "c", summary: "c" } as CommandSpec;
-    expect(renderHelp(child, parent)).toMatch(
+    expect(renderHelp(child, [parent])).toMatch(
       /API {7}Calls the deployed LiveOne API/,
     );
   });

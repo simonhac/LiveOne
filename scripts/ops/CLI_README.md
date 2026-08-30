@@ -6,7 +6,7 @@
 
 **Generated — do not edit.**
 
-2 tool(s). Indexed from [docs/cli-reference.md](../../docs/cli-reference.md).
+3 tool(s). Indexed from [docs/cli-reference.md](../../docs/cli-reference.md).
 
 Every command takes `--help` and `--format human|json` (human at a terminal, json when piped).
 Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry by default** —
@@ -23,8 +23,637 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 
 ## Contents
 
-- [cli-reference](#cli-reference)
+- [liveone](#liveone)
+  - [liveone dashboard](#liveone-dashboard)
+    - [liveone dashboard list](#liveone-dashboard-list)
+    - [liveone dashboard show](#liveone-dashboard-show)
+    - [liveone dashboard validate](#liveone-dashboard-validate)
+    - [liveone dashboard rename](#liveone-dashboard-rename)  _(writes)_
+    - [liveone dashboard add-card](#liveone-dashboard-add-card)  _(writes)_
+    - [liveone dashboard add-group](#liveone-dashboard-add-group)  _(writes)_
+    - [liveone dashboard remove-node](#liveone-dashboard-remove-node)  _(writes)_
+    - [liveone dashboard move-node](#liveone-dashboard-move-node)  _(writes)_
+    - [liveone dashboard set-prop](#liveone-dashboard-set-prop)  _(writes)_
+- [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
+
+## liveone
+
+The LiveOne operator CLI.
+
+`npm run liveone` — `scripts/ops/liveone.ts`
+
+```
+The LiveOne operator CLI.
+
+When to use:
+  The entry point for operating LiveOne from a terminal or an agent. Pick the domain that owns
+  the thing you want to read or change — `dashboard` for what a dashboard SHOWS — then the verb.
+  Run `liveone <domain> --help` to see a domain's verbs.
+
+Connection and credentials are per-domain; each domain's --help states what it reaches and
+what a failure means. Mutating commands change nothing without --apply.
+
+Usage:
+  liveone <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+
+Run `liveone <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  None. This command is pure — it reaches no database, API or credential.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  130  interrupted
+```
+
+### liveone dashboard
+
+Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+
+```
+Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+
+When to use:
+  Reach for this to read or change what a dashboard SHOWS — its cards, groups, layout and
+  which area or device each is bound to — directly in the database. For a card-type rename
+  across every stored document use `scripts/utils/migrate-card-type.ts` instead; for the
+  areas and devices a dashboard refers to, edit those through the app.
+
+The connection comes from MIGRATE_DATABASE_URL and nothing else — deliberately NOT the
+ambient PLANETSCALE_DATABASE_URL, because the durable target is PROD and 'which database am
+I pointed at' must never be answered by whatever happens to be in .env.local. Every command
+prints `target: database as user @ host` on stderr before doing anything: READ THAT LINE
+before you pass --apply. There is deliberately no 'am I on prod' auto-detection — a freshly
+minted `pscale role` connects as pscale_api_… and carries no branch id, so the usual check
+would report a confident 'not prod' for the exact connection this tool normally targets. A
+false reassurance is worse than none; the printed identity is the check.
+
+🛑 Durable edits go to PROD. `dashboards` is a config table the 2-hourly prod→dev sync
+refreshes, so a dev-only edit is reverted within the hour. Rehearse against dev freely.
+🛑 n_… node ids are minted per-document per-ENVIRONMENT, so prod and dev drift. Making the
+same edit in both means re-running `show` in each — never reuse an id across environments.
+
+Usage:
+  liveone dashboard <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   List dashboards: id, owner, name, slug, revision and card count.
+  show                   Render a dashboard's node tree, with the n_… ids edits address.
+  validate               Validate a stored dashboard doc, or a doc in a JSON file.
+  rename                 Change a dashboard's name and/or slug. Metadata only — the doc is untouched.  (writes)
+  add-card               Insert a card node.  (writes)
+  add-group              Insert an empty group node.  (writes)
+  remove-node            Remove a node and its whole subtree.  (writes)
+  move-node              Move a node, subtree intact and ids preserved.  (writes)
+  set-prop               Set or clear a node's envelope props, and a card's type/config.  (writes)
+
+Run `liveone dashboard <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard list
+
+List dashboards: id, owner, name, slug, revision and card count.
+
+```
+List dashboards: id, owner, name, slug, revision and card count.
+
+When to use:
+  Start here when you do not yet know a dashboard's id.
+
+Usage:
+  liveone dashboard list [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --owner <userId>           Only this owner's dashboards
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard list
+  liveone dashboard list --format json
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard show
+
+Render a dashboard's node tree, with the n_… ids edits address.
+
+```
+Render a dashboard's node tree, with the n_… ids edits address.
+
+When to use:
+  Run this before any edit: the n_… ids it prints are the handles every other subcommand
+  takes, and they are per-environment so they must be read from the database you intend
+  to change.
+
+Always renders the NORMALIZED document, so the ids shown are the ids a write would
+persist. --format json emits the same normalized doc (or one subtree with --node).
+
+Usage:
+  liveone dashboard show <dash> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+
+Options:
+  --node <n_id>              Render only this node's subtree
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard show 6
+  liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_1
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard validate
+
+Validate a stored dashboard doc, or a doc in a JSON file.
+
+```
+Validate a stored dashboard doc, or a doc in a JSON file.
+
+When to use:
+  Use this to find out WHY an edit is being refused, or to check a document you are about
+  to write from a file.
+
+Usage:
+  liveone dashboard validate [dash] [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  [dash]                 A dashboard: its db_… id, its legacy integer id, or its slug
+
+Options:
+  --file <path>              Validate this JSON file instead of a stored dashboard
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard validate 6
+  liveone dashboard validate --file=doc.json
+
+Exit codes:
+  0    success
+  1    the document is invalid
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard rename
+
+Change a dashboard's name and/or slug. Metadata only — the doc is untouched.
+
+```
+Change a dashboard's name and/or slug. Metadata only — the doc is untouched.
+
+When to use:
+  Use this for the dashboard's own name or its /dashboard/{user}/{slug} shortname.
+
+Usage:
+  liveone dashboard rename <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+
+Options:
+  --name <text>              New display name, or "none" to clear it
+  --slug <kebab>             New owner-unique shortname, or "none" to clear it
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard rename 6 --slug=daylesford
+  liveone dashboard rename 6 --name='Daylesford' --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard add-card
+
+Insert a card node.
+
+```
+Insert a card node.
+
+When to use:
+  Use this to put a new card on a dashboard; `add-group` makes a container instead.
+
+Usage:
+  liveone dashboard add-card <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+
+Options:
+  --type <cardType>          The card type, e.g. solar, chart, heatmap  (required)
+  --config-json <json>       The card's config, inline
+  --config-file <path>       The card's config, from a JSON file
+  --allow-unknown-type       Write a type this build does not know (it renders as a placeholder)
+  --area <ar_id>             Bind the node to an area (scope-bearing; readability is NOT checked)
+  --device <dv_id>           Bind the node to a device (scope-bearing; readability is NOT checked)
+  --hidden                   Mark the node hidden
+  --columns <1-12>           Width hint  (1–12 on the 12-column grid)
+  --parent <n_id>            Insert inside this group (default: the root)
+  --index <k>                Position within the parent (default: append)  (0-based position among the parent's children)
+  --before <n_id>            Insert immediately before this sibling
+  --after <n_id>             Insert immediately after this sibling
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a
+  liveone dashboard add-card 6 --type=chart --config-json='{"variant":"lines"}' --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard add-group
+
+Insert an empty group node.
+
+```
+Insert an empty group node.
+
+When to use:
+  Use this for structure — a row of tiles, or an area section. A group with an area and
+  heading is what used to be called a section; a row group is what used to be a tiles card.
+
+Usage:
+  liveone dashboard add-group <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+
+Options:
+  --direction <string>       Flex direction (default: column)  (one of: row, column)
+  --wrap                     Allow children to wrap
+  --heading                  Render the bound area's header
+  --area <ar_id>             Bind the node to an area (scope-bearing; readability is NOT checked)
+  --device <dv_id>           Bind the node to a device (scope-bearing; readability is NOT checked)
+  --hidden                   Mark the node hidden
+  --columns <1-12>           Width hint  (1–12 on the 12-column grid)
+  --parent <n_id>            Insert inside this group (default: the root)
+  --index <k>                Position within the parent (default: append)  (0-based position among the parent's children)
+  --before <n_id>            Insert immediately before this sibling
+  --after <n_id>             Insert immediately after this sibling
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard add-group 6 --direction=row --wrap --after=n_2
+  liveone dashboard add-group 6 --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard remove-node
+
+Remove a node and its whole subtree.
+
+```
+Remove a node and its whole subtree.
+
+When to use:
+  Removes the node AND everything under it — check `show` first if it is a group.
+
+Usage:
+  liveone dashboard remove-node <dash> <node> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <node>                 The n_… id of the node, as printed by `show`
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard remove-node 6 n_6
+  liveone dashboard remove-node 6 n_6 --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard move-node
+
+Move a node, subtree intact and ids preserved.
+
+```
+Move a node, subtree intact and ids preserved.
+
+When to use:
+  Use this to reorder or re-parent. Ids survive the move, so a later edit can still
+  address the node by the id `show` printed before it.
+
+Usage:
+  liveone dashboard move-node <dash> <node> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <node>                 The n_… id of the node, as printed by `show`
+
+Options:
+  --parent <n_id>            Insert inside this group (default: the root)
+  --index <k>                Position within the parent (default: append)  (0-based position among the parent's children)
+  --before <n_id>            Insert immediately before this sibling
+  --after <n_id>             Insert immediately after this sibling
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard move-node 6 n_8 --before=n_7
+  liveone dashboard move-node 6 n_8 --parent=n_2 --index=0 --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard set-prop
+
+Set or clear a node's envelope props, and a card's type/config.
+
+```
+Set or clear a node's envelope props, and a card's type/config.
+
+When to use:
+  Use this to change an existing node in place — bind it to a different device, resize it,
+  hide it, or replace a card's config. Pass `none` to any property to DELETE that key.
+
+Usage:
+  liveone dashboard set-prop <dash> <node> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id, its legacy integer id, or its slug
+  <node>                 The n_… id of the node, as printed by `show`
+
+Options:
+  --area <ar_id|none>        Bind to an area, or none to clear (readability is NOT checked)
+  --device <dv_id|none>      Bind to a device, or none to clear (readability is NOT checked)
+  --hidden <string>          Set or clear the hidden flag  (one of: true, false, none)
+  --wrap <string>            Group only: set or clear wrapping  (one of: true, false, none)
+  --heading <string>         Group only: set or clear the area header  (one of: true, false, none)
+  --direction <string>       Group only: flex direction, or none to clear  (one of: row, column, none)
+  --columns <1-12|none>      Width hint, or none to clear
+  --type <cardType>          Card only: change the card type
+  --config <string>          Card only: clear the config (use --config-json/--config-file to set)  (one of: none)
+  --config-json <json>       Card only: replace the config, inline
+  --config-file <path>       Card only: replace the config, from a JSON file
+  --allow-unknown-type       Allow a --type this build does not know
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  liveone dashboard set-prop 6 n_3 --columns=6
+  liveone dashboard set-prop 6 n_3 --hidden=none --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  5    upstream failure
+  130  interrupted
+```
 
 ## cli-reference
 

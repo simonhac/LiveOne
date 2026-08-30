@@ -43,8 +43,8 @@ export interface TierManifest {
 
 export const TIERS: TierManifest = {
   a: [
-    // The dashboard-document editor. Named in CLAUDE.md and docs/migrations.md.
-    "scripts/ops/dashboard/cli.ts",
+    // The operator CLI. One entrypoint; each domain is a composable module beneath it.
+    "scripts/ops/liveone.ts",
     // The generator for the committed reference. Agent-facing because a stale catalogue is how
     // discovery starts lying.
     "scripts/ops/cli-reference.ts",
@@ -58,8 +58,10 @@ export const TIERS: TierManifest = {
     "scripts/utils/add-generator-tile.ts",
   ],
   c: [
-    // Shared plumbing for the dashboard CLI, not a CLI itself. Imported by the two tier-B scripts
-    // above, so it must not carry an entrypoint of its own.
+    // The `dashboard` domain and its plumbing — composed by scripts/ops/liveone.ts, and
+    // deliberately WITHOUT entrypoints of their own so they can be imported. Not CLIs themselves,
+    // so they are not documented separately; the reference documents them through `liveone`.
+    "scripts/ops/dashboard/cli.ts",
     "scripts/ops/dashboard/db.ts",
   ],
   lib: [],

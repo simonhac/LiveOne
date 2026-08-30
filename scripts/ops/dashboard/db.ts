@@ -19,9 +19,9 @@ import { failWith, EXIT } from "@/lib/cli/cli";
 
 export async function connect(): Promise<Client> {
   let raw = process.env.MIGRATE_DATABASE_URL;
-  // `npm run dashboard:dev` sets DASHBOARD_DEV_FALLBACK=1 and loads .env.local via tsx --env-file,
+  // `npm run liveone:dev` sets DASHBOARD_DEV_FALLBACK=1 and loads .env.local via tsx --env-file,
   // allowing the ambient dev URL — but ONLY behind that explicit gate, and never a URL carrying the
-  // prod branch id. Plain `npm run dashboard` stays MIGRATE_DATABASE_URL-only: an ambient variable
+  // prod branch id. Plain `npm run liveone` stays MIGRATE_DATABASE_URL-only: an ambient variable
   // must not silently choose the target. (This fallback direction is fail-closed: the token is
   // present iff the URL is prod. The unreliable direction — "no token, therefore not prod", which a
   // minted pscale_api_… role would trip — is never relied on; see the module header.)
@@ -30,7 +30,7 @@ export async function connect(): Promise<Client> {
     const prodToken = process.env.PLANETSCALE_PROD_BRANCH_ID;
     if (dev && prodToken && dev.includes(prodToken)) {
       throw new Error(
-        "dashboard:dev refuses to run: PLANETSCALE_DATABASE_URL carries the prod branch id",
+        "liveone:dev refuses to run: PLANETSCALE_DATABASE_URL carries the prod branch id",
       );
     }
     raw = dev;
@@ -40,8 +40,8 @@ export async function connect(): Promise<Client> {
       "set MIGRATE_DATABASE_URL to the connection string of the database to target\n" +
         // .env.local is NOT sourced into your shell, so $PLANETSCALE_DATABASE_URL expands empty —
         // the hint must be a command that actually works.
-        "  dev:  npm run dashboard:dev -- <command> …   (reads .env.local), or\n" +
-        "        MIGRATE_DATABASE_URL=$(grep '^PLANETSCALE_DATABASE_URL=' .env.local | cut -d= -f2-) npm run dashboard -- …\n" +
+        "  dev:  npm run liveone:dev -- dashboard <command> …   (reads .env.local), or\n" +
+        "        MIGRATE_DATABASE_URL=$(grep '^PLANETSCALE_DATABASE_URL=' .env.local | cut -d= -f2-) npm run liveone -- dashboard …\n" +
         "  prod: pscale role create liveone sydney dash-cli --inherited-roles postgres --ttl 1h",
     );
   }

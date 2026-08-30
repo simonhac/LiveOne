@@ -35,6 +35,7 @@ import {
 } from "@/lib/cli/cli";
 import {
   flattenCommands,
+  walkCommandTree,
   inputSchemaFor,
   signatureFor,
   descriptionFor,
@@ -135,31 +136,28 @@ function renderDirReadme(dir: string, tools: Loaded[]): string {
     "## Contents",
     "",
   );
-  for (const t of tools) out.push(`- [${t.spec.name}](#${t.spec.name})`);
+  for (const t of tools)
+    for (const node of walkCommandTree(t.spec))
+      out.push(
+        `${"  ".repeat(node.path.length - 1)}- [${node.path.join(" ")}](#${node.path.join("-")})` +
+          (node.spec.mutates ? "  _(writes)_" : ""),
+      );
   out.push("");
   for (const t of tools) {
-    out.push(
-      `## ${t.spec.name}`,
-      "",
-      t.spec.summary,
-      "",
-      `\`npm run ${t.spec.name}\` — \`${t.file}\``,
-      "",
-      "```",
-      renderHelp(t.spec),
-      "```",
-      "",
-    );
-    for (const leaf of flattenCommands(t.spec)) {
-      if (leaf.path.length === 1) continue;
+    // EVERY node, not just leaves: a reader needs the intermediate domain's own help (including
+    // its safety text), and a leaf's usage line needs its full ancestor chain or it renders as
+    // `liveone show` with the domain silently missing.
+    for (const node of walkCommandTree(t.spec)) {
+      const depth = node.path.length;
       out.push(
-        `### ${leaf.path.join(" ")}`,
+        `${"#".repeat(Math.min(depth + 1, 6))} ${node.path.join(" ")}`,
         "",
-        "```",
-        renderHelp(leaf.spec, t.spec),
-        "```",
+        node.spec.summary,
         "",
       );
+      if (depth === 1)
+        out.push(`\`npm run ${t.spec.name}\` — \`${t.file}\``, "");
+      out.push("```", renderHelp(node.spec, node.ancestors), "```", "");
     }
   }
   return out.join("\n").replace(/\n*$/, "\n");
@@ -185,16 +183,11 @@ function renderIndex(byDir: Map<string, Loaded[]>): string {
     out.push(`## \`${dir}\``, "");
     for (const t of tools) {
       const readme = path.relative("docs", path.join(dir, "CLI_README.md"));
-      out.push(
-        `- [${t.spec.name}](${readme}#${t.spec.name}) — ${t.spec.summary}`,
-      );
-      for (const leaf of flattenCommands(t.spec)) {
-        if (leaf.path.length === 1) continue;
+      for (const node of walkCommandTree(t.spec))
         out.push(
-          `  - [${leaf.path.join(" ")}](${readme}#${leaf.path.join("-")}) — ${leaf.spec.summary}` +
-            (leaf.spec.mutates ? "  _(writes)_" : ""),
+          `${"  ".repeat(node.path.length - 1)}- [${node.path.join(" ")}](${readme}#${node.path.join("-")}) — ${node.spec.summary}` +
+            (node.spec.mutates ? "  _(writes)_" : ""),
         );
-      }
     }
     out.push("");
   }

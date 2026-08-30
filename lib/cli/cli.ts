@@ -251,8 +251,14 @@ export type ParseResult =
       dryRun: boolean;
       color: boolean;
       quiet: boolean;
-      /** Which subcommand ran, if the command has any. */
-      subcommand?: string;
+      /**
+       * The subcommand path that ran, root-first — e.g. `["dashboard", "show"]`.
+       *
+       * An ARRAY rather than a name: nesting is arbitrarily deep, and the previous single field
+       * was overwritten by each outer level on the way back up, so a three-level invocation
+       * (`liveone dashboard show`) silently reported only "dashboard" and the leaf was lost.
+       */
+      subcommandPath: string[];
     }
   | { ok: false; error: CliError };
 
@@ -368,7 +374,15 @@ export function parse(
   spec: CommandSpec,
   argv: string[],
   tty: Tty,
+  /**
+   * Names of the commands ABOVE `spec`, root-first. Used only to build error messages that name a
+   * command the caller can actually run: the recursion descends into a subcommand's own spec, so
+   * without this a failure inside `liveone dashboard` recommended `dashboard --help` — a command
+   * that does not exist, since only the root has an entrypoint.
+   */
+  ancestors: string[] = [],
 ): ParseResult {
+  const invocation = [...ancestors, spec.name].join(" ");
   // Subcommand dispatch happens before anything else: `dashboard show --node x` is a request to
   // parse `show`, and the parent's flag table has nothing to say about --node. A sibling's flag
   // must not quietly succeed here.
@@ -383,7 +397,7 @@ export function parse(
         return fail(
           EXIT.USAGE,
           `unknown subcommand "${first}"`,
-          `${spec.name} has no subcommand "${first}"`,
+          `${invocation} has no subcommand "${first}"`,
           near
             ? `did you mean "${near}"? Subcommands: ${names.join(", ")}`
             : `subcommands: ${names.join(", ")}`,
@@ -391,8 +405,8 @@ export function parse(
       }
       // Inherit the parent's declared access unless the subcommand states its own.
       const effective = sub.uses ? sub : { ...sub, uses: spec.uses };
-      const r = parse(effective, argv.slice(1), tty);
-      return r.ok ? { ...r, subcommand: first } : r;
+      const r = parse(effective, argv.slice(1), tty, [...ancestors, spec.name]);
+      return r.ok ? { ...r, subcommandPath: [first, ...r.subcommandPath] } : r;
     }
 
     if (argv.includes("--help") || argv.includes("-h"))
@@ -405,13 +419,14 @@ export function parse(
         dryRun: true,
         color: tty.stdoutIsTTY,
         quiet: false,
+        subcommandPath: [],
       };
 
     return fail(
       EXIT.USAGE,
       first === undefined ? "no subcommand given" : `"${first}"`,
-      `${spec.name} requires a subcommand`,
-      `subcommands: ${names.join(", ")} — run \`${spec.name} --help\` for what each does`,
+      `${invocation} requires a subcommand`,
+      `subcommands: ${names.join(", ")} — run \`${invocation} --help\` for what each does`,
     );
   }
 
@@ -436,6 +451,7 @@ export function parse(
       dryRun: true,
       color: tty.stdoutIsTTY,
       quiet: false,
+      subcommandPath: [],
     };
   }
 
@@ -474,9 +490,9 @@ export function parse(
       return fail(
         EXIT.USAGE,
         `unknown flag "${tok}"`,
-        `${spec.name} does not accept ${tok}`,
+        `${invocation} does not accept ${tok}`,
         near
-          ? `did you mean ${near}? Run \`${spec.name} --help\` for all flags.`
+          ? `did you mean ${near}? Run \`${invocation} --help\` for all flags.`
           : `valid flags: ${knownCli.sort().join(", ")}`,
       );
     }
@@ -617,7 +633,7 @@ export function parse(
         EXIT.USAGE,
         `missing <${a.name}>`,
         `${a.name} is required`,
-        `run \`${spec.name} --help\` for the argument order`,
+        `run \`${invocation} --help\` for the argument order`,
       );
   }
   const last = argSpecs[argSpecs.length - 1];
@@ -625,8 +641,8 @@ export function parse(
     return fail(
       EXIT.USAGE,
       `unexpected argument "${positional[argSpecs.length]}"`,
-      `${spec.name} takes ${argSpecs.length} positional argument(s)`,
-      `quote the whole value if it contains spaces, or run \`${spec.name} --help\``,
+      `${invocation} takes ${argSpecs.length} positional argument(s)`,
+      `quote the whole value if it contains spaces, or run \`${invocation} --help\``,
     );
 
   // Format precedence: --format, then the --json alias, then LIVEONE_FORMAT, then TTY detection.
@@ -666,7 +682,7 @@ export function parse(
       return fail(
         EXIT.USAGE,
         "--apply without --yes",
-        `${spec.name} will not write without confirmation, and stdin is not a terminal so it cannot ask`,
+        `${invocation} will not write without confirmation, and stdin is not a terminal so it cannot ask`,
         `pass --yes to confirm non-interactively, or drop --apply to preview the change`,
       );
   }
@@ -686,6 +702,7 @@ export function parse(
     dryRun,
     color,
     quiet: !!values.quiet,
+    subcommandPath: [],
   };
 }
 
@@ -695,10 +712,19 @@ export function parse(
  * `--help` is frequently an agent's only specification, so this documents every flag, its default,
  * the format values and the exit codes — not just a usage line.
  */
-export function renderHelp(spec: CommandSpec, parent?: CommandSpec): string {
-  // A subcommand inherits its parent's declared access, the same way parse() does.
-  if (parent && !spec.uses && parent.uses)
-    spec = { ...spec, uses: parent.uses };
+export function renderHelp(
+  spec: CommandSpec,
+  ancestors: CommandSpec[] = [],
+): string {
+  // A subcommand inherits declared access from its NEAREST ancestor that states any, the same way
+  // parse() does — walking the chain rather than looking at one parent, so a three-level tree does
+  // not lose the middle level's declaration to the root's silence.
+  if (!spec.uses)
+    for (let i = ancestors.length - 1; i >= 0; i--)
+      if (ancestors[i].uses) {
+        spec = { ...spec, uses: ancestors[i].uses };
+        break;
+      }
   const flagSpecs = allFlags(spec);
   const out: string[] = [];
 
@@ -717,7 +743,7 @@ export function renderHelp(spec: CommandSpec, parent?: CommandSpec): string {
         (a.variadic ? "..." : ""),
     )
     .join(" ");
-  const invocation = parent ? `${parent.name} ${spec.name}` : spec.name;
+  const invocation = [...ancestors.map((a) => a.name), spec.name].join(" ");
   out.push(
     "Usage:",
     spec.subcommands
@@ -933,7 +959,9 @@ function renderError(e: CliError): string {
 export interface Ctx {
   flags: Record<string, unknown>;
   args: string[];
-  /** Which subcommand ran, for a command that has them. */
+  /** The subcommand path that ran, root-first — e.g. `["dashboard", "show"]`. */
+  subcommandPath: string[];
+  /** The leaf subcommand, for the common single-level case. */
   subcommand?: string;
   format: Format;
   dryRun: boolean;
@@ -997,8 +1025,17 @@ export async function run(
     process.exit(r.error.code);
   }
   if (r.help) {
-    const target = r.subcommand ? spec.subcommands?.[r.subcommand] : undefined;
-    writeStdout(renderHelp(target ?? spec, target ? spec : undefined) + "\n");
+    // Walk the path so `liveone dashboard show --help` documents the leaf, with the whole
+    // invocation on its usage line.
+    const ancestors: CommandSpec[] = [];
+    let target: CommandSpec = spec;
+    for (const name of r.subcommandPath) {
+      const next = target.subcommands?.[name];
+      if (!next) break;
+      ancestors.push(target);
+      target = next;
+    }
+    writeStdout(renderHelp(target, ancestors) + "\n");
     await flushStdout();
     process.exit(EXIT.OK);
   }
@@ -1012,7 +1049,8 @@ export async function run(
     const code = await main({
       flags: r.flags,
       args: r.args,
-      subcommand: r.subcommand,
+      subcommandPath: r.subcommandPath,
+      subcommand: r.subcommandPath[r.subcommandPath.length - 1],
       format: r.format,
       dryRun: r.dryRun,
       quiet: r.quiet,

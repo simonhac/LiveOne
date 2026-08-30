@@ -70,6 +70,13 @@ export interface FlatCommand {
   /** Resolved, with the parent's declaration inherited where the child has none. */
   uses: readonly Capability[];
   /**
+   * The NAME of the ancestor that supplied `parentWhen`. Without it the description labels the
+   * text with `path[0]`, so in a three-level tree `dashboard`'s routing guidance is announced as
+   * being about `liveone` generally — wrong, and misleading in exactly the field a model reads to
+   * decide whether a tool applies.
+   */
+  parentWhenName?: string;
+  /**
    * The parent's `when`, where there is one.
    *
    * A SEPARATE FIELD, not copied into `spec.when`. The parent's sentence answers "is this the
@@ -101,8 +108,39 @@ export function flattenCommands(spec: CommandSpec): FlatCommand[] {
       // Nearest ancestor that declares one wins, so a three-level tree does not lose the middle
       // level's routing to the root's.
       parentWhen: c.parentWhen ?? spec.when,
+      parentWhenName: c.parentWhenName ?? (spec.when ? spec.name : undefined),
     })),
   );
+}
+
+/** One node of the command tree — a root, an intermediate domain, or a leaf. */
+export interface TreeNode {
+  spec: CommandSpec;
+  /** Root-first, EXCLUDING `spec` itself. */
+  ancestors: CommandSpec[];
+  /** Root-first, INCLUDING `spec`'s own name. */
+  path: string[];
+}
+
+/**
+ * Every command in the tree, including intermediates — unlike `flattenCommands`, which returns
+ * only invocable leaves.
+ *
+ * Both exist because they answer different questions. The MCP catalogue wants leaves (a tool for a
+ * bare domain would advertise a command that exits 2), while generated DOCUMENTATION wants every
+ * node: a reader needs the `dashboard` section, and a leaf's usage line needs its full ancestor
+ * chain or it renders as `liveone show`.
+ */
+export function walkCommandTree(
+  spec: CommandSpec,
+  ancestors: CommandSpec[] = [],
+): TreeNode[] {
+  const path = [...ancestors.map((a) => a.name), spec.name];
+  const here: TreeNode = { spec, ancestors, path };
+  const kids = Object.values(spec.subcommands ?? {}).flatMap((sub) =>
+    walkCommandTree(sub, [...ancestors, spec]),
+  );
+  return [here, ...kids];
 }
 
 /** `["dashboard","show"]` → `dashboard__show`. */
@@ -278,7 +316,9 @@ export function descriptionFor(
   // The parent's routing, for a subcommand — a model reading `dashboard__set-prop` in isolation
   // otherwise has no idea what `dashboard` is for.
   if (cmd.parentWhen)
-    out.push(`About \`${cmd.path[0]}\` generally: ${cmd.parentWhen}`);
+    out.push(
+      `About \`${cmd.parentWhenName ?? cmd.path[0]}\` generally: ${cmd.parentWhen}`,
+    );
   if (spec.description) out.push(spec.description);
 
   out.push(

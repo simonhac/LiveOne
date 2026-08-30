@@ -146,7 +146,7 @@ Ordering and scope:
 - **Prefer it in the same PR as the rename**, so the code and the data never disagree across a deploy.
   There is no read-time upgrade ladder and no legacy-alias map — by design, so the two never drift.
 
-**Ad-hoc document edits** — `npm run dashboard` (`scripts/ops/dashboard/cli.ts`) is the general-purpose
+**Ad-hoc document edits** — `npm run liveone -- dashboard …` (`scripts/ops/liveone.ts`) is the general-purpose
 editor for `dashboards.doc` and dashboard metadata: `list` / `show` (prints the `n_…` node ids edits
 address) / `validate` / `rename` / `add-card` / `add-group` / `remove-node` / `move-node` / `set-prop`.
 Every subcommand takes `--help` and `--format human|json`. Same safety model as the rewrite script: connection from `MIGRATE_DATABASE_URL` only, printed

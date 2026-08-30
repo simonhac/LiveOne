@@ -1,11 +1,17 @@
-#!/usr/bin/env tsx
 /**
- * dashboard — inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
+ * The `dashboard` domain of the `liveone` CLI — inspect and edit stored dashboard documents
+ * (`dashboards.doc`, the v4 node tree).
  *
- * Declared with `defineCommand` and driven by the shared harness in `lib/cli/` — so it gets
- * arity-aware parsing, `--help` on every subcommand, `--format human|json`, the dry-by-default
- * write gate, the exit-code vocabulary and stdout/stderr separation for free, and so a future MCP
- * server can render its tool list from this same declaration (`lib/cli/tool-schema.ts`).
+ * A COMPOSABLE module, not an entrypoint: it exports the spec and a dispatcher, and
+ * `scripts/ops/liveone.ts` mounts it. That is what lets one CLI carry several domains
+ * (`liveone dashboard show`, and later `liveone device …`) instead of one npm script per domain.
+ * Deliberately no `run()` here — a module with an entrypoint cannot be composed, and importing it
+ * would execute it.
+ *
+ * Driven by the shared harness in `lib/cli/`, so it gets arity-aware parsing, `--help` at every
+ * level, `--format human|json`, the dry-by-default write gate, the exit-code vocabulary and
+ * stdout/stderr separation for free — and a future MCP server renders its tool list from this same
+ * declaration (`lib/cli/tool-schema.ts`).
  *
  * See `docs/migrations.md` § "Data & config-document migrations".
  */
@@ -45,7 +51,6 @@ import {
   defineCommand,
   failWith,
   kebab,
-  run,
   EXIT,
   type CommandSpec,
   type Ctx,
@@ -126,7 +131,7 @@ function loadWorkingDoc(row: DashRow): {
       EXIT.FINDINGS,
       `${dashLabel(row)}: stored doc is already invalid`,
       issueLines(res.errors, "error").join("\n").trim(),
-      "run `dashboard validate` for the full list — refusing to edit a doc that is already broken",
+      "run `liveone dashboard validate` for the full list — refusing to edit a doc that is already broken",
     );
   return { working: res.normalized!, missingIds: countMissingIds(row.doc) };
 }
@@ -464,7 +469,7 @@ const ENVELOPE_FLAGS = {
 // The command
 // ---------------------------------------------------------------------------
 
-export const cmd = defineCommand({
+export const dashboardCommand = defineCommand({
   name: "dashboard",
   summary:
     "Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).",
@@ -501,7 +506,10 @@ export const cmd = defineCommand({
           help: "Only this owner's dashboards",
         },
       },
-      examples: ["dashboard list", "dashboard list --format json"],
+      examples: [
+        "liveone dashboard list",
+        "liveone dashboard list --format json",
+      ],
     },
 
     show: {
@@ -524,8 +532,8 @@ export const cmd = defineCommand({
         },
       },
       examples: [
-        "dashboard show 6",
-        "dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_1",
+        "liveone dashboard show 6",
+        "liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_1",
       ],
     },
 
@@ -544,7 +552,10 @@ export const cmd = defineCommand({
         },
       },
       exitCodes: { 1: "the document is invalid" },
-      examples: ["dashboard validate 6", "dashboard validate --file=doc.json"],
+      examples: [
+        "liveone dashboard validate 6",
+        "liveone dashboard validate --file=doc.json",
+      ],
     },
 
     rename: {
@@ -567,8 +578,8 @@ export const cmd = defineCommand({
         },
       },
       examples: [
-        "dashboard rename 6 --slug=daylesford",
-        "dashboard rename 6 --name='Daylesford' --apply",
+        "liveone dashboard rename 6 --slug=daylesford",
+        "liveone dashboard rename 6 --name='Daylesford' --apply",
       ],
     },
 
@@ -603,8 +614,8 @@ export const cmd = defineCommand({
         ...POSITION_FLAGS,
       },
       examples: [
-        "dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a",
-        'dashboard add-card 6 --type=chart --config-json=\'{"variant":"lines"}\' --apply',
+        "liveone dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a",
+        'liveone dashboard add-card 6 --type=chart --config-json=\'{"variant":"lines"}\' --apply',
       ],
     },
 
@@ -628,8 +639,8 @@ export const cmd = defineCommand({
         ...POSITION_FLAGS,
       },
       examples: [
-        "dashboard add-group 6 --direction=row --wrap --after=n_2",
-        "dashboard add-group 6 --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply",
+        "liveone dashboard add-group 6 --direction=row --wrap --after=n_2",
+        "liveone dashboard add-group 6 --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply",
       ],
     },
 
@@ -640,8 +651,8 @@ export const cmd = defineCommand({
       mutates: true,
       args: [DASH_ARG, NODE_ARG],
       examples: [
-        "dashboard remove-node 6 n_6",
-        "dashboard remove-node 6 n_6 --apply",
+        "liveone dashboard remove-node 6 n_6",
+        "liveone dashboard remove-node 6 n_6 --apply",
       ],
     },
 
@@ -655,8 +666,8 @@ export const cmd = defineCommand({
       args: [DASH_ARG, NODE_ARG],
       flags: { ...POSITION_FLAGS },
       examples: [
-        "dashboard move-node 6 n_8 --before=n_7",
-        "dashboard move-node 6 n_8 --parent=n_2 --index=0 --apply",
+        "liveone dashboard move-node 6 n_8 --before=n_7",
+        "liveone dashboard move-node 6 n_8 --parent=n_2 --index=0 --apply",
       ],
     },
 
@@ -731,8 +742,8 @@ export const cmd = defineCommand({
         },
       },
       examples: [
-        "dashboard set-prop 6 n_3 --columns=6",
-        "dashboard set-prop 6 n_3 --hidden=none --apply",
+        "liveone dashboard set-prop 6 n_3 --columns=6",
+        "liveone dashboard set-prop 6 n_3 --hidden=none --apply",
       ],
     },
   },
@@ -798,7 +809,7 @@ async function runShow(ctx: Ctx): Promise<number> {
         EXIT.FINDINGS,
         `no node "${nodeId}"`,
         "this document has no node with that id",
-        "run `dashboard show <dash>` for the current ids — they are per-environment",
+        "run `liveone dashboard show <dash>` for the current ids — they are per-environment",
       );
     const subtree = nodeId ? findNode(working, nodeId)!.node : working.root;
     ctx.emit(
@@ -1036,7 +1047,7 @@ async function runSetProp(ctx: Ctx): Promise<number> {
         EXIT.FINDINGS,
         `no node "${id}"`,
         "this document has no node with that id",
-        "run `dashboard show <dash>` for the current ids",
+        "run `liveone dashboard show <dash>` for the current ids",
       );
 
     const patch: NodePatch = {};
@@ -1107,7 +1118,7 @@ async function runSetProp(ctx: Ctx): Promise<number> {
       throw usage(
         "nothing to change",
         "set-prop needs at least one property flag",
-        "run `dashboard set-prop --help` for the list",
+        "run `liveone dashboard set-prop --help` for the list",
       );
 
     const res = setNodeProps(working, id, patch);
@@ -1159,4 +1170,19 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   "set-prop": runSetProp,
 };
 
-run(cmd, async (ctx) => HANDLERS[ctx.subcommand!](ctx), import.meta.url);
+/**
+ * Run whichever `dashboard` verb was selected. Reads the LAST element of the path, because under
+ * `liveone` the path is `["dashboard", "<verb>"]`.
+ */
+export async function runDashboard(ctx: Ctx): Promise<number> {
+  const verb = ctx.subcommandPath[ctx.subcommandPath.length - 1];
+  const handler = HANDLERS[verb];
+  if (!handler)
+    throw failWith(
+      EXIT.USAGE,
+      `unknown dashboard command "${verb}"`,
+      "this verb has no handler",
+      "run `npm run liveone -- dashboard --help`",
+    );
+  return handler(ctx);
+}
