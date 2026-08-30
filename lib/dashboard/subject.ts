@@ -19,10 +19,8 @@
  * | `?deviceId=dv_…` | device | Unambiguous by construction. |
  * | `?areaId=ar_…` | area | Unambiguous by construction. This is how an Area is addressed AS an area. |
  *
- * So the legacy alias keeps its exact v3 meaning forever, and the area-native reading of a colliding
- * handle is reachable only through the new, explicit `ar_…` address. (The Phase 13 brief's step 2 says
- * `?systemId=N` should resolve "area leg first"; that contradicts the same document's own proof gate
- * for handle 13, and the gate wins.)
+ * So the legacy alias keeps its original meaning forever, and the area-native reading of a colliding
+ * handle is reachable only through the explicit `ar_…` address.
  *
  * ## 🛑 Scope boundary
  *
@@ -199,6 +197,6 @@ export async function resolveWireAddress(
       status: 400,
     };
   }
-  // Device-first — the LOCKED v3 order. See the precedence table above (trap D-l).
+  // Device-first — the LOCKED order. See the precedence table above.
   return { ok: true, handle, prefer: "device" };
 }

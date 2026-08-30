@@ -1,16 +1,14 @@
 /**
  * The NODE CATALOG — the declarative, capability-keyed card ELIGIBILITY data (label + required
  * capabilities + scope), one entry per `KnownCardType`. Server-safe and React-free: the render side
- * is the client plugin registry (components/dashboard/registry.tsx), which replaced the old
- * `card.type` switch in the (since deleted) v3 renderer; the live renderer is
- * components/dashboard/v4/node-view.tsx.
+ * is the client plugin registry (components/dashboard/registry.tsx); the renderer that consumes it
+ * is components/dashboard/v4/node-view.tsx.
  *
- * ONE CATALOG, ONE VOCABULARY (config-v4 Phase 14 stage 7). `TILE_CATALOG` (8 tiles) and
- * `CARD_CATALOG` (10 cards + the v3 `tiles` container) were separate maps over two id spaces. §8.1
- * unified the primitive — a tile IS a card — so they are now one `Record<KnownCardType, …>` keyed on
- * the same 18-type vocabulary as the render registry and the config schemas
- * (lib/dashboard/card-types.ts). The `tiles` entry is GONE with them: in v4 that container is a `row`
- * group, not a card, so it has no eligibility of its own — its members answer for themselves.
+ * ONE CATALOG, ONE VOCABULARY. §8.1 unified the primitive — a tile IS a card — so this is a single
+ * `Record<KnownCardType, …>` keyed on the same 18-type vocabulary as the render registry and the
+ * config schemas (lib/dashboard/card-types.ts), rather than separate tile and card maps over two id
+ * spaces. There is no entry for a tile CONTAINER: that is a `row` group, not a card, so it has no
+ * eligibility of its own — its members answer for themselves.
  *
  * Each entry declares the capabilities it REQUIRES. "Which cards can an area show" =
  * `NODE_CATALOG.filter(e => satisfies(scopeCaps(e), e.requires))`. No vendor/device names appear here
@@ -83,8 +81,8 @@ export interface NodeCatalogEntry {
  */
 export const NODE_CATALOG: Record<KnownCardType, NodeCatalogEntry> = {
   // --- tile views ------------------------------------------------------------------------------
-  // Area-scoped: a tile's eligibility is judged against the area UNION, exactly as the v3
-  // `availableTiles(latest)` was. `oe-grid` is the one device-scoped tile — it is bound to an
+  // Area-scoped: a tile's eligibility is judged against the area UNION.
+  // `oe-grid` is the one device-scoped tile — it is bound to an
   // OpenElectricity region device, not derived from an area's capabilities.
   solar: {
     id: "solar",

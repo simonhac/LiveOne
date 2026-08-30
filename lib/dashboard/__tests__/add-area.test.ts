@@ -1,5 +1,5 @@
 /**
- * The pure half of `AddAreaDialog` (config-v4 Phase 14 stage 14). These live here rather than beside
+ * The pure half of `AddAreaDialog`. These live here rather than beside
  * the component because `components/` is not a jest root — a test placed there is silently not
  * collected.
  */
@@ -151,7 +151,7 @@ describe("docAreaRefs", () => {
     expect(docAreaRefs(emptyDashboardV4())).toEqual([]);
   });
 
-  it("sees an area bound BELOW the top level — the v3 section walk did not", () => {
+  it("sees an area bound BELOW the top level, not just at the root's children", () => {
     const doc: DashboardV4 = {
       version: 4,
       root: {

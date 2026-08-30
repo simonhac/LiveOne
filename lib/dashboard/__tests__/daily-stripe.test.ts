@@ -1,5 +1,5 @@
 /**
- * The `daily-stripe` card's pure core (config-v4 Phase 14 stage 19) — the strict config schema as
+ * The `daily-stripe` card's pure core — the strict config schema as
  * the v4 doc validator sees it, plus the window / OpenNEM-parse / colour-domain helpers the plugin
  * is a thin shell over.
  */

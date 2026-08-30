@@ -109,12 +109,12 @@ async function renderCompositionDashboard(
   // path — the token is the identity there and the URL is left alone.
   canonicalPath?: string,
 ) {
-  // The v4 node tree is what renders (DashboardV4View, inside DashboardClient), and as of config-v4
-  // Phase 14 stage 16 it is the ONLY shape: `descriptor` was made inert at stage 15 and dropped from
-  // the database by migration 0054. `dashboards.doc` is NOT NULL (Phase 8/10 cutover) and its one write path validates it,
-  // so this guard is a defence against a corrupt jsonb only — and a failed guard renders an EMPTY
-  // document. That is deliberate: quietly serving a second, divergent shape from a shape-guard
-  // failure is exactly the drift the cutover set out to end.
+  // The node tree is what renders (DashboardV4View, inside DashboardClient), and it is the ONLY
+  // shape — the `descriptor` column that held a second one was dropped by migration 0054.
+  // `dashboards.doc` is NOT NULL and its one write path validates it, so this guard is a defence
+  // against a corrupt jsonb only — and a failed guard renders an EMPTY document. That is deliberate:
+  // quietly serving a second, divergent shape from a shape-guard failure is exactly the drift this
+  // is here to prevent.
   const v4doc = isDashboardV4(dashboard.doc)
     ? dashboard.doc
     : emptyDashboardV4();
@@ -150,11 +150,9 @@ async function renderCompositionDashboard(
   const queryClient = getQueryClient();
   // A tile/card can pin a specific device via `deviceSystemId` (e.g. the `oe-grid` tile → a public NEM
   // region device; a member device for `device-metrics`). Those pins are NOT section handles, so
-  // without seeding they self-fetch /api/data on the client. Collect them from authorized sections.
-  // config-v4 Phase 14 stage 15: the v3 walk that also collected `deviceSystemId` off descriptor
-  // cards/tiles is gone. It was a duplicate, not a second source — `rewriteV3ToV4` carried every one
-  // of those pins into the doc as a `dv_` device ref, which is exactly what `v4DeviceIds` below
-  // resolves. Worst case it would only cost an SSR seed, since an unseeded pin self-fetches.
+  // without seeding they self-fetch /api/data on the client. Every pin reaches the document as a
+  // `dv_` device ref, which is what `v4DeviceIds` below resolves — there is no second source to
+  // collect from. Worst case a missed pin only costs an SSR seed, since an unseeded pin self-fetches.
   const pins = new Set<number>();
   for (const id of v4DeviceIds) {
     const device = deviceById.get(id);
@@ -298,9 +296,9 @@ async function renderCompositionDashboard(
 }
 
 /**
- * `/dashboard/*` serves only composition (v3) dashboards now. Per-device "device" views live at
- * `/device/*`; any device-shaped slug here 301s there. A composition is shareable via `?access=`
- * (read-only, no sign-in); the legacy per-device share path is retired.
+ * `/dashboard/*` serves composition dashboards only. Per-device "device" views live at `/device/*`;
+ * any device-shaped slug here 301s there. A composition is shareable via `?access=` (read-only, no
+ * sign-in); there is no per-device share path.
  */
 export default async function DashboardPage({
   params,

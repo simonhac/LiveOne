@@ -3,7 +3,7 @@
  * helper device is minted with `helper:area:<areaId>` (lib/areas/helper.ts); mint and parse both
  * go through here so the two directions can never drift.
  *
- * ## config-v4 Phase 14 stage 17 — the area id in here is the `ar_` TypeID, not a raw uuid
+ * ## The area id in here is the `ar_` TypeID, not a raw uuid
  *
  * 🛑 **This string reaches an ANONYMOUS wire.** `devices.vendor_site_id` is emitted verbatim as
  * `DeviceBlock.vendorSiteId` by `/api/data` (lib/dashboard/serve-data.ts), and `/api/data` is
@@ -22,20 +22,10 @@
  * concern — an environment that has not had 0053 applied yet still serves the raw form, so the
  * legacy leg stays until both environments are migrated *and* someone deliberately retires it.
  */
-import { Area, isCanonicalUuid, type AreaId } from "@/lib/ids";
+import type { AreaId } from "@/lib/ids";
+import { areaRefToArId } from "./ref";
 
 const HELPER_PREFIX = "helper:area:";
-
-/**
- * Normalize an area ref — raw uuid (the pre-0053 stored form) or `ar_` TypeID — to `ar_`. Null if
- * neither. Deliberately the same two-line rule as `areaRefToArId` (lib/areas/ref.ts) rather than an
- * import of it: that module is v3-descriptor machinery on its way out, and this one is imported by a
- * client component.
- */
-function toAreaId(ref: string): AreaId | null {
-  if (Area.is(ref)) return ref;
-  return isCanonicalUuid(ref) ? Area.encode(ref) : null;
-}
 
 /**
  * The canonical `vendorSiteId` for an Area's helper device: `helper:area:ar_…`.
@@ -45,7 +35,7 @@ function toAreaId(ref: string): AreaId | null {
  * site id does not name an area would be silently unparseable later.
  */
 export function helperSiteId(areaId: string): string {
-  const arId = toAreaId(areaId);
+  const arId = areaRefToArId(areaId);
   if (!arId)
     throw new TypeError(
       `helperSiteId: not an area id: ${JSON.stringify(areaId)}`,
@@ -63,5 +53,5 @@ export function parentAreaIdFromHelperSiteId(
   vendorSiteId: string,
 ): AreaId | null {
   if (!vendorSiteId.startsWith(HELPER_PREFIX)) return null;
-  return toAreaId(vendorSiteId.slice(HELPER_PREFIX.length));
+  return areaRefToArId(vendorSiteId.slice(HELPER_PREFIX.length));
 }

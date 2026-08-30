@@ -168,8 +168,7 @@ export default function DeviceViewer({
           </div>
         ))}
 
-      {/* `px-1` reproduces the v3 renderer's own outer padding, which sat inside this `main`'s —
-          keeping the cards' horizontal inset unchanged by the v4 port. */}
+      {/* `px-1` is the cards' own outer horizontal inset, sitting inside this `main`'s padding. */}
       {(data?.device ?? data?.area) && doc && (
         <div className="px-1">
           <DashboardV4View

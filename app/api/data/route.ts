@@ -13,13 +13,13 @@ import { makeTimer, serverTimingHeaders } from "@/lib/server-timing";
 /**
  * Live values (+ optional readings table) for one serving subject.
  *
- * ## Addressing (config-v4 Phase 13 PR 1)
+ * ## Addressing
  *
  * - `?areaId=ar_…`   — an Area, served AS an area (`{area, latest}`).
  * - `?deviceId=dv_…` — a device (`{device, latest}`).
- * - `?systemId=N`    — the **permanent** legacy alias. Resolved DEVICE-FIRST, which is the v3 order and
- *   the only order that preserves handle 13 (a real Sigenergy device AND a 3-member Area) at its
- *   device's own 12 points. See `lib/dashboard/subject.ts` for the precedence table (trap D-l).
+ * - `?systemId=N`    — the **permanent** legacy alias. Resolved DEVICE-FIRST — the only order that
+ *   preserves handle 13 (a real Sigenergy device AND a 3-member Area) at its device's own 12 points.
+ *   See `lib/dashboard/subject.ts` for the precedence table.
  *
  * Exactly one of the three. A comma-separated `systemId` list is a BATCH request: one request instead
  * of N, response shaped `{data: {[systemId]: <the single-subject payload>}}`. Any id that fails auth is

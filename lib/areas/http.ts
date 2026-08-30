@@ -148,7 +148,7 @@ export type MemberRefsResult =
  *
  * Order is PRESERVED (it becomes `area_members.ordinal`), and duplicates are rejected rather than
  * silently deduped: on a declarative full-replace, `[a, b, a]` states two different ordinals for `a` and
- * there is no defensible way to pick one. (config-v4 Phase 14 stage 10.)
+ * there is no defensible way to pick one.
  */
 export async function resolveMemberDeviceRefs(
   userId: string,

@@ -1,18 +1,11 @@
 /**
- * The two battery-provenance READ computations, lifted out of the route layer so the config-v4
- * `/api/v4/areas/{ar_…}/provenance-{daily,summary}` handlers are auth + wiring only.
+ * The two battery-provenance READ computations, lifted out of the route layer so the
+ * `/api/v4/areas/{ar_…}/provenance-{daily,summary}` handlers are auth + wiring only. Both routes
+ * import from here; there is one implementation of each read.
  *
- * 🛑 **The routes (`app/api/v4/areas/[id]/provenance-{daily,summary}/route.ts`) deliberately
- * still carry their own inline copies.** config-v4 Phase 14 stage 12 ports these reads to `/api/v4`
- * WITHOUT touching the legacy tree, which stage 13 deletes wholesale in one reviewable step. Keeping
- * the copies for that one stage buys something real: `scripts/utils/v4-surface-smoke.ts` drives the v4
- * route and its legacy twin against the same database and compares the payloads key-by-key and
- * value-by-value, which is only evidence because the two are independent implementations. Share them
- * and the comparison becomes a tautology. The copies die with the legacy routes.
- *
- * The window resolver is shared by both reads and matches the legacy semantics EXACTLY, including the
- * one asymmetry: `provenance-daily` defaults to the trailing year ending yesterday, `provenance-summary`
- * to full history from the LiveOne birthdate.
+ * The window resolver is shared by both reads, including the one asymmetry between them:
+ * `provenance-daily` defaults to the trailing year ending yesterday, `provenance-summary` to full
+ * history from the LiveOne birthdate.
  */
 import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { parseDate, CalendarDate } from "@internationalized/date";

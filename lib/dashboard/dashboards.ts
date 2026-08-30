@@ -1,12 +1,10 @@
 /**
- * Composition-first dashboard CRUD (Phase 2b-2) — first-class, owner-scoped, id/alias-addressed.
+ * Composition-first dashboard CRUD — first-class, owner-scoped, id/alias-addressed.
  *
- * Distinct from the legacy per-(user,device) `store.ts` (retired with the old path). A row here has
- * `display_name`, an optional owner-unique `alias`, and a v4 `doc` (the node-tree document, every
- * scope ref on the envelope); `system_id`/`area_id` are left null. Addressed by `id` or `(owner, alias)`.
- *
- * config-v4 Phase 14 stage 16: `dashboards.descriptor` (the retired v3 shape) is GONE — made inert by
- * stage 15, dropped from the database by migration 0054. `doc` is the only dashboard document.
+ * A row has `display_name`, an optional owner-unique `alias`, and a `doc` (the node-tree document,
+ * every scope ref on the envelope); `system_id`/`area_id` are left null. Addressed by `id` or
+ * `(owner, alias)`. `doc` is the ONLY dashboard document — the `descriptor` column that once held a
+ * second shape was dropped from the database by migration 0054.
  *
  * config-v4 id boundary: the `dashboards` PK is a uuid, but this module's PUBLIC surface speaks the
  * opaque `db_…` TypeID (the `id` field of every returned object; every id PARAM). The raw uuid is decoded
@@ -32,7 +30,7 @@ export interface CompositionDashboard {
   ownerClerkUserId: string;
   displayName: string | null;
   alias: string | null;
-  /** The v4 node-tree document — the ONLY shape a dashboard has (config-v4 Phase 14 stage 15).
+  /** The v4 node-tree document — the ONLY shape a dashboard has.
    *  `dashboards.doc` is NOT NULL, so this is null only for a jsonb that fails the shape guard. */
   doc: DashboardV4 | null;
   /** Whole-doc revision counter (default 1); the optimistic-concurrency token for the v4 doc PUT. */
@@ -68,21 +66,17 @@ const ALIAS_UNIQUE = "dashboards_owner_alias_unique";
 /**
  * Is this the SLUG collision, as opposed to any other unique violation on `dashboards`?
  *
- * Two corrections, in order:
+ * Two things this must NOT be, both of which it has been:
  *
- *  - config-v4 Phase 14 STEP 0: this used to read `(err as {code?: string})?.code`, which drizzle ≥0.44
- *    never populates — the SQLSTATE lives on the wrapping `DrizzleQueryError`'s `cause`. The alias 409 on
- *    BOTH write paths below was therefore an unhandled 500 with an empty body (measured on the previously
- *    dark `/api/v4/dashboards` POST + PATCH).
- *  - config-v4 Phase 14 stage 11: STEP 0's replacement was `isPgUniqueViolation`, i.e. "ANY 23505 on this
- *    statement is an alias collision". `dashboards` then carried a SECOND unique —
- *    `dashboards_legacy_id_unique` over the frozen pre-cutover int — so a clash there would have been
- *    reported to the user as "That shortname is already in use", with a 409 and a plausible message
- *    hiding a real defect. Now the name is matched, and `lib/db/pg-error.ts` is deliberately strict: a
- *    23505 whose name cannot be determined does NOT match, and the error propagates as a 500 rather
- *    than being mislabelled. (That second unique is gone with `legacy_id`, so the slug unique is once
- *    again the only one — matching by name is kept regardless: it is what makes the NEXT unique added
- *    here fail loudly instead of masquerading as a slug collision.)
+ *  - Reading `(err as {code?: string})?.code`. Drizzle ≥0.44 never populates it — the SQLSTATE lives
+ *    on the wrapping `DrizzleQueryError`'s `cause` — so the alias 409 on both write paths below came
+ *    out as an unhandled 500 with an empty body.
+ *  - Treating ANY 23505 on the statement as an alias collision. When `dashboards` carried a second
+ *    unique, a clash there was reported to the user as "That shortname is already in use": a 409 and
+ *    a plausible message hiding a real defect. The slug unique is the only one again today, but the
+ *    name is still matched deliberately — it is what makes the NEXT unique added here fail loudly
+ *    instead of masquerading as a slug collision. `lib/db/pg-error.ts` is strict to match: a 23505
+ *    whose name cannot be determined does NOT match, and propagates as a 500 rather than a mislabel.
  *
  * On this database the name arrives only in the pg `message` (PlanetScale's proxy strips `constraint`);
  * `violatedUniqueName` handles that. Read `lib/db/pg-error.ts` before touching this.
@@ -97,15 +91,7 @@ export function isAliasCollision(err: unknown): boolean {
  * The row is created EMPTY — an `emptyDashboardV4()` doc. Content arrives immediately afterwards via
  * `updateDashboardDoc` (`POST /api/v4/dashboards` seeds, then PUTs), which is the document's only author.
  *
- * ✅ **Back on drizzle as of config-v4 Phase 14 stage 16.** Stage 15 had to write this as one
- * hand-rolled `INSERT` because `dashboards.descriptor` was retired but still `NOT NULL` with no DB
- * default, and it was deliberately absent from `schema.ts` (so a projection-less `.select()` could
- * never name a column about to disappear) — which also meant drizzle could not supply it. Migration
- * 0054 drops the column, so the statement is a plain typed insert again and there is exactly one
- * dashboard shape on the row.
- *
- * (No `id` is supplied — the uuid PK carries DEFAULT gen_random_uuid(); defect D-a was it inheriting
- * no default and 23502-ing on the first POST.)
+ * (No `id` is supplied — the uuid PK carries DEFAULT gen_random_uuid().)
  */
 export async function createDashboard(args: {
   ownerClerkUserId: string;
@@ -298,10 +284,7 @@ function rowToSummary(
     revision: r.revision,
     displayName: r.displayName,
     alias: r.alias,
-    // config-v4 Phase 14 stage 15: counted off the v4 `doc`, which is where a dashboard's content
-    // actually lives. This used to count v3 `descriptor` cards, and stage 13 measured the resulting
-    // regression: a dashboard created through the UI reported `cardCount: 0`, because the seed was
-    // written to `doc` while `descriptor` stayed empty.
+    // Counted off `doc`, which is where a dashboard's content lives.
     cardCount: isDashboardV4(r.doc) ? countCardNodes(r.doc) : 0,
     updatedAt: r.updatedAt,
     access,
@@ -345,13 +328,10 @@ export async function listAccessibleDashboards(
 /**
  * Rename / re-slug a dashboard. **Metadata only** — there is no structural patch here.
  *
- * config-v4 Phase 14 stage 15 deleted this function's `descriptor` branch, and with it the last
- * clobber hazard in the dashboard write path. That branch regenerated `doc` from `descriptor` on
- * every PATCH, which was safe only while `doc` had no independent author; `PUT /api/v4/dashboards/{id}`
- * is that author (and since stage 14 `AddAreaDialog` calls it), so a descriptor PATCH would have
- * silently overwritten v4-authored structure with a rewrite of a shape nothing maintains any more.
- * Stage 13 deleted the last route that could reach it and stage 14 the last client; this deletes the
- * capability. Structure is changed ONLY through `updateDashboardDoc`, under an `If-Match` revision.
+ * 🛑 Keep it that way. This function once regenerated `doc` wholesale on every PATCH, which is a
+ * clobber: `PUT /api/v4/dashboards/{id}` is the document's author (via `AddAreaDialog`), so a
+ * metadata PATCH that also rewrote structure would silently overwrite authored content. Structure is
+ * changed ONLY through `updateDashboardDoc`, under an `If-Match` revision.
  */
 export async function updateDashboard(
   id: string,

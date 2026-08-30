@@ -31,9 +31,8 @@ export interface DashboardReadAccess {
 /**
  * A dashboard's scope inputs. Scope = the union of the Areas its v4 document references.
  *
- * config-v4 Phase 14 stage 15 removed the `descriptor` leg: there is one shape. A `doc` that fails
- * the v4 shape guard resolves to an EMPTY scope (fail-closed) rather than falling back to a second,
- * divergent document.
+ * There is ONE shape. A `doc` that fails the v4 shape guard resolves to an EMPTY scope
+ * (fail-closed) rather than falling back to a second, divergent document.
  */
 export interface DashboardScopeInput {
   /** The v4 document; its §8.3 envelope refs carry the area + device scope. */

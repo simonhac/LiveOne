@@ -63,9 +63,9 @@ describe("isPublicRoute — middleware allow-list", () => {
     "/api/share-tokens",
     "/api/devices",
     "/api/device/1/point/0",
-    // 🛑 config-v4 Phase 14 stage 13 — the LEGACY `/api/areas` TREE IS DELETED, and so are the three
-    // `publicRoutes` entries that used to name its provenance/by-handle suffixes. These paths are now
-    // unrouted strings, and they must NOT be public: a leftover allow-list entry is an edge bypass
+    // 🛑 The LEGACY `/api/areas` TREE IS DELETED, and so are the three `publicRoutes` entries that
+    // used to name its provenance/by-handle suffixes. These paths are now unrouted strings, and they
+    // must NOT be public: a leftover allow-list entry is an edge bypass
     // pointing at a 404 today and at whatever occupies the path tomorrow. Nothing else in the suite
     // would notice its reintroduction, which is why the negative assertion is spelled out.
     "/api/areas",
@@ -163,8 +163,7 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/device/1/run-periods",
     // 🛑 THIS is the entry a logged-in tester can never miss the absence of: without it the route 404s
     // at the Clerk edge for every ANONYMOUS `?access=` shared-dashboard viewer and works perfectly for
-    // everyone else. `lib/queries/provenanceDaily.ts` moved onto this path in Phase 14 stage 13, in the
-    // same commit that deleted the legacy `/api/areas/(.*)/provenance-daily` route AND its entry.
+    // everyone else. `lib/queries/provenanceDaily.ts` is the client that reaches it.
     "/api/v4/areas/ar_01k9fahd43fkbb2ge7dwsjhzqf/provenance-daily",
   ];
   it.each(shareable)("allows %s via a share token", (p) => {
@@ -178,8 +177,8 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/test/cache",
     "/api/admin/storage",
     "/api/devices",
-    // 🛑 config-v4 Phase 14 stage 18 — the PRE-Phase-13 spellings, after the compat shim was
-    // deleted. `/api/system/(.*)` used to sit in `shareableRoutes` so that an anonymous
+    // 🛑 The OLD spellings, after the compat shim was deleted.
+    // `/api/system/(.*)` used to sit in `shareableRoutes` so that an anonymous
     // `?access=` viewer running a stale bundle got past the Clerk edge and into the
     // next.config rewrite to `/api/device/*`. Both halves are gone, so these paths are now
     // just unrouted strings: no rewrite, no bypass. The negative assertion is what keeps the
@@ -190,7 +189,7 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/dashboards/5",
     "/api/share-tokens",
     "/api/user/preferences",
-    // 🛑 config-v4 Phase 14 stage 13 — the deleted legacy tree, on the shareable side. The
+    // 🛑 The deleted legacy tree, on the shareable side. The
     // `/api/areas/(.*)/provenance-daily` entry that used to make the FIRST of these shareable went with
     // the route; an anonymous `?access=` viewer now reaches only the v4 path.
     "/api/areas/019f513a-0d43-7c4b-b133-38f6e399fdd6/provenance-daily",
@@ -207,7 +206,7 @@ describe("isShareableRoute — ?access= bypass allow-list", () => {
     "/api/v4/areas/by-handle/1000002",
     "/api/v4/devices",
     "/api/v4/dashboards/db_01k9fahd43fkbb2ge7dwsjhzqf",
-    // 🛑 config-v4 Phase 14 stage 11 — the SHARING-MANAGEMENT routes themselves. A share token that
+    // 🛑 The SHARING-MANAGEMENT routes themselves. A share token that
     // could reach these would be a self-extending credential: it could mint further tokens, relabel
     // its own, or hand a stranger a grant. `middleware.ts` also refuses any non-GET on the bypass,
     // so this is belt AND braces — but the belt is the one an accidental `/api/v4/dashboards/(.*)`

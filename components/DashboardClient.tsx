@@ -280,9 +280,8 @@ export default function DashboardClient({
             />
           ) : (
             // A brand-new dashboard has an empty document, and `DashboardV4View` renders literally
-            // nothing for it. The v3 renderer used to own this state; Phase 8/10 made it unreachable
-            // and stage 9's deletion of that renderer made it permanent, so it lives here now — the
-            // shell owns the empty case because the shell owns the dialog it opens.
+            // nothing for it. The shell owns the empty case, because the shell owns the dialog it
+            // opens.
             <div className="mx-auto max-w-md px-4 py-16 text-center text-gray-400">
               <Layers className="mx-auto mb-3 h-10 w-10 text-gray-600" />
               <p className="text-sm">

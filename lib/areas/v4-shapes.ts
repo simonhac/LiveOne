@@ -44,7 +44,7 @@ export interface AreaDetailSource {
  * made this payload silently non-substitutable for the legacy one; see the same note (and the much
  * sharper failure mode) on `app/api/v4/areas/route.ts`. It dies with the handle, not before.
  *
- * 🛑 The SAME exception applies per MEMBER, and for the same reason (config-v4 Phase 14 stage 13). The
+ * 🛑 The SAME exception applies per MEMBER, and for the same reason. The
  * legacy twin's `memberSystemIds: number[]` is what the area builder's Bindings tab turns into
  * `GET /api/device/{handle}/points` — the only way to enumerate a member's bindable points. Emitting a
  * `dv_` alone forced the client to re-derive the handle by joining against `GET /api/v4/devices`, which
@@ -80,7 +80,7 @@ export function areaDetailResponse(source: AreaDetailSource) {
  *
  * Split out of `areaDetailResponse` rather than re-written beside it: §9.2 makes the collection PUT's
  * response the same list the aggregate GET carries, so a second projection would only exist in order to
- * drift from this one. (config-v4 Phase 14 stage 10.)
+ * drift from this one.
  */
 export function areaMembersWire(members: AreaDetailSource["members"]) {
   return members.map((member) => ({

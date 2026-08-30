@@ -207,10 +207,10 @@ describe("GET /api/v4/areas/{id}/eligibility", () => {
   });
 
   /**
-   * config-v4 Phase 14 stage 7 — the two catalogs became one `NODE_CATALOG`, so the separate `tiles`
-   * list is gone and the tile views are area-scoped cards like any other. The mocked area advertises
-   * `solar/power` only, which is exactly the `solar` tile, the `load` tile (`any:` disjunct) and
-   * `chart`/`sankey` — and NOT the v3 `tiles` container, which is no longer a card at all.
+   * There is one `NODE_CATALOG`, so there is no separate `tiles` list and the tile views are
+   * area-scoped cards like any other. The mocked area advertises `solar/power` only, which is exactly
+   * the `solar` tile, the `load` tile (`any:` disjunct) and `chart`/`sankey` — and NOT a `tiles`
+   * container, which is not a card type at all.
    */
   it("folds the tile views into `areaCards` and no longer emits `tiles`", async () => {
     const res = await eligibilityGET(req(), params);

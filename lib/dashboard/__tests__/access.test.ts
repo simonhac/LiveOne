@@ -37,10 +37,6 @@ const mockGetInstance = jest.mocked(PointManager.getInstance);
 // Build a v4 document holding one area-scoped group per distinct area — the only thing the
 // share-scope resolvers read (the §8.3 envelope refs, via `collectRefs`).
 //
-// config-v4 Phase 14 stage 15: this was a v3 `descriptor` builder until `dashboards.descriptor` went
-// inert. Every assertion below is unchanged, because the scope has always been "the distinct Areas
-// the dashboard references" — only the shape carrying them moved.
-//
 // Decode is STRICT, so a stored `area` must be `ar_`. Encode HERE rather than minting `ar_` in the
 // AREA proxy, because the mocks above (getLegacySystemIdForArea) are keyed on the RAW uuid — the form
 // that travels below the seam. Encoding at exactly this boundary is what the real write path does.
@@ -204,9 +200,8 @@ describe("allowedSystemIds — the share-scope system set (handles + member syst
     expect(out).toEqual([14]);
   });
 
-  // config-v4 Phase 14 stage 15: there is no `descriptor` fallback left, so a doc that fails the v4
-  // shape guard resolves to NOTHING rather than to a second, divergent document. Fail-closed: an
-  // unreadable dashboard authorizes no device at all.
+  // There is no fallback shape, so a doc that fails the v4 shape guard resolves to NOTHING rather
+  // than to a second, divergent document. Fail-closed: an unreadable dashboard authorizes no device.
   it("a doc that is not valid v4 → empty scope, and nothing is resolved", async () => {
     withPoints({});
     for (const bad of [null, undefined, {}, { version: 3, sections: [] }]) {

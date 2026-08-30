@@ -1,11 +1,10 @@
 /**
- * config-v4 "add an area to a dashboard" — the pure half of `components/AddAreaDialog`.
+ * "Add an area to a dashboard" — the pure half of `components/AddAreaDialog`.
  *
- * The dialog is the LAST authoring surface in the app, and as of Phase 14 stage 14 it writes the v4
- * document (`PUT /api/v4/dashboards/{db_…}` with `If-Match`) instead of the v3 `descriptor`. The
- * splice, the already-on-the-dashboard filter, the has-any-cards test and the error wording live here
- * rather than in the component because `components/` is NOT a jest root (config-v4 Phase 14 finding:
- * a test placed there is silently not collected).
+ * The dialog is the LAST authoring surface in the app; it writes the document through
+ * `PUT /api/v4/dashboards/{db_…}` with `If-Match`. The splice, the already-on-the-dashboard filter,
+ * the has-any-cards test and the error wording live here rather than in the component because
+ * 🛑 `components/` is NOT a jest root — a test placed there is silently not collected.
  */
 import { collectRefs } from "./v4-validate";
 // stripNodeIds moved to node-ops.ts (the structural-op module) when the dashboard CLI landed; its
@@ -14,9 +13,8 @@ import { stripNodeIds } from "./node-ops";
 import { walkNodes, type DashboardV4, type GroupNode } from "./v4";
 
 /**
- * Append a seed group to the document's root children — the whole of "add an area" in the v4 model
- * (the v3 analogue was `descriptor.sections.push(section)`). Pure: the input doc is not mutated, so a
- * failed `PUT` leaves the caller's rendered tree untouched.
+ * Append a seed group to the document's root children — the whole of "add an area". Pure: the input
+ * doc is not mutated, so a failed `PUT` leaves the caller's rendered tree untouched.
  */
 export function appendGroupToDoc(
   doc: DashboardV4,
@@ -32,10 +30,9 @@ export function appendGroupToDoc(
 }
 
 /**
- * The `ar_…` refs a document already carries — the v4 replacement for `sectionAreaIdsV3`. Uses the
- * §8.3 envelope walk (`collectRefs`), so it sees an area bound at ANY depth, not just at a top-level
- * "section"; both the add-area picker's exclusion filter and the settings dialog's recompute list want
- * that superset.
+ * The `ar_…` refs a document already carries. Uses the §8.3 envelope walk (`collectRefs`), so it
+ * sees an area bound at ANY depth, not just at a top-level "section"; both the add-area picker's
+ * exclusion filter and the settings dialog's recompute list want that superset.
  */
 export function docAreaRefs(doc: DashboardV4): string[] {
   return collectRefs(doc).areas;

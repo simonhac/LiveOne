@@ -1,6 +1,6 @@
 /**
  * `resolveMemberDeviceRefs` — the `members: [dv_…]` seam every v4 area write goes through
- * (config-v4 Phase 14 stage 10).
+ *.
  *
  * The point under test is the STATUS MAP, and it is a security decision rather than a formatting one:
  * a well-formed `dv_` id that names nothing and one that names a device the caller cannot see must be

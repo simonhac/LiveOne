@@ -1,6 +1,6 @@
 /**
  * ROUTE-level tests for `/api/v4/dashboards/{id}/shares` and `/api/v4/dashboards/{id}/grants`
- * (config-v4 Phase 14 stage 11).
+ *.
  *
  * Companion to `scripts/utils/v4-surface-smoke.ts`, which drives the same handlers against a live dev
  * server, a real Clerk session and a real Postgres. This file covers what only a mock reaches — the

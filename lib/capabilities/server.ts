@@ -152,8 +152,8 @@ export async function derivedCapabilitiesForDevice(
 /**
  * The CONFIG-derived inputs behind a handle's area strategy — its capability set, whether it
  * aggregates multiple sources, and the OE region device (as a legacy handle) the `oe-grid` card binds.
- * Split out so the v4 seed path (`lib/dashboard/v4-seed.ts`, which resolves that handle to a `dv_`)
- * and the v3 projection below share one resolution.
+ * Split out so the seed path (`lib/dashboard/v4-seed.ts`, which resolves that handle to a `dv_`)
+ * and the device strategy below share one resolution.
  */
 export interface AreaStrategyInputs {
   capabilities: CapabilitySet;
@@ -192,17 +192,14 @@ export interface DeviceStrategyDoc {
 }
 
 /**
- * The v4 default view for `/device/{id}` (config-v4 Phase 14 stage 9).
+ * The default view for `/device/{id}`.
  *
- * 🛑 **The page is DEVICE-scoped, so the document is device-bound — it binds no area.** That is the
- * §8.3 envelope answer to what the v3 projection used to fake with a synthetic `device-{id}`
- * `section.areaId`: a device page is not a section over an area, it is a subtree scoped to one
- * device, and the renderer addresses it through the inherited `device` (see `node-view.tsx`'s
- * `area?.handle ?? device?.systemId`). Consequences, all matching the pre-port render exactly:
- *  - no area header — a `heading` group with no resolvable area renders bare, which is what the v3
- *    renderer did for a single-section descriptor (`showHeaders = sections.length > 1`);
- *  - `chartCapable` stays undefined, so the collapsed site charts stay hidden here, as before;
- *  - the `device-` sentinel loses its last producer.
+ * 🛑 **The page is DEVICE-scoped, so the document is device-bound — it binds no area.** A device page
+ * is not a section over an area, it is a subtree scoped to one device, and the renderer addresses it
+ * through the inherited `device` (see `node-view.tsx`'s `area?.handle ?? device?.systemId`) rather
+ * than through a synthetic area ref. Consequences:
+ *  - no area header — a `heading` group with no resolvable area renders bare;
+ *  - `chartCapable` stays undefined, so the collapsed site charts stay hidden here.
  *
  * `device.deviceId` is always present (`devices.id` is the row's own uuid), so unlike the area leg
  * there is no "unresolvable binding" case to degrade. The one pin the strategy can emit — the

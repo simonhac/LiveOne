@@ -10,8 +10,7 @@ import {
 import { DeviceRegistry } from "@/lib/registry";
 
 /**
- * config-v4 area eligibility (§9.2), DARK — the add-card GALLERY data ("which cards CAN this area
- * show", grey-out). Per catalog contract #2, ELIGIBILITY ≠ render authority; a consumer must not treat
+ * Area eligibility (§9.2) — the add-card GALLERY data ("which cards CAN this area show", grey-out). Per catalog contract #2, ELIGIBILITY ≠ render authority; a consumer must not treat
  * this as the final say on whether a card renders. Readable (owner ∪ viewer).
  *
  * Area-scoped cards are checked against the area UNION capabilities; device-scoped cards against
@@ -21,7 +20,7 @@ import { DeviceRegistry } from "@/lib/registry";
  * (the key is `deviceId` and carries a `dv_` TypeID — this said `systemId` while the handler has
  *  emitted `deviceId` since slice H; nothing called it, so the drift was never observed.)
  *
- * 🆕 THE `tiles` KEY IS GONE (config-v4 Phase 14 stage 7) — a WIRE CHANGE, made while this surface
+ * 🆕 THE `tiles` KEY IS GONE — a WIRE CHANGE, made while this surface
  * still has no client. It existed because the catalog was two maps over two id spaces; §8.1 says a
  * tile IS a card, and `NODE_CATALOG` is now one map, so the tile views appear in `areaCards` (first,
  * in canonical tile order) like every other area-scoped card. The old `{id:"tiles"}` ENTRY is gone

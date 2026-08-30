@@ -18,7 +18,7 @@
  * the index name appears in the `message` text alone. Both `dashboards_owner_alias_unique` and
  * `areas_owner_alias_unique` are `uniqueIndex(...)`, not table constraints.
  *
- * ## 🛑 …and a migration would NOT fix that (Phase 14 stage 2b, measured 2026-07-31)
+ * ## 🛑 …and a migration would NOT fix that (measured 2026-07-31)
  *
  * The obvious remedy — "restate the unique INDEX as a NAMED table CONSTRAINT so `err.constraint`
  * arrives" — does not work here, and the measurement says so unambiguously. Forcing a **PRIMARY KEY**

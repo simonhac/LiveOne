@@ -1,19 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 
 /**
- * `dashboards.descriptor` is GONE — config-v4 Phase 14 stages 15 (inert) and 16 (migration 0054
- * dropped the column).
+ * `dashboards.descriptor` is GONE — dropped from the database by migration 0054.
  *
- * This suite used to assert that `rowToDashboard` handed the descriptor out VERBATIM (Phase 14 having
- * removed the read-normalize that laundered a raw-uuid section ref into `ar_`). That property is moot:
- * nothing reads the column, so there is nothing to launder.
- *
- * Stage 15 rewrote it as the executable gate on the DROP. **It is KEPT after the DROP, and its job
- * changes from precondition to standing guard:** nothing may reintroduce a second dashboard shape by
- * re-declaring the column in `schema.ts` and re-exposing it on `CompositionDashboard`. The fixture row
- * below still carries a `descriptor` deliberately — a row shape that no longer exists in the database
- * is exactly the adversarial input this asserts is ignored, so the test does not need the column to
- * exist and does not go stale with it.
+ * 🛑 This suite is the STANDING GUARD on that: nothing may reintroduce a second dashboard shape by
+ * re-declaring the column in `schema.ts` and re-exposing it on `CompositionDashboard`. The fixture
+ * row below still carries a `descriptor` deliberately — a row shape that no longer exists in the
+ * database is exactly the adversarial input this asserts is ignored, so the test does not need the
+ * column to exist and does not go stale with it.
  *
  * Mock the drizzle select, table-aware, mirroring lib/__tests__/user-preferences.test.ts.
  */

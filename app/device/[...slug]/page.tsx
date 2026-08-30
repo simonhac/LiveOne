@@ -252,8 +252,8 @@ export default async function DevicePage({ params }: PageProps) {
 
   // Server-build the device's default view from the same server/config capability path dashboards
   // use: `buildDeviceStrategyDoc` folds in grid context + generator tracking + config overrides.
-  // config-v4 Phase 14 stage 9: it returns a v4 DOCUMENT bound to this DEVICE (§8.3) — the page is
-  // device-scoped, so there is no area envelope and no synthetic `device-{id}` section id any more.
+  // It returns a DOCUMENT bound to this DEVICE (§8.3) — the page is device-scoped, so there is no
+  // area envelope and no synthetic section id.
   // `devices` carries every `dv_` the doc binds (this device, plus the `oe-grid` pin when the area
   // has grid context) so the renderer can resolve them. Only for an accessible device; an
   // Access-Denied render never uses it.
