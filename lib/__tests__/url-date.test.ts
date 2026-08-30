@@ -2,6 +2,11 @@ import { describe, it, expect } from "@jest/globals";
 import {
   decodeUrlSafeStringToI18n,
   encodeI18nToUrlSafeString,
+  encodeUrlDate,
+  decodeUrlDate,
+  decodeUrlDateToEpoch,
+  decodeUrlOffset,
+  UrlDateFormatError,
 } from "../url-date";
 import { CalendarDate, parseAbsolute, toZoned } from "@internationalized/date";
 
@@ -239,5 +244,99 @@ describe("URL Safe String I18n Functions", () => {
         expect(decoded.offset).toBe(original.offset);
       });
     });
+  });
+});
+
+/**
+ * The strict decoders. These are fed straight from the address bar, so "unparseable" is a routine
+ * input, not an exceptional one — but it must arrive as a TYPED error rather than as a NaN that
+ * detonates later. See `decodeRangeFromParams`, which recovers from `UrlDateFormatError` and only
+ * from `UrlDateFormatError`.
+ */
+describe("decodeUrlDate", () => {
+  it("decodes the canonical date-only form as local start-of-day", () => {
+    expect(decodeUrlDate("2026-08-24", 600)).toBe("2026-08-23T14:00:00.000Z");
+  });
+
+  it("decodes the canonical date-time form", () => {
+    expect(decodeUrlDate("2025-11-02_14.15", 600)).toBe(
+      "2025-11-02T04:15:00.000Z",
+    );
+  });
+
+  // The reported crash: a colon where the format wants a dot. This used to reach
+  // `Number("00:00") -> NaN` and throw a bare `RangeError: Invalid time value` out of a render.
+  it("rejects a colon-separated time (the reported bad URL) with a typed error", () => {
+    expect(() => decodeUrlDate("2026-08-24_00:00", 600)).toThrow(
+      UrlDateFormatError,
+    );
+    try {
+      decodeUrlDate("2026-08-24_00:00", 600);
+    } catch (err) {
+      expect((err as UrlDateFormatError).value).toBe("2026-08-24_00:00");
+    }
+  });
+
+  it.each([
+    ["empty", ""],
+    ["nonsense", "abc"],
+    ["hyphen time separator", "2026-08-24_00-00"],
+    ["ISO T separator", "2026-08-24T00:00"],
+    ["space separator", "2026-08-24 00:00"],
+    ["full ISO instant", "2026-08-24T00:00:00Z"],
+    ["trailing separator", "2026-08-24_"],
+    ["unpadded components", "2026-8-4_9.5"],
+    ["impossible day", "2026-02-31"],
+    ["impossible month", "2026-13-01"],
+    ["hour out of range", "2026-08-24_25.00"],
+    ["minute out of range", "2026-08-24_00.60"],
+    ["embedded timezone", "2025-11-02_14.15T10"],
+  ])("rejects %s (%s)", (_label, input) => {
+    expect(() => decodeUrlDate(input, 600)).toThrow(UrlDateFormatError);
+  });
+
+  // A non-finite offset comes from area config, not the URL — a bug on our side. It must NOT look
+  // like bad user input, or `decodeRangeFromParams` would quietly swap it for "the last 24 hours".
+  it("throws a plain Error (NOT UrlDateFormatError) for a non-finite offset", () => {
+    expect(() => decodeUrlDate("2026-08-24_00.00", NaN)).toThrow(Error);
+    expect(() => decodeUrlDate("2026-08-24_00.00", NaN)).not.toThrow(
+      UrlDateFormatError,
+    );
+  });
+
+  it.each([600, -300, 570])("round-trips through encodeUrlDate (%i)", (off) => {
+    const iso = "2025-11-02T04:15:00.000Z";
+    expect(decodeUrlDate(encodeUrlDate(iso, off), off)).toBe(iso);
+  });
+
+  // The admin readings route turns this throw into a 400. Keep it throwing.
+  it("still throws via decodeUrlDateToEpoch, which the admin route relies on for its 400", () => {
+    expect(() => decodeUrlDateToEpoch("garbage", 600)).toThrow(
+      UrlDateFormatError,
+    );
+    expect(decodeUrlDateToEpoch("2026-08-24", 600)).toBe(
+      Date.parse("2026-08-23T14:00:00.000Z"),
+    );
+  });
+});
+
+describe("decodeUrlOffset", () => {
+  it.each([
+    ["600m", 600],
+    ["-300m", -300],
+    ["570m", 570],
+    ["0m", 0],
+  ])("decodes %s", (input, expected) => {
+    expect(decodeUrlOffset(input as string)).toBe(expected);
+  });
+
+  it.each([
+    ["missing unit", "600"],
+    ["nonsense", "abc"],
+    ["empty", ""],
+    ["doubled unit", "600mm"],
+    ["out of range", "9999m"],
+  ])("rejects %s (%s)", (_label, input) => {
+    expect(() => decodeUrlOffset(input)).toThrow(UrlDateFormatError);
   });
 });

@@ -19,8 +19,9 @@
  */
 import type React from "react";
 import type { ReactNode } from "react";
-import { Layers, AlertTriangle } from "lucide-react";
+import { Layers } from "lucide-react";
 import { Area } from "@/lib/ids";
+import { ErrorPanel } from "@/components/ErrorPanel";
 import { datumCanControl, datumCanControlPoint } from "@/lib/control/ownership";
 import type { AreaId } from "@/lib/ids";
 import {
@@ -266,16 +267,10 @@ function GroupNodeView({
   if (node.heading && nodeContext.area && area == null && areasResolved) {
     return (
       <section className="rounded-lg border border-gray-700/70 bg-gray-900/30 p-2 sm:p-3">
-        <div className="flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm">
-          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-          <div>
-            <p className="font-medium text-amber-200">Area unavailable</p>
-            <p className="mt-0.5 text-amber-200/70">
-              This section points to an area that couldn&rsquo;t be loaded — it
-              may have been removed, or you don&rsquo;t have access to it.
-            </p>
-          </div>
-        </div>
+        <ErrorPanel title="Area unavailable">
+          This section points to an area that couldn&rsquo;t be loaded — it may
+          have been removed, or you don&rsquo;t have access to it.
+        </ErrorPanel>
       </section>
     );
   }
@@ -404,16 +399,10 @@ function CardUnavailable({ height }: { height: number }) {
 
 function DeviceUnavailable() {
   return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-sm">
-      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-      <div>
-        <p className="font-medium text-amber-200">Device unavailable</p>
-        <p className="mt-0.5 text-amber-200/70">
-          This item points to a device that couldn&rsquo;t be loaded — it may
-          have been removed, or you don&rsquo;t have access to it.
-        </p>
-      </div>
-    </div>
+    <ErrorPanel title="Device unavailable">
+      This item points to a device that couldn&rsquo;t be loaded — it may have
+      been removed, or you don&rsquo;t have access to it.
+    </ErrorPanel>
   );
 }
 

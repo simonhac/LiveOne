@@ -31,6 +31,7 @@ import {
   decodeUrlDate,
   encodeUrlOffset,
   decodeUrlOffset,
+  UrlDateFormatError,
 } from "@/lib/url-date";
 
 /**
@@ -91,6 +92,45 @@ export interface TemporalRange {
    * ArrowRight disable — NOT `isHistoricalMode`, since M/Y are always historical yet can be at latest.
    */
   isLatest: boolean;
+  /**
+   * URL params that were unreadable and have been ignored — a mangled share link, a hand-edited date,
+   * a `?start=…_14:15` where the format wants `_14.15`. Purely informational: the range above is
+   * already valid without them (it is exactly the range a param-free URL would give).
+   * `useTemporalRange` turns this into a toast and strips the offending params from the address bar,
+   * so the URL — this module's single source of truth — keeps matching what is actually on screen.
+   */
+  droppedParams?: DroppedParam[];
+}
+
+/** One URL param that was ignored, kept verbatim so the toast can quote what the user pasted. */
+export interface DroppedParam {
+  param: "start" | "end" | "offset";
+  value: string;
+}
+
+/**
+ * Decode one URL param, or record it as dropped and return undefined.
+ *
+ * Catches ONLY {@link UrlDateFormatError} — i.e. bad input, which the caller recovers from by falling
+ * back to the default window. Anything else (a non-finite `timezoneOffsetMin` from area config, say)
+ * is a fault on our side and keeps propagating to the error boundary, where it stays visible instead
+ * of being silently rewritten into "the last 24 hours".
+ */
+function readParam<T>(
+  param: DroppedParam["param"],
+  raw: string,
+  decode: (raw: string) => T,
+  dropped: DroppedParam[],
+): T | undefined {
+  try {
+    return decode(raw);
+  } catch (err) {
+    if (err instanceof UrlDateFormatError) {
+      dropped.push({ param, value: raw });
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 /** Minimal read interface satisfied by both URLSearchParams and Next's ReadonlyURLSearchParams. */
@@ -99,6 +139,20 @@ type ReadonlyParamsLike = { get(name: string): string | null };
 type StringableParams = { toString(): string };
 
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Decode M/Y's date-only `?end` param, raising the same {@link UrlDateFormatError} the D/W decoders
+ * raise so that {@link readParam} can treat every malformed param identically. `parseDate` throws its
+ * own untyped Error for an impossible date (2026-02-31), which we normalise here.
+ */
+function decodeDateOnlyParam(raw: string) {
+  if (!DATE_ONLY_RE.test(raw)) throw new UrlDateFormatError(raw);
+  try {
+    return parseDate(raw);
+  } catch {
+    throw new UrlDateFormatError(raw);
+  }
+}
 
 /**
  * Period window length in milliseconds — a FIXED nominal duration (M=30d, Y=365d), NOT a calendar
@@ -198,20 +252,31 @@ export function decodeRangeFromParams(
       ? periodParam
       : "D";
 
+  // Every param that failed to decode. Non-empty ⇒ the range below is the DEFAULT one and the caller
+  // should strip these from the URL (see `useTemporalRange`).
+  const dropped: DroppedParam[] = [];
+  const withDropped = (range: TemporalRange): TemporalRange =>
+    dropped.length ? { ...range, droppedParams: dropped } : range;
+
   if (isDateOnlyPeriod(period)) {
     const endEncoded = params.get("end");
-    const hasEnd = !!endEncoded && DATE_ONLY_RE.test(endEncoded);
-    const lastDay = hasEnd
-      ? parseDate(endEncoded as string)
-      : getTodayInTimezone(timezoneOffsetMin).subtract({ days: 1 });
-    const firstDay = lastDay.add({ days: 1 }).subtract(periodStep(period));
-    return {
+    // An unreadable `?end` used to be ignored in silence, which left the URL claiming one month while
+    // the page showed another. Now it is dropped loudly.
+    const lastDay = endEncoded
+      ? readParam("end", endEncoded, decodeDateOnlyParam, dropped)
+      : undefined;
+    const resolvedLastDay =
+      lastDay ?? getTodayInTimezone(timezoneOffsetMin).subtract({ days: 1 });
+    const firstDay = resolvedLastDay
+      .add({ days: 1 })
+      .subtract(periodStep(period));
+    return withDropped({
       period,
       start: utcMidnightISO(firstDay),
-      end: utcMidnightISO(lastDay),
+      end: utcMidnightISO(resolvedLastDay),
       isHistoricalMode: true,
-      isLatest: !hasEnd,
-    };
+      isLatest: !lastDay,
+    });
   }
 
   // D / W
@@ -221,23 +286,50 @@ export function decodeRangeFromParams(
     return { period, isHistoricalMode: false, isLatest: true };
   }
 
+  // A bad `?offset` costs you the offset, never the date: fall back to the area's own timezone,
+  // exactly as the offset-absent path does.
   const offsetEncoded = params.get("offset");
-  const offsetMin = offsetEncoded
-    ? decodeUrlOffset(offsetEncoded)
-    : timezoneOffsetMin;
-  const periodDuration = getPeriodDuration(period);
-  let start: string | undefined;
-  let end: string | undefined;
+  const offsetMin =
+    (offsetEncoded
+      ? readParam("offset", offsetEncoded, decodeUrlOffset, dropped)
+      : undefined) ?? timezoneOffsetMin;
 
-  if (startEncoded) {
-    start = decodeUrlDate(startEncoded, offsetMin);
-    end = new Date(new Date(start).getTime() + periodDuration).toISOString();
-  } else if (endEncoded) {
-    end = decodeUrlDate(endEncoded, offsetMin);
-    start = new Date(new Date(end).getTime() - periodDuration).toISOString();
+  const periodDuration = getPeriodDuration(period);
+  const anchorParam = startEncoded ? "start" : "end";
+  const anchorRaw = (startEncoded ?? endEncoded) as string;
+  const anchor = readParam(
+    anchorParam,
+    anchorRaw,
+    (v) => decodeUrlDate(v, offsetMin),
+    dropped,
+  );
+
+  if (anchor === undefined) {
+    // Unreadable window ⇒ the live trailing window: byte-identical to what a param-free URL returns
+    // above, so every consumer already handles this shape. A lone `?offset` means nothing without it.
+    if (offsetEncoded && !dropped.some((d) => d.param === "offset")) {
+      dropped.push({ param: "offset", value: offsetEncoded });
+    }
+    return withDropped({ period, isHistoricalMode: false, isLatest: true });
   }
 
-  return { period, start, end, isHistoricalMode: true, isLatest: false };
+  const anchorMs = new Date(anchor).getTime();
+  const start =
+    anchorParam === "start"
+      ? anchor
+      : new Date(anchorMs - periodDuration).toISOString();
+  const end =
+    anchorParam === "start"
+      ? new Date(anchorMs + periodDuration).toISOString()
+      : anchor;
+
+  return withDropped({
+    period,
+    start,
+    end,
+    isHistoricalMode: true,
+    isLatest: false,
+  });
 }
 
 /**
