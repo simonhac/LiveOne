@@ -162,7 +162,23 @@ The project has utility scripts in `/scripts`:
 
 - `/scripts/temp/` - Temporary scripts for one-off tasks
 - `/scripts/utils/` - Reusable utility scripts
-- `/scripts/ops/` - Operator CLIs (agent-facing)
+- `/scripts/ops/` - Operator CLIs (agent-facing), built on the shared kit in `lib/cli/`
+
+#### Operator CLIs
+
+Every tool under `scripts/ops/` is declared with `defineCommand()` (`lib/cli/cli.ts`), so it has
+`--help` on each subcommand, `--format human|json` (human at a terminal, json when piped), data on
+stdout with diagnostics on stderr, the shared exit vocabulary (0 ok · 1 findings · 2 usage · 3 auth
+· 5 upstream · 130 interrupted), and — for writers — dry-run by default with `--apply`, which off a
+terminal additionally requires `--yes`.
+
+- **What exists:** [docs/cli-reference.md](docs/cli-reference.md) (index) → each directory's
+  `CLI_README.md` (full `--help`) → [docs/cli-tools.json](docs/cli-tools.json) (machine catalogue,
+  one MCP-shaped entry per leaf command). All generated; regenerate with
+  `npm run cli:reference -- --apply` after changing any `defineCommand()` block.
+- **The registry is `lib/cli/tiers.ts`.** A new CLI defaults to UNLISTED, and `npm run check:cli`
+  reports it. Unlisted means unchecked and undocumented — it is a finding, not an exemption.
+  `npm run check:cli:a` is the tier-A gate and must stay green.
 
 #### Dashboard CLI
 
