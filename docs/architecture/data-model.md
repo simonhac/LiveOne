@@ -260,7 +260,7 @@ rewriter and the adapter were all deleted in config-v4 Phase 14 (migration 0054)
   card simply 403s on fetch. **Do not add a scope-bearing ref to a card's `config`** — that is the one
   change that would silently break sharing.
 - **Validation is asymmetric on purpose.** The envelope is strict (zod; malformed ⇒ 422, never
-  persisted) and node ids are server-assigned `n_…`. But `type` is an **open string, warn-not-reject**:
+  persisted) and node ids are server-assigned `n_…` (random 4-char base32, minted per document and never recycled). But `type` is an **open string, warn-not-reject**:
   an unknown card type persists with its opaque `config` intact and renders a labelled placeholder, so
   an older validator cannot destroy a newer client's config. Known types get strict per-type `config`
   schemas, and references are **always** strict.

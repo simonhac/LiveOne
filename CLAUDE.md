@@ -184,7 +184,8 @@ terminal additionally requires `--yes`.
 
 `npm run liveone -- dashboard <command>` (`scripts/ops/liveone.ts`) edits stored dashboard documents
 (`dashboards.doc`) directly in Postgres: `list` / `show` / `validate` / `rename` / `add-card` /
-`add-group` / `remove-node` / `move-node` / `set-prop`. Run `-- <command> --help` for options.
+`add-group` / `remove-node` / `move-node` / `set-prop` / `remint-ids`. Run `-- <command> --help` for
+options.
 
 - Connection from **`MIGRATE_DATABASE_URL` only** (prod: short-TTL `pscale role` url); for dev use
   `npm run liveone:dev -- dashboard <command>` (reads `.env.local`, refuses a prod URL). Read the printed
@@ -196,9 +197,11 @@ terminal additionally requires `--yes`.
   `--format human|json` (human at a terminal, **json when piped**) with data on stdout and all
   diagnostics on stderr.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
-- 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev (environments
-  drift). "Make the same edit in both" means re-running `show` in each environment first — never
-  reuse a node id across environments.
+- 🛑 `n_…` node ids are minted **per document, per environment** — random 4-char base32, so the same
+  node has different ids in prod and dev. Never reuse one across environments: re-run `show` against
+  the database you intend to edit. (A foreign id now simply fails to resolve. Before the ids were
+  randomised they were a shared counter — `n_0`, `n_1`, … — so a prod id silently addressed a
+  DIFFERENT node in dev, and a deleted node's id was recycled onto the next node added.)
 
 #### Development API Authentication
 

@@ -12,6 +12,7 @@ import { resolveAreaStrategyInputs } from "@/lib/capabilities/server";
 import { DeviceRegistry } from "@/lib/registry";
 import { buildPersistableSeedDoc, buildSeedGroupPreview } from "../v4-seed";
 import { collectRefs, validateDocV4 } from "../v4-validate";
+import { stripNodeIds } from "../node-ops";
 import type { CapabilityId } from "@/lib/capabilities/registry";
 
 const mockInputs = jest.mocked(resolveAreaStrategyInputs);
@@ -62,7 +63,10 @@ describe("authoritative config-v4 seeds", () => {
       areas: [Area.encode(areaId)],
       devices: [mappings.get(12)!.deviceId],
     });
-    expect(group).toEqual(doc.root.children[0]);
+    // Ids stripped from both sides: these are two SEPARATE documents, and a node id is only
+    // meaningful within the document that minted it (they are random, so the preview's ids and the
+    // persisted doc's ids differ by construction). What must match is the structure and the refs.
+    expect(stripNodeIds(group)).toEqual(stripNodeIds(doc.root.children[0]));
     expect(mockMappings).toHaveBeenCalledWith([12]);
   });
 

@@ -10,11 +10,11 @@
  *   4. References: format-STRICT here (`area` must be `ar_…`, `device` `dv_…`); EXISTENCE + readability
  *      is an async DB check the Phase-6 route layers on top, over `collectRefs` (§8.3 — one walk).
  *
- * `normalizeDocV4` assigns every node a stable `n_…` id idempotently (generalizes v3
- * `normalizeDescriptor`). `collectRefs` is the single type-agnostic scope walk over the fixed envelope
- * positions (`node.area` / `node.device`) — the §8.3 security invariant made executable.
+ * `normalizeDocV4` assigns every node a stable `n_…` id idempotently. `collectRefs` is the single
+ * type-agnostic scope walk over the fixed envelope positions (`node.area` / `node.device`) — the
+ * §8.3 security invariant made executable.
  *
- * PURE + DARK: no DB, no React; nothing calls this in the live path yet.
+ * PURE: no DB, no React.
  */
 import { z } from "zod";
 import { Area, Device } from "@/lib/ids";
@@ -56,11 +56,9 @@ const nodeSizeSchema = z.strictObject({
 const areaRefSchema = z
   .string()
   .refine((s) => Area.is(s), { message: "invalid area id (expected ar_…)" });
-const deviceRefSchema = z
-  .string()
-  .refine((s) => Device.is(s), {
-    message: "invalid device id (expected dv_…)",
-  });
+const deviceRefSchema = z.string().refine((s) => Device.is(s), {
+  message: "invalid device id (expected dv_…)",
+});
 
 // Declared first: the lazy union references group/card (defined below) only when parsing runs.
 const nodeSchema: z.ZodTypeAny = z.lazy(() =>
@@ -201,21 +199,40 @@ export function validateDocV4(input: unknown): ValidationResult {
   return { valid: errors.length === 0, errors, warnings, normalized };
 }
 
+/** Crockford base32 — no I/L/O/U, so a minted id is unambiguous read aloud or retyped. */
+const MINT_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** A random `n_` + 4 base32 chars (~1M values). Uniqueness within a doc is enforced by the
+ *  retry loop in `normalizeDocV4`, not by this function — this is just the candidate generator. */
+function randomMint(): string {
+  const b = crypto.getRandomValues(new Uint8Array(4));
+  return "n_" + Array.from(b, (x) => MINT_ALPHABET[x & 31]).join("");
+}
+
 /**
  * Assign every node a stable `n_…` id (server-assigned when absent). Idempotent: existing ids are
- * preserved, so `normalizeDocV4(normalizeDocV4(x))` deep-equals `normalizeDocV4(x)`. Minted ids skip
- * any id already present, so a partial input can't collide. Deterministic given traversal order.
+ * preserved, so `normalizeDocV4(normalizeDocV4(x))` deep-equals `normalizeDocV4(x)`.
+ *
+ * Minted ids are RANDOM (4-char Crockford base32), deliberately not sequential: a counter recycles
+ * a deleted node's id on the next insert (an agent holding a stale `show` then edits the wrong
+ * node), and mints the same `n_0, n_1, …` in every environment (a prod id pasted against dev
+ * resolves — to the wrong node). Random ids are never reused and a foreign id fails closed. The
+ * retry loop against `taken` makes within-document uniqueness proven, not probabilistic.
+ *
+ * `mintCandidate` is injectable for tests that want reproducible ids; production callers omit it.
  */
-export function normalizeDocV4(doc: DashboardV4): DashboardV4 {
+export function normalizeDocV4(
+  doc: DashboardV4,
+  mintCandidate: () => string = randomMint,
+): DashboardV4 {
   const taken = new Set<string>();
   walkNodes(doc, (n) => {
     if (n.id) taken.add(n.id);
   });
-  let seq = 0;
   const mint = (): string => {
     let id: string;
     do {
-      id = `n_${(seq++).toString(36)}`;
+      id = mintCandidate();
     } while (taken.has(id));
     taken.add(id);
     return id;

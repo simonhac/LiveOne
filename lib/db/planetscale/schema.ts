@@ -635,9 +635,10 @@ export const dashboards = pgTable(
     // before the window). Stage 5d swaps the serial int PK for a uuid, freezing the old int in
     // `legacy_id`, and renames clerk_user_id→owner_user_id, display_name→name, alias→slug.
     id: uuid("id").primaryKey().defaultRandom(), // 5d sets DEFAULT gen_random_uuid() (defect D-a)
-    // The frozen pre-cutover int id. Permanent: it backs the `/dashboard/id/{n}` 301 and the
-    // `?systemId=N` compat alias, so it is NOT dropped in Phase 9.
-    legacyId: integer("legacy_id"),
+    // 🪦 `legacy_id` (the frozen pre-cutover int) is GONE. Its only consumer was the
+    // `/dashboard/id/{n}` → `/dashboard/id/{db_…}` 301; the opaque `db_…` id has been the primary
+    // address since the cutover, share tokens key on `id` (uuid), and the `?systemId=N` compat alias
+    // resolves through `legacy_handles` — a different mechanism entirely, still live.
     ownerUserId: text("owner_user_id").notNull(), // the owner
     // A dashboard's name + owner-unique shortname (the /dashboard/{user}/{slug} path). Nullable for
     // an unnamed dashboard. The legacy per-device `system_id`/`area_id` handles were dropped in P6 —
@@ -664,10 +665,6 @@ export const dashboards = pgTable(
       table.slug,
     ),
     userIdx: index("dashboards_user_idx").on(table.ownerUserId),
-    // 5d: ADD CONSTRAINT dashboards_legacy_id_unique UNIQUE (legacy_id).
-    legacyIdUnique: uniqueIndex("dashboards_legacy_id_unique").on(
-      table.legacyId,
-    ),
   }),
 );
 

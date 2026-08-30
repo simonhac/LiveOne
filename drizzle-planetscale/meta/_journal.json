@@ -435,6 +435,13 @@
       "when": 1786703498058,
       "tag": "0061_nasty_starfox",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788065207624,
+      "tag": "0062_drop_dashboards_legacy_id",
+      "breakpoints": true
     }
   ]
 }

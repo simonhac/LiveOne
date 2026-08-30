@@ -6,9 +6,10 @@
  * this: the predicate read `err.code`, which drizzle ≥0.44 leaves undefined, so the 409 branch never
  * fired and both write paths answered a bare 500 with an empty body. Its replacement was
  * `isPgUniqueViolation` — "any 23505 here is an alias collision" — which is too lenient, because
- * `dashboards` carries a SECOND unique index (`dashboards_legacy_id_unique`, over the frozen
- * pre-cutover int). A clash there would have surfaced to the user as "That shortname is already in
- * use": a plausible message, a plausible status, and a real defect hidden behind both.
+ * `dashboards` carries other unique constraints (here `dashboards_pkey`; there was also a
+ * `legacy_id` unique until migration 0062 dropped that column). A clash on one of those would have
+ * surfaced to the user as "That shortname is already in use": a plausible message, a plausible
+ * status, and a real defect hidden behind both.
  *
  * BOTH branches are driven here, because tightening the predicate is a behaviour change on a path
  * STEP 0 verified — the alias case must still 409 with the same error, and the non-alias case must now
@@ -117,16 +118,16 @@ describe("dashboards — alias collision vs every other unique violation", () =>
   });
 
   describe("a NON-alias unique violation no longer masquerades as one", () => {
-    it("createDashboard rethrows a dashboards_legacy_id_unique clash", async () => {
-      nextFailure = wrappedUniqueViolation("dashboards_legacy_id_unique");
+    it("createDashboard rethrows a dashboards_pkey clash", async () => {
+      nextFailure = wrappedUniqueViolation("dashboards_pkey");
       await expect(create()).rejects.toThrow(/Failed query/);
       await expect(create()).rejects.not.toBeInstanceOf(
         DashboardAliasTakenError,
       );
     });
 
-    it("updateDashboard rethrows a dashboards_legacy_id_unique clash", async () => {
-      nextFailure = wrappedUniqueViolation("dashboards_legacy_id_unique");
+    it("updateDashboard rethrows a dashboards_pkey clash", async () => {
+      nextFailure = wrappedUniqueViolation("dashboards_pkey");
       await expect(
         updateDashboard(DASH_ID, { alias: "taken" }),
       ).rejects.toThrow(/Failed query/);

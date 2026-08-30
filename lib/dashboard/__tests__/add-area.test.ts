@@ -83,11 +83,12 @@ describe("appendGroupToDoc", () => {
     expect(result.valid).toBe(true);
   });
 
-  // 🛑 REGRESSION, measured against a live dev server: `default-group` normalizes its group inside a
-  // throwaway one-group document, so it arrives carrying `n_1…n_9`. Appending a SECOND such group
-  // verbatim collides with the first and `PUT /api/v4/dashboards/{id}` 422s `duplicate-node-id`. The
-  // first add is unaffected (the destination holds only the root's `n_0`), so only a two-add test
-  // catches it.
+  // 🛑 REGRESSION, originally measured against a live dev server: `default-group` normalizes its
+  // group inside a throwaway one-group document, so it arrives carrying ids minted for a document
+  // it was never part of. Appending such a group verbatim risks `PUT /api/v4/dashboards/{id}` 422ing
+  // `duplicate-node-id` — certain under the old sequential minter (both groups came out `n_1…n_9`),
+  // rare but not impossible under random ids. Either way an id belongs to the document that minted
+  // it, so the incoming subtree is re-minted; see `stripNodeIds`.
   it("strips the incoming group's server-minted ids, so a SECOND add does not collide", () => {
     const first = appendGroupToDoc(
       emptyDashboardV4(),
@@ -110,17 +111,27 @@ describe("appendGroupToDoc", () => {
     );
   });
 
-  it("is what makes the second add valid — the un-stripped splice really does 422", () => {
-    // Negative control for the test above: splice verbatim (what this code did before the fix).
-    const g = normalizedSeedGroup(AREA_A);
+  it("is what makes the second add valid — an un-stripped splice really does 422", () => {
+    // Negative control for the test above: splice a subtree carrying ids the destination ALREADY
+    // holds, which is what an un-stripped graft from a foreign document amounts to.
+    //
+    // The collision is constructed EXPLICITLY rather than by minting two seed groups and hoping
+    // they clash. Node ids are random, so two independently-normalized groups almost never collide
+    // — but "almost never" is not "never", and `stripNodeIds` is what makes it impossible. (Under
+    // the old sequential minter both groups came out `n_1, n_2, …` and the clash was certain,
+    // which is why this test used to be written that way.)
     const doc = validateDocV4(
-      appendGroupToDoc(emptyDashboardV4(), g),
+      appendGroupToDoc(emptyDashboardV4(), normalizedSeedGroup(AREA_A)),
     ).normalized!;
+    const alreadyPresent = doc.root.children[0] as GroupNode;
     const naive: DashboardV4 = {
       ...doc,
       root: {
         ...doc.root,
-        children: [...doc.root.children, normalizedSeedGroup(AREA_B)],
+        children: [
+          ...doc.root.children,
+          { ...alreadyPresent, area: AREA_B as GroupNode["area"] },
+        ],
       },
     };
     const result = validateDocV4(naive);

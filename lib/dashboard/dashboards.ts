@@ -72,11 +72,14 @@ const ALIAS_UNIQUE = "dashboards_owner_alias_unique";
  *    BOTH write paths below was therefore an unhandled 500 with an empty body (measured on the previously
  *    dark `/api/v4/dashboards` POST + PATCH).
  *  - config-v4 Phase 14 stage 11: STEP 0's replacement was `isPgUniqueViolation`, i.e. "ANY 23505 on this
- *    statement is an alias collision". `dashboards` carries a SECOND unique — `dashboards_legacy_id_unique`
- *    over the frozen pre-cutover int — so a clash there would have been reported to the user as
- *    "That shortname is already in use", with a 409 and a plausible message hiding a real defect. Now the
- *    name is matched, and `lib/db/pg-error.ts` is deliberately strict: a 23505 whose name cannot be
- *    determined does NOT match, and the error propagates as a 500 rather than being mislabelled.
+ *    statement is an alias collision". `dashboards` then carried a SECOND unique —
+ *    `dashboards_legacy_id_unique` over the frozen pre-cutover int — so a clash there would have been
+ *    reported to the user as "That shortname is already in use", with a 409 and a plausible message
+ *    hiding a real defect. Now the name is matched, and `lib/db/pg-error.ts` is deliberately strict: a
+ *    23505 whose name cannot be determined does NOT match, and the error propagates as a 500 rather
+ *    than being mislabelled. (That second unique is gone with `legacy_id`, so the slug unique is once
+ *    again the only one — matching by name is kept regardless: it is what makes the NEXT unique added
+ *    here fail loudly instead of masquerading as a slug collision.)
  *
  * On this database the name arrives only in the pg `message` (PlanetScale's proxy strips `constraint`);
  * `violatedUniqueName` handles that. Read `lib/db/pg-error.ts` before touching this.
@@ -168,21 +171,6 @@ export async function getDashboard(
     .where(eq(dashboards.id, uuid))
     .limit(1);
   return row ? rowToDashboard(row) : null;
-}
-
-/**
- * config-v4: the opaque `db_…` id of the dashboard carrying this frozen pre-cutover int (`legacy_id`),
- * or null. Backs the permanent `/dashboard/id/{n}` (int) → `/dashboard/id/{db_…}` redirect.
- */
-export async function getDashboardIdByLegacyId(
-  legacyId: number,
-): Promise<string | null> {
-  const [row] = await requirePlanetscaleDb()
-    .select({ id: dashboards.id })
-    .from(dashboards)
-    .where(eq(dashboards.legacyId, legacyId))
-    .limit(1);
-  return row ? Dashboard.encode(row.id) : null;
 }
 
 export type DocUpdateResult =

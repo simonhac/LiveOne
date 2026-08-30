@@ -119,7 +119,7 @@ describe("prod→dev readings transfer", () => {
     expect(names.indexOf("devices")).toBeLessThan(
       names.indexOf("amber_forecast_history"),
     );
-    // dashboards' uuid PK is minted independently per environment (only legacy_id is stable), so it
+    // dashboards' uuid PK is minted independently per environment (slug is the stable key), so it
     // must sync BEFORE any table with an FK to dashboards.id — otherwise users.default_dashboard_id /
     // share_tokens.dashboard_id copy a prod uuid that doesn't yet exist in dev.
     expect(names.indexOf("dashboards")).toBeLessThan(names.indexOf("users"));
@@ -202,7 +202,7 @@ describe("prod→dev readings transfer", () => {
     ]);
   });
 
-  it("syncs dashboards via a legacy_id-keyed idDrift, not the retired serial mirror", async () => {
+  it("syncs dashboards via a slug-keyed idDrift, not the retired serial mirror", async () => {
     const table = prodDevSyncManifest().find(
       (entry) => entry.name === "dashboards",
     )!;
@@ -210,9 +210,10 @@ describe("prod→dev readings transfer", () => {
       mode: "full",
       onConflict: "update",
       idDrift: {
-        // ["slug"] is not an index — it is the stable cross-env identity of a `legacy-share-*`
-        // dashboard, whose legacy_id is NULL on both sides and whose dev owner reown has rewritten.
-        uniqueKeys: [["legacy_id"], ["owner_user_id", "slug"], ["slug"]],
+        // ["slug"] is not an index — it is the stable cross-env identity, and the only key that
+        // survives dev's owner reown. `legacy_id` was the primary key here until migration 0062
+        // dropped it; every dashboard now carries a slug so this key covers them all.
+        uniqueKeys: [["owner_user_id", "slug"], ["slug"]],
         children: [],
       },
     });
@@ -228,7 +229,6 @@ describe("prod→dev readings transfer", () => {
           "dashboards",
           [
             "id",
-            "legacy_id",
             "owner_user_id",
             "name",
             "slug",
@@ -246,7 +246,6 @@ describe("prod→dev readings transfer", () => {
     const sql = devSql.at(-1)!;
     expect(sql).toContain("CREATE TEMP TABLE _drift");
     expect(sql).toContain("ANALYZE _drift");
-    expect(sql).toContain("d.legacy_id = s.legacy_id");
     expect(sql).toContain("(d.slug = s.slug)");
     expect(sql).toContain(
       "d.owner_user_id = s.owner_user_id AND d.slug = s.slug",

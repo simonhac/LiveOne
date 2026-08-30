@@ -28,6 +28,7 @@ import {
   countCardNodes,
   countCardsInNode,
   isDashboardV4,
+  walkNodes,
   type CardNode,
   type DashboardV4,
   type GroupNode,
@@ -40,6 +41,7 @@ import {
   findNode,
   insertNode,
   moveNode,
+  remintNodeIds,
   removeNode,
   setNodeProps,
   subtreeIds,
@@ -263,7 +265,7 @@ function describePosition(pos: NodePosition): string {
 interface Mutation {
   /** Transformed (pre-normalize) doc. */
   next: DashboardV4;
-  /** e.g. `insert card "solar" under n_3` — the runner prefixes would/WRITE. */
+  /** e.g. `insert card "solar" under n_VX15` — the runner prefixes would/WRITE. */
   action: string;
   /** Highlight a node resolved post-normalize by slot (inserts mint their id late). */
   markerSlot?: { parentId: NodeId; index: number; marker: string };
@@ -410,7 +412,7 @@ async function runInsert(
 const DASH_ARG = {
   name: "dash",
   required: true,
-  help: "A dashboard: its db_… id, its legacy integer id, or its slug",
+  help: "A dashboard: its db_… id or its slug",
 } as const;
 
 const NODE_ARG = {
@@ -532,8 +534,8 @@ export const dashboardCommand = defineCommand({
         },
       },
       examples: [
-        "liveone dashboard show 6",
-        "liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_1",
+        "liveone dashboard show kink",
+        "liveone dashboard show db_01kyf18tp3e5brm474zf0fzvkm --node=n_2XRX",
       ],
     },
 
@@ -553,7 +555,7 @@ export const dashboardCommand = defineCommand({
       },
       exitCodes: { 1: "the document is invalid" },
       examples: [
-        "liveone dashboard validate 6",
+        "liveone dashboard validate kink",
         "liveone dashboard validate --file=doc.json",
       ],
     },
@@ -578,8 +580,8 @@ export const dashboardCommand = defineCommand({
         },
       },
       examples: [
-        "liveone dashboard rename 6 --slug=daylesford",
-        "liveone dashboard rename 6 --name='Daylesford' --apply",
+        "liveone dashboard rename kink --slug=kinkora",
+        "liveone dashboard rename kink --name='Kinkora' --apply",
       ],
     },
 
@@ -614,8 +616,8 @@ export const dashboardCommand = defineCommand({
         ...POSITION_FLAGS,
       },
       examples: [
-        "liveone dashboard add-card 6 --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_a",
-        'liveone dashboard add-card 6 --type=chart --config-json=\'{"variant":"lines"}\' --apply',
+        "liveone dashboard add-card kink --type=heatmap --device=dv_01kybrhzkmfyxvz63d15rscj19 --after=n_2VF4",
+        'liveone dashboard add-card kink --type=chart --config-json=\'{"variant":"lines"}\' --apply',
       ],
     },
 
@@ -639,8 +641,8 @@ export const dashboardCommand = defineCommand({
         ...POSITION_FLAGS,
       },
       examples: [
-        "liveone dashboard add-group 6 --direction=row --wrap --after=n_2",
-        "liveone dashboard add-group 6 --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply",
+        "liveone dashboard add-group kink --direction=row --wrap --after=n_CBEX",
+        "liveone dashboard add-group kink --area=ar_01kx8km3a3fh5v2csryvhskzep --heading --apply",
       ],
     },
 
@@ -651,8 +653,24 @@ export const dashboardCommand = defineCommand({
       mutates: true,
       args: [DASH_ARG, NODE_ARG],
       examples: [
-        "liveone dashboard remove-node 6 n_6",
-        "liveone dashboard remove-node 6 n_6 --apply",
+        "liveone dashboard remove-node kink n_5CKF",
+        "liveone dashboard remove-node kink n_5CKF --apply",
+      ],
+    },
+
+    "remint-ids": {
+      name: "remint-ids",
+      summary: "Re-mint every node id in a document (one-time migration).",
+      when:
+        "A MIGRATION, not an edit: run it once per document to move ids off the retired sequential\n" +
+        "form (n_0, n_1, …) onto the random form. Every id changes, so any id noted from an earlier\n" +
+        "`show` stops resolving — which is the point, because a sequential id could be RECYCLED onto\n" +
+        "a different node after a removal. Structure, refs and config are untouched.",
+      mutates: true,
+      args: [DASH_ARG],
+      examples: [
+        "liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm",
+        "liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm --apply",
       ],
     },
 
@@ -666,8 +684,8 @@ export const dashboardCommand = defineCommand({
       args: [DASH_ARG, NODE_ARG],
       flags: { ...POSITION_FLAGS },
       examples: [
-        "liveone dashboard move-node 6 n_8 --before=n_7",
-        "liveone dashboard move-node 6 n_8 --parent=n_2 --index=0 --apply",
+        "liveone dashboard move-node kink n_FS02 --before=n_E7Z1",
+        "liveone dashboard move-node kink n_FS02 --parent=n_CBEX --index=0 --apply",
       ],
     },
 
@@ -742,8 +760,8 @@ export const dashboardCommand = defineCommand({
         },
       },
       examples: [
-        "liveone dashboard set-prop 6 n_3 --columns=6",
-        "liveone dashboard set-prop 6 n_3 --hidden=none --apply",
+        "liveone dashboard set-prop kink n_VX15 --columns=6",
+        "liveone dashboard set-prop kink n_VX15 --hidden=none --apply",
       ],
     },
   },
@@ -767,7 +785,6 @@ async function runList(ctx: Ctx): Promise<number> {
     const rows = await listDashboards(client, owner);
     const dashboards = rows.map((r) => ({
       id: Dashboard.encode(r.id),
-      legacyId: r.legacyId,
       owner: r.ownerUserId,
       name: r.name,
       slug: r.slug,
@@ -781,7 +798,7 @@ async function runList(ctx: Ctx): Promise<number> {
         ...model.dashboards.map(
           (e) =>
             `${e.id}  rev=${String(e.revision).padEnd(3)} cards=${String(e.cardCount ?? "?").padEnd(3)} ` +
-            `legacy=${String(e.legacyId ?? "-").padEnd(4)} owner=${e.owner}  ` +
+            `owner=${e.owner}  ` +
             `${e.slug ? `slug=${e.slug}  ` : ""}${e.name ?? "(unnamed)"}`,
         ),
         "",
@@ -818,7 +835,6 @@ async function runShow(ctx: Ctx): Promise<number> {
           id: Dashboard.encode(row.id),
           name: row.name,
           slug: row.slug,
-          legacyId: row.legacyId,
           owner: row.ownerUserId,
           revision: row.revision,
           cards: countCardNodes(working),
@@ -830,7 +846,6 @@ async function runShow(ctx: Ctx): Promise<number> {
         [
           `${dashLabel(row)}  owner=${row.ownerUserId}` +
             `${row.slug ? `  slug=${row.slug}` : ""}` +
-            `${row.legacyId !== null ? `  legacy=${row.legacyId}` : ""}` +
             `  cards=${countCardNodes(working)}`,
           renderDocTree(working, { nodeId }),
         ].join("\n"),
@@ -1018,6 +1033,37 @@ async function runRemoveNode(ctx: Ctx): Promise<number> {
   });
 }
 
+/**
+ * Re-mint every node id. Deliberately whole-document and one dashboard at a time: there is no
+ * `--all`, because each run must be read and confirmed against the tree it prints.
+ */
+async function runRemintIds(ctx: Ctx): Promise<number> {
+  return withClient(async (client) => {
+    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await resolveDashboard(client, ctx.args[0]);
+    const { working, missingIds } = loadWorkingDoc(row);
+    const next = remintNodeIds(working);
+
+    // The old→new map, in document order, so the change is auditable line by line. Both walks visit
+    // the same tree in the same order, so the two id lists correspond positionally.
+    const before: NodeId[] = [];
+    const after: NodeId[] = [];
+    walkNodes(working, (n) => before.push(n.id!));
+    walkNodes(next, (n) => after.push(n.id!));
+
+    return runDocMutation(ctx, client, row, working, missingIds, {
+      next,
+      action: `re-mint ${before.length} node id(s)`,
+      markerIds: { ids: after, marker: "~" },
+      extraLines: [
+        "id map:",
+        ...before.map((id, i) => `  ${id} → ${after[i]}`),
+        "resulting tree:",
+      ],
+    });
+  });
+}
+
 async function runMoveNode(ctx: Ctx): Promise<number> {
   return withClient(async (client) => {
     await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
@@ -1166,6 +1212,7 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
       () => "insert group",
     ),
   "remove-node": runRemoveNode,
+  "remint-ids": runRemintIds,
   "move-node": runMoveNode,
   "set-prop": runSetProp,
 };

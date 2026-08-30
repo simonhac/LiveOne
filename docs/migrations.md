@@ -148,7 +148,8 @@ Ordering and scope:
 
 **Ad-hoc document edits** — `npm run liveone -- dashboard …` (`scripts/ops/liveone.ts`) is the general-purpose
 editor for `dashboards.doc` and dashboard metadata: `list` / `show` (prints the `n_…` node ids edits
-address) / `validate` / `rename` / `add-card` / `add-group` / `remove-node` / `move-node` / `set-prop`.
+address) / `validate` / `rename` / `add-card` / `add-group` / `remove-node` / `move-node` / `set-prop` /
+`remint-ids`.
 Every subcommand takes `--help` and `--format human|json`. Same safety model as the rewrite script: connection from `MIGRATE_DATABASE_URL` only, printed
 `target:` identity, dry-run by default with `--apply`, every result doc gated on `validateDocV4`, and
 CAS writes that bump `revision`. Use it for one-off edits; a rename that must sweep every document
