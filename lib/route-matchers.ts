@@ -84,3 +84,34 @@ export function hasAccessToken(request: Request): boolean {
   const url = new URL(request.url);
   return url.searchParams.has("access");
 }
+
+// ---------------------------------------------------------------------------
+// CLI tokens
+// ---------------------------------------------------------------------------
+
+// Routes an operator CLI may reach with an `Authorization: Bearer lo_cli_…` token instead of a
+// Clerk session cookie. This list BOUNDS the edge bypass below, exactly as `shareableRoutes` bounds
+// the `?access=` one — a stray `lo_cli_` bearer can never skip the edge on admin, control or
+// vendor routes.
+//
+// 🛑 THESE ARE NOT PUBLIC ROUTES, and must never be moved into `publicRoutes`. The bypass is
+// PRESENCE-ONLY: it declines to 404 a request that *claims* to be a CLI request, and the handler's
+// own `requireAuth`/`loadOwnedDashboard` is the single enforcement point — `getAuthContext`
+// resolves the token there and yields `userId: null` for anything invalid, which is a clean 401.
+// Every handler under this matcher MUST authorize; adding a route here without checking that is
+// how a bypass becomes a hole.
+//
+// Why bypass at the edge at all: `auth.protect()` REWRITES an unauthenticated /api request to a
+// 404 before the handler runs, so a credential the handler understands never gets the chance to be
+// understood. This is the same reason `/api/cron` and `/api/gush` are listed elsewhere.
+const cliTokenRoutes = [
+  "/api/v4/dashboards(.*)", // the dashboard CLI
+  "/api/cli-auth/tokens(.*)", // `auth list` / `auth revoke`, so a CLI can manage its own credential
+];
+
+export const isCliTokenRoute = createRouteMatcher(cliTokenRoutes);
+
+// Presence-only detection lives in lib/cli-auth/bearer.ts — CRYPTO-FREE on purpose, because this
+// module is imported by middleware.ts on the EDGE runtime and the verification path
+// (lib/cli-auth/verify.ts) uses node:crypto. Re-exported here so middleware has one import.
+export { cliBearerToken, hasCliBearer } from "./cli-auth/bearer";

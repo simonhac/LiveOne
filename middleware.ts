@@ -8,6 +8,8 @@ import {
   isPublicRoute,
   isShareableRoute,
   hasAccessToken,
+  isCliTokenRoute,
+  hasCliBearer,
 } from "@/lib/route-matchers";
 import {
   MIDDLEWARE_DUR_HEADER,
@@ -25,7 +27,18 @@ const clerk = clerkMiddleware(async (auth, request) => {
     isShareableRoute(request) &&
     hasAccessToken(request);
 
-  if (!isPublicRoute(request) && !sharedRead) {
+  // An operator CLI presenting `Authorization: Bearer lo_cli_…` on a CLI-eligible route is let
+  // PAST THE EDGE — not authorized here. auth.protect() would otherwise rewrite it to a 404 before
+  // the handler could look at the credential at all (the same reason /api/cron and /api/gush are
+  // public-listed). Bounded by isCliTokenRoute, presence-only, and every handler under that matcher
+  // authorizes for itself: getAuthContext verifies the token against Clerk private metadata and
+  // yields userId: null for anything invalid, which requireAuth turns into a 401.
+  //
+  // Deliberately NOT method-gated, unlike the share-link bypass above: a CLI credential is a real
+  // user credential and may legitimately write, whereas a share token never may.
+  const cliRequest = isCliTokenRoute(request) && hasCliBearer(request);
+
+  if (!isPublicRoute(request) && !sharedRead && !cliRequest) {
     // AWAIT is load-bearing: an un-awaited protect() is a no-op — it throws a
     // floating NEXT_HTTP_ERROR_FALLBACK;404 (logged, never blocks) and the request
     // proceeds, leaving enforcement entirely to the route handlers. Awaiting makes
