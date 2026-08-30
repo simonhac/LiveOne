@@ -232,7 +232,7 @@ export function inputSchemaFor(spec: CommandSpec): JsonSchema {
       g === "format"
         ? {
             type: "string",
-            enum: [...FORMATS],
+            enum: [...(spec.formats ?? FORMATS)],
             description: "Output format (default: json off a terminal)",
           }
         : g === "apply"

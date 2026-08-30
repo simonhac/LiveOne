@@ -161,7 +161,7 @@
       "summary": "The rolled-up source×load energy-flow matrix (the Sankey) for a period.",
       "when": "Use this to download WHERE an area's energy came from and went to over a period, with the\nattributed cost/emissions/renewable legs — the multi-day rollup of the per-day Sankey.",
       "parentWhen": "Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\nphysical/vendor layer use `device`; for what a dashboard shows use `dashboard`.",
-      "description": "npm run liveone -- area flows — The rolled-up source×load energy-flow matrix (the Sankey) for a period.\n\nUse this to download WHERE an area's energy came from and went to over a period, with the\nattributed cost/emissions/renewable legs — the multi-day rollup of the per-day Sankey.\n\nAbout `area` generally: Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\nphysical/vendor layer use `device`; for what a dashboard shows use `dashboard`.\n\nReads the materialized per-day matrices (`flow_attr_1d` via /api/history) and folds them:\nenergy is a plain sum; each metric leg sums only the days where it is known, and carries a\nknown-kWh denominator so averages divide by known energy only. Windows are capped at 13\nmonths (the 1d serving cap). The matrix is per-AREA — never sum a multi-device area with\nits member devices.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = no attributed flow for the window (the reason says why).\n\nExamples:\n  liveone area flows daylesford --last=90d\n  liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --csv --out=flows.csv",
+      "description": "npm run liveone -- area flows — The rolled-up source×load energy-flow matrix (the Sankey) for a period.\n\nUse this to download WHERE an area's energy came from and went to over a period, with the\nattributed cost/emissions/renewable legs — the multi-day rollup of the per-day Sankey.\n\nAbout `area` generally: Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\nphysical/vendor layer use `device`; for what a dashboard shows use `dashboard`.\n\nReads the materialized per-day matrices (`flow_attr_1d` via /api/history) and folds them:\nenergy is a plain sum; each metric leg sums only the days where it is known, and carries a\nknown-kWh denominator so averages divide by known energy only. Windows are capped at 13\nmonths (the 1d serving cap). The matrix is per-AREA — never sum a multi-device area with\nits member devices.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = no attributed flow for the window (the reason says why).\n\nExamples:\n  liveone area flows daylesford --last=90d\n  liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --format=csv --out=flows.csv",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -189,10 +189,6 @@
             "type": "boolean",
             "description": "Also carry the raw per-day matrices (CSV: one row per day×edge)"
           },
-          "csv": {
-            "type": "boolean",
-            "description": "Serialise as CSV, one row per source×load edge (to pipe raw CSV, add --format=human or --out)"
-          },
           "out": {
             "type": "string",
             "description": "Write the CSV/JSON to this file; stdout gets a summary (path)"
@@ -201,7 +197,8 @@
             "type": "string",
             "enum": [
               "human",
-              "json"
+              "json",
+              "csv"
             ],
             "description": "Output format (default: json off a terminal)"
           }
@@ -210,7 +207,7 @@
           "area"
         ]
       },
-      "signature": "liveone area flows <area> { --base-url?: string; --last?: string; --start?: string; --end?: string; --per-day?: boolean; --csv?: boolean; --out?: string }",
+      "signature": "liveone area flows <area> { --base-url?: string; --last?: string; --start?: string; --end?: string; --per-day?: boolean; --out?: string }",
       "invocation": "npm run liveone -- area flows",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
@@ -228,7 +225,7 @@
       "summary": "Time series for an area, in the OpenNEM shape /api/history serves.",
       "when": "Use this to pull an area's measured series over a window. The human rendering is a\nper-series summary; the full payload goes to --out (or --format json).",
       "parentWhen": "Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\nphysical/vendor layer use `device`; for what a dashboard shows use `dashboard`.",
-      "description": "npm run liveone -- area history — Time series for an area, in the OpenNEM shape /api/history serves.\n\nUse this to pull an area's measured series over a window. The human rendering is a\nper-series summary; the full payload goes to --out (or --format json).\n\nAbout `area` generally: Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\nphysical/vendor layer use `device`; for what a dashboard shows use `dashboard`.\n\n--start/--end are whole LOCAL days (the area's fixed day offset — the same boundaries\nthe daily aggregates roll up on). One request regardless of span; bound long sub-daily\npulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n--out writes the RAW body; each series carries\nhistory.{firstInterval,lastInterval,interval,numIntervals,data}.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = the window returned no series.\n\nExamples:\n  liveone area history daylesford --last=3d --interval=30m\n  liveone area history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31 --out=july.json",
+      "description": "npm run liveone -- area history — Time series for an area, in the OpenNEM shape /api/history serves.\n\nUse this to pull an area's measured series over a window. The human rendering is a\nper-series summary; the full payload goes to --out (or --format json).\n\nAbout `area` generally: Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\nphysical/vendor layer use `device`; for what a dashboard shows use `dashboard`.\n\n--start/--end are whole LOCAL days (the area's fixed day offset — the same boundaries\nthe daily aggregates roll up on). One request regardless of span; bound long sub-daily\npulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n--out writes the RAW body; each series carries\nhistory.{firstInterval,lastInterval,interval,numIntervals,data}.\n--format csv emits WIDE rows — timestamp_local, timestamp_utc, then one column per\nseries with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.\nWith --out the CSV goes to the file and stdout gets the summary (as JSON).\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = no series matched (the window, or the --list-series subject).\n\nExamples:\n  liveone area history daylesford --list-series\n  liveone area history daylesford --last=3d --interval=30m\n  liveone area history daylesford --interval=30m --last=7d --series=\"load/*\" --format=csv --out=load.csv\n  liveone area history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31 --out=july.json",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -271,13 +268,18 @@
           },
           "out": {
             "type": "string",
-            "description": "Write the raw OpenNEM body to this file; stdout gets a summary (path)"
+            "description": "Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary (path)"
+          },
+          "list-series": {
+            "type": "boolean",
+            "description": "List series METADATA only — id, unit, metric type, stat suffix, declared intervals, data extents and sample count; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)"
           },
           "format": {
             "type": "string",
             "enum": [
               "human",
-              "json"
+              "json",
+              "csv"
             ],
             "description": "Output format (default: json off a terminal)"
           }
@@ -1659,7 +1661,7 @@
       "summary": "Time series for a device, in the OpenNEM shape /api/history serves.",
       "when": "Use this to pull a device's measured series over a window. The human rendering is a\nper-series summary; the full payload goes to --out (or --format json).",
       "parentWhen": "Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.",
-      "description": "npm run liveone -- device history — Time series for a device, in the OpenNEM shape /api/history serves.\n\nUse this to pull a device's measured series over a window. The human rendering is a\nper-series summary; the full payload goes to --out (or --format json).\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\n--start/--end are whole LOCAL days (the device's fixed day offset — the same boundaries\nthe daily aggregates roll up on). One request regardless of span; bound long sub-daily\npulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n--out writes the RAW body; each series carries\nhistory.{firstInterval,lastInterval,interval,numIntervals,data}.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = the window returned no series.\n\nExamples:\n  liveone device history daylesford --last=3h\n  liveone device history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31",
+      "description": "npm run liveone -- device history — Time series for a device, in the OpenNEM shape /api/history serves.\n\nUse this to pull a device's measured series over a window. The human rendering is a\nper-series summary; the full payload goes to --out (or --format json).\n\nAbout `device` generally: Reach for this for the PHYSICAL/vendor layer: what a device IS and what it reports. For the\nsemantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use\n`dashboard`.\n\n--start/--end are whole LOCAL days (the device's fixed day offset — the same boundaries\nthe daily aggregates roll up on). One request regardless of span; bound long sub-daily\npulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n--out writes the RAW body; each series carries\nhistory.{firstInterval,lastInterval,interval,numIntervals,data}.\n--format csv emits WIDE rows — timestamp_local, timestamp_utc, then one column per\nseries with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.\nWith --out the CSV goes to the file and stdout gets the summary (as JSON).\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130. For this command, 1 = no series matched (the window, or the --list-series subject).\n\nExamples:\n  liveone device history daylesford --list-series\n  liveone device history daylesford --last=3h\n  liveone device history daylesford --last=7d --series=\"load/*\" --format=csv --out=load.csv\n  liveone device history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -1702,13 +1704,18 @@
           },
           "out": {
             "type": "string",
-            "description": "Write the raw OpenNEM body to this file; stdout gets a summary (path)"
+            "description": "Write the raw OpenNEM body (or the CSV, under --format csv) to this file; stdout gets a summary (path)"
+          },
+          "list-series": {
+            "type": "boolean",
+            "description": "List series METADATA only — id, unit, metric type, stat suffix, declared intervals, data extents and sample count; no data arrays. The natural first call against an unfamiliar subject. Refuses time flags; --interval is ignored (the per-series `intervals` field answers it)"
           },
           "format": {
             "type": "string",
             "enum": [
               "human",
-              "json"
+              "json",
+              "csv"
             ],
             "description": "Output format (default: json off a terminal)"
           }

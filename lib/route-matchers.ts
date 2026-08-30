@@ -118,6 +118,9 @@ const cliTokenRoutes = [
   // (members, bindings, derivations, eligibility, by-handle, …) stay OUTSIDE the bypass until each
   // is judged on its own, rather than inheriting it by being a sibling.
   "/api/v4/areas/:id",
+  // Judged on its own (the first sub-resource to be): both GET and POST authorize in-handler via
+  // `loadAreaForOwner`. Again a named segment — `/derivations/:dxid` (PATCH) stays outside.
+  "/api/v4/areas/:id/derivations",
   "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
   // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
   // independently (each only declines to 404 its own credential shape) and the handler's

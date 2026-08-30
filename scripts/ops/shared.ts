@@ -17,6 +17,7 @@ import {
   type FlagSpec,
 } from "@/lib/cli/cli";
 import type { ApiSession } from "@/lib/cli-kit/api-session";
+import { formatTime_fromJSDate } from "@/lib/date-utils";
 
 export const usage = (what: string, why: string, next: string) =>
   failWith(EXIT.USAGE, what, why, next);
@@ -136,7 +137,17 @@ export const HISTORY_FLAGS = {
   out: {
     type: "string",
     placeholder: "path",
-    help: "Write the raw OpenNEM body to this file; stdout gets a summary",
+    help:
+      "Write the raw OpenNEM body (or the CSV, under --format csv) to this file; " +
+      "stdout gets a summary",
+  },
+  listSeries: {
+    type: "boolean",
+    help:
+      "List series METADATA only — id, unit, metric type, stat suffix, declared intervals, " +
+      "data extents and sample count; no data arrays. The natural first call against an " +
+      "unfamiliar subject. Refuses time flags; --interval is ignored (the per-series " +
+      "`intervals` field answers it)",
   },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -153,7 +164,8 @@ interface WireSeries {
     lastInterval?: string;
     interval?: string;
     numIntervals?: number;
-    data?: (number | null)[];
+    /** Numbers for the stat series; strings for `.quality`. */
+    data?: (number | string | null)[];
   };
 }
 
@@ -220,9 +232,11 @@ export const HISTORY_400 = {
  * 13-month 30m pull is a single call; use `--series` to bound the payload).
  *
  * Output shapes, so nobody has to guess them again: stdout json nests the full OpenNEM body under
- * `response`; `--out` writes the RAW body (no envelope); each series carries
- * `history.{firstInterval,lastInterval,interval,numIntervals,data}`. The human rendering is a
- * per-series summary only — a long 5m payload is far too large to be read.
+ * `response`; `--out` writes the RAW body (no envelope) — or the CSV, under `--format csv`; each
+ * series carries `history.{firstInterval,lastInterval,interval,numIntervals,data}`. The human
+ * rendering is a per-series summary only — a long 5m payload is far too large to be read.
+ * `--format csv` emits the wide CSV (see `historyCsv`); combined with `--out` the CSV goes to the
+ * file and stdout gets the summary as JSON.
  */
 export async function runHistoryVerb(
   ctx: Ctx,
@@ -230,6 +244,7 @@ export async function runHistoryVerb(
   address: string,
   label: string,
 ): Promise<number> {
+  if (bool(ctx, "listSeries")) return runListSeriesVerb(ctx, s, address, label);
   const interval = str(ctx, "interval") ?? "5m";
   const globs = (ctx.flags.series as string[] | undefined) ?? [];
   const params = [
@@ -252,8 +267,12 @@ export async function runHistoryVerb(
     );
 
   const out = str(ctx, "out");
+  const wantCsv = ctx.format === "csv";
   if (out !== undefined)
-    fs.writeFileSync(out, JSON.stringify(body, null, 2) + "\n");
+    fs.writeFileSync(
+      out,
+      wantCsv ? historyCsv(body) : JSON.stringify(body, null, 2) + "\n",
+    );
 
   const summary = (body.data ?? []).map((d) => ({
     id: d.id ?? "?",
@@ -280,8 +299,190 @@ export async function runHistoryVerb(
           ? `wrote ${out}`
           : `${summary.length} series. (--out=<path> to save the full payload, --format json to print it)`,
       ].join("\n"),
+    // With --out the CSV already went to the file; the summary model has no CSV shape, so emit's
+    // JSON fallback (with its stderr note) is exactly right there.
+    out === undefined ? () => historyCsv(body) : undefined,
   );
   return summary.length ? EXIT.OK : EXIT.FINDINGS;
+}
+
+/** One entry of the `?list=series` response (`lib/history/list-series.ts` is the producer). */
+interface WireSeriesListingEntry {
+  id?: string;
+  path?: string;
+  label?: string;
+  metricType?: string;
+  aggField?: string;
+  units?: string;
+  intervals?: string[];
+  firstData?: string | null;
+  lastData?: string | null;
+  samples?: number | null;
+}
+
+interface WireSeriesListing {
+  list?: string;
+  count?: number;
+  subject?: {
+    handle?: number;
+    displayTimezone?: string | null;
+    timezoneOffsetMin?: number;
+  };
+  series?: WireSeriesListingEntry[];
+}
+
+/**
+ * `history --list-series`: series METADATA for a subject — no data arrays, no time range. The
+ * discovery call: series ids and the stat-suffix vocabulary (`.avg/.min/.max/.last/.quality`,
+ * `.delta` for energy) are otherwise only learnable by fetching data and reading the summary.
+ */
+async function runListSeriesVerb(
+  ctx: Ctx,
+  s: ApiSession,
+  address: string,
+  label: string,
+): Promise<number> {
+  // Time flags are REFUSED, not ignored — the listing has no window, and silently dropping input
+  // is the kit's cardinal sin. `--interval` is the exception: it carries a default, so an explicit
+  // value is indistinguishable from the defaulted one; it is documented as ignored instead.
+  for (const f of ["last", "start", "end"] as const)
+    if (ctx.flags[f] !== undefined)
+      throw usage(
+        `--${f} with --list-series`,
+        "the series listing is not windowed — it covers all data",
+        `drop --${f}, or drop --list-series to fetch data`,
+      );
+
+  const globs = (ctx.flags.series as string[] | undefined) ?? [];
+  const params = [
+    address,
+    "list=series",
+    ...(globs.length ? [`series=${encodeURIComponent(globs.join(","))}`] : []),
+  ].join("&");
+  const body = await s.get<WireSeriesListing>(`/api/history?${params}`, {
+    errors: HISTORY_400,
+  });
+  const series = body.series ?? [];
+
+  if (globs.length > 0 && series.length === 0)
+    throw usage(
+      `--series matched no series`,
+      `patterns match the path AFTER the device prefix (e.g. load/energy.delta), and \`*\` does not cross \`/\``,
+      `try e.g. --series="load/*", or re-run without --series to list every id`,
+    );
+
+  const out = str(ctx, "out");
+  if (out !== undefined)
+    fs.writeFileSync(out, JSON.stringify(body, null, 2) + "\n");
+
+  const csv = () =>
+    toCsv(
+      [
+        "series_id",
+        "path",
+        "label",
+        "metric_type",
+        "agg_field",
+        "unit",
+        "intervals",
+        "first_data_local",
+        "last_data_local",
+        "samples",
+      ],
+      series.map((r) => [
+        r.id,
+        r.path,
+        r.label,
+        r.metricType,
+        r.aggField,
+        r.units,
+        (r.intervals ?? []).join("|"),
+        r.firstData,
+        r.lastData,
+        r.samples,
+      ]),
+    );
+
+  ctx.emit(
+    out !== undefined
+      ? { subject: label, file: out, count: series.length }
+      : body,
+    () =>
+      [
+        `${label}  ${series.length} series${body.subject?.displayTimezone ? `  (${body.subject.displayTimezone})` : ""}`,
+        ...series.map(
+          (r) =>
+            `  ${(r.id ?? "?").padEnd(40)} ${(r.units ?? "").padEnd(4)} ${(r.metricType ?? "").padEnd(7)} ` +
+            `${(r.intervals ?? []).join(",").padEnd(6)} ` +
+            (r.firstData
+              ? `${r.firstData.slice(0, 10)} → ${r.lastData?.slice(0, 10) ?? "?"}  ${String(r.samples ?? "").padStart(7)} samples`
+              : "(no data)"),
+        ),
+        out !== undefined ? `wrote ${out}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    out === undefined ? csv : undefined,
+  );
+  return series.length ? EXIT.OK : EXIT.FINDINGS;
+}
+
+/**
+ * The CSV rendering of an OpenNEM history body — WIDE: one row per timestamp, one column per
+ * series, units embedded in the header (`13/load/power.avg (W)`). Deliberately not tidy-long
+ * (one row per timestamp×series): long measured ~20× the size of the source JSON for the same
+ * window. One header row, so `pandas.read_csv` takes it as-is.
+ *
+ * Timestamps are reconstructed from each series' `firstInterval` grid — already LOCAL at the
+ * subject's fixed offset, so the CLI does no timezone work beyond reading the suffix — plus the
+ * same instant as UTC. Rows are a UNION across series keyed by epoch: every series today shares
+ * the request-level grid, but a divergent one must land on its own timestamps, never misalign a
+ * column. Nulls are empty cells.
+ */
+export function historyCsv(body: WireHistory): string {
+  const series = body.data ?? [];
+  const stepOf = (iv: string | undefined): number | null =>
+    iv === "5m"
+      ? 5 * 60 * 1000
+      : iv === "30m"
+        ? 30 * 60 * 1000
+        : iv === "1d"
+          ? 24 * 60 * 60 * 1000
+          : null;
+
+  const header = ["timestamp_local", "timestamp_utc"];
+  const cells = new Map<number, (string | number | null)[]>();
+  let offsetMin: number | null = null;
+
+  series.forEach((d, col) => {
+    header.push(d.units ? `${d.id ?? "?"} (${d.units})` : (d.id ?? "?"));
+    const h = d.history;
+    const step = stepOf(h?.interval);
+    if (!h?.data || !h.firstInterval || step === null) return;
+    const epoch0 = new Date(h.firstInterval).getTime();
+    if (Number.isNaN(epoch0)) return;
+    const m = /([+-])(\d{2}):(\d{2})$/.exec(h.firstInterval);
+    if (m && offsetMin === null)
+      offsetMin = (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+    h.data.forEach((v, i) => {
+      const epoch = epoch0 + i * step;
+      let row = cells.get(epoch);
+      if (!row) {
+        row = new Array<string | number | null>(series.length).fill(null);
+        cells.set(epoch, row);
+      }
+      row[col] = v;
+    });
+  });
+
+  const rows = [...cells.keys()]
+    .sort((a, b) => a - b)
+    .map((epoch) => [
+      formatTime_fromJSDate(new Date(epoch), offsetMin ?? 0),
+      new Date(epoch).toISOString().replace(".000Z", "Z"),
+      ...cells.get(epoch)!,
+    ]);
+  return toCsv(header, rows);
 }
 
 /** Serialise rows as RFC-4180-enough CSV: quote only when needed, null/undefined → empty. */

@@ -195,6 +195,25 @@ describe("parse — format precedence", () => {
     expect(e.next).toMatch(/human, json/);
     clearEnv();
   });
+
+  it("accepts --format csv only on a command that declares it", () => {
+    clearEnv();
+    const csvCapable = defineCommand({
+      name: "downloader",
+      summary: "A csv-capable command.",
+      formats: ["human", "json", "csv"],
+      uses: ["api"],
+    });
+    expect(ok(csvCapable, ["--format=csv"], PIPE).format).toBe("csv");
+    // The default set stays closed: a non-declaring command rejects csv with the usual enum error.
+    const e = err(simple, ["hello", "--format=csv"]);
+    expect(e.code).toBe(EXIT.USAGE);
+    expect(e.why).toMatch(/human, json/);
+    // ...and csv is never a valid session-wide env preference, even for a declaring command.
+    process.env.LIVEONE_FORMAT = "csv";
+    expect(err(csvCapable, []).code).toBe(EXIT.USAGE);
+    clearEnv();
+  });
 });
 
 describe("parse — the write gate", () => {
@@ -385,6 +404,21 @@ describe("serialise", () => {
         (m: never) => `count=${(m as typeof model).count}\n\n\n`,
       ),
     ).toBe("count=2\n");
+  });
+
+  it("uses the csv renderer under csv, and falls back to JSON without one", () => {
+    const model = { count: 2, items: ["a", "b"] };
+    expect(
+      serialise(
+        model,
+        "csv",
+        () => "unused",
+        (m: never) => (m as typeof model).items.join(","),
+      ),
+    ).toBe("a,b\n");
+    // A csv-format emit with no csv renderer (a summary or diagnostic model) must stay
+    // machine-parseable: JSON, never the human rendering.
+    expect(JSON.parse(serialise(model, "csv", () => "unused"))).toEqual(model);
   });
 });
 

@@ -31,6 +31,7 @@ import {
   type LogicalSystem,
 } from "@/lib/aggregation/logical-system";
 import { buildFlowMatrixFromAggRows } from "@/lib/history/build-flow-matrix";
+import { buildSeriesListing } from "@/lib/history/list-series";
 import { buildAttributedFlowMatrix } from "@/lib/history/build-attributed-flow-matrix";
 import { readAttributedDailyMatrices } from "@/lib/aggregation/flow-attr-read";
 import { planetscaleDb } from "@/lib/db/planetscale";
@@ -574,8 +575,23 @@ export async function GET(request: NextRequest) {
   try {
     // Parse basic parameters (interval, debug)
     const searchParams = request.nextUrl.searchParams;
+
+    // Metadata-only listing mode (`?list=series`): what series exist, no data arrays, no time
+    // range. Interval is not required — the per-entry `intervals` field answers that question
+    // better than a filter would (an interval filter silently hides the 1d-only soc stats).
+    // The subject resolution and authorization below are SHARED with the data path; the branch
+    // itself sits after `requireDashboardAccess`, so this mode can never relax auth.
+    const listParam = searchParams.get("list");
+    if (listParam !== null && listParam !== "series") {
+      return NextResponse.json(
+        { error: `Unsupported list mode: '${listParam}'. Only 'series'.` },
+        { status: 400 },
+      );
+    }
+    const listSeries = listParam === "series";
+
     const basicParams = parseBasicParams(searchParams);
-    if (!basicParams.isValid) {
+    if (!listSeries && !basicParams.isValid) {
       return NextResponse.json(
         { error: basicParams.error },
         { status: basicParams.statusCode! },
@@ -609,6 +625,40 @@ export async function GET(request: NextRequest) {
     // with it.
     const { subject } = authResult;
     const tzOffsetMin = subjectTimezoneOffsetMin(subject);
+
+    if (listSeries) {
+      // A present-but-invalid interval is refused (not ignored): a misspelling must not
+      // silently change nothing. A VALID interval is tolerated and unused.
+      const iv = searchParams.get("interval");
+      if (iv !== null && !["5m", "30m", "1d"].includes(iv)) {
+        return NextResponse.json(
+          { error: "Only 5m, 30m, and 1d intervals are supported" },
+          { status: 400 },
+        );
+      }
+      const seriesParam = searchParams.get("series");
+      const patterns = seriesParam ? splitBraceAware(seriesParam) : [];
+      if (patterns.length > 0) {
+        const v = validateSeriesPatterns(patterns);
+        if (!v.valid) {
+          return NextResponse.json({ error: v.error }, { status: 400 });
+        }
+      }
+      const listing = await t.time("list", () =>
+        buildSeriesListing(handle, tzOffsetMin, patterns),
+      );
+      return NextResponse.json(
+        {
+          ...listing,
+          subject: {
+            handle,
+            displayTimezone: subjectDisplayTimezone(subject),
+            timezoneOffsetMin: tzOffsetMin,
+          },
+        },
+        { headers: serverTimingHeaders(t) },
+      );
+    }
 
     // Parse time range
     const timeRange = parseTimeRangeParams(

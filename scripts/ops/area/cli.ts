@@ -120,12 +120,20 @@ export const areaCommand = defineCommand({
         "the daily aggregates roll up on). One request regardless of span; bound long sub-daily\n" +
         "pulls with --series. Shapes: --format json nests the full OpenNEM body under `response`;\n" +
         "--out writes the RAW body; each series carries\n" +
-        "history.{firstInterval,lastInterval,interval,numIntervals,data}.",
+        "history.{firstInterval,lastInterval,interval,numIntervals,data}.\n" +
+        "--format csv emits WIDE rows — timestamp_local, timestamp_utc, then one column per\n" +
+        "series with the unit in the header (`13/load/power.avg (W)`); nulls are empty cells.\n" +
+        "With --out the CSV goes to the file and stdout gets the summary (as JSON).",
       args: [AREA_ARG],
       flags: { ...BASE_URL_FLAG, ...HISTORY_FLAGS },
-      exitCodes: { 1: "the window returned no series" },
+      formats: ["human", "json", "csv"],
+      exitCodes: {
+        1: "no series matched (the window, or the --list-series subject)",
+      },
       examples: [
+        "liveone area history daylesford --list-series",
         "liveone area history daylesford --last=3d --interval=30m",
+        'liveone area history daylesford --interval=30m --last=7d --series="load/*" --format=csv --out=load.csv',
         "liveone area history daylesford --interval=1d --start=2026-07-01 --end=2026-07-31 --out=july.json",
       ],
     },
@@ -166,22 +174,19 @@ export const areaCommand = defineCommand({
           type: "boolean",
           help: "Also carry the raw per-day matrices (CSV: one row per day×edge)",
         },
-        csv: {
-          type: "boolean",
-          help: "Serialise as CSV, one row per source×load edge (to pipe raw CSV, add --format=human or --out)",
-        },
         out: {
           type: "string",
           placeholder: "path",
           help: "Write the CSV/JSON to this file; stdout gets a summary",
         },
       },
+      formats: ["human", "json", "csv"],
       exitCodes: {
         1: "no attributed flow for the window (the reason says why)",
       },
       examples: [
         "liveone area flows daylesford --last=90d",
-        "liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --csv --out=flows.csv",
+        "liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --format=csv --out=flows.csv",
       ],
     },
   },
@@ -340,7 +345,7 @@ async function runFlows(ctx: Ctx): Promise<number> {
       );
 
     const perDay = bool(ctx, "perDay");
-    const wantCsv = bool(ctx, "csv");
+    const wantCsv = ctx.format === "csv";
     const out = str(ctx, "out");
     const csv = wantCsv ? (perDay ? perDayCsv(flow) : summedCsv(summed)) : null;
 
@@ -378,37 +383,36 @@ async function runFlows(ctx: Ctx): Promise<number> {
       return EXIT.OK;
     }
 
-    if (csv !== null) {
-      // CSV is a third serialisation of the same model: raw under --format=human (the terminal
-      // default), carried as a field under json so nothing is ever lost to the format flag.
-      ctx.emit({ ...model, csv }, () => csv);
-      return EXIT.OK;
-    }
-
-    ctx.emit(model, () => {
-      const lines = [
-        `${area.displayName} (${area.id})  ${body.requestStart} → ${body.requestEnd}  (${flow.days.length} day(s))`,
-      ];
-      summed.sources.forEach((src, i) =>
-        summed.loads.forEach((load, j) => {
-          const e = summed.matrix[i][j];
-          if (e === 0) return;
-          const cost = summed.metrics?.costC.matrix[i][j];
-          const em = summed.metrics?.emissionsG.matrix[i][j];
-          lines.push(
-            `  ${src.id.padEnd(24)} → ${load.id.padEnd(22)} ${e.toFixed(1).padStart(9)} kWh` +
-              (cost != null
-                ? `  $${(cost / 100).toFixed(2).padStart(8)}`
-                : "") +
-              (em != null
-                ? `  ${(em / 1000).toFixed(1).padStart(7)} kg CO₂`
-                : ""),
-          );
-        }),
-      );
-      lines.push(`total ${summed.totalEnergy.toFixed(1)} kWh`);
-      return lines.join("\n");
-    });
+    ctx.emit(
+      model,
+      () => {
+        const lines = [
+          `${area.displayName} (${area.id})  ${body.requestStart} → ${body.requestEnd}  (${flow.days.length} day(s))`,
+        ];
+        summed.sources.forEach((src, i) =>
+          summed.loads.forEach((load, j) => {
+            const e = summed.matrix[i][j];
+            if (e === 0) return;
+            const cost = summed.metrics?.costC.matrix[i][j];
+            const em = summed.metrics?.emissionsG.matrix[i][j];
+            lines.push(
+              `  ${src.id.padEnd(24)} → ${load.id.padEnd(22)} ${e.toFixed(1).padStart(9)} kWh` +
+                (cost != null
+                  ? `  $${(cost / 100).toFixed(2).padStart(8)}`
+                  : "") +
+                (em != null
+                  ? `  ${(em / 1000).toFixed(1).padStart(7)} kg CO₂`
+                  : ""),
+            );
+          }),
+        );
+        lines.push(`total ${summed.totalEnergy.toFixed(1)} kWh`);
+        return lines.join("\n");
+      },
+      // Raw CSV under --format csv — one mechanism with `history`, not the old --csv bool that
+      // hijacked the human rendering.
+      csv !== null ? () => csv : undefined,
+    );
     return EXIT.OK;
   });
 }

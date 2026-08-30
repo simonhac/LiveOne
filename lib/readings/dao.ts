@@ -152,6 +152,8 @@ export interface ActivePointLatest {
 export interface Agg5mCoverage {
   firstMs: number;
   lastMs: number;
+  /** Exact 5m-row count — rides the same grouped index scan as the MIN/MAX. */
+  samples: number;
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────────────────────────────
@@ -547,6 +549,7 @@ async function agg5mCoverageForPoints(
       pointRid: pointReadingsAgg5m.pointRid,
       first: sql<Date | null>`min(${pointReadingsAgg5m.intervalEnd})`,
       last: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})`,
+      samples: sql<number>`count(*)::int`,
     })
     .from(pointReadingsAgg5m)
     .where(inArray(pointReadingsAgg5m.pointRid, rids))
@@ -557,6 +560,7 @@ async function agg5mCoverageForPoints(
     out.set(point, {
       firstMs: new Date(row.first as string | number | Date).getTime(),
       lastMs: new Date(row.last as string | number | Date).getTime(),
+      samples: Number(row.samples),
     });
   }
   return out;

@@ -139,6 +139,15 @@ describe("inputSchemaFor", () => {
     expect(writer.properties.yes.type).toBe("boolean");
   });
 
+  it("emits the declared format set for a csv-capable command", () => {
+    const csvCapable = inputSchemaFor({
+      name: "downloader",
+      summary: "s",
+      formats: ["human", "json", "csv"],
+    });
+    expect(csvCapable.properties.format.enum).toEqual(["human", "json", "csv"]);
+  });
+
   it("THROWS when a positional and a flag claim the same name", () => {
     // JSON Schema has one namespace and a CLI has two; the alternative is one silently
     // overwriting the other and the agent never learning which.

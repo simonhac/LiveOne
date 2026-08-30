@@ -46,6 +46,7 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/devices/dv_x",
       "/api/v4/areas",
       "/api/v4/areas/ar_x",
+      "/api/v4/areas/ar_x/derivations",
       "/api/v4/users",
       "/api/v4/users/user_x",
       "/api/data",
@@ -72,6 +73,8 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       // control surface stay outside the bypass, each to be judged on its own.
       "/api/v4/areas/ar_x/members",
       "/api/v4/areas/ar_x/bindings",
+      // `derivations` itself is bypassed, but its per-derivation control route is not.
+      "/api/v4/areas/ar_x/derivations/dx_x",
       "/api/v4/points/pt_x/action",
       "/dashboard/simon/kink",
       "/",
@@ -176,6 +179,9 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // one. Exactly this one widening — a new wrapper does not belong here until it provably calls
     // requireAuth on every path.
     "loadReadableArea",
+    // The owner-scoped sibling (same file): requireAuth then owner-or-admin on the resolved area.
+    // Needed by `/api/v4/areas/{id}/derivations`, whose GET and POST both use it.
+    "loadAreaForOwner",
   ];
 
   /** Every route.ts under app/api, with the URL path it serves. */
@@ -214,6 +220,7 @@ describe("every route the bypass exposes authorizes for itself", () => {
         "app/api/v4/dashboards/route.ts",
         "app/api/v4/devices/[id]/route.ts",
         "app/api/v4/areas/[id]/route.ts",
+        "app/api/v4/areas/[id]/derivations/route.ts",
         "app/api/v4/users/[id]/route.ts",
         "app/api/data/route.ts",
         "app/api/history/route.ts",
