@@ -164,11 +164,20 @@ describe("verifyToken", () => {
   });
 
   it("rejects a revoked token even before it expires", () => {
+    // Revocation prunes, so the record is gone rather than marked — the caller still gets a
+    // refusal, which is the property that matters. (Both map to the same 401.)
     const { records: revoked } = revokeToken(holder, {
       all: true,
       now: NOW,
     });
-    expect(verifyToken(token, userWith(revoked), NOW)).toEqual({
+    expect(revoked).toEqual([]);
+    expect(verifyToken(token, userWith(revoked), NOW).ok).toBe(false);
+  });
+
+  it("still reports `revoked` for a record marked but not yet swept", () => {
+    // A record revoked by some other writer (or an older build) must still be refused explicitly.
+    const marked = records.map((r) => ({ ...r, revokedAt: NOW.toISOString() }));
+    expect(verifyToken(token, userWith(marked), NOW)).toEqual({
       ok: false,
       reason: "revoked",
     });
@@ -222,6 +231,28 @@ describe("revokeToken", () => {
     expect(verifyToken(b.token, userWith(records), NOW).ok).toBe(true);
   });
 
+  it("PRUNES dead records, so revoking and never logging in again leaves nothing behind", () => {
+    // The gap this closes: only mintToken used to prune, so a revoke-and-walk-away left dead
+    // records in Clerk metadata indefinitely — inert, but accumulating in a shared budget.
+    const stale = [
+      {
+        id: "cli_old",
+        hash: "00",
+        label: "lapsed",
+        scopes: ["*"],
+        createdAt: NOW.toISOString(),
+        expiresAt: NOW.toISOString(), // already expired
+      },
+    ];
+    const live = mintToken(userWith(stale), { label: "keep", now: NOW });
+    // Revoking something else must still sweep the expired record.
+    const { records } = revokeToken(userWith(live.records), {
+      id: "nothing-matches",
+      now: NOW,
+    });
+    expect(records.map((r) => r.label)).toEqual(["keep"]);
+  });
+
   it("is idempotent — re-revoking counts nothing", () => {
     const { records } = mintFor(userWith([]));
     const once = revokeToken(userWith(records), { all: true, now: NOW });
@@ -237,6 +268,27 @@ describe("describeTokens", () => {
     expect(described[0]).not.toHaveProperty("hash");
     expect(described[0].live).toBe(true);
     expect(JSON.stringify(described)).not.toContain(records[0].hash);
+  });
+
+  it("lists LIVE tokens only by default — the list answers 'what can access my account'", () => {
+    const { records } = mintFor(userWith([]));
+    const withDead = [
+      ...records,
+      {
+        ...records[0],
+        id: "cli_dead",
+        label: "lapsed",
+        expiresAt: NOW.toISOString(),
+      },
+    ];
+    expect(describeTokens(userWith(withDead), NOW).map((t) => t.label)).toEqual(
+      ["laptop"],
+    );
+    expect(
+      describeTokens(userWith(withDead), NOW, { includeDead: true }).map(
+        (t) => t.label,
+      ),
+    ).toEqual(["laptop", "lapsed"]);
   });
 });
 
