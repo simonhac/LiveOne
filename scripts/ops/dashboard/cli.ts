@@ -17,8 +17,7 @@
  */
 import fs from "node:fs";
 import { z } from "zod";
-import type { Client } from "pg";
-import { Area, Dashboard, Device } from "@/lib/ids";
+import { Area, Device } from "@/lib/ids";
 import { isValidAlias, normalizeAlias } from "@/lib/dashboard/alias";
 import {
   CARD_CONFIG_SCHEMAS,
@@ -34,7 +33,6 @@ import {
   type GroupNode,
   type NodeId,
 } from "@/lib/dashboard/v4";
-import { isAliasCollision } from "@/lib/dashboard/dashboards";
 import { validateDocV4, type DocIssue } from "@/lib/dashboard/v4-validate";
 import {
   countMissingIds,
@@ -48,34 +46,30 @@ import {
   type NodePatch,
   type NodePosition,
 } from "@/lib/dashboard/node-ops";
+import { NodeOpError } from "@/lib/dashboard/node-ops";
 import { renderDocTree } from "@/lib/dashboard/v4-tree-text";
 import {
+  bool,
   defineCommand,
   failWith,
   kebab,
+  num,
+  str,
   EXIT,
   type CommandSpec,
   type Ctx,
 } from "@/lib/cli/cli";
+import { DocInvalidError } from "@/lib/cli-kit/http";
 import {
-  connect,
-  dashLabel,
-  listDashboards,
-  printTarget,
-  resolveDashboard,
-  writeDoc,
-  type DashRow,
-} from "./db";
+  dashLabelLike as dashLabel,
+  withTransport,
+  type DashboardTransport,
+  type DashRowLike as DashRow,
+} from "./transport";
 
 // ---------------------------------------------------------------------------
 // Flag access
 // ---------------------------------------------------------------------------
-
-const str = (ctx: Ctx, k: string): string | undefined =>
-  ctx.flags[k] as string | undefined;
-const bool = (ctx: Ctx, k: string): boolean => ctx.flags[k] === true;
-const num = (ctx: Ctx, k: string): number | undefined =>
-  ctx.flags[k] as number | undefined;
 
 /**
  * At most one of `names` may be supplied. `names` are DECLARATION keys (`ctx.flags` is keyed by
@@ -99,15 +93,6 @@ const usage = (what: string, why: string, next: string) =>
 // ---------------------------------------------------------------------------
 // Shared plumbing
 // ---------------------------------------------------------------------------
-
-async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  const client = await connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.end();
-  }
-}
 
 const issueLines = (issues: DocIssue[], severity: string): string[] =>
   issues.map((i) => `  ${severity} ${i.path}: ${i.message} [${i.code}]`);
@@ -139,45 +124,17 @@ function loadWorkingDoc(row: DashRow): {
 }
 
 /**
- * Format-check an `--area`/`--device` flag and confirm the row exists in the target database.
- *
- * 🛑 EXISTENCE ONLY — this admin path deliberately skips the API's `checkDocRefsReadable`
- * (readability/no-escalation) check, and that has two concrete consequences:
- *   - Share-token scope is derived from the doc at READ time (`collectRefs` → `allowedSystemIds`),
- *     so writing a ref here on a dashboard with an active share token IMMEDIATELY widens what
- *     anonymous `?access=` viewers can query — no grant row anywhere.
- *   - A ref outside the owner's readable set makes the doc unsaveable via the web editor: every
- *     subsequent UI PUT 403s until this CLI removes the ref.
- * The warning below is emitted on every ref write so neither happens silently.
+ * Pre-check an `--area`/`--device` ref where the transport can (db: existence query + the
+ * scope-widening warning). Over http there is deliberately NO pre-check: the PUT's server-side
+ * `checkDocRefsReadable` verifies existence AND readability, which is strictly stronger — a bad
+ * ref surfaces as the mapped 403/422 instead.
  */
 async function checkRef(
-  ctx: Ctx,
-  client: Client,
+  t: DashboardTransport,
   kind: "area" | "device",
   value: string,
 ): Promise<void> {
-  const codec = kind === "area" ? Area : Device;
-  const uuid = codec.toUuidOrNull(value);
-  if (!uuid)
-    throw usage(
-      `"${value}" for --${kind}`,
-      `--${kind} expects a ${kind} id`,
-      `pass a ${kind === "area" ? "ar_…" : "dv_…"} id`,
-    );
-  const table = kind === "area" ? "areas" : "devices";
-  const res = await client.query(`select 1 from ${table} where id = $1`, [
-    uuid,
-  ]);
-  if (res.rowCount === 0)
-    throw usage(
-      `--${kind}: no ${kind} ${value} in the target database`,
-      "the id is well-formed but names nothing here",
-      "check you are pointed at the right database — ids are per-environment",
-    );
-  ctx.warn(
-    `warning: readability of ${value} is NOT checked — on a shared dashboard this ref widens what ` +
-      `anonymous viewers can query, and a ref the owner cannot read locks the doc out of the web editor`,
-  );
+  if (t.checkRef) await t.checkRef(kind, value);
 }
 
 /** The unknown-card-type gate — only for the type THIS command introduces. */
@@ -285,7 +242,7 @@ interface Mutation {
  */
 async function runDocMutation(
   ctx: Ctx,
-  client: Client,
+  t: DashboardTransport,
   row: DashRow,
   working: DashboardV4,
   missingIds: number,
@@ -319,14 +276,30 @@ async function runDocMutation(
     renderDocTree(final, { nodeId: mutation.renderRootId, markers }),
   ];
 
-  if (!ctx.dryRun) await writeDoc(client, row, final);
+  let newRevision = row.revision + 1;
+  if (!ctx.dryRun) {
+    try {
+      newRevision = (await t.writeDoc(row, final)).revision;
+    } catch (err) {
+      // Local validation passed but the server refused — the deployed build's schemas may be
+      // older than this checkout. Surface its issues in the house format.
+      if (err instanceof DocInvalidError)
+        throw failWith(
+          EXIT.FINDINGS,
+          `${dashLabel(row)}: the SERVER rejected the edited doc`,
+          issueLines(err.rejection.errors, "error").join("\n").trim(),
+          "the deployed build may predate this card type/config — deploy first, or use --via=db",
+        );
+      throw err;
+    }
+  }
 
   ctx.emit(
     {
       dashboard: {
-        id: Dashboard.encode(row.id),
+        id: row.id,
         name: row.name,
-        revision: ctx.dryRun ? row.revision : row.revision + 1,
+        revision: ctx.dryRun ? row.revision : newRevision,
       },
       action: mutation.action,
       applied: !ctx.dryRun,
@@ -356,7 +329,7 @@ async function runDocMutation(
         out.push(`cards: ${model.cards.before} -> ${model.cards.after}`);
       out.push(
         model.applied
-          ? `wrote revision ${row.revision + 1}`
+          ? `wrote revision ${newRevision}`
           : "Re-run with --apply to write.",
       );
       return out.join("\n");
@@ -375,28 +348,28 @@ async function runInsert(
   makeBareNode: () => CardNode | GroupNode,
   summaryOf: (node: CardNode | GroupNode) => string,
 ): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
     const node = makeBareNode();
     const area = str(ctx, "area");
     if (area !== undefined) {
-      await checkRef(ctx, client, "area", area);
+      await checkRef(t, "area", area);
       if (Area.is(area)) node.area = area;
     }
     const device = str(ctx, "device");
     if (device !== undefined) {
-      await checkRef(ctx, client, "device", device);
+      await checkRef(t, "device", device);
       if (Device.is(device)) node.device = device;
     }
     if (bool(ctx, "hidden")) node.hidden = true;
     const columns = num(ctx, "columns");
     if (columns !== undefined) node.size = { columns };
 
-    const row = await resolveDashboard(client, ctx.args[0]);
+    const row = await t.resolve(ctx.args[0]);
     const { working, missingIds } = loadWorkingDoc(row);
     const pos = parsePositionFlags(ctx, working.root.id!, false);
     const res = insertNode(working, node, pos);
-    return runDocMutation(ctx, client, row, working, missingIds, {
+    return runDocMutation(ctx, t, row, working, missingIds, {
       next: res.doc,
       action: `${summaryOf(node)} ${describePosition(pos)}`,
       markerSlot: { parentId: res.parentId, index: res.index, marker: "+" },
@@ -419,6 +392,26 @@ const NODE_ARG = {
   name: "node",
   required: true,
   help: "The n_… id of the node, as printed by `show`",
+} as const;
+
+/**
+ * Transport selection, on EVERY verb. `http` is the default — the deployed API, as you, via
+ * `liveone auth login`. `db` is explicit-only and keeps its own credential story
+ * (MIGRATE_DATABASE_URL / the liveone:dev fallback); an ambient env var never silently chooses
+ * the target.
+ */
+const TRANSPORT_FLAGS = {
+  via: {
+    type: "string",
+    values: ["http", "db"],
+    default: "http",
+    help: "How to reach the data: the deployed API (http) or Postgres directly (db)",
+  },
+  baseUrl: {
+    type: "string",
+    placeholder: "origin",
+    help: "http only: target origin (default: your stored default, else https://www.liveone.energy)",
+  },
 } as const;
 
 const POSITION_FLAGS = {
@@ -494,7 +487,7 @@ export const dashboardCommand = defineCommand({
     "refreshes, so a dev-only edit is reverted within the hour. Rehearse against dev freely.\n" +
     "🛑 n_… node ids are minted per-document per-ENVIRONMENT, so prod and dev drift. Making the\n" +
     "same edit in both means re-running `show` in each — never reuse an id across environments.",
-  uses: ["db"],
+  uses: ["db", "api"],
   subcommands: {
     list: {
       name: "list",
@@ -502,6 +495,7 @@ export const dashboardCommand = defineCommand({
         "List dashboards: id, owner, name, slug, revision and card count.",
       when: "Start here when you do not yet know a dashboard's id.",
       flags: {
+        ...TRANSPORT_FLAGS,
         owner: {
           type: "string",
           placeholder: "userId",
@@ -527,6 +521,7 @@ export const dashboardCommand = defineCommand({
         "persist. --format json emits the same normalized doc (or one subtree with --node).",
       args: [DASH_ARG],
       flags: {
+        ...TRANSPORT_FLAGS,
         node: {
           type: "string",
           placeholder: "n_id",
@@ -547,6 +542,7 @@ export const dashboardCommand = defineCommand({
         "to write from a file.",
       args: [{ ...DASH_ARG, required: false }],
       flags: {
+        ...TRANSPORT_FLAGS,
         file: {
           type: "string",
           placeholder: "path",
@@ -568,6 +564,7 @@ export const dashboardCommand = defineCommand({
       mutates: true,
       args: [DASH_ARG],
       flags: {
+        ...TRANSPORT_FLAGS,
         name: {
           type: "string",
           placeholder: "text",
@@ -592,6 +589,7 @@ export const dashboardCommand = defineCommand({
       mutates: true,
       args: [DASH_ARG],
       flags: {
+        ...TRANSPORT_FLAGS,
         type: {
           type: "string",
           required: true,
@@ -630,6 +628,7 @@ export const dashboardCommand = defineCommand({
       mutates: true,
       args: [DASH_ARG],
       flags: {
+        ...TRANSPORT_FLAGS,
         direction: {
           type: "string",
           values: ["row", "column"],
@@ -652,6 +651,7 @@ export const dashboardCommand = defineCommand({
       when: "Removes the node AND everything under it — check `show` first if it is a group.",
       mutates: true,
       args: [DASH_ARG, NODE_ARG],
+      flags: { ...TRANSPORT_FLAGS },
       examples: [
         "liveone dashboard remove-node kink n_5CKF",
         "liveone dashboard remove-node kink n_5CKF --apply",
@@ -668,6 +668,7 @@ export const dashboardCommand = defineCommand({
         "a different node after a removal. Structure, refs and config are untouched.",
       mutates: true,
       args: [DASH_ARG],
+      flags: { ...TRANSPORT_FLAGS },
       examples: [
         "liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm",
         "liveone dashboard remint-ids db_01kyf18tp3e5brm474zf0fzvkm --apply",
@@ -682,7 +683,7 @@ export const dashboardCommand = defineCommand({
         "address the node by the id `show` printed before it.",
       mutates: true,
       args: [DASH_ARG, NODE_ARG],
-      flags: { ...POSITION_FLAGS },
+      flags: { ...TRANSPORT_FLAGS, ...POSITION_FLAGS },
       examples: [
         "liveone dashboard move-node kink n_FS02 --before=n_E7Z1",
         "liveone dashboard move-node kink n_FS02 --parent=n_CBEX --index=0 --apply",
@@ -699,6 +700,7 @@ export const dashboardCommand = defineCommand({
       mutates: true,
       args: [DASH_ARG, NODE_ARG],
       flags: {
+        ...TRANSPORT_FLAGS,
         area: {
           type: "string",
           placeholder: "ar_id|none",
@@ -764,6 +766,80 @@ export const dashboardCommand = defineCommand({
         "liveone dashboard set-prop kink n_VX15 --hidden=none --apply",
       ],
     },
+    history: {
+      name: "history",
+      summary:
+        "The dashboard's edit history — who changed it, when, revision by revision.",
+      when:
+        "Run this before `restore`, and any time an edit surprises you. Every write records a\n" +
+        "post-image row, so revision N here IS version N of the document.",
+      description:
+        "savedBy is a provenance string, not always a person: routes record the caller's Clerk\n" +
+        "userId, the CLI records `cli`, scripts `script:<name>`, and the backfill `backfill`.\n" +
+        "History is per-environment — the prod→dev sync deliberately does not carry it.",
+      args: [DASH_ARG],
+      flags: {
+        ...TRANSPORT_FLAGS,
+        limit: {
+          type: "number",
+          default: 20,
+          schema: z.number().int().min(1).max(500),
+          hint: "1–500",
+          help: "How many revisions to show, newest first",
+        },
+      },
+      exitCodes: { 1: "no history recorded (run backfill-history)" },
+      examples: [
+        "liveone dashboard history kink",
+        "liveone dashboard history kink --limit=5",
+      ],
+    },
+    restore: {
+      name: "restore",
+      summary:
+        "Restore a recorded revision — as a NEW revision, never a counter rewind.",
+      when:
+        "The undo. Find the revision with `history`, preview the restore dry, then --apply. The\n" +
+        "restore itself is recorded, so history shows what happened and is itself restorable.",
+      description:
+        "The recorded doc is re-validated against TODAY'S card vocabulary before writing — a\n" +
+        "months-old snapshot may name a type this build no longer knows, and restoring it blindly\n" +
+        "would write a grey box. A doc that no longer validates is refused with its issues.",
+      mutates: true,
+      args: [DASH_ARG],
+      flags: {
+        ...TRANSPORT_FLAGS,
+        revision: {
+          type: "number",
+          required: true,
+          schema: z.number().int().min(1),
+          hint: "a revision number from `history`",
+          help: "The recorded revision to restore",
+        },
+      },
+      examples: [
+        "liveone dashboard restore kink --revision=3",
+        "liveone dashboard restore kink --revision=3 --apply",
+      ],
+    },
+    "backfill-history": {
+      name: "backfill-history",
+      summary:
+        "Seed a history row for every dashboard whose current revision has none.",
+      when:
+        "Run ONCE per environment after the revisions writers land, so `restore` has a floor for\n" +
+        "documents that predate them. Idempotent — a dashboard already recorded is skipped.",
+      description:
+        "db transport only: it writes rows the API deliberately has no endpoint for (history is\n" +
+        "server-written, not client-supplied). Rows are inserted with savedBy=backfill at each\n" +
+        "dashboard's CURRENT revision, ON CONFLICT DO NOTHING.",
+      mutates: true,
+      flags: { ...TRANSPORT_FLAGS },
+      examples: [
+        "npm run liveone:dev -- dashboard backfill-history",
+        "liveone dashboard backfill-history --via=db --apply",
+      ],
+    },
   },
 } satisfies CommandSpec);
 
@@ -772,8 +848,8 @@ export const dashboardCommand = defineCommand({
 // ---------------------------------------------------------------------------
 
 async function runList(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, "read-only");
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget("read-only");
     const owner = str(ctx, "owner");
     if (owner === "")
       // An unset shell variable must not silently widen the query to every owner.
@@ -782,23 +858,15 @@ async function runList(ctx: Ctx): Promise<number> {
         "the value is empty",
         "omit the flag to list every owner, or pass a real user id",
       );
-    const rows = await listDashboards(client, owner);
-    const dashboards = rows.map((r) => ({
-      id: Dashboard.encode(r.id),
-      owner: r.ownerUserId,
-      name: r.name,
-      slug: r.slug,
-      revision: r.revision,
-      cardCount: isDashboardV4(r.doc) ? countCardNodes(r.doc) : null,
-      updatedAt: r.updatedAt.toISOString(),
-    }));
+    const dashboards = await t.list(owner);
     ctx.emit({ count: dashboards.length, dashboards }, (m: never) => {
       const model = m as { count: number; dashboards: typeof dashboards };
       return [
         ...model.dashboards.map(
           (e) =>
             `${e.id}  rev=${String(e.revision).padEnd(3)} cards=${String(e.cardCount ?? "?").padEnd(3)} ` +
-            `owner=${e.owner}  ` +
+            // db lists every owner; http lists the CALLER's reachable set, tagged by access.
+            `${e.owner !== undefined ? `owner=${e.owner}` : `access=${e.access}`}  ` +
             `${e.slug ? `slug=${e.slug}  ` : ""}${e.name ?? "(unnamed)"}`,
         ),
         "",
@@ -810,9 +878,9 @@ async function runList(ctx: Ctx): Promise<number> {
 }
 
 async function runShow(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, "read-only");
-    const row = await resolveDashboard(client, ctx.args[0]);
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget("read-only");
+    const row = await t.resolve(ctx.args[0]);
     const nodeId = str(ctx, "node");
     const { working, missingIds } = loadWorkingDoc(row);
     if (missingIds > 0)
@@ -832,10 +900,10 @@ async function runShow(ctx: Ctx): Promise<number> {
     ctx.emit(
       {
         dashboard: {
-          id: Dashboard.encode(row.id),
+          id: row.id,
           name: row.name,
           slug: row.slug,
-          owner: row.ownerUserId,
+          owner: row.owner ?? null,
           revision: row.revision,
           cards: countCardNodes(working),
         },
@@ -844,7 +912,7 @@ async function runShow(ctx: Ctx): Promise<number> {
       },
       () =>
         [
-          `${dashLabel(row)}  owner=${row.ownerUserId}` +
+          `${dashLabel(row)}${row.owner ? `  owner=${row.owner}` : ""}` +
             `${row.slug ? `  slug=${row.slug}` : ""}` +
             `  cards=${countCardNodes(working)}`,
           renderDocTree(working, { nodeId }),
@@ -880,9 +948,9 @@ async function runValidate(ctx: Ctx): Promise<number> {
     }
     label = file;
   } else {
-    const row = await withClient(async (client) => {
-      await printTarget(client, "read-only");
-      return resolveDashboard(client, ref!);
+    const row = await withTransport(ctx, async (t) => {
+      await t.describeTarget("read-only");
+      return t.resolve(ref!);
     });
     doc = row.doc;
     label = dashLabel(row);
@@ -910,8 +978,8 @@ async function runValidate(ctx: Ctx): Promise<number> {
 }
 
 async function runRename(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
     const rawName = str(ctx, "name");
     const rawSlug = str(ctx, "slug");
     if (rawName === undefined && rawSlug === undefined)
@@ -951,43 +1019,23 @@ async function runRename(ctx: Ctx): Promise<number> {
       }
     }
 
-    const row = await resolveDashboard(client, ctx.args[0]);
+    const row = await t.resolve(ctx.args[0]);
     const changes: Record<string, unknown> = {};
     if (name !== undefined) changes.name = { from: row.name, to: name };
     if (slug !== undefined) changes.slug = { from: row.slug, to: slug };
 
     if (!ctx.dryRun) {
-      const sets: string[] = [];
-      const params: unknown[] = [];
-      if (name !== undefined) {
-        params.push(name);
-        sets.push(`name = $${params.length}`);
-      }
-      if (slug !== undefined) {
-        params.push(slug);
-        sets.push(`slug = $${params.length}`);
-      }
-      params.push(row.id);
-      try {
-        await client.query(
-          `update dashboards set ${sets.join(", ")}, updated_at = now() where id = $${params.length}`,
-          params,
-        );
-      } catch (err) {
-        if (isAliasCollision(err))
-          throw failWith(
-            EXIT.FINDINGS,
-            `slug "${slug}" is already taken`,
-            `another of ${row.ownerUserId}'s dashboards already uses it`,
-            "pick a different shortname",
-          );
-        throw err;
-      }
+      // The transport owns the write: db = direct UPDATE with the alias-collision mapping,
+      // http = PATCH (the 409 mapper renders the same refusal).
+      const patch: { name?: string | null; slug?: string | null } = {};
+      if (name !== undefined) patch.name = name;
+      if (slug !== undefined) patch.slug = slug;
+      await t.patchMeta(row, patch);
     }
 
     ctx.emit(
       {
-        dashboard: { id: Dashboard.encode(row.id), name: row.name },
+        dashboard: { id: row.id, name: row.name },
         changes,
         applied: !ctx.dryRun,
       },
@@ -1012,16 +1060,16 @@ async function runRename(ctx: Ctx): Promise<number> {
 }
 
 async function runRemoveNode(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
-    const row = await resolveDashboard(client, ctx.args[0]);
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await t.resolve(ctx.args[0]);
     const { working, missingIds } = loadWorkingDoc(row);
     const id = ctx.args[1];
     const res = removeNode(working, id);
     const removedMarkers = new Map(
       subtreeIds(res.removed).map((n) => [n, "-"] as const),
     );
-    return runDocMutation(ctx, client, row, working, missingIds, {
+    return runDocMutation(ctx, t, row, working, missingIds, {
       next: res.doc,
       action: `remove ${id} (${countCardsInNode(res.removed)} card(s))`,
       extraLines: [
@@ -1038,9 +1086,9 @@ async function runRemoveNode(ctx: Ctx): Promise<number> {
  * `--all`, because each run must be read and confirmed against the tree it prints.
  */
 async function runRemintIds(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
-    const row = await resolveDashboard(client, ctx.args[0]);
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await t.resolve(ctx.args[0]);
     const { working, missingIds } = loadWorkingDoc(row);
     const next = remintNodeIds(working);
 
@@ -1051,7 +1099,7 @@ async function runRemintIds(ctx: Ctx): Promise<number> {
     walkNodes(working, (n) => before.push(n.id!));
     walkNodes(next, (n) => after.push(n.id!));
 
-    return runDocMutation(ctx, client, row, working, missingIds, {
+    return runDocMutation(ctx, t, row, working, missingIds, {
       next,
       action: `re-mint ${before.length} node id(s)`,
       markerIds: { ids: after, marker: "~" },
@@ -1065,14 +1113,14 @@ async function runRemintIds(ctx: Ctx): Promise<number> {
 }
 
 async function runMoveNode(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
-    const row = await resolveDashboard(client, ctx.args[0]);
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await t.resolve(ctx.args[0]);
     const { working, missingIds } = loadWorkingDoc(row);
     const id = ctx.args[1];
     const pos = parsePositionFlags(ctx, working.root.id!, true);
     const res = moveNode(working, id, pos);
-    return runDocMutation(ctx, client, row, working, missingIds, {
+    return runDocMutation(ctx, t, row, working, missingIds, {
       next: res.doc,
       action: `move ${id} ${describePosition(pos)}`,
       markerIds: { ids: [id], marker: "*" },
@@ -1082,9 +1130,9 @@ async function runMoveNode(ctx: Ctx): Promise<number> {
 }
 
 async function runSetProp(ctx: Ctx): Promise<number> {
-  return withClient(async (client) => {
-    await printTarget(client, ctx.dryRun ? "dry-run" : "APPLY");
-    const row = await resolveDashboard(client, ctx.args[0]);
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await t.resolve(ctx.args[0]);
     const { working, missingIds } = loadWorkingDoc(row);
     const id = ctx.args[1];
     const found = findNode(working, id);
@@ -1111,7 +1159,7 @@ async function runSetProp(ctx: Ctx): Promise<number> {
     if (area !== undefined) {
       if (area === "none") patch.area = null;
       else {
-        await checkRef(ctx, client, "area", area);
+        await checkRef(t, "area", area);
         if (Area.is(area)) patch.area = area;
       }
     }
@@ -1119,7 +1167,7 @@ async function runSetProp(ctx: Ctx): Promise<number> {
     if (device !== undefined) {
       if (device === "none") patch.device = null;
       else {
-        await checkRef(ctx, client, "device", device);
+        await checkRef(t, "device", device);
         if (Device.is(device)) patch.device = device;
       }
     }
@@ -1168,12 +1216,115 @@ async function runSetProp(ctx: Ctx): Promise<number> {
       );
 
     const res = setNodeProps(working, id, patch);
-    return runDocMutation(ctx, client, row, working, missingIds, {
+    return runDocMutation(ctx, t, row, working, missingIds, {
       next: res.doc,
       action: `set ${Object.keys(patch).join(", ")} on ${id}`,
       markerIds: { ids: [id], marker: "*" },
       renderRootId: found.parent?.id ?? id,
     });
+  });
+}
+
+async function runHistory(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget("read-only");
+    const row = await t.resolve(ctx.args[0]);
+    const limit = (ctx.flags.limit as number | undefined) ?? 20;
+    const revisions = await t.history(row, limit);
+    ctx.emit(
+      {
+        dashboard: { id: row.id, name: row.name, revision: row.revision },
+        revisions,
+      },
+      (m: never) => {
+        const model = m as {
+          revisions: Array<{
+            revision: number;
+            savedBy: string;
+            savedAt: string;
+          }>;
+        };
+        if (!model.revisions.length)
+          return `No history recorded for ${dashLabel(row)} — run \`liveone dashboard backfill-history\`.`;
+        return [
+          `${dashLabel(row)}:`,
+          ...model.revisions.map(
+            (r) =>
+              `  r${String(r.revision).padEnd(4)} ${r.savedAt}  ${r.savedBy}` +
+              (r.revision === row.revision ? "  <- current" : ""),
+          ),
+        ].join("\n");
+      },
+    );
+    return revisions.length ? EXIT.OK : EXIT.FINDINGS;
+  });
+}
+
+async function runRestore(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    const row = await t.resolve(ctx.args[0]);
+    const revision = ctx.flags.revision as number;
+    if (revision === row.revision)
+      throw usage(
+        `--revision=${revision}`,
+        "that IS the current revision — restoring it would change nothing",
+        "pick an earlier revision from `liveone dashboard history`",
+      );
+    const rec = await t.getRevision(row, revision);
+    if (!rec)
+      throw failWith(
+        EXIT.FINDINGS,
+        `no revision ${revision} recorded for ${dashLabel(row)}`,
+        "history only reaches back to when the writers (or the backfill) started recording",
+        "run `liveone dashboard history` to see what exists",
+      );
+    // Re-validate under TODAY'S vocabulary: a snapshot may predate a card-type change, and
+    // restoring it blindly would write a grey box.
+    const result = validateDocV4(rec.doc);
+    if (!result.valid)
+      throw failWith(
+        EXIT.FINDINGS,
+        `revision ${revision} no longer validates`,
+        issueLines(result.errors, "error").join("\n").trim(),
+        "it predates a schema change — restore a newer revision, or repair via --via=db",
+      );
+    const { working, missingIds } = loadWorkingDoc(row);
+    return runDocMutation(ctx, t, row, working, missingIds, {
+      next: result.normalized!,
+      action: `restore revision ${revision} (saved ${rec.savedAt} by ${rec.savedBy})`,
+    });
+  });
+}
+
+async function runBackfillHistory(ctx: Ctx): Promise<number> {
+  return withTransport(ctx, async (t) => {
+    await t.describeTarget(ctx.dryRun ? "dry-run" : "APPLY");
+    if (!t.backfillHistory)
+      throw usage(
+        "--via=http",
+        "the backfill writes history rows directly, and the API deliberately has no endpoint for that",
+        "re-run with --via=db (dev: `npm run liveone:dev -- dashboard backfill-history`)",
+      );
+    const { inserted, skipped } = await t.backfillHistory(!ctx.dryRun);
+    ctx.emit({ applied: !ctx.dryRun, inserted, skipped }, (m: never) => {
+      const model = m as {
+        applied: boolean;
+        inserted: string[];
+        skipped: string[];
+      };
+      return [
+        ...model.inserted.map(
+          (l) => `  ${model.applied ? "SEEDED" : "would seed"} ${l}`,
+        ),
+        ...model.skipped.map((l) => `  skip (already recorded) ${l}`),
+        `${model.inserted.length} seeded, ${model.skipped.length} already recorded.`,
+        ...(model.applied || !model.inserted.length
+          ? []
+          : ["Re-run with --apply to write."]),
+      ].join("\n");
+    });
+    return EXIT.OK;
   });
 }
 
@@ -1215,6 +1366,9 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   "remint-ids": runRemintIds,
   "move-node": runMoveNode,
   "set-prop": runSetProp,
+  history: runHistory,
+  restore: runRestore,
+  "backfill-history": runBackfillHistory,
 };
 
 /**
@@ -1231,5 +1385,19 @@ export async function runDashboard(ctx: Ctx): Promise<number> {
       "this verb has no handler",
       "run `npm run liveone -- dashboard --help`",
     );
-  return handler(ctx);
+  try {
+    return await handler(ctx);
+  } catch (err) {
+    // A structural refusal (no such node, root-immutable, cycle, …) is a FINDING about the
+    // caller's request, not an upstream failure. Without this, classify() mapped NodeOpError to
+    // exit 5 with a "re-run with LIVEONE_DEBUG" hint — misleading for what is a clean refusal.
+    if (err instanceof NodeOpError)
+      throw failWith(
+        EXIT.FINDINGS,
+        err.message,
+        `the requested edit is not structurally possible (${err.code})`,
+        "run `liveone dashboard show <dash>` and pick a valid target",
+      );
+    throw err;
+  }
 }

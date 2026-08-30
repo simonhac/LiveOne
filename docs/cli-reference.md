@@ -27,6 +27,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## `scripts/ops`
 
 - [liveone](../scripts/ops/CLI_README.md#liveone) — The LiveOne operator CLI.
+  - [liveone find](../scripts/ops/CLI_README.md#liveone-find) — Find the command for a job, in plain English.
+  - [liveone auth](../scripts/ops/CLI_README.md#liveone-auth) — Sign the CLI in as you, and manage its tokens.
+    - [liveone auth login](../scripts/ops/CLI_README.md#liveone-auth-login) — Sign in via the browser and store a token for one origin.
+    - [liveone auth whoami](../scripts/ops/CLI_README.md#liveone-auth-whoami) — Who and where the stored token makes you — the target line, on demand.
+    - [liveone auth list](../scripts/ops/CLI_README.md#liveone-auth-list) — The live tokens on your account (server-side), plus this machine's logins.
+    - [liveone auth revoke](../scripts/ops/CLI_README.md#liveone-auth-revoke) — Revoke one token by id, or all of them.
+    - [liveone auth logout](../scripts/ops/CLI_README.md#liveone-auth-logout) — Revoke this origin's token server-side and forget it locally.
   - [liveone dashboard](../scripts/ops/CLI_README.md#liveone-dashboard) — Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
     - [liveone dashboard list](../scripts/ops/CLI_README.md#liveone-dashboard-list) — List dashboards: id, owner, name, slug, revision and card count.
     - [liveone dashboard show](../scripts/ops/CLI_README.md#liveone-dashboard-show) — Render a dashboard's node tree, with the n_… ids edits address.
@@ -38,5 +45,8 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard remint-ids](../scripts/ops/CLI_README.md#liveone-dashboard-remint-ids) — Re-mint every node id in a document (one-time migration).  _(writes)_
     - [liveone dashboard move-node](../scripts/ops/CLI_README.md#liveone-dashboard-move-node) — Move a node, subtree intact and ids preserved.  _(writes)_
     - [liveone dashboard set-prop](../scripts/ops/CLI_README.md#liveone-dashboard-set-prop) — Set or clear a node's envelope props, and a card's type/config.  _(writes)_
+    - [liveone dashboard history](../scripts/ops/CLI_README.md#liveone-dashboard-history) — The dashboard's edit history — who changed it, when, revision by revision.
+    - [liveone dashboard restore](../scripts/ops/CLI_README.md#liveone-dashboard-restore) — Restore a recorded revision — as a NEW revision, never a counter rewind.  _(writes)_
+    - [liveone dashboard backfill-history](../scripts/ops/CLI_README.md#liveone-dashboard-backfill-history) — Seed a history row for every dashboard whose current revision has none.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.

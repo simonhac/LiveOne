@@ -176,6 +176,13 @@ export async function writeDoc(
   client: Client,
   row: Pick<DashRow, "id" | "revision">,
   doc: unknown,
+  /**
+   * Who to record in `dashboard_revisions.saved_by`. A provenance string, not always a Clerk id:
+   * routes pass the caller's userId; the CLI passes "cli"; the direct-SQL scripts pass
+   * "script:<name>"; the backfill passes "backfill". Anything resolving saved_by to a person must
+   * tolerate these sentinels.
+   */
+  savedBy: string,
 ): Promise<void> {
   await client.query("begin");
   try {
@@ -191,6 +198,12 @@ export async function writeDoc(
     await client.query(
       "update dashboards set doc = $1, revision = revision + 1, updated_at = now() where id = $2",
       [JSON.stringify(doc), row.id],
+    );
+    // POST-IMAGE history, in the SAME transaction: row (dashboard, N) IS version N. No ON
+    // CONFLICT — the CAS above makes a collision a bug worth hearing about, not one to swallow.
+    await client.query(
+      "insert into dashboard_revisions (dashboard_id, revision, doc, saved_by, saved_at) values ($1, $2, $3, $4, now())",
+      [row.id, row.revision + 1, JSON.stringify(doc), savedBy],
     );
     await client.query("commit");
   } catch (err) {

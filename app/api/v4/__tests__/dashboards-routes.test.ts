@@ -303,6 +303,7 @@ describe("PUT /api/v4/dashboards/{id}", () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       DASHBOARD_ID,
       expect.anything(),
+      expect.any(String), // savedBy: the caller's userId
       7,
     );
   });
@@ -312,6 +313,7 @@ describe("PUT /api/v4/dashboards/{id}", () => {
     expect(mockUpdateDoc).toHaveBeenCalledWith(
       DASHBOARD_ID,
       expect.anything(),
+      expect.any(String), // savedBy: the caller's userId
       undefined,
     );
   });
@@ -456,6 +458,7 @@ describe("GET /api/v4/dashboards", () => {
         displayName: "Home",
         alias: "home",
         cardCount: 3,
+        revision: 7,
         updatedAt: new Date(0),
         access: "owner",
       },
@@ -469,6 +472,7 @@ describe("GET /api/v4/dashboards", () => {
       id: DASHBOARD_ID,
       name: "Home",
       slug: "home",
+      revision: 7,
       cardCount: 3,
       access: "owner",
     });

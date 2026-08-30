@@ -28,6 +28,12 @@ let nextFailure: unknown = null;
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb() {
     return {
+      // The revisions tranche wrapped `createDashboard` in a transaction (row + revision-1 history
+      // in one commit). The tx object exposes the same chains, so the error-path measurements
+      // below are unchanged — the failure still surfaces through `returning()`.
+      async transaction(fn: (tx: unknown) => Promise<unknown>) {
+        return fn(this);
+      },
       // config-v4 Phase 14 stage 16: `createDashboard` is back on `db.insert(dashboards)` now that
       // migration 0054 has dropped `descriptor` (stage 15 had to hand-roll the SQL because that column
       // was NOT NULL but deliberately undeclared in schema.ts). The error path is unchanged —

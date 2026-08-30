@@ -175,7 +175,9 @@ const FULL: FullTable[] = [
   // afterward (users.default_dashboard_id, share_tokens.dashboard_id) would reference a prod uuid
   // absent from dev. `idDrift` makes dev ADOPT prod's uuid: clear the colliding dev row before the
   // by-PK upsert. Every FK to dashboards.id is CASCADE/SET NULL (users, share_tokens,
-  // dashboard_grants, dashboard_revisions), so no manual child clears are needed (children: []). Runs
+  // dashboard_grants, dashboard_revisions — the latter DELIBERATELY unsynced: dev history is
+  // dev-local, and this drift-delete + CASCADE wipes it, which is accepted), so no manual child
+  // clears are needed (children: []). Runs
   // FIRST of the FK-bearing full tables so users/share_tokens (synced next) land on uuids that already
   // exist in dev.
   //

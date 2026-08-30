@@ -990,9 +990,13 @@ export const derivedIntervals = pgTable(
   }),
 );
 
-// dashboard_revisions: cross-session undo — each whole-doc PUT (Phase-6 /api/v4) inserts a revision +
-// bumps dashboards.revision. dashboard_id is bare uuid: the FK → dashboards(id) is DEFERRED to cutover
-// (dashboards.id is serial int today; becomes uuid at cutover).
+// dashboard_revisions: post-image edit history — row (dashboard, N) IS version N, written in the
+// SAME transaction as every doc write (updateDashboardDoc, the CLI/scripts' shared writeDoc, and
+// createDashboard's revision-1 row; wired 2026-08-30 — the table predates its writers by a phase).
+// saved_by is a PROVENANCE STRING, not always a Clerk id: routes record the caller's userId, the
+// CLI "cli", scripts "script:<name>", the backfill "backfill". The FK → dashboards(id) is live,
+// ON DELETE CASCADE. Deliberately NOT carried by the prod→dev sync: dev history is dev-local, and
+// the sync's drift-delete + this CASCADE would wipe it anyway.
 export const dashboardRevisions = pgTable(
   "dashboard_revisions",
   {
