@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Gauge, Settings } from "lucide-react";
 import Tile from "@/components/Tile";
 import Value from "@/components/ui/value";
@@ -11,6 +11,7 @@ import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { getPeriodDuration } from "@/lib/charts/temporal";
 import { formatDollars, formatKwh, pricedTotal } from "@/lib/provenance-format";
 import { runPeriodsQuery } from "@/lib/queries/runPeriods";
+import { queryKeys } from "@/lib/queries/keys";
 import { IDLE_CHROME, ROLE_CHROME } from "@/lib/role-chrome";
 import {
   GENERATOR_CONTROL_PATHS,
@@ -23,6 +24,7 @@ import {
   GENERATOR_ERROR_PATH,
   describeGeneratorState,
   firstPresentPath,
+  openRunIsLive,
   panelIsAuto,
   runTimeWords,
 } from "@/lib/control/generator-ref";
@@ -140,6 +142,12 @@ function GeneratorTile({
   // mechanism `datumCanControlPoint` uses to answer "which device would this actually touch".
   const runsSystemId =
     latest[GENERATOR_RUNNING_PATH]?.sourceSystemId ?? systemId;
+  /**
+   * That same entry's VALUE: 1/0 for "is a run open right now", or null when the derived point
+   * hasn't reached this area's serving map. Free — it is the row the line above already reads —
+   * and, unlike the run-periods response below, it rides a query that actually polls.
+   */
+  const liveRunning = getPointValue(latest, GENERATOR_RUNNING_PATH);
   const { datum, paused } = useAreaDatum(systemId ?? 0, {
     enabled: systemId != null,
   });
@@ -183,16 +191,51 @@ function GeneratorTile({
       offset: 0,
     }),
     enabled: runsSystemId != null,
+    // An OPEN run's energy and cost keep accruing (the minutely reconcile re-allocates it over
+    // [start, now]), so the row froze at whatever the last fetch happened to see — "0.3 kWh" for
+    // the rest of the run. One row, once a minute, and only while an engine is actually turning:
+    // off this poll goes the moment `running` drops, and it never starts on a site whose derived
+    // point is absent (null ⇒ false).
+    refetchInterval: liveRunning === 1 ? 60_000 : false,
   });
 
-  // The OPEN run, if there is one. `running` is the server's own open-period flag; the event it
-  // points at carries the whole run — its start, and its energy/cost accumulated so far (the
-  // minutely reconcile allocates an open run over [start, now], so this is live, not zero).
-  const openRun = currentRuns?.running
-    ? (currentRuns.events?.find((e) => e.running) ?? null)
+  /**
+   * The OPEN run, if there is one. `running` is the server's own open-period flag; the event it
+   * points at carries the whole run — its start, and its energy/cost accumulated so far (the
+   * minutely reconcile allocates an open run over [start, now], so this is live, not zero).
+   *
+   * 🛑 Under `openRunIsLive`, because that flag arrives on a query nobody polls and the fresher
+   * copy of the same flag is sitting in `latest` — see the function for the failure it closes.
+   */
+  const openRun = openRunIsLive(currentRuns?.running, liveRunning)
+    ? (currentRuns?.events?.find((e) => e.running) ?? null)
     : null;
   const openRunStart = openRun?.startTimeISO ?? null;
   const openRunFor = compactElapsed(openRunStart, nowMs);
+
+  /**
+   * Go and re-read the runs when the live flag CHANGES — the other half of the veto above.
+   *
+   * The veto alone only stops the tile lying; it doesn't fetch the truth. On a stop this is what
+   * lands the finished run's real end and energy and folds it into the "This period" total; on a
+   * start it is what makes the "Since …" row appear at all for a run WE didn't command (an
+   * inverter-started run opens no dialog, so nothing else ever invalidates).
+   *
+   * Edge-triggered via a ref rather than a plain dependency: on mount `prev` is null and we only
+   * record, because the queries have just fetched and a second round-trip would buy nothing. A null
+   * on either side is "no opinion" and never counts as an edge, so a site without the derived point
+   * is left exactly as it was.
+   */
+  const queryClient = useQueryClient();
+  const prevRunningRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prev = prevRunningRef.current;
+    prevRunningRef.current = liveRunning;
+    if (prev == null || liveRunning == null || prev === liveRunning) return;
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.runPeriodsForDevice(runsSystemId ?? 0),
+    });
+  }, [liveRunning, runsSystemId, queryClient]);
 
   /**
    * What the "Generated" row is ABOUT, which changes with the engine.

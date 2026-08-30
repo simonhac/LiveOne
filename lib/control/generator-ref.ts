@@ -319,6 +319,35 @@ export function runMinutesElapsed(
   return Math.max(0, Math.floor((nowMs - startMs) / 60_000));
 }
 
+/**
+ * Whether a cached run-periods response's open run is still open RIGHT NOW.
+ *
+ * 🛑 THE TWO ARGUMENTS ARE THE SAME FACT — "is there an open `derived_intervals` row" — arriving
+ * over two channels with wildly different freshness, which is the whole reason this rule exists.
+ *
+ *  - `cachedRunning` is `RunPeriodsResponse.running`. `runPeriodsQuery` has no `refetchInterval`,
+ *    so once fetched it is never asked again on its own; the only sweep is the control dialog's
+ *    +6 s/+20 s pair after a command. Closing a run takes the DSE cool-down (~90 s) plus the
+ *    detector's `delayOffMs` (120 s) plus the minutely reconcile — four to five minutes — so both
+ *    of those fire while the run is legitimately still open and the cache then keeps saying
+ *    "running" indefinitely. Observed on prod 2026-08-30: a five-minute run stopped at 21:45 was
+ *    still rendering "Since 9:40pm" under an "Auto / Ready to start" hero at 21:48 and after.
+ *  - `liveRunning` is `source.generator/running` out of the latest map, which the tile polls every
+ *    30 s, republished every minute by `publishRunningLatest` from `isRunningNow(derivation)`.
+ *    Fresher copy of the same flag, so it VETOES.
+ *
+ * Null `liveRunning` — the derived point has not reached this area's serving map, or a fixture
+ * omits it — is "no opinion", NOT "stopped": blanking the row then would hide a genuinely running
+ * engine. And the veto is one-directional, because `liveRunning === 1` cannot manufacture an event
+ * we have not fetched; the caller's edge-triggered invalidation is what goes and gets it.
+ */
+export function openRunIsLive(
+  cachedRunning: boolean | undefined,
+  liveRunning: number | null | undefined,
+): boolean {
+  return Boolean(cachedRunning) && liveRunning !== 0;
+}
+
 /** Whether the DSE's front panel is in Auto — the precondition no remote request may override. */
 export function panelIsAuto(mode: string | null | undefined): boolean {
   return (mode ?? "").trim().toLowerCase() === "auto";

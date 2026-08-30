@@ -12,6 +12,7 @@ import {
   describeGeneratorState,
   firstPresentPath,
   GENERATOR_RPM_PATHS,
+  openRunIsLive,
   panelIsAuto,
   runMinutesElapsed,
   runMinutesLeft,
@@ -363,5 +364,35 @@ describe("runTimeWords", () => {
         nowMs: NOW,
       }),
     ).toBeNull();
+  });
+});
+
+describe("openRunIsLive", () => {
+  it("keeps the row while both agree the engine is running", () => {
+    expect(openRunIsLive(true, 1)).toBe(true);
+  });
+
+  it("drops a cached open run once the LIVE flag says stopped", () => {
+    // The bug this exists for: a five-minute run stopped at 21:45 still rendering "Since 9:40pm"
+    // under an "Auto / Ready to start" hero, because nothing re-fetches the run-periods read.
+    expect(openRunIsLive(true, 0)).toBe(false);
+  });
+
+  it("falls back to the cached answer when the live point is absent", () => {
+    // No opinion, NOT "stopped" — an area whose serving map lacks the derived point must keep
+    // showing a genuinely running engine.
+    expect(openRunIsLive(true, null)).toBe(true);
+    expect(openRunIsLive(true, undefined)).toBe(true);
+  });
+
+  it("cannot manufacture a run the cache has not fetched", () => {
+    // One-directional: the live flag vetoes, it never invents. Getting the event is the caller's
+    // invalidation, not this function's.
+    expect(openRunIsLive(false, 1)).toBe(false);
+    expect(openRunIsLive(undefined, 1)).toBe(false);
+  });
+
+  it("stays false when neither source reports a run", () => {
+    expect(openRunIsLive(false, 0)).toBe(false);
   });
 });

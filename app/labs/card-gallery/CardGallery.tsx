@@ -54,13 +54,21 @@ function pick<T>(map: Record<string, T>, scenario: string, stale: boolean): T {
 }
 
 /**
- * Generator scenarios whose engine is TURNING **and whose run the detector has already opened** —
- * the stubbed run-periods returns an open run for these.
+ * Scenarios for which the stubbed run-periods answer carries an OPEN run.
  *
- * 🛑 "starting (ours)" is deliberately ABSENT even though its engine is turning. The run detector
- * needs a minute or two to open a period after a start, and the tile's rule is to show NOTHING in
- * that window rather than the previous period's totals under a hero that says the engine is going.
- * Leaving it out is what makes that window reviewable here.
+ * 🛑 This is what the CACHED response says, which is not the same question as "is the engine
+ * turning" — and the two entries that break the correspondence are the point of the set:
+ *
+ *  - "starting (ours)" is ABSENT though its engine is turning. The detector needs a minute or two
+ *    to open a period after a start, and the tile's rule is to show NOTHING in that window rather
+ *    than the previous period's totals under a hero that says the engine is going.
+ *  - "run just ended (stale runs cache)" is PRESENT though its engine is stopped, which is the
+ *    whole scenario: closing a run takes the cool-down plus the detector's deadband plus the
+ *    minutely reconcile, and `runPeriodsQuery` never polls, so a real browser sat on a response
+ *    saying "running" long after the engine stopped. The tile must believe the live
+ *    `source.generator/running` point instead — see `openRunIsLive`.
+ *
+ * Leaving both out would make the set agree with the hero everywhere and reproduce nothing.
  */
 const RUNNING_SCENARIOS = new Set([
   "running (ours)",
@@ -69,6 +77,7 @@ const RUNNING_SCENARIOS = new Set([
   "running, panel locked",
   "stop failing",
   "still running after release",
+  "run just ended (stale runs cache)",
 ]);
 
 /**
