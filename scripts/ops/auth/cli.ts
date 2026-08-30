@@ -182,6 +182,8 @@ async function runLogin(ctx: Ctx): Promise<number> {
         `Signed in to ${model.origin} as ${model.user.email ?? model.user.userId}${model.user.isAdmin ? " (admin)" : ""}.`,
         `  clerk ${model.env.clerkInstance} · db ${model.env.dbHost}`,
         `  token ${model.tokenId}, expires ${model.expiresAt}`,
+        // Say it out loud: this login just re-pointed every later command.
+        `Commands now default to ${model.origin} — override per call with --base-url.`,
         `Revoke it any time with \`liveone auth revoke ${model.tokenId}\`.`,
       ].join("\n");
     },

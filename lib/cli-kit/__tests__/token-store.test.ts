@@ -74,25 +74,47 @@ describe("per-origin isolation", () => {
     expect(tokenFor("https://x.preview.liveone.energy", f)).toBeNull();
   });
 
-  it("defaultOrigin is set by the FIRST login and survives later ones", () => {
+  it("defaultOrigin follows the MOST RECENT login", () => {
+    // First-login-wins was the original rule, and it meant a prod login after a localhost one left
+    // every later command silently talking to localhost. Logging in says where you are working.
     const f = at("default.json");
     setToken("http://localhost:3001", entry("dev"), f);
-    setToken("https://www.liveone.energy", entry("prod"), f);
     expect(readStore(f).defaultOrigin).toBe("http://localhost:3001");
+    setToken("https://www.liveone.energy", entry("prod"), f);
+    expect(readStore(f).defaultOrigin).toBe("https://www.liveone.energy");
   });
 });
 
 describe("removal", () => {
-  it("forgets one origin, clearing defaultOrigin only when it pointed there", () => {
+  it("forgets one origin, and adopts the one remaining login as the default", () => {
     const f = at("rm.json");
     setToken("http://localhost:3001", entry("dev"), f);
     setToken("https://www.liveone.energy", entry("prod"), f);
+    // prod is the default (most recent login); logging out of it leaves exactly one login,
+    // so that becomes the default rather than stranding the store with none.
     removeToken("https://www.liveone.energy", f);
     const s = readStore(f);
     expect(s.tokens["https://www.liveone.energy"]).toBeUndefined();
     expect(s.defaultOrigin).toBe("http://localhost:3001");
     removeToken("http://localhost:3001", f);
     expect(readStore(f).defaultOrigin).toBeUndefined();
+  });
+
+  it("clears the default rather than guessing, when several logins remain", () => {
+    const f = at("rm-many.json");
+    setToken("http://localhost:3001", entry("dev"), f);
+    setToken("http://localhost:3002", entry("dev2"), f);
+    setToken("https://www.liveone.energy", entry("prod"), f);
+    removeToken("https://www.liveone.energy", f);
+    expect(readStore(f).defaultOrigin).toBeUndefined();
+  });
+
+  it("leaves the default alone when a non-default origin is forgotten", () => {
+    const f = at("rm-other.json");
+    setToken("https://www.liveone.energy", entry("prod"), f);
+    setToken("http://localhost:3001", entry("dev"), f);
+    removeToken("https://www.liveone.energy", f);
+    expect(readStore(f).defaultOrigin).toBe("http://localhost:3001");
   });
 });
 
