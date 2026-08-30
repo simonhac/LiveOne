@@ -78,19 +78,33 @@
 }
 
 .shimmer-text {
-  /* The word rests at 80% of its OWN colour and a narrow 100% band travels through it.
-     `color-mix` on `currentColor` rather than a literal white, so the effect is a brightness ramp
-     within one hue: a white hero shimmers white, and a red one (the generator's "Stop failing")
-     shimmers red. A hardcoded white band would have put a white flash through a word whose whole
-     job is to read as a warning. The 80/100 relationship is fixed either way, so the contrast does
-     not depend on the hue the caller chose. */
+  /* The word rests at FULL strength and a DIMMED band travels through it — the inverse of the
+     original, which rested at 80% and swept a 100% band. That was a 20% swing against an already
+     near-white hero, and on a phone in daylight it was imperceptible; it also forced the generator
+     tile to override its hero to pure white purely to buy the band somewhere to go, making it the
+     one hero on the dashboard that did not match its neighbours.
+
+     Resting at 100% means the tile keeps the ordinary `text-gray-100` hero, and the animation has
+     the whole range below it to work in: the band bottoms out near 45%, a swing more than twice the
+     old one. `color-mix` on `currentColor` rather than a literal colour, so it stays a brightness
+     ramp within one hue — a red "Stop failing" dims in red rather than flashing white through a
+     warning.
+
+     The band is wider than the old glint and raked FORWARD — 125deg, so the band line runs
+     bottom-left to top-right ("/", leaning the way italics do). A gradient's bands are
+     perpendicular to its angle, so the intuition inverts: 35deg looks like it should lean forward
+     and in fact produces a backward "\" band. 125deg (a quarter turn clockwise) is the one that
+     leans the way you expect, and reads as a shadow passing across the letters rather than a
+     sliver clipping their tops. */
   background-image: linear-gradient(
-    100deg,
-    color-mix(in srgb, currentColor 80%, transparent) 0%,
-    color-mix(in srgb, currentColor 80%, transparent) 42%,
-    currentColor 50%,
-    color-mix(in srgb, currentColor 80%, transparent) 58%,
-    color-mix(in srgb, currentColor 80%, transparent) 100%
+    125deg,
+    currentColor 0%,
+    currentColor 30%,
+    color-mix(in srgb, currentColor 65%, transparent) 42%,
+    color-mix(in srgb, currentColor 45%, transparent) 50%,
+    color-mix(in srgb, currentColor 65%, transparent) 58%,
+    currentColor 70%,
+    currentColor 100%
   );
   /* One tile is much wider than any hero word, so the band crosses it as a periodic glint rather
      than sitting on it permanently. */
@@ -107,11 +121,13 @@
     animation: none;
   }
 
-  /* Falls back to the resting 80%, in the hero's own hue — never a transparent glyph. */
+  /* Falls back to the resting FULL strength, in the hero's own hue — never a transparent glyph,
+     and now identical to a non-shimmering hero, so nothing is dimmed for a reader who asked for
+     less motion. */
   .shimmer-text {
     animation: none;
     background-image: none;
-    -webkit-text-fill-color: color-mix(in srgb, currentColor 80%, transparent);
+    -webkit-text-fill-color: currentColor;
   }
 }
 

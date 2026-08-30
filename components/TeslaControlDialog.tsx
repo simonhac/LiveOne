@@ -27,6 +27,13 @@ import ControlNotice, {
 import TeslaChargeLimits from "@/components/TeslaChargeLimits";
 import CommandActivityLog from "@/components/CommandActivityLog";
 
+/**
+ * This dialog's width — declared once, and handed BOTH to its own DialogContent and to the activity
+ * log's "Show more" modal, which opens on top of it. Two literals would let the stack resize as you
+ * open the trail; one constant cannot.
+ */
+const DIALOG_WIDTH = "sm:max-w-sm";
+
 interface LatestValue {
   value: number | string | boolean;
   measurementTime?: string | Date;
@@ -289,7 +296,7 @@ export default function TeslaControlDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className={DIALOG_WIDTH}>
         <DialogHeader>
           <DialogTitle>Charging controls</DialogTitle>
           <DialogDescription className="flex items-center gap-1.5">
@@ -442,7 +449,10 @@ export default function TeslaControlDialog({
             isCharging={isCharging}
           />
 
-          <CommandActivityLog pt={targets.active} />
+          <CommandActivityLog
+            pt={targets.active}
+            modalWidthClass={DIALOG_WIDTH}
+          />
         </div>
       </DialogContent>
     </Dialog>

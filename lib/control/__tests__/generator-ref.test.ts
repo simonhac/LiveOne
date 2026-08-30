@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from "@jest/globals";
 import {
+  CRANK_RPM,
   describeGeneratorState,
   firstPresentPath,
   GENERATOR_RPM_PATHS,
@@ -36,7 +37,6 @@ describe("describeGeneratorState", () => {
     for (const s of ALL) {
       const copy = describeGeneratorState(s, "Auto");
       expect(copy.label).toBeTruthy();
-      expect(copy.sentence).toBeTruthy();
       expect(copy.label).not.toBe("—");
     }
   });
@@ -57,17 +57,88 @@ describe("describeGeneratorState", () => {
 
   it("🛑 does not claim a generator is armed when the panel cannot be seen", () => {
     // Mode absent is not mode Auto. Saying "Auto" here would be the one lie that matters.
+    //
+    // "Stopped" and not "Off": the unknown is the PANEL, not the engine — `idle` positively says
+    // the engine is not turning. "Off" reads as out-of-service, which is what LOCKED_OUT means, so
+    // it would assert the very thing this test exists to withhold. The blank detail IS the
+    // withheld claim.
     expect(describeGeneratorState("idle", null)).toMatchObject({
-      label: "Off",
+      label: "Stopped",
+      detail: null,
       tone: "idle",
     });
-    expect(describeGeneratorState("idle", undefined).label).toBe("Off");
+    expect(describeGeneratorState("idle", undefined).label).toBe("Stopped");
   });
 
   it("lets a turning engine outrank the panel state — running is the more urgent fact", () => {
     expect(describeGeneratorState("running:hub", "Stop")).toMatchObject({
       label: "Running",
       isRunning: true,
+    });
+  });
+
+  /**
+   * Starting vs Running. The hub says `running:hub` the moment it closes the latch, which is true
+   * of the REQUEST but not yet of the engine — so for the first ~10 s the tile put a hero reading
+   * "Running" over an "Engine 0 rpm" row.
+   */
+  describe("the Starting phase", () => {
+    it("calls a latched run below crank speed Starting", () => {
+      expect(
+        describeGeneratorState("running:hub", "Auto", { rpm: 0 }),
+      ).toMatchObject({
+        label: "Starting",
+        isCommandedRun: true,
+        isRunning: true,
+      });
+      expect(
+        describeGeneratorState("running:hub", "Auto", { rpm: CRANK_RPM - 1 })
+          .label,
+      ).toBe("Starting");
+    });
+
+    it("calls it Running at or above crank speed", () => {
+      expect(
+        describeGeneratorState("running:hub", "Auto", { rpm: CRANK_RPM }).label,
+      ).toBe("Running");
+      expect(
+        describeGeneratorState("running:hub", "Auto", { rpm: 1500 }).label,
+      ).toBe("Running");
+    });
+
+    // 🛑 A phase we cannot see is one we must not claim. The rpm point is absent on a device that
+    // has not pushed it, and guessing "Starting" there would relabel every commanded run.
+    it("keeps Running when rpm is unavailable", () => {
+      expect(describeGeneratorState("running:hub", "Auto").label).toBe(
+        "Running",
+      );
+      expect(
+        describeGeneratorState("running:hub", "Auto", { rpm: null }).label,
+      ).toBe("Running");
+      expect(
+        describeGeneratorState("running:hub", "Auto", { rpm: NaN }).label,
+      ).toBe("Running");
+    });
+
+    // We know the start instant only for OUR runs. A low rpm on someone else's is as likely to be
+    // a cool-down tail as a start.
+    it("never applies to a run we did not command", () => {
+      for (const s of [
+        "running:sp-pro",
+        "running:other",
+        "stopping",
+        "latch-released-still-running",
+      ] as GeneratorControlState[]) {
+        expect(describeGeneratorState(s, "Auto", { rpm: 0 }).label).not.toBe(
+          "Starting",
+        );
+      }
+    });
+
+    it("stays a commanded run, so the dialog still offers Stop rather than Start", () => {
+      const copy = describeGeneratorState("running:hub", "Auto", { rpm: 0 });
+      expect(copy.isCommandedRun).toBe(true);
+      expect(copy.tone).toBe("commanded");
     });
   });
 
@@ -107,15 +178,14 @@ describe("describeGeneratorState", () => {
     expect(describeGeneratorState("stopping", "Auto").tone).toBe("running");
   });
 
-  it("🛑 says out loud that a run we did not start cannot be stopped by us", () => {
-    // fn 33 clears only OUR latch; it cannot cancel the SP-PRO's input-A request. A bare
-    // "Running" would imply a Stop button that works on it.
-    expect(describeGeneratorState("running:sp-pro", "Auto").sentence).toMatch(
-      /cannot stop a run it did not start/i,
-    );
-    expect(describeGeneratorState("running:sp-pro", "Auto").detail).toBe(
-      "Inverter request",
-    );
+  it("🛑 names the inverter as the commander of a run we did not start", () => {
+    // fn 33 clears only OUR latch; it cannot cancel the SP-PRO's input-A request. The detail line
+    // is now the ONLY place the tile says whose run this is — the fuller sentence that used to
+    // spell out "LiveOne cannot stop a run it did not start" went with the dialog header that read
+    // it. What survives must at least attribute the run, or Stop looks like it would work.
+    const copy = describeGeneratorState("running:sp-pro", "Auto");
+    expect(copy.detail).toBe("Inverter request");
+    expect(copy.isCommandedRun).toBe(false);
   });
 
   it("🛑 keeps released and stopped apart, and flags a failing stop as needing a human", () => {
@@ -124,10 +194,12 @@ describe("describeGeneratorState", () => {
       "Auto",
     );
     expect(stuck.tone).toBe("warning");
-    expect(stuck.sentence).toMatch(/still running/i);
+    expect(stuck.detail).toBe("Released");
+    expect(stuck.isRunning).toBe(true); // released, but the engine did NOT stop
     const failing = describeGeneratorState("stop-failing", "Auto");
     expect(failing.tone).toBe("warning");
-    expect(failing.sentence).toMatch(/retrying every 15 seconds/i);
+    expect(failing.detail).toBe("Hub is retrying");
+    expect(failing.isCommandedRun).toBe(true); // we still hold the latch — offer Stop, not Start
   });
 
   it("keeps every hero word short enough for the tile's value slot", () => {

@@ -21,7 +21,7 @@ import { formatTime12h } from "@/lib/fe-date-format";
 import type { CommandLogEntryJson } from "@/lib/control/command-log";
 
 /**
- * "Recent activity" — the command audit trail (`point_commands`) as sentences, inside a control
+ * "Last activity" — the command audit trail (`point_commands`) as sentences, inside a control
  * dialog. "Why did my car stop charging at 2am", or "who started the generator", gets answered here
  * rather than in SQL.
  *
@@ -30,25 +30,36 @@ import type { CommandLogEntryJson } from "@/lib/control/command-log";
  * point's ADDRESS. So the generator dialog reuses it as-is rather than growing a second copy that
  * would drift.
  *
- * ## Two, then a door
+ * ## One, then a door
  *
- * Always visible, showing the newest TWO. It used to be collapsed behind a disclosure, which saved
+ * Always visible, showing the newest ONE. It used to be collapsed behind a disclosure, which saved
  * a fetch but hid the answer to "did that command actually land" behind a click, immediately after
- * the press that raised the question. Two rows is small enough to sit under the buttons without
- * pushing them off the dialog, and the history that answers "what happened last night" stays
- * reachable through "Show more", which opens the full trail in its own modal 50 rows at a time. The
- * route reports whether a third row exists (`hasMore`), so the door only appears when there is
- * something behind it.
+ * the press that raised the question. One row answers exactly that and nothing else, which is what
+ * lets the whole dialog fit a phone; the history that answers "what happened last night" stays
+ * reachable through "Show more", which opens the full trail in its own modal — layered OVER this
+ * dialog at the same width, so nothing resizes — 50 rows at a time. The route reports whether a
+ * further row exists (`hasMore`), so the door only appears when there is something behind it.
  *
  * The dialog invalidates `queryKeys.commands(pt)` after each of its own commands, so a press shows
  * up here immediately.
  */
 export default function CommandActivityLog({
   pt,
+  modalWidthClass,
 }: {
   /** The point the log route is addressed by (`ev.charge/active`, the generator run request, …).
    *  Null ⇒ nothing to show. */
   pt: string | null;
+  /**
+   * The Tailwind max-width of the dialog this log sits IN, so the "Show more" modal opens at the
+   * same size rather than resizing the stack.
+   *
+   * Passed down rather than fixed here because the two consumers are different widths (the charge
+   * dialog is `sm:max-w-sm`, the generator's `sm:max-w-md`), so there is no one right answer — and
+   * each parent declares it once and hands the same constant to both its own DialogContent and to
+   * this, which is what stops the two from drifting apart.
+   */
+  modalWidthClass: string;
 }) {
   const [allOpen, setAllOpen] = useState(false);
   const log = useQuery({
@@ -62,31 +73,37 @@ export default function CommandActivityLog({
 
   return (
     <div className="pt-1">
-      <div className="mb-1 flex items-center gap-1 text-sm text-gray-400">
-        Recent activity
-        {log.isLoading && (
-          <Loader2 className="h-3 w-3 animate-spin text-gray-500" />
+      {/* Heading and "Show more" share one line, and the list below it is a single row. Three lines
+          of history was what tipped this dialog past a phone screen, and the trail itself is one
+          tap away — the peek only has to answer "did my last press land?". */}
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 text-sm text-gray-400">
+          Last activity
+          {log.isLoading && (
+            <Loader2 className="h-3 w-3 animate-spin text-gray-500" />
+          )}
+        </div>
+        {!log.isLoading && log.data?.hasMore && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setAllOpen(true)}
+          >
+            Show more
+          </Button>
         )}
       </div>
 
-      {!log.isLoading && (
-        <>
-          <EntryList entries={entries} />
-          {log.data?.hasMore && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="mt-1 h-7 px-1 text-xs text-gray-400 hover:text-gray-200"
-              onClick={() => setAllOpen(true)}
-            >
-              Show more
-            </Button>
-          )}
-        </>
-      )}
+      {!log.isLoading && <EntryList entries={entries} />}
 
-      <AllActivityDialog pt={pt} open={allOpen} onOpenChange={setAllOpen} />
+      <AllActivityDialog
+        pt={pt}
+        open={allOpen}
+        onOpenChange={setAllOpen}
+        widthClass={modalWidthClass}
+      />
     </div>
   );
 }
@@ -96,10 +113,12 @@ function AllActivityDialog({
   pt,
   open,
   onOpenChange,
+  widthClass,
 }: {
   pt: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  widthClass: string;
 }) {
   const pages = useInfiniteQuery({
     ...commandLogPagesQuery(pt),
@@ -110,7 +129,10 @@ function AllActivityDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      {/* `nested`: this opens OVER the control dialog that spawned it, and must read that way —
+          without it the second backdrop blanks the parent and the trail looks like a replacement
+          rather than a layer. `widthClass` is the parent's own, so the stack does not resize. */}
+      <DialogContent className={widthClass} nested>
         <DialogHeader>
           <DialogTitle>Activity</DialogTitle>
         </DialogHeader>

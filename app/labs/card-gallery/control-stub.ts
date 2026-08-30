@@ -233,8 +233,15 @@ const TOTAL_COMMANDS = 137;
 export function installControlStub(opts: {
   scenario: () => ControlScenarioName;
   delayMs?: () => number;
-  /** Is a run open? Drives whether the tile's row reads "Since h:mma" or "This period". */
-  runOpen?: () => boolean;
+  /**
+   * Is a run open for this device handle? Drives whether the tile's row reads "Since h:mma" or
+   * "This period".
+   *
+   * Keyed by systemId because the gallery renders the generator tile TWICE — once as a viewer who
+   * can control it and once as one who cannot — and the two sections have independent scenario
+   * pickers. Sharing one answer would let a pick in one section rewrite the other's data.
+   */
+  runOpen?: (systemId: number) => boolean;
 }): () => void {
   const real = globalThis.fetch;
 
@@ -304,7 +311,9 @@ export function installControlStub(opts: {
       const startTimeISO = new Date(
         Date.now() - startedMinsAgo * 60_000,
       ).toISOString();
-      const running = opts.runOpen?.() ?? true;
+      // …/api/device/{systemId}/run-periods
+      const systemId = Number(url.match(/\/device\/(\d+)\//)?.[1] ?? 0);
+      const running = opts.runOpen?.(systemId) ?? true;
       return json({
         role: "generator",
         running,

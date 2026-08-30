@@ -117,7 +117,9 @@ function GeneratorTile({
   const hzPath = firstPresentPath(latest, GENERATOR_HZ_PATHS);
   const hz = hzPath ? getPointValue(latest, hzPath) : null;
 
-  const status = describeGeneratorState(state, mode);
+  // rpm splits a commanded run into Starting and Running — the hub reports `running:hub` the instant
+  // it latches, which put the hero "Running" over an "Engine 0 rpm 0.0 Hz" row for the first ~10 s.
+  const status = describeGeneratorState(state, mode, { rpm });
 
   // A commanded run's countdown must tick without waiting for the next 15 s push, and `stop_at` is
   // an absolute instant, so re-rendering on a clock is enough — there is nothing to re-fetch.
@@ -179,6 +181,12 @@ function GeneratorTile({
    * the live KV map and the event from a run-periods read that can be a couple of minutes behind;
    * gating on the event is the only arrangement where the label and the number cannot be describing
    * two different worlds ("Since 9:43am" over a period total).
+   *
+   * That lag is why there is a THIRD state, `null`: the engine is turning but the detector has not
+   * opened its run yet (~1–2 min). The period total is then stale in the most misleading way — it
+   * describes the world before this run, under a hero that says the engine is going — so the row is
+   * withheld until there is something true to put in it. Between runs the period total is exactly
+   * right, and is what the row has always shown.
    */
   const scope: {
     short: string;
@@ -188,7 +196,7 @@ function GeneratorTile({
     /** Show a zero: a run one minute old has legitimately made ~nothing yet, and hiding the row
      *  exactly then hides it during the run the reader opened the dashboard to watch. */
     showZero: boolean;
-  } = openRun
+  } | null = openRun
     ? {
         // The narrowest rung of the ladder: the span alone, since at this width the clock time
         // costs more than it tells you.
@@ -222,17 +230,20 @@ function GeneratorTile({
         cents: openRun.costC ?? null,
         showZero: true,
       }
-    : {
-        short: "Period",
-        long: "This period",
-        energyKwh: runs?.totalEnergyKwh ?? null,
-        cents: pricedTotal(
-          runs?.costKnownKwh ? (runs.totalCostC ?? null) : null,
-          runs?.costKnownKwh ?? 0,
-          runs?.totalEnergyKwh ?? 0,
-        ),
-        showZero: false,
-      };
+    : status.isRunning
+      ? // Turning, but the detector has not caught up. Say nothing rather than the wrong thing.
+        null
+      : {
+          short: "Period",
+          long: "This period",
+          energyKwh: runs?.totalEnergyKwh ?? null,
+          cents: pricedTotal(
+            runs?.costKnownKwh ? (runs.totalCostC ?? null) : null,
+            runs?.costKnownKwh ?? 0,
+            runs?.totalEnergyKwh ?? 0,
+          ),
+          showZero: false,
+        };
 
   const time = runTimeWords({
     isCommandedRun: status.isCommandedRun,
@@ -286,17 +297,14 @@ function GeneratorTile({
       // A red hero for "Locked out" / "Stop failing": the words alone are easy to read past on a
       // wall of tiles, and both mean the generator will not do what the reader expects of it.
       //
-      // A running engine's hero is pure white rather than the default gray-100, because the shimmer
-      // below rests at 80% of THIS colour — so this is what makes the resting state exactly 80%
-      // white, and it is the same knob that keeps a red "Running" shimmering in red.
-      valueColor={
-        status.tone === "warning"
-          ? "text-red-400"
-          : status.isRunning
-            ? "text-white"
-            : undefined
-      }
-      // A turning engine pulses. `.shimmer-text` sweeps a highlight THROUGH the glyphs, so unlike
+      // Otherwise the DEFAULT hero colour, exactly like every other tile. A running engine used to
+      // get `text-white` to make the old shimmer (which dimmed the resting word and swept a
+      // brighter band through it) readable — but that made "Running" the one hero on the dashboard
+      // that was a different colour from its neighbours, for a reason that was about the animation
+      // rather than about the generator. The shimmer now rests at full strength and sweeps a DIMMED
+      // band instead, so it no longer needs the extra headroom.
+      valueColor={status.tone === "warning" ? "text-red-400" : undefined}
+      // A turning engine pulses. `.shimmer-text` sweeps a dimmed band THROUGH the glyphs, so unlike
       // the skeleton `.shimmer` the word stays fully readable — this says "live", not "loading".
       valueClassName={status.isRunning ? "shimmer-text" : undefined}
       bgColor={chrome.tint}
@@ -349,7 +357,8 @@ function GeneratorTile({
               }
             />
           )}
-          {scope.energyKwh != null &&
+          {scope != null &&
+            scope.energyKwh != null &&
             (scope.showZero || scope.energyKwh > 0) && (
               <Row
                 short={scope.short}

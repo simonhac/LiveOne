@@ -7,7 +7,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -109,15 +108,20 @@ function runWords(minutes: number): string {
 /** How long after an ambiguous send before we re-probe to find out what actually happened. */
 const AMBIGUITY_RECHECK_MS = 5_000;
 
-/** "as of…" words for the status line. Null when there is nothing to date. */
-function freshnessWords(ms: number | null, nowMs: number): string | null {
-  if (ms == null) return null;
-  const age = Math.max(0, nowMs - ms);
-  if (age < 45_000) return "just now";
-  const min = Math.round(age / 60_000);
-  if (min < 1) return "under a minute ago";
-  if (min < 120) return `${min}\u00A0min ago`;
-  return `${Math.round(min / 60)} h ago`;
+/**
+ * This dialog's width — declared once, and handed BOTH to its own DialogContent and to the activity
+ * log's "Show more" modal, which opens on top of it. Two literals would let the stack resize as you
+ * open the trail; one constant cannot.
+ */
+const DIALOG_WIDTH = "sm:max-w-md";
+
+/**
+ * The house 12-hour spelling of an absolute instant ("12:03am"), in the BROWSER's zone — the clock
+ * the reader is looking at while the engine runs. Absolute, so no offset arithmetic is needed.
+ */
+function clockWords(ms: number): string {
+  const d = new Date(ms);
+  return formatTime12h({ hour: d.getHours(), minute: d.getMinutes() });
 }
 
 function text(latest: LatestPointValues | null, path: string): string | null {
@@ -186,6 +190,13 @@ export default function GeneratorControlDialog({
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!open) return;
+    // 🛑 Re-seed on OPEN, not only on the interval. This component stays MOUNTED (with `open`
+    // false) inside the generator tile's overlay for as long as the dashboard is up, so the
+    // initializer above runs at PAGE LOAD — on a dashboard left open an hour, `nowMs` is an hour
+    // stale, and the first interval tick is another 5 s away. Every clock in this dialog derives
+    // from it, including the Extend button's projected stop time, which is a forward projection
+    // and so wrong by the full staleness rather than self-correcting.
+    setNowMs(Date.now());
     const t = setInterval(() => setNowMs(Date.now()), 5_000);
     return () => clearInterval(t);
   }, [open]);
@@ -250,7 +261,6 @@ export default function GeneratorControlDialog({
         preflight.data!.detail!.panelMode ?? mode,
       )
     : describeGeneratorState(state, mode);
-  const asOfMs = useProbe ? probeMs : statusMs;
 
   // The ceiling that is actually enforced, once the hub has told us. Until then the point's own
   // descriptor bound stands. `Math.min` on purpose: whichever is lower wins, always.
@@ -369,33 +379,42 @@ export default function GeneratorControlDialog({
   const busy = mutation.isPending;
   // Only the runtimes the hub would actually accept — see `maxMin`.
   const presets = PRESETS.filter((p) => p.min <= maxMin);
-  const freshness = freshnessWords(asOfMs, nowMs);
-  // The house 12-hour spelling ("12:03am"), in the BROWSER's zone — the clock the reader is looking
-  // at while the engine runs. An absolute instant, so no offset arithmetic is needed.
-  //
   // Reads the PROBE's deadline first for the same reason `minsLeft` does, and reading a different
   // one would be worse than either: the two sit in one sentence ("stops at 3:05pm (12 min left)"),
   // so sourcing them differently lets them contradict each other.
   const deadlineSec = probeStopAtSec ?? stopAtSec;
   const stopsAtWords =
-    deadlineSec != null
-      ? (() => {
-          const d = new Date(deadlineSec * 1000);
-          return formatTime12h({ hour: d.getHours(), minute: d.getMinutes() });
-        })()
-      : null;
+    deadlineSec != null ? clockWords(deadlineSec * 1000) : null;
+  /**
+   * The deadline an Extend would SET — and the whole reason the button names a clock time.
+   *
+   * 🛑 The hub recomputes the deadline from NOW (`setDeadline(runtimeSec)` on an already-latched
+   * run), so "Extend · 30m" means "run until 30 minutes from now", NOT "add 30 minutes to what is
+   * left". Those differ by the remaining time, and on a run with 24 minutes left the two readings
+   * are 30 minutes apart — which is exactly the ambiguity a duration label cannot resolve. An
+   * absolute instant has only one meaning, and it sits directly under the current "stops at …", so
+   * the reader compares the old deadline with the new one rather than doing the arithmetic.
+   */
+  const extendToWords = clockWords(nowMs + minutes * 60_000);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      {/* 🛑 No auto-focus. Radix focuses the first tabbable descendant, which lands a focus ring on
+          "Check again" — or, while the probe is still in flight and that button is disabled, on the
+          FIRST duration chip. That read as "5m is selected" next to an actually-selected 30m, which
+          is the one thing this dialog must not be ambiguous about. Nothing here wants focus on open;
+          Escape and the close button work regardless. */}
+      <DialogContent
+        className={DIALOG_WIDTH}
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        // There is no DialogDescription any more, so tell Radix not to look for one.
+        aria-describedby={undefined}
+      >
         <DialogHeader>
+          {/* The status sentence used to live here. It came from the same probe the Engine check
+              panel below renders, so it said nothing that panel does not — and on a phone those two
+              lines were the difference between the dialog fitting and not. */}
           <DialogTitle>Generator control</DialogTitle>
-          <DialogDescription className="flex flex-wrap items-center gap-1.5">
-            <span>{status.sentence}</span>
-            {freshness && (
-              <span className="text-xs text-gray-500">· as of {freshness}</span>
-            )}
-          </DialogDescription>
         </DialogHeader>
 
         <div className="mt-2 space-y-5">
@@ -415,9 +434,11 @@ export default function GeneratorControlDialog({
               <span className="text-sm font-medium text-gray-300">
                 Engine check
               </span>
+              {/* Outline, matching the activity log's "Show more" — the dialog's two small utility
+                  buttons should read as one family rather than as a link and a button. */}
               <Button
                 size="sm"
-                variant="ghost"
+                variant="outline"
                 className="h-7 px-2 text-xs"
                 disabled={preflight.isFetching || !target}
                 onClick={() => void preflight.refetch()}
@@ -504,9 +525,9 @@ export default function GeneratorControlDialog({
 
           {/* ── Duration ────────────────────────────────────────────────── */}
           <div className="space-y-2">
-            <Label htmlFor="generator-minutes">
-              Run for {runWords(minutes)}
-            </Label>
+            {/* Static: the chosen length is on the selected chip and again on the Start button, so
+                repeating it here was a third copy that moved as you dragged. */}
+            <Label htmlFor="generator-minutes">Run time</Label>
             {/* One row, spanning the slider's full width: an equal-fraction grid rather than a
                 wrapping flex, so the chips end flush with both ends of the track below them and
                 the run lengths read as one scale. `min-w-0` + `px-0` let a chip shrink below its
@@ -566,7 +587,7 @@ export default function GeneratorControlDialog({
                   ) : (
                     <Play className="mr-2 h-4 w-4" />
                   )}
-                  Extend · {runWords(minutes)}
+                  Extend · to {extendToWords}
                 </Button>
                 {/* 🛑 Never disabled on the preflight. Letting go of the latch must stay reachable
                     when our picture is stale or the probe itself failed. */}
@@ -627,7 +648,7 @@ export default function GeneratorControlDialog({
             </div>
           )}
 
-          <CommandActivityLog pt={target} />
+          <CommandActivityLog pt={target} modalWidthClass={DIALOG_WIDTH} />
         </div>
       </DialogContent>
     </Dialog>
