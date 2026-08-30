@@ -29,6 +29,14 @@ const publicRoutes = [
   // stage 13). They were never redundant with these: the middleware runs BEFORE next.config's rewrites
   // and matches the ORIGINAL path, so `/api/v4/...` is simply a different path and inherited nothing
   // from them — which is also why removing them cannot affect these.
+  // The CLI hand-off exchange: self-authenticating on a code this server signed plus the PKCE
+  // verifier, with no session by design (the CLI has no cookie — that is the problem being solved).
+  // Same rationale as /api/cron: public-listed so a headless call reaches the handler that can
+  // actually check its credential, instead of being 404'd at the edge.
+  //
+  // 🛑 ONLY `exchange`. `/api/cli-auth/authorize` is deliberately NOT here: it is what BINDS a code
+  // to a user, so it must require a real browser session.
+  "/api/cli-auth/exchange",
   "/api/v4/areas/(.*)/recompute-provenance",
   "/api/v4/areas/(.*)/provenance-summary",
   "/api/v4/areas/by-handle/(.*)",
@@ -107,6 +115,9 @@ export function hasAccessToken(request: Request): boolean {
 const cliTokenRoutes = [
   "/api/v4/dashboards(.*)", // the dashboard CLI
   "/api/cli-auth/tokens(.*)", // `auth list` / `auth revoke`, so a CLI can manage its own credential
+  "/api/cli-auth/whoami", // the `target:` line — which deployment, as whom, against which database
+  // 🛑 Enumerated, NOT `/api/cli-auth(.*)`. A wildcard would sweep in `authorize`, and a CLI token
+  // must not be able to mint its own successor without a fresh human approval in a browser.
 ];
 
 export const isCliTokenRoute = createRouteMatcher(cliTokenRoutes);

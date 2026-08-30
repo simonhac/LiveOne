@@ -216,32 +216,56 @@ export function verifyToken(
   return { ok: true, record: match };
 }
 
-/** Mark one token revoked, or all of them. Returns the records to persist. */
+/**
+ * Mark one token revoked, or all of them. Returns the records to persist.
+ *
+ * PRUNES dead records as it goes, so the stored set stays bounded no matter how the operator uses
+ * the tool. Previously only `mintToken` pruned, which meant revoking tokens and never logging in
+ * again left the dead records sitting in Clerk metadata indefinitely — inert (verification checks
+ * liveness, so they could never authenticate) but accumulating in a budget shared with the vendor
+ * credentials `lib/secure-credentials.ts` keeps there.
+ *
+ * The trade, stated plainly: there is no revocation HISTORY. A revoked token stops appearing in
+ * `auth list` rather than showing as revoked, and a later verification attempt reports
+ * `unknown-secret` instead of `revoked` — the same 401 either way. The revoke call's own count is
+ * the confirmation that something happened. If an audit trail is ever wanted, it belongs somewhere
+ * durable, not in a credential store that has to stay small.
+ */
 export function revokeToken(
   user: UserLike,
   opts: { id?: string; all?: boolean; now: Date },
 ): { records: CliTokenRecord[]; revoked: number } {
   let revoked = 0;
-  const records = recordsOf(user).map((r) => {
-    const hit = opts.all || r.id === opts.id;
-    if (!hit || r.revokedAt) return r;
-    revoked++;
-    return { ...r, revokedAt: opts.now.toISOString() };
-  });
+  const records = recordsOf(user)
+    .map((r) => {
+      const hit = opts.all || r.id === opts.id;
+      if (!hit || r.revokedAt) return r;
+      revoked++;
+      return { ...r, revokedAt: opts.now.toISOString() };
+    })
+    .filter((r) => isLive(r, opts.now));
   return { records, revoked };
 }
 
 /**
  * The shape safe to show an operator: never the hash, never the secret.
+ *
+ * LIVE ONLY by default. "What can currently access my account" is the question this answers, and
+ * mixing dead records into that list is exactly the noise that makes a security surface hard to
+ * read. `includeDead` is for the rare "what happened here" case — it can still show naturally
+ * expired records that no write has swept yet.
  */
 export function describeTokens(
   user: UserLike,
   now: Date,
+  opts: { includeDead?: boolean } = {},
 ): Array<Omit<CliTokenRecord, "hash"> & { live: boolean }> {
-  return recordsOf(user).map(({ hash: _hash, ...rest }) => ({
-    ...rest,
-    live: isLive(rest as CliTokenRecord, now),
-  }));
+  return recordsOf(user)
+    .map(({ hash: _hash, ...rest }) => ({
+      ...rest,
+      live: isLive(rest as CliTokenRecord, now),
+    }))
+    .filter((r) => opts.includeDead || r.live);
 }
 
 /**
