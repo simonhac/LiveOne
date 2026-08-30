@@ -181,10 +181,27 @@ const engine = (rpm: number, hz: number) => ({
   "generator.output/frequency": genHz(hz),
 });
 
+/**
+ * The DERIVED run-detector point — "is a run period open right now", 1/0.
+ *
+ * 🛑 It is NOT the hub's status point restated, and the scenarios below are where the difference is
+ * visible. `control.status/state` is the hub's live opinion, pushed every 15 s while running but
+ * only every 300 s idle; this one is written every minute by our own reconcile from the open
+ * `derived_intervals` row, and it is what the tile's "Since …" row must obey. They disagree for
+ * about four minutes after every stop — the detector's cool-down tail plus its anti-flap deadband —
+ * which is exactly the window "run just ended" reproduces.
+ *
+ * Also the row the tile reads `sourceSystemId` off to find the DETECTOR's device, so a scenario
+ * without it exercises a different (and less interesting) fallback.
+ */
+const genRunning = (running: 0 | 1) =>
+  mk(running, "source.generator/running", "bool", "Generator");
+
 export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
   "auto (armed)": {
     "source.generator.control.status/state": genState("idle"),
     "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(0),
     ...engine(0, 0),
   },
   // The first ~10 s of our own run: the hub has latched, so it reports `running:hub`, but the
@@ -194,32 +211,41 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
     "source.generator.control.status/state": genState("running:hub"),
     "source.generator.control.stop_at/time": stopAt(30),
     "source.generator.mode/state": genMode("Auto"),
+    // 0, and correctly so: the detector needs a sample or two above threshold before it opens a
+    // run, which is the tile's deliberate third state — hero "Starting", no "Since …" row yet.
+    "source.generator/running": genRunning(0),
     ...engine(0, 0),
   },
   "running (ours)": {
     "source.generator.control.status/state": genState("running:hub"),
     "source.generator.control.stop_at/time": stopAt(23),
     "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
     ...engine(1502, 50.1),
   },
   "running (inverter)": {
     "source.generator.control.status/state": genState("running:sp-pro"),
     "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
     ...engine(1497, 49.9),
   },
   "cooling down": {
     "source.generator.control.status/state": genState("stopping"),
     "source.generator.mode/state": genMode("Auto"),
+    // Still 1: the cool-down tail belongs to the run that caused it, so the period stays open.
+    "source.generator/running": genRunning(1),
     ...engine(980, 32.4),
   },
   "locked out": {
     "source.generator.control.status/state": genState("idle"),
     "source.generator.mode/state": genMode("Stop"),
+    "source.generator/running": genRunning(0),
     ...engine(0, 0),
   },
   "running, panel locked": {
     "source.generator.control.status/state": genState("running:sp-pro"),
     "source.generator.mode/state": genMode("Stop"),
+    "source.generator/running": genRunning(1),
     ...engine(1499, 50.0),
   },
   "stop failing": {
@@ -231,6 +257,7 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
       "Control Last Error",
     ),
     "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
     ...engine(1502, 50.0),
   },
   "still running after release": {
@@ -238,6 +265,7 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
       "latch-released-still-running",
     ),
     "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(1),
     ...engine(1488, 49.8),
   },
   // The panel has not been read at all — must NOT claim the generator is armed. Named for BOTH
@@ -245,6 +273,22 @@ export const GENERATOR_SCENARIOS: Record<string, LatestPointValues> = {
   // the PANEL is unreadable, so the tile can say "Stopped" while withholding armed-vs-locked-out.
   "stopped, mode unknown": {
     "source.generator.control.status/state": genState("idle"),
+  },
+  /**
+   * The bug of 2026-08-30, frozen: a five-minute run started at 9:40pm and stopped at 9:45pm, seen
+   * at 9:48pm. The hub says `idle` and the derived point says 0 — the detector closed the run — but
+   * the gallery's fetch stub still answers the run-periods read with an OPEN run, which is exactly
+   * what a real browser's un-polled cache was doing.
+   *
+   * Must render "This period", not "Since 9:40pm". If it ever says "Since …" again the live flag
+   * has stopped vetoing the cache (`openRunIsLive`), and the tile is back to disagreeing with its
+   * own hero for as long as the tab stays focused.
+   */
+  "run just ended (stale runs cache)": {
+    "source.generator.control.status/state": genState("idle"),
+    "source.generator.mode/state": genMode("Auto"),
+    "source.generator/running": genRunning(0),
+    ...engine(0, 0),
   },
 };
 

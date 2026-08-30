@@ -21,7 +21,7 @@ import {
   Square,
   XCircle,
 } from "lucide-react";
-import { queryKeys } from "@/lib/queries/keys";
+import { queryKeys, RUN_PERIODS_PREFIX } from "@/lib/queries/keys";
 import { measurementMsOf } from "@/lib/control/point-ref";
 import { describeDecline } from "@/lib/control/decline-copy";
 import { GENERATOR_RUN_REQUEST_ADDRESS } from "@/lib/control/addresses";
@@ -315,7 +315,7 @@ export default function GeneratorControlDialog({
    * that changed it, showing the previous run (or none) under a hero that had already moved.
    */
   function invalidateRunPeriods() {
-    return queryClient.invalidateQueries({ queryKey: ["runPeriods"] });
+    return queryClient.invalidateQueries({ queryKey: RUN_PERIODS_PREFIX });
   }
 
   const mutation = useMutation({

@@ -51,6 +51,7 @@
  *                           under a bare `renderToStaticMarkup`. Replaced by a fixed payload.
  *   - `useQuery`          — the two tiles and the one card that query directly (hot-water,
  *                           renewables, ev-provenance).
+ *   - `useQueryClient`    — the generator tile takes one to invalidate its run-period reads.
  *   - `useSearchParams`   — `useTemporalRange` reads it during render.
  *   - `next/font/local`   — only Next's compiler can evaluate it.
  *   - the leaf components — so we capture props rather than markup.
@@ -103,6 +104,10 @@ jest.mock("@tanstack/react-query", () => {
       isError: false,
       isSuccess: false,
     }),
+    // Same reason as `useQuery` above: there is no provider in a bare static render. A no-op client
+    // is faithful here rather than a shortcut — the only caller (the generator tile) uses it from an
+    // effect, and `renderToStaticMarkup` runs no effects, so nothing can invoke this.
+    useQueryClient: () => ({ invalidateQueries: () => Promise.resolve() }),
   };
 });
 jest.mock("@/components/dashboard/cards/shared", () => {
