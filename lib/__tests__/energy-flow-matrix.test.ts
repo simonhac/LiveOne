@@ -3,6 +3,9 @@ import {
   calculateEnergyFlowMatrix,
   combineSolarSources,
   reduceEdgeProvenance,
+  reduceLoadProvenance,
+  sumDailyFlowMatrices,
+  sumDailyFlowMatricesWithMetrics,
   EnergyFlowMatrix,
   DailyFlowMatrices,
 } from "../energy-flow-matrix";
@@ -714,5 +717,362 @@ describe("reduceEdgeProvenance", () => {
     expect(
       reduceEdgeProvenance(legacy, "source.grid", "load.house"),
     ).toBeNull();
+  });
+});
+
+describe("sumDailyFlowMatricesWithMetrics", () => {
+  const nodes = () => ({
+    sources: [
+      { id: "source.solar", label: "Solar", color: "#000" },
+      { id: "source.grid", label: "Grid", color: "#000" },
+    ],
+    loads: [
+      { id: "load.house", label: "House", color: "#000" },
+      { id: "load.grid", label: "Export", color: "#000" },
+    ],
+  });
+
+  // Two days, every leg present, no nulls, every cell carrying energy — the pure-additivity case.
+  const cleanFixture = (): DailyFlowMatrices => ({
+    ...nodes(),
+    days: [
+      {
+        day: "2025-01-01",
+        matrix: [
+          [2, 1], // solar
+          [3, 2], // grid
+        ],
+        emissionsG: [
+          [0, 10],
+          [300, 200],
+        ],
+        renewableKwh: [
+          [2, 1],
+          [0, 0],
+        ],
+        selfRenewableKwh: [
+          [2, 0],
+          [0, 0],
+        ],
+        costC: [
+          [0, 0],
+          [90, 60],
+        ],
+        revenueC: [
+          [0, 5],
+          [0, 10],
+        ],
+        estimatedKwh: [
+          [0, 0],
+          [1, 0],
+        ],
+      },
+      {
+        day: "2025-01-02",
+        matrix: [
+          [1, 2],
+          [4, 1],
+        ],
+        emissionsG: [
+          [0, 20],
+          [500, 100],
+        ],
+        renewableKwh: [
+          [1, 2],
+          [0, 0],
+        ],
+        selfRenewableKwh: [
+          [1, 0],
+          [0, 0],
+        ],
+        costC: [
+          [0, 0],
+          [120, 30],
+        ],
+        revenueC: [
+          [0, 8],
+          [0, 4],
+        ],
+        estimatedKwh: [
+          [0, 0],
+          [0.5, 0],
+        ],
+      },
+    ],
+  });
+
+  // Three days: null cells on days 1/2 (unknown intensity), day 3 a LEGACY day (matrix only) — the
+  // null-exclusion + whole-leg-missing paths.
+  const mixedFixture = (): DailyFlowMatrices => ({
+    ...nodes(),
+    days: [
+      {
+        day: "2025-01-01",
+        matrix: [
+          [2, 1],
+          [3, 2],
+        ],
+        emissionsG: [
+          [0, null],
+          [300, 200],
+        ],
+        renewableKwh: [
+          [2, 1],
+          [0, null],
+        ],
+        selfRenewableKwh: [
+          [2, 0],
+          [0, 0],
+        ],
+        costC: [
+          [0, 0],
+          [90, null],
+        ],
+        revenueC: [
+          [null, 5],
+          [null, 10],
+        ],
+        estimatedKwh: [
+          [0, 0],
+          [1, 0],
+        ],
+      },
+      {
+        day: "2025-01-02",
+        matrix: [
+          [1, 2],
+          [4, 1],
+        ],
+        emissionsG: [
+          [0, 20],
+          [500, 100],
+        ],
+        renewableKwh: [
+          [1, 2],
+          [0, 0],
+        ],
+        selfRenewableKwh: [
+          [1, 0],
+          [0, 0],
+        ],
+        costC: [
+          [0, 0],
+          [null, 30],
+        ],
+        revenueC: [
+          [null, 8],
+          [null, 4],
+        ],
+        estimatedKwh: [
+          [0, 0],
+          [0, 0.5],
+        ],
+      },
+      {
+        day: "2025-01-03", // legacy day: no metric legs at all
+        matrix: [
+          [1, 1],
+          [1, 1],
+        ],
+      },
+    ],
+  });
+
+  it("adds every leg per cell across days when nothing is null (hand-computed)", () => {
+    const out = sumDailyFlowMatricesWithMetrics(cleanFixture())!;
+    expect(out).not.toBeNull();
+
+    // Energy fold (2+1=3, 1+2=3, 3+4=7, 2+1=3).
+    expect(out.matrix).toEqual([
+      [3, 3],
+      [7, 3],
+    ]);
+    expect(out.sourceTotals).toEqual([6, 10]);
+    expect(out.loadTotals).toEqual([10, 6]);
+    expect(out.totalEnergy).toBe(16);
+
+    const m = out.metrics!;
+    expect(m).toBeDefined();
+    expect(m.emissionsG.matrix).toEqual([
+      [0, 30],
+      [800, 300],
+    ]);
+    expect(m.renewableKwh.matrix).toEqual([
+      [3, 3],
+      [0, 0],
+    ]);
+    expect(m.selfRenewableKwh.matrix).toEqual([
+      [3, 0],
+      [0, 0],
+    ]);
+    expect(m.costC.matrix).toEqual([
+      [0, 0],
+      [210, 90],
+    ]);
+    expect(m.revenueC.matrix).toEqual([
+      [0, 13],
+      [0, 14],
+    ]);
+    expect(m.estimatedKwh).toEqual([
+      [0, 0],
+      [1.5, 0],
+    ]);
+
+    // Nothing was null, so every metric's known-energy denominator IS the energy matrix.
+    for (const leg of [
+      m.emissionsG,
+      m.renewableKwh,
+      m.selfRenewableKwh,
+      m.costC,
+      m.revenueC,
+    ]) {
+      expect(leg.knownKwh).toEqual(out.matrix);
+    }
+  });
+
+  it("excludes a null cell from the metric sum AND its energy from that metric's knownKwh", () => {
+    const out = sumDailyFlowMatricesWithMetrics(mixedFixture())!;
+    const m = out.metrics!;
+
+    // grid→house cost: day 1 = 90 (3 kWh known), day 2 null (4 kWh excluded), day 3 legacy (1 kWh
+    // excluded) — but the ENERGY matrix still includes all three days.
+    expect(m.costC.matrix[1][0]).toBe(90);
+    expect(m.costC.knownKwh[1][0]).toBe(3);
+    expect(out.matrix[1][0]).toBe(8);
+
+    // grid→export cost is the mirror: day 1 null, day 2 = 30 over 1 kWh.
+    expect(m.costC.matrix[1][1]).toBe(30);
+    expect(m.costC.knownKwh[1][1]).toBe(1);
+
+    // A non-null ZERO still counts as known (grid→export renewable: day 1 null, day 2 zero).
+    expect(m.renewableKwh.matrix[1][1]).toBe(0);
+    expect(m.renewableKwh.knownKwh[1][1]).toBe(1);
+
+    // A cell null on EVERY day stays null with a zero denominator (solar rows earn no revenue... on
+    // load.house at least).
+    expect(m.revenueC.matrix[0][0]).toBeNull();
+    expect(m.revenueC.knownKwh[0][0]).toBe(0);
+
+    // estimatedKwh is a plain sum; the legacy day contributes 0 (leg absent = nothing estimated).
+    expect(m.estimatedKwh).toEqual([
+      [0, 0],
+      [1, 0.5],
+    ]);
+  });
+
+  it("treats a whole-leg-missing day as all-null for the metrics", () => {
+    const out = sumDailyFlowMatricesWithMetrics(mixedFixture())!;
+    const m = out.metrics!;
+
+    // grid→house emissions: days 1+2 known (300+500 over 3+4 kWh); the legacy day 3 (1 kWh) is
+    // excluded from the metric AND its denominator, but present in the energy fold.
+    expect(m.emissionsG.matrix[1][0]).toBe(800);
+    expect(m.emissionsG.knownKwh[1][0]).toBe(7);
+    expect(out.matrix[1][0]).toBe(8);
+  });
+
+  it("returns no metrics member for a fully legacy payload", () => {
+    const legacy: DailyFlowMatrices = {
+      ...nodes(),
+      days: [
+        {
+          day: "2025-01-01",
+          matrix: [
+            [2, 1],
+            [3, 2],
+          ],
+        },
+        {
+          day: "2025-01-02",
+          matrix: [
+            [1, 2],
+            [4, 1],
+          ],
+        },
+      ],
+    };
+    const out = sumDailyFlowMatricesWithMetrics(legacy)!;
+    expect(out).not.toBeNull();
+    expect(out.metrics).toBeUndefined();
+    expect(out.matrix).toEqual([
+      [3, 3],
+      [7, 3],
+    ]);
+  });
+
+  it("agrees exactly with sumDailyFlowMatrices on the energy fields", () => {
+    for (const fixture of [cleanFixture(), mixedFixture()]) {
+      const plain = sumDailyFlowMatrices(fixture)!;
+      const withMetrics = sumDailyFlowMatricesWithMetrics(fixture)!;
+      expect({
+        sources: withMetrics.sources,
+        loads: withMetrics.loads,
+        matrix: withMetrics.matrix,
+        sourceTotals: withMetrics.sourceTotals,
+        loadTotals: withMetrics.loadTotals,
+        totalEnergy: withMetrics.totalEnergy,
+      }).toEqual(plain);
+    }
+  });
+
+  it("column totals agree with reduceLoadProvenance for every load", () => {
+    const fixture = mixedFixture();
+    const out = sumDailyFlowMatricesWithMetrics(fixture)!;
+    const m = out.metrics!;
+
+    const colSum = (grid: (number | null)[][], l: number) =>
+      grid.reduce((sum, row) => sum + (row[l] ?? 0), 0);
+
+    fixture.loads.forEach((load, l) => {
+      const summary = reduceLoadProvenance(fixture, load.id)!;
+      expect(summary).not.toBeNull();
+
+      expect(out.loadTotals[l]).toBeCloseTo(summary.energyKwh, 9);
+
+      expect(colSum(m.costC.matrix, l)).toBeCloseTo(summary.costC, 9);
+      expect(colSum(m.costC.knownKwh, l)).toBeCloseTo(summary.costKnownKwh, 9);
+
+      expect(colSum(m.emissionsG.matrix, l) / 1000).toBeCloseTo(
+        summary.kgCo2,
+        9,
+      );
+      expect(colSum(m.emissionsG.knownKwh, l)).toBeCloseTo(
+        summary.emissionsKnownKwh,
+        9,
+      );
+
+      // Revenue: the reducer nulls the total when nothing was sold; the fold's column mirrors that
+      // with an all-null column and a zero denominator.
+      expect(colSum(m.revenueC.knownKwh, l)).toBeCloseTo(
+        summary.revenueKnownKwh,
+        9,
+      );
+      if (summary.revenueC === null) {
+        expect(m.revenueC.matrix.every((row) => row[l] === null)).toBe(true);
+      } else {
+        expect(colSum(m.revenueC.matrix, l)).toBeCloseTo(summary.revenueC, 9);
+      }
+
+      // The reducer only exposes renewable/estimated as percentages — reconstruct them from the
+      // fold's column sums and compare.
+      const renewKnown = colSum(m.renewableKwh.knownKwh, l);
+      if (summary.pctRenewable !== null) {
+        expect(
+          (100 * colSum(m.renewableKwh.matrix, l)) / renewKnown,
+        ).toBeCloseTo(summary.pctRenewable, 9);
+      } else {
+        expect(renewKnown).toBe(0);
+      }
+      const estCol = m.estimatedKwh.reduce((sum, row) => sum + row[l], 0);
+      expect((100 * estCol) / out.loadTotals[l]).toBeCloseTo(
+        summary.pctEstimated,
+        9,
+      );
+    });
+  });
+
+  it("returns null for an empty window", () => {
+    const empty: DailyFlowMatrices = { ...nodes(), days: [] };
+    expect(sumDailyFlowMatricesWithMetrics(empty)).toBeNull();
   });
 });

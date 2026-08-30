@@ -112,6 +112,19 @@ export function hasAccessToken(request: Request): boolean {
 // understood. This is the same reason `/api/cron` and `/api/gush` are listed elsewhere.
 const cliTokenRoutes = [
   "/api/v4/dashboards(.*)", // the dashboard CLI
+  "/api/v4/devices(.*)", // device list + per-device aggregate — every handler requireAuth's
+  "/api/v4/areas", // the readable-areas list — requireAuth (POST create authorizes the same way)
+  // The area aggregate — a NAMED single segment, deliberately NOT `(.*)`: the sub-resources
+  // (members, bindings, derivations, eligibility, by-handle, …) stay OUTSIDE the bypass until each
+  // is judged on its own, rather than inheriting it by being a sibling.
+  "/api/v4/areas/:id",
+  "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
+  // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
+  // independently (each only declines to 404 its own credential shape) and the handler's
+  // `requireDashboardAccess` is the enforcement point either way — a CLI token here reaches nothing
+  // a browser session couldn't.
+  "/api/data",
+  "/api/history",
   "/api/cli-auth/tokens(.*)", // `auth list` / `auth revoke`, so a CLI can manage its own credential
   "/api/cli-auth/whoami", // the `target:` line — which deployment, as whom, against which database
   // 🛑 Enumerated, NOT `/api/cli-auth(.*)`. A wildcard would sweep in `authorize`, and a CLI token

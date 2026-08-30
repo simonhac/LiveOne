@@ -52,7 +52,6 @@ import {
   bool,
   defineCommand,
   failWith,
-  kebab,
   num,
   str,
   EXIT,
@@ -60,35 +59,13 @@ import {
   type Ctx,
 } from "@/lib/cli/cli";
 import { DocInvalidError } from "@/lib/cli-kit/http";
+import { atMostOne, usage } from "../shared";
 import {
   dashLabelLike as dashLabel,
   withTransport,
   type DashboardTransport,
   type DashRowLike as DashRow,
 } from "./transport";
-
-// ---------------------------------------------------------------------------
-// Flag access
-// ---------------------------------------------------------------------------
-
-/**
- * At most one of `names` may be supplied. `names` are DECLARATION keys (`ctx.flags` is keyed by
- * them), but the message shows the kebab form, because that is what the caller typed and what the
- * parser will accept back.
- */
-function atMostOne(ctx: Ctx, names: string[]): void {
-  const present = names.filter((n) => ctx.flags[n] !== undefined);
-  if (present.length > 1)
-    throw failWith(
-      EXIT.USAGE,
-      present.map((n) => `--${kebab(n)}`).join(" and "),
-      "these flags are mutually exclusive",
-      `pass only one of ${names.map((n) => `--${kebab(n)}`).join(", ")}`,
-    );
-}
-
-const usage = (what: string, why: string, next: string) =>
-  failWith(EXIT.USAGE, what, why, next);
 
 // ---------------------------------------------------------------------------
 // Shared plumbing
