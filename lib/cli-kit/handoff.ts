@@ -38,6 +38,42 @@ export function loginUrl(
   return `${origin}/cli-auth?${q.toString()}`;
 }
 
+/**
+ * The page the browser lands on after the approval redirect. Self-contained (the server dies right
+ * after this response, so no external assets), styled to match the app's dark theme.
+ */
+const SIGNED_IN_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiveOne CLI</title>
+<style>
+  body { margin: 0; min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+         background: #111827; color: #f3f4f6;
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .card { background: #1f2937; border: 1px solid #374151; border-radius: 0.5rem;
+          padding: 2.5rem 3rem; max-width: 24rem; text-align: center;
+          box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3); }
+  .tick { width: 3rem; height: 3rem; margin: 0 auto 1rem; border-radius: 9999px;
+          background: rgb(74 222 128 / 0.1); display: flex; align-items: center; justify-content: center; }
+  .brand { font-size: 1.375rem; font-weight: 600; margin: 0 0 0.25rem; }
+  .brand span { color: #3b82f6; }
+  h1 { font-size: 1.125rem; font-weight: 500; margin: 0 0 0.5rem; }
+  p { color: #9ca3af; font-size: 0.875rem; margin: 0; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="tick"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4ade80"
+    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div>
+  <p class="brand">Live<span>One</span></p>
+  <h1>Signed in</h1>
+  <p>You can close this tab and return to the terminal.</p>
+</div>
+</body>
+</html>`;
+
 export interface CallbackServer {
   port: number;
   /** Resolves with the callback's params; rejects on timeout. */
@@ -74,9 +110,7 @@ export function awaitCallback(timeoutMs = 180_000): Promise<CallbackServer> {
           // measured as a jest force-exit warning; in real use, a lingering listener.
           connection: "close",
         })
-        .end(
-          '<!doctype html><title>LiveOne CLI</title><body style="font-family:system-ui;padding:2rem">Signed in — you can close this tab and return to the terminal.</body>',
-        );
+        .end(SIGNED_IN_HTML);
       clearTimeout(timer);
       server.close();
       server.closeAllConnections?.();
