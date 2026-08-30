@@ -68,6 +68,9 @@ export const TIERS: TierManifest = {
     "scripts/ops/dashboard/db.ts",
     // The `auth` domain — composed by liveone.ts, same rules as the dashboard module.
     "scripts/ops/auth/cli.ts",
+    // The `find` verb, likewise composed rather than an entrypoint.
+    "scripts/ops/find/cli.ts",
+    "scripts/ops/dashboard/transport.ts",
   ],
   lib: [],
 };

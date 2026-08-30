@@ -24,6 +24,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
 ## Contents
 
 - [liveone](#liveone)
+  - [liveone find](#liveone-find)
   - [liveone auth](#liveone-auth)
     - [liveone auth login](#liveone-auth-login)
     - [liveone auth whoami](#liveone-auth-whoami)
@@ -70,6 +71,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Subcommands:
+  find                   Find the command for a job, in plain English.
   auth                   Sign the CLI in as you, and manage its tokens.
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
 
@@ -92,6 +94,64 @@ External access:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  130  interrupted
+```
+
+### liveone find
+
+Find the command for a job, in plain English.
+
+```
+Find the command for a job, in plain English.
+
+When to use:
+  Reach for this FIRST when you know what you want to do but not which command does it —
+  instead of reading CLI_README.md end to end, or grepping the generated prose. Offline and
+  instant: it ranks the committed catalogue, and imports nothing.
+
+Prints the best few matches with a one-line signature each — enough to construct the call.
+Use --show <name> for one command's full argument schema, and --index for the whole
+name+summary spine. Results are trimmed to a character budget, and `truncated` is always
+reported rather than a short list quietly looking complete.
+
+Usage:
+  liveone find [query]... [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  [query]                What you are trying to do, in words
+
+Options:
+  --show <name>              Print one command's full catalogue entry, including its input schema
+  --index                    List every command — name and summary only
+  --limit <number>           How many matches to return  (default: 5; a positive integer)
+  --budget <number>          Character budget for the results  (default: 4000; a positive integer)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  None. This command is pure — it reaches no database, API or credential.
+
+Examples:
+  liveone find "edit a dashboard card"
+  liveone find "log in" --limit=3
+  liveone find --show liveone__dashboard__set-prop
+  liveone find --index
+
+Exit codes:
+  0    success
+  1    nothing matched
   2    usage error
   130  interrupted
 ```
