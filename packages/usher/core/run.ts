@@ -447,7 +447,12 @@ export async function runLoop(
           ? ` push ${pushMs / 1000}s` +
             (activePushMs !== pushMs ? `/${activePushMs / 1000}s active` : "")
           : "";
-        return `${e.source.name} poll ${poll}${push}`;
+        // Named on its own, because it is the one cadence that is neither the poll nor the push but
+        // both — and this line is where an operator confirms a deploy actually armed the bracket.
+        const transition = e.transitionIntervalMs
+          ? ` transition ${e.transitionIntervalMs / 1000}s`
+          : "";
+        return `${e.source.name} poll ${poll}${push}${transition}`;
       })
       .join(", ")}]`,
   );
