@@ -117,7 +117,11 @@ export function setToken(
   const store = readStore(filePath);
   const next: TokenStore = {
     ...store,
-    defaultOrigin: store.defaultOrigin ?? key,
+    // MOST RECENT LOGIN WINS. It was first-login-wins, and the result was that logging in to prod
+    // after a localhost login left every subsequent command still pointed at localhost — the
+    // target: line caught it, but only because someone read it. `auth login <origin>` is an
+    // explicit statement of where you are working now, so it moves the default.
+    defaultOrigin: key,
     tokens: { ...store.tokens, [key]: entry },
   };
   writeStore(next, filePath);
@@ -132,11 +136,19 @@ export function removeToken(
   const key = normalizeOrigin(origin);
   const store = readStore(filePath);
   const { [key]: _dropped, ...rest } = store.tokens;
+  const remaining = Object.keys(rest);
   writeStore(
     {
       ...store,
+      // Logging out of the default origin adopts the ONLY remaining login, if there is exactly
+      // one — otherwise there is no non-arbitrary answer, so it clears and the next command falls
+      // back to prod (and says so on the target: line) rather than picking a host for you.
       defaultOrigin:
-        store.defaultOrigin === key ? undefined : store.defaultOrigin,
+        store.defaultOrigin === key
+          ? remaining.length === 1
+            ? remaining[0]
+            : undefined
+          : store.defaultOrigin,
       tokens: rest,
     },
     filePath,
