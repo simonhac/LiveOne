@@ -60,6 +60,7 @@ import { formatFlowMagnitude } from "@/lib/energy-formatting";
 import { avgPowerMetric, provenancePanels } from "@/lib/charts/tooltip-metrics";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useSettledWindow } from "@/lib/charts/useSettledWindow";
+import { useNeighbourPrefetch } from "@/lib/charts/useNeighbourPrefetch";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
 import { formatDateTimeRange } from "@/lib/fe-date-format";
 import { formatHoverTimestamp } from "@/lib/charts/temporal";
@@ -514,6 +515,7 @@ export default function SiteChartsCard({
     period: desiredPeriod,
     start: desiredStart,
     end: desiredEnd,
+    isLatest: desiredIsLatest,
   } = useTemporalRange({
     timezoneOffsetMin: device?.timezoneOffsetMin ?? 600,
   });
@@ -626,6 +628,15 @@ export default function SiteChartsCard({
   useEffect(() => {
     reportHistoryFetching(historyFetching);
   }, [historyFetching, reportHistoryFetching]);
+
+  // Warm the prev/next windows so temporal navigation resolves from cache. Gated on the CURRENT
+  // window having finished fetching, so the prefetch can never compete with the window on screen.
+  useNeighbourPrefetch({
+    systemId: systemId ?? "",
+    range: { period, start, end, isLatest: desiredIsLatest },
+    timezoneOffsetMin: device?.timezoneOffsetMin ?? 600,
+    enabled: runSiteQuery && !!systemId && !historyFetching,
+  });
 
   const processedHistoryData = useMemo<ProcessedSiteData>(
     () => siteData ?? { load: null, generation: null },
