@@ -71,11 +71,35 @@ coercion bug means the guard is papering over something we should fix at the par
 
 ### 1. Settle it — re-fetch the day
 
-`scripts/sigenergy/poll.ts --stats --start=2026-08-20 --end=2026-08-20 --raw` is read-only and
-prints the payload. Two blockers: it reads `SIGENERGY_USERNAME` / `SIGENERGY_PASSWORD` from
-`.env.local` (**not set** — the real credentials live in prod Clerk), and it makes a live call to
-the owner's mySigen account. Check first that the endpoint is deterministic for a settled past day;
-if it re-derives on read, a fetch today says nothing about what arrived on 2026-08-21.
+**The tooling exists.** `raw=true` on the backfill route (single day, dry-run) returns the vendor's
+verbatim payload, using the credentials stored in prod Clerk — nothing needs to be in `.env.local`:
+
+```
+npm run liveone -- api "/api/cron/sigenergy-backfill?start=2026-08-20&end=2026-08-20\
+  &dryRun=true&raw=true"
+```
+
+`liveone api` reaches it because `/api/cron(.*)` is public at the edge and a `lo_cli_` token
+resolves to an admin context (`lib/api-auth.ts`), so `requireCronOrAdmin` accepts it. It prints the
+`target:` line first — read it. Requires the route to be DEPLOYED, so this is a post-merge check
+unless a preview is stood up (and see the receiver-URL trap below).
+
+Then look at the `itemList` row for the dropout interval: a literal `0` / `"0"` is the vendor; a
+`false`, `[]` or other non-numeric sentinel is `pickNumber` coercing (§3).
+
+⚠️ Check first that the endpoint is deterministic for a settled past day. If it re-derives on read,
+a fetch today says nothing about what arrived on 2026-08-21 — in which case only §2 can answer it,
+for future occurrences.
+
+⚠️ **Do not run this on a preview deployment before checking where its writes go.**
+`getObservationsReceiverUrl()` (`lib/qstash.ts`) falls through to the PRODUCTION receiver when
+`NODE_ENV === "production"` — which a preview build is — unless the Preview scope sets
+`NEXT_PUBLIC_APP_URL` or `OBSERVATIONS_QSTASH_RECEIVER_URL`. `dryRun=true` does not publish, so it
+is safe; a non-dry run on a preview may not be.
+
+The local alternative, `scripts/sigenergy/poll.ts --stats --start=… --end=… --raw`, needs
+`SIGENERGY_USERNAME` / `SIGENERGY_PASSWORD` in `.env.local` (**not set** — the credentials live in
+prod Clerk).
 
 ### 2. Keep the evidence — archive the raw statistics payload
 

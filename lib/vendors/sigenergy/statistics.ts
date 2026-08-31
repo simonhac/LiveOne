@@ -67,6 +67,18 @@ export interface PullEnergyDayResult {
   empty: boolean; // no itemList rows (e.g. a pre-go-live day)
   /** Power/SoC rows recovered for intervals the live poll missed (see `derive-power.ts`). */
   derivedWritten: number;
+  /**
+   * The vendor's verbatim `statistics/energy` response, when the caller asked for it.
+   *
+   * Off by default — it is ~288 itemList rows per day and nothing in the write path needs it. It
+   * exists because the differenced output CANNOT answer questions about the input: the counters
+   * occasionally drop to ~0 for one sample (see `derive-power.ts`), and whether the vendor SENT
+   * that zero or we coerced a non-numeric sentinel into one is not decidable from a stored delta.
+   * Reading it back through this field is the only way to look at the actual payload, because
+   * `pullEnergyDay` does not archive it (see
+   * `docs/plans/sigenergy-counter-dropout-forensics.md`).
+   */
+  raw?: unknown;
 }
 
 /**
@@ -154,6 +166,8 @@ export async function pullEnergyDay(params: {
   session: SessionInfo;
   collector?: PollCollector;
   now?: number;
+  /** Return the vendor's verbatim response on the result — diagnostics only. */
+  includeRaw?: boolean;
 }): Promise<PullEnergyDayResult> {
   const { client, systemId, stationId, date, tzOffsetMin, session, collector } =
     params;
@@ -219,6 +233,7 @@ export async function pullEnergyDay(params: {
     reconciled: isComplete,
     empty: false,
     derivedWritten: derived.length,
+    ...(params.includeRaw ? { raw: day.raw } : {}),
   };
 }
 
@@ -254,6 +269,8 @@ export async function backfillEnergyRange(params: {
   session: SessionInfo;
   collector?: PollCollector;
   now?: number;
+  /** Return each day's verbatim vendor response — diagnostics only; see `PullEnergyDayResult.raw`. */
+  includeRaw?: boolean;
 }): Promise<{
   days: PullEnergyDayResult[];
   errors: string[];
@@ -272,6 +289,7 @@ export async function backfillEnergyRange(params: {
           session: params.session,
           collector: params.collector,
           now: params.now,
+          includeRaw: params.includeRaw,
         }),
       );
     } catch (err) {

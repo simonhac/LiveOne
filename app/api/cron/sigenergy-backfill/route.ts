@@ -37,7 +37,8 @@ const MAX_RANGE_DAYS = 31;
  * rebuilds 1d for the range.
  *
  * Params (GET query string, or POST JSON body):
- *   { systemId?: number, start?: "YYYY-MM-DD", end?: "YYYY-MM-DD", days?: number, dryRun?: boolean }
+ *   { systemId?: number, start?: "YYYY-MM-DD", end?: "YYYY-MM-DD", days?: number, dryRun?: boolean,
+ *     raw?: boolean }
  *   - systemId: one sigenergy device; omit to run EVERY active sigenergy device (the cron default).
  *   - start/end: inclusive station-local calendar dates; if omitted, the last `days` (default 7).
  *
@@ -47,6 +48,17 @@ const MAX_RANGE_DAYS = 31;
  *   curl -X POST .../api/cron/sigenergy-backfill \
  *     -H "Authorization: Bearer $CRON_SECRET" -d '{"days":7}'
  *   curl "http://localhost:3000/api/cron/sigenergy-backfill?days=2&dryRun=true" -H "x-claude: true"
+ *
+ * `raw=true` (single day only) returns the vendor's verbatim statistics payload alongside the
+ * counts. The differenced output cannot answer questions about its own INPUT — the cumulative
+ * counters occasionally drop to ~0 for one sample, and a stored delta cannot say whether the vendor
+ * sent that zero or we coerced a non-numeric sentinel into one. Nothing archives the payload, so
+ * reading it back is the only way to look:
+ *
+ *   npm run liveone -- api "/api/cron/sigenergy-backfill?start=2026-08-20&end=2026-08-20\
+ *     &dryRun=true&raw=true"
+ *
+ * See `docs/plans/sigenergy-counter-dropout-forensics.md`.
  */
 
 interface BackfillParams {
@@ -55,6 +67,8 @@ interface BackfillParams {
   end?: string;
   days?: number;
   dryRun?: boolean;
+  /** Diagnostics: return the vendor's verbatim statistics payload. Single-day ranges only. */
+  raw?: boolean;
 }
 
 /** One device's outcome. `ok: false` carries `error` instead of a backfill result. */
@@ -242,6 +256,7 @@ async function handleBackfill(request: NextRequest) {
       end: q.get("end") ?? undefined,
       days: num(q.get("days")),
       dryRun: q.get("dryRun") === "true",
+      raw: q.get("raw") === "true",
     };
   }
   if (params.systemId != null && !Number.isFinite(params.systemId))
@@ -277,6 +292,27 @@ async function handleBackfill(request: NextRequest) {
       { error: `Range ${params.days}d exceeds ${MAX_RANGE_DAYS}d cap` },
       { status: 400 },
     );
+
+  // `raw` is bounded to ONE day: the payload is ~288 itemList rows, so the default 7-day window
+  // would return roughly 2000 of them and make the diagnostic unreadable in the same breath as
+  // making the response large. Asking for a specific day is also the only sensible way to use it —
+  // you are looking AT something.
+  if (params.raw) {
+    const span =
+      params.start && params.end
+        ? spanDaysBetween(parseToYmd(params.start), parseToYmd(params.end))
+        : params.start || params.end
+          ? 1
+          : (params.days ?? DEFAULT_DAYS);
+    if (span !== 1)
+      return NextResponse.json(
+        {
+          error:
+            "raw=true needs a single day — pass start=YYYY-MM-DD&end=<same>, or days=1",
+        },
+        { status: 400 },
+      );
+  }
 
   // Resolve the targets: an explicit systemId, else EVERY active sigenergy system. Looping by
   // default is deliberate — the old "exactly one, or 400" rule would have silently broken the
