@@ -1,9 +1,8 @@
 # Sigenergy counter dropouts: prove the source, and keep the evidence
 
-> **Status:** the research is DONE and the two defects it found have shipped (#414, #416). What
-> remains is §3 alone — a latent `pickNumber` coercion, worth doing on its own merits but not
-> implicated in anything observed. §1 and §2 are closed; the reasoning is kept because the next
-> person to see a 300 kW spike will ask the same questions.
+> **Status:** COMPLETE. The research is done, the two defects it found have shipped (#414, #416),
+> and §1–§3 are all closed. Kept because the next person to see a 300 kW spike will ask the same
+> questions.
 >
 > It began as fallout from the Sigenergy power/SoC recovery, which shipped a guard against this
 > without establishing where the bad value came from. Answering that turned up two live defects
@@ -208,14 +207,26 @@ re-fetching the same days nightly:
 | `itemList` only, envelope dropped | ~30 % less | still 7× redundant |
 | **only days where `trustedCounters` found a dropout** | a few days/month at ~52 KB | the least-bad option IF it is ever needed — but see above: it probably is not |
 
-### 3. Harden `pickNumber` regardless
+### 3. Harden `pickNumber` — DONE
 
-Reject non-numeric input rather than coercing it: `typeof v === "number"`, or a string that parses.
-`Number(false) === 0` and `Number([]) === 0` are silent, and this is the same defect class as
-Selectronic's `|| 0` idiom (see the raw-payload notes in
-[architecture/coverage-repair.md](../architecture/coverage-repair.md)). Worth doing whichever way §1
-lands. ⚠️ Check the blast radius first — `pickNumber` is used by every Sigenergy field, and a
-vendor that legitimately sends numeric strings would start returning `null`.
+It now accepts a finite `number`, or a string that trims to one, and treats everything else as
+absent. Bare `Number()` coerced things that are not measurements — `Number(false)` and `Number([])`
+are `0`, `Number([7])` is `7`, `Number(" ")` is `0` — and a silent zero is indistinguishable
+downstream from the site genuinely producing nothing. Same defect class as Selectronic's `|| 0`
+idiom (see the raw-payload notes in
+[architecture/coverage-repair.md](../architecture/coverage-repair.md)).
+
+Not hypothetical for this payload: the live `energyflow` body carries `onGrid` (**boolean**) and
+`greenSourceInfos` (**array**) beside the numeric fields, and `pickNumber` takes candidate key LISTS
+spanning vendor spellings (`["pvPower", "pv_power", "solarPower"]`) — so a rename, or a reused name,
+landing on one of those types is the realistic way this bites.
+
+**Blast radius, measured before changing it:** `pickNumber` is module-private to
+`sigenergy-client.ts`, so Sigenergy only. Across 3000 archived live responses and one full
+statistics day (288 rows), every field it reads is a JSON number or `null`, and **none is ever a
+string** — so the tightening is provably a no-op on real data. The numeric-string branch is kept
+purely as insurance against a vendor that starts quoting its numbers. `Number.isFinite` also
+replaces `!Number.isNaN`, since `Number("Infinity")` is not a measurement either.
 
 ## The same dropouts were corrupting the flow matrix — FIXED
 
