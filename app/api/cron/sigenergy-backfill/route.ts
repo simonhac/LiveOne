@@ -191,6 +191,7 @@ async function backfillOneDevice(
       tzOffsetMin: device.timezoneOffsetMin,
       session,
       collector,
+      includeRaw: params.raw ?? false,
     });
 
     // Flush the collected observations to the queue on session close (unless dry run).

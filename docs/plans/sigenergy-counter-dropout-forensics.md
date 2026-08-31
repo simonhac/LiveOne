@@ -131,6 +131,48 @@ Selectronic's `|| 0` idiom (see the raw-payload notes in
 lands. ⚠️ Check the blast radius first — `pickNumber` is used by every Sigenergy field, and a
 vendor that legitimately sends numeric strings would start returning `null`.
 
+## The same dropouts are corrupting the flow matrix TODAY
+
+Found 2026-08-31 while verifying the power recovery on prod. This is a live defect in daily energy
+and the Sankey, independent of the power work, and it is worse than the chart gaps ever were.
+
+`attachEnergyOverlays` (`lib/aggregation/flow-series.ts:425-435`) already guards this — the comment
+cites a previous Sigenergy incident, "−27.3 kWh then +29.3 kWh in adjacent 5-min slots, inflating
+the day's load/charge/solar to ~2×" — but only for an **adjacent** pair:
+
+```ts
+if (v < 0) return null;
+const prev = slots[slot - 1];
+if (prev !== null && prev !== undefined && prev < 0) return null;
+```
+
+That is the same guard this work started with, and it has the same hole: **the freeze can last
+several intervals, so the catch-up is not adjacent to the negative.** 2026-08-19 is the case —
+`−10590` at 17:30, zeros through 17:55, `+10590` at 18:00. `prev` is 0, not negative, so the
+catch-up passes and is counted as one interval's energy.
+
+Measured against the metered daily total (`Σ` signed delta), August 2026, Kutis:
+
+| day | metered solar | flow matrix | ratio |
+| --- | --- | --- | --- |
+| 2026-08-18 | 31.13 kWh | 31.10 kWh | 1.00 — no dropout, exact |
+| 2026-08-20 | 26.97 kWh | 42.31 kWh | 1.57 |
+| **2026-08-19** | **10.59 kWh** | **113.49 kWh** | **10.7** |
+
+Five days in the month are affected (08-05, 08-06, 08-19, 08-20, 08-21); the other 26 agree with
+the meter exactly. Clamping the negative half at zero is what does it: `Σ max(delta, 0)` for
+2026-08-19 solar is 127.08 kWh against a true 10.59.
+
+**The fix is already written.** `trustedCounters` (`lib/vendors/sigenergy/derive-power.ts`) is the
+generalisation — it tracks an unrepaid deficit per counter, so a multi-interval freeze stays
+distrusted until the debt is repaid, and single-ULP negatives are read as rounding rather than as
+dropouts. Extract it and use it in `attachEnergyOverlays` so both consumers share one implementation
+instead of two guards that disagree about the same data.
+
+⚠️ Not a drop-in: the overlay returns `null` to fall back to power integration, which is the right
+behaviour and should be kept. And any fix needs a `flow_attr_1d` recompute over the affected days —
+scope it (`derivation=`), do not delete-and-reinsert every detector.
+
 ## Residual risk the guard does NOT cover
 
 A dropout to a value still *above* the previous sample leaves both deltas positive and passes the
