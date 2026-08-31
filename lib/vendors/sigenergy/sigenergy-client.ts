@@ -13,6 +13,7 @@
 
 import { createCipheriv, createHash } from "node:crypto";
 import type {
+  SigenergyIntervalPower,
   SigenRegion,
   SigenergyDayEnergy,
   SigenergyEnergyFlow,
@@ -167,6 +168,25 @@ function maybeJson(v: unknown): unknown {
   } catch {
     return v;
   }
+}
+
+/**
+ * Extract the instantaneous power + SoC an `itemList` row carries alongside the counters (kW / %).
+ *
+ * Vendor signs, as reported — `sigenergyIntervalPowerToW` normalises them. Field names match the
+ * `energyflow` payload's, which is the clue that these are the same snapshot: `pvTotalPower`,
+ * `loadPower`, `toGridPower`, `fromGridPower`, `esChargePower`, `esDischargePower`, `batSoc`.
+ */
+function extractIntervalPower(rec: unknown): SigenergyIntervalPower {
+  return {
+    solarKw: pickNumber(rec, ["pvTotalPower"]),
+    loadKw: pickNumber(rec, ["loadPower"]),
+    gridImportKw: pickNumber(rec, ["fromGridPower"]),
+    gridExportKw: pickNumber(rec, ["toGridPower"]),
+    batteryChargeKw: pickNumber(rec, ["esChargePower"]),
+    batteryDischargeKw: pickNumber(rec, ["esDischargePower"]),
+    socPct: pickNumber(rec, ["batSoc"]),
+  };
 }
 
 /** Extract the six energy fields (kWh) from a statistics record or an itemList row. */
@@ -553,6 +573,7 @@ export class SigenergyClient {
       .map((r) => ({
         dataTime: String(r.dataTime ?? ""),
         ...extractEnergyTotals(r),
+        ...extractIntervalPower(r),
       }));
     return { date, totals, intervals, raw: json };
   }

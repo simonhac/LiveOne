@@ -38,6 +38,16 @@ function mk(
     powerFromGrid: 0,
     esCharging: 0,
     esDischarging: 0,
+    // The instantaneous half of an itemList row. Null here: these cases exercise the COUNTER
+    // differencing, and a null power field is what an older payload (or a field we cannot read)
+    // looks like — the path that must still fall back to energy-derived power.
+    solarKw: null,
+    loadKw: null,
+    gridImportKw: null,
+    gridExportKw: null,
+    batteryChargeKw: null,
+    batteryDischargeKw: null,
+    socPct: null,
   };
 }
 
@@ -82,6 +92,13 @@ describe("computeDayEnergyReadings", () => {
       powerFromGrid: v,
       esCharging: 0,
       esDischarging: 0,
+      solarKw: null,
+      loadKw: null,
+      gridImportKw: null,
+      gridExportKw: null,
+      batteryChargeKw: null,
+      batteryDischargeKw: null,
+      socPct: null,
     });
     const flick = [
       gi("00:00", 0),

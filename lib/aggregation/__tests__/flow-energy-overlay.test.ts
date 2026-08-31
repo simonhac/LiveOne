@@ -303,6 +303,56 @@ describe("energy overlay: counter re-base (matched negative + catch-up)", () => 
   });
 });
 
+describe("energy overlay: a MULTI-INTERVAL counter freeze", () => {
+  // The case the adjacent-pair guard missed, and the reason it became a deficit scan. The counter
+  // does not always come back on the very next interval — it can sit frozen (delta 0) for several
+  // and then release everything at once, so the slot before the catch-up is 0, not negative.
+  //
+  // Prod, Kutis 2026-08-19: −10590 Wh at 17:30, zeros through 17:55, +10590 Wh at 18:00. The
+  // catch-up passed the old guard and was booked as one interval's energy, inflating that day's
+  // solar to 113.49 kWh against a metered 10.59 — a 10.7× overstatement of a real day.
+  const timestamps = tl(6);
+  const points: ClassifiedPoint[] = [
+    { stem: "source.solar", power: [3, 3, 3, 3, 3, 3, 3] },
+    { stem: "load", power: [3, 3, 3, 3, 3, 3, 3] },
+  ];
+  const energy: EnergySeriesInput[] = [
+    {
+      stem: "source.solar",
+      energyKwhBySlot: [null, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25],
+    },
+    // slots:      i0    i1    i2(drop)  i3   i4   i5(catch-up)  i6
+    {
+      stem: "load",
+      energyKwhBySlot: [null, 0.25, -10.59, 0, 0, 10.59, 0.25],
+    },
+  ];
+
+  it("distrusts the whole freeze, not just the slot after the negative", () => {
+    const { loads } = buildFlowSeries(points, energy, timestamps);
+    const load = loads.find((l) => l.path === "load")!;
+    expect(load.energyKwh![0]).toBeCloseTo(0.25, 9); // before the drop
+    expect(load.energyKwh![1]).toBeNull(); // the negative
+    expect(load.energyKwh![2]).toBeNull(); // frozen — debt unrepaid
+    expect(load.energyKwh![3]).toBeNull(); // still frozen
+    expect(load.energyKwh![4]).toBeNull(); // the catch-up itself
+    expect(load.energyKwh![5]).toBeCloseTo(0.25, 9); // debt repaid, trusted again
+  });
+
+  it("never books the catch-up as one interval's energy", () => {
+    const { sources, loads } = buildFlowSeries(points, energy, timestamps);
+    const m = computeFlowMatrix({ timestamps, sources, loads });
+    const trapezoid = 3 * (FIVE_MIN / 3_600_000); // 0.25 kWh per fallback interval
+    // Two real intervals + four that fall back to power integration. Emphatically not the ~10.6 kWh
+    // the catch-up slot would have contributed.
+    expect(at(m, "source.solar", "load")).toBeCloseTo(
+      0.25 * 2 + trapezoid * 4,
+      9,
+    );
+    expect(at(m, "source.solar", "load")).toBeLessThan(2);
+  });
+});
+
 describe("energy overlay: a master-load register sizes the complement", () => {
   // The Kutis shape: the site meter's ENERGY counter is the total (house + EV); the charger is a
   // power-only sub-meter and the house-excluding-charger point IS the complement, measured. The

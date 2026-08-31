@@ -22,10 +22,11 @@ import type { PollCollector } from "@/lib/observations/poll-collector";
 import type { SigenergyClient } from "./sigenergy-client";
 import {
   SIGENERGY_ENERGY_POINTS,
+  sigenergyIntervalPowerToW,
   type SigenergyEnergyCounterField,
 } from "./point-metadata";
 import type { SigenergyEnergyInterval, SigenergyEnergyTotals } from "./types";
-import { deriveDayPowerReadings } from "./derive-power";
+import { deriveDayPowerReadings, type VendorPowerSample } from "./derive-power";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -208,9 +209,19 @@ export async function pullEnergyDay(params: {
   // succeeded.
   let derived: Awaited<ReturnType<typeof deriveDayPowerReadings>> = [];
   try {
+    // The itemList's instantaneous half, keyed the way agg_5m is. `dataTime` is the interval START,
+    // so the sample at T belongs to the interval ENDING at T+5min — the same interval our poll's
+    // sample would have landed in.
+    const vendorPower = new Map<number, VendorPowerSample>();
+    for (const r of rows) {
+      const startMs = localDataTimeToUtcMs(r.dataTime, tzOffsetMin);
+      if (startMs == null) continue;
+      vendorPower.set(startMs + FIVE_MIN_MS, sigenergyIntervalPowerToW(r));
+    }
     derived = await deriveDayPowerReadings({
       systemId,
       energyReadings: readings,
+      vendorPower,
       nowMs: now,
     });
   } catch (err) {

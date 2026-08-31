@@ -46,7 +46,75 @@ without that exemption the low-volume flicker distrusted **half** of all grid in
 makes the differencing loop `continue` — no reading at all. We emitted deltas either side of the
 dropout, which requires three present, numeric samples.
 
-## The open question
+## SETTLED 2026-08-31 — and the itemList carries historical POWER
+
+`raw=true` against prod returned the payload. At the 2026-08-20 19:20 dropout Sigenergy sent
+literal numeric zeros — not a sentinel `pickNumber` coerced:
+
+```json
+{"dataTime": "20260820 19:20", "powerGeneration": 0, "powerToGrid": 0, "powerUse": -0.01,
+ "esCharging": -0.01, "esDischarging": -0.01, "batSoc": 55.1, "loadPower": 2.219, ...}
+```
+
+`26.97 → 0 → 26.97` on `powerGeneration`, with `esCharging` going NEGATIVE (−0.01) — impossible for
+a cumulative counter. **The vendor sends the zeros. `pickNumber` is exonerated** (§3 is still worth
+doing on its own merits, but it is not implicated here).
+
+**The bigger finding: the same `itemList` carries per-interval instantaneous POWER and SoC.**
+
+```
+pvTotalPower  loadPower  toGridPower  fromGridPower
+esChargeDischargePower  esChargePower  esDischargePower  batSoc
+```
+
+We only ever read the six cumulative energy fields (`extractEnergyTotals`), so this was never seen.
+The premise the power recovery was built on — "Sigenergy's cloud API serves no historical power, so
+a missed poll is unrecoverable" — is **wrong**. It is in the payload we already fetch nightly.
+
+Validated against our own measured samples for 2026-08-20 (n=268):
+
+| itemList field | vs our measurement | median | p90 |
+| --- | --- | --- | --- |
+| `pvTotalPower` | `source.solar/power.avg` | **0.0 W** | 406 W |
+| `batSoc` | `bidi.battery/soc.last` | **0.0 %** | 0.1 % |
+| `loadPower` | `rest-of-house + ev` | 140 W | — |
+
+`loadPower` is TOTAL load, EV included (on >2 kW EV intervals: 6850 W error against rest-of-house
+alone, 57.5 W against the sum) — the same semantics as `powerUse`. There is **no EV field**, so the
+EV / rest-of-house split still has to be interpolated. Everything else can come from the vendor.
+
+### What this changes
+
+Reading these fields is strictly better than deriving power from the energy counters:
+
+- **Exact, not quantised.** No ±120 W from the 0.01 kWh counter resolution.
+- **No counter-dropout guard needed for power.** The power fields did NOT glitch at 19:20 —
+  `loadPower` 2.219 and `batSoc` 55.1 are both sane while every energy counter collapsed. They are
+  independent failure domains.
+- **No interpolation cap.** Fills a hole of any length, so the 15-minute limit disappears for
+  everything except the EV split.
+- **It would have filled the intervals the guard refused** (2026-08-20 01:30 / 05:05 / 09:50), which
+  were refused precisely because the ENERGY counters were untrustworthy there.
+
+`trustedCounters` stays necessary regardless — the energy series still need it, and the flow-matrix
+defect below is the same bug in another consumer.
+
+**DONE** — `derive-power.ts` now prefers the itemList power fields per field, marks them `good`
+(a vendor record is not a derivation, and provenance lives in `session_id`), and falls back to the
+counter arithmetic only where a field is absent. The EV / rest-of-house split stays `interpolated`,
+because there is still no EV field.
+
+⚠️ **Rows written before this are upgradable, and are meant to be.** The write decision is ranked
+by quality (`interpolated` < `calculated` < `good`), not by presence — otherwise a `calculated` row
+would block itself from ever becoming the vendor's own measurement, and prod already carries such
+rows from 2026-08-31 (the 2026-08-20 manual run and the cron's 08-26..08-31). Only markers this
+module writes are in the rank, so a `null` (measured) or `estimated` (another writer's) row is
+never touched. Equal rank does not rewrite, so re-running stays idempotent.
+
+To pick the existing rows up, re-run the backfill over the days that carry them once this is
+deployed — they will not upgrade themselves, since the nightly window only reaches back 7 days.
+
+## The open question (now answered — kept for the record)
 
 **Did Sigenergy send the zero, or did we coerce one?**
 
@@ -131,10 +199,14 @@ Selectronic's `|| 0` idiom (see the raw-payload notes in
 lands. ⚠️ Check the blast radius first — `pickNumber` is used by every Sigenergy field, and a
 vendor that legitimately sends numeric strings would start returning `null`.
 
-## The same dropouts are corrupting the flow matrix TODAY
+## The same dropouts were corrupting the flow matrix — FIXED
 
-Found 2026-08-31 while verifying the power recovery on prod. This is a live defect in daily energy
-and the Sankey, independent of the power work, and it is worse than the chart gaps ever were.
+Found 2026-08-31 while verifying the power recovery on prod: a live defect in daily energy and the
+Sankey, independent of the power work, and worse than the chart gaps ever were.
+
+**Fixed.** `trustedByDeficit` (`lib/aggregation/counter-deficit.ts`) is now shared by the overlay
+and the Sigenergy power recovery — two guards disagreeing about one defect is how the overlay kept
+a bug the other had already fixed. `FLOW_ATTR_VERSION` 7 → 8, so stored days re-materialise.
 
 `attachEnergyOverlays` (`lib/aggregation/flow-series.ts:425-435`) already guards this — the comment
 cites a previous Sigenergy incident, "−27.3 kWh then +29.3 kWh in adjacent 5-min slots, inflating
