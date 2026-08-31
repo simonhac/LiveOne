@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Panel from "@/components/ui/panel";
 import HeatmapPanel, {
   type HeatmapSelection,
 } from "@/components/heatmap/HeatmapPanel";
@@ -66,17 +67,20 @@ export default function HeatmapClient({ device }: HeatmapClientProps) {
     window.history.replaceState(null, "", newUrl);
   }, []);
 
+  // The panel draws no frame of its own (chart-style.md: one frame per nesting level, owned by the
+  // host). On a dashboard the v4 section is that host; here there is no section, so this page is.
   return (
-    <HeatmapPanel
-      systemId={device.id}
-      timezone={device.displayTimezone}
-      dayOffsetMin={device.timezoneOffsetMin}
-      showDebug
-      enableKeyboardNav
-      initialSeries={initial.point}
-      initialPalette={initial.palette}
-      onSelectionChange={handleSelectionChange}
-      className="container mx-auto px-4 py-8"
-    />
+    <Panel className="container mx-auto my-8">
+      <HeatmapPanel
+        systemId={device.id}
+        timezone={device.displayTimezone}
+        dayOffsetMin={device.timezoneOffsetMin}
+        showDebug
+        enableKeyboardNav
+        initialSeries={initial.point}
+        initialPalette={initial.palette}
+        onSelectionChange={handleSelectionChange}
+      />
+    </Panel>
   );
 }

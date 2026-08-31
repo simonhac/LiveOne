@@ -7,6 +7,7 @@ import { getPeriodDuration } from "@/lib/charts/temporal";
 import { formatSecondsAsDuration } from "@/lib/fe-date-format";
 import { formatRunWhen } from "@/lib/run-tracking/run-period-view";
 import { formatDollars, formatKgCo2 } from "@/lib/provenance-format";
+import { CHART_HAIRLINE } from "@/lib/charts/style";
 
 /**
  * A dashboard panel listing one tracked device's run periods WITHIN the temporal-navigator window —
@@ -130,9 +131,12 @@ export default function RunsCard({
     <span className="ml-1 font-normal text-gray-400">{u}</span>
   );
 
+  // A hairline, not a filled card. A chart delimits itself with its axes; a table does not, so this
+  // is the one card shape allowed an outline of its own — around the content, with no fill. See
+  // docs/architecture/chart-style.md.
   return (
-    <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+    <div className={`${CHART_HAIRLINE} overflow-hidden`}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700/70">
         <h2 className="text-sm font-semibold text-gray-100 flex items-center gap-2">
           {title}
           {(runningOverride ?? data?.running) && (
@@ -161,7 +165,7 @@ export default function RunsCard({
         <>
           <div className="max-h-[420px] overflow-y-auto">
             <table className="w-full">
-              <thead className="bg-gray-700 sticky top-0">
+              <thead className="bg-gray-800 sticky top-0">
                 <tr>
                   <th className={`${th} text-left`}>When</th>
                   <th className={`${th} text-right`}>Duration</th>
@@ -172,12 +176,9 @@ export default function RunsCard({
                   {showCost && <th className={`${th} text-right`}>Cost</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-700">
+              <tbody className="divide-y divide-gray-700/70">
                 {rows.map(({ e, durationSec, spansOutside }, i) => (
-                  <tr
-                    key={i}
-                    className="text-gray-100 odd:bg-gray-800 even:bg-gray-750"
-                  >
+                  <tr key={i} className="text-gray-100 odd:bg-white/[0.02]">
                     {/* Deliberately NOT whitespace-nowrap: this card sits in a fixed-width
                         dashboard column, and a midnight-crossing run's full
                         "Mon 27 Jul, 23:40 – Tue 28 Jul, 01:15" would set a min-content width that
@@ -212,7 +213,7 @@ export default function RunsCard({
                 ))}
               </tbody>
               <tfoot className="sticky bottom-0">
-                <tr className="bg-gray-700 text-gray-100 font-medium border-t border-gray-600">
+                <tr className="bg-gray-800 text-gray-100 font-medium border-t border-gray-700/70">
                   <td className={td}>
                     {rows.length} {rows.length === 1 ? noun : `${noun}s`}
                   </td>

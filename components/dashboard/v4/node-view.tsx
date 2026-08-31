@@ -22,6 +22,8 @@ import type { ReactNode } from "react";
 import { Layers } from "lucide-react";
 import { Area } from "@/lib/ids";
 import { ErrorPanel } from "@/components/ErrorPanel";
+import Panel from "@/components/ui/panel";
+import { CHART_PANEL } from "@/lib/charts/style";
 import { datumCanControl, datumCanControlPoint } from "@/lib/control/ownership";
 import type { AreaId } from "@/lib/ids";
 import {
@@ -188,9 +190,9 @@ function CardNodeView({
   const plugin = RENDERERS[node.type];
   if (!plugin) {
     return (
-      <div className="rounded-lg border border-gray-700/70 bg-gray-900/30 px-4 py-3 text-sm text-gray-400">
+      <Panel className="px-4 py-3 text-sm text-gray-400" padded={false}>
         Unknown card type <code className="text-gray-300">{node.type}</code>
-      </div>
+      </Panel>
     );
   }
 
@@ -266,12 +268,12 @@ function GroupNodeView({
   // notice, but only once areas are known.
   if (node.heading && nodeContext.area && area == null && areasResolved) {
     return (
-      <section className="rounded-lg border border-gray-700/70 bg-gray-900/30 p-2 sm:p-3">
+      <Panel as="section">
         <ErrorPanel title="Area unavailable">
           This section points to an area that couldn&rsquo;t be loaded — it may
           have been removed, or you don&rsquo;t have access to it.
         </ErrorPanel>
-      </section>
+      </Panel>
     );
   }
 
@@ -369,13 +371,13 @@ function GroupNodeView({
 
   if (node.heading && area) {
     return (
-      <section className="rounded-lg border border-gray-700/70 bg-gray-900/30 p-2 sm:p-3">
+      <Panel as="section">
         <div className="flex items-center gap-1.5 px-1 pb-2 text-xs font-medium uppercase tracking-wide text-gray-400">
           <Layers className="h-3.5 w-3.5" />
           <span>{area.displayName}</span>
         </div>
         {inner}
-      </section>
+      </Panel>
     );
   }
   return inner;
@@ -390,7 +392,7 @@ function CardUnavailable({ height }: { height: number }) {
   return (
     <div
       style={{ minHeight: height }}
-      className="flex items-center justify-center rounded-lg border border-gray-700/50 bg-gray-900/30 px-4 py-3 text-sm text-gray-500"
+      className={`flex items-center justify-center px-4 py-3 text-sm text-gray-500 ${CHART_PANEL}`}
     >
       This card&rsquo;s area couldn&rsquo;t be loaded.
     </div>

@@ -2,6 +2,14 @@
 
 import { useMemo, useRef } from "react";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import {
+  LEGEND_HEADER,
+  LEGEND_LABEL,
+  LEGEND_ROW,
+  LEGEND_SWATCH,
+  LEGEND_VALUE,
+  legendSwatchStyle,
+} from "@/lib/charts/style";
 import { SeriesData } from "@/lib/charts/types";
 import { calculateSeriesEnergy } from "@/lib/energy-calculator";
 import {
@@ -141,7 +149,7 @@ function SkeletonRow({
   swatch?: boolean;
 }) {
   return (
-    <div className="flex items-center text-xs">
+    <div className={LEGEND_ROW}>
       <div className="flex flex-1 h-4 items-center gap-2">
         {swatch && <ShimmerBar className="h-3 w-3 flex-shrink-0" />}
         <ShimmerBar className={`h-3 ${labelWidth}`} />
@@ -178,7 +186,7 @@ function EnergyTableSkeleton({
     <div className={className} data-skeleton="" aria-hidden>
       <div className="space-y-4" style={{ paddingTop: "44px" }}>
         {/* Column headers */}
-        <div className="flex items-center text-xs border-b border-gray-700 pb-1">
+        <div className={`${LEGEND_ROW} border-b border-gray-700 pb-1`}>
           <div className="flex h-4 flex-1 items-center">
             <ShimmerBar className="h-3 w-12" />
           </div>
@@ -543,13 +551,15 @@ export default function EnergyTable({
       {/* Match exact chart title height (text-sm = ~20px) + margin (mb-3 = 12px) + chart padding (~12px) */}
       <div className="space-y-4" style={{ paddingTop: "44px" }}>
         {/* Column Headers - aligned to top */}
-        <div className="flex items-center text-xs border-b border-gray-700 pb-1">
-          <div className="flex-1 text-gray-400">
+        <div className={`${LEGEND_ROW} border-b border-gray-700 pb-1`}>
+          <div className={`flex-1 ${LEGEND_HEADER}`}>
             {mode === "load" ? "Load" : "Source"}
           </div>
-          <div className="w-20 text-right text-gray-400">{columnHeader}</div>
+          <div className={`w-20 text-right ${LEGEND_HEADER}`}>
+            {columnHeader}
+          </div>
           <div
-            className={`text-gray-400 ${metricCellClass}`}
+            className={`${LEGEND_HEADER} ${metricCellClass}`}
             {...metricCellProps}
             role={onCycleMetric ? "button" : undefined}
             tabIndex={onCycleMetric ? 0 : undefined}
@@ -569,7 +579,7 @@ export default function EnergyTable({
         <div className="space-y-1">
           {tableData.map((item) => {
             return (
-              <div key={item.id} className="flex items-center text-xs">
+              <div key={item.id} className={LEGEND_ROW}>
                 <div
                   className="flex items-center gap-2 flex-1 cursor-pointer select-none touch-none"
                   onPointerDown={() => handlePointerDown(item.id)}
@@ -579,17 +589,12 @@ export default function EnergyTable({
                   title="Click to toggle visibility, Shift-click or long press to show only this series"
                 >
                   <div
-                    className="w-3 h-3 rounded-sm flex-shrink-0 border-2"
-                    style={{
-                      backgroundColor: item.isVisible
-                        ? item.color
-                        : "transparent",
-                      borderColor: item.color,
-                    }}
+                    className={LEGEND_SWATCH}
+                    style={legendSwatchStyle(item.color, item.isVisible)}
                   />
-                  <span className="text-gray-300">{item.label}</span>
+                  <span className={LEGEND_LABEL}>{item.label}</span>
                 </div>
-                <span className="text-gray-100 font-mono w-20 text-right">
+                <span className={`${LEGEND_VALUE} w-20`}>
                   {item.isVisible
                     ? displayValue === "power"
                       ? formatValue(item.powerValue)
@@ -597,7 +602,7 @@ export default function EnergyTable({
                     : ""}
                 </span>
                 <span
-                  className={`text-gray-400 ${metricCellClass}`}
+                  className={`${LEGEND_HEADER} ${metricCellClass}`}
                   {...metricCellProps}
                 >
                   {!item.isVisible
@@ -618,15 +623,15 @@ export default function EnergyTable({
 
         {/* Total */}
         <div className="border-t border-gray-700 pt-1">
-          <div className="flex items-center text-xs">
-            <span className="text-gray-300 font-medium flex-1">Total</span>
-            <span className="text-gray-100 font-mono font-medium w-20 text-right">
+          <div className={LEGEND_ROW}>
+            <span className={`${LEGEND_LABEL} font-medium flex-1`}>Total</span>
+            <span className={`${LEGEND_VALUE} font-medium w-20`}>
               {displayValue === "power"
                 ? formatValue(total)
                 : formatValue(total, 1)}
             </span>
             <span
-              className={`text-gray-400 font-medium ${metricCellClass}`}
+              className={`${LEGEND_HEADER} font-medium ${metricCellClass}`}
               {...metricCellProps}
             >
               {effectiveMetric === "pct"
@@ -647,21 +652,21 @@ export default function EnergyTable({
             style={{ paddingTop: "20px", paddingBottom: "20px" }}
           >
             {socSeries.length > 0 && (
-              <div className="flex items-center text-xs">
+              <div className={LEGEND_ROW}>
                 <div className="flex items-center gap-2 flex-1">
                   <div
-                    className="w-3 h-3 rounded-sm flex-shrink-0"
-                    style={{ backgroundColor: CHART_COLORS.battery.soc }}
+                    className={LEGEND_SWATCH}
+                    style={legendSwatchStyle(CHART_COLORS.battery.soc)}
                   />
-                  <span className="text-gray-300">Battery SoC</span>
+                  <span className={LEGEND_LABEL}>Battery SoC</span>
                 </div>
-                <span className="text-gray-100 font-mono w-20 text-right">
+                <span className={`${LEGEND_VALUE} w-20`}>
                   {socValue !== null && socValue !== undefined
                     ? `${formatPercent(socValue)}%`
                     : "—"}
                 </span>
                 <span
-                  className={`text-gray-400 ${metricCellClass}`}
+                  className={`${LEGEND_HEADER} ${metricCellClass}`}
                   {...metricCellProps}
                 >
                   {/* Always empty - SoC has no share/cost/emissions of its own. Still part of the
@@ -671,19 +676,17 @@ export default function EnergyTable({
             )}
 
             {showMoneyRow && (
-              <div className="flex items-center text-xs">
+              <div className={LEGEND_ROW}>
                 <div className="flex items-center gap-2 flex-1">
                   {/* The grid colour, matching the Grid Import / Grid Export series this line
                       prices — one hue serves both directions everywhere in the app. */}
                   <div
-                    className="w-3 h-3 rounded-sm flex-shrink-0"
-                    style={{ backgroundColor: CHART_COLORS.grid.main }}
+                    className={LEGEND_SWATCH}
+                    style={legendSwatchStyle(CHART_COLORS.grid.main)}
                   />
-                  <span className="text-gray-300">{moneyLabel}</span>
+                  <span className={LEGEND_LABEL}>{moneyLabel}</span>
                 </div>
-                <span className="text-gray-100 font-mono w-20 text-right">
-                  {moneyValue}
-                </span>
+                <span className={`${LEGEND_VALUE} w-20`}>{moneyValue}</span>
                 {/* The unit, broken off into the metric column and LEFT-aligned, so it reads
                     immediately after the number while the number itself right-aligns with the
                     Power/Energy column above. The two columns abut, so "¢" fuses to the number
@@ -693,7 +696,7 @@ export default function EnergyTable({
                     dense mono table it is secondary chrome next to the value, not a hero glyph.
                     Still part of the column, so clicking it cycles the metric like anywhere else. */}
                 <span
-                  className={`text-gray-400 font-mono w-16 text-left whitespace-nowrap ${metricCellInteractive}`}
+                  className={`${LEGEND_HEADER} font-mono w-16 text-left whitespace-nowrap ${metricCellInteractive}`}
                   {...metricCellProps}
                 >
                   {moneyUnit}

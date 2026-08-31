@@ -12,6 +12,7 @@ import { encodeHistoryWindow } from "@/lib/charts/history-window";
 import { useTemporalRange } from "@/lib/charts/useTemporalRange";
 import { useSettledWindow } from "@/lib/charts/useSettledWindow";
 import { useChartFocus, nearestIndex } from "@/lib/charts/ChartFocusContext";
+import { CHART_BODY_PAD } from "@/lib/charts/style";
 
 interface LinesChartCardProps {
   className?: string;
@@ -198,7 +199,9 @@ export default function LinesChartCard({
       // Debounce. Publish the hovered instant to the shared focus; the displayed values + focus line
       // derive from it below, so they also follow focus set by a sibling chart.
       hoverTimeoutRef.current = setTimeout(() => {
-        setFocusedTime(index == null ? null : (chartData.timestamps[index] ?? null));
+        setFocusedTime(
+          index == null ? null : (chartData.timestamps[index] ?? null),
+        );
       }, 10);
     },
     [chartData, setFocusedTime],
@@ -225,7 +228,6 @@ export default function LinesChartCard({
           batterySOC: null,
           timestamp: null,
         };
-
 
   // X-axis window: prefer the rendered data's actual extent (keeps the axis + daytime/weekday
   // shading aligned with historical data); else the requested window; else the live trailing window.
@@ -367,10 +369,13 @@ export default function LinesChartCard({
     );
   };
 
+  // No frame of its own: the section this mounts into already draws one, and a filled card inside
+  // it is the nested roundrect docs/architecture/chart-style.md exists to remove. This used to be
+  // `md:bg-gray-800 md:border md:border-gray-700 md:rounded md:p-4` — breakpoint-gated, so the lines
+  // chart and the stacked chart (which never had a frame) matched on a phone and diverged on a
+  // laptop.
   return (
-    <div
-      className={`md:bg-gray-800 md:border md:border-gray-700 md:rounded py-1 px-0 md:p-4 flex flex-col ${className}`}
-    >
+    <div className={`${CHART_BODY_PAD} flex flex-col ${className}`}>
       {renderChartContent()}
 
       <ServerErrorModal

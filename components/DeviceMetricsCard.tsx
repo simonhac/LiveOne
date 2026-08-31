@@ -11,6 +11,7 @@ import { latestReadingsQuery } from "@/lib/queries";
 import { useModalContext } from "@/contexts/ModalContext";
 import { TILE_GRID_CONTAINER, tileGridClass } from "@/lib/dashboard/tile-grid";
 import { SKELETON_CLASS, TileSkeleton } from "@/components/ui/skeleton";
+import { CHART_HAIRLINE } from "@/lib/charts/style";
 
 /** Tiles drawn while the point list is in flight — see the note at the placeholder below. */
 const SKELETON_TILE_COUNT = 4;
@@ -57,23 +58,25 @@ export default function DeviceMetricsCard({
       return (
         <div
           data-skeleton=""
-          className={`mx-1 h-48 ${SKELETON_CLASS}`}
+          className={`h-48 ${SKELETON_CLASS}`}
           aria-hidden
         />
       );
     }
     if (rows.length === 0) {
       return (
-        <div className="mx-1 rounded-lg border border-gray-700/50 bg-gray-900/30 px-4 py-6 text-center text-sm text-gray-400">
+        <div
+          className={`${CHART_HAIRLINE} px-4 py-6 text-center text-sm text-gray-400`}
+        >
           No device metrics available.
         </div>
       );
     }
     const nowMs = Date.now();
     return (
-      <div className="mx-1 overflow-hidden rounded-lg border border-gray-700/50 bg-gray-900/30">
+      <div className={`${CHART_HAIRLINE} overflow-hidden`}>
         <table className="w-full text-sm">
-          <tbody className="divide-y divide-gray-800">
+          <tbody className="divide-y divide-gray-700/70">
             {rows.map((row, i) => {
               const formatted =
                 row.value != null
@@ -135,7 +138,9 @@ export default function DeviceMetricsCard({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border border-gray-700/50 bg-gray-900/30 px-4 py-6 text-center text-sm text-gray-400">
+      <div
+        className={`${CHART_HAIRLINE} px-4 py-6 text-center text-sm text-gray-400`}
+      >
         No device metrics available.
       </div>
     );

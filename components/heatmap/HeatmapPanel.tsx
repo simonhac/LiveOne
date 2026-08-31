@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
+import { CHART_HAIRLINE } from "@/lib/charts/style";
 import type { ZonedDateTime } from "@internationalized/date";
 import { toZoned } from "@internationalized/date";
 import { getUnitDisplay } from "@/lib/point/unit-display";
@@ -105,7 +106,7 @@ function StatusBlock({
   }
   return (
     <div
-      className="flex items-center justify-center bg-gray-900 rounded-lg border border-gray-700"
+      className={`flex items-center justify-center ${CHART_HAIRLINE}`}
       style={{ height: HEATMAP_CHART_H }}
     >
       <div className={text}>{children}</div>
@@ -515,7 +516,7 @@ export default function HeatmapPanel({
         />
       ) : (
         <div
-          className="flex items-center justify-center bg-gray-900 rounded-lg border border-gray-700"
+          className={`flex items-center justify-center ${CHART_HAIRLINE}`}
           style={{ height: HEATMAP_CHART_H }}
         >
           <div className="text-gray-400">Select a point to view heatmap</div>

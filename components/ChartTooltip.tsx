@@ -1,6 +1,13 @@
 import React from "react";
 import Value from "@/components/ui/value";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import {
+  LEGEND_LABEL,
+  LEGEND_SWATCH,
+  LEGEND_SWATCH_BOX,
+  LEGEND_VALUE,
+  legendSwatchStyle,
+} from "@/lib/charts/style";
 import { SOC_DASH } from "@/lib/charts/line-series";
 import { formatPercent } from "@/lib/point/format-value";
 
@@ -13,13 +20,18 @@ import { formatPercent } from "@/lib/point/format-value";
  * matching RGB literal — two copies of one palette, and a third (`CHART_COLORS`) that the stacked
  * chart and Sankey actually used. They did not agree: the lines chart painted Battery orange-400,
  * which IS `CHART_COLORS.hotWater`, and Grid red-500, next to `CHART_COLORS.ev`. One registry now.
+ *
+ * The BOX is `LEGEND_SWATCH` — the same 12px `rounded-sm` square, bordered in the series colour,
+ * that `EnergyTable` draws. It was a hard-edged `h-3 w-3` span here, so the two legends on one
+ * dashboard drew visibly different swatches for the same series.
  */
 function Swatch({ color, dash }: { color: string; dash?: number[] }) {
   if (dash) {
     // An SVG rule using the ACTUAL dash array the dataset draws with, so the legend cannot drift
-    // from the chart if that pattern is ever tuned.
+    // from the chart if that pattern is ever tuned. Same box as the solid swatch, minus the border
+    // — a 2px frame around a 2px rule would read as a filled square.
     return (
-      <svg className="h-3 w-3" viewBox="0 0 12 12" aria-hidden>
+      <svg className={LEGEND_SWATCH_BOX} viewBox="0 0 12 12" aria-hidden>
         <line
           x1="0"
           y1="6"
@@ -34,10 +46,40 @@ function Swatch({ color, dash }: { color: string; dash?: number[] }) {
   }
   return (
     <span
-      className="inline-block h-3 w-3"
-      style={{ backgroundColor: color }}
+      className={LEGEND_SWATCH}
+      style={legendSwatchStyle(color)}
       aria-hidden
     />
+  );
+}
+
+/**
+ * One legend entry: swatch, name, and the focused reading (blank when nothing is focused, or when
+ * the focused sample is a gap).
+ *
+ * The value is right-aligned against a 48px floor so the row does not reflow as the pointer scrubs.
+ * That geometry is unchanged; what it replaces is four copy-pasted inline `style` blocks that each
+ * re-declared the min-width, the flex and DM Sans by hand. The ink is now `EnergyTable`'s.
+ */
+function Entry({
+  color,
+  dash,
+  label,
+  children,
+}: {
+  color: string;
+  dash?: number[];
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Swatch color={color} dash={dash} />
+      <span className={LEGEND_LABEL}>{label}</span>
+      <span className={`${LEGEND_VALUE} inline-flex min-w-12 justify-end`}>
+        {children}
+      </span>
+    </div>
   );
 }
 
@@ -60,6 +102,10 @@ function Swatch({ color, dash }: { color: string; dash?: number[] }) {
  * as "this device has no solar" rather than "the legend does not fit". Found once an explicitly
  * narrow gallery case existed; the mobile Playwright project renders the same 900 px chart, so
  * viewport alone never surfaced it.
+ *
+ * The unit rides INLINE on each value (via `<Value>`) rather than sitting in a column header, as it
+ * does in `EnergyTable`. That is the one place the two legends legitimately differ: a row has no
+ * header to hang `kW` on. See docs/architecture/chart-style.md.
  */
 interface ChartTooltipProps {
   /** Whether the series EXISTS (mirrors the dataset gate) — not whether it has a value right now. */
@@ -85,115 +131,39 @@ export default function ChartTooltip({
 }: ChartTooltipProps) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs sm:gap-x-6 md:gap-x-10">
-      {/* Solar */}
-      <div className="flex items-center gap-1">
-        <Swatch color={CHART_COLORS.solar.primary} />
-        <span className="text-gray-400">Solar</span>
-        <span
-          style={{
-            minWidth: "48px",
-            display: "inline-flex",
-            fontFamily: "DM Sans, system-ui, sans-serif",
-            justifyContent: "flex-end",
-          }}
-        >
-          {solar !== null && solar !== undefined ? (
-            <Value
-              className="text-white"
-              value={solar.toFixed(1)}
-              unit={unit}
-            />
-          ) : null}
-        </span>
-      </div>
+      <Entry color={CHART_COLORS.solar.primary} label="Solar">
+        {solar != null ? <Value value={solar.toFixed(1)} unit={unit} /> : null}
+      </Entry>
 
-      {/* Load */}
-      <div className="flex items-center gap-1">
-        <Swatch color={CHART_COLORS.load} />
-        <span className="text-gray-400">Load</span>
-        <span
-          style={{
-            minWidth: "48px",
-            display: "inline-flex",
-            fontFamily: "DM Sans, system-ui, sans-serif",
-            justifyContent: "flex-end",
-          }}
-        >
-          {load !== null && load !== undefined ? (
-            <Value className="text-white" value={load.toFixed(1)} unit={unit} />
-          ) : null}
-        </span>
-      </div>
+      <Entry color={CHART_COLORS.load} label="Load">
+        {load != null ? <Value value={load.toFixed(1)} unit={unit} /> : null}
+      </Entry>
 
       {/* Battery power — shown whenever the SERIES exists, blank when this instant has no sample. */}
       {hasBattery && (
-        <div className="flex items-center gap-1">
-          <Swatch color={CHART_COLORS.battery.main} />
-          <span className="text-gray-400">Battery</span>
-          <span
-            style={{
-              minWidth: "48px",
-              display: "inline-flex",
-              fontFamily: "DM Sans, system-ui, sans-serif",
-              justifyContent: "flex-end",
-            }}
-          >
-            {battery !== null && battery !== undefined ? (
-              <Value
-                className="text-white"
-                value={battery.toFixed(1)}
-                unit={unit}
-              />
-            ) : null}
-          </span>
-        </div>
+        <Entry color={CHART_COLORS.battery.main} label="Battery">
+          {battery != null ? (
+            <Value value={battery.toFixed(1)} unit={unit} />
+          ) : null}
+        </Entry>
       )}
 
       {/* Grid — shown whenever the SERIES exists, blank when this instant has no sample. */}
       {hasGrid && (
-        <div className="flex items-center gap-1">
-          <Swatch color={CHART_COLORS.grid.main} />
-          <span className="text-gray-400">Grid</span>
-          <span
-            style={{
-              minWidth: "48px",
-              display: "inline-flex",
-              fontFamily: "DM Sans, system-ui, sans-serif",
-              justifyContent: "flex-end",
-            }}
-          >
-            {grid !== null && grid !== undefined ? (
-              <Value
-                className="text-white"
-                value={grid.toFixed(1)}
-                unit={unit}
-              />
-            ) : null}
-          </span>
-        </div>
+        <Entry color={CHART_COLORS.grid.main} label="Grid">
+          {grid != null ? <Value value={grid.toFixed(1)} unit={unit} /> : null}
+        </Entry>
       )}
 
-      {/* Battery SoC */}
-      <div className="flex items-center gap-1">
-        <Swatch color={CHART_COLORS.battery.soc} dash={SOC_DASH} />
-        <span className="text-gray-400">Battery SoC</span>
-        <span
-          style={{
-            minWidth: "48px",
-            display: "inline-flex",
-            fontFamily: "DM Sans, system-ui, sans-serif",
-            justifyContent: "flex-end",
-          }}
-        >
-          {batterySOC !== null && batterySOC !== undefined ? (
-            <Value
-              className="text-white"
-              value={formatPercent(batterySOC)}
-              unit={"%"}
-            />
-          ) : null}
-        </span>
-      </div>
+      <Entry
+        color={CHART_COLORS.battery.soc}
+        dash={SOC_DASH}
+        label="Battery SoC"
+      >
+        {batterySOC != null ? (
+          <Value value={formatPercent(batterySOC)} unit="%" />
+        ) : null}
+      </Entry>
     </div>
   );
 }

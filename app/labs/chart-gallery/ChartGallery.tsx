@@ -35,6 +35,7 @@ import ProvenanceChart from "@/components/battery-provenance/ProvenanceChart";
 // re-introduce a `ChartJS.register(...)` of a chart-specific plugin anywhere in this graph and every
 // lines/stacked baseline fails immediately.
 import HeatmapChart from "@/components/HeatmapChart";
+import { CHART_HAIRLINE } from "@/lib/charts/style";
 import PrimitivesDemo from "./PrimitivesDemo";
 import IngestionChart from "@/app/admin/observations/IngestionChart";
 import { CHART_COLORS } from "@/lib/chart-colors";
@@ -195,7 +196,9 @@ function SiteLayoutCase({
         {/* Stands in for the EnergyTable: same box, no data — it is here because it is what makes
             the row branch's cross size definite, which is why desktop never saw the bug. */}
         <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-          <div className="h-[260px] rounded border border-gray-700 bg-gray-800/40 p-2 text-xs text-gray-500">
+          <div
+            className={`h-[260px] bg-gray-800/40 p-2 text-xs text-gray-500 ${CHART_HAIRLINE}`}
+          >
             legend
           </div>
         </div>

@@ -10,6 +10,7 @@ import { DEFAULT_HWS_MODEL_OPTIONS } from "@/lib/hws-model";
 import { validateDashboardShareToken } from "@/lib/dashboard/sharing";
 import { getDashboard } from "@/lib/dashboard/dashboards";
 import DailyStripes from "@/components/dashboard/DailyStripes";
+import Panel from "@/components/ui/panel";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -169,21 +170,24 @@ export default async function KinkoraHwsPage({
             No modelled data in the last {DISPLAY_DAYS} days.
           </p>
         ) : (
-          <DailyStripes
-            values={faucetByTs}
-            state={powerSeries}
-            tz={tz}
-            firstDayMidnightMs={displayStartMs}
-            dayCount={DISPLAY_DAYS}
-            domain={[
-              DEFAULT_HWS_MODEL_OPTIONS.tFloor,
-              DEFAULT_HWS_MODEL_OPTIONS.tFaucetMax,
-            ]}
-            palette={["hsl(210,80%,50%)", "hsl(0,80%,50%)"]}
-            onThreshold={ON_THRESHOLD_W}
-            unit="°C"
-            label="Faucet"
-          />
+          // DailyStripes draws no frame of its own — the host owns the box (chart-style.md).
+          <Panel>
+            <DailyStripes
+              values={faucetByTs}
+              state={powerSeries}
+              tz={tz}
+              firstDayMidnightMs={displayStartMs}
+              dayCount={DISPLAY_DAYS}
+              domain={[
+                DEFAULT_HWS_MODEL_OPTIONS.tFloor,
+                DEFAULT_HWS_MODEL_OPTIONS.tFaucetMax,
+              ]}
+              palette={["hsl(210,80%,50%)", "hsl(0,80%,50%)"]}
+              onThreshold={ON_THRESHOLD_W}
+              unit="°C"
+              label="Faucet"
+            />
+          </Panel>
         )}
       </div>
     </main>

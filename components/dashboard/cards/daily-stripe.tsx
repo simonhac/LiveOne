@@ -23,6 +23,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import DailyStripes from "@/components/dashboard/DailyStripes";
+import Panel from "@/components/ui/panel";
 import { historyQuery } from "@/lib/queries/history";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
 import {
@@ -41,9 +42,9 @@ import { CardSkeleton, subjectOf, useAreaDatum } from "./shared";
 
 function ConfigNotice() {
   return (
-    <div className="rounded-lg border border-gray-700/70 bg-gray-900/30 px-4 py-3 text-sm text-gray-400">
+    <Panel className="px-4 py-3 text-sm text-gray-400" padded={false}>
       This daily-stripe card is misconfigured.
-    </div>
+    </Panel>
   );
 }
 
