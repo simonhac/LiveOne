@@ -25,6 +25,7 @@ import {
   type SigenergyEnergyCounterField,
 } from "./point-metadata";
 import type { SigenergyEnergyInterval, SigenergyEnergyTotals } from "./types";
+import { deriveDayPowerReadings } from "./derive-power";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,6 +65,20 @@ export interface PullEnergyDayResult {
   readingsWritten: number;
   reconciled: boolean; // true for a completed day (tail residual applied)
   empty: boolean; // no itemList rows (e.g. a pre-go-live day)
+  /** Power/SoC rows recovered for intervals the live poll missed (see `derive-power.ts`). */
+  derivedWritten: number;
+  /**
+   * The vendor's verbatim `statistics/energy` response, when the caller asked for it.
+   *
+   * Off by default — it is ~288 itemList rows per day and nothing in the write path needs it. It
+   * exists because the differenced output CANNOT answer questions about the input: the counters
+   * occasionally drop to ~0 for one sample (see `derive-power.ts`), and whether the vendor SENT
+   * that zero or we coerced a non-numeric sentinel into one is not decidable from a stored delta.
+   * Reading it back through this field is the only way to look at the actual payload, because
+   * `pullEnergyDay` does not archive it (see
+   * `docs/plans/sigenergy-counter-dropout-forensics.md`).
+   */
+  raw?: unknown;
 }
 
 /**
@@ -151,6 +166,8 @@ export async function pullEnergyDay(params: {
   session: SessionInfo;
   collector?: PollCollector;
   now?: number;
+  /** Return the vendor's verbatim response on the result — diagnostics only. */
+  includeRaw?: boolean;
 }): Promise<PullEnergyDayResult> {
   const { client, systemId, stationId, date, tzOffsetMin, session, collector } =
     params;
@@ -168,6 +185,7 @@ export async function pullEnergyDay(params: {
       readingsWritten: 0,
       reconciled: false,
       empty: true,
+      derivedWritten: 0,
     };
   }
 
@@ -183,10 +201,28 @@ export async function pullEnergyDay(params: {
     date,
   );
 
+  // Recover the POWER + SoC intervals the live poll missed, from the energy we just differenced.
+  // Sigenergy's cloud API serves no historical power, so this pass is the only thing that can close
+  // those holes — see `derive-power.ts`. Best-effort by design: it reads the serving store to find
+  // out what is missing, and a failed read must not cost us the energy backfill that already
+  // succeeded.
+  let derived: Awaited<ReturnType<typeof deriveDayPowerReadings>> = [];
+  try {
+    derived = await deriveDayPowerReadings({
+      systemId,
+      energyReadings: readings,
+      nowMs: now,
+    });
+  } catch (err) {
+    console.warn(
+      `[Sigenergy] ${date}: power/SoC recovery skipped — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   await PointManager.getInstance().insertPointReadingsAgg5m(
     systemId,
     session,
-    readings,
+    [...readings, ...derived],
     collector,
   );
 
@@ -196,6 +232,8 @@ export async function pullEnergyDay(params: {
     readingsWritten: readings.length,
     reconciled: isComplete,
     empty: false,
+    derivedWritten: derived.length,
+    ...(params.includeRaw ? { raw: day.raw } : {}),
   };
 }
 
@@ -231,6 +269,8 @@ export async function backfillEnergyRange(params: {
   session: SessionInfo;
   collector?: PollCollector;
   now?: number;
+  /** Return each day's verbatim vendor response — diagnostics only; see `PullEnergyDayResult.raw`. */
+  includeRaw?: boolean;
 }): Promise<{
   days: PullEnergyDayResult[];
   errors: string[];
@@ -249,6 +289,7 @@ export async function backfillEnergyRange(params: {
           session: params.session,
           collector: params.collector,
           now: params.now,
+          includeRaw: params.includeRaw,
         }),
       );
     } catch (err) {

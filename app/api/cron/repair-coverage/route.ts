@@ -20,6 +20,12 @@ import { runCoverageRepair } from "@/lib/coverage/runner";
 
 export const maxDuration = 300;
 
+/**
+ * Weekday (UTC, 0=Sunday) on which the nightly run sweeps each provider's full window instead of
+ * the shallow one. Monday, matching the slot this cron used to occupy when it ran weekly.
+ */
+const DEEP_SWEEP_UTC_DAY = 1;
+
 /** Send a Slack-compatible message to the monitor channel. Best-effort; never throws. */
 async function postToMonitor(text: string): Promise<boolean> {
   const url = process.env.OBSERVATIONS_ALERT_WEBHOOK_URL;
@@ -50,7 +56,33 @@ export async function GET(request: NextRequest) {
     request.nextUrl.searchParams.get("dry") === "true";
   const onlyVendor = request.nextUrl.searchParams.get("vendor") || undefined;
 
-  const result = await runCoverageRepair(planetscaleDb, { dryRun, onlyVendor });
+  // Shallow nightly, deep weekly — one schedule, not two. The depth is chosen from the weekday
+  // rather than from a second cron entry with `?deep=true`, because a Vercel cron `path` carrying a
+  // query string is not something this repo relies on anywhere else, and a route that decides for
+  // itself is testable without deploying. `?deep=true` / `?lookback=N` still override, for manual
+  // runs.
+  //
+  // Why not deep every night: nothing records that a gap has been accepted, so a nightly full
+  // 90-day sweep re-fetches every permanently-unrecoverable day, every night, against a
+  // per-vendor budget inside a 300 s function. See `lib/coverage/runner.ts`.
+  const params = request.nextUrl.searchParams;
+  const lookbackParam = params.get("lookback");
+  const lookbackDays =
+    lookbackParam != null && Number.isFinite(Number(lookbackParam))
+      ? Number(lookbackParam)
+      : undefined;
+  const deep =
+    params.get("deep") === "true" ||
+    (params.get("deep") == null &&
+      lookbackDays === undefined &&
+      new Date().getUTCDay() === DEEP_SWEEP_UTC_DAY);
+
+  const result = await runCoverageRepair(planetscaleDb, {
+    dryRun,
+    onlyVendor,
+    deep,
+    lookbackDays,
+  });
 
   if (result.status === "alert")
     console.error(`[RepairCoverage] ${result.reportText}`);
@@ -60,6 +92,7 @@ export async function GET(request: NextRequest) {
     configured: true,
     now: new Date().toISOString(),
     monitorPosted: posted,
+    deep,
     ...result,
   });
 }

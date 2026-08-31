@@ -16,7 +16,8 @@
  *    one adapter that was already boundary-aligned. A slot model has no need for an early
  *    allowance, so `toleranceSeconds` is gone rather than carried over.
  *
- * 2. **Keyed on the last SUCCESS, not the last attempt.** A failed poll must not consume its slot,
+ * 2. **Keyed on the last SUCCESS for closing a slot; on the last ATTEMPT for budgeting.** A failed
+ *    poll must not consume its slot,
  *    or a vendor blip costs a whole interval. (Sigenergy already depended on this and defends it by
  *    classing an all-null snapshot as a failure rather than an empty success.) The retry is
  *    **bounded** — see `RETRY_WINDOW_MINUTES`. Unbounded, this property is an amplifier: measured on
@@ -41,6 +42,13 @@ const MINUTE_MS = 60_000;
  * Expressed as a window rather than an attempt counter on purpose: the cron is `* * * * *`, so it
  * offers at most one attempt per minute, and a 2-minute window therefore IS "at most 2 attempts"
  * — without persisting a per-slot counter, which is what keeps this function pure.
+ *
+ * ⚠️ It gates RETRIES ONLY — a slot with no attempt on record is always due, however late the tick
+ * (`SlotState.lastAttemptMs`). Applied to the first attempt as well, this window silently
+ * abandoned slots that were never asked: measured on prod, Sigenergy lost ~2.75% of its 5-minute
+ * buckets that way, with `fail 0`, and its cloud API serves no historical power to recover them
+ * with. The cap that stops a DOWN vendor being hammered is {@link BREAKER_AFTER_ERRORS}, which is
+ * keyed on evidence of failure rather than on the clock.
  */
 export const RETRY_WINDOW_MINUTES = 2;
 
@@ -87,6 +95,15 @@ export interface SlotSchedule {
  */
 export interface SlotState {
   consecutiveErrors?: number;
+  /**
+   * When the last poll ATTEMPT started (`device_state.last_poll_time`), successful or not, or
+   * null/undefined if never. Distinguishes "this slot has been tried and failed" from "this slot
+   * has never been tried at all" — see the retry window in {@link evaluateSlot}.
+   *
+   * Undefined (the caller does not track attempts) is treated as "no attempt this slot", which is
+   * the safe reading: it can only make a poll MORE likely, never suppress one.
+   */
+  lastAttemptMs?: number | null;
 }
 
 export interface SlotDecision {
@@ -142,6 +159,12 @@ export function evaluateSlot(
   const intoSlotMs = nowMs - openMs;
   const breakerOpen = (state?.consecutiveErrors ?? 0) >= BREAKER_AFTER_ERRORS;
 
+  // Has anything been TRIED in this slot yet? Both budgets below (the never-polled breaker and the
+  // retry window) are meant to cap attempts per slot, not to close a slot the clock has moved past.
+  const attemptedThisSlot =
+    state?.lastAttemptMs != null &&
+    slotOf(state.lastAttemptMs, intervalMinutes) >= slotStartMs;
+
   if (lastSuccessMs === null) {
     // A device that has never succeeded has no recorded slot to close, so the retry above can never
     // engage and it polls EVERY minute, forever — 1440 calls a day at a vendor that isn't answering
@@ -149,7 +172,12 @@ export function evaluateSlot(
     // nothing pages while it happens. Against Enphase's ~1000 calls/MONTH that empties the quota in
     // under a day. The breaker applies here too; the in-slot window deliberately does not, because a
     // genuinely new device should keep asking until it gets its first reading.
-    if (breakerOpen && intoSlotMs >= MINUTE_MS) {
+    //
+    // The breaker's cap is ONE ATTEMPT PER SLOT, so it is keyed on whether this slot has been tried
+    // — not on the clock. Keying it on `intoSlotMs` meant a tick that arrived late (jitter, a lease
+    // skip) burned the slot without asking at all, which is stricter than the cap intends and buys
+    // nothing: the call it suppresses was never made.
+    if (breakerOpen && attemptedThisSlot) {
       return {
         due: false,
         reason: `never polled — breaker open after ${state?.consecutiveErrors} consecutive failures`,
@@ -179,12 +207,25 @@ export function evaluateSlot(
     return { due: true, reason: "slot poll", slotStartMs, nextDueMs: nowMs };
   }
 
+  // A first attempt is never late. The window below bounds RETRIES — re-asking a vendor that has
+  // already answered badly this slot — and applying it to a slot nothing has attempted yet spends
+  // a permanent data hole to save a call that was never made. That is the wrong trade for any
+  // vendor, and a ruinous one for a vendor with a single sample per bucket and no re-fetch path
+  // (Sigenergy: one instantaneous snapshot per 5-minute slot, and its cloud API serves no
+  // historical power, so a skipped slot is gone). The real "stop asking a vendor that is down"
+  // control is the breaker below, which is keyed on consecutive FAILURES — actual evidence —
+  // rather than on the clock.
+  //
+  // Measured on prod (2026-08-31, `npm run poll-cadence -- --device=13 --hours=48`): Sigenergy ran
+  // 11.67 polls/h against a declared 12, with `fail 0` and `gap max` exactly 10 min — i.e. ~2.75%
+  // of slots produced no attempt at all, one slot wide. Losing the first two minutely ticks of a
+  // slot (Vercel delivery jitter, or an `acquireCronLease` skip) was enough to abandon it.
   // Retry, but only within the budget. The breaker (a vendor failing slot after slot) collapses the
   // window to the first attempt; a success zeroes `consecutive_errors` and restores it.
   const windowMs =
     (breakerOpen ? 1 : (schedule.retryWindowMinutes ?? RETRY_WINDOW_MINUTES)) *
     MINUTE_MS;
-  if (intoSlotMs >= windowMs) {
+  if (attemptedThisSlot && intoSlotMs >= windowMs) {
     return {
       due: false,
       reason: breakerOpen
@@ -197,7 +238,9 @@ export function evaluateSlot(
 
   return {
     due: true,
-    reason: "retrying until slot recorded",
+    reason: attemptedThisSlot
+      ? "retrying until slot recorded"
+      : "slot poll (late — first attempt)",
     slotStartMs,
     nextDueMs: nowMs,
   };

@@ -6,6 +6,7 @@
  * publishing through the shared collector → receiver → agg_5m path.
  */
 import { backfillEnergyRange } from "@/lib/vendors/sigenergy/statistics";
+import { SIGEN_DERIVED_TAILS } from "@/lib/vendors/sigenergy/derive-power";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
 import type {
@@ -49,12 +50,34 @@ const SIGEN_ENERGY_TAILS = [
   "battery_discharge_interval_wh",
 ] as const;
 
+/**
+ * Detection covers the POWER + SoC points too, not just energy.
+ *
+ * It used to watch only the energy tails, which made Sigenergy look permanently healthy: energy is
+ * re-fetchable and therefore always complete, while power and SoC — the series the dashboard
+ * actually draws — were losing ~3% of their intervals to skipped polls with nothing reporting it.
+ * Measured on prod, 2026-08-01..30: energy 0/8640 missing, power and SoC 70/8640.
+ *
+ * They became repairable at the same time as they became visible: `backfillEnergyRange` now also
+ * reconstructs them from the interval energy (`derive-power.ts`). Order matters — detecting a class
+ * of gap the repair cannot close just files the same `unsettled` day in every report forever
+ * (`docs/architecture/coverage-repair.md`, "a source-confirmed permanent hole is reported forever").
+ *
+ * Holes longer than the interpolation cap still cannot be closed for SoC and the EV/rest-of-house
+ * split, so a long outage will keep being reported. That is the right answer: it is a real gap, and
+ * a report that names it is more use than one that stays silent.
+ */
+const SIGEN_COVERAGE_TAILS = [
+  ...SIGEN_ENERGY_TAILS,
+  ...SIGEN_DERIVED_TAILS,
+] as const;
+
 export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
   vendorType: "sigenergy",
   cadenceMinutes: 5, // 288/day
   lookbackDays: 90,
   graceDays: 7,
-  expectedPointTails: SIGEN_ENERGY_TAILS,
+  expectedPointTails: SIGEN_COVERAGE_TAILS,
   needsCredentials: true,
   hasDerivedFlow: true,
   bucketOffsetMin: (s) => s.timezoneOffsetMin ?? 600, // station-local
@@ -85,7 +108,10 @@ export const sigenergyProvider: CoverageRepairProvider<SigenCtx> = {
         session,
         collector,
       });
-      const rows = res.days?.[0]?.readingsWritten ?? 0;
+      // Count the recovered power/SoC rows as published too — they are the point of the repair for
+      // every tail that is not energy, and omitting them would report a genuine repair as a no-op.
+      const day0 = res.days?.[0];
+      const rows = (day0?.readingsWritten ?? 0) + (day0?.derivedWritten ?? 0);
       if (res.errors && res.errors.length > 0)
         return {
           systemId: device.id,

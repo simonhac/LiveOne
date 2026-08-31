@@ -17,7 +17,7 @@ import {
   mapWithConcurrency,
   withDeadline,
 } from "@/lib/cron/concurrency";
-import { acquireCronLease } from "@/lib/cron/run-lock";
+import { acquireCronLease, readCronLeaseHolder } from "@/lib/cron/run-lock";
 
 /**
  * The device's slot width, used only to order dispatch. Read off the adapter rather than plumbed
@@ -391,12 +391,20 @@ export async function GET(request: NextRequest) {
       if (!lease) {
         // 200, not 429: `cronSkipReason` already established that a skip is a normal outcome here,
         // and a non-2xx would make Vercel retry into exactly the overlap being prevented.
+        //
+        // Name the holder. A dropped tick and a skipped one look identical after the fact, and they
+        // mean different things — an overlap says a run overshot its 60 s period, a gap in the log
+        // says Vercel never delivered. Neither loses a slot any more (the slot stays due until it
+        // has actually been attempted, `lib/vendors/schedule.ts`), so this is purely for telling
+        // them apart when the cadence report shows a shortfall.
+        const heldBy = await readCronLeaseHolder("minutely");
         console.warn(
-          "[Cron] previous run still in flight — skipping this tick",
+          `[Cron] previous run still in flight (held by ${heldBy ?? "unknown"}) — skipping this tick`,
         );
         return NextResponse.json({
           skipped: true,
           reason: "previous minutely run still in flight",
+          heldBy,
         });
       }
       releaseLease = lease.release;

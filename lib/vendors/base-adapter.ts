@@ -143,7 +143,8 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
    * Keyed on `lastSuccessTime` (a failed poll must not consume its slot) which, since this change,
    * stamps when the poll STARTED — see `lib/vendors/schedule.ts` for why both matter. That retry is
    * bounded by an in-slot budget plus a consecutive-failure breaker, both fed from the
-   * `device_state` row this method already has in hand.
+   * `device_state` row this method already has in hand. The in-slot budget counts ATTEMPTS
+   * (`lastPollTime`), so a slot nothing has asked yet stays due no matter how late the tick.
    */
   async shouldPoll(
     device: DeviceConfigView,
@@ -181,7 +182,13 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         offsetMinutes: this.pollOffsetMinutes,
         retryWindowMinutes: this.retryWindowMinutes,
       },
-      { consecutiveErrors: device.pollingStatus?.consecutiveErrors ?? 0 },
+      {
+        consecutiveErrors: device.pollingStatus?.consecutiveErrors ?? 0,
+        // `last_poll_time` is stamped with the poll's START instant on both the success and the
+        // error path (`lib/polling-utils.ts`), so it answers "was this slot attempted" without the
+        // slot-crossing hazard a completion stamp would carry.
+        lastAttemptMs: device.pollingStatus?.lastPollTime?.getTime() ?? null,
+      },
     );
 
     return {

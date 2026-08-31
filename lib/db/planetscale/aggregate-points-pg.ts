@@ -250,9 +250,14 @@ async function recompute5mIntervalsWithin(
       if (toUpsert.length > 0) {
         // preserveVendorMeta: the recompute owns the value columns but must not clobber
         // session_id/value_str/data_quality a 5m-native queue write may have set on this interval.
+        //
+        // clearDerivedQuality: the one exception. Reaching here means real samples exist for this
+        // interval, so a `calculated`/`interpolated` marker left by gap recovery is now describing
+        // values that were just overwritten with measurements — keeping it would label a
+        // measurement as invented. Vendor markers are still preserved; only ours are dropped.
         const { written } = await ReadingsDao.insert5m(
           toUpsert,
-          { upsert: true, preserveVendorMeta: true },
+          { upsert: true, preserveVendorMeta: true, clearDerivedQuality: true },
           db,
         );
         rowsUpserted += written;

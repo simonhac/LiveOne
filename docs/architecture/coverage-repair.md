@@ -1,14 +1,15 @@
-# Coverage repair — weekly self-heal for re-fetchable vendors
+# Coverage repair — nightly self-heal for re-fetchable vendors
 
-Status: **current** — deployed and running weekly in prod (see [Status](#status--deployment)).
+Status: **current** — deployed and running nightly in prod (see [Status](#status--deployment)).
 
-A weekly, two-stage job that finds coverage gaps in the serving store and backfills them from the
+A nightly, two-stage job that finds coverage gaps in the serving store and backfills them from the
 vendor API, for every **re-fetchable** external vendor (Amber, OpenElectricity, Sigenergy). It is the
 generalization of the one-off Amber usage backfill into standing infrastructure. Push vendors
 (Fronius/DeepSea) are **out of scope** — their gaps are device/network downtime, gone for good.
 
 Engine: `lib/coverage/`. Providers: `lib/vendors/<vendor>/coverage-repair.ts`. Cron:
-`app/api/cron/repair-coverage/route.ts` (weekly, Monday, in `vercel.json`).
+`app/api/cron/repair-coverage/route.ts` (nightly in `vercel.json`; **shallow** most nights, **deep** on
+Mondays — see [Window depth](#window-depth-shallow-nightly-deep-weekly)).
 
 ## Why
 
@@ -22,6 +23,14 @@ External-API vendors accumulate holes in `point_readings_agg_5m` that live polli
   _collection_ gap and affect any usage day.)
 - **OpenElectricity / Sigenergy** — brief API/outage windows that the live poll's short auto-heal
   lookback misses; they leave a handful of missing intervals on scattered days.
+- **Sigenergy's power + SoC are not re-fetchable at all.** Its cloud API has exactly two data
+  endpoints: `energyflow` (an instantaneous snapshot, no history) and `statistics/energy` (5-minute
+  cumulative ENERGY counters). So energy self-heals perfectly while power and SoC — the series the
+  dashboard actually draws — accumulate permanent holes at every slot the 5-minute poll misses, and
+  Sigenergy has exactly ONE sample per bucket, so there is no redundancy to absorb one. Measured on
+  prod 2026-08-01..30: energy 0/8640 missing, power and SoC 70/8640, always the same intervals.
+  Those are RECONSTRUCTED rather than re-fetched — see
+  [Sigenergy power recovery](#sigenergy-power--soc-recovery).
 
 The common shape: each vendor already has a **backfill** primitive (re-fetch a range/day and publish),
 but only Amber had a **gap-finder** and a scheduler. This framework supplies the missing half —
@@ -51,7 +60,7 @@ native result → `repaired | unsettled | error`). Registered in `lib/coverage/p
 | --------------- | --------------- | --------------------------------------------------------------------- | ------------------------------------------ | ------------- | --------------------------------------- | ---------------------- |
 | Amber           | 30-min (48/day) | `E1/kwh,E1/cost,B1/kwh,B1/cost`                                       | per-owner (Clerk)                          | AEST +10      | `fetchAmberUsage`→`storeRecordsLocally` | ~90 days               |
 | OpenElectricity | 5-min (288/day) | `nem/price,nem/renewableProportion,nem/demand,nem/emissionsIntensity` | **ownerless** (`OPEN_ELECTRICITY_API_KEY`) | AEST +10      | `backfillRange` (one day)               | deep (months)          |
-| Sigenergy       | 5-min (288/day) | six `*_interval_wh`                                                   | per-owner (Clerk)                          | station-local | `backfillEnergyRange(day,day)`          | **unknown** (see note) |
+| Sigenergy       | 5-min (288/day) | six `*_interval_wh` **+ `solar_w,grid_w,battery_w,load_w,ev_w,battery_soc`** | per-owner (Clerk)                          | station-local | `backfillEnergyRange(day,day)`          | **unknown** (see note) |
 
 ## Invariants & gotchas (the non-obvious decisions)
 
@@ -98,9 +107,10 @@ day)` per repaired system-day, plus per-area `recomputeFlowMatrixForDay` + batte
   UPSERT). See `architecture/engine-web-separation.md` and `observations-qstash-payloads.md`.
 - **Reporting** — an itemised summary posts to the monitor channel (`OBSERVATIONS_ALERT_WEBHOOK_URL`),
   🟢 ok / 🟡 warn (unsettled / deferred / not-yet-landed) / 🔴 alert (errors). See `operations.md`.
-- **Config (env, all optional)** — `REPAIR_LOOKBACK_DAYS` (90), `REPAIR_SETTLEMENT_GRACE_DAYS` (7),
-  `REPAIR_MAX_DAYS_PER_RUN` (120/vendor), `REPAIR_LANDING_WAIT_SECONDS` (120). The window is uniform
-  **7–90 days** for all vendors.
+- **Config (env, all optional)** — `REPAIR_LOOKBACK_DAYS` (10 — the SHALLOW nightly window; a deep
+  run uses each provider's own 90), `REPAIR_SETTLEMENT_GRACE_DAYS` (defaults to the provider's, 7),
+  `REPAIR_MAX_DAYS_PER_RUN` (120/vendor), `REPAIR_LANDING_WAIT_SECONDS` (120). A deep window is
+  uniform **7–90 days** for all vendors.
 - **Manual invocation** — `GET /api/cron/repair-coverage` with `?dry=true` (Stage-1 report only),
   `?vendor=<amber|openelectricity|sigenergy>` (target one), `?force=true` (bypass the `CRONS_ENABLED`
   kill-switch). Auth: `Authorization: Bearer $CRON_SECRET` or an admin session.
@@ -130,18 +140,68 @@ bounds a first-run/backlog and rolls the remainder to next week.
 
 **The scaling invariant — and why batching is easy.** The only real requirement is **"every eligible
 system is repaired at least once a week"** — _when_ within the week does not matter. So as the fleet
-grows we do **not** need to process everything in one weekly request: run more often and do a **slice
+grows we do **not** need to process everything in one deep request: do a **slice
 per run** (round-robin systems, or a cursor/queue that drains over the week — the same shape as
 `recompute-provenance`'s `nextCursor` loop). That scales indefinitely while keeping every invocation
 well inside the time budget. When that day comes, also take the **landing-wait + recompute off the
 critical path**: recompute on the _next_ run, keyed on "`agg_5m` present but `agg_1d` stale"
 (race-free, no blocking). Neither is needed yet.
 
+## Window depth: shallow nightly, deep weekly
+
+The cron runs nightly, but a nightly pass over the full 7–90 day window would re-fetch every
+permanently-unrecoverable day in it every night: nothing records that a gap has been *accepted*
+(see [Status](#status--deployment)), so the same days recur forever against a per-vendor budget
+inside a 300 s function.
+
+So the route picks its own depth: **shallow** (`REPAIR_LOOKBACK_DAYS`, default 10 days — enough for
+Amber settlement and the week's fresh holes) on most nights, and **deep** (each provider's own
+`lookbackDays`, 90) on Mondays UTC — the slot this cron occupied when it ran weekly. A shallow
+window is always a subset of the deep one, never a different window.
+
+`?deep=true` and `?lookback=N` override, for manual runs. The depth is decided in the route rather
+than by a second cron entry with a query string, so it is testable without deploying.
+
+## Sigenergy power & SoC recovery
+
+`lib/vendors/sigenergy/derive-power.ts`, invoked from the energy backfill. For any 5-minute interval
+that has energy but NO power row, it writes:
+
+- `calculated` — exact, by identity, from the same interval's energy (Wh × 12 = mean W): solar,
+  grid (`import − export`), battery (`discharge − charge`), and TOTAL load.
+- `interpolated` — linear between bracketing **measured** samples, holes ≤ 3 intervals only: SoC,
+  and the EV / rest-of-house split of that total load.
+
+Three things worth knowing before touching it:
+
+- **`load_interval_wh` is TOTAL load — it includes the EV.** Verified on prod 2026-08-20: on
+  intervals where the EV draws > 2 kW, median |`powerUse`×12 − rest-of-house| is 7060 W against
+  290 W for |`powerUse`×12 − (rest-of-house + ev)|. The energy counters cannot separate the two, and
+  the vendor's balance identity is pure conservation so it adds nothing — hence an interpolated
+  split, with the exact total preserved.
+- **The counters drop out.** They occasionally read ~0 for a sample and repay the difference later,
+  which `computeDayEnergyReadings` deliberately keeps as signed diffs so the day still telescopes to
+  the vendor total. Correct for a total, useless for one interval: ×12 would paint a 300 kW spike.
+  The guard tracks an unrepaid deficit per counter (negatives within one 0.01 kWh ULP are rounding
+  flicker, not a dropout). Over 2026-08-01..30 that took the worst |derived − measured| from
+  323.6 kW to 5.6 kW (solar), 33.2 → 5.5 kW (grid), 203.9 → 6.4 kW (battery), keeping 98–99 % of
+  intervals. Leave-one-out, SoC interpolation is accurate to 0.85 % worst case.
+  **Whether the vendor SENDS those zeros or we coerce them is not established** — `pullEnergyDay`
+  discards the raw payload, so the session archive cannot answer it. See
+  [plans/sigenergy-counter-dropout-forensics.md](../plans/sigenergy-counter-dropout-forensics.md).
+- **Nothing measured is ever overwritten.** The write path upserts at the receiver, so the
+  protection is that rows are only emitted for intervals that had none — plus a 30-minute settle
+  margin for the read-then-write window. If a real sample later lands on a derived interval, the
+  raw→5m recompute clears the marker (`clearDerivedQuality` in `lib/readings/dao.ts`), so a
+  measurement is never left labelled as invented.
+
 ## Relationship to the manual backfill routes
 
-`app/api/cron/openelectricity-backfill` and `app/api/cron/sigenergy-backfill` remain as **manual,
-range-based** tools (you POST an explicit date range; no detection). The weekly coverage-repair cron is
-the **automated, self-detecting** counterpart, wrapping the same underlying re-fetch primitives.
+`app/api/cron/openelectricity-backfill` is a **manual, range-based** tool (you POST an explicit date
+range; no detection). `app/api/cron/sigenergy-backfill` has the same shape but **is scheduled**
+(nightly, `20 14 * * *`) and is the PRIMARY writer of Sigenergy interval energy — coverage repair is
+only its backstop. The coverage-repair cron is the **automated, self-detecting** counterpart,
+wrapping the same underlying re-fetch primitives.
 
 ## Adding a vendor
 
@@ -167,20 +227,20 @@ lets you **re-fetch history** — push/webhook vendors cannot self-heal.
 
 ## Status / deployment
 
-**Live.** The cron is scheduled in `vercel.json` (`30 15 * * 1` UTC — Monday, weekly) and
+**Live.** The cron is scheduled in `vercel.json` (`45 14 * * *` UTC — nightly, deep on Mondays) and
 `CRONS_ENABLED=true` in prod, so it runs unattended. It was built and validated in 2026-07
 (Stage-1 detection + provider `prepare`/`backfillDay` proven on dev for all three vendors; full
 write→land→recompute proven on prod for OpenElectricity, healing 12 real gaps) and has since healed
 gaps in normal operation.
 
-Two things are still open, and both are about *interpreting* the weekly report rather than about the
+Two things are still open, and both are about *interpreting* the report rather than about the
 machinery:
 
 - **Sigenergy's recoverable window is still unmeasured** — see the gotcha above. Until it is known,
   old Sigen days may be reported `unsettled` every week without ever being recoverable.
 - **A source-confirmed permanent hole is reported forever.** There is no way to mark a gap
   "accepted — the vendor genuinely has no data here", so a known-unrecoverable day recurs in every
-  weekly report as noise. A commission-date floor already suppresses pre-commissioning days (and
+  report as noise. A commission-date floor already suppresses pre-commissioning days (and
   note the trap that a vendor's commission date can *predate* all its data and manufacture a phantom
   gap — investigated and fixed for Kutis, 2026-07-28), but that only covers the before-the-start
   case.

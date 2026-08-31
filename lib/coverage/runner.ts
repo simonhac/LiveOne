@@ -40,6 +40,26 @@ const num = (env: string | undefined, fallback: number): number => {
 };
 const MAX_DAYS_PER_RUN = num(process.env.REPAIR_MAX_DAYS_PER_RUN, 120); // per vendor
 const LANDING_WAIT_SECONDS = num(process.env.REPAIR_LANDING_WAIT_SECONDS, 120);
+
+/**
+ * How far back a run scans, overriding each provider's own `lookbackDays`.
+ *
+ * The cron runs NIGHTLY, and a nightly pass over the full 90 days would re-fetch every
+ * permanently-unrecoverable day in the window every night — nothing records that a gap has been
+ * accepted, so the same days recur forever (see the "reported forever" note in
+ * `docs/architecture/coverage-repair.md`). So the schedule is shallow-nightly, deep-weekly: the
+ * nightly run covers the days that can still change (Amber settlement, this week's fresh holes)
+ * and one run a week sweeps the whole window.
+ *
+ * `REPAIR_LOOKBACK_DAYS` / `REPAIR_SETTLEMENT_GRACE_DAYS` are the env overrides the docs have
+ * always described; until now they existed only in the docs.
+ */
+const SHALLOW_LOOKBACK_DAYS = num(process.env.REPAIR_LOOKBACK_DAYS, 10);
+const GRACE_DAYS_OVERRIDE = Number.isFinite(
+  Number(process.env.REPAIR_SETTLEMENT_GRACE_DAYS),
+)
+  ? Number(process.env.REPAIR_SETTLEMENT_GRACE_DAYS)
+  : null;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A UTC timestamp (`created_at`) → its local calendar day "YYYY-MM-DD" at the given bucket offset. */
@@ -93,9 +113,20 @@ export interface CoverageRepairResult {
 
 export async function runCoverageRepair(
   db: PgDb,
-  opts: { dryRun: boolean; onlyVendor?: string },
+  opts: {
+    dryRun: boolean;
+    onlyVendor?: string;
+    /**
+     * Days to scan back. Omitted = the shallow nightly default; `deep` = each provider's own
+     * `lookbackDays` (90). Explicitly `null` also means deep, so a caller can ask for the full
+     * sweep without knowing the number.
+     */
+    lookbackDays?: number | null;
+    deep?: boolean;
+  },
 ): Promise<CoverageRepairResult> {
   const { dryRun, onlyVendor } = opts;
+  const deep = opts.deep === true || opts.lookbackDays === null;
   const nowMs = Date.now();
   const providers = COVERAGE_PROVIDERS.filter(
     (p) => !onlyVendor || p.vendorType === onlyVendor,
@@ -129,11 +160,20 @@ export async function runCoverageRepair(
         const todayLocal = new Date(nowMs + offset * 60_000)
           .toISOString()
           .slice(0, 10);
+        // A deep run uses the provider's own window; a shallow one is capped, and never widened
+        // past it — a shallow pass is a subset of the deep pass, never a different window.
+        const lookbackDays = deep
+          ? provider.lookbackDays
+          : Math.min(
+              provider.lookbackDays,
+              opts.lookbackDays ?? SHALLOW_LOOKBACK_DAYS,
+            );
+        const graceDays = GRACE_DAYS_OVERRIDE ?? provider.graceDays;
         const lookbackFirst = parseDate(todayLocal)
-          .subtract({ days: provider.lookbackDays })
+          .subtract({ days: lookbackDays })
           .toString();
         const lastDay = parseDate(todayLocal)
-          .subtract({ days: provider.graceDays })
+          .subtract({ days: graceDays })
           .toString();
 
         // Floor the window start at the device's "birth" so pre-existence days aren't flagged as
@@ -515,7 +555,7 @@ export async function runCoverageRepair(
     )
     .join(", ");
   const lines: string[] = [
-    `${icon} LiveOne weekly coverage repair${dryRun ? " [DRY-RUN]" : ""} — window ${windowFirst}..${windowLast} (7–90d); ${vendorCounts}`,
+    `${icon} LiveOne ${deep ? "deep" : "nightly"} coverage repair${dryRun ? " [DRY-RUN]" : ""} — window ${windowFirst}..${windowLast}; ${vendorCounts}`,
   ];
   const devicesToReport = reports.filter(
     (r) => r.gaps.length > 0 || r.repairs.some((x) => x.status === "error"),

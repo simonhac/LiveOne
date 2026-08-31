@@ -16,6 +16,16 @@ import {
 
 const at = (iso: string) => Date.parse(iso);
 
+/**
+ * "An attempt was made at this instant." The retry budget gates RETRIES, so every case that means
+ * to exercise it has to put an attempt on record first — without one the slot has never been asked
+ * and is due however late the tick (see `SlotState.lastAttemptMs`).
+ */
+const tried = (iso: string, extra: { consecutiveErrors?: number } = {}) => ({
+  ...extra,
+  lastAttemptMs: at(iso),
+});
+
 describe("slotOf / nextSlotStart", () => {
   it("anchors slots to the UTC epoch", () => {
     expect(slotOf(at("2026-08-15T05:07:31Z"), 5)).toBe(
@@ -68,6 +78,7 @@ describe("evaluateSlot", () => {
       at("2026-08-15T05:06:00Z"),
       at("2026-08-15T05:00:04Z"),
       every5,
+      tried("2026-08-15T05:05:33Z"),
     );
     expect(d.due).toBe(true);
     expect(d.reason).toBe("retrying until slot recorded");
@@ -205,18 +216,31 @@ describe("evaluateSlot", () => {
     const lastSuccess = at("2026-08-15T05:00:04Z");
 
     it("allows the first attempt and one retry, then stops for the slot", () => {
-      const due = ["05:05:33", "05:06:33"].map(
-        (t) => evaluateSlot(at(`2026-08-15T${t}Z`), lastSuccess, every5).due,
-      );
-      const notDue = ["05:07:33", "05:08:33", "05:09:33"].map(
-        (t) => evaluateSlot(at(`2026-08-15T${t}Z`), lastSuccess, every5).due,
-      );
-      expect(due).toEqual([true, true]);
-      expect(notDue).toEqual([false, false, false]);
+      // Replayed, because the budget is spent by ATTEMPTS: each due tick records one, and that is
+      // what closes the window for the rest of the slot.
+      let lastAttemptMs: number | null = null;
+      const due = [
+        "05:05:33",
+        "05:06:33",
+        "05:07:33",
+        "05:08:33",
+        "05:09:33",
+      ].map((t) => {
+        const nowMs = at(`2026-08-15T${t}Z`);
+        const d = evaluateSlot(nowMs, lastSuccess, every5, { lastAttemptMs });
+        if (d.due) lastAttemptMs = nowMs;
+        return d.due;
+      });
+      expect(due).toEqual([true, true, false, false, false]);
     });
 
     it("points nextDueMs at the next slot once the budget is spent", () => {
-      const d = evaluateSlot(at("2026-08-15T05:08:00Z"), lastSuccess, every5);
+      const d = evaluateSlot(
+        at("2026-08-15T05:08:00Z"),
+        lastSuccess,
+        every5,
+        tried("2026-08-15T05:06:33Z"),
+      );
       expect(d.due).toBe(false);
       expect(d.reason).toBe("retry budget spent for this slot");
       expect(d.nextDueMs).toBe(at("2026-08-15T05:10:00Z"));
@@ -226,13 +250,19 @@ describe("evaluateSlot", () => {
       const offset2 = { intervalMinutes: 5, offsetMinutes: 2 };
       // Opens at 05:07. The retry at 05:08 is still inside the budget…
       expect(
-        evaluateSlot(at("2026-08-15T05:08:10Z"), lastSuccess, offset2).due,
+        evaluateSlot(
+          at("2026-08-15T05:08:10Z"),
+          lastSuccess,
+          offset2,
+          tried("2026-08-15T05:07:10Z"),
+        ).due,
       ).toBe(true);
       // …but 05:09 is not, and the next chance is the next slot's offset.
       const spent = evaluateSlot(
         at("2026-08-15T05:09:10Z"),
         lastSuccess,
         offset2,
+        tried("2026-08-15T05:07:10Z"),
       );
       expect(spent.due).toBe(false);
       expect(spent.nextDueMs).toBe(at("2026-08-15T05:12:00Z"));
@@ -248,7 +278,7 @@ describe("evaluateSlot", () => {
         at("2026-08-15T05:06:33Z"),
         lastSuccess,
         every5,
-        tripped,
+        tried("2026-08-15T05:05:33Z", tripped),
       );
       expect(d.due).toBe(false);
       expect(d.reason).toMatch(/breaker open/);
@@ -279,7 +309,7 @@ describe("evaluateSlot", () => {
           at("2026-08-15T05:06:33Z"),
           null,
           every5,
-          tripped,
+          tried("2026-08-15T05:05:33Z", tripped),
         );
         expect(d.due).toBe(false);
         expect(d.reason).toMatch(/never polled — breaker open/);
@@ -290,6 +320,88 @@ describe("evaluateSlot", () => {
         expect(evaluateSlot(at("2026-08-15T05:05:33Z"), null, every5).due).toBe(
           true,
         );
+      });
+    });
+
+    /**
+     * The budget gates RETRIES. A slot nothing has asked yet is due however late the tick — the
+     * call the window would suppress was never made, so suppressing it buys nothing and costs a
+     * permanent hole in any series the vendor will not serve twice.
+     *
+     * Measured on prod 2026-08-31: Sigenergy (5-minute, ONE instantaneous sample per bucket, no
+     * historical power endpoint) ran 11.67 polls/h against a declared 12 with `fail 0` — ~2.75% of
+     * its buckets lost outright, each exactly one slot wide.
+     */
+    describe("a slot with no attempt on record", () => {
+      it("is due however late the tick", () => {
+        for (const t of ["05:06:33", "05:07:33", "05:09:59"]) {
+          const d = evaluateSlot(
+            at(`2026-08-15T${t}Z`),
+            lastSuccess,
+            every5,
+            { lastAttemptMs: at("2026-08-15T05:00:33Z") }, // last attempt was the PREVIOUS slot
+          );
+          expect(d.due).toBe(true);
+          expect(d.reason).toBe("slot poll (late — first attempt)");
+        }
+      });
+
+      it("is due even with the breaker open — the breaker caps attempts, not lateness", () => {
+        const d = evaluateSlot(
+          at("2026-08-15T05:08:33Z"),
+          lastSuccess,
+          every5,
+          tried("2026-08-15T05:00:33Z", {
+            consecutiveErrors: BREAKER_AFTER_ERRORS,
+          }),
+        );
+        expect(d.due).toBe(true);
+      });
+
+      it("still yields at most one attempt per slot when the breaker is open", () => {
+        let lastAttemptMs: number | null = at("2026-08-15T05:00:33Z");
+        const due = ["05:08:33", "05:09:33"].map((t) => {
+          const nowMs = at(`2026-08-15T${t}Z`);
+          const d = evaluateSlot(nowMs, lastSuccess, every5, {
+            consecutiveErrors: BREAKER_AFTER_ERRORS,
+            lastAttemptMs,
+          });
+          if (d.due) lastAttemptMs = nowMs;
+          return d.due;
+        });
+        expect(due).toEqual([true, false]);
+      });
+
+      /**
+       * The end-to-end shape of the bug: lose the first two minutely ticks of a slot (Vercel
+       * delivery jitter, or an `acquireCronLease` skip) and the slot used to be abandoned unasked.
+       */
+      it("recovers a slot whose first two ticks were dropped", () => {
+        const dropped = new Set(["05:05:33", "05:06:33"]);
+        let lastSuccessMs = at("2026-08-15T05:00:33Z");
+        let lastAttemptMs: number | null = lastSuccessMs;
+        let polled = false;
+
+        for (const t of ["05:05:33", "05:06:33", "05:07:33", "05:08:33"]) {
+          if (dropped.has(t)) continue; // the tick never ran
+          const nowMs = at(`2026-08-15T${t}Z`);
+          if (
+            !evaluateSlot(nowMs, lastSuccessMs, every5, { lastAttemptMs }).due
+          )
+            continue;
+          lastAttemptMs = nowMs;
+          lastSuccessMs = nowMs;
+          polled = true;
+        }
+        expect(polled).toBe(true);
+      });
+
+      // An undefined `lastAttemptMs` (a caller that does not track attempts) must read as "not
+      // attempted": it can only make a poll more likely, never suppress one.
+      it("treats an absent attempt time as not-yet-attempted", () => {
+        expect(
+          evaluateSlot(at("2026-08-15T05:08:33Z"), lastSuccess, every5).due,
+        ).toBe(true);
       });
     });
 
@@ -320,12 +432,13 @@ describe("evaluateSlot", () => {
     it("honours a widened window", () => {
       const wide = { intervalMinutes: 60, retryWindowMinutes: 10 };
       const hourly = at("2026-08-15T05:00:04Z");
-      expect(evaluateSlot(at("2026-08-15T06:09:00Z"), hourly, wide).due).toBe(
-        true,
-      );
-      expect(evaluateSlot(at("2026-08-15T06:11:00Z"), hourly, wide).due).toBe(
-        false,
-      );
+      const attempt = tried("2026-08-15T06:00:30Z");
+      expect(
+        evaluateSlot(at("2026-08-15T06:09:00Z"), hourly, wide, attempt).due,
+      ).toBe(true);
+      expect(
+        evaluateSlot(at("2026-08-15T06:11:00Z"), hourly, wide, attempt).due,
+      ).toBe(false);
     });
 
     /**
@@ -342,14 +455,18 @@ describe("evaluateSlot", () => {
         const downFrom = at("2026-08-15T14:05:00Z");
         const downUntil = at("2026-08-15T14:30:00Z");
         let lastSuccessMs = at("2026-08-15T13:55:33Z");
+        let lastAttemptMs: number | null = null;
         let consecutiveErrors = 0;
         let attempts = 0;
 
         for (let m = 0; m <= 35; m++) {
           const nowMs = at("2026-08-15T14:00:33Z") + m * 60_000;
-          const state = withBreaker ? { consecutiveErrors } : undefined;
+          const state = withBreaker
+            ? { consecutiveErrors, lastAttemptMs }
+            : { lastAttemptMs };
           if (!evaluateSlot(nowMs, lastSuccessMs, schedule, state).due)
             continue;
+          lastAttemptMs = nowMs;
           const up = nowMs < downFrom || nowMs >= downUntil;
           if (nowMs >= downFrom && nowMs < downUntil) attempts++;
           if (up) {

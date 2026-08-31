@@ -223,7 +223,14 @@ describe("recomputeAgg5mForIntervals", () => {
 
     expect(mockInsert5m).toHaveBeenCalledTimes(1);
     const [rows, opts] = mockInsert5m.mock.calls[0];
-    expect(opts).toEqual({ upsert: true, preserveVendorMeta: true });
+    // clearDerivedQuality: reaching the upsert means real samples exist for this interval, so a
+    // `calculated`/`interpolated` marker left by gap recovery must not survive onto values that
+    // have just been replaced by measurements. Vendor markers are still preserved.
+    expect(opts).toEqual({
+      upsert: true,
+      preserveVendorMeta: true,
+      clearDerivedQuality: true,
+    });
     expect(rows).toEqual([
       {
         point: p1.id,
