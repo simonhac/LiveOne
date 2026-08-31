@@ -1,9 +1,14 @@
 # Sigenergy counter dropouts: prove the source, and keep the evidence
 
-> **Status:** proposed — research first, no code written (drafted 2026-08-31). Fallout from the
-> Sigenergy power/SoC recovery work, which shipped a guard against this without ever establishing
-> where the bad value comes from. The guard is not blocked on any of this; it rejects the interval
-> on evidence the counter went backwards, which holds under either explanation.
+> **Status:** the research is DONE and the two defects it found have shipped (#414, #416). What
+> remains is §3 alone — a latent `pickNumber` coercion, worth doing on its own merits but not
+> implicated in anything observed. §1 and §2 are closed; the reasoning is kept because the next
+> person to see a 300 kW spike will ask the same questions.
+>
+> It began as fallout from the Sigenergy power/SoC recovery, which shipped a guard against this
+> without establishing where the bad value came from. Answering that turned up two live defects
+> (the flow-matrix overlay, and the itemList's unread power fields) and closed the guard's
+> provenance question: the vendor sends the zeros.
 
 ## Why
 
@@ -155,9 +160,15 @@ unless a preview is stood up (and see the receiver-URL trap below).
 Then look at the `itemList` row for the dropout interval: a literal `0` / `"0"` is the vendor; a
 `false`, `[]` or other non-numeric sentinel is `pickNumber` coercing (§3).
 
-⚠️ Check first that the endpoint is deterministic for a settled past day. If it re-derives on read,
-a fetch today says nothing about what arrived on 2026-08-21 — in which case only §2 can answer it,
-for future occurrences.
+**The endpoint is deterministic for a settled past day — measured 2026-09-01.** Two `raw=true`
+fetches of 2026-08-20, eight hours apart, returned a byte-identical 288-row `itemList`
+(sha `40dbf9d5…` both times), and the 19:20 dropout is still there twelve days after it was first
+recorded — `powerGeneration: 0`, `esCharging: -0.01`, with `batSoc: 55.1` and `loadPower: 2.219`
+unaffected beside it.
+
+So the endpoint serves a PERSISTED record, not a re-derivation: a fetch today does tell you what
+arrived. A dropout is therefore diagnosable retrospectively, on demand, which is what §2 existed to
+guarantee.
 
 ⚠️ **Do not run this on a preview deployment before checking where its writes go.**
 `getObservationsReceiverUrl()` (`lib/qstash.ts`) falls through to the PRODUCTION receiver when
@@ -171,9 +182,16 @@ prod Clerk).
 
 ### 2. Keep the evidence — archive the raw statistics payload
 
-So the next occurrence is answerable without a re-fetch. The write side is nearly free: the backfill
-route already stores the whole `backfillEnergyRange` result (`response: result`), so carrying `raw`
-through onto `PullEnergyDayResult` is most of it.
+**Largely OBVIATED by §1.** The point of archiving was to make the next dropout answerable without a
+re-fetch; since a re-fetch of a settled past day returns the identical payload, on demand, there is
+nothing to preserve. Do not build this on forensic grounds.
+
+The one case it would still cover is a dropout older than the vendor's retention window — which is
+**unmeasured** (see the note at the end of `docs/architecture/coverage-repair.md`), and only matters
+for diagnosing an anomaly nobody looked at for months. Weigh it against the cost below if that ever
+becomes a real need. The write side would be nearly free: the backfill route already stores the whole
+`backfillEnergyRange` result (`response: result`), so carrying `raw` through onto
+`PullEnergyDayResult` is most of it.
 
 Measured on prod (device 13, 2026-08-20..21), and note the 7× is the rolling 7-day window
 re-fetching the same days nightly:
@@ -188,7 +206,7 @@ re-fetching the same days nightly:
 | --- | --- | --- |
 | every day's raw | ~130 MB/yr per site | 7× redundant by construction |
 | `itemList` only, envelope dropped | ~30 % less | still 7× redundant |
-| **only days where `trustedCounters` found a dropout** | a few days/month at ~52 KB | **preferred** — we already detect them, and it captures exactly the forensic case |
+| **only days where `trustedCounters` found a dropout** | a few days/month at ~52 KB | the least-bad option IF it is ever needed — but see above: it probably is not |
 
 ### 3. Harden `pickNumber` regardless
 
