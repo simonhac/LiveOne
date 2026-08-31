@@ -823,6 +823,15 @@ async function insertRaw(
  * (battery-provenance blend, HWS) are the SOLE writer of their derived points and OWN both the value
  * columns AND `data_quality` (they set `"estimated"`/`"good"`), but never `session_id`/`value_str`
  * (always NULL for a derived point). Byte-identical to their legacy upsert.
+ *
+ * `clearDerivedQuality` (also only with `preserveVendorMeta:true`) drops the marker when — and only
+ * when — it is one this codebase wrote for a value it made up (`lib/data-quality.ts`). Gap recovery
+ * writes `calculated`/`interpolated` into intervals a poll missed; if a real sample for such an
+ * interval later lands (a QStash retry, a session replay, `rebuild-sigenergy-readings.ts`), the
+ * raw->5m recompute overwrites the values but `preserveVendorMeta` would keep the stale marker, and
+ * the row would claim a measurement was derived. It cannot use `writeDataQuality` instead: that
+ * would clobber the `good`/`b`/`a` a 5m-native queue write set on the same interval, which is the
+ * whole reason `preserveVendorMeta` exists. So the SET is conditional, in SQL, on the CURRENT value.
  */
 async function insert5m(
   rows: Agg5mInsert[],
@@ -830,6 +839,7 @@ async function insert5m(
     upsert: boolean;
     preserveVendorMeta?: boolean;
     writeDataQuality?: boolean;
+    clearDerivedQuality?: boolean;
   },
   exec?: ReadingsExec,
 ): Promise<{ written: number }> {
@@ -872,7 +882,11 @@ async function insert5m(
             ...(opts.preserveVendorMeta
               ? opts.writeDataQuality
                 ? { dataQuality: sql`excluded.data_quality` }
-                : {}
+                : opts.clearDerivedQuality
+                  ? {
+                      dataQuality: sql`CASE WHEN ${pointReadingsAgg5m.dataQuality} IN ('calculated', 'interpolated') THEN NULL ELSE ${pointReadingsAgg5m.dataQuality} END`,
+                    }
+                  : {}
               : {
                   sessionId: sql`excluded.session_id`,
                   valueStr: sql`excluded.value_str`,

@@ -26,7 +26,7 @@ product reasons about.
   registry ([kv-store.md](kv-store.md)).
 - **Cron:** Vercel Cron, 8 jobs (`vercel.json` is the schedule of record): minutely poll,
   outbox relay, derivations, daily aggregation, Sigenergy backfill, DB stats, queue monitor,
-  and the weekly coverage repair.
+  and the nightly coverage repair.
 - **On-site:** a Fly.io hub ([`packages/usher`](../../packages/usher/README.md)) fronts LAN-only
   push devices (DeepSea), which reach the app through `POST /api/gush`. The same collector also
   runs on a Raspberry Pi on the site LAN; the tunnel is a deployment choice, not app logic.
@@ -98,7 +98,7 @@ adapter. Anything that used to be a composite system is now an Area with members
 | KV cache keys & subscription registry                       | [kv-store.md](kv-store.md)                                                                       |
 | Energy-flow (Sankey) matrix                                 | [energy-flow-matrix.md](energy-flow-matrix.md)                                                   |
 | Metric-attributed flows (emissions/renewable/cost)          | [battery-provenance.md](battery-provenance.md)                                                   |
-| Weekly gap self-heal for re-fetchable vendors               | [coverage-repair.md](coverage-repair.md)                                                         |
+| Nightly gap self-heal for re-fetchable vendors              | [coverage-repair.md](coverage-repair.md)                                                         |
 | "Rest of house" load calculations                           | [load-calcs.md](load-calcs.md)                                                                   |
 | Hero-number and unit typography on cards                    | [number-typography.md](number-typography.md)                                                     |
 | Why the config layer looks like this (config-v4)            | [../plans/completed/config-v4-clean-sheet.md](../plans/completed/config-v4-clean-sheet.md)       |

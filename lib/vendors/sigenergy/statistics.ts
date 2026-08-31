@@ -25,6 +25,7 @@ import {
   type SigenergyEnergyCounterField,
 } from "./point-metadata";
 import type { SigenergyEnergyInterval, SigenergyEnergyTotals } from "./types";
+import { deriveDayPowerReadings } from "./derive-power";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,6 +65,8 @@ export interface PullEnergyDayResult {
   readingsWritten: number;
   reconciled: boolean; // true for a completed day (tail residual applied)
   empty: boolean; // no itemList rows (e.g. a pre-go-live day)
+  /** Power/SoC rows recovered for intervals the live poll missed (see `derive-power.ts`). */
+  derivedWritten: number;
 }
 
 /**
@@ -168,6 +171,7 @@ export async function pullEnergyDay(params: {
       readingsWritten: 0,
       reconciled: false,
       empty: true,
+      derivedWritten: 0,
     };
   }
 
@@ -183,10 +187,28 @@ export async function pullEnergyDay(params: {
     date,
   );
 
+  // Recover the POWER + SoC intervals the live poll missed, from the energy we just differenced.
+  // Sigenergy's cloud API serves no historical power, so this pass is the only thing that can close
+  // those holes — see `derive-power.ts`. Best-effort by design: it reads the serving store to find
+  // out what is missing, and a failed read must not cost us the energy backfill that already
+  // succeeded.
+  let derived: Awaited<ReturnType<typeof deriveDayPowerReadings>> = [];
+  try {
+    derived = await deriveDayPowerReadings({
+      systemId,
+      energyReadings: readings,
+      nowMs: now,
+    });
+  } catch (err) {
+    console.warn(
+      `[Sigenergy] ${date}: power/SoC recovery skipped — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   await PointManager.getInstance().insertPointReadingsAgg5m(
     systemId,
     session,
-    readings,
+    [...readings, ...derived],
     collector,
   );
 
@@ -196,6 +218,7 @@ export async function pullEnergyDay(params: {
     readingsWritten: readings.length,
     reconciled: isComplete,
     empty: false,
+    derivedWritten: derived.length,
   };
 }
 

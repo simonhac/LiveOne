@@ -82,13 +82,14 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 - `/api/admin/observations/{dlq,info,messages,stats}` — read-only inspection of
   queue + outbox state.
 
-## Weekly coverage repair
+## Nightly coverage repair
 
-**`app/api/cron/repair-coverage/route.ts`** — a Vercel cron (weekly, `vercel.json`) that finds
-coverage gaps in the re-fetchable vendors (Amber/OpenElectricity/Sigenergy) and backfills them. Unlike
-the monitor above it **posts every run** (a weekly heartbeat), not only on failure. The message is an
+**`app/api/cron/repair-coverage/route.ts`** — a Vercel cron (nightly, `vercel.json`) that finds
+coverage gaps in the re-fetchable vendors (Amber/OpenElectricity/Sigenergy) and backfills them. Most
+nights it scans a shallow window (~10 days); on Mondays UTC it sweeps each provider's full 90. Unlike
+the monitor above it **posts every run** (a nightly heartbeat), not only on failure. The message is an
 itemised report — `🟢 ok` (nothing to do, or all repaired) / `🟡 warn` (some gap-days `unsettled` —
-the vendor API had no data yet, retried next week — or `deferred (cap)` / not-yet-landed) / `🔴 alert`
+the vendor API had no data yet, retried next run — or `deferred (cap)` / not-yet-landed) / `🔴 alert`
 (a fetch/credential error). Each line is `– <day>: <n> int (<points>) → <outcome>`. It only writes via
 the normal publish path and recomputes scoped derived tables. Full design, invariants, and per-vendor
 recoverable windows: **[architecture/coverage-repair.md](architecture/coverage-repair.md)**.

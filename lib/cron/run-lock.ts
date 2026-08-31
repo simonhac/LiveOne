@@ -72,3 +72,25 @@ export async function acquireCronLease(
     },
   };
 }
+
+/**
+ * Who currently holds the named lease, or null if nobody (or KV is unconfigured).
+ *
+ * Diagnostic only — never gates a poll. A skipped tick and a tick Vercel simply never delivered are
+ * indistinguishable in the logs otherwise, and they have different remedies: an overlap means a run
+ * overshot its 60 s period, delivery jitter means it did not. The slot scheduler no longer LOSES a
+ * slot to either (`lib/vendors/schedule.ts` keeps a slot due until it has actually been attempted),
+ * so this is for telling the two apart, not for damage control.
+ */
+export async function readCronLeaseHolder(
+  name: string,
+): Promise<string | null> {
+  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+    return null;
+  }
+  try {
+    return (await kv.get<string>(kvKey(`cron:lease:${name}`))) ?? null;
+  } catch {
+    return null;
+  }
+}

@@ -31,7 +31,7 @@
     },
     {
       "path": "/api/cron/repair-coverage",
-      "schedule": "30 15 * * 1"
+      "schedule": "45 14 * * *"
     }
   ],
   "functions": {
