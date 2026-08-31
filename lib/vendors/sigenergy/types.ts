@@ -78,7 +78,37 @@ export interface SigenergyEnergyTotals {
   esDischarging: number | null; // battery discharge (kWh)
 }
 
-export interface SigenergyEnergyInterval extends SigenergyEnergyTotals {
+/**
+ * The INSTANTANEOUS power + SoC an `itemList` row also carries (kW / %), vendor signs.
+ *
+ * The statistics endpoint is not energy-only: every row reports the same snapshot fields the live
+ * `energyflow` endpoint does. Discovered 2026-08-31, having assumed for the life of this integration
+ * that Sigenergy served no historical power — see
+ * `docs/plans/sigenergy-counter-dropout-forensics.md`.
+ *
+ * These are a genuine measurement of the interval, and independent of the cumulative counters: at
+ * the 2026-08-20 19:20 dropout, every energy counter collapsed to 0 while `loadPower` (2.219 kW)
+ * and `batSoc` (55.1 %) stayed sane. Validated against our own polled samples for that day (n=268):
+ * `pvTotalPower` matches `source.solar/power.avg` to a median 0.0 W, `batSoc` to 0.0 %.
+ *
+ * ⚠️ `load` is the site TOTAL and includes the EV — the same semantics as `powerUse`, and there is
+ * no EV field. On EV-charging (>2 kW) intervals it misses rest-of-house alone by 6850 W and the sum
+ * by 57.5 W.
+ */
+export interface SigenergyIntervalPower {
+  solarKw: number | null;
+  /** TOTAL site load, EV included. */
+  loadKw: number | null;
+  gridImportKw: number | null;
+  gridExportKw: number | null;
+  batteryChargeKw: number | null;
+  batteryDischargeKw: number | null;
+  socPct: number | null;
+}
+
+export interface SigenergyEnergyInterval
+  extends SigenergyEnergyTotals,
+    SigenergyIntervalPower {
   /** Local wall-clock start of the 5-min interval, "YYYYMMDD HH:MM". */
   dataTime: string;
 }

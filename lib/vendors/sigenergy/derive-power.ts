@@ -12,6 +12,25 @@
  * because it is the whole poll that is lost. On the chart those become breaks
  * (`d3.line().defined()`), which is what this module exists to close.
  *
+ * ## The vendor's own power comes first
+ *
+ * The `statistics/energy` `itemList` also carries the INSTANTANEOUS power and SoC for each
+ * historical interval (`pvTotalPower`, `loadPower`, `toGridPower`, `fromGridPower`,
+ * `esChargePower`, `esDischargePower`, `batSoc`) — the same snapshot fields the live endpoint
+ * returns. Where those are present they are used verbatim, because they are a MEASUREMENT of the
+ * interval, not a reconstruction of it: exact rather than quantised to 0.01 kWh, subject to no
+ * interpolation cap, and independent of the counters (at the 2026-08-20 19:20 dropout every energy
+ * counter collapsed while `loadPower` and `batSoc` stayed sane). Validated against our own polled
+ * samples for that day, n=268: `pvTotalPower` matches to a median 0.0 W, `batSoc` to 0.0 %.
+ *
+ * They are written with `data_quality` "good" and NOT one of the derived markers. That is the
+ * honest label — the value is the vendor's record of that interval, the same thing the poll would
+ * have captured had it run — and it keeps them out of the "% estimated" accounting, which is about
+ * confidence, not provenance. Which rows arrived this way is answerable from `session_id`; using a
+ * quality marker to carry provenance is the mistake Amber's abbreviation already made.
+ *
+ * Everything below is the FALLBACK, for an interval whose power fields are absent.
+ *
  * ## What can be recovered, and how honestly
  *
  * `calculated` — exact, by identity, from the interval energy of the SAME interval (Wh x 12 = mean
@@ -93,6 +112,7 @@
 import { PointManager, type PointMetadata } from "@/lib/point/point-manager";
 import { ReadingsDao } from "@/lib/readings";
 import { Point } from "@/lib/ids";
+import { trustedByDeficit } from "@/lib/aggregation/counter-deficit";
 import { SIGENERGY_POINTS } from "./point-metadata";
 
 const FIVE_MIN_MS = 5 * 60 * 1000;
@@ -128,11 +148,27 @@ export interface MeasuredSample {
   value: number;
 }
 
+/**
+ * The vendor's instantaneous sample for one interval, in LiveOne's canonical units and signs
+ * (Watts, inflow-positive) — already normalised, so this module never sees the vendor convention.
+ */
+export interface VendorPowerSample {
+  solarW: number | null;
+  /** TOTAL site load, EV included — there is no EV field. */
+  loadW: number | null;
+  /** + import. */
+  gridW: number | null;
+  /** + discharge. */
+  batteryW: number | null;
+  socPct: number | null;
+}
+
 export interface DerivedReading {
   pointMetadata: PointMetadata;
   rawValue: number;
   intervalEndMs: number;
-  dataQuality: "calculated" | "interpolated";
+  /** "good" = the vendor's own recorded sample; the others are ours. See the header. */
+  dataQuality: "good" | "calculated" | "interpolated";
 }
 
 const metadataByTail = new Map<string, PointMetadata>(
@@ -216,28 +252,28 @@ const ENERGY_FIELDS: readonly (keyof IntervalEnergyWh)[] = [
 export function trustedCounters(
   ordered: readonly (readonly [number, IntervalEnergyWh])[],
 ): Map<number, Set<keyof IntervalEnergyWh>> {
-  const out = new Map<number, Set<keyof IntervalEnergyWh>>();
-  const deficit = new Map<keyof IntervalEnergyWh, number>();
+  // One deficit scan per counter. The scan itself is shared with the flow-matrix energy overlay
+  // (`lib/aggregation/counter-deficit.ts`) — same defect, same data, and two guards that disagreed
+  // about it is how the overlay kept a bug this one had already fixed.
+  const perField = new Map<keyof IntervalEnergyWh, boolean[]>();
+  for (const field of ENERGY_FIELDS) {
+    perField.set(
+      field,
+      trustedByDeficit(
+        ordered.map(([, e]) => e[field]),
+        COUNTER_ULP_WH,
+      ),
+    );
+  }
 
-  for (const [ms, e] of ordered) {
+  const out = new Map<number, Set<keyof IntervalEnergyWh>>();
+  ordered.forEach(([ms], i) => {
     const ok = new Set<keyof IntervalEnergyWh>();
     for (const field of ENERGY_FIELDS) {
-      const raw = e[field];
-      if (raw == null) continue;
-      if (raw < -COUNTER_ULP_WH) {
-        deficit.set(field, -raw); // dropped out — it now owes this much
-        continue;
-      }
-      const v = raw < 0 ? 0 : raw; // within one ULP: rounding, not a dropout
-      const owed = deficit.get(field) ?? 0;
-      if (owed > 0) {
-        deficit.set(field, owed - v); // still repaying; this bucket is inflated
-        continue;
-      }
-      ok.add(field);
+      if (perField.get(field)![i]) ok.add(field);
     }
     out.set(ms, ok);
-  }
+  });
   return out;
 }
 
@@ -260,6 +296,9 @@ export function computeDerivedPowerReadings(params: {
   measuredEv: MeasuredSample[];
   /** Existing measured `bidi.battery/soc` samples, ascending. */
   measuredSoc: MeasuredSample[];
+  /** The vendor's own per-interval samples, keyed by `interval_end` epoch-ms. Preferred over
+   *  anything derived — see the header. */
+  vendorPower?: Map<number, VendorPowerSample>;
   /**
    * The tails this device actually HAS. Required: a tail missing from `presentByTail` is otherwise
    * indistinguishable from one with no rows yet, and emitting a reading for a point that does not
@@ -274,6 +313,7 @@ export function computeDerivedPowerReadings(params: {
     measuredEv,
     measuredSoc,
     availableTails,
+    vendorPower,
     maxInterpIntervals = MAX_INTERP_INTERVALS,
   } = params;
 
@@ -288,7 +328,7 @@ export function computeDerivedPowerReadings(params: {
     tail: SigenDerivedTail,
     ms: number,
     value: number,
-    dataQuality: "calculated" | "interpolated",
+    dataQuality: DerivedReading["dataQuality"],
   ) => {
     out.push({
       pointMetadata: meta(tail),
@@ -314,11 +354,36 @@ export function computeDerivedPowerReadings(params: {
     const usable = (field: keyof IntervalEnergyWh): boolean =>
       e[field] != null && trust.has(field);
 
-    // --- calculated, straight from the counters -------------------------------------------------
-    if (usable("solar") && isMissing("solar_w", ms)) {
+    const vp = vendorPower?.get(ms);
+
+    // --- the vendor's own sample, where it has one ------------------------------------------------
+    // A measurement of the interval, so it is preferred over every reconstruction below and carries
+    // no derived marker. Each field is taken on its own: a payload missing one still contributes the
+    // others, and whatever it lacks falls through to the counter arithmetic.
+    if (vp?.solarW != null && isMissing("solar_w", ms)) {
+      push("solar_w", ms, vp.solarW, "good");
+    }
+    if (vp?.gridW != null && isMissing("grid_w", ms)) {
+      push("grid_w", ms, vp.gridW, "good");
+    }
+    if (vp?.batteryW != null && isMissing("battery_w", ms)) {
+      push("battery_w", ms, vp.batteryW, "good");
+    }
+    if (vp?.socPct != null && isMissing("battery_soc", ms)) {
+      out.push({
+        pointMetadata: meta("battery_soc"),
+        rawValue: vp.socPct,
+        intervalEndMs: ms,
+        dataQuality: "good",
+      });
+    }
+
+    // --- fallback: calculated, straight from the counters ----------------------------------------
+    if (vp?.solarW == null && usable("solar") && isMissing("solar_w", ms)) {
       push("solar_w", ms, e.solar! * WH_TO_W, "calculated");
     }
     if (
+      vp?.gridW == null &&
       usable("gridImport") &&
       usable("gridExport") &&
       isMissing("grid_w", ms)
@@ -331,6 +396,7 @@ export function computeDerivedPowerReadings(params: {
       );
     }
     if (
+      vp?.batteryW == null &&
       usable("batteryCharge") &&
       usable("batteryDischarge") &&
       isMissing("battery_w", ms)
@@ -346,8 +412,12 @@ export function computeDerivedPowerReadings(params: {
     // --- the EV / rest-of-house split -------------------------------------------------------------
     // Total load is exact; only the split is inferred, so the uncertainty is confined to it and the
     // two always sum back to the measured total.
-    if (usable("load") && (isMissing("ev_w", ms) || isMissing("load_w", ms))) {
-      const totalW = e.load! * WH_TO_W;
+    // Total load is exact from either source; only its EV / rest-of-house split is ever inferred, so
+    // the marker below stays `interpolated` even when the total came from the vendor.
+    const totalFromVendor = vp?.loadW ?? null;
+    const totalW =
+      totalFromVendor ?? (usable("load") ? e.load! * WH_TO_W : null);
+    if (totalW != null && (isMissing("ev_w", ms) || isMissing("load_w", ms))) {
       if (!availableTails.has("ev_w")) {
         // No charger on this site, so there is nothing to split off: total load IS rest-of-house,
         // and that is a calculation, not an inference.
@@ -365,7 +435,11 @@ export function computeDerivedPowerReadings(params: {
     }
 
     // --- interpolated: SoC ------------------------------------------------------------------------
-    if (availableTails.has("battery_soc") && !socPresent.has(ms)) {
+    if (
+      vp?.socPct == null &&
+      availableTails.has("battery_soc") &&
+      !socPresent.has(ms)
+    ) {
       const soc = interpolateAt(measuredSoc, ms, maxSpanMs);
       if (soc != null) {
         out.push({
@@ -462,6 +536,8 @@ export async function deriveDayPowerReadings(params: {
     rawValue: number;
     intervalEndMs: number;
   }[];
+  /** The vendor's own per-interval samples, keyed by `interval_end` epoch-ms. */
+  vendorPower?: Map<number, VendorPowerSample>;
   nowMs?: number;
   settleMs?: number;
   maxInterpIntervals?: number;
@@ -529,6 +605,7 @@ export async function deriveDayPowerReadings(params: {
     measuredEv,
     measuredSoc,
     availableTails: new Set(targets.map((x) => x.tail)),
+    vendorPower: params.vendorPower,
     maxInterpIntervals: params.maxInterpIntervals,
   });
 }

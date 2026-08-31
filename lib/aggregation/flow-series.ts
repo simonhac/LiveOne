@@ -8,6 +8,7 @@
 
 import { FlowSeries } from "./flow-matrix-core";
 import { classifyEnergyStem } from "@/lib/roles/registry";
+import { trustedByDeficit } from "./counter-deficit";
 
 export const SOLAR_PARENT_PATH = "source.solar";
 export const SOLAR_RESIDUAL_PATH = "source.solar.residual";
@@ -420,22 +421,35 @@ function attachEnergyOverlays(
     if (cls === null) continue;
     const slots = e.energyKwhBySlot;
     if (cls.kind === "pair" || cls.kind === "uni") {
+      // A counter re-base shows up as a negative delta (the counter dropping to its new base) plus
+      // a catch-up delta carrying everything it had accumulated. Raw sums self-cancel; nulling only
+      // the negative half would keep the catch-up and count that history twice (measured on
+      // Sigenergy: −27.3 kWh then +29.3 kWh, inflating the day's load/charge/solar to ~2×). Both
+      // halves are unknown — those intervals fall back to power integration.
+      //
+      // This used to null the negative and the slot AFTER it, which misses the common case where
+      // the counter stays frozen for several intervals and the catch-up is not adjacent: prod
+      // 2026-08-19 went −10590, 0, 0, 0, +10590, and the catch-up passed, inflating that day's
+      // solar to 113.49 kWh against a metered 10.59. `trustedByDeficit` tracks the debt instead, so
+      // the whole freeze stays distrusted until it is repaid.
+      //
+      // No ULP tolerance here (unlike the Sigenergy power recovery, which needs the coverage): an
+      // untrusted interval falls back to power integration, which is a correct answer, so being
+      // stricter costs nothing.
+      const trusted = trustedByDeficit(slots);
       addContribution(cls.targetPath, (slot) => {
         const v = slots[slot];
         if (v === null || v === undefined) return null;
-        // A counter re-base shows up as a MATCHED PAIR: one negative delta (the counter dropping to
-        // its new base) immediately followed by a catch-up delta carrying everything the counter had
-        // accumulated. Raw sums self-cancel; nulling only the negative half would keep the catch-up
-        // and count that history twice (measured on Sigenergy: −27.3 kWh then +29.3 kWh in adjacent
-        // 5-min slots, inflating the day's load/charge/solar to ~2×). Both halves are unknown — the
-        // intervals fall back to power integration.
-        if (v < 0) return null;
-        const prev = slots[slot - 1];
-        if (prev !== null && prev !== undefined && prev < 0) return null;
-        return v;
+        return trusted[slot] ? v : null;
       });
     } else {
       // net: split the signed exact net by sign onto the channel's directional halves.
+      //
+      // Deliberately NOT deficit-guarded. That guard reads a negative delta as impossible, which
+      // holds only for a one-directional counter; a signed net register goes negative every time
+      // the flow reverses, so its dropouts are not detectable by sign and the guard would discard
+      // real reversals. No current vendor's net register is known to drop out — Sigenergy, the one
+      // that does, reports directional pairs and is handled above.
       const positivePath =
         cls.channelStem === "bidi.battery" ? "source.battery" : "source.grid";
       const negativePath =

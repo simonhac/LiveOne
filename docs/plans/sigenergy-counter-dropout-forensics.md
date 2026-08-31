@@ -99,10 +99,10 @@ Reading these fields is strictly better than deriving power from the energy coun
 `trustedCounters` stays necessary regardless — the energy series still need it, and the flow-matrix
 defect below is the same bug in another consumer.
 
-Recommended: switch `derive-power.ts`'s `calculated` half to read the itemList power fields, keep
-the interpolated EV/rest-of-house split, and re-mark the recovered rows accordingly (a vendor-
-reported value is not `calculated` — it is as measured as anything else we store, so it may not
-warrant a derived marker at all).
+**DONE** — `derive-power.ts` now prefers the itemList power fields per field, marks them `good`
+(a vendor record is not a derivation, and provenance lives in `session_id`), and falls back to the
+counter arithmetic only where a field is absent. The EV / rest-of-house split stays `interpolated`,
+because there is still no EV field.
 
 ## The open question (now answered — kept for the record)
 
@@ -189,10 +189,14 @@ Selectronic's `|| 0` idiom (see the raw-payload notes in
 lands. ⚠️ Check the blast radius first — `pickNumber` is used by every Sigenergy field, and a
 vendor that legitimately sends numeric strings would start returning `null`.
 
-## The same dropouts are corrupting the flow matrix TODAY
+## The same dropouts were corrupting the flow matrix — FIXED
 
-Found 2026-08-31 while verifying the power recovery on prod. This is a live defect in daily energy
-and the Sankey, independent of the power work, and it is worse than the chart gaps ever were.
+Found 2026-08-31 while verifying the power recovery on prod: a live defect in daily energy and the
+Sankey, independent of the power work, and worse than the chart gaps ever were.
+
+**Fixed.** `trustedByDeficit` (`lib/aggregation/counter-deficit.ts`) is now shared by the overlay
+and the Sigenergy power recovery — two guards disagreeing about one defect is how the overlay kept
+a bug the other had already fixed. `FLOW_ATTR_VERSION` 7 → 8, so stored days re-materialise.
 
 `attachEnergyOverlays` (`lib/aggregation/flow-series.ts:425-435`) already guards this — the comment
 cites a previous Sigenergy incident, "−27.3 kWh then +29.3 kWh in adjacent 5-min slots, inflating

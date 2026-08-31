@@ -119,7 +119,12 @@ export function blendValue(step: FoldStep, metricType: string): number | null {
 // receiving no edge, so that fraction of EVERY load's energy in the interval was allocated to nothing
 // and vanished. Re-materialised days gain it back — nothing for a day with no dropout, 0.378 kWh on
 // Kinkora's EV alone for 2026-01-27.
-export const FLOW_ATTR_VERSION = 7;
+// v8: the energy overlay's counter-dropout guard became a DEBT scan (`trustedByDeficit`). v<=7 only
+// distrusted a negative delta and the slot immediately after it, so a counter that stayed frozen for
+// several intervals had its catch-up — carrying everything it skipped — booked as one interval's
+// energy. Re-materialised days lose that phantom energy: nothing for a day with no dropout (26 of 31
+// in Aug 2026 for Kutis), but 2026-08-19 read 113.49 kWh of solar against a metered 10.59.
+export const FLOW_ATTR_VERSION = 8;
 /** ~72h estimated→final settlement window (matches the schema comment on
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */

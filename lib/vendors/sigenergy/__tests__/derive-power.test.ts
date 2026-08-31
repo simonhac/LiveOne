@@ -16,6 +16,7 @@ import {
   MAX_INTERP_INTERVALS,
   type IntervalEnergyWh,
   type MeasuredSample,
+  type VendorPowerSample,
 } from "../derive-power";
 
 const FIVE_MIN = 5 * 60 * 1000;
@@ -403,5 +404,134 @@ describe("computeDerivedPowerReadings — counter dropouts", () => {
       { ms: t(0), v: 3600, q: "calculated" },
       { ms: t(3), v: 3600, q: "calculated" },
     ]);
+  });
+});
+
+/**
+ * The vendor's own instantaneous sample, which the `statistics/energy` itemList carries alongside
+ * the counters. A measurement of the interval, so it wins over every reconstruction — exact rather
+ * than quantised, capped by nothing, and independent of the counters (at the 2026-08-20 19:20
+ * dropout every energy counter collapsed while `loadPower` and `batSoc` stayed sane).
+ */
+describe("computeDerivedPowerReadings — the vendor's own sample wins", () => {
+  const vp = (over: Partial<VendorPowerSample> = {}): VendorPowerSample => ({
+    solarW: null,
+    loadW: null,
+    gridW: null,
+    batteryW: null,
+    socPct: null,
+    ...over,
+  });
+
+  it("uses the vendor value verbatim, marked good — not calculated", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        // The counters would give 6000 W; the vendor says 5900. The vendor wins.
+        energyByIntervalEnd: new Map([[t(1), energy({ solar: 500 })]]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        vendorPower: new Map([[t(1), vp({ solarW: 5900 })]]),
+      }),
+    );
+    expect(out.get("solar_w")).toEqual([{ ms: t(1), v: 5900, q: "good" }]);
+  });
+
+  it("falls back to the counters for a field the payload lacks", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([
+          [t(1), energy({ solar: 500, gridImport: 100 })],
+        ]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        vendorPower: new Map([[t(1), vp({ solarW: 5900 })]]), // gridW absent
+      }),
+    );
+    expect(out.get("solar_w")![0].q).toBe("good");
+    expect(out.get("grid_w")).toEqual([{ ms: t(1), v: 1200, q: "calculated" }]);
+  });
+
+  /** The whole point: the power fields are a separate failure domain from the counters. */
+  it("recovers an interval the counter guard refused", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([
+          [t(0), energy({ solar: 300 })],
+          [t(1), energy({ solar: -26970 })], // dropout — counters unusable here
+          [t(2), energy({ solar: 26970 })], // and here
+        ]),
+        presentByTail: noneP(),
+        measuredEv: [],
+        measuredSoc: [],
+        vendorPower: new Map([
+          [t(1), vp({ solarW: 0 })],
+          [t(2), vp({ solarW: 0 })],
+        ]),
+      }),
+    );
+    // Without the vendor sample these two intervals stay empty; with it they are filled correctly
+    // (the sun was down — the prod case reads 0 W while the counter claims 324 kW).
+    expect(out.get("solar_w")).toEqual([
+      { ms: t(0), v: 3600, q: "calculated" },
+      { ms: t(1), v: 0, q: "good" },
+      { ms: t(2), v: 0, q: "good" },
+    ]);
+  });
+
+  it("takes SoC from the vendor rather than interpolating it", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy()]]),
+        presentByTail: new Map([["battery_soc", new Set([t(0), t(2)])]]),
+        measuredEv: [],
+        measuredSoc: [
+          { intervalEndMs: t(0), value: 50 },
+          { intervalEndMs: t(2), value: 60 },
+        ],
+        vendorPower: new Map([[t(1), vp({ socPct: 58 })]]),
+      }),
+    );
+    // Interpolation would have said 55; the vendor recorded 58.
+    expect(out.get("battery_soc")).toEqual([{ ms: t(1), v: 58, q: "good" }]);
+  });
+
+  it("still interpolates the EV split when the vendor gives only the total", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        energyByIntervalEnd: new Map([[t(1), energy()]]), // no load counter at all
+        presentByTail: noneP(),
+        measuredEv: [
+          { intervalEndMs: t(0), value: 7000 },
+          { intervalEndMs: t(2), value: 7000 },
+        ],
+        measuredSoc: [],
+        vendorPower: new Map([[t(1), vp({ loadW: 12000 })]]),
+      }),
+    );
+    // The total is the vendor's; only the division of it is ours.
+    expect(out.get("ev_w")).toEqual([{ ms: t(1), v: 7000, q: "interpolated" }]);
+    expect(out.get("load_w")).toEqual([
+      { ms: t(1), v: 5000, q: "interpolated" },
+    ]);
+  });
+
+  it("never overwrites a measured row, whatever the vendor says", () => {
+    const out = computeDerivedPowerReadings({
+      energyByIntervalEnd: new Map([[t(1), energy({ solar: 500 })]]),
+      presentByTail: new Map(
+        SIGEN_DERIVED_TAILS.map((tail) => [tail, new Set([t(1)])]),
+      ),
+      measuredEv: [],
+      measuredSoc: [],
+      vendorPower: new Map([
+        [
+          t(1),
+          vp({ solarW: 5900, loadW: 12000, gridW: 1, batteryW: 1, socPct: 9 }),
+        ],
+      ]),
+    });
+    expect(out).toEqual([]);
   });
 });

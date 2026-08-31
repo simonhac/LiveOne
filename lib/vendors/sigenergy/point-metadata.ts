@@ -8,7 +8,12 @@
 
 import type { PointMetadata } from "@/lib/point/point-manager";
 import type { PointReadingInput } from "../types";
-import type { SigenergyData, SigenergyEnergyFlow } from "./types";
+import type {
+  SigenergyData,
+  SigenergyEnergyFlow,
+  SigenergyIntervalPower,
+} from "./types";
+import type { VendorPowerSample } from "./derive-power";
 
 export interface SigenergyPointConfig {
   field: Exclude<keyof SigenergyData, "timestamp">;
@@ -133,6 +138,37 @@ export function sigenergyFlowToData(
     gridW: toWInverted(flow.gridKw), // vendor + export → canonical + import
     loadW: toW(flow.loadKw),
     evW: toW(flow.evKw),
+  };
+}
+
+/**
+ * An `itemList` row's instantaneous half → canonical Watts / percent.
+ *
+ * The sibling of `sigenergyFlowToData`, and it lives next to it so the sign convention has ONE
+ * home: vendor rows are outflow-positive on both bidi channels, LiveOne is inflow-positive. The
+ * statistics endpoint reports the directional pair (`esChargePower` / `esDischargePower`,
+ * `toGridPower` / `fromGridPower`) rather than a signed net, so each channel is a subtraction
+ * rather than a negation — no `esChargeDischargePower` needed, and a missing half is not silently
+ * read as zero.
+ *
+ * `loadW` is the site TOTAL and includes the EV; there is no EV field in the payload.
+ */
+export function sigenergyIntervalPowerToW(
+  p: SigenergyIntervalPower,
+): VendorPowerSample {
+  const toW = (kw: number | null) =>
+    kw == null ? null : Math.round(kw * 1000) + 0;
+  /** Directional pair → one canonical signed value; null unless BOTH halves are reported. */
+  const pair = (inflow: number | null, outflow: number | null) =>
+    inflow == null || outflow == null
+      ? null
+      : Math.round((inflow - outflow) * 1000) + 0;
+  return {
+    solarW: toW(p.solarKw),
+    loadW: toW(p.loadKw),
+    gridW: pair(p.gridImportKw, p.gridExportKw), // + import
+    batteryW: pair(p.batteryDischargeKw, p.batteryChargeKw), // + discharge
+    socPct: p.socPct,
   };
 }
 
