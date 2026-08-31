@@ -419,6 +419,40 @@ describe("ReadingsDao reads — rows map back to PointId, timestamps → epoch-m
     ]);
   });
 
+  it("read30m maps SQL-bucketed rows back to PointId with bucketEndSec → epoch-ms", async () => {
+    const p = point(24, 7); // rid 24
+    // The fake exec returns the grouped row shape the SQL projects: bucketEndSec in epoch-SECONDS.
+    const rows = [
+      {
+        pointRid: 24,
+        bucketEndSec: 1_700_001_000, // ms/1000, a :00/:30 boundary
+        avg: 2.5,
+        min: 1,
+        max: 4,
+        last: 3,
+        delta: 0.5,
+        dataQuality: "good",
+      },
+    ];
+    const { exec } = makeFakeExec(rows);
+    const out = await ReadingsDao.read30m(
+      [p],
+      { fromMs: 0, toMs: 2_000_000_000_000, anchorMs: 0 },
+      exec,
+    );
+    expect(out.get(p)).toEqual([
+      {
+        intervalEndMs: 1_700_001_000_000,
+        avg: 2.5,
+        min: 1,
+        max: 4,
+        last: 3,
+        delta: 0.5,
+        dataQuality: "good",
+      },
+    ]);
+  });
+
   it("latestForPoints returns null for a point with no rows", async () => {
     const p = point(22, 8);
     const { exec } = makeFakeExec([]); // no rows

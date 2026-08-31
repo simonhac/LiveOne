@@ -6,11 +6,10 @@
  * `AggRow[]` it produces the served `OpenNEMDataSeries[]`, independent of where those rows came
  * from.
  *
- * Behavior must stay byte-identical to the pre-extraction route — with one deliberate fix: 30m
- * bucketing reduces each field by its own semantics (avg mean / delta sum / min-max extreme /
- * last + quality last-in-bucket). The extracted code averaged every numeric field, which made a
- * 30m energy.delta exactly one sixth of the truth. Dense-timeline handling, transform inversion
- * and `toPrecision(4)` are unchanged.
+ * 30m rows arrive PRE-BUCKETED from SQL (`ReadingsDao.read30m`), each field reduced by its own
+ * semantics (avg mean / delta sum / min-max extreme / last + quality last-in-bucket) — the JS
+ * reduce step that used to live here is retired. Dense-timeline handling, transform inversion and
+ * `toPrecision(4)` are unchanged.
  */
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { OpenNEMDataSeries } from "@/types/opennem";
@@ -111,13 +110,6 @@ export async function buildSeriesFromAggRows(
   // Build series for each SeriesInfo
   const allSeries: OpenNEMDataSeries[] = [];
 
-  const intervalMs =
-    interval === "5m"
-      ? 5 * 60 * 1000
-      : interval === "30m"
-        ? 30 * 60 * 1000
-        : 24 * 60 * 60 * 1000;
-
   for (const series of seriesInfos) {
     const key = `${series.point.systemId}.${series.point.index}.${series.aggregationField}`;
     let rows = rowsByPointAndField.get(key) || [];
@@ -133,115 +125,10 @@ export async function buildSeriesFromAggRows(
       }));
     }
 
-    // Handle 30m aggregation if needed
-    if (interval === "30m" && aggTable === "point_readings_agg_5m") {
-      if (series.aggregationField === "quality") {
-        // For quality (string values), take the last value in each 30m bucket
-        const aggregated: Array<{
-          interval_end: number;
-          value: string | null;
-        }> = [];
-        const buckets = new Map<
-          number,
-          Array<{ interval_end: number; value: string }>
-        >();
-
-        for (const row of rows) {
-          // Align bucketing to request boundaries
-          // Use ceil to round readings UP to the next bucket boundary
-          const bucketIndex = Math.ceil(
-            (row.interval_end - firstEpoch) / intervalMs,
-          );
-          const bucketEnd = firstEpoch + bucketIndex * intervalMs;
-
-          if (!buckets.has(bucketEnd)) {
-            buckets.set(bucketEnd, []);
-          }
-
-          if (row.value !== null) {
-            buckets.get(bucketEnd)!.push({
-              interval_end: row.interval_end,
-              value: row.value as string,
-            });
-          }
-        }
-
-        // Take the last (most recent) quality value in each bucket
-        for (const [bucketEnd, values] of buckets.entries()) {
-          if (values.length > 0) {
-            // Sort by interval_end and take the last one
-            values.sort((a, b) => a.interval_end - b.interval_end);
-            aggregated.push({
-              interval_end: bucketEnd,
-              value: values[values.length - 1].value,
-            });
-          }
-        }
-
-        aggregated.sort((a, b) => a.interval_end - b.interval_end);
-        rows = aggregated;
-      } else {
-        // For numeric values, reduce each bucket by the field's own semantics: a
-        // cumulative delta must be summed, min/max take the extreme, last takes the
-        // most recent non-null value, and only avg is a mean of the 5m values.
-        const aggregated: Array<{
-          interval_end: number;
-          value: number | null;
-        }> = [];
-        const buckets = new Map<
-          number,
-          Array<{ interval_end: number; value: number }>
-        >();
-
-        for (const row of rows) {
-          // Align bucketing to request boundaries
-          // Use ceil to round readings UP to the next bucket boundary
-          const bucketIndex = Math.ceil(
-            (row.interval_end - firstEpoch) / intervalMs,
-          );
-          const bucketEnd = firstEpoch + bucketIndex * intervalMs;
-
-          if (!buckets.has(bucketEnd)) {
-            buckets.set(bucketEnd, []);
-          }
-
-          if (row.value !== null) {
-            buckets.get(bucketEnd)!.push({
-              interval_end: row.interval_end,
-              value: row.value as number,
-            });
-          }
-        }
-
-        for (const [bucketEnd, entries] of buckets.entries()) {
-          let value: number | null = null;
-          if (entries.length > 0) {
-            const values = entries.map((e) => e.value);
-            switch (series.aggregationField) {
-              case "delta":
-                value = values.reduce((sum, v) => sum + v, 0);
-                break;
-              case "min":
-                value = Math.min(...values);
-                break;
-              case "max":
-                value = Math.max(...values);
-                break;
-              case "last":
-                entries.sort((a, b) => a.interval_end - b.interval_end);
-                value = entries[entries.length - 1].value;
-                break;
-              default:
-                value = values.reduce((sum, v) => sum + v, 0) / values.length;
-            }
-          }
-          aggregated.push({ interval_end: bucketEnd, value });
-        }
-
-        aggregated.sort((a, b) => a.interval_end - b.interval_end);
-        rows = aggregated;
-      }
-    }
+    // 30m arrives PRE-BUCKETED from SQL (`ReadingsDao.read30m` via fetchAggRowsPg): each field is
+    // already reduced by its own semantics (avg mean / delta sum / min-max extreme / last + quality
+    // last-in-bucket) and the rows sit on the dense :00/:30 grid — there is no JS reduce step here
+    // any more. 5m and 1d are served verbatim as before.
 
     // 1d: densify to a dense day grid over [firstEpoch, lastEpoch] (step 24h), null where a day has
     // no row. agg_1d is sparse — a point only has a row for days it actually reported — but every

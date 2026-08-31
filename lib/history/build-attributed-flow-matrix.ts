@@ -24,11 +24,11 @@ import {
   SOLAR_ACTUAL_COST,
 } from "@/lib/battery-provenance/compute";
 import { loadProvenanceInputs } from "@/lib/battery-provenance/load";
+import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
 import { readPersistedBatteryBlend } from "@/lib/battery-provenance/persisted-blend";
 import { resolveExportReceiptSeries } from "@/lib/battery-provenance/tariff";
 import { loadWarmProvenanceInputs } from "@/lib/battery-provenance/warm-inputs";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import {
   computeFlowAccounting,
   type FlowAccountingResult,
@@ -152,16 +152,13 @@ export async function buildAttributedFlowMatrix(
    *  once for the energy-only Sankey) — skips two internal `resolveLogicalSystem` calls (here and
    *  inside `loadProvenanceInputs`). Must be for the same `handle`; not verified. */
   logicalSystem?: LogicalSystem,
-  /** Request-scoped `agg_5m` avg cache from the `/api/history` "fetch" span, so the flow-series read
-   *  reuses the in-window rows fetch already loaded instead of re-querying (§1.3a). */
-  avgCache?: Agg5mAvgCache,
 ): Promise<DailyFlowMatrices | null> {
   const db = requirePlanetscaleDb();
 
   let inputs = await loadProvenanceInputs(
     handle,
     { startMs, endMs },
-    { logicalSystem, avgCache },
+    { logicalSystem },
   );
   if (!inputs || inputs.timeline.length < 2) return null;
 
@@ -203,7 +200,7 @@ export async function buildAttributedFlowMatrix(
       db,
       handle,
       { startMs, endMs },
-      { logicalSystem, avgCache },
+      { logicalSystem },
     );
     if (!warm) return null;
     inputs = warm.inputs;
@@ -236,5 +233,55 @@ export async function buildAttributedFlowMatrix(
   }
 
   const day = localDay(startMs, inputs.timezoneOffsetMin);
+  return shapeAttributedFlowMatrix(acc, day, displayNameByStem);
+}
+
+/**
+ * DEGRADED single-path fallback: the attributed matrix with the metric legs all-null and every
+ * joule booked as `estimatedKwh` — the ENERGY leg is exact, nothing else is claimed.
+ *
+ * This is what replaces the retired energy-only `response.flowMatrix` (P3): when
+ * {@link buildAttributedFlowMatrix} throws (a metric-leg input failed — blend read, learned params,
+ * grid intensity series), the caller retries with this builder, which needs ONLY the logical
+ * system + `agg_5m` — the same inputs the old energy-only matrix needed — so the one remaining
+ * flow computation cannot fail anywhere the old fallback would have succeeded. All-null
+ * intensities run through the SAME `computeFlowAccounting` allocation (a null intensity keeps the
+ * cell's energy and books it estimated), so the energy grid is byte-identical to the full build's.
+ */
+export async function buildEnergyOnlyAttributedMatrix(
+  handle: number,
+  startMs: number,
+  endMs: number,
+  logicalSystem: LogicalSystem,
+): Promise<DailyFlowMatrices | null> {
+  const db = requirePlanetscaleDb();
+  const { timeline, sources, loads } = await loadFlowSeriesFromAgg5m(
+    db,
+    logicalSystem.points,
+    startMs,
+    endMs,
+    logicalSystem.energyPoints,
+  );
+  if (timeline.length < 2 || sources.length === 0 || loads.length === 0)
+    return null;
+
+  const acc = computeFlowAccounting({
+    timestamps: timeline,
+    sources,
+    loads,
+    sourceIntensities: sources.map(() => null),
+    loadPrices: buildLoadPrices(
+      loads,
+      new Array<number | null>(timeline.length).fill(null),
+    ),
+    window: { startMs, endMs },
+  });
+
+  const displayNameByStem = new Map<string, string>();
+  for (const p of logicalSystem.points) {
+    if (!displayNameByStem.has(p.stem))
+      displayNameByStem.set(p.stem, p.displayName);
+  }
+  const day = localDay(startMs, logicalSystem.timezoneOffsetMin);
   return shapeAttributedFlowMatrix(acc, day, displayNameByStem);
 }

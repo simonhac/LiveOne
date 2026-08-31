@@ -16,21 +16,33 @@ import type { DailyFlowMatrices } from "@/lib/energy-flow-matrix";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
 
+/** One raw `point_readings_flow_attr_1d` row, shaped for {@link toDailyFlowMatrices}. */
+export type AttrRollupRow = {
+  day: string;
+  sourcePath: string;
+  loadPath: string;
+  energyKwh: unknown;
+  emissionsG: unknown;
+  renewableKwh: unknown;
+  selfRenewableKwh: unknown;
+  costC: unknown;
+  revenueC: unknown;
+  estimatedKwh: unknown;
+};
+
 /**
- * `reason` explains an empty result so a blank Sankey isn't read as "no energy":
- *   - `not-a-logical-system` — no resolvable/complete logical system for the Area.
- *   - `not-materialized` — a complete device, but no `flow_attr_1d` rows in the window yet.
+ * The raw rollup rows for one Area over `[startYMD, endYMD]` (inclusive local days) — the un-shaped
+ * half of {@link readAttributedDailyMatrices}, exported so the sub-daily attributed-window builder
+ * (`lib/history/attributed-window.ts`) can merge rollup days with live-computed partial days
+ * before shaping once.
  */
-export async function readAttributedDailyMatrices(
+export async function readAttrRollupRows(
   db: PgDb,
-  logicalSystem: LogicalSystem | null,
+  areaId: string,
   startYMD: string,
   endYMD: string,
-): Promise<DailyFlowMatrices & { reason?: string }> {
-  if (!logicalSystem)
-    return { sources: [], loads: [], days: [], reason: "not-a-logical-system" };
-
-  const rows = await db
+): Promise<AttrRollupRow[]> {
+  return db
     .select({
       day: pointReadingsFlowAttr1d.day,
       sourcePath: pointReadingsFlowAttr1d.sourcePath,
@@ -46,11 +58,33 @@ export async function readAttributedDailyMatrices(
     .from(pointReadingsFlowAttr1d)
     .where(
       and(
-        eq(pointReadingsFlowAttr1d.areaId, logicalSystem.areaId),
+        eq(pointReadingsFlowAttr1d.areaId, areaId),
         gte(pointReadingsFlowAttr1d.day, startYMD),
         lte(pointReadingsFlowAttr1d.day, endYMD),
       ),
     );
+}
+
+/**
+ * `reason` explains an empty result so a blank Sankey isn't read as "no energy":
+ *   - `not-a-logical-system` — no resolvable/complete logical system for the Area.
+ *   - `not-materialized` — a complete device, but no `flow_attr_1d` rows in the window yet.
+ */
+export async function readAttributedDailyMatrices(
+  db: PgDb,
+  logicalSystem: LogicalSystem | null,
+  startYMD: string,
+  endYMD: string,
+): Promise<DailyFlowMatrices & { reason?: string }> {
+  if (!logicalSystem)
+    return { sources: [], loads: [], days: [], reason: "not-a-logical-system" };
+
+  const rows = await readAttrRollupRows(
+    db,
+    logicalSystem.areaId,
+    startYMD,
+    endYMD,
+  );
 
   const displayNameByStem = new Map<string, string>();
   for (const p of logicalSystem.points) {

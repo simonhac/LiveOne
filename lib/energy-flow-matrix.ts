@@ -815,19 +815,20 @@ export function calculateInstantFlowMatrix(
 }
 
 /**
- * Pick the window energy-flow matrix for a sankey from the NON-materialized sources: the history
- * response's bundled matrix (1D/7D), else computed client-side from generation + load. The 30D
- * Sankey is served from the per-day flow_attr_1d matrices instead (see {@link sumDailyFlowMatrices} /
- * {@link pickDailyFlowMatrix}); this is its fallback when those aren't materialized.
+ * LAST-RESORT window energy-flow matrix for a sankey: integrated client-side from the chart's
+ * generation + load series. Every served path now rides `attributedFlow` (rollup + live edge days;
+ * its energy leg IS the old server `flowMatrix` — same `computeFlowAccounting`), so this runs only
+ * when that payload is absent entirely (no logical system / attr hard-failure). It is knowingly the
+ * least accurate producer: at W the series are 30m averages (within-bucket battery charge↔discharge
+ * cancels) and there are no metered-energy overlays.
  * Returns null when there is no complete flow to diagram (missing generation OR load) — the data-driven
  * gate for "this area has loads + sources". Extracted so every sankey site shares one precedence.
  */
 export function selectFlowMatrix(
   processed: ProcessedSiteData,
 ): EnergyFlowMatrix | null {
-  const { generation, load, flowMatrix } = processed;
+  const { generation, load } = processed;
   if (!generation || !load) return null;
-  if (flowMatrix) return flowMatrix;
   return calculateEnergyFlowMatrix(processed);
 }
 

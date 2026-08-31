@@ -1,12 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from "@jest/globals";
 import { Point, type PointId } from "@/lib/ids";
-import type { Agg5mReading, Agg1dReading } from "@/lib/readings";
+import type { Agg5mReading, Agg30mReading, Agg1dReading } from "@/lib/readings";
 
 /**
  * After the config-v4 readings-seam migration `fetchAggRowsPg` is a pure transform over
- * `ReadingsDao` output: it reads by the `PointId` the CALLER supplies, then densifies (5m/30m) /
- * maps (1d) and reconstructs the `avgCache`. These tests pin that transform against a mocked DAO —
- * the DAO's own SQL/WHERE is proven separately in `lib/readings/__tests__/dao.test.ts`.
+ * `ReadingsDao` output: it reads by the `PointId` the CALLER supplies, then densifies (5m via
+ * `read5m`, 30m via the SQL-bucketed `read30m`) / maps (1d). These tests pin that transform
+ * against a mocked DAO — the DAO's own SQL/WHERE is proven separately in
+ * `lib/readings/__tests__/dao.test.ts`.
  *
  * There is no registry mock any more: slice D moved identity resolution up to the caller
  * (`SeriesInfo.point` / `LogicalSystemPoint` both carry `point_uid`), so this module no longer
@@ -15,19 +16,36 @@ import type { Agg5mReading, Agg1dReading } from "@/lib/readings";
 
 // Canned DAO results keyed by PointId; an absent point resolves to [] (the DAO pre-seeds empties).
 const read5mByPoint = new Map<PointId, Agg5mReading[]>();
+const read30mByPoint = new Map<PointId, Agg30mReading[]>();
 const read1dByPoint = new Map<PointId, Agg1dReading[]>();
+// The window each read30m call received — asserts the 25-minute lead-in AND the bucket anchor.
+const read30mWindows: Array<{
+  fromMs: number;
+  toMs: number;
+  anchorMs: number;
+}> = [];
 
 jest.mock("@/lib/readings", () => ({
   ReadingsDao: {
     read5m: async (points: PointId[]) =>
       new Map(points.map((pt) => [pt, read5mByPoint.get(pt) ?? []])),
+    read30m: async (
+      points: PointId[],
+      window: { fromMs: number; toMs: number; anchorMs: number },
+    ) => {
+      read30mWindows.push({
+        fromMs: window.fromMs,
+        toMs: window.toMs,
+        anchorMs: window.anchorMs,
+      });
+      return new Map(points.map((pt) => [pt, read30mByPoint.get(pt) ?? []]));
+    },
     read1d: async (points: PointId[]) =>
       new Map(points.map((pt) => [pt, read1dByPoint.get(pt) ?? []])),
   },
 }));
 
 import { fetchAggRowsPg, type AggFetchPoint } from "../readings-pg";
-import { Agg5mAvgCache } from "../agg5m-cache";
 
 const FIVE = 5 * 60 * 1000;
 
@@ -74,7 +92,9 @@ function agg1d(day: string, v: Partial<Agg1dReading>): Agg1dReading {
 
 beforeEach(() => {
   read5mByPoint.clear();
+  read30mByPoint.clear();
   read1dByPoint.clear();
+  read30mWindows.length = 0;
 });
 
 describe("fetchAggRowsPg", () => {
@@ -120,7 +140,7 @@ describe("fetchAggRowsPg", () => {
     const out = await fetchAggRowsPg({
       uniquePairs: [p],
       interval: "5m",
-      queryFirstEpoch: 0,
+      firstEpoch: 0,
       lastEpoch: 3 * FIVE, // 0, 300k, 600k, 900k → 4 grid points (inclusive)
     });
     const rows = out as unknown as Array<Record<string, unknown>>;
@@ -160,7 +180,7 @@ describe("fetchAggRowsPg", () => {
     const out = await fetchAggRowsPg({
       uniquePairs: [pair(1, 0)],
       interval: "5m",
-      queryFirstEpoch: 0,
+      firstEpoch: 0,
       lastEpoch: 250_000, // not on the 300k grid
     });
     const rows = out as unknown as Array<Record<string, unknown>>;
@@ -168,22 +188,83 @@ describe("fetchAggRowsPg", () => {
     expect(rows.map((r) => r.interval_end)).toEqual([0, FIVE]);
   });
 
-  it("30m: uses the same 5-minute grid over the caller-supplied (pre-rolled) bounds", async () => {
+  it("30m: reads SQL-bucketed rows with a 25-minute lead-in and densifies onto the 30m grid", async () => {
+    const THIRTY = 6 * FIVE;
+    const p = pair(1, 0);
+    read30mByPoint.set(p.point, [
+      {
+        intervalEndMs: THIRTY,
+        avg: 4,
+        min: 1,
+        max: 9,
+        last: 5,
+        delta: 12,
+        dataQuality: "good",
+      },
+    ]);
     const out = await fetchAggRowsPg({
-      uniquePairs: [pair(1, 0)],
+      uniquePairs: [p],
       interval: "30m",
-      queryFirstEpoch: 0,
-      lastEpoch: 2 * FIVE,
+      firstEpoch: 0,
+      lastEpoch: 2 * THIRTY,
     });
+    // The DAO read got the request grid's lower bound minus 25 min (a bucket needs six 5m rows),
+    // and the bucket ANCHOR is the served grid's origin — not a global UTC :00/:30 grid, which
+    // would key every bucket off-grid for a subject at a :45 offset and serve all nulls.
+    expect(read30mWindows).toEqual([
+      { fromMs: -(THIRTY - FIVE), toMs: 2 * THIRTY, anchorMs: 0 },
+    ]);
     const rows = out as unknown as Array<Record<string, unknown>>;
-    expect(rows.map((r) => r.interval_end)).toEqual([0, FIVE, 2 * FIVE]);
+    // Dense 30m grid, null-filled where no bucket came back.
+    expect(rows.map((r) => r.interval_end)).toEqual([0, THIRTY, 2 * THIRTY]);
+    expect(rows[1]).toEqual({
+      system_id: 1,
+      point_id: 0,
+      interval_end: THIRTY,
+      avg: 4,
+      min: 1,
+      max: 9,
+      last: 5,
+      delta: 12,
+      data_quality: "good",
+    });
+    expect(rows[0].avg).toBeNull();
+    expect(rows[2].avg).toBeNull();
+  });
+
+  it("30m: anchors buckets on firstEpoch even when it is off the global :00/:30 grid", async () => {
+    const THIRTY = 6 * FIVE;
+    const anchor = 15 * 60 * 1000; // :15 — a UTC+08:45-style subject's local :00
+    const p = pair(1, 0);
+    read30mByPoint.set(p.point, [
+      {
+        intervalEndMs: anchor + THIRTY,
+        avg: 1,
+        min: null,
+        max: null,
+        last: null,
+        delta: null,
+        dataQuality: null,
+      },
+    ]);
+    const out = await fetchAggRowsPg({
+      uniquePairs: [p],
+      interval: "30m",
+      firstEpoch: anchor,
+      lastEpoch: anchor + THIRTY,
+    });
+    expect(read30mWindows[0].anchorMs).toBe(anchor);
+    const rows = out as unknown as Array<Record<string, unknown>>;
+    expect(rows.map((r) => r.interval_end)).toEqual([anchor, anchor + THIRTY]);
+    // The bucket the DAO keyed at anchor+30m lands on the densified slot — not dropped as a miss.
+    expect(rows[1].avg).toBe(1);
   });
 
   it("5m: emits a dense grid per point", async () => {
     const out = await fetchAggRowsPg({
       uniquePairs: [pair(1, 0), pair(1, 1)],
       interval: "5m",
-      queryFirstEpoch: 0,
+      firstEpoch: 0,
       lastEpoch: FIVE, // 2 grid points per point
     });
     const rows = out as unknown as Array<Record<string, unknown>>;
@@ -204,45 +285,12 @@ describe("fetchAggRowsPg", () => {
     const out = await fetchAggRowsPg({
       uniquePairs: [p],
       interval: "5m",
-      queryFirstEpoch: 0,
+      firstEpoch: 0,
       lastEpoch: FIVE,
     });
     const rows = out as unknown as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(2); // dense grid: 0, FIVE
     expect(rows.every((r) => r.point_id === 42)).toBe(true);
     expect(rows.find((r) => r.interval_end === FIVE)!.avg).toBe(10);
-  });
-
-  it("5m: reconstructs the avgCache from the sparse DAO rows (covered slice)", async () => {
-    const p = pair(1, 0);
-    read5mByPoint.set(p.point, [
-      agg5m(FIVE, { avg: 10 }),
-      agg5m(2 * FIVE, { avg: 20 }),
-    ]);
-    const avgCache = new Agg5mAvgCache();
-    await fetchAggRowsPg(
-      {
-        uniquePairs: [p],
-        interval: "5m",
-        queryFirstEpoch: 0,
-        lastEpoch: 2 * FIVE,
-      },
-      avgCache,
-    );
-    // The queried pair is covered and yields the raw sparse (t, avg) rows over the window.
-    expect(avgCache.slice(1, 0, 0, 2 * FIVE)).toEqual({
-      covered: true,
-      from: 0,
-      rows: [
-        { t: FIVE, avg: 10 },
-        { t: 2 * FIVE, avg: 20 },
-      ],
-    });
-    // A pair fetch never queried is not covered → the consumer full-queries it.
-    expect(avgCache.slice(1, 99, 0, 2 * FIVE)).toEqual({
-      covered: false,
-      from: 0,
-      rows: [],
-    });
   });
 });
