@@ -1,6 +1,6 @@
 # Energy Flow Matrix (Sankey) — daily materialization, monthly by summation
 
-> **Status:** current — last verified 2026-08-01. The Storage/Compute/Read pass that the previous
+> **Status:** current — last verified 2026-09-01. The Storage/Compute/Read pass that the previous
 > revision deferred is done: `point_readings_flow_1d` and the `FLOW_MATRIX_*` flags are gone, and
 > `point_readings_flow_attr_1d` is the sole flow/Sankey matrix.
 
@@ -106,20 +106,26 @@ the ev-provenance card both moved onto it):
   legs as `attributedFlow`. Today's partial day is not included — the deliberate v1 limitation above.
   The field carries an `attributedFlowOmittedReason` when there is nothing to serve (not‑yet‑materialized,
   or not a logical system).
-- **Sub‑daily (1D/7D)** — computed on the fly from the **same signed 5‑minute rows the history read
-  already loads** (5m and 30m both read `agg_5m`; the matrix is built before 30m bucketing, so 7D stays
-  5m‑accurate) — no extra query for the energy leg, served as `flowMatrix`. The attributed leg
-  additionally runs the battery-provenance fold on the fly
-  (`lib/history/build-attributed-flow-matrix.ts`, DB-bound, its own bounded query) and degrades
-  gracefully (`attributedFlowOmittedReason`) on failure — the energy‑only Sankey never blocks on it.
-  Refused for filtered requests that don't cover the role set.
+- **Sub‑daily (1D/7D)** — served from the SAME rollup wherever the window covers whole local days,
+  with only the partial edge days of a live rolling window computed on the fly
+  (`lib/history/attributed-window.ts` → `buildAttributedFlowMatrix` per edge day; a not‑yet‑
+  materialised whole day also falls back to the live compute). One `days[]` entry per local day —
+  the client sums for the window view — so D/W agrees with M/Y **exactly**, including the rollup's
+  midnight‑crossing‑gap‑interval semantics. There is no separate energy‑only `flowMatrix` on the
+  wire any more: the attributed matrix's energy leg IS that matrix (`computeFlowMatrix` is
+  `computeFlowAccounting`'s energy projection), and a segment whose metric‑leg inputs fail degrades
+  to an energy‑exact matrix with null legs and everything booked `estimatedKwh`
+  (`buildEnergyOnlyAttributedMatrix`) rather than to a second implementation. Total failure carries
+  `attributedFlowOmittedReason`, and the FE's last resort is the client‑side integration
+  (`calculateEnergyFlowMatrix`, chart‑resolution).
 
-The energy leg is presented through the shared `toEnergyFlowMatrix` (`lib/aggregation/flow-node-meta.ts`).
+The 1d/rollup energy leg is presented through the shared `toEnergyFlowMatrix`
+(`lib/aggregation/flow-node-meta.ts`).
 
-Note the asymmetry, because it explains the performance shape: the 1d path serves a **stored**
-rollup in tens of ms, while the sub‑daily path recomputes everything per request — which is why
-`/api/history` is the server tail on a dashboard load. See
-[`../plans/live-dashboard-roadmap.md`](../plans/live-dashboard-roadmap.md) §1.3.
+The old asymmetry — the 1d path served a **stored** rollup in tens of ms while the sub‑daily path
+recomputed everything per request (the reason `/api/history` was the server tail on a dashboard
+load; [`../plans/live-dashboard-roadmap.md`](../plans/live-dashboard-roadmap.md) §1.3) — is gone:
+both now serve the rollup, and only ≤ 2 partial edge days are ever computed live.
 
 ## Invariants
 

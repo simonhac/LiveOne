@@ -3,7 +3,7 @@ import type { ChartTimeRange } from "@/lib/charts/temporal";
 import { generateSeriesConfig } from "@/lib/charts/series-config";
 import { getColorForPath } from "@/lib/chart-colors";
 import { flowPathForSeries } from "@/lib/aggregation/flow-node-meta";
-import type { DailyFlowMatrices, EnergyFlowMatrix } from "./energy-flow-matrix";
+import type { DailyFlowMatrices } from "./energy-flow-matrix";
 import { SeriesPath } from "@/lib/identifiers";
 import { matchesLogicalPath, stemSplit } from "@/lib/identifiers/logical-path";
 import { encodeHistoryWindow } from "@/lib/charts/history-window";
@@ -14,11 +14,9 @@ export interface ProcessedSiteData {
   generation: ChartData | null;
   requestStart?: string;
   requestEnd?: string;
-  /** Server-computed sub-daily energy-flow matrix (when served), else null → compute client-side. */
-  flowMatrix?: EnergyFlowMatrix | null;
-  /** Server-computed ATTRIBUTED flow matrix (energy + emissions/renewable/cost/estimated legs) behind
-   *  the Sankey node tooltips — served for every interval; absent/null → tooltips degrade to
-   *  energy-only (P3), same fallback discipline as `flowMatrix`. */
+  /** Server-computed ATTRIBUTED flow matrix (energy + emissions/renewable/cost/estimated legs) —
+   *  the Sankey and its node tooltips, one `days[]` entry per local day (rollup + live edge days);
+   *  absent/null → the client integrates an energy-only matrix from the chart series (P3). */
   attributedFlow?: DailyFlowMatrices | null;
   /** Hot-water temperature series (`load.hws/temperature.avg`) — only requested/populated for the D
    *  period (see `fetchSiteData`'s `period === "D"` branch); null/absent otherwise. The hot-water
@@ -89,7 +87,6 @@ async function fetchHistoryData(
   series: ParsedSeries[];
   requestStart?: string;
   requestEnd?: string;
-  flowMatrix?: EnergyFlowMatrix | null;
   attributedFlow?: DailyFlowMatrices | null;
 }> {
   // Build API URL - use absolute time if provided, otherwise use relative
@@ -121,7 +118,6 @@ async function fetchHistoryData(
       series: [],
       requestStart: data?.requestStart,
       requestEnd: data?.requestEnd,
-      flowMatrix: data?.flowMatrix ?? null,
       attributedFlow: data?.attributedFlow ?? null,
     };
   }
@@ -137,7 +133,6 @@ async function fetchHistoryData(
     series: parsedSeries,
     requestStart: data.requestStart,
     requestEnd: data.requestEnd,
-    flowMatrix: data.flowMatrix ?? null,
     attributedFlow: data.attributedFlow ?? null,
   };
 }
@@ -158,8 +153,6 @@ interface FetchedSiteData {
   requestInterval: string;
   requestStart?: string;
   requestEnd?: string;
-  /** Server-computed sub-daily energy-flow matrix (when ?include=sankey is served), else null. */
-  flowMatrix?: EnergyFlowMatrix | null;
   /** Server-computed attributed flow matrix (when ?include=sankey is served), else null. */
   attributedFlow?: DailyFlowMatrices | null;
 }
@@ -371,7 +364,6 @@ async function fetchSiteData(
     series: allSeries,
     requestStart,
     requestEnd,
-    flowMatrix,
     attributedFlow,
   } = await fetchHistoryData(
     systemId,
@@ -452,7 +444,6 @@ async function fetchSiteData(
       requestInterval,
       requestStart,
       requestEnd,
-      flowMatrix,
       attributedFlow,
     },
   };
@@ -842,7 +833,6 @@ function processSiteData(
     requestInterval,
     requestStart,
     requestEnd,
-    flowMatrix,
     attributedFlow,
   } = fetchedData;
 
@@ -852,7 +842,6 @@ function processSiteData(
     rawSeries,
     requestStart,
     requestEnd,
-    flowMatrix,
     attributedFlow,
     hwsTemperature: hwsSeries[0]
       ? {

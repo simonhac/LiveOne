@@ -11,6 +11,7 @@ export {
   type SeriesByPoint,
   type RawReading,
   type Agg5mReading,
+  type Agg30mReading,
   type Agg1dReading,
   type RawInsert,
   type Agg5mInsert,

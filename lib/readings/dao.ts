@@ -98,6 +98,17 @@ export interface Agg1dReading {
   sampleCount: number;
   errorCount: number;
 }
+/** One 30-minute bucket of `agg_5m` rows, reduced in SQL by {@link read30m}. */
+export interface Agg30mReading {
+  /** Bucket END (epoch-ms UTC), aligned to :00/:30 — the first 30m boundary ≥ each row's interval_end. */
+  intervalEndMs: number;
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  last: number | null;
+  delta: number | null;
+  dataQuality: string | null;
+}
 
 export interface RawInsert {
   point: PointId;
@@ -279,6 +290,104 @@ async function read5m(
       errorCount: r.errorCount,
       dataQuality: r.dataQuality,
       sessionId: r.sessionId,
+    });
+  }
+  return out;
+}
+
+/**
+ * Read `agg_5m` reduced to 30-minute buckets IN SQL — the `/api/history` `interval=30m` serving
+ * read, replacing "read every 5m row and bucket 6:1 in JS" (6× fewer rows over the wire).
+ *
+ * Each field reduces by its own semantics, byte-matching the retired JS bucketing in
+ * `lib/history/build-series.ts`: `avg` = unweighted mean of the non-null 5m avgs, `delta` = sum
+ * (a cumulative delta averaged is one sixth of the truth), `min`/`max` = extremes, `last` and
+ * `data_quality` = last non-null in the bucket by interval_end. A bucket's end is the first :00/:30
+ * boundary at/after the row's interval_end (rows ending in `(B−30m, B]` belong to bucket `B`), so a
+ * caller wanting full buckets over `[firstEpoch, lastEpoch]` passes `fromMs = firstEpoch − 25min`,
+ * exactly as the 5m path's 30m lead-in did. Buckets with no stored rows are simply absent — the
+ * caller densifies onto the 30m grid, same contract as {@link read5m}.
+ *
+ * 🛑 Buckets are anchored on `window.anchorMs` (the caller's `firstEpoch`), NOT on a global UTC
+ * :00/:30 grid. `validateTimeRange` aligns a request to 30-minute boundaries in the SUBJECT's local
+ * time, and a subject at a :45 offset (UTC+08:45 Eucla, +05:45 Kathmandu, +12:45 Chatham — or any
+ * explicit `?timezoneOffset=`) makes those boundaries UTC :15/:45. A global grid would key every
+ * bucket 15 minutes off the grid `fetchAggRowsPg` densifies onto, so NO bucket would match and the
+ * served series would be silently all-null. The retired JS bucketing was request-relative for the
+ * same reason; this reproduces it.
+ *
+ * One knowing divergence from the JS path: the JS bucketed AFTER applying a point's `transform`,
+ * so an inverted ("i") point's `min`/`max` buckets were extremes of the NEGATED values (= the
+ * negated max/min). Here bucketing precedes the transform. No power/SoC point carries a transform
+ * today (see `LogicalSystemPoint.transform`), and the JS order was itself inconsistent with the 5m
+ * serve; if an inverted min/max series ever matters, swap min/max client-side for "i" points.
+ */
+async function read30m(
+  points: PointId[],
+  /** `anchorMs` is the caller's first served grid point — buckets are keyed relative to it. */
+  window: ReadWindow & { anchorMs: number },
+  exec?: ReadingsExec,
+): Promise<SeriesByPoint<Agg30mReading>> {
+  const out: SeriesByPoint<Agg30mReading> = new Map(points.map((p) => [p, []]));
+  if (points.length === 0) return out;
+  const db = exec ?? requirePlanetscaleDb();
+  const from = new Date(window.fromMs);
+  const to = new Date(window.toMs);
+  // SEAM: rid-keyed WHERE (single query, no per-device fan-out).
+  const ridByPoint = await RegistryCache.ridsForPoints(points);
+  const rids = [...ridByPoint.values()];
+  const pointByRid = new Map<number, PointId>(
+    [...ridByPoint].map(([p, r]) => [r, p]),
+  );
+  // Ceil each interval_end onto the caller's grid: anchor + ceil((t − anchor)/1800)·1800, in
+  // epoch-seconds. `ceil` over numeric (not integer division, which truncates toward zero) so the
+  // lead-in rows — where `t − anchor` is negative — land in the FIRST bucket, matching the retired
+  // JS `Math.ceil`. Mirrors: bucket B covers the rows ending in (B−30m, B].
+  // 🛑 The anchor is INLINED as a literal, not bound. Postgres matches a GROUP BY expression to the
+  // SELECT list structurally, and two occurrences of the same JS value bind as DIFFERENT parameters
+  // ($1 vs $13) — which are not equal nodes, so the query fails with "column must appear in the
+  // GROUP BY clause". `sql.raw` is safe here because the value is proven to be a finite integer.
+  const anchorSec = Math.floor(window.anchorMs / 1000);
+  if (!Number.isFinite(anchorSec))
+    throw new Error(`read30m: non-finite anchorMs (${window.anchorMs})`);
+  const anchorLit = sql.raw(String(anchorSec));
+  const bucketEndSec = sql<number>`(${anchorLit} + ceil((extract(epoch from ${pointReadingsAgg5m.intervalEnd}) - ${anchorLit})::numeric / 1800) * 1800)::float8`;
+  const rows = await db
+    .select({
+      pointRid: pointReadingsAgg5m.pointRid,
+      bucketEndSec,
+      avg: sql<number | null>`avg(${pointReadingsAgg5m.avg})::float8`,
+      min: sql<number | null>`min(${pointReadingsAgg5m.min})::float8`,
+      max: sql<number | null>`max(${pointReadingsAgg5m.max})::float8`,
+      delta: sql<number | null>`sum(${pointReadingsAgg5m.delta})::float8`,
+      last: sql<
+        number | null
+      >`(array_agg(${pointReadingsAgg5m.last} order by ${pointReadingsAgg5m.intervalEnd} desc) filter (where ${pointReadingsAgg5m.last} is not null))[1]::float8`,
+      dataQuality: sql<
+        string | null
+      >`(array_agg(${pointReadingsAgg5m.dataQuality} order by ${pointReadingsAgg5m.intervalEnd} desc) filter (where ${pointReadingsAgg5m.dataQuality} is not null))[1]`,
+    })
+    .from(pointReadingsAgg5m)
+    .where(
+      and(
+        inArray(pointReadingsAgg5m.pointRid, rids),
+        gte(pointReadingsAgg5m.intervalEnd, from),
+        upperBoundOp(window.toInclusive)(pointReadingsAgg5m.intervalEnd, to),
+      ),
+    )
+    .groupBy(pointReadingsAgg5m.pointRid, bucketEndSec)
+    .orderBy(bucketEndSec);
+  for (const r of rows) {
+    const id = pointByRid.get(r.pointRid);
+    if (!id) continue;
+    out.get(id)!.push({
+      intervalEndMs: Number(r.bucketEndSec) * 1000,
+      avg: r.avg,
+      min: r.min,
+      max: r.max,
+      last: r.last,
+      delta: r.delta,
+      dataQuality: r.dataQuality,
     });
   }
   return out;
@@ -1594,6 +1703,7 @@ async function syncProdToDev(options: SyncProdToDevOptions) {
 export const ReadingsDao = {
   readRaw,
   read5m,
+  read30m,
   read1d,
   latestForPoints,
   latest5mForPoints,

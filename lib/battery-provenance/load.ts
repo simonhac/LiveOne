@@ -25,7 +25,6 @@ import { ReadingsDao } from "@/lib/readings";
 import { Point, type PointId } from "@/lib/ids";
 import { applyPowerTransform } from "@/lib/aggregation/flow-series";
 import { loadFlowSeriesFromAgg5m } from "@/lib/aggregation/flow-series-pg";
-import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import { isSettledQuality } from "@/lib/data-quality";
 import {
   resolveLogicalSystem,
@@ -288,10 +287,6 @@ export interface LoadOptions {
    *  resolves it once for the energy-only Sankey and can hand it straight in here) — skips the
    *  internal `resolveLogicalSystem` call. Must be the same `handle`; not verified. */
   logicalSystem?: LogicalSystem;
-  /** Request-scoped `agg_5m` avg cache (from the `/api/history` "fetch" span) so the flow-series read
-   *  reuses in-window rows instead of re-querying (§1.3a). Only the `/api/history` attr path passes it;
-   *  every other caller (engine rollup, harness) omits it and reads exactly as before. */
-  avgCache?: Agg5mAvgCache;
 }
 
 /**
@@ -346,14 +341,7 @@ export async function loadProvenanceInputs(
   // points were unbound.
   const [bound, flowBundle, paramRows] = await Promise.all([
     boundPoints(db, area.id),
-    loadFlowSeriesFromAgg5m(
-      db,
-      ls.points,
-      startMs,
-      endMs,
-      opts.avgCache,
-      ls.energyPoints,
-    ),
+    loadFlowSeriesFromAgg5m(db, ls.points, startMs, endMs, ls.energyPoints),
     db
       .select({
         t: batteryProvenanceDaily.firstIntervalEnd,

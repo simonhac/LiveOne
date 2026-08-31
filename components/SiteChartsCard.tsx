@@ -1011,8 +1011,8 @@ export default function SiteChartsCard({
                   : null;
 
               // The attributed slice the tooltip reduces over — the SAME data the boxes above were
-              // built from (date-only hovered day → just that day; otherwise the whole payload, which
-              // for sub-daily is already a single day entry covering the exact window).
+              // built from (date-only hovered day → just that day; otherwise the whole payload —
+              // one entry per local day for sub-daily windows too, which the reducers sum across).
               const daySlice: DailyFlowMatrices | null =
                 unit === "kW" || !hasAttributed
                   ? null

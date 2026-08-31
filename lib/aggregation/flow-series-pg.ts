@@ -22,7 +22,6 @@ import {
   EnergySeriesInput,
 } from "@/lib/aggregation/flow-series";
 import type { FlowSeries } from "@/lib/aggregation/flow-matrix-core";
-import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import type { PointId } from "@/lib/ids";
 
 type PgDb = NonNullable<typeof planetscaleDb>;
@@ -66,14 +65,8 @@ export async function loadFlowSeriesFromAgg5m(
   points: FlowSeriesPoint[],
   startMs: number,
   endMs: number,
-  /** Optional request-scoped cache of the raw sparse `agg_5m` avg rows the `/api/history` "fetch" span
-   *  already read (§1.3a). Covered role points reuse those in-window rows and query only the pre-window
-   *  lead-in `[startMs, cache.from)`; uncovered points fall back to a full `[startMs, endMs]` query. The
-   *  reconstructed row set is identical to the single-query path — a pure read elimination. */
-  cache?: Agg5mAvgCache,
   /** Exact-energy accumulator points (`LogicalSystem.energyPoints`): their `delta` becomes the
-   *  `FlowSeries.energyKwh` overlays the integrator prefers over power integration. Read on the
-   *  direct-query path (the avg cache never covers them — ≤ a handful of points), and their
+   *  `FlowSeries.energyKwh` overlays the integrator prefers over power integration. Their
    *  interval_ends JOIN the shared timeline, so an interval the power series dropped still exists. */
   energyPoints?: FlowSeriesPoint[],
 ): Promise<FlowSeriesBundle> {
@@ -126,41 +119,10 @@ export async function loadFlowSeriesFromAgg5m(
     }
   };
 
-  // Split into cache-covered points (reuse in-window rows + query only the lead-in) and uncovered
-  // points (full [startMs, endMs] query). With no cache, every point is a full query — today's path.
-  const fullPoints: FlowSeriesPoint[] = [];
-  const leadInPoints: FlowSeriesPoint[] = [];
-  let leadInFrom: number | undefined;
-  for (const p of points) {
-    const s = cache?.slice(p.ref.systemId, p.ref.pointId, startMs, endMs);
-    if (s?.covered) {
-      for (const r of s.rows)
-        merged.push({
-          systemId: p.ref.systemId,
-          pointId: p.ref.pointId,
-          t: r.t,
-          avg: r.avg,
-          delta: null, // cache rows are avg-only; power points never read delta
-        });
-      // Lead-in only when the window starts before the cache's lower bound (uniform across covered
-      // points in one request). A seeded anchor inside the cache window needs no lead-in query.
-      if (startMs < s.from) {
-        leadInPoints.push(p);
-        leadInFrom = s.from;
-      }
-    } else {
-      fullPoints.push(p);
-    }
-  }
-  if (leadInPoints.length > 0 && leadInFrom !== undefined)
-    await queryInto(leadInPoints, startMs, leadInFrom, false); // [startMs, from)
-  // Energy points always take the direct-query path alongside the uncovered power points.
-  await queryInto(
-    [...fullPoints, ...(energyPoints ?? [])],
-    startMs,
-    endMs,
-    true,
-  ); // [startMs, endMs]
+  // One query for the power points + energy overlays together over [startMs, endMs]. (The
+  // request-scoped avg cache that once split this into covered/lead-in reads is gone — the
+  // /api/history fetch and attr spans no longer share rows; see the attributed-window builder.)
+  await queryInto([...points, ...(energyPoints ?? [])], startMs, endMs, true);
 
   if (merged.length === 0) return { timeline: [], sources: [], loads: [] };
 

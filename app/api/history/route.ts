@@ -25,20 +25,15 @@ import {
 } from "@/lib/history/build-series";
 import { fetchAggRowsPg, type AggFetchPoint } from "@/lib/history/readings-pg";
 import { Point, type PointId } from "@/lib/ids";
-import { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import {
   resolveLogicalSystem,
   type LogicalSystem,
 } from "@/lib/aggregation/logical-system";
-import { buildFlowMatrixFromAggRows } from "@/lib/history/build-flow-matrix";
 import { buildSeriesListing } from "@/lib/history/list-series";
-import { buildAttributedFlowMatrix } from "@/lib/history/build-attributed-flow-matrix";
+import { buildAttributedFlowWindow } from "@/lib/history/attributed-window";
 import { readAttributedDailyMatrices } from "@/lib/aggregation/flow-attr-read";
 import { planetscaleDb } from "@/lib/db/planetscale";
-import type {
-  EnergyFlowMatrix,
-  DailyFlowMatrices,
-} from "@/lib/energy-flow-matrix";
+import type { DailyFlowMatrices } from "@/lib/energy-flow-matrix";
 import {
   makeTimer,
   serverTimingHeaders,
@@ -47,6 +42,27 @@ import {
 
 // Initialize manager instances
 const pointManager = PointManager.getInstance();
+
+/**
+ * Short-TTL memo over `resolveLogicalSystem` — the role→point mapping is near-static config (it
+ * changes only on an area/binding edit) yet was re-read from the DB on every sankey request, and
+ * twice on some paths. Instance-scoped (per warm serverless instance) and deliberately short, so a
+ * config edit is visible within seconds; an in-flight promise is shared, a rejected one is evicted.
+ */
+const LOGICAL_TTL_MS = 30_000;
+const logicalCache = new Map<
+  number,
+  { at: number; value: Promise<LogicalSystem | null> }
+>();
+function cachedLogicalSystem(handle: number): Promise<LogicalSystem | null> {
+  const hit = logicalCache.get(handle);
+  const now = Date.now();
+  if (hit && now - hit.at < LOGICAL_TTL_MS) return hit.value;
+  const value = resolveLogicalSystem(handle);
+  value.catch(() => logicalCache.delete(handle));
+  logicalCache.set(handle, { at: now, value });
+  return value;
+}
 
 // ============================================================================
 // Helper Functions
@@ -314,16 +330,11 @@ async function getDeviceHistoryInOpenNEMFormat(
   interval: "5m" | "30m" | "1d",
   filterPatterns?: string[],
   enableDebug?: boolean,
-  sankey?: { logicalSystem: LogicalSystem },
 ): Promise<{
   series: OpenNEMDataSeries[];
   debug?: HistoryDebugInfo;
   dataSource?: string;
   sqlQueries?: string[];
-  flowMatrix?: EnergyFlowMatrix | null;
-  flowMatrixOmittedReason?: string;
-  /** §1.3a: the raw sparse `agg_5m` avg rows read here, for the attr span to reuse. */
-  avgCache?: Agg5mAvgCache;
 }> {
   // Get filtered SeriesInfo[] from PointManager
   // Note: PointManager only supports "5m" | "1d" intervals, so for "30m" we use "5m"
@@ -336,10 +347,7 @@ async function getDeviceHistoryInOpenNEMFormat(
   );
 
   if (seriesInfos.length === 0) {
-    return {
-      series: [],
-      flowMatrixOmittedReason: sankey ? "no-series" : undefined,
-    };
+    return { series: [] };
   }
 
   const aggTable =
@@ -379,70 +387,24 @@ async function getDeviceHistoryInOpenNEMFormat(
     });
   }
 
-  // Sub-daily Sankey: compute the energy-flow matrix from the SAME signed 5m rows this fetch loads
-  // (5m/30m only — for 30m the rows are still raw 5m, bucketed later), so it costs no extra query.
-  // Refuse if the fetched series don't cover every role point (a filtered request would otherwise
-  // silently mis-derive rest-of-house / residual). The matrix is captured from whichever serve path
-  // produces the rows below.
-  let flowMatrix: EnergyFlowMatrix | null | undefined;
-  let flowMatrixOmittedReason: string | undefined;
-  if (sankey) {
-    const fetchedAvgPoints = new Set(
-      seriesInfos
-        .filter((s) => s.aggregationField === "avg")
-        .map((s) => `${s.point.systemId}.${s.point.index}`),
-    );
-    const coversRoleSet = sankey.logicalSystem.points.every((p) =>
-      fetchedAvgPoints.has(`${p.ref.systemId}.${p.ref.pointId}`),
-    );
-    if (!coversRoleSet) flowMatrixOmittedReason = "incomplete-series-set";
-  }
-  const computeSankey =
-    sankey !== undefined && flowMatrixOmittedReason === undefined;
-
-  // Exact-energy overlay: also fetch the logical system's energy-accumulator points so the Sankey
-  // can prefer metered interval energies over power integration (`FlowSeries.energyKwh`). Additive
-  // only — the coverage check above stays POWER-only, so missing energy rows can never omit the
-  // Sankey (they just fall back to integration), and `buildSeriesFromAggRows` iterates
-  // `seriesInfos`, so the extra rows never leak into the chart payload.
-  if (computeSankey) {
-    for (const ep of sankey!.logicalSystem.energyPoints) {
-      if (seenPoints.has(ep.point)) continue;
-      seenPoints.add(ep.point);
-      uniquePairsArray.push({
-        point: ep.point,
-        systemId: ep.ref.systemId,
-        pointId: ep.ref.pointId,
-      });
-    }
-  }
-
-  // Time window: 1d uses YYYY-MM-DD day strings; 5m/30m uses an epoch-ms dense timeline.
-  // When aggregating 5m → 30m we fetch 25 min earlier (a 30m bucket needs six 5m readings).
+  // Time window: 1d uses YYYY-MM-DD day strings; 5m/30m uses an epoch-ms dense timeline (the 30m
+  // read's 25-min lead-in — a bucket needs six 5m readings — is applied inside fetchAggRowsPg).
   const startDate =
     interval === "1d" ? (startTime as CalendarDate).toString() : undefined;
   const endDate =
     interval === "1d" ? (endTime as CalendarDate).toString() : undefined;
-  const queryFirstEpoch =
-    interval === "30m" ? firstEpoch - 25 * 60 * 1000 : firstEpoch;
 
   // Serve from Postgres: read the window and build the OpenNEM series via the shared transform.
-  // §1.3a: when a Sankey is requested, cache the raw sparse avg rows so the attr flow-series read
-  // reuses them instead of re-querying agg_5m for the same role points.
-  const avgCache = sankey ? new Agg5mAvgCache() : undefined;
-  const rows = await fetchAggRowsPg(
-    {
-      uniquePairs: uniquePairsArray,
-      interval,
-      queryFirstEpoch,
-      lastEpoch,
-      startDate,
-      endDate,
-    },
-    avgCache,
-  );
-  if (computeSankey)
-    flowMatrix = buildFlowMatrixFromAggRows(rows, sankey!.logicalSystem);
+  // (The Sankey no longer rides these rows — the attributed matrix is built independently from the
+  // flow_attr_1d rollup + per-edge-day live computes; see the route's attr branch.)
+  const rows = await fetchAggRowsPg({
+    uniquePairs: uniquePairsArray,
+    interval,
+    firstEpoch,
+    lastEpoch,
+    startDate,
+    endDate,
+  });
   const series = await buildSeriesFromAggRows(
     rows,
     seriesInfos,
@@ -457,9 +419,6 @@ async function getDeviceHistoryInOpenNEMFormat(
     series,
     dataSource: aggTable,
     debug,
-    flowMatrix,
-    flowMatrixOmittedReason,
-    avgCache,
   };
 }
 
@@ -478,8 +437,6 @@ function buildResponse(
   debug?: any,
   seriesPatterns?: string[],
   sqlQueries?: string[],
-  flowMatrix?: EnergyFlowMatrix | null,
-  flowMatrixOmittedReason?: string,
   attributedFlow?: DailyFlowMatrices | null,
   attributedFlowOmittedReason?: string,
   timer?: ServerTimer,
@@ -535,17 +492,12 @@ function buildResponse(
     response.sqlQueries = sqlQueries;
   }
 
-  // Add the sub-daily energy-flow matrix (or why it was omitted) when ?include=sankey was requested.
-  if (flowMatrix) {
-    response.flowMatrix = flowMatrix;
-    response.flowMatrixResolution = "5m";
-  } else if (flowMatrixOmittedReason) {
-    response.flowMatrixOmittedReason = flowMatrixOmittedReason;
-  }
-
-  // The ATTRIBUTED matrix (energy + emissions/renewable/cost legs) behind the Sankey node tooltips —
-  // computed on the fly for sub-daily windows, read from `flow_attr_1d` for 1d. Never blocks the
-  // request on failure (P3 — see build-attributed-flow-matrix.ts); the reason explains a blank payload.
+  // The ATTRIBUTED matrix (energy + emissions/renewable/cost legs) behind the Sankey and its node
+  // tooltips — flow_attr_1d rollup days + live-computed partial edge days for sub-daily windows,
+  // pure rollup for 1d (see lib/history/attributed-window.ts). Never blocks the request on failure
+  // (P3); the reason explains a blank payload. The old energy-only `flowMatrix` projection is
+  // retired — the attributed matrix's energy leg IS that matrix (computeFlowMatrix is
+  // computeFlowAccounting's energy projection), and its degraded form carries null metric legs.
   if (attributedFlow) {
     response.attributedFlow = attributedFlow;
   } else if (attributedFlowOmittedReason) {
@@ -702,9 +654,7 @@ export async function GET(request: NextRequest) {
 
     const interval = basicParams.interval as "5m" | "30m" | "1d";
 
-    // Optional energy-flow Sankey bundled with the history payload (?include=sankey). The energy-only
-    // matrix is computed here for sub-daily intervals only (the in-hand signed 5m rows); 1d / long-range
-    // has no energy-only leg here (it never did — see `attributedFlow` below for its replacement).
+    // Optional attributed energy-flow Sankey bundled with the history payload (?include=sankey).
     const includeParam = searchParams.get("include");
     const includeSankey = includeParam
       ? includeParam
@@ -712,29 +662,27 @@ export async function GET(request: NextRequest) {
           .map((s) => s.trim())
           .includes("sankey")
       : false;
-    let sankey: { logicalSystem: LogicalSystem } | undefined;
-    let sankeyOmittedReason: string | undefined;
-    if (includeSankey && interval !== "1d") {
-      const logicalSystem = await t.time("logical", () =>
-        resolveLogicalSystem(handle),
+    // One logical-system resolve per request, shared by every interval's attr branch (it used to be
+    // resolved twice on some paths), and TTL-memoised across requests — it is near-static config,
+    // and week-by-week navigation re-resolves it on every request.
+    let logicalSystem: LogicalSystem | null = null;
+    if (includeSankey) {
+      logicalSystem = await t.time("logical", () =>
+        cachedLogicalSystem(handle),
       );
-      if (!logicalSystem || !logicalSystem.isComplete) {
-        sankeyOmittedReason = "not-a-logical-system";
-      } else {
-        sankey = { logicalSystem };
-      }
     }
+    // 🛑 Completeness gates the LIVE sub-daily compute only. The 1d reader is deliberately handed
+    // the system whether or not it is complete: an area whose current bindings have gone incomplete
+    // can still have materialised `flow_attr_1d` history, and `readAttributedDailyMatrices` serves
+    // those rows, consulting `isComplete` only to EXPLAIN an empty result. Gating it here blanked
+    // every M/Y Sankey for such an area.
+    const completeLogicalSystem =
+      logicalSystem && logicalSystem.isComplete ? logicalSystem : null;
 
-    // Fetch data using point readings provider
-    const {
-      series: dataSeries,
-      dataSource,
-      debug,
-      sqlQueries,
-      flowMatrix,
-      flowMatrixOmittedReason,
-      avgCache,
-    } = await t.time("fetch", () =>
+    // The series fetch and the attributed matrix are independent (the attr side reads the
+    // flow_attr_1d rollup + its own agg_5m windows), so they run CONCURRENTLY — the smaller span
+    // leaves the request's critical path entirely.
+    const fetchPromise = t.time("fetch", () =>
       getDeviceHistoryInOpenNEMFormat(
         handle,
         tzOffsetMin,
@@ -743,29 +691,27 @@ export async function GET(request: NextRequest) {
         interval,
         seriesPatterns.length > 0 ? seriesPatterns : undefined,
         basicParams.enableDebug,
-        sankey,
       ),
     );
 
-    // The ATTRIBUTED matrix (energy + emissions/renewable/cost/estimated legs) behind the Sankey node
-    // tooltips. Sub-daily: computed on the fly (P2 — same unified series universe as `sankey` above);
-    // wrapped in try/catch so a fold/provenance-load hiccup degrades to the energy-only matrix + limited
-    // tooltips instead of failing the whole history request (P3). 1d: read the materialized
-    // `flow_attr_1d` rollup for the window's local days (replaces the old flat refusal).
+    // The ATTRIBUTED matrix (energy + emissions/renewable/cost/estimated legs) behind the Sankey and
+    // its node tooltips. Sub-daily: flow_attr_1d rollup days + live-computed partial edge days
+    // (lib/history/attributed-window.ts); 1d: the pure rollup read. Wrapped so a failure degrades to
+    // no matrix + a reason rather than failing the whole history request (P3) — and the sub-daily
+    // builder itself degrades per segment to an energy-only matrix (null metric legs) first.
     let attributedFlow: DailyFlowMatrices | undefined;
     let attributedFlowOmittedReason: string | undefined;
-    if (includeSankey) {
-      await t.time("attr", async () => {
-        if (interval === "1d") {
-          if (!planetscaleDb) {
-            attributedFlowOmittedReason = "database-unavailable";
-          } else {
+    const attrPromise = includeSankey
+      ? t.time("attr", async () => {
+          if (interval === "1d") {
+            if (!planetscaleDb) {
+              attributedFlowOmittedReason = "database-unavailable";
+              return;
+            }
             try {
               const startYMD = (timeRange.startTime as CalendarDate).toString();
               const endYMD = (timeRange.endTime as CalendarDate).toString();
-              // `readAttributedDailyMatrices` (main, post-PR#193) takes a pre-resolved logical system;
-              // it handles null/incomplete internally (→ reason "not-a-logical-system").
-              const logicalSystem = await resolveLogicalSystem(handle);
+              // `logicalSystem`, NOT `completeLogicalSystem` — see the note at its declaration.
               const attr = await readAttributedDailyMatrices(
                 planetscaleDb,
                 logicalSystem,
@@ -781,36 +727,39 @@ export async function GET(request: NextRequest) {
               console.error("[history] attributed flow (1d) failed:", error);
               attributedFlowOmittedReason = "attributed-compute-failed";
             }
-          }
-        } else if (sankey) {
-          try {
-            const startMs = (timeRange.startTime as ZonedDateTime)
-              .toDate()
-              .getTime();
-            const endMs = (timeRange.endTime as ZonedDateTime)
-              .toDate()
-              .getTime();
-            const attr = await buildAttributedFlowMatrix(
-              handle,
-              startMs,
-              endMs,
-              sankey.logicalSystem,
-              avgCache,
-            );
-            if (attr) {
-              attributedFlow = attr;
-            } else {
-              attributedFlowOmittedReason = "no-provenance-inputs";
+          } else {
+            if (!completeLogicalSystem) {
+              attributedFlowOmittedReason = "not-a-logical-system";
+              return;
             }
-          } catch (error) {
-            console.error("[history] attributed flow failed:", error);
-            attributedFlowOmittedReason = "attributed-compute-failed";
+            try {
+              const startMs = (timeRange.startTime as ZonedDateTime)
+                .toDate()
+                .getTime();
+              const endMs = (timeRange.endTime as ZonedDateTime)
+                .toDate()
+                .getTime();
+              const attr = await buildAttributedFlowWindow(
+                handle,
+                startMs,
+                endMs,
+                completeLogicalSystem,
+              );
+              if (attr) {
+                attributedFlow = attr;
+              } else {
+                attributedFlowOmittedReason = "no-provenance-inputs";
+              }
+            } catch (error) {
+              console.error("[history] attributed flow failed:", error);
+              attributedFlowOmittedReason = "attributed-compute-failed";
+            }
           }
-        } else {
-          attributedFlowOmittedReason = sankeyOmittedReason;
-        }
-      });
-    }
+        })
+      : Promise.resolve();
+
+    const [{ series: dataSeries, dataSource, debug, sqlQueries }] =
+      await Promise.all([fetchPromise, attrPromise]);
 
     // Build and return response
     const durationMs = Date.now() - startTime;
@@ -825,10 +774,6 @@ export async function GET(request: NextRequest) {
       debug,
       seriesPatterns.length > 0 ? seriesPatterns : undefined,
       sqlQueries,
-      flowMatrix,
-      includeSankey
-        ? (sankeyOmittedReason ?? flowMatrixOmittedReason)
-        : undefined,
       attributedFlow,
       attributedFlowOmittedReason,
       t,

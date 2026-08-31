@@ -45,9 +45,8 @@ export interface WarmInputsResult {
 /**
  * Warm inputs for `[startMs, endMs]`, or null when the Area/window yields nothing loadable at all.
  *
- * `opts` is forwarded to the loader unchanged (a pre-resolved logical system, a request-scoped
- * `agg_5m` cache) — the seeded path threads it too, so a caller that already fetched its rows does
- * not re-query on either branch.
+ * `opts` is forwarded to the loader unchanged (a pre-resolved logical system) — the seeded path
+ * threads it too.
  */
 export async function loadWarmProvenanceInputs(
   db: PgDb,
@@ -68,7 +67,6 @@ export async function loadWarmProvenanceInputs(
       startMs,
       endMs,
       opts.logicalSystem,
-      opts.avgCache,
     );
   } catch (err) {
     console.error("[BatProv] checkpoint seed lookup failed:", err);

@@ -83,6 +83,14 @@ a React Query `HydrationBoundary`. The SSR seed _is_ the values.
 
 ### 1.3 Trim `/api/history` (the ~198 ms server tail)
 
+> **Status 2026-09-01: closed by a fourth lever the list below didn't have** — serve the SUB-DAILY
+> Sankey from the existing `flow_attr_1d` rollup per whole local day, live-computing only a rolling
+> window's ≤ 2 partial edge days (`lib/history/attributed-window.ts`), plus SQL-side 30m bucketing
+> (`ReadingsDao.read30m`), fetch ∥ attr, and a TTL-memoised `resolveLogicalSystem`. That supersedes
+> 1.3a (the `avgCache` is REMOVED — nothing shares rows any more) and makes 1.3c moot (no new
+> materialisation needed; the existing rollup is the store). The energy-only `flowMatrix` response
+> field is retired with it — the attributed matrix's energy leg is the same computation.
+
 `/api/history` (`fetch` 82 ms + `attr` 66 ms battery-provenance) is the slowest request and gates settle.
 The measured tail is the **sub-daily live-compute path** (the profiled request carries a `logical` span,
 emitted only for `includeSankey && interval !== "1d"`) — so, unlike the 1d path which already reads the

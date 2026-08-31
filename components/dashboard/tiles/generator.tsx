@@ -190,7 +190,11 @@ function GeneratorTile({
       limit: 1,
       offset: 0,
     }),
-    enabled: runsSystemId != null,
+    // Gated on the LIVE point: `openRunIsLive` discards this response whenever `liveRunning === 0`,
+    // so fetching while the engine is provably stopped is a ~140 ms read nobody can consume. `null`
+    // (derived point absent from the serving map) still fetches — the believe-the-live-point rule
+    // cuts only where the point positively says "stopped" (#406).
+    enabled: runsSystemId != null && liveRunning !== 0,
     // An OPEN run's energy and cost keep accruing (the minutely reconcile re-allocates it over
     // [start, now]), so the row froze at whatever the last fetch happened to see — "0.3 kWh" for
     // the rest of the run. One row, once a minute, and only while an engine is actually turning:

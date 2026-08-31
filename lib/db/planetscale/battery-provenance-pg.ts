@@ -43,7 +43,6 @@ import {
   bindingPoint,
   loadProvenanceInputs,
 } from "@/lib/battery-provenance/load";
-import type { Agg5mAvgCache } from "@/lib/history/agg5m-cache";
 import { computeBatteryProvenance } from "@/lib/battery-provenance/compute";
 import {
   BATPROV_MODEL_VERSION,
@@ -129,7 +128,8 @@ export const FLOW_ATTR_VERSION = 8;
  *  point_readings_flow_attr_1d.finalized_at). A day younger than this is still re-materialised by the
  *  heal so late Amber/OE revisions and backfills flow in; once past it, the day is stamped final. */
 export const SETTLEMENT_WINDOW_MS = 72 * 3600 * 1000;
-const MIN_ATTR_KWH = 0.001;
+/** Below this, an edge is noise: the rollup writer skips the row and the sub-daily flattener follows it. */
+export const MIN_ATTR_KWH = 0.001;
 
 /**
  * A flow_attr_1d day is FINAL once its local day-end is past the settlement window; NULL while still
@@ -822,7 +822,6 @@ export async function tryLoadSeededProvenanceInputs(
   targetStartMs: number,
   endMs: number,
   logicalSystem?: LogicalSystem,
-  avgCache?: Agg5mAvgCache,
 ): Promise<ProvenanceSeedResult> {
   const [area] = await db
     .select({ id: areas.id, tz: areas.timezoneOffsetMin })
@@ -885,7 +884,7 @@ export async function tryLoadSeededProvenanceInputs(
   const inputs = await loadProvenanceInputs(
     handle,
     { startMs: env.anchorMs, endMs },
-    { logicalSystem, avgCache },
+    { logicalSystem },
   );
   if (!inputs) return { seeded: false, reason: "no-inputs" };
   if (!inputsAreCanonical(inputs))
