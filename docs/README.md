@@ -84,6 +84,7 @@ Kept because they answer _why does the system look like this_ — not because th
 ## Deferred work
 
 - [deferred/postgres-integration-test-harness.md](deferred/postgres-integration-test-harness.md) — re-point legacy-seeded/flag-gated test suites to Postgres
+- [deferred/session-response-retention.md](deferred/session-response-retention.md) — `sessions` is **24.5 % of the database** and the archived payload is ~90 % of every row. Nulling `response` beyond 3 months reclaims ~13.5 % of the DB; deleting the rows outright only adds 2.6 % more, is blocked by `point_readings.session_id`'s `ON DELETE NO ACTION` FK, and severs reading→payload traceability. Neither shrinks the file without `VACUUM FULL`. Measured, no decision taken
 
 ## Records (append-only; never "stale")
 
