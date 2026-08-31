@@ -418,8 +418,12 @@ pscale role create liveone sydney <name> --inherited-roles postgres --ttl 1h --f
 # Deploy to production
 vercel --prod
 
-# Check recent deployments
+# Check recent deployments (NB: vercel ls prints its table to STDERR — pipe with 2>&1)
 vercel ls
+
+# Wait for the newest production deploy to go Ready (bounded; exit 0 Ready / 1 failed / 2 timeout).
+# Use THIS, not a hand-rolled `vercel ls | grep` loop — the stderr table makes naive polling hang.
+./scripts/utils/wait-for-deploy.sh [--sha <commit>] [--timeout 600]
 
 # View build logs
 npx tsx tools/read-vercel-build-log.ts
