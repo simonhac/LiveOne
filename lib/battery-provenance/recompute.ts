@@ -121,7 +121,26 @@ type PgDb = ReturnType<typeof requirePlanetscaleDb>;
  * current (idle handle / dead feed), the minutely reconcile can skip the whole ~7.5-day re-fold. Returns
  * false (→ recompute) when there is no battery point or no blend has been written yet.
  */
-async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
+/**
+ * The newest 5m interval-end the fold could possibly have covered at `nowMs` — i.e. the last
+ * COMPLETE interval boundary. The receiver writes the IN-PROGRESS bucket (a 10:01 reading creates
+ * the row for interval-end 10:05, and `withSuccessorIntervals` the one after), so the raw input
+ * watermark runs one bucket ahead of anything a fold windowed to `now` can reach. Comparing the
+ * blend against that raw watermark therefore NEVER passes while a feed is live — the skip-guard
+ * it was built for was dead code, and the refold ran every minute when a new fold is only even
+ * possible once per 5. Clamp the input watermark to this boundary before comparing.
+ * Pure; exported for tests.
+ */
+export function lastCompletableIntervalMs(nowMs: number): number {
+  const FIVE_MIN_MS = 5 * 60 * 1000;
+  return Math.floor(nowMs / FIVE_MIN_MS) * FIVE_MIN_MS;
+}
+
+async function blendIsCurrent(
+  db: PgDb,
+  handle: number,
+  nowMs: number,
+): Promise<boolean> {
   const [bat] = await db
     .select({ uid: areaBindings.pointUid })
     .from(areaBindings)
@@ -167,7 +186,10 @@ async function blendIsCurrent(db: PgDb, handle: number): Promise<boolean> {
   const outMax = maxes.get(outPoint) ?? null;
   if (inMax == null) return true; // no input data at all → nothing to do
   if (outMax == null) return false; // blend never written → recompute
-  return outMax >= inMax;
+  // Clamp the input watermark to the last complete boundary — see lastCompletableIntervalMs.
+  // Late intra-day revisions BEHIND the watermark are (and always were) invisible to this guard;
+  // they heal on the next boundary's refold-from-anchor and at the nightly reheal.
+  return outMax >= Math.min(inMax, lastCompletableIntervalMs(nowMs));
 }
 
 /** Minutely: keep the last `trailingMs` fresh for every battery Area + refresh the KV latest blend. Skips a
@@ -188,7 +210,7 @@ export async function reconcileTrailingWindow(
   let seeded = 0;
   let fellBack = 0;
   for (const handle of handles) {
-    if (await blendIsCurrent(db, handle)) {
+    if (await blendIsCurrent(db, handle, nowMs)) {
       skipped++;
       continue;
     }

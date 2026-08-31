@@ -56,6 +56,7 @@ function makeFakeExec(selectRows: any[] = []) {
     rows: any[];
     mode: string;
     setKeys?: string[];
+    setWhereSql?: string;
   }[] = [];
   const deletes: { table: string }[] = [];
   // A chainable, awaitable read result: awaiting resolves the canned `selectRows`, and `.orderBy`/
@@ -77,6 +78,7 @@ function makeFakeExec(selectRows: any[] = []) {
             rows: any[];
             mode: string;
             setKeys?: string[];
+            setWhereSql?: string;
           } = { table: tableName(table), rows, mode: "" };
           const returning = () => Promise.resolve(rows.map(() => ({})));
           return {
@@ -85,9 +87,26 @@ function makeFakeExec(selectRows: any[] = []) {
               inserts.push(rec);
               return { returning };
             },
-            onConflictDoUpdate(cfg: { set: Record<string, unknown> }) {
+            onConflictDoUpdate(cfg: {
+              set: Record<string, unknown>;
+              setWhere?: unknown;
+            }) {
               rec.mode = "update";
               rec.setKeys = Object.keys(cfg.set);
+              // Render the drizzle SQL chunks to a rough string so tests can assert which columns
+              // the skip-unchanged predicate compares (a queryChunks walk; params render as "?").
+              if (cfg.setWhere !== undefined) {
+                const render = (node: any): string => {
+                  if (node == null) return "";
+                  if (typeof node === "string") return node;
+                  if (Array.isArray(node.queryChunks))
+                    return node.queryChunks.map(render).join("");
+                  if (Array.isArray(node.value)) return node.value.join("");
+                  if (node.name !== undefined) return String(node.name);
+                  return "?";
+                };
+                rec.setWhereSql = render(cfg.setWhere);
+              }
               inserts.push(rec);
               return { returning };
             },
@@ -218,6 +237,62 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
     const first = makeFakeExec();
     await ReadingsDao.insert5m([base], { upsert: false }, first.exec);
     expect(first.inserts[0].mode).toBe("nothing");
+  });
+
+  it("insert5m skipUnchanged adds a setWhere over exactly the columns the SET writes", async () => {
+    const p = point(15, 2);
+    const base = {
+      point: p,
+      intervalEndMs: 1_700_000_000_000,
+      avg: 1,
+      min: 0,
+      max: 2,
+      last: 1,
+      delta: 0,
+      valueStr: null,
+      sampleCount: 1,
+      errorCount: 0,
+      dataQuality: "good",
+      sessionId: null,
+    };
+    // The blend/HWS writer shape: sole-writer of value cols + data_quality.
+    const derived = makeFakeExec();
+    await ReadingsDao.insert5m(
+      [base],
+      {
+        upsert: true,
+        preserveVendorMeta: true,
+        writeDataQuality: true,
+        skipUnchanged: true,
+      },
+      derived.exec,
+    );
+    const where = derived.inserts[0].setWhereSql!;
+    expect(where).toContain("IS DISTINCT FROM");
+    for (const col of [
+      "avg",
+      "min",
+      "max",
+      "last",
+      "delta",
+      "sample_count",
+      "error_count",
+      "data_quality",
+    ])
+      expect(where).toContain(`excluded.${col}`);
+    // preserveVendorMeta: the SET never writes session_id/value_str, so a difference there must
+    // NOT resurrect the update.
+    expect(where).not.toContain("excluded.session_id");
+    expect(where).not.toContain("excluded.value_str");
+
+    // Without the flag, no predicate — the update always fires (today's behaviour).
+    const plain = makeFakeExec();
+    await ReadingsDao.insert5m(
+      [base],
+      { upsert: true, preserveVendorMeta: true, writeDataQuality: true },
+      plain.exec,
+    );
+    expect(plain.inserts[0].setWhereSql).toBeUndefined();
   });
 
   it("insert5m upsert overwrites the vendor-meta columns by default", async () => {

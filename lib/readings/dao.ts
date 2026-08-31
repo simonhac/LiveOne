@@ -941,6 +941,17 @@ async function insertRaw(
  * the row would claim a measurement was derived. It cannot use `writeDataQuality` instead: that
  * would clobber the `good`/`b`/`a` a 5m-native queue write set on the same interval, which is the
  * whole reason `preserveVendorMeta` exists. So the SET is conditional, in SQL, on the CURRENT value.
+ *
+ * `skipUnchanged` (upsert only) suppresses the UPDATE arm entirely — `setWhere` on the conflict —
+ * when no column this writer owns differs from what is already stored. For a whole-window rewriter
+ * (the battery-provenance blend re-folds [local midnight → now] every run and upserts EVERY
+ * interval, ~720 byte-identical rewrites per row per day measured on prod 2026-09-01) this is the
+ * difference between ~2,850 dead tuples/min and single digits: Postgres versions a new tuple for
+ * ANY update that fires, identical values included, so idempotence has to be decided BEFORE the
+ * update, not by it. A suppressed row also keeps its `updated_at` — correct, nothing changed — and
+ * is absent from `written` (RETURNING only reports rows actually written). The comparison covers
+ * exactly the columns the SET would write (minus `updated_at`), so a row differing only in a
+ * column this writer does not own is still — correctly — left alone.
  */
 async function insert5m(
   rows: Agg5mInsert[],
@@ -949,6 +960,7 @@ async function insert5m(
     preserveVendorMeta?: boolean;
     writeDataQuality?: boolean;
     clearDerivedQuality?: boolean;
+    skipUnchanged?: boolean;
   },
   exec?: ReadingsExec,
 ): Promise<{ written: number }> {
@@ -973,10 +985,37 @@ async function insert5m(
     dataQuality: r.dataQuality,
   }));
   const insert = db.insert(pointReadingsAgg5m).values(values);
+  // The owned-column difference test behind `skipUnchanged` — one IS DISTINCT FROM per column the
+  // SET writes (null-safe, unlike <>). `data_quality` joins the list only when this writer owns it
+  // (`writeDataQuality`); vendor-meta columns are compared only when the SET would write them.
+  const changedWhere = sql.join(
+    [
+      sql`${pointReadingsAgg5m.avg} IS DISTINCT FROM excluded.avg`,
+      sql`${pointReadingsAgg5m.min} IS DISTINCT FROM excluded.min`,
+      sql`${pointReadingsAgg5m.max} IS DISTINCT FROM excluded.max`,
+      sql`${pointReadingsAgg5m.last} IS DISTINCT FROM excluded.last`,
+      sql`${pointReadingsAgg5m.delta} IS DISTINCT FROM excluded.delta`,
+      sql`${pointReadingsAgg5m.sampleCount} IS DISTINCT FROM excluded.sample_count`,
+      sql`${pointReadingsAgg5m.errorCount} IS DISTINCT FROM excluded.error_count`,
+      ...(opts.writeDataQuality || !opts.preserveVendorMeta
+        ? [
+            sql`${pointReadingsAgg5m.dataQuality} IS DISTINCT FROM excluded.data_quality`,
+          ]
+        : []),
+      ...(opts.preserveVendorMeta
+        ? []
+        : [
+            sql`${pointReadingsAgg5m.sessionId} IS DISTINCT FROM excluded.session_id`,
+            sql`${pointReadingsAgg5m.valueStr} IS DISTINCT FROM excluded.value_str`,
+          ]),
+    ],
+    sql` OR `,
+  );
   const res = await (
     opts.upsert
       ? insert.onConflictDoUpdate({
           target: [pointReadingsAgg5m.pointRid, pointReadingsAgg5m.intervalEnd],
+          ...(opts.skipUnchanged ? { setWhere: changedWhere } : {}),
           set: {
             avg: sql`excluded.avg`,
             min: sql`excluded.min`,
