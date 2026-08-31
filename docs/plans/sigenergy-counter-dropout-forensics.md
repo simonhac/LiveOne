@@ -46,7 +46,65 @@ without that exemption the low-volume flicker distrusted **half** of all grid in
 makes the differencing loop `continue` — no reading at all. We emitted deltas either side of the
 dropout, which requires three present, numeric samples.
 
-## The open question
+## SETTLED 2026-08-31 — and the itemList carries historical POWER
+
+`raw=true` against prod returned the payload. At the 2026-08-20 19:20 dropout Sigenergy sent
+literal numeric zeros — not a sentinel `pickNumber` coerced:
+
+```json
+{"dataTime": "20260820 19:20", "powerGeneration": 0, "powerToGrid": 0, "powerUse": -0.01,
+ "esCharging": -0.01, "esDischarging": -0.01, "batSoc": 55.1, "loadPower": 2.219, ...}
+```
+
+`26.97 → 0 → 26.97` on `powerGeneration`, with `esCharging` going NEGATIVE (−0.01) — impossible for
+a cumulative counter. **The vendor sends the zeros. `pickNumber` is exonerated** (§3 is still worth
+doing on its own merits, but it is not implicated here).
+
+**The bigger finding: the same `itemList` carries per-interval instantaneous POWER and SoC.**
+
+```
+pvTotalPower  loadPower  toGridPower  fromGridPower
+esChargeDischargePower  esChargePower  esDischargePower  batSoc
+```
+
+We only ever read the six cumulative energy fields (`extractEnergyTotals`), so this was never seen.
+The premise the power recovery was built on — "Sigenergy's cloud API serves no historical power, so
+a missed poll is unrecoverable" — is **wrong**. It is in the payload we already fetch nightly.
+
+Validated against our own measured samples for 2026-08-20 (n=268):
+
+| itemList field | vs our measurement | median | p90 |
+| --- | --- | --- | --- |
+| `pvTotalPower` | `source.solar/power.avg` | **0.0 W** | 406 W |
+| `batSoc` | `bidi.battery/soc.last` | **0.0 %** | 0.1 % |
+| `loadPower` | `rest-of-house + ev` | 140 W | — |
+
+`loadPower` is TOTAL load, EV included (on >2 kW EV intervals: 6850 W error against rest-of-house
+alone, 57.5 W against the sum) — the same semantics as `powerUse`. There is **no EV field**, so the
+EV / rest-of-house split still has to be interpolated. Everything else can come from the vendor.
+
+### What this changes
+
+Reading these fields is strictly better than deriving power from the energy counters:
+
+- **Exact, not quantised.** No ±120 W from the 0.01 kWh counter resolution.
+- **No counter-dropout guard needed for power.** The power fields did NOT glitch at 19:20 —
+  `loadPower` 2.219 and `batSoc` 55.1 are both sane while every energy counter collapsed. They are
+  independent failure domains.
+- **No interpolation cap.** Fills a hole of any length, so the 15-minute limit disappears for
+  everything except the EV split.
+- **It would have filled the intervals the guard refused** (2026-08-20 01:30 / 05:05 / 09:50), which
+  were refused precisely because the ENERGY counters were untrustworthy there.
+
+`trustedCounters` stays necessary regardless — the energy series still need it, and the flow-matrix
+defect below is the same bug in another consumer.
+
+Recommended: switch `derive-power.ts`'s `calculated` half to read the itemList power fields, keep
+the interpolated EV/rest-of-house split, and re-mark the recovered rows accordingly (a vendor-
+reported value is not `calculated` — it is as measured as anything else we store, so it may not
+warrant a derived marker at all).
+
+## The open question (now answered — kept for the record)
 
 **Did Sigenergy send the zero, or did we coerce one?**
 
