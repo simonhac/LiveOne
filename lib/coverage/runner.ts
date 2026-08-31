@@ -14,11 +14,7 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
-import { recomputeAgg1dForDay } from "@/lib/db/planetscale/aggregate-points-pg";
-import { resolveLogicalSystem } from "@/lib/aggregation/logical-system";
-import { learnAllForHandle } from "@/lib/db/planetscale/battery-provenance-daily-pg";
-import { recomputeBatteryProvenanceForWindow } from "@/lib/db/planetscale/battery-provenance-pg";
-import { dayToUnixRangeForAggregation } from "@/lib/aggregation/point-aggregates";
+import { recomputeDerivedForDeviceDays } from "@/lib/aggregation/scoped-recompute";
 import { COVERAGE_PROVIDERS } from "./providers";
 import {
   resolveCoveragePoints,
@@ -435,119 +431,21 @@ export async function runCoverageRepair(
     }
     recompute.pending = [...pending.values()].reduce((a, s) => a + s.size, 0);
 
+    // The per-device recompute is shared with the Sigenergy backfill route
+    // (`lib/aggregation/scoped-recompute.ts`) — the same "these device-days changed" work, and
+    // keeping one copy is what stops the two drifting.
     for (const [sid, days] of landedByDevice) {
       const device = allDevices.find((s) => s.id === sid);
       if (!device || days.length === 0) continue;
-
-      for (const day of days) {
-        try {
-          await recomputeAgg1dForDay(db, device, parseDate(day));
-          recompute.agg1dDays++;
-        } catch (err) {
-          console.error(
-            `[RepairCoverage] agg_1d recompute failed sys=${sid} day=${day}:`,
-            err,
-          );
-        }
-      }
-
-      let areaRows: {
-        id: string;
-        handle: number | null;
-        tz: number;
-        isBattery: boolean;
-      }[] = [];
-      try {
-        // ⚠️ HAND-WRITTEN `sql` — invisible to `tsc`, and its failure mode is silent
-        // under-resolution (no areas found → no flow refresh, no error), swallowed by the `catch`
-        // below. The device test goes through the binding's `point_uid` since config-v4 Phase 12
-        // slice E PR 2a, hopping `points.device_id → devices.rid` (the seam invariant
-        // `devices.rid == systems.id`).
-        //
-        // ⚠️ config-v4 Phase 13 PR 5: `handle` comes from `legacy_handles`, NOT the dropped
-        // `areas.legacy_system_id`. Because this is raw SQL, a stale column name here would be a
-        // RUNTIME 42703 that the `catch` swallows into "no areas found" — the exact shape of the
-        // failure this PR exists to avoid, which is why this path is driven and not merely compiled.
-        // LEFT JOIN, not JOIN: the old projection was nullable and the loop below still relies on
-        // `handle == null` to skip, so an area without a handle must survive the join rather than
-        // vanish from the result set. `legacy_handles.area_id` is uniquely indexed, so the join adds
-        // at most one row per area and cannot fan the `DISTINCT` out.
-        const res = await db.execute(sql`
-          SELECT DISTINCT a.id,
-                 lh.handle AS handle,
-                 a.timezone_offset_min AS tz,
-                 EXISTS (SELECT 1 FROM area_bindings b2
-                         WHERE b2.area_id = a.id AND b2.role='battery' AND b2.metric_type='power') AS is_battery
-          FROM area_bindings b
-          JOIN areas a ON a.id = b.area_id
-          LEFT JOIN legacy_handles lh ON lh.area_id = a.id
-          JOIN points p ON p.id = b.point_uid
-          JOIN devices d ON d.id = p.device_id
-          WHERE d.rid = ${sid}
-        `);
-        areaRows = (res.rows ?? []).map((r) => ({
-          id: String((r as { id: unknown }).id),
-          handle:
-            (r as { handle: unknown }).handle == null
-              ? null
-              : Number((r as { handle: unknown }).handle),
-          tz: Number((r as { tz: unknown }).tz),
-          isBattery: Boolean((r as { is_battery: unknown }).is_battery),
-        }));
-      } catch (err) {
-        console.error(`[RepairCoverage] area lookup failed sys=${sid}:`, err);
-      }
-
-      for (const area of areaRows) {
-        if (area.handle == null) continue;
-        // Refresh the attributed flow matrix (flow_attr_1d) for the repaired days — the sole
-        // per-(area, day) flow matrix since flow_1d was retired. Battery Areas also re-fold the blend
-        // (learn first — best-effort so a learn hiccup can't block the flow refresh); battery-less Areas
-        // get the energy + grid/solar attribution rollup only.
-        try {
-          const ls = await resolveLogicalSystem(area.handle);
-          if (ls && ls.isComplete && days.length) {
-            if (area.isBattery) {
-              try {
-                await learnAllForHandle(db, area.handle, nowMs, {
-                  rebuild: false,
-                });
-              } catch (err) {
-                console.error(
-                  `[RepairCoverage] battery learn failed area=${area.id}:`,
-                  err,
-                );
-              }
-            }
-            const sorted = [...days].sort();
-            const [winStartSec] = dayToUnixRangeForAggregation(
-              parseDate(sorted[0]),
-              area.tz,
-            );
-            const [, winEndSec] = dayToUnixRangeForAggregation(
-              parseDate(sorted[sorted.length - 1]),
-              area.tz,
-            );
-            await recomputeBatteryProvenanceForWindow(
-              db,
-              area.handle,
-              winStartSec * 1000,
-              winEndSec * 1000,
-              {
-                writeRollup: true,
-                writeCheckpoints: true,
-                updateLatest: false,
-              },
-            );
-            recompute.provenanceAreas++;
-          }
-        } catch (err) {
-          console.error(
-            `[RepairCoverage] flow/provenance recompute failed area=${area.id}:`,
-            err,
-          );
-        }
-      }
+      const r = await recomputeDerivedForDeviceDays(
+        db,
+        device,
+        days,
+        nowMs,
+        "RepairCoverage",
+      );
+      recompute.agg1dDays += r.agg1dDays;
+      recompute.provenanceAreas += r.provenanceAreas;
     }
   }
 
