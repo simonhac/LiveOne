@@ -510,12 +510,24 @@ async function writeBlendOutputs(
 
   // Chunk the upsert — a single multi-thousand-row insert overflows drizzle's recursive query builder.
   // The derived points are sole-writer here: own the value cols + `data_quality`, never
-  // `session_id`/`value_str`. Byte-identical to the legacy upsert SET.
+  // `session_id`/`value_str`.
+  //
+  // `skipUnchanged` is what makes the whole-window rewrite affordable: this writer re-folds
+  // [local midnight → now] every reconcile and upserts EVERY interval, but a settled interval's
+  // blend is identical run over run — measured on prod 2026-09-01 at ~2,850 rewrites/min fleet-wide,
+  // a 719:1 write amplification over the ~18 rows per 5 minutes of new information. Suppressing the
+  // no-op updates keeps the anchor-refold's zero-bookkeeping self-heal (a healed interval's values
+  // DIFFER, so it still writes) while cutting the churn to the rows that changed.
   const CHUNK = 1000;
   for (let off = 0; off < rows.length; off += CHUNK) {
     await ReadingsDao.insert5m(
       rows.slice(off, off + CHUNK),
-      { upsert: true, preserveVendorMeta: true, writeDataQuality: true },
+      {
+        upsert: true,
+        preserveVendorMeta: true,
+        writeDataQuality: true,
+        skipUnchanged: true,
+      },
       db,
     );
   }

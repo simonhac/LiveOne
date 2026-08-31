@@ -90,10 +90,17 @@ async function recomputePairWindow(
   }));
 
   // The derived point is sole-writer here: own the value cols + `data_quality`, never
-  // `session_id`/`value_str`. Byte-identical to the legacy upsert SET.
+  // `session_id`/`value_str`. `skipUnchanged`: this is the same whole-trailing-window rewrite
+  // pattern as the battery-provenance blend — the model recomputes deterministically over settled
+  // inputs, so most rewrites are byte-identical; suppress them (see ReadingsDao.insert5m).
   await ReadingsDao.insert5m(
     aggRows,
-    { upsert: true, preserveVendorMeta: true, writeDataQuality: true },
+    {
+      upsert: true,
+      preserveVendorMeta: true,
+      writeDataQuality: true,
+      skipUnchanged: true,
+    },
     db,
   );
 
