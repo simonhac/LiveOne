@@ -79,10 +79,14 @@ storeRecordsLocally`, **not** `updateUsage`. `updateUsage` is a quality-based _s
   **not** fill missing intervals on a partially-present day. (It happens to work only when the whole
   day is absent.) Coverage repair targets count-gaps, so it always re-fetches. `storeRecordsLocally`
   is idempotent, so re-writing present intervals is harmless.
-- **The runner owns ALL recompute, scoped.** After landing, it calls `recomputeAgg1dForDay(db, system,
-day)` per repaired system-day, plus per-area `recomputeFlowMatrixForDay` + battery provenance where
-  the system belongs to an Area. Providers pass `aggregate: null` — the runner **never** calls the
-  all-systems `aggregateRange` fleet cascade. (OE region systems have no Area → agg_1d only.)
+- **The runner owns ALL recompute, scoped.** After landing it calls
+  `recomputeDerivedForDeviceDays` (`lib/aggregation/scoped-recompute.ts`) per repaired device —
+  `agg_1d` for each day, plus the per-Area flow matrix and battery provenance where the device
+  belongs to an Area. Providers pass `aggregate: null` — the runner **never** calls the all-systems
+  `aggregateRange` fleet cascade. (OE region systems have no Area → agg_1d only.)
+  That module is SHARED with `/api/cron/sigenergy-backfill`, which used to call `aggregateRange` and
+  therefore spent its entire 300 s `maxDuration` in it on every live run — see the note under
+  "Relationship to the manual backfill routes".
 - **Landing is PROGRESS-based, not `== expected`.** A day is "landed" when its max present-count rises
   above the pre-repair value _or_ reaches `expected`. Strict equality would hang forever on points
   that legitimately can't reach the full count.
@@ -200,7 +204,22 @@ Three things worth knowing before touching it:
 `app/api/cron/openelectricity-backfill` is a **manual, range-based** tool (you POST an explicit date
 range; no detection). `app/api/cron/sigenergy-backfill` has the same shape but **is scheduled**
 (nightly, `20 14 * * *`) and is the PRIMARY writer of Sigenergy interval energy — coverage repair is
-only its backstop. The coverage-repair cron is the **automated, self-detecting** counterpart,
+only its backstop.
+
+⚠️ **`aggregateRange` is the wrong recompute for a backfill, and was silently costing the whole
+budget.** It rebuilds `agg_1d` for every device over the range, then re-runs HWS, battery learning,
+provenance, run periods and two backlog reheal passes — most from the range start to *now*, none
+scoped to a device. Measured on prod 2026-08-31: a ONE-DAY Sigenergy backfill spent all 300 s of
+`maxDuration` there and returned an empty response, so every nightly run was timing out, burning a
+full invocation and reporting nothing. It looked healthy only because the queue flush happens
+*before* the recompute, so the data always landed, and `cron/daily` rebuilt `agg_1d` overnight.
+Both callers now use the scoped recompute, and the fleet backlog stays `cron/daily`'s job.
+
+One consequence worth knowing: the old pass was slow enough to incidentally mask the
+publish→recompute race (the 5m rows land asynchronously via the queue). A fast recompute exposes it,
+so the route now waits for the landing watermark — `MAX(updated_at)` over the device's 5m rows,
+compared against a baseline taken *before* the flush, so app/DB clock skew cannot make a stale read
+look fresh. The coverage-repair cron is the **automated, self-detecting** counterpart,
 wrapping the same underlying re-fetch primitives.
 
 ## Adding a vendor

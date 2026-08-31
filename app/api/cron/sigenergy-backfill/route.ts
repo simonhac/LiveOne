@@ -6,10 +6,13 @@ import {
   type DeviceConfigView,
 } from "@/lib/registry/device-config";
 import { sessionManager } from "@/lib/session-manager";
+import { PointManager } from "@/lib/point/point-manager";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { getDeviceCredentials } from "@/lib/secure-credentials";
-import { parseDateISO } from "@/lib/date-utils";
-import { aggregateRange } from "@/lib/aggregation/daily-points";
+import { planetscaleDb } from "@/lib/db/planetscale";
+import { recomputeDerivedForDeviceDays } from "@/lib/aggregation/scoped-recompute";
+import { ReadingsDao } from "@/lib/readings";
+import { Point } from "@/lib/ids";
 import { SigenergyClient } from "@/lib/vendors/sigenergy/sigenergy-client";
 import { backfillEnergyRange } from "@/lib/vendors/sigenergy/statistics";
 import type { SigenergyCredentials } from "@/lib/vendors/sigenergy/types";
@@ -86,8 +89,6 @@ const ymd = (d: Date) =>
   ).padStart(2, "0")}`;
 
 const parseToYmd = (iso: string) => iso.replace(/-/g, "");
-const ymdToIso = (y: string) =>
-  `${y.slice(0, 4)}-${y.slice(4, 6)}-${y.slice(6, 8)}`;
 
 function spanDaysBetween(startYmd: string, endYmd: string): number {
   const toUtc = (y: string) =>
@@ -117,6 +118,46 @@ function resolveWindow(
   const startD = new Date(localNow);
   startD.setUTCDate(startD.getUTCDate() - (days - 1));
   return { startYmd: ymd(startD), endYmd: ymd(localNow) };
+}
+
+/** Inclusive local days between two YYYYMMDD bounds, as "YYYY-MM-DD". */
+function eachIsoDay(startYmd: string, endYmd: string): string[] {
+  const out: string[] = [];
+  const toMs = (y: string) =>
+    Date.UTC(+y.slice(0, 4), +y.slice(4, 6) - 1, +y.slice(6, 8));
+  for (let ms = toMs(startYmd); ms <= toMs(endYmd); ms += 24 * 3600 * 1000) {
+    out.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/** How long to wait for the published 5m rows to land before recomputing from them. */
+const LANDING_WAIT_MS = 60_000;
+const LANDING_POLL_MS = 3_000;
+
+/** A device's points, as reading-DAO ids. Empty when the device has none yet. */
+async function pointIdsFor(systemId: number) {
+  const map = await PointManager.getInstance().loadPointInfoMap(systemId);
+  return Object.values(map).map((p) => Point.encode(p.pointUid));
+}
+
+/**
+ * `MAX(updated_at)` across a device's 5m rows — the landing watermark.
+ *
+ * Compared against a baseline taken BEFORE the queue flush, so both readings come from the database
+ * clock and app/DB skew cannot make a stale read look fresh. A window this wide is still an indexed
+ * `(point_rid, interval_end)` range scan.
+ */
+async function landingWatermark(
+  systemId: number,
+  windowMs: { fromMs: number; toMs: number },
+): Promise<number | null> {
+  const points = await pointIdsFor(systemId);
+  if (points.length === 0) return null;
+  return ReadingsDao.latestAgg5mUpdatedAtForPoints(points, {
+    afterIntervalEndMs: windowMs.fromMs,
+    throughIntervalEndMs: windowMs.toMs,
+  });
 }
 
 /** Backfill one system. Never throws — a failure is reported as `{ ok: false, error }`. */
@@ -344,35 +385,96 @@ async function handleBackfill(request: NextRequest) {
     });
 
   const dryRun = params.dryRun ?? false;
+
+  // The landing baseline must predate the queue flush that `backfillOneDevice` performs, so it is
+  // taken here rather than after the loop.
+  const landingWindow = {
+    fromMs: Date.now() - 400 * 24 * 3600 * 1000,
+    toMs: Date.now() + 24 * 3600 * 1000,
+  };
+  const baselines = new Map<number, number | null>();
+  if (!dryRun) {
+    for (const device of targets) {
+      try {
+        baselines.set(
+          device.id,
+          await landingWatermark(device.id, landingWindow),
+        );
+      } catch {
+        baselines.set(device.id, null); // unknown baseline ⇒ the wait below just times out
+      }
+    }
+  }
+
   const outcomes: DeviceOutcome[] = [];
   for (const device of targets) {
     outcomes.push(await backfillOneDevice(device, params));
   }
 
-  // Rebuild 1d aggregates once, over the union of the touched windows. aggregateRange is fleet-wide
-  // (and runs the HWS / run-period / battery-provenance + flow_attr heal passes), so calling it per
-  // device would just repeat the same work.
+  // Rebuild the derived tables for the days we actually touched.
+  //
+  // This used to call the fleet-wide `aggregateRange`, which rebuilds agg_1d for EVERY device over
+  // the range and then re-runs HWS, battery learning, provenance, run periods and two backlog reheal
+  // passes — most of them from the range start to now, none of them scoped to this device. Measured
+  // on prod: a ONE-DAY run spent the whole 300 s `maxDuration` in it and returned an empty response,
+  // so every nightly run was timing out, burning a full invocation and reporting nothing. The writes
+  // were unaffected only because the queue flush happens before this point.
+  //
+  // The scoped version does the work that actually follows from "this device's days changed", shared
+  // with the coverage-repair runner. The fleet backlog remains `cron/daily`'s job.
   const succeeded = outcomes.filter((o) => o.ok && o.range);
   let aggregated1d = false;
   let aggregatedRange: { start: string; end: string } | undefined;
-  if (!dryRun && succeeded.length > 0) {
+  let recompute: { agg1dDays: number; provenanceAreas: number } | undefined;
+  if (!dryRun && succeeded.length > 0 && planetscaleDb) {
     const startYmd = succeeded
       .map((o) => o.range!.start)
       .reduce((a, b) => (a < b ? a : b));
     const endYmd = succeeded
       .map((o) => o.range!.end)
       .reduce((a, b) => (a > b ? a : b));
-    await aggregateRange(
-      parseDateISO(ymdToIso(startYmd)),
-      parseDateISO(ymdToIso(endYmd)),
-    );
-    aggregated1d = true;
+
+    // The 5m rows are published to a queue and land asynchronously, so recomputing immediately would
+    // read pre-backfill data. That race existed before, but the old fleet-wide pass was slow enough
+    // to hide it — making the recompute fast is exactly what exposes it, so the wait is part of this
+    // change, not an extra.
+    const deadline = Date.now() + LANDING_WAIT_MS;
+    const awaiting = new Set(succeeded.map((o) => o.systemId));
+    while (awaiting.size > 0 && Date.now() < deadline) {
+      for (const sid of [...awaiting]) {
+        const base = baselines.get(sid);
+        try {
+          const now = await landingWatermark(sid, landingWindow);
+          if (now != null && (base == null || now > base)) awaiting.delete(sid);
+        } catch {
+          // Transient read failure — keep waiting; the deadline bounds it.
+        }
+      }
+      if (awaiting.size === 0) break;
+      await new Promise((r) => setTimeout(r, LANDING_POLL_MS));
+    }
+
+    recompute = { agg1dDays: 0, provenanceAreas: 0 };
+    for (const o of succeeded) {
+      const device = targets.find((d) => d.id === o.systemId);
+      if (!device) continue;
+      const r = await recomputeDerivedForDeviceDays(
+        planetscaleDb,
+        device,
+        eachIsoDay(o.range!.start, o.range!.end),
+        Date.now(),
+        "SigenBackfill",
+      );
+      recompute.agg1dDays += r.agg1dDays;
+      recompute.provenanceAreas += r.provenanceAreas;
+    }
+    aggregated1d = recompute.agg1dDays > 0;
     aggregatedRange = { start: startYmd, end: endYmd };
   }
 
   const ok = outcomes.every((o) => o.ok);
   return NextResponse.json(
-    { ok, dryRun, aggregated1d, aggregatedRange, devices: outcomes },
+    { ok, dryRun, aggregated1d, aggregatedRange, recompute, devices: outcomes },
     // Every target failed ⇒ 500 so a scheduled run surfaces as a failure. A partial failure stays
     // 200 with `ok: false` — the successful devices really were written.
     { status: succeeded.length === 0 ? 500 : 200 },
