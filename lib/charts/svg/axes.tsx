@@ -12,15 +12,22 @@
  */
 import type { ScaleLinear, ScaleTime } from "d3-scale";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import { CHART_INK } from "@/lib/charts/style";
 import { classifyUnit } from "@/lib/point/unit-typography";
 import type { TimeTick } from "./time-ticks";
 
-/** Matches the Chart.js styling these replace, so the port is not also a restyle. */
-const GRID = "rgb(55, 65, 81)"; // gray-700
-const TICK_TEXT = "rgb(156, 163, 175)"; // gray-400
-const FONT_SIZE = 10;
-const FONT_FAMILY = "DM Sans, system-ui, sans-serif";
-const LINE_HEIGHT = 12;
+/**
+ * The ink these draw in. Values match the Chart.js styling they replaced, so the port was not also
+ * a restyle; they now live in `lib/charts/style.ts` because the heatmap had grown a byte-identical
+ * private copy of half of them.
+ */
+const {
+  grid: GRID,
+  tickText: TICK_TEXT,
+  fontSize: FONT_SIZE,
+  fontFamily: FONT_FAMILY,
+  lineHeight: LINE_HEIGHT,
+} = CHART_INK;
 
 export interface TimeAxisProps {
   ticks: TimeTick[];
@@ -165,7 +172,7 @@ export function ShadingBands({ bands, x, plotHeight }: ShadingBandsProps) {
             y={0}
             width={Math.max(0, x1 - x0)}
             height={plotHeight}
-            fill="rgba(255, 255, 255, 0.07)"
+            fill={CHART_INK.shading}
           />
         );
       })}
@@ -200,7 +207,7 @@ export function FocusLine({ at, x, plotHeight }: FocusLineProps) {
       y1={0}
       y2={plotHeight}
       stroke={CHART_COLORS.focusLine}
-      strokeWidth={1}
+      strokeWidth={CHART_INK.focusStroke}
       pointerEvents="none"
     />
   );

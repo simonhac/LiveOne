@@ -29,6 +29,7 @@
  */
 import { useMemo } from "react";
 import HeatmapPanel from "@/components/heatmap/HeatmapPanel";
+import Panel from "@/components/ui/panel";
 import { resolveHeatmapConfig } from "@/lib/dashboard/heatmap-card";
 import type {
   HeatmapCardConfig,
@@ -36,12 +37,7 @@ import type {
 } from "@/lib/dashboard/card-types";
 import type { HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import type { CardPlugin, CardRenderProps } from "./types";
-import {
-  CardSkeleton,
-  dayOffsetOf,
-  subjectOf,
-  useAreaDatum,
-} from "./shared";
+import { CardSkeleton, dayOffsetOf, subjectOf, useAreaDatum } from "./shared";
 import { CARD_FOOTPRINTS } from "./footprints";
 
 /** One number for every placeholder this card can show; tracks `HEATMAP_CHART_H` (HeatmapChart). */
@@ -67,9 +63,9 @@ void _paletteVocabularyInSync;
 
 function ConfigNotice() {
   return (
-    <div className="rounded-lg border border-gray-700/70 bg-gray-900/30 px-4 py-3 text-sm text-gray-400">
+    <Panel className="px-4 py-3 text-sm text-gray-400" padded={false}>
       This heatmap card is misconfigured.
-    </div>
+    </Panel>
   );
 }
 

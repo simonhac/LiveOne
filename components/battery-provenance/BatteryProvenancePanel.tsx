@@ -12,6 +12,7 @@ import {
   useChartFocus,
 } from "@/lib/charts/ChartFocusContext";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
+import { CHART_BODY_PAD } from "@/lib/charts/style";
 import { fromUnixTimestamp } from "@/lib/date-utils";
 import { provenanceDailyQuery } from "@/lib/queries";
 import {
@@ -199,7 +200,7 @@ function PanelInner({
   const atHistoryStart = view !== null && days.length === 0;
 
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-2 sm:p-4">
+    <div className={CHART_BODY_PAD}>
       <div className="flex justify-end items-center gap-2 sm:gap-4 pb-2">
         <span
           className="text-xs sm:text-sm text-gray-400"

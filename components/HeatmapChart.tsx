@@ -13,6 +13,7 @@ import {
 import { encodeI18nToUrlSafeString } from "@/lib/url-date";
 import { HEATMAP_PALETTES, HeatmapPaletteKey } from "@/lib/heatmap-colors";
 import { useContainerSize } from "@/lib/charts/svg";
+import { CHART_BODY_PAD, CHART_INK } from "@/lib/charts/style";
 import {
   bucketHeatmap,
   daysOffFrame,
@@ -49,8 +50,8 @@ export const HEATMAP_CHART_H = 600;
 
 /** The cell grid, derived so the svg totals exactly {@link HEATMAP_CHART_H} — never a second literal. */
 const GRID_HEIGHT = HEATMAP_CHART_H - MARGIN.top - MARGIN.bottom;
-const TICK_TEXT = "rgb(156, 163, 175)"; // gray-400
-const FONT_FAMILY = "DM Sans, system-ui, sans-serif";
+/** Axis ink, shared with every other chart — see lib/charts/style.ts. */
+const { tickText: TICK_TEXT, fontFamily: FONT_FAMILY } = CHART_INK;
 /** Missing readings — distinct from the black baseline, which means "on but idle". */
 const NO_DATA_FILL = "rgba(55, 65, 81, 0.3)";
 /** gray-900, the page background: a load/source power cell at or below standby reads as nothing. */
@@ -401,9 +402,13 @@ export default function HeatmapChart({
   const formatValue = (v: number | null): { value: string; unit: string } => {
     if (v == null) return { value: "No data", unit: "" };
     if (metricType === "energy") {
-      return { value: (v / 1000).toFixed(1), unit: pointUnit.replace("Wh", "kWh") };
+      return {
+        value: (v / 1000).toFixed(1),
+        unit: pointUnit.replace("Wh", "kWh"),
+      };
     }
-    if (metricType === "power") return { value: (v / 1000).toFixed(1), unit: "kW" };
+    if (metricType === "power")
+      return { value: (v / 1000).toFixed(1), unit: "kW" };
     return { value: v.toFixed(2), unit: pointUnit };
   };
 
@@ -413,7 +418,8 @@ export default function HeatmapChart({
       : metricType === "power"
         ? "kW"
         : pointUnit;
-  const axisScale = metricType === "energy" || metricType === "power" ? 1000 : 1;
+  const axisScale =
+    metricType === "energy" || metricType === "power" ? 1000 : 1;
   // A FIXED domain's bounds are exact by definition — "0%"/"100%", not "0.00%"/"100.00%". Only an
   // observed range needs decimals, because there the number is a measurement.
   const axisDecimals = domain?.fixed
@@ -425,7 +431,7 @@ export default function HeatmapChart({
   if (loading && !heatmapData) {
     return (
       <div className={className}>
-        <div className="rounded-lg border border-gray-700 bg-gray-900 p-4">
+        <div className={CHART_BODY_PAD}>
           <div
             className="flex items-center justify-center"
             style={{ height: HEATMAP_CHART_H }}
@@ -480,7 +486,10 @@ export default function HeatmapChart({
 
   return (
     <div className={className}>
-      <div className="relative rounded-lg border border-gray-700 bg-gray-900 p-4">
+      {/* No frame: the section (or the standalone page's <Panel>) owns the only box. This drew its
+          own `rounded-lg border-gray-700 bg-gray-900` card, which put an opaque gray-900 panel
+          inside the section's translucent one. See docs/architecture/chart-style.md. */}
+      <div className={`relative ${CHART_BODY_PAD}`}>
         <div ref={containerRef}>
           {ready && (
             <svg
@@ -515,7 +524,8 @@ export default function HeatmapChart({
                 {heatmapData.yLabels.map((day, r) => {
                   const local = new Date(`${day}T00:00:00`);
                   const isFirstChronologically = r === rows - 1;
-                  const showMonth = isFirstChronologically || local.getDate() === 1;
+                  const showMonth =
+                    isFirstChronologically || local.getDate() === 1;
                   const mark = heatmapData.offFrameDays.has(day) ? "*" : "";
                   return (
                     <text
@@ -524,7 +534,7 @@ export default function HeatmapChart({
                       y={rowY(r) + cellH / 2}
                       dy="0.32em"
                       textAnchor="end"
-                      fontSize={10}
+                      fontSize={CHART_INK.fontSize}
                       fontFamily={FONT_FAMILY}
                       data-tick-label
                     >
@@ -551,7 +561,7 @@ export default function HeatmapChart({
                       y={plotH + 6}
                       textAnchor="end"
                       dy="0.32em"
-                      fontSize={10}
+                      fontSize={CHART_INK.fontSize}
                       fontFamily={FONT_FAMILY}
                       fill={TICK_TEXT}
                       data-tick-label
@@ -604,7 +614,8 @@ export default function HeatmapChart({
                   {(() => {
                     const { value, unit } = formatValue(hovered.v);
                     if (!unit) return value;
-                    const gap = classifyUnit(unit).headGap === "hair" ? "\u200a" : "";
+                    const gap =
+                      classifyUnit(unit).headGap === "hair" ? "\u200a" : "";
                     return `${value}${gap}${unit}`;
                   })()}
                 </span>
@@ -631,11 +642,11 @@ export default function HeatmapChart({
 
         {heatmapData.offFrameDays.size > 0 && (
           <p className="mt-2 text-center text-[11px] text-gray-500">
-            Times are {formatUtcOffset(heatmapData.frameOffsetMin)} for every day,
-            so a routine lines up across the whole chart.{" "}
-            <span className="text-gray-400">*</span> marks days the site was on a
-            different offset (daylight saving) — the local clock read an hour later
-            than the column says.
+            Times are {formatUtcOffset(heatmapData.frameOffsetMin)} for every
+            day, so a routine lines up across the whole chart.{" "}
+            <span className="text-gray-400">*</span> marks days the site was on
+            a different offset (daylight saving) — the local clock read an hour
+            later than the column says.
           </p>
         )}
 

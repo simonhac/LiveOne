@@ -12,6 +12,7 @@ import {
   dailyStripeSvgHeight,
 } from "@/lib/dashboard/daily-stripe";
 import { formatPercent } from "@/lib/point/format-value";
+import { CHART_BODY_PAD } from "@/lib/charts/style";
 
 /**
  * A day-per-row gradient stripe timeline for one point.
@@ -243,7 +244,7 @@ export default function DailyStripes({
   }
 
   return (
-    <div className="-mx-6 px-3 py-3 sm:mx-0 sm:bg-gray-800 sm:rounded sm:p-4">
+    <div className={CHART_BODY_PAD}>
       {/* `ready` is false until the container has been measured, so without a floor here the card
           would render at zero height for a frame and then jump to `totalH` — the same shift the
           card's declared footprint exists to prevent, one level further in. */}

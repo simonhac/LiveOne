@@ -18,6 +18,7 @@ import { formatRunWhenLines } from "@/lib/run-tracking/run-period-view";
 import { ROLES, TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import NodeTooltip, { PANEL_WIDTH } from "@/components/NodeTooltip";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import { CHART_BODY_PAD, CHART_HAIRLINE } from "@/lib/charts/style";
 import DashboardChart, {
   type RunTooltipAnchor,
 } from "@/components/DashboardChart";
@@ -113,14 +114,14 @@ const SANKEY_H = 680;
  */
 function SankeyBlockPlaceholder() {
   return (
-    <div className="sm:p-4" data-skeleton="" aria-hidden>
+    <div className={CHART_BODY_PAD} data-skeleton="" aria-hidden>
       <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
         <h3 className="text-base font-semibold text-gray-300">Flows</h3>
       </div>
       <div className="flex justify-center">
         <div
           style={{ width: SANKEY_W, height: SANKEY_H }}
-          className="max-w-full animate-pulse rounded-lg border border-gray-700/50 bg-gray-800/30"
+          className={`max-w-full animate-pulse bg-gray-800/30 ${CHART_HAIRLINE}`}
         />
       </div>
       <div className="mt-1 text-center text-xs text-gray-500">&nbsp;</div>
@@ -838,7 +839,7 @@ export default function SiteChartsCard({
         >
           {/* Loads Chart with Table */}
           {cardVisible("chart:load") && (
-            <div className="px-2 sm:px-4 pt-1 sm:pt-2 pb-2 sm:pb-4">
+            <div className={CHART_BODY_PAD}>
               <div className="flex flex-col md:flex-row md:gap-4">
                 <div className="flex-1 min-w-0">
                   <StackedChart
@@ -878,7 +879,7 @@ export default function SiteChartsCard({
 
           {/* Generation Chart with Table */}
           {cardVisible("chart:generation") && (
-            <div className="p-2 sm:p-4">
+            <div className={CHART_BODY_PAD}>
               <div className="flex flex-col md:flex-row md:gap-4">
                 <div className="flex-1 min-w-0">
                   <StackedChart
@@ -1179,7 +1180,7 @@ export default function SiteChartsCard({
               };
 
               return (
-                <div className="sm:p-4">
+                <div className={CHART_BODY_PAD}>
                   <div className="mb-2 flex items-center justify-between px-2 sm:px-0">
                     <h3 className="text-base font-semibold text-gray-300">
                       Flows

@@ -17,6 +17,7 @@ import {
   usePointerIndex,
 } from "@/lib/charts/svg";
 import { CHART_COLORS } from "@/lib/chart-colors";
+import { CHART_INK } from "@/lib/charts/style";
 import { SOC_DASH, lineSeries } from "@/lib/charts/line-series";
 import { snapToBandEdges, type RunBand } from "@/lib/charts/run-bands";
 import type { ChartTimeRange } from "@/lib/charts/temporal";
@@ -91,17 +92,6 @@ const RUN_EDGE_HOVER = "rgba(255, 255, 255, 0.95)";
 /** Stripe pitch and duty, in px — see `patternUnits` on the pattern for why these are not fractions. */
 const RUN_STRIPE_TILE = 8;
 const RUN_STRIPE_WIDTH = 4;
-
-/**
- * Stroke width for a stacked band's upper edge — a hairline.
- *
- * Deliberately thinner than the `lines` variant's 2 px, and thinner than the `borderWidth: 2` that
- * Chart.js used here (measured: both rendered 2 CSS px, so this is a change, not a restoration).
- * The two strokes do different jobs. On the lines chart the stroke IS the data and earns its weight;
- * on a filled band it is only a boundary. At 2 px that boundary dominates a narrow chart, and a
- * series resting at zero reads as a heavy rule along the axis rather than a quiet edge.
- */
-const BAND_EDGE_WIDTH = 1;
 
 type CommonProps = {
   timeRange: ChartTimeRange;
@@ -394,7 +384,7 @@ export default function DashboardChart(props: DashboardChartProps) {
                         d={band.topD}
                         fill="none"
                         stroke={series[i].colour}
-                        strokeWidth={BAND_EDGE_WIDTH}
+                        strokeWidth={CHART_INK.bandEdgeStroke}
                       />
                     )}
                   </g>
@@ -407,7 +397,7 @@ export default function DashboardChart(props: DashboardChartProps) {
                       d={d}
                       fill="none"
                       stroke={s.colour}
-                      strokeWidth={2}
+                      strokeWidth={CHART_INK.seriesStroke}
                       data-series={s.key}
                     />
                   ) : null;
@@ -571,7 +561,7 @@ export default function DashboardChart(props: DashboardChartProps) {
                 d={d}
                 fill="none"
                 stroke={CHART_COLORS.battery.soc}
-                strokeWidth={2}
+                strokeWidth={CHART_INK.seriesStroke}
                 strokeDasharray={SOC_DASH.join(" ")}
                 data-series="soc"
               />
