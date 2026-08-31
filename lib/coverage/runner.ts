@@ -140,10 +140,29 @@ export async function runCoverageRepair(
   const publishedByDevice = new Map<number, string[]>();
   let deferredForCap = 0;
 
-  // Representative window for the header (uniform 90/7, fixed +10 basis).
+  // Representative window for the header (fixed +10 basis).
+  //
+  // Derived from the EFFECTIVE lookback, not the constant 90: a shallow run scans ~10 days, and a
+  // header claiming 90 would make an unrepaired old gap read as a repair failure rather than as
+  // out-of-window. Widest across the providers in play, since each caps the shallow window at its
+  // own `lookbackDays`; the grace is theirs unless overridden.
   const headToday = new Date(nowMs + 600 * 60_000).toISOString().slice(0, 10);
-  const windowFirst = parseDate(headToday).subtract({ days: 90 }).toString();
-  const windowLast = parseDate(headToday).subtract({ days: 7 }).toString();
+  // `providers` is empty when `--vendor` matches nothing; spread-Math would give ±Infinity and the
+  // date arithmetic below would produce nonsense rather than an empty report.
+  const headLookbacks = providers.map((p) =>
+    deep
+      ? p.lookbackDays
+      : Math.min(p.lookbackDays, opts.lookbackDays ?? SHALLOW_LOOKBACK_DAYS),
+  );
+  const headLookback = headLookbacks.length ? Math.max(...headLookbacks) : 0;
+  const headGraces = providers.map((p) => GRACE_DAYS_OVERRIDE ?? p.graceDays);
+  const headGrace = headGraces.length ? Math.min(...headGraces) : 0;
+  const windowFirst = parseDate(headToday)
+    .subtract({ days: headLookback })
+    .toString();
+  const windowLast = parseDate(headToday)
+    .subtract({ days: headGrace })
+    .toString();
 
   // ── Phases 0–2: enumerate → Stage 1 detect → Stage 2 backfill ──
   // Vendors run CONCURRENTLY (independent APIs / per-owner keys); devices within a vendor stay
