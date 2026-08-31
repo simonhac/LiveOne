@@ -34,7 +34,22 @@ const energy = (over: Partial<IntervalEnergyWh> = {}): IntervalEnergyWh => ({
 });
 
 /** Nothing present anywhere — every interval is a hole. */
-const noneP = () => new Map<string, Set<number>>();
+const noneP = () => new Map<string, Map<number, string | null>>();
+
+/**
+ * Rows the store already has, as `interval_end` → `data_quality`. `null` is a MEASURED row (the
+ * raw→5m recompute writes no marker); a marker string is one this module wrote on an earlier run.
+ */
+const present = (
+  entries: [string, number[]][],
+  quality: string | null = null,
+) =>
+  new Map<string, Map<number, string | null>>(
+    entries.map(([tail, times]) => [
+      tail,
+      new Map(times.map((ms) => [ms, quality])),
+    ]),
+  );
 
 /** Every point exists on the device, unless a case says otherwise. */
 const ALL_TAILS: ReadonlySet<string> = new Set(SIGEN_DERIVED_TAILS);
@@ -198,7 +213,7 @@ describe("computeDerivedPowerReadings — SoC", () => {
     const out = byTail(
       computeDerivedPowerReadings({
         energyByIntervalEnd: new Map([[t(1), energy()]]),
-        presentByTail: new Map([["battery_soc", new Set([t(0), t(2)])]]),
+        presentByTail: present([["battery_soc", [t(0), t(2)]]]),
         measuredEv: [],
         measuredSoc: [
           { intervalEndMs: t(0), value: 50 },
@@ -218,7 +233,7 @@ describe("computeDerivedPowerReadings — SoC", () => {
     const out = byTail(
       computeDerivedPowerReadings({
         energyByIntervalEnd,
-        presentByTail: new Map([["battery_soc", new Set([t(0), t(wide + 1)])]]),
+        presentByTail: present([["battery_soc", [t(0), t(wide + 1)]]]),
         measuredEv: [],
         measuredSoc: [
           { intervalEndMs: t(0), value: 50 },
@@ -236,19 +251,12 @@ describe("computeDerivedPowerReadings — never overwrites a measurement", () =>
    * what protects measured data. It is the single most important property in the module.
    */
   it("emits nothing for an interval that already has a row", () => {
-    const present = new Map<string, Set<number>>([
-      ["solar_w", new Set([t(1)])],
-      ["grid_w", new Set([t(1)])],
-      ["battery_w", new Set([t(1)])],
-      ["load_w", new Set([t(1)])],
-      ["ev_w", new Set([t(1)])],
-      ["battery_soc", new Set([t(1)])],
-    ]);
+    const stored = present(SIGEN_DERIVED_TAILS.map((tail) => [tail, [t(1)]]));
     const out = computeDerivedPowerReadings({
       energyByIntervalEnd: new Map([
         [t(1), energy({ solar: 500, load: 1000, gridImport: 100 })],
       ]),
-      presentByTail: present,
+      presentByTail: stored,
       measuredEv: [
         { intervalEndMs: t(0), value: 7000 },
         { intervalEndMs: t(2), value: 7000 },
@@ -269,7 +277,7 @@ describe("computeDerivedPowerReadings — never overwrites a measurement", () =>
         energyByIntervalEnd: new Map([
           [t(1), energy({ solar: 500, gridImport: 100 })],
         ]),
-        presentByTail: new Map([["solar_w", new Set([t(1)])]]),
+        presentByTail: present([["solar_w", [t(1)]]]),
         measuredEv: [],
         measuredSoc: [],
       }),
@@ -484,7 +492,7 @@ describe("computeDerivedPowerReadings — the vendor's own sample wins", () => {
     const out = byTail(
       computeDerivedPowerReadings({
         energyByIntervalEnd: new Map([[t(1), energy()]]),
-        presentByTail: new Map([["battery_soc", new Set([t(0), t(2)])]]),
+        presentByTail: present([["battery_soc", [t(0), t(2)]]]),
         measuredEv: [],
         measuredSoc: [
           { intervalEndMs: t(0), value: 50 },
@@ -520,9 +528,7 @@ describe("computeDerivedPowerReadings — the vendor's own sample wins", () => {
   it("never overwrites a measured row, whatever the vendor says", () => {
     const out = computeDerivedPowerReadings({
       energyByIntervalEnd: new Map([[t(1), energy({ solar: 500 })]]),
-      presentByTail: new Map(
-        SIGEN_DERIVED_TAILS.map((tail) => [tail, new Set([t(1)])]),
-      ),
+      presentByTail: present(SIGEN_DERIVED_TAILS.map((tail) => [tail, [t(1)]])),
       measuredEv: [],
       measuredSoc: [],
       vendorPower: new Map([
@@ -533,5 +539,105 @@ describe("computeDerivedPowerReadings — the vendor's own sample wins", () => {
       ]),
     });
     expect(out).toEqual([]);
+  });
+});
+
+/**
+ * Upgrading rows this module wrote earlier.
+ *
+ * Keyed on presence alone, a `calculated` row would block itself from ever becoming the vendor's
+ * own `good` sample — and there are already such rows on prod, written before the itemList's power
+ * fields were discovered. They must be replaceable; a measurement must not be.
+ */
+describe("computeDerivedPowerReadings — replacing our own earlier estimates", () => {
+  const vp = (over: Partial<VendorPowerSample> = {}): VendorPowerSample => ({
+    solarW: null,
+    loadW: null,
+    gridW: null,
+    batteryW: null,
+    socPct: null,
+    ...over,
+  });
+  const base = {
+    energyByIntervalEnd: new Map([[t(1), energy({ solar: 500 })]]),
+    measuredEv: [],
+    measuredSoc: [],
+  };
+
+  it("replaces a calculated row with the vendor's measurement", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        ...base,
+        presentByTail: present([["solar_w", [t(1)]]], "calculated"),
+        vendorPower: new Map([[t(1), vp({ solarW: 5900 })]]),
+      }),
+    );
+    expect(out.get("solar_w")).toEqual([{ ms: t(1), v: 5900, q: "good" }]);
+  });
+
+  it("replaces an interpolated SoC with the vendor's measurement", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        ...base,
+        presentByTail: present([["battery_soc", [t(1)]]], "interpolated"),
+        vendorPower: new Map([[t(1), vp({ socPct: 58 })]]),
+      }),
+    );
+    expect(out.get("battery_soc")).toEqual([{ ms: t(1), v: 58, q: "good" }]);
+  });
+
+  it("does NOT touch a measured row (no marker)", () => {
+    const out = computeDerivedPowerReadings({
+      ...base,
+      presentByTail: present([["solar_w", [t(1)]]], null),
+      vendorPower: new Map([[t(1), vp({ solarW: 5900 })]]),
+      availableTails: new Set(["solar_w"]),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("does NOT touch a marker owned by another writer", () => {
+    // `estimated` is the battery-provenance/HWS marker. Unrecognised here ⇒ untouchable, which is
+    // the property that keeps "upgrade my estimates" from becoming "overwrite someone's output".
+    const out = computeDerivedPowerReadings({
+      ...base,
+      presentByTail: present([["solar_w", [t(1)]]], "estimated"),
+      vendorPower: new Map([[t(1), vp({ solarW: 5900 })]]),
+      availableTails: new Set(["solar_w"]),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("is idempotent — an equal-quality row is not rewritten", () => {
+    const out = computeDerivedPowerReadings({
+      ...base,
+      presentByTail: present([["solar_w", [t(1)]]], "good"),
+      vendorPower: new Map([[t(1), vp({ solarW: 5900 })]]),
+      availableTails: new Set(["solar_w"]),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("does not downgrade a good row back to calculated", () => {
+    const out = computeDerivedPowerReadings({
+      ...base,
+      presentByTail: present([["solar_w", [t(1)]]], "good"),
+      vendorPower: new Map(), // vendor fields absent this run
+      availableTails: new Set(["solar_w"]),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("upgrades interpolated to calculated when only the counters are available", () => {
+    const out = byTail(
+      computeDerivedPowerReadings({
+        ...base,
+        presentByTail: present([["solar_w", [t(1)]]], "interpolated"),
+        vendorPower: new Map(),
+      }),
+    );
+    expect(out.get("solar_w")).toEqual([
+      { ms: t(1), v: 6000, q: "calculated" },
+    ]);
   });
 });

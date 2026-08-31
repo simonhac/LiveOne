@@ -104,6 +104,16 @@ defect below is the same bug in another consumer.
 counter arithmetic only where a field is absent. The EV / rest-of-house split stays `interpolated`,
 because there is still no EV field.
 
+⚠️ **Rows written before this are upgradable, and are meant to be.** The write decision is ranked
+by quality (`interpolated` < `calculated` < `good`), not by presence — otherwise a `calculated` row
+would block itself from ever becoming the vendor's own measurement, and prod already carries such
+rows from 2026-08-31 (the 2026-08-20 manual run and the cron's 08-26..08-31). Only markers this
+module writes are in the rank, so a `null` (measured) or `estimated` (another writer's) row is
+never touched. Equal rank does not rewrite, so re-running stays idempotent.
+
+To pick the existing rows up, re-run the backfill over the days that carry them once this is
+deployed — they will not upgrade themselves, since the nightly window only reaches back 7 days.
+
 ## The open question (now answered — kept for the record)
 
 **Did Sigenergy send the zero, or did we coerce one?**

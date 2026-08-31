@@ -290,8 +290,15 @@ export function trustedCounters(
 export function computeDerivedPowerReadings(params: {
   /** Interval energy keyed by `interval_end` epoch-ms, for one local day. */
   energyByIntervalEnd: Map<number, IntervalEnergyWh>;
-  /** Per-tail sets of interval ends that already have a row. */
-  presentByTail: Map<string, Set<number>>;
+  /**
+   * What the serving store already has: per tail, `interval_end` → that row's `data_quality`.
+   *
+   * The QUALITY is load-bearing, not decoration. Keyed on presence alone, a row this module wrote
+   * on an earlier run would block itself from ever being improved — the `calculated`/`interpolated`
+   * rows already on prod could never be replaced by the vendor's own `good` samples once those
+   * became available. See {@link QUALITY_RANK}.
+   */
+  presentByTail: Map<string, Map<number, string | null>>;
   /** Existing measured `load.ev` power samples, ascending — anchors for the EV split. */
   measuredEv: MeasuredSample[];
   /** Existing measured `bidi.battery/soc` samples, ascending. */
@@ -321,8 +328,40 @@ export function computeDerivedPowerReadings(params: {
   const maxSpanMs = (maxInterpIntervals + 1) * FIVE_MIN_MS;
   const out: DerivedReading[] = [];
 
-  const isMissing = (tail: SigenDerivedTail, ms: number) =>
-    availableTails.has(tail) && !presentByTail.get(tail)?.has(ms);
+  /**
+   * How good a row is, for deciding whether a better one may replace it.
+   *
+   * ONLY the markers this module writes appear here, and that is the safety property: a quality it
+   * does not recognise — `null` (a measured raw sample), `estimated` (a model output owned by
+   * another writer), an Amber marker — is absent from the map and therefore never replaceable. So
+   * "upgrade my own estimates" can never become "overwrite someone's measurement".
+   */
+  const QUALITY_RANK: Record<string, number> = {
+    interpolated: 1,
+    calculated: 2,
+    good: 3, // the vendor's own recorded sample — nothing outranks it
+  };
+
+  /**
+   * Should this module write `tail` at `ms` with quality `q`?
+   *
+   * True when there is no row, or when the row that IS there is one of ours and strictly worse.
+   * Re-running is therefore idempotent (equal rank does not rewrite) while still letting a later
+   * run replace an estimate with a measurement.
+   */
+  const shouldWrite = (
+    tail: SigenDerivedTail,
+    ms: number,
+    q: DerivedReading["dataQuality"],
+  ): boolean => {
+    if (!availableTails.has(tail)) return false;
+    const existing = presentByTail.get(tail);
+    if (!existing?.has(ms)) return true;
+    const current = existing.get(ms);
+    const currentRank = current == null ? undefined : QUALITY_RANK[current];
+    if (currentRank === undefined) return false; // not ours to touch
+    return QUALITY_RANK[q] > currentRank;
+  };
 
   const push = (
     tail: SigenDerivedTail,
@@ -343,7 +382,6 @@ export function computeDerivedPowerReadings(params: {
   // below is keyed on the energy intervals because in practice they are complete (0/8640 missing on
   // prod) while the power ones are not; an interval the statistics endpoint never reported gets no
   // SoC fill either, which is the conservative side to err on.
-  const socPresent = presentByTail.get("battery_soc") ?? new Set<number>();
 
   const ordered = [...energyByIntervalEnd].sort((a, b) => a[0] - b[0]);
   const trusted = trustedCounters(ordered);
@@ -360,16 +398,16 @@ export function computeDerivedPowerReadings(params: {
     // A measurement of the interval, so it is preferred over every reconstruction below and carries
     // no derived marker. Each field is taken on its own: a payload missing one still contributes the
     // others, and whatever it lacks falls through to the counter arithmetic.
-    if (vp?.solarW != null && isMissing("solar_w", ms)) {
+    if (vp?.solarW != null && shouldWrite("solar_w", ms, "good")) {
       push("solar_w", ms, vp.solarW, "good");
     }
-    if (vp?.gridW != null && isMissing("grid_w", ms)) {
+    if (vp?.gridW != null && shouldWrite("grid_w", ms, "good")) {
       push("grid_w", ms, vp.gridW, "good");
     }
-    if (vp?.batteryW != null && isMissing("battery_w", ms)) {
+    if (vp?.batteryW != null && shouldWrite("battery_w", ms, "good")) {
       push("battery_w", ms, vp.batteryW, "good");
     }
-    if (vp?.socPct != null && isMissing("battery_soc", ms)) {
+    if (vp?.socPct != null && shouldWrite("battery_soc", ms, "good")) {
       out.push({
         pointMetadata: meta("battery_soc"),
         rawValue: vp.socPct,
@@ -379,14 +417,18 @@ export function computeDerivedPowerReadings(params: {
     }
 
     // --- fallback: calculated, straight from the counters ----------------------------------------
-    if (vp?.solarW == null && usable("solar") && isMissing("solar_w", ms)) {
+    if (
+      vp?.solarW == null &&
+      usable("solar") &&
+      shouldWrite("solar_w", ms, "calculated")
+    ) {
       push("solar_w", ms, e.solar! * WH_TO_W, "calculated");
     }
     if (
       vp?.gridW == null &&
       usable("gridImport") &&
       usable("gridExport") &&
-      isMissing("grid_w", ms)
+      shouldWrite("grid_w", ms, "calculated")
     ) {
       push(
         "grid_w",
@@ -399,7 +441,7 @@ export function computeDerivedPowerReadings(params: {
       vp?.batteryW == null &&
       usable("batteryCharge") &&
       usable("batteryDischarge") &&
-      isMissing("battery_w", ms)
+      shouldWrite("battery_w", ms, "calculated")
     ) {
       push(
         "battery_w",
@@ -417,29 +459,31 @@ export function computeDerivedPowerReadings(params: {
     const totalFromVendor = vp?.loadW ?? null;
     const totalW =
       totalFromVendor ?? (usable("load") ? e.load! * WH_TO_W : null);
-    if (totalW != null && (isMissing("ev_w", ms) || isMissing("load_w", ms))) {
+    if (
+      totalW != null &&
+      (shouldWrite("ev_w", ms, "interpolated") ||
+        shouldWrite("load_w", ms, "interpolated"))
+    ) {
       if (!availableTails.has("ev_w")) {
         // No charger on this site, so there is nothing to split off: total load IS rest-of-house,
         // and that is a calculation, not an inference.
-        if (isMissing("load_w", ms)) push("load_w", ms, totalW, "calculated");
+        if (shouldWrite("load_w", ms, "calculated"))
+          push("load_w", ms, totalW, "calculated");
       } else {
         const evW = interpolateAt(measuredEv, ms, maxSpanMs);
         if (evW != null) {
           // EV power is a load: never negative, and never more than the whole house drew.
           const ev = Math.min(Math.max(evW, 0), Math.max(totalW, 0));
-          if (isMissing("ev_w", ms)) push("ev_w", ms, ev, "interpolated");
-          if (isMissing("load_w", ms))
+          if (shouldWrite("ev_w", ms, "interpolated"))
+            push("ev_w", ms, ev, "interpolated");
+          if (shouldWrite("load_w", ms, "interpolated"))
             push("load_w", ms, totalW - ev, "interpolated");
         }
       }
     }
 
     // --- interpolated: SoC ------------------------------------------------------------------------
-    if (
-      vp?.socPct == null &&
-      availableTails.has("battery_soc") &&
-      !socPresent.has(ms)
-    ) {
+    if (vp?.socPct == null && shouldWrite("battery_soc", ms, "interpolated")) {
       const soc = interpolateAt(measuredSoc, ms, maxSpanMs);
       if (soc != null) {
         out.push({
@@ -576,13 +620,18 @@ export async function deriveDayPowerReadings(params: {
     window,
   );
 
-  const presentByTail = new Map<string, Set<number>>();
+  const presentByTail = new Map<string, Map<number, string | null>>();
   const measuredEv: MeasuredSample[] = [];
   const measuredSoc: MeasuredSample[] = [];
 
   for (const { tail, row } of targets) {
     const rows = series.get(Point.encode(row!.pointUid)) ?? [];
-    presentByTail.set(tail, new Set(rows.map((r) => r.intervalEndMs)));
+    // Carry each row's quality, not just its presence — that is what lets a later run replace an
+    // estimate this module wrote with the vendor's own sample.
+    presentByTail.set(
+      tail,
+      new Map(rows.map((r) => [r.intervalEndMs, r.dataQuality])),
+    );
     if (tail !== "ev_w" && tail !== "battery_soc") continue;
     for (const r of rows) {
       // Anchor only on MEASURED samples. Interpolating from an earlier interpolation would let a
