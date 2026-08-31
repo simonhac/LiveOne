@@ -82,14 +82,41 @@ export function encryptPassword(plain: string): string {
   );
 }
 
+/**
+ * First of `keys` that carries a usable number, else null.
+ *
+ * Deliberately does NOT use bare `Number()`, which coerces things that are not measurements:
+ * `Number(false)` and `Number([])` are both `0`, `Number([7])` is `7`, and `Number(" ")` is `0`. The
+ * keys here are CANDIDATE LISTS spanning vendor spellings (`["pvPower", "pv_power", "solarPower"]`),
+ * so a rename or a reused name landing on a field of the wrong type would silently record a real
+ * reading of zero — indistinguishable, downstream, from the site genuinely producing nothing.
+ *
+ * That is not hypothetical for this payload: the live `energyflow` body carries `onGrid` (boolean)
+ * and `greenSourceInfos` (array) beside the numeric fields. Measured over 3000 archived responses
+ * and one full statistics day, every field actually read here is a JSON number or null and NONE is
+ * ever a string — so accepting only numbers (plus a numeric string, kept as insurance against a
+ * vendor that starts quoting them) changes nothing observable today.
+ *
+ * `Number.isFinite` rather than `!Number.isNaN`: `Infinity` is not a measurement either, and
+ * `Number("Infinity")` produces one.
+ */
 function pickNumber(obj: unknown, keys: string[]): number | null {
   if (!obj || typeof obj !== "object") return null;
   const rec = obj as Record<string, unknown>;
   for (const key of keys) {
     const v = rec[key];
-    if (v == null || v === "") continue;
-    const n = Number(v);
-    if (!Number.isNaN(n)) return n;
+    if (typeof v === "number") {
+      if (Number.isFinite(v)) return v;
+      continue;
+    }
+    if (typeof v === "string") {
+      const t = v.trim();
+      if (t === "") continue; // whitespace is absence, not zero
+      const n = Number(t);
+      if (Number.isFinite(n)) return n;
+      continue;
+    }
+    // boolean / array / object / null / undefined — never a reading.
   }
   return null;
 }

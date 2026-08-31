@@ -27,6 +27,7 @@
 - [architecture/chart-style.md](architecture/chart-style.md) — how a chart is housed, drawn and labelled: one frame per nesting level (owned by the section, never breakpoint-gated), the hairline carve-out for tables, one ink registry, and one legend vocabulary across the row and table forms; `lib/charts/style.ts` + `<Panel>` are the source of truth
 - [architecture/authentication.md](architecture/authentication.md) — the **authorization model**: device ownership (one nullable owner, ownerless = public), access levels, the `lib/api-auth.ts` helpers, and the edge boundary — why the `/api/v4/areas/*` public entries are surgical and why `isShareableRoute` is a security list, not a convenience one
 - [clerk-setup.md](clerk-setup.md) — Clerk **setup**: env vars, the `isPlatformAdmin` session claim (and the ~150 ms it saves), private-metadata credential layout, minting a token for local API testing
+- [architecture/session-response-archive.md](architecture/session-response-archive.md) — `sessions.response`: ~1yr of **verbatim** vendor payloads, the only place the raw upstream truth survives once a parser has collapsed absent-into-zero. Its two designed uses (replay-through-a-fixed-adapter repair; evidence for absent-vs-zero), the ⚠️ blind spot that batch/backfill sessions archive a **summary** not the body, and the unread-field census query that has twice turned up fields we archive and never read (`pvDayNrg` is an unused independent cross-check on daily generation). **Nothing reads it on a schedule**
 - [architecture/kv-store.md](architecture/kv-store.md) — KV cache keys, subscription registry
 - [sync-prod-to-dev.md](sync-prod-to-dev.md) — keeping `liveone-dev` fresh: the 2-hourly prod→dev DB top-up + KV rebuild-from-DB (`db:sync-dev-db` / `db:rebuild-dev-kv`)
 - [architecture/load-calcs.md](architecture/load-calcs.md) — "rest of house" load calculation
@@ -83,6 +84,7 @@ Kept because they answer _why does the system look like this_ — not because th
 ## Deferred work
 
 - [deferred/postgres-integration-test-harness.md](deferred/postgres-integration-test-harness.md) — re-point legacy-seeded/flag-gated test suites to Postgres
+- [deferred/session-response-retention.md](deferred/session-response-retention.md) — `sessions` is **24.5 % of the database** and the archived payload is ~90 % of every row. Nulling `response` beyond 3 months reclaims ~13.5 % of the DB; deleting the rows outright only adds 2.6 % more, is blocked by `point_readings.session_id`'s `ON DELETE NO ACTION` FK, and severs reading→payload traceability. Neither shrinks the file without `VACUUM FULL`. Measured, no decision taken
 
 ## Records (append-only; never "stale")
 
