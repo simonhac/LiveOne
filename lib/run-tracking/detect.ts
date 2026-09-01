@@ -35,6 +35,24 @@ export interface DetectConfig {
    * this also decides whether the final run is left open (running now). Folds in "staleness".
    */
   delayOffMs: number;
+  /**
+   * Floor `delayOffMs` at this multiple of the OBSERVED interval between on-samples. Default
+   * {@link DEFAULT_DELAY_OFF_CADENCE_MULTIPLE}; 0 disables the floor.
+   *
+   * 🛑 THE UNITS BUG THIS FIXES. `delayOffMs` is compared against `s.tMs - run.lastOnMs` — a SAMPLE
+   * GAP — so any threshold on it is only meaningful in multiples of the sampling interval, yet it is
+   * configured in absolute seconds. The `ev` role default of 300 s was sized against Kinkora Mondo,
+   * whose EV point polls at a 120 s median: 2.5x cadence, comfortable. Pointed at the Sigenergy
+   * charger, which polls every ~300 s, the same 300 s is 1.0x — and 31 of 74 measured gaps exceeded
+   * it, so one six-hour charge was detected as 25 runs of 3-8 minutes.
+   *
+   * `delayOffMs` is really doing two jobs. The MERGE POLICY ("an unplug/replug inside five minutes is
+   * one session") is a genuine per-role choice and stays in `defaults.ts`. GAP TOLERANCE — surviving
+   * a late or dropped poll — is not per-role at all; it is a function of the cadence, and only the
+   * data knows it. So the effective value is `max(policy, k × cadence)`: the floor can only ever
+   * MERGE more, never fragment more, so it cannot regress a detector that works today.
+   */
+  delayOffCadenceMultiple?: number;
   /** Recompute "as of" time (epoch-ms), injected. The final run stays open iff now − lastOn ≤ delayOff. */
   nowMs: number;
   /**
@@ -61,6 +79,22 @@ export interface DetectConfig {
    */
   boundaryEventsMs?: number[];
 }
+
+/**
+ * Gap tolerance, in multiples of the observed on-sample cadence. 2x is too tight — one dropped poll
+ * is already 2x plus jitter — so 3x, which survives a dropped poll comfortably. Against the three
+ * live detectors: Kutis EV 3x300s = 900s (fixes it), Kinkora EV 3x120s = 360s (only bites on gaps in
+ * (300,360], and its measured max is 184s), Daylesford generator 3x60s = 180s < its 240s policy
+ * (unchanged).
+ */
+export const DEFAULT_DELAY_OFF_CADENCE_MULTIPLE = 3;
+
+/**
+ * Fewest ON-sample intervals needed before their median is taken to describe a cadence. Below this
+ * the window has not shown a rhythm — a couple of intervals is noise — and no floor is applied, so
+ * the configured `delayOffMs` stands exactly as it does today.
+ */
+const MIN_ON_INTERVALS_FOR_CADENCE = 4;
 
 export type CloseReason = "gap" | "boundary" | null;
 
@@ -107,6 +141,60 @@ function classify(value: number, cfg: DetectConfig, prevOn: boolean): boolean {
     return prevOn;
   }
   return false;
+}
+
+/**
+ * Median interval between CONSECUTIVE on-samples, or null when the window has not shown enough of a
+ * rhythm to say. Pure; measured from the same rows the detector is about to walk.
+ *
+ * 🛑 ON-samples specifically, never every sample — and the Daylesford generator is why. The DeepSea
+ * hub polls at 300 s while idle and 60 s while the engine runs, so a median over the whole window is
+ * dominated by idle samples and would floor `delayOff` at 900 s, bridging fifteen-minute gaps and
+ * merging genuinely separate generator runs. The cadence that governs whether a RUN survives a poll
+ * gap is the cadence WHILE RUNNING, which is 60 s.
+ *
+ * Classification here is unlatched (`prevOn = false`, i.e. the turn-on test) because this needs a
+ * cadence, not a state machine: a sample sitting inside the hysteresis deadband is genuinely
+ * ambiguous and contributes no interval either way. Pairs straddling an off-sample are skipped, so
+ * an idle stretch never widens the measured rhythm.
+ */
+export function medianOnSampleIntervalMs(
+  samples: Sample[],
+  cfg: DetectConfig,
+): number | null {
+  const rows = normalizeSamples(samples);
+  const gaps: number[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1];
+    const b = rows[i];
+    if (a.value === null || b.value === null) continue;
+    if (!classify(a.value, cfg, false) || !classify(b.value, cfg, false))
+      continue;
+    const gap = b.tMs - a.tMs;
+    if (gap > 0) gaps.push(gap);
+  }
+  if (gaps.length < MIN_ON_INTERVALS_FOR_CADENCE) return null;
+  gaps.sort((x, y) => x - y);
+  const mid = gaps.length >> 1;
+  return gaps.length % 2
+    ? gaps[mid]
+    : Math.round((gaps[mid - 1] + gaps[mid]) / 2);
+}
+
+/**
+ * The `delayOffMs` detection will actually use: the configured merge policy, floored at
+ * `k x` the observed on-sample cadence. See {@link DetectConfig.delayOffCadenceMultiple}.
+ */
+export function effectiveDelayOffMs(
+  samples: Sample[],
+  cfg: DetectConfig,
+): number {
+  const k = cfg.delayOffCadenceMultiple ?? DEFAULT_DELAY_OFF_CADENCE_MULTIPLE;
+  if (k <= 0) return cfg.delayOffMs;
+  const cadence = medianOnSampleIntervalMs(samples, cfg);
+  return cadence === null
+    ? cfg.delayOffMs
+    : Math.max(cfg.delayOffMs, cadence * k);
 }
 
 interface OpenRun {
@@ -158,6 +246,8 @@ export function detectRunPeriods(
   }
   const midpoint = cfg.boundaryMode === "midpoint";
   const rows = normalizeSamples(samples);
+  // Measured once, from the same rows, before the walk — so every gap test below uses one value.
+  const delayOffMs = effectiveDelayOffMs(rows, cfg);
   const boundaries = [...(cfg.boundaryEventsMs ?? [])].sort((a, b) => a - b);
   const hasBoundaryIn = (afterMs: number, throughMs: number): boolean =>
     boundaries.some((b) => b > afterMs && b <= throughMs);
@@ -172,7 +262,7 @@ export function detectRunPeriods(
 
   for (const s of rows) {
     // Gap-close: any sample beyond delayOff from the last on-sample ends the open run.
-    if (run && s.tMs - run.lastOnMs > cfg.delayOffMs) {
+    if (run && s.tMs - run.lastOnMs > delayOffMs) {
       periods.push(finalize(run, run.lastOnMs, "gap"));
       run = null;
       state = false;
@@ -224,7 +314,7 @@ export function detectRunPeriods(
 
   // Tail: the final run is open iff its last on-sample is recent; else close it (gap).
   if (run) {
-    if (cfg.nowMs - run.lastOnMs <= cfg.delayOffMs) {
+    if (cfg.nowMs - run.lastOnMs <= delayOffMs) {
       periods.push(finalize(run, null, null));
     } else {
       periods.push(finalize(run, run.lastOnMs, "gap"));
