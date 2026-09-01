@@ -100,7 +100,12 @@ export default function RunsCard({
   });
 
   const totalSeconds = rows.reduce((s, r) => s + (r.durationSec ?? 0), 0);
-  const totalEnergyKwh = rows.reduce((s, r) => s + r.e.energyKwh, 0);
+  // Known energy only, and null when NOTHING was known — the footer then shows "—" rather than a
+  // total that silently counts unmeasured runs as zero.
+  const totalEnergyKwh = rows.reduce<number | null>(
+    (s, r) => (r.e.energyKwh == null ? s : (s ?? 0) + r.e.energyKwh),
+    null,
+  );
   const anyOutside = rows.some((r) => r.spansOutside);
 
   // The two provenance columns, each gated SERVER-side on what the returned rows actually carry
@@ -210,7 +215,7 @@ export default function RunsCard({
                     </td>
                     {showEnergy && (
                       <td className={`${td} text-right tabular-nums`}>
-                        {e.energyKwh.toFixed(1)}
+                        {e.energyKwh != null ? e.energyKwh.toFixed(1) : "—"}
                       </td>
                     )}
                     {showAvgPower && (
@@ -245,7 +250,7 @@ export default function RunsCard({
                   </td>
                   {showEnergy && (
                     <td className={`${td} text-right tabular-nums`}>
-                      {totalEnergyKwh.toFixed(1)}
+                      {totalEnergyKwh != null ? totalEnergyKwh.toFixed(1) : "—"}
                     </td>
                   )}
                   {/* No total for average power: a mean of means is not the window's average, and

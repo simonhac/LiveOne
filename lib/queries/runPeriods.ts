@@ -44,7 +44,13 @@ export interface RunPeriodEvent {
   /** True average power over the run (W) — energy ÷ duration; null while still running. */
   avgPowerW?: number | null;
   sampleCount?: number;
-  energyKwh: number;
+  /**
+   * kWh metered over the run. **NULL = UNKNOWN**, and that is a real case, not a defensive type: a
+   * detector binds an energy point only if the device publishes a cumulative counter, and the
+   * Sigenergy EV charger publishes power only. Never render it as 0 — `columns.energy` says whether
+   * the figure exists at all, and `avgPowerW` is the fallback when it does not.
+   */
+  energyKwh: number | null;
   /**
    * Per-run provenance, ACCUMULATED by the recompute against the run's own metered energy (see
    * lib/run-tracking/energy.ts). Null = unknown — the corresponding column is then absent from the

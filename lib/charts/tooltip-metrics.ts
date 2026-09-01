@@ -39,7 +39,15 @@ import type {
  * and passes the result.
  */
 export interface ProvenancePanelInput {
-  energyKwh: number;
+  /**
+   * kWh. **Null = unknown**, shown as "—" exactly like the three figures below it.
+   *
+   * 🛑 Energy was the one panel here that did not admit null, and it was wrong for the same reason
+   * the others are right: a run detector with no energy point stores NULL, and the run-periods route
+   * used to coalesce that to 0 — so a 6-hour EV charge that the chart legend showed as 6.8 kWh got a
+   * band tooltip reading "0.0 kWh". A number nobody measured must not be printed as a measurement.
+   */
+  energyKwh: number | null;
   /** Cents, signed. Null = unknown, which shows "—" rather than $0.00. */
   costC: number | null;
   /** Grams CO₂. Null = unknown. */
@@ -59,14 +67,19 @@ export interface ProvenancePanels {
   renewable: SankeyMetric;
 }
 
+/** An average-power secondary value, from watts. */
+export function powerMetric(avgW: number): SankeyMetricValue {
+  const { value, unit } = formatValue(avgW, "W");
+  return { value, unit };
+}
+
 /** An average-power secondary value from energy over a span of hours. */
 export function avgPowerMetric(
   energyKwh: number,
   hours: number,
 ): SankeyMetricValue {
   const avgW = hours > 0 ? (energyKwh * 1000) / hours : 0;
-  const { value, unit } = formatValue(avgW, "W");
-  return { value, unit };
+  return powerMetric(avgW);
 }
 
 /** Build the four panels. */
@@ -78,7 +91,10 @@ export function provenancePanels(
   const kgCo2 = emissionsG == null ? null : emissionsG / 1000;
   return {
     energy: {
-      primary: { value: formatKwh(energyKwh), unit: "kWh" },
+      primary: {
+        value: energyKwh == null ? "—" : formatKwh(energyKwh),
+        unit: "kWh",
+      },
       ...(secondaryEnergy ? { secondary: secondaryEnergy } : {}),
     },
     emissions: {
@@ -111,7 +127,8 @@ export function provenancePanels(
  */
 export function runProvenancePanels(
   run: {
-    energyKwh: number;
+    energyKwh: number | null;
+    avgPowerW?: number | null;
     costC?: number | null;
     emissionsG?: number | null;
     renewableKwh?: number | null;
@@ -132,10 +149,12 @@ export function runProvenancePanels(
       avgCentsPerKwh: per(costC),
       avgGramsPerKwh: per(emissionsG),
     },
-    // Average power over the run itself, not over the chart window — "how hard was it charging"
-    // is a fact about the session. Absent while the run is still open (no duration yet).
-    run.durationSeconds
-      ? avgPowerMetric(run.energyKwh, run.durationSeconds / 3600)
-      : undefined,
+    // Average power over the run itself, not over the chart window — "how hard was it charging" is
+    // a fact about the session. Taken from `avgPowerW` rather than re-derived from energy ÷ duration:
+    // the server already picked the honest basis for it (metered energy where there is an energy
+    // point, the mean of the power SIGNAL where there is not — `columns.avgPowerBasis`), so reading
+    // it here is both simpler and the only version that survives a null energy. Deriving it locally
+    // is what made the EV band tooltip say "0.0 kW" beside its "0.0 kWh".
+    run.avgPowerW != null ? powerMetric(run.avgPowerW) : undefined,
   );
 }
