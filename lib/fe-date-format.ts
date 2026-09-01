@@ -27,6 +27,29 @@ export const SHORT_MONTHS = [
 ] as const;
 
 /**
+ * Full month names, 1-indexed as `[month - 1]`. Hardcoded for the same reason {@link SHORT_MONTHS}
+ * is: `Intl`/`toLocaleDateString` reads ICU/CLDR data that changes between Node versions, which made
+ * the same code render differently across local / CI / Vercel.
+ *
+ * Used where a range collapses to the period it covers and there is room to spell it out — the
+ * navigator's whole-calendar-month label ("August 2026") — rather than for dates inside a range.
+ */
+export const LONG_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const;
+
+/**
  * Format a date/time for display in the UI
  * Returns time in 12-hour format with no leading zero and lowercase am/pm
  * Date in short month format
