@@ -13,8 +13,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdmin } from "@/lib/api-auth";
 import { cronSkipReason } from "@/lib/cron/guard";
-import { parseDate } from "@internationalized/date";
 import { getNowFormattedAEST } from "@/lib/date-utils";
+import { parseRecomputeRange } from "@/lib/run-tracking/range";
 import {
   reconcileTrailingWindow,
   recomputeRange,
@@ -31,71 +31,6 @@ import {
   evaluateAutomations,
   type AutomationsSummary,
 } from "@/lib/automations/evaluate";
-
-// Earliest data (when point data collection began) — clamps backfill ranges.
-const LIVEONE_BIRTHDATE_MS = Date.parse("2025-08-16T00:00:00Z");
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Resolve a [startMs, endMs] range from the request params. Returns null when no range was
- * specified (the no-param cron path → trailing reconcile).
- *
- * - last=Nd            → [now − N days, now]
- * - date=YYYY-MM-DD    → that whole UTC day
- * - start&end=Y-M-D    → [start 00:00Z, end 23:59:59.999Z]
- * - (action, no dates) → [BIRTHDATE, now] (all data)
- */
-function parseRange(
-  action: string | null,
-  last: string | null,
-  date: string | null,
-  start: string | null,
-  end: string | null,
-  nowMs: number,
-): { startMs: number; endMs: number } | null {
-  const specCount = [last, date, start || end].filter(Boolean).length;
-  if (specCount > 1) {
-    throw new Error(
-      "Only one date specification allowed: use 'last', 'date', or 'start+end'",
-    );
-  }
-
-  let startMs: number;
-  let endMs: number;
-
-  if (last) {
-    const days = parseInt(last.replace("d", ""), 10);
-    if (isNaN(days) || days <= 0) {
-      throw new Error("Invalid 'last' parameter. Expected format: '7d'");
-    }
-    startMs = nowMs - days * DAY_MS;
-    endMs = nowMs;
-  } else if (date) {
-    const d = parseDate(date); // throws on bad format
-    startMs = Date.parse(`${d.toString()}T00:00:00Z`);
-    endMs = Date.parse(`${d.toString()}T23:59:59.999Z`);
-  } else if (start || end) {
-    if (!start || !end) {
-      throw new Error("Both start and end must be provided together");
-    }
-    const s = parseDate(start);
-    const e = parseDate(end);
-    startMs = Date.parse(`${s.toString()}T00:00:00Z`);
-    endMs = Date.parse(`${e.toString()}T23:59:59.999Z`);
-  } else if (action) {
-    // Explicit action, no dates → all data.
-    startMs = LIVEONE_BIRTHDATE_MS;
-    endMs = nowMs;
-  } else {
-    return null; // no action, no dates → trailing reconcile
-  }
-
-  if (startMs < LIVEONE_BIRTHDATE_MS) startMs = LIVEONE_BIRTHDATE_MS;
-  if (startMs > endMs) {
-    throw new Error("Start must be before or equal to end");
-  }
-  return { startMs, endMs };
-}
 
 /**
  * Resolve the optional detector SCOPE from the request: `derivation=<uuid>` or
@@ -156,7 +91,7 @@ async function handle(request: NextRequest) {
     let range: { startMs: number; endMs: number } | null;
     let filter: RunDetectorFilter | undefined;
     try {
-      range = parseRange(action, last, date, start, end, nowMs);
+      range = parseRecomputeRange(action, { last, date, start, end }, nowMs);
       filter = parseFilter(derivation, handleParam, role);
     } catch (error) {
       return NextResponse.json(

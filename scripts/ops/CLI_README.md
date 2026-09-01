@@ -59,6 +59,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone area latest](#liveone-area-latest)
     - [liveone area history](#liveone-area-history)
     - [liveone area flows](#liveone-area-flows)
+  - [liveone derivation](#liveone-derivation)
+    - [liveone derivation list](#liveone-derivation-list)
+    - [liveone derivation create](#liveone-derivation-create)  _(writes)_
+    - [liveone derivation enable](#liveone-derivation-enable)  _(writes)_
+    - [liveone derivation disable](#liveone-derivation-disable)  _(writes)_
+    - [liveone derivation recompute](#liveone-derivation-recompute)  _(writes)_
+    - [liveone derivation intervals](#liveone-derivation-intervals)
   - [liveone user](#liveone-user)
     - [liveone user list](#liveone-user-list)
     - [liveone user show](#liveone-user-show)
@@ -94,6 +101,7 @@ Subcommands:
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
   device                 Inspect devices — config, metadata, points, latest values, history.
   area                   Inspect areas — membership, bindings, latest values, history, flows.
+  derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
   user                   The user directory — who exists, what they own. Admin-only.
   api                    One authenticated request to the deployed API, as you.  (writes)
 
@@ -2047,6 +2055,430 @@ Examples:
 Exit codes:
   0    success
   1    no attributed flow for the window (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone derivation
+
+Derived signals — run detectors and the HWS model: list, create, enable, recompute.
+
+```
+Derived signals — run detectors and the HWS model: list, create, enable, recompute.
+
+When to use:
+  Reach for this when a device's RUNS are the question — whether the generator/EV-charge detector
+  exists, what it has detected, or rebuilding its history after a config change. The `runs` card on
+  a dashboard shows what a detector here produced; `area` and `device` show the inputs it reads.
+
+Http-only: every verb calls the deployed v4 API as you (`liveone auth login`), and prints
+`target: <origin> as <you>` on stderr first — read it to know which environment answered.
+A derivation lives on an AREA, and must live on the area-of-one of the device it watches: a
+detector on a composite is invisible to the capability probe, and `create` refuses with the
+member handles that would work. Ids are per-environment.
+
+Usage:
+  liveone derivation <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   The derivations on an area: id, kind, role, enabled, sources.
+  create                 Add a derivation to an area.  (writes)
+  enable                 Re-enable a derivation, so it is recomputed again.  (writes)
+  disable                Stop a derivation being recomputed. Its existing rows are untouched.  (writes)
+  recompute              Rebuild ONE derivation's intervals over a window.  (writes)
+  intervals              The rows a derivation has produced — runs, newest first.
+
+Run `liveone derivation <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation list
+
+The derivations on an area: id, kind, role, enabled, sources.
+
+```
+The derivations on an area: id, kind, role, enabled, sources.
+
+When to use:
+  Start here — to find a dx_… id, or to check whether a detector exists at all.
+
+There is no fleet-wide listing: the API serves derivations per area, so 'which detectors
+exist anywhere' means one call per area.
+
+Usage:
+  liveone derivation list <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation list kutis
+  liveone derivation list 13 --format json
+
+Exit codes:
+  0    success
+  1    the area has no derivations
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation create
+
+Add a derivation to an area.
+
+```
+Add a derivation to an area.
+
+When to use:
+  Use this to start tracking a device's runs — a generator, or an EV charger. For the HWS
+  thermal model pass --kind=hws-model, which takes no points (it finds its own).
+
+--signal/--energy take a LOGICAL PATH (`load.ev/power`) or a pt_… id; prefer the path,
+since a mis-pinned uuid fails silently — the detector simply never fires.
+
+One of --upper/--lower is required: they are the threshold the run is detected against.
+Every OTHER knob is sparse by contract — a flag you do not pass is not written, so it
+inherits the role's default (lib/run-tracking/defaults.ts) as those defaults evolve.
+Passing a value equal to today's default is therefore NOT a no-op; it pins it.
+
+--energy is optional and its absence is legal: a detector with no cumulative energy
+counter still records duration and signal statistics, and the runs card drops the kWh,
+cost, emissions and renewable columns rather than showing them empty.
+
+Usage:
+  liveone derivation create <area> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --kind <string>            What sort of derived signal  (one of: run-detector, hws-model; default: run-detector)
+  --role <string>            run-detector only: which role's runs these are  (one of: generator, ev)
+  --name <text>              Display name (default: '<role> runs')
+  --signal <path|pt_>        run-detector only: the series to follow, e.g. load.ev/power
+  --energy <path|pt_>        Optional cumulative energy counter, for per-run kWh
+  --upper <W>                Above this, the device is ON
+  --lower <W>                Below this, the device is OFF
+  --hysteresis <W>           Deadband around the threshold
+  --delay-on <seconds>       Ignore an on-signal shorter than this
+  --delay-off <seconds>      Keep the run open across a gap shorter than this
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation create kutis --role=ev --name='EV charging' --signal=load.ev/power --upper=100 --delay-off=300
+  liveone derivation create kutis --role=ev --signal=load.ev/power --upper=100 --apply
+  liveone derivation create kink --kind=hws-model --apply
+
+Exit codes:
+  0    success
+  1    the server refused the derivation (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation enable
+
+Re-enable a derivation, so it is recomputed again.
+
+```
+Re-enable a derivation, so it is recomputed again.
+
+When to use:
+  Use this after a `disable`, once whatever was wrong with its inputs is fixed.
+
+Usage:
+  liveone derivation enable <area> <derivation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation enable kutis ev --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation disable
+
+Stop a derivation being recomputed. Its existing rows are untouched.
+
+```
+Stop a derivation being recomputed. Its existing rows are untouched.
+
+When to use:
+  This is the safe lever, and the only one: there is deliberately no delete, because
+  `derived_intervals` CASCADEs — removing a derivation would destroy every interval it ever
+  produced. A disabled derivation stops being recomputed and stops advertising its
+  capability, while its history stays exactly as it was.
+
+Usage:
+  liveone derivation disable <area> <derivation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation disable kutis ev --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation recompute
+
+Rebuild ONE derivation's intervals over a window.
+
+```
+Rebuild ONE derivation's intervals over a window.
+
+When to use:
+  Use this to backfill history for a detector you just created, or to rebuild after changing
+  its params. The minutely cron already heals the trailing 6 hours, so this is for anything
+  older than that.
+
+🛑 regenerate and delete are DELETE-AND-REINSERT. That is safe here only because the
+derivation is named in the request path, so this verb has no unscoped form — unlike the
+cron's twin, whose filter is optional and through which a full-range unscoped regenerate
+once collapsed 71 rows to 3.
+
+No window means ALL of this detector's history. A long span may exceed the route's 300s
+budget; run it in --last=30d slices if so (the server chunks at 14 days internally and
+retries transient database errors, so a re-run is cheap and safe to repeat).
+
+Usage:
+  liveone derivation recompute <area> <derivation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --last <30d>               Relative window ending now
+  --date <YYYY-MM-DD>        A single UTC day
+  --start <YYYY-MM-DD>       Window start (UTC)
+  --end <YYYY-MM-DD>         Window end, inclusive (UTC)
+  --action <string>          regenerate = purge then rebuild; aggregate = rebuild in place; delete = purge only  (one of: regenerate, aggregate, delete; default: regenerate)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation recompute kutis ev --start=2026-07-06 --end=2026-09-01
+  liveone derivation recompute kutis ev --last=30d --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation intervals
+
+The rows a derivation has produced — runs, newest first.
+
+```
+The rows a derivation has produced — runs, newest first.
+
+When to use:
+  Use this to check what a detector actually found: after a create, after a backfill, or when
+  a dashboard's runs card looks wrong and you want the numbers behind it.
+
+Raw values, not the display strings the dashboard card's own endpoint serves — ISO instants
+and numbers, with the unit each signal statistic is in carried PER ROW (a window can
+straddle a detector re-point and hold two units).
+A run belongs to a window if it STARTED in it, which is the same rule `recompute` deletes
+by — so these are exactly the rows a recompute over the same window would replace.
+
+Usage:
+  liveone derivation intervals <area> <derivation> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --last <30d>               Relative window ending now
+  --date <YYYY-MM-DD>        A single UTC day
+  --start <YYYY-MM-DD>       Window start (UTC)
+  --end <YYYY-MM-DD>         Window end, inclusive (UTC)
+  --limit <n>                Rows to return, max 500 (default 100)
+  --offset <n>               Skip this many
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation intervals kutis ev --last=60d
+  liveone derivation intervals kutis ev --last=7d --format json
+
+Exit codes:
+  0    success
+  1    no intervals in the window
   2    usage error
   3    authentication failure
   5    upstream failure

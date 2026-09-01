@@ -184,7 +184,8 @@ terminal additionally requires `--yes`.
 #### The liveone CLI
 
 `npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
-`auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), and the read-only
+`auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), `derivation` (run detectors
+and the HWS model: list, create, enable/disable, recompute, intervals), and the read-only
 `device` / `area` / `user` (list, show, latest values, history; `area flows` downloads the
 rolled-up Sankey matrix for a period). Run `-- <domain> --help` for verbs; the generated
 reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
@@ -197,12 +198,19 @@ reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
   prints on stderr before any work — read it before `--apply`.
 - **`--via=db` is the explicit escape hatch** (connection from `MIGRATE_DATABASE_URL` only; dev:
   `npm run liveone:dev -- dashboard <command>`): required for repairing a doc whose refs the owner
-  cannot read (the repairing PUT would itself be 403'd), bulk sweeps, and outages.
+  cannot read (the repairing PUT would itself be 403'd), bulk sweeps, and outages. **`dashboard`
+  only** — `derivation` is http-only by design, because what makes a derivation correct
+  (`ensureRunDetector`'s placement rules, the locked recompute) is all server-side.
 - Mutations are **dry-run by default**; `--apply` writes (CAS on `revision` both ways). Off a
   terminal `--apply` additionally requires `--yes`.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
 - 🛑 `n_…` node ids are minted **per environment** and are NOT portable prod↔dev. "Make the same
   edit in both" means re-running `show` in each environment first.
+- 🛑 `derivation recompute` is a **delete-and-reinsert**, and it always names one derivation —
+  it posts to `…/derivations/{dx_}/recompute`, where the scope is a path segment, so it has no
+  unscoped form. Use it rather than the cron (`POST /api/cron/derivations?action=regenerate`),
+  whose filter is optional and through which a full-range unscoped regenerate once collapsed 71
+  dev rows to 3.
 
 #### Development API Authentication
 

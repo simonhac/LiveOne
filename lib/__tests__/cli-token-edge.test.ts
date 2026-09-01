@@ -47,6 +47,12 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/areas",
       "/api/v4/areas/ar_x",
       "/api/v4/areas/ar_x/derivations",
+      // The per-derivation surface, admitted for the `liveone derivation` domain. `recompute`
+      // rewrites history (delete-and-reinsert), and it is admitted only because the derivation is a
+      // path segment — there is no unscoped form of it to reach.
+      "/api/v4/areas/ar_x/derivations/dx_x",
+      "/api/v4/areas/ar_x/derivations/dx_x/recompute",
+      "/api/v4/areas/ar_x/derivations/dx_x/intervals",
       "/api/v4/users",
       "/api/v4/users/user_x",
       "/api/data",
@@ -73,8 +79,11 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       // control surface stay outside the bypass, each to be judged on its own.
       "/api/v4/areas/ar_x/members",
       "/api/v4/areas/ar_x/bindings",
-      // `derivations` itself is bypassed, but its per-derivation control route is not.
-      "/api/v4/areas/ar_x/derivations/dx_x",
+      "/api/v4/areas/ar_x/eligibility",
+      // 🛑 The CRON twin of the recompute that IS admitted above. Its `derivation=`/`handle=`+`role=`
+      // filter is OPTIONAL, so it has an unscoped form that rebuilds every detector in the fleet —
+      // which is precisely why `…/derivations/:dxid/recompute` exists and why this stays outside.
+      "/api/cron/derivations",
       "/api/v4/points/pt_x/action",
       "/dashboard/simon/kink",
       "/",
@@ -182,6 +191,11 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // The owner-scoped sibling (same file): requireAuth then owner-or-admin on the resolved area.
     // Needed by `/api/v4/areas/{id}/derivations`, whose GET and POST both use it.
     "loadAreaForOwner",
+    // The per-derivation wrapper (lib/derivations/http.ts): it CALLS loadAreaForOwner on every path
+    // and then loads the row with the area in the WHERE clause. It earns its place here on the same
+    // terms `loadReadableArea` did — it does not shortcut an authorization, it adds a scope check on
+    // top of one. It is the only reason `…/derivations/:dxid{,/recompute,/intervals}` may be listed.
+    "loadDerivationForOwner",
   ];
 
   /** Every route.ts under app/api, with the URL path it serves. */
@@ -214,13 +228,16 @@ describe("every route the bypass exposes authorizes for itself", () => {
   it("finds the exposed routes (so the check cannot silently cover nothing)", () => {
     // The dashboard surface, the devices/areas/users read surface, the card-data reads, plus the
     // CLI's own token management and whoami.
-    expect(exposed.length).toBeGreaterThanOrEqual(15);
+    expect(exposed.length).toBeGreaterThanOrEqual(18);
     expect(exposed.map((r) => r.file)).toEqual(
       expect.arrayContaining([
         "app/api/v4/dashboards/route.ts",
         "app/api/v4/devices/[id]/route.ts",
         "app/api/v4/areas/[id]/route.ts",
         "app/api/v4/areas/[id]/derivations/route.ts",
+        "app/api/v4/areas/[id]/derivations/[dxid]/route.ts",
+        "app/api/v4/areas/[id]/derivations/[dxid]/recompute/route.ts",
+        "app/api/v4/areas/[id]/derivations/[dxid]/intervals/route.ts",
         "app/api/v4/users/[id]/route.ts",
         "app/api/data/route.ts",
         "app/api/history/route.ts",
