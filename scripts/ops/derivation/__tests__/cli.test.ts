@@ -32,13 +32,15 @@ const success = (argv: string[]) => {
 describe("the write gate", () => {
   // The harness installs --apply/--dry-run/--yes from `mutates`, but only on the verbs that declare
   // it. A read verb that grew the flags would be advertising a gate it does not honour.
-  it.each(["create", "enable", "disable", "recompute"])(
+  it.each(["create", "set", "enable", "disable", "recompute"])(
     "%s is dry by default and offers --apply",
     (verb) => {
       const args =
         verb === "create"
           ? ["create", "kutis", "--role=ev", "--signal=load.ev/power"]
-          : [verb, "kutis", "ev"];
+          : verb === "set"
+            ? ["set", "kutis", "ev", "--delay-off=900"]
+            : [verb, "kutis", "ev"];
       expect(success(args).dryRun).toBe(true);
       expect(success([...args, "--apply"]).dryRun).toBe(false);
     },
@@ -106,6 +108,49 @@ describe("create", () => {
     ]);
     for (const k of ["upper", "lower", "hysteresis", "delayOn", "delayOff"])
       expect(r.flags[k]).toBeUndefined();
+  });
+});
+
+describe("set", () => {
+  it("collects repeated --unset", () => {
+    const r = success([
+      "set",
+      "kutis",
+      "ev",
+      "--unset=hysteresis",
+      "--unset=delayOn",
+    ]);
+    expect(r.flags.unset).toEqual(["hysteresis", "delayOn"]);
+  });
+
+  it("refuses an --unset that is not a knob", () => {
+    // `signalKind` IS a params key, but it is not a threshold knob and clearing it would leave the
+    // detector with no signal kind at all.
+    expect(failure(["set", "kutis", "ev", "--unset=signalKind"])).toMatch(
+      /unset/i,
+    );
+  });
+
+  it("shares its knob flags with create, so the two cannot disagree", () => {
+    // Both verbs read the same KNOBS table; this pins that they accept the same spellings.
+    for (const flag of [
+      "--upper=100",
+      "--lower=50",
+      "--hysteresis=10",
+      "--delay-on=30",
+      "--delay-off=900",
+    ]) {
+      expect(success(["set", "kutis", "ev", flag]).ok).toBe(true);
+      expect(
+        success([
+          "create",
+          "kutis",
+          "--role=ev",
+          "--signal=load.ev/power",
+          flag,
+        ]).ok,
+      ).toBe(true);
+    }
   });
 });
 
