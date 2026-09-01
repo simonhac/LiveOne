@@ -790,6 +790,38 @@ function runSetEnabled(enabled: boolean): (ctx: Ctx) => Promise<number> {
     );
 }
 
+/**
+ * The fragmentation warning, and the reason it is worth a line of its own.
+ *
+ * `delayOff` is tested against a SAMPLE GAP, so a detector whose signal is polled at or slower than
+ * that value closes a run on almost every poll. The output is not malformed — each fragment is a
+ * valid run with a valid duration and valid statistics — so `inserted`, `open` and `failures` all
+ * read healthy. The Kutis EV backfill returned 408 "sessions" for 27 real charges and said nothing.
+ *
+ * `runsSplitByDataGap` counts the runs that began without the device ever being seen off since the
+ * previous one ended. A device that genuinely stopped leaves below-threshold samples behind; a late
+ * poll leaves nothing, because absence is what made the gap. A high proportion means the pass is
+ * reporting artefacts.
+ */
+function fragmentationLines(
+  result: Record<string, unknown> | undefined,
+): string[] {
+  const split = Number(result?.runsSplitByDataGap ?? 0);
+  if (!result || split === 0) return [];
+  const inserted = Number(result.rowsInserted ?? 0);
+  const pct = inserted > 0 ? Math.round((split / inserted) * 100) : 0;
+  return [
+    `  ⚠ ${split} of ${inserted} run(s) began with no off-sample since the previous one` +
+      ` — split by missing data, not by the device stopping`,
+    ...(pct >= 50
+      ? [
+          `    ${pct}% is too many to be outages: check --delay-off against the signal's` +
+            ` sample interval (\`liveone derivation intervals\` shows the run spacing)`,
+        ]
+      : []),
+  ];
+}
+
 async function runRecompute(ctx: Ctx): Promise<number> {
   return withApiSession(
     ctx,
@@ -854,6 +886,11 @@ async function runRecompute(ctx: Ctx): Promise<number> {
                   ? `  🛑 ${result.trackersFailed} failure(s) — see the server logs`
                   : "")
               : "Re-run with --apply to write.",
+            // The one number that makes fragmentation visible. Everything else in this summary looks
+            // healthy while a detector shreds a six-hour charge into eighty-odd pieces, because a
+            // fragment is a perfectly well-formed run — it is only the ABSENCE of an off-sample
+            // between them that says the device never actually stopped.
+            ...fragmentationLines(result),
           ].join("\n"),
       );
       // A pass that failed its detector reported success at the HTTP layer but derived nothing.

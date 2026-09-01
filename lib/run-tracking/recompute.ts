@@ -63,6 +63,17 @@ export interface RecomputeSummary {
   rowsDeleted: number;
   rowsInserted: number;
   openPeriods: number;
+  /**
+   * Runs this pass split WITHOUT the device ever being seen off — split by missing data rather than
+   * by stopping. See `DetectedPeriod.precededByDataGap`.
+   *
+   * Surfaced because fragmentation is otherwise invisible: a detector whose `delayOff` sits at or
+   * below its signal's sampling cadence reports a continuous run as dozens of short ones, and every
+   * number in this summary looks healthy while it happens — the Kutis EV backfill returned 408
+   * "sessions" for what were 27 charges, and nothing but reading the rows revealed it. A pass where
+   * most runs carry this is reporting artefacts, not runs.
+   */
+  runsSplitByDataGap: number;
 }
 
 export interface RecomputeRetryOptions extends TransientPostgresRetryOptions {
@@ -99,6 +110,7 @@ async function recomputeWindowAllTrackers(
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
+  let runsSplitByDataGap = 0;
   let trackersFailed = 0;
 
   for (const tracker of trackers) {
@@ -109,6 +121,7 @@ async function recomputeWindowAllTrackers(
       rowsDeleted += res.deleted;
       rowsInserted += res.inserted;
       if (res.open) openPeriods += 1;
+      runsSplitByDataGap += res.splitByDataGap;
     } catch (err) {
       trackersFailed += 1;
       console.error(
@@ -124,6 +137,7 @@ async function recomputeWindowAllTrackers(
     rowsDeleted,
     rowsInserted,
     openPeriods,
+    runsSplitByDataGap,
   };
 }
 
@@ -361,6 +375,7 @@ export async function recomputeRange(
   let rowsDeleted = 0;
   let rowsInserted = 0;
   let openPeriods = 0;
+  let runsSplitByDataGap = 0;
   const failures: Error[] = [];
 
   for (const tracker of trackers) {
@@ -375,6 +390,9 @@ export async function recomputeRange(
         );
         rowsDeleted += res.deleted;
         rowsInserted += res.inserted;
+        // Counted over the ANCHOR-FILTERED periods (see derived-intervals-pg), i.e. the same set
+        // that is inserted — so chunk overlap cannot double-count it.
+        runsSplitByDataGap += res.splitByDataGap;
         trackerOpen = res.open;
         onProgress?.({
           tracker: `${tracker.legacyHandle}/${tracker.role}`,
@@ -405,6 +423,7 @@ export async function recomputeRange(
     rowsDeleted,
     rowsInserted,
     openPeriods,
+    runsSplitByDataGap,
   };
   console.log(
     `[RunTracking] recompute range ${new Date(startMs).toISOString()}..${new Date(endMs).toISOString()}` +
