@@ -222,7 +222,11 @@ export default function GeneratorClient({
                         {showAvgPower && (
                           <td className={TD_NUM}>{kwText(avgPowerW)}</td>
                         )}
-                        <td className={TD_NUM}>{event.energyKwh.toFixed(2)}</td>
+                        <td className={TD_NUM}>
+                          {event.energyKwh != null
+                            ? event.energyKwh.toFixed(2)
+                            : "—"}
+                        </td>
                         {showCost && (
                           <td className={TD_NUM}>
                             {event.costC != null

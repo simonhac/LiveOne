@@ -148,7 +148,15 @@ function toEvent(r: DerivedInterval, s: EventShape) {
     /** Set only when the run ends on a different local day — see `endDateIfDifferentDay`. */
     endDate: endDateIfDifferentDay(r, s.tz),
     running: r.endTime === null,
-    energyKwh: r.energyKwh ?? 0,
+    /**
+     * 🛑 NULL, not 0, when the detector binds no energy point. This used to be `r.energyKwh ?? 0`
+     * and the fabricated zero leaked into every consumer of this wire: the runs card printed
+     * "0.0 kWh" against a 6-hour EV charge, and the stacked chart's run-band tooltip printed
+     * "0.0 kWh / 0.0 kW" over a session the legend showed as 6.8 kWh. `derived_intervals.energy_kwh`
+     * is explicit that NULL means UNKNOWN — coalescing it here turned an unknown into a confident,
+     * wrong claim, four components deep.
+     */
+    energyKwh: r.energyKwh,
     /**
      * Accumulated at recompute time (never derived here) — see lib/run-tracking/energy.ts
      * `assignProvenanceToPeriods`. Null = unknown; the matching column is then absent entirely.
@@ -394,7 +402,8 @@ export async function GET(
     const { signal, shape } = await resolveShape(detector, tz, rows);
 
     let runningNow = false;
-    let totalEnergyKwh = 0;
+    let totalEnergyKwh: number | null = null;
+    let anyEnergyKnown = false;
     // Summed alongside the energy so the footer can show a genuine period-average power
     // (Σenergy ÷ Σduration). Open runs contribute no duration, matching their null avg power.
     let totalDurationSeconds = 0;
@@ -408,12 +417,18 @@ export async function GET(
     const events = rows.map((r) => {
       const ev = toEvent(r, shape);
       if (ev.running) runningNow = true;
-      totalEnergyKwh += ev.energyKwh;
+      // Known energy only. A run with no energy point contributes nothing rather than a zero, and
+      // `totalEnergyKwh` stays null when NOTHING was known — the same "null, never zero" rule the
+      // provenance sums below already follow.
+      if (ev.energyKwh != null) {
+        totalEnergyKwh = (totalEnergyKwh ?? 0) + ev.energyKwh;
+        anyEnergyKnown = true;
+      }
       totalDurationSeconds += ev.durationSeconds ?? 0;
-      cost.add(ev.costC, ev.energyKwh);
-      emissions.add(ev.emissionsG, ev.energyKwh);
-      renewable.add(ev.renewableKwh, ev.energyKwh);
-      estimated.add(ev.estimatedKwh, ev.energyKwh);
+      cost.add(ev.costC, ev.energyKwh ?? 0);
+      emissions.add(ev.emissionsG, ev.energyKwh ?? 0);
+      renewable.add(ev.renewableKwh, ev.energyKwh ?? 0);
+      estimated.add(ev.estimatedKwh, ev.energyKwh ?? 0);
       return ev;
     });
 
