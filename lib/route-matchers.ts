@@ -119,8 +119,20 @@ const cliTokenRoutes = [
   // is judged on its own, rather than inheriting it by being a sibling.
   "/api/v4/areas/:id",
   // Judged on its own (the first sub-resource to be): both GET and POST authorize in-handler via
-  // `loadAreaForOwner`. Again a named segment — `/derivations/:dxid` (PATCH) stays outside.
+  // `loadAreaForOwner`. Again named segments, never `(.*)` — `members` and `bindings` stay outside.
   "/api/v4/areas/:id/derivations",
+  // The per-derivation surface, admitted when `liveone derivation` was written (it is the whole
+  // point of that domain: enable/disable, recompute, read back). All three authorize through
+  // `loadDerivationForOwner` → `loadAreaForOwner`, and each puts the AREA in its WHERE clause, so
+  // the area's owner-or-admin check genuinely covers the derivation rather than merely preceding it.
+  //
+  // `recompute` is the one worth pausing on: it is a delete-and-reinsert, and admitting a route that
+  // rewrites history is a real widening. It is safe here because the derivation is a PATH SEGMENT —
+  // there is no unscoped form to reach, unlike `/api/cron/derivations`, whose filter is optional and
+  // which stays outside this bypass.
+  "/api/v4/areas/:id/derivations/:dxid",
+  "/api/v4/areas/:id/derivations/:dxid/recompute",
+  "/api/v4/areas/:id/derivations/:dxid/intervals",
   "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
   // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
   // independently (each only declines to 404 its own credential shape) and the handler's

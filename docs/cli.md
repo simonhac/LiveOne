@@ -64,8 +64,19 @@ enforcement point (`getAuthContext` resolves the token and yields `userId: null`
 invalid). The invariant "every route under the bypass authorizes in-handler" is enforced
 structurally by `lib/__tests__/cli-token-edge.test.ts`; widening the matcher without satisfying
 that test is how a bypass becomes a hole. The matcher is surgical on purpose: the areas aggregate
-GET is listed as `:id`, not `(.*)`, so members/bindings/derivations writes stay outside until a
-verb needs them, and the admin tree and point-control routes are outside entirely.
+GET is listed as `:id`, not `(.*)`, so `members`/`bindings` stay outside until a verb needs them,
+and the admin tree and point-control routes are outside entirely.
+
+The `derivations` sub-tree is the worked example of "until a verb needs them". `liveone derivation`
+needed four of them, so four named segments were admitted — the resource, the member (PATCH), and
+its `recompute`/`intervals` sub-resources — each authorizing through `loadDerivationForOwner`, which
+calls `loadAreaForOwner` and then puts the AREA in its WHERE clause. The interesting one is
+`recompute`: it is a delete-and-reinsert over history, and it was admitted only because **its scope
+is a path segment**. Its cron twin, `/api/cron/derivations`, takes the same actions with an
+*optional* filter and therefore has an unscoped form; it stays outside the bypass, and
+`cli-token-edge.test.ts` asserts that it does. That is the rule the sub-tree illustrates — the
+question is never "is this route related to one we already trust", it is "what is the worst call
+this address can spell".
 
 ## The generated reference
 

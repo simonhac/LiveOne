@@ -23,6 +23,7 @@ import { defineCommand, run, failWith, EXIT, type Ctx } from "@/lib/cli/cli";
 import { dashboardCommand, runDashboard } from "./dashboard/cli";
 import { deviceCommand, runDevice } from "./device/cli";
 import { areaCommand, runArea } from "./area/cli";
+import { derivationCommand, runDerivation } from "./derivation/cli";
 import { userCommand, runUser } from "./user/cli";
 import { authCommand, runAuth } from "./auth/cli";
 import { findCommand, runFind } from "./find/cli";
@@ -46,6 +47,7 @@ export const cmd = defineCommand({
     dashboard: dashboardCommand,
     device: deviceCommand,
     area: areaCommand,
+    derivation: derivationCommand,
     user: userCommand,
     // A root-level VERB like `find`: one raw authenticated request, for endpoints no verb covers.
     api: apiCommand,
@@ -62,6 +64,7 @@ const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
   dashboard: runDashboard,
   device: runDevice,
   area: runArea,
+  derivation: runDerivation,
   user: runUser,
   api: runApi,
 };
