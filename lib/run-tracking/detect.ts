@@ -108,6 +108,24 @@ export interface DetectedPeriod {
   minW: number | null;
   avgW: number | null;
   closeReason: CloseReason;
+  /**
+   * This run began without the device ever having been SEEN off since the previous run ended — so
+   * the split between them came from missing data, not from the device stopping.
+   *
+   * 🛑 THE SIGNAL FRAGMENTATION HAS OTHERWISE GOT NONE, and `closeReason` is not it: an off-sample
+   * does not close a run (it is bridged, and the gap clock ends the run later), so EVERY closed run
+   * reads "gap" and the field is a constant. The two cases are genuinely indistinguishable from the
+   * run rows alone — a device that stopped and a poll that was late both yield two runs — which is
+   * why 408 three-minute fragments and 27 real charge sessions looked like the same kind of answer.
+   *
+   * What separates them is what sits BETWEEN the runs. A device that really stopped leaves samples
+   * below the threshold; a late poll leaves nothing at all, because absence is what made the gap.
+   * A `null` sample counts as absence too — "missing" is not evidence the device was off.
+   *
+   * False for the first run of a window (nothing precedes it) and after a boundary split (which
+   * requires an off-sample by construction).
+   */
+  precededByDataGap: boolean;
 }
 
 /** Sort ascending by time and collapse exact-duplicate timestamps (last value wins). */
@@ -198,6 +216,7 @@ export function effectiveDelayOffMs(
 }
 
 interface OpenRun {
+  precededByDataGap: boolean;
   startMs: number;
   firstOnMs: number;
   lastOnMs: number;
@@ -213,6 +232,7 @@ function finalize(
   closeReason: CloseReason,
 ): DetectedPeriod {
   return {
+    precededByDataGap: run.precededByDataGap,
     startMs: run.startMs,
     endMs,
     sampleCount: run.count,
@@ -259,6 +279,12 @@ export function detectRunPeriods(
   // Has the signal actually been OFF since the last on-sample? The guard that keeps a control edge
   // from splitting a continuously-running engine — see `boundaryEventsMs`.
   let offSinceLastOn = false;
+  // The same question, but NOT reset when a run closes — which is the whole difference. Read at the
+  // moment a run opens, it answers "was the device seen off between that run and this one?", and a
+  // "no" means the two were split by absent data rather than by the device stopping.
+  // See `DetectedPeriod.precededByDataGap`.
+  let offSeenSinceLastOnSample = false;
+  let aRunHasClosed = false;
 
   for (const s of rows) {
     // Gap-close: any sample beyond delayOff from the last on-sample ends the open run.
@@ -267,6 +293,7 @@ export function detectRunPeriods(
       run = null;
       state = false;
       offSinceLastOn = false;
+      aRunHasClosed = true;
     }
 
     if (s.value === null) {
@@ -284,11 +311,14 @@ export function detectRunPeriods(
       if (run && offSinceLastOn && hasBoundaryIn(run.lastOnMs, s.tMs)) {
         periods.push(finalize(run, run.lastOnMs, "boundary"));
         run = null;
+        aRunHasClosed = true;
       }
       if (!run) {
         const startMs =
           midpoint && prevSampleMs != null ? (prevSampleMs + s.tMs) / 2 : s.tMs;
         run = {
+          // Read BEFORE the flag is cleared below, and only meaningful once something has closed.
+          precededByDataGap: aRunHasClosed && !offSeenSinceLastOnSample,
           startMs,
           firstOnMs: s.tMs,
           lastOnMs: s.tMs,
@@ -305,8 +335,10 @@ export function detectRunPeriods(
         if (s.value < run.min) run.min = s.value;
       }
       offSinceLastOn = false;
+      offSeenSinceLastOnSample = false;
     } else {
       offSinceLastOn = true;
+      offSeenSinceLastOnSample = true;
     }
     // off-sample: leave the run open (delay_off bridging); the gap-close above will end it.
     prevSampleMs = s.tMs;

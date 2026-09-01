@@ -56,6 +56,11 @@ export interface RecomputeResult {
   deleted: number;
   inserted: number;
   open: boolean;
+  /**
+   * Of the runs written, how many the detector split WITHOUT ever seeing the device off — i.e. split
+   * by missing data rather than by stopping. See `DetectedPeriod.precededByDataGap`.
+   */
+  splitByDataGap: number;
 }
 
 /** Bounded read of one point's raw readings over [fromMs, toMs], ascending. */
@@ -323,6 +328,10 @@ export async function recomputeIntervalsForWindow(
       deleted: deletedRows.length,
       inserted,
       open: periods.some((p) => p.endMs === null),
+      // Runs the detector split without ever seeing the device off — i.e. split by missing data.
+      // Counted here rather than stored: it is a fact about THIS detection pass, reproducible from
+      // the readings, and what it is for is telling the operator that a pass looks wrong.
+      splitByDataGap: periods.filter((p) => p.precededByDataGap).length,
     };
   });
 }
