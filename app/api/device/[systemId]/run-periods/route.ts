@@ -218,6 +218,7 @@ async function resolveShape(
     // what the config says they should. A window straddling the re-point holds both.
     rowSignalUnits: rows.map((r) => r.signalUnit),
     hasEnergyPoint: detector?.energyPoint != null,
+    rowsCarryEnergy: rows.some((r) => r.energyKwh != null),
     provenance: {
       cost: rows.some((r) => r.costC != null),
       emissions: rows.some((r) => r.emissionsG != null),

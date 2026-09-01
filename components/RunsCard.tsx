@@ -111,6 +111,15 @@ export default function RunsCard({
   // genuinely wider than the original four. That is affordable because the numbers are short and
   // `when` is the only wrappable cell, but it is the reason each column stays gated: a device with
   // no energy point still renders the narrow three-column table.
+  // 🛑 Energy is GATED, and used not to be. A detector with no energy point (the Sigenergy EV
+  // charger publishes power only) has NULL energy on every row, which the wire coalesces to 0 — so
+  // an ungated column printed "0.0 kWh" against every charge session. When it is absent, fall back
+  // to the average POWER the plan already computes from the signal (`avgPowerBasis: "signal"`),
+  // which is the figure GeneratorClient has always shown for exactly this case. Deliberately only
+  // as a fallback: a device WITH energy keeps its existing three-column table rather than gaining a
+  // fourth in a card whose width is the reason every column here is gated.
+  const showEnergy = data?.columns?.energy ?? false;
+  const showAvgPower = !showEnergy && (data?.columns?.avgPower ?? false);
   const showCost = data?.columns?.cost ?? false;
   const showEmissions = data?.columns?.emissions ?? false;
   // Totals sum only the runs that carry a figure, matching how the footer's other totals behave.
@@ -169,7 +178,12 @@ export default function RunsCard({
                 <tr>
                   <th className={`${th} text-left`}>When</th>
                   <th className={`${th} text-right`}>Duration</th>
-                  <th className={`${th} text-right`}>Energy{unit("kWh")}</th>
+                  {showEnergy && (
+                    <th className={`${th} text-right`}>Energy{unit("kWh")}</th>
+                  )}
+                  {showAvgPower && (
+                    <th className={`${th} text-right`}>Avg{unit("kW")}</th>
+                  )}
                   {showEmissions && (
                     <th className={`${th} text-right`}>CO₂{unit("kg")}</th>
                   )}
@@ -194,9 +208,18 @@ export default function RunsCard({
                         ? formatSecondsAsDuration(durationSec)
                         : "—"}
                     </td>
-                    <td className={`${td} text-right tabular-nums`}>
-                      {e.energyKwh.toFixed(1)}
-                    </td>
+                    {showEnergy && (
+                      <td className={`${td} text-right tabular-nums`}>
+                        {e.energyKwh.toFixed(1)}
+                      </td>
+                    )}
+                    {showAvgPower && (
+                      <td className={`${td} text-right tabular-nums`}>
+                        {e.avgPowerW != null
+                          ? (e.avgPowerW / 1000).toFixed(1)
+                          : "—"}
+                      </td>
+                    )}
                     {showEmissions && (
                       <td className={`${td} text-right tabular-nums`}>
                         {e.emissionsG != null
@@ -220,9 +243,14 @@ export default function RunsCard({
                   <td className={`${td} text-right tabular-nums`}>
                     {formatSecondsAsDuration(totalSeconds)}
                   </td>
-                  <td className={`${td} text-right tabular-nums`}>
-                    {totalEnergyKwh.toFixed(1)}
-                  </td>
+                  {showEnergy && (
+                    <td className={`${td} text-right tabular-nums`}>
+                      {totalEnergyKwh.toFixed(1)}
+                    </td>
+                  )}
+                  {/* No total for average power: a mean of means is not the window's average, and
+                      an energy-weighted one needs the energy this card does not have. */}
+                  {showAvgPower && <td className={td} />}
                   {showEmissions && (
                     <td className={`${td} text-right tabular-nums`}>
                       {totalEmissionsG != null

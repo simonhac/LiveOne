@@ -98,6 +98,7 @@ describe("planRunPeriodColumns", () => {
         hasEnergyPoint: true,
       }),
     ).toEqual({
+      energy: true,
       signal: false,
       avgPower: true,
       avgPowerBasis: "energy",
@@ -115,6 +116,7 @@ describe("planRunPeriodColumns", () => {
         hasEnergyPoint: false,
       }),
     ).toEqual({
+      energy: false,
       signal: false,
       avgPower: true,
       avgPowerBasis: "signal",
@@ -131,6 +133,7 @@ describe("planRunPeriodColumns", () => {
         hasEnergyPoint: true,
       }),
     ).toEqual({
+      energy: true,
       signal: true,
       avgPower: true,
       avgPowerBasis: "energy",
@@ -149,6 +152,7 @@ describe("planRunPeriodColumns", () => {
         hasEnergyPoint: false,
       }),
     ).toEqual({
+      energy: false,
       signal: true,
       avgPower: false,
       avgPowerBasis: "signal",
@@ -177,6 +181,7 @@ describe("planRunPeriodColumns", () => {
         hasEnergyPoint: true,
       }),
     ).toEqual({
+      energy: true,
       signal: false,
       avgPower: true,
       avgPowerBasis: "energy",
@@ -218,6 +223,7 @@ describe("planRunPeriodColumns", () => {
         provenance: ALL_PRESENT,
       }),
     ).toEqual({
+      energy: true,
       signal: true,
       avgPower: true,
       avgPowerBasis: "energy",
@@ -403,6 +409,47 @@ describe("planRunPeriodColumns", () => {
   });
 });
 
+describe("the energy column", () => {
+  // 🛑 THE REGRESSION THIS FILE EXISTS TO PREVENT A SECOND TIME. `derived_intervals.energy_kwh` is
+  // NULL when a detector has no energy point, the run-periods route coalesces that to 0 on the wire
+  // (load-bearing where energy IS known), and RunsCard rendered the column ungated — so the
+  // Sigenergy EV charger, which publishes power only, showed "0.0 kWh" against every charge
+  // session and a 0.0 total. A confident zero is worse than an absent column, which is the rule
+  // `cost`/`emissions` already followed.
+  const POWER_W = {
+    signalMetricType: "power",
+    signalMetricUnit: "W",
+    rowSignalUnits: ["W", "W"],
+  };
+
+  it("is absent when the detector binds no energy point and no row carries energy", () => {
+    const c = planRunPeriodColumns({ ...POWER_W, hasEnergyPoint: false });
+    expect(c.energy).toBe(false);
+    // …and the power figure is still available, from the signal — so the card is not left with
+    // nothing but a duration.
+    expect(c.avgPower).toBe(true);
+    expect(c.avgPowerBasis).toBe("signal");
+  });
+
+  it("is present whenever the detector binds an energy point", () => {
+    expect(
+      planRunPeriodColumns({ ...POWER_W, hasEnergyPoint: true }).energy,
+    ).toBe(true);
+  });
+
+  it("is present when the ROWS carry energy even though the config says otherwise", () => {
+    // The same "read what the rows carry" principle the provenance gates use: a detector that
+    // gained an energy point mid-history still has rows worth showing.
+    expect(
+      planRunPeriodColumns({
+        ...POWER_W,
+        hasEnergyPoint: false,
+        rowsCarryEnergy: true,
+      }).energy,
+    ).toBe(true);
+  });
+});
+
 describe("formatRunWhen", () => {
   // The times arrive already spelled by the server in the UI's 12-hour house style ("h:mma") — this
   // function only joins them, so the fixtures below are what `/api/device/{id}/run-periods` serves.
@@ -472,6 +519,47 @@ describe("formatRunWhen", () => {
     });
     expect(s).toContain("–");
     expect(s).not.toContain("-");
+  });
+});
+
+describe("the energy column", () => {
+  // 🛑 THE REGRESSION THIS FILE EXISTS TO PREVENT A SECOND TIME. `derived_intervals.energy_kwh` is
+  // NULL when a detector has no energy point, the run-periods route coalesces that to 0 on the wire
+  // (load-bearing where energy IS known), and RunsCard rendered the column ungated — so the
+  // Sigenergy EV charger, which publishes power only, showed "0.0 kWh" against every charge
+  // session and a 0.0 total. A confident zero is worse than an absent column, which is the rule
+  // `cost`/`emissions` already followed.
+  const POWER_W = {
+    signalMetricType: "power",
+    signalMetricUnit: "W",
+    rowSignalUnits: ["W", "W"],
+  };
+
+  it("is absent when the detector binds no energy point and no row carries energy", () => {
+    const c = planRunPeriodColumns({ ...POWER_W, hasEnergyPoint: false });
+    expect(c.energy).toBe(false);
+    // …and the power figure is still available, from the signal — so the card is not left with
+    // nothing but a duration.
+    expect(c.avgPower).toBe(true);
+    expect(c.avgPowerBasis).toBe("signal");
+  });
+
+  it("is present whenever the detector binds an energy point", () => {
+    expect(
+      planRunPeriodColumns({ ...POWER_W, hasEnergyPoint: true }).energy,
+    ).toBe(true);
+  });
+
+  it("is present when the ROWS carry energy even though the config says otherwise", () => {
+    // The same "read what the rows carry" principle the provenance gates use: a detector that
+    // gained an energy point mid-history still has rows worth showing.
+    expect(
+      planRunPeriodColumns({
+        ...POWER_W,
+        hasEnergyPoint: false,
+        rowsCarryEnergy: true,
+      }).energy,
+    ).toBe(true);
   });
 });
 
