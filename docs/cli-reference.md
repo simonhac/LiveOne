@@ -65,6 +65,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone derivation](../scripts/ops/CLI_README.md#liveone-derivation) — Derived signals — run detectors and the HWS model: list, create, enable, recompute.
     - [liveone derivation list](../scripts/ops/CLI_README.md#liveone-derivation-list) — The derivations on an area: id, kind, role, enabled, sources.
     - [liveone derivation create](../scripts/ops/CLI_README.md#liveone-derivation-create) — Add a derivation to an area.  _(writes)_
+    - [liveone derivation set](../scripts/ops/CLI_README.md#liveone-derivation-set) — Change a derivation's threshold params, or rename it.  _(writes)_
     - [liveone derivation enable](../scripts/ops/CLI_README.md#liveone-derivation-enable) — Re-enable a derivation, so it is recomputed again.  _(writes)_
     - [liveone derivation disable](../scripts/ops/CLI_README.md#liveone-derivation-disable) — Stop a derivation being recomputed. Its existing rows are untouched.  _(writes)_
     - [liveone derivation recompute](../scripts/ops/CLI_README.md#liveone-derivation-recompute) — Rebuild ONE derivation's intervals over a window.  _(writes)_

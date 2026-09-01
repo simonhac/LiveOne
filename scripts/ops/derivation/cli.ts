@@ -61,6 +61,58 @@ const KINDS = ["run-detector", "hws-model"] as const;
  */
 const TRACKABLE_ROLES = ["generator", "ev"] as const;
 
+/**
+ * The threshold knobs, as `[CLI flag, params key]`. One table so `create` and `set` cannot disagree
+ * about which flag writes which key — the sort of drift that is invisible until a detector is
+ * configured through the verb that got it wrong.
+ */
+const KNOBS = [
+  ["upper", "upperW"],
+  ["lower", "lowerW"],
+  ["hysteresis", "hysteresisW"],
+  ["delayOn", "delayOnSeconds"],
+  ["delayOff", "delayOffSeconds"],
+] as const;
+
+/** The knob flags, shared by `create` and `set`. */
+const KNOB_FLAGS = {
+  upper: {
+    type: "number",
+    placeholder: "W",
+    help: "Above this, the device is ON",
+  },
+  lower: {
+    type: "number",
+    placeholder: "W",
+    help: "Below this, the device is OFF",
+  },
+  hysteresis: {
+    type: "number",
+    placeholder: "W",
+    help: "Deadband around the threshold",
+  },
+  delayOn: {
+    type: "number",
+    placeholder: "seconds",
+    help: "Ignore an on-signal shorter than this",
+  },
+  delayOff: {
+    type: "number",
+    placeholder: "seconds",
+    help: "Bridge a gap shorter than this. 🛑 Must comfortably EXCEED the point's sample interval, or every poll gap closes a run",
+  },
+} as const;
+
+/** Read the knob flags that were actually passed, as `params` keys. Absent flags stay absent. */
+function knobsFrom(ctx: Ctx): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [flag, key] of KNOBS) {
+    const v = num(ctx, flag);
+    if (v !== undefined) out[key] = v;
+  }
+  return out;
+}
+
 interface WireArea {
   id: string | null;
   displayName: string;
@@ -310,31 +362,7 @@ export const derivationCommand = defineCommand({
           placeholder: "path|pt_",
           help: "Optional cumulative energy counter, for per-run kWh",
         },
-        upper: {
-          type: "number",
-          placeholder: "W",
-          help: "Above this, the device is ON",
-        },
-        lower: {
-          type: "number",
-          placeholder: "W",
-          help: "Below this, the device is OFF",
-        },
-        hysteresis: {
-          type: "number",
-          placeholder: "W",
-          help: "Deadband around the threshold",
-        },
-        delayOn: {
-          type: "number",
-          placeholder: "seconds",
-          help: "Ignore an on-signal shorter than this",
-        },
-        delayOff: {
-          type: "number",
-          placeholder: "seconds",
-          help: "Keep the run open across a gap shorter than this",
-        },
+        ...KNOB_FLAGS,
       },
       exitCodes: {
         1: "the server refused the derivation (the reason says why)",
@@ -343,6 +371,44 @@ export const derivationCommand = defineCommand({
         "liveone derivation create kutis --role=ev --name='EV charging' --signal=load.ev/power --upper=100 --delay-off=300",
         "liveone derivation create kutis --role=ev --signal=load.ev/power --upper=100 --apply",
         "liveone derivation create kink --kind=hws-model --apply",
+      ],
+    },
+    set: {
+      name: "set",
+      summary: "Change a derivation's threshold params, or rename it.",
+      when:
+        "Use this when a detector is firing wrongly — most often when it FRAGMENTS one long run into\n" +
+        "many short ones, which means --delay-off is at or below the point's sample interval.",
+      description:
+        "Params are MERGED into what is stored, then sent as a whole object (the API replaces\n" +
+        "`params` wholesale, and a blind replace would silently drop the knobs you did not mention).\n" +
+        "Use --unset to remove a pinned knob so it goes back to inheriting the role default.\n" +
+        "\n" +
+        "🛑 This does NOT rewrite history. Existing intervals were detected under the OLD params and\n" +
+        "stay exactly as they were until you `recompute` the window you care about.\n" +
+        "\n" +
+        "The signal and energy points are deliberately not editable here: re-pointing a detector\n" +
+        "changes what its already-stored rows MEAN, and those rows carry the old signal's unit with\n" +
+        "no way to know they predate the change. That is a considered manual operation, not a flag.",
+      mutates: true,
+      args: [AREA_ARG, DERIVATION_ARG],
+      flags: {
+        ...BASE_URL_FLAG,
+        ...KNOB_FLAGS,
+        name: { type: "string", placeholder: "text", help: "Rename it" },
+        unset: {
+          type: "string",
+          repeatable: true,
+          placeholder: "knob",
+          values: KNOBS.map(([flag]) => flag),
+          help: "Drop a pinned knob, so it inherits the role default again",
+        },
+      },
+      exitCodes: { 1: "nothing to change" },
+      examples: [
+        "liveone derivation set kutis ev --delay-off=900",
+        "liveone derivation set kutis ev --delay-off=900 --apply",
+        "liveone derivation set daylesford generator --unset=hysteresis --apply",
       ],
     },
     enable: {
@@ -530,18 +596,8 @@ async function runCreate(ctx: Ctx): Promise<number> {
         // is worse than omitting it.
         const params: Record<string, unknown> = {
           signalKind: "power-threshold",
+          ...knobsFrom(ctx),
         };
-        const knobs = [
-          ["upper", "upperW"],
-          ["lower", "lowerW"],
-          ["hysteresis", "hysteresisW"],
-          ["delayOn", "delayOnSeconds"],
-          ["delayOff", "delayOffSeconds"],
-        ] as const;
-        for (const [flag, key] of knobs) {
-          const v = num(ctx, flag);
-          if (v !== undefined) params[key] = v;
-        }
         if (params.upperW === undefined && params.lowerW === undefined)
           throw usage(
             "neither --upper nor --lower was given",
@@ -606,6 +662,71 @@ async function runCreate(ctx: Ctx): Promise<number> {
             created
               ? `${status === "exists" ? "already existed" : "created"}: ${created.id}`
               : "Re-run with --apply to create it.",
+          ].join("\n"),
+      );
+      return EXIT.OK;
+    },
+    ctx.dryRun ? "dry-run" : "APPLY",
+  );
+}
+
+async function runSet(ctx: Ctx): Promise<number> {
+  return withApiSession(
+    ctx,
+    async (s) => {
+      const area = await resolveArea(s, ctx.args[0]);
+      const row = resolveDerivation(
+        await listDerivations(s, area),
+        ctx.args[1],
+        area,
+      );
+
+      const given = knobsFrom(ctx);
+      const unset = (ctx.flags.unset as string[] | undefined) ?? [];
+      const name = str(ctx, "name");
+      if (!Object.keys(given).length && !unset.length && name === undefined)
+        throw usage(
+          "nothing to set",
+          "no knob, --unset or --name was given",
+          "pass e.g. --delay-off=900, or --unset=hysteresis",
+        );
+
+      // MERGE, then send whole: the API replaces `params` wholesale (that is what makes removing an
+      // override possible at all), so reading first is the only way to keep the knobs not mentioned.
+      const params: Record<string, unknown> = { ...row.params, ...given };
+      const unsetKeys = unset.map(
+        (f) => KNOBS.find(([flag]) => flag === f)![1] as string,
+      );
+      for (const k of unsetKeys) delete params[k];
+
+      const patch: Record<string, unknown> = { params };
+      if (name !== undefined) patch.name = name;
+
+      let updated: WireDerivation | undefined;
+      if (!ctx.dryRun) {
+        const { body } = await apiFetch<{ derivation: WireDerivation }>(
+          s.origin,
+          `/api/v4/areas/${encodeURIComponent(area.id!)}/derivations/${encodeURIComponent(row.id)}`,
+          { method: "PATCH", body: patch, token: s.token },
+        );
+        updated = body.derivation;
+      }
+
+      ctx.emit(
+        {
+          derivation: updated ?? row,
+          before: row.params,
+          after: params,
+          applied: !ctx.dryRun,
+        },
+        () =>
+          [
+            `${ctx.dryRun ? "would" : "WRITE"} set ${row.name} (${row.id}) on ${area.displayName}`,
+            `  params: ${JSON.stringify(row.params)}`,
+            `       -> ${JSON.stringify(params)}`,
+            ...(name !== undefined ? [`  name:   ${row.name} -> ${name}`] : []),
+            "  existing intervals are NOT rewritten — `recompute` the window to apply this to history",
+            ctx.dryRun ? "Re-run with --apply to write." : "written.",
           ].join("\n"),
       );
       return EXIT.OK;
@@ -802,6 +923,7 @@ async function runIntervals(ctx: Ctx): Promise<number> {
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   list: runList,
   create: runCreate,
+  set: runSet,
   enable: runSetEnabled(true),
   disable: runSetEnabled(false),
   recompute: runRecompute,

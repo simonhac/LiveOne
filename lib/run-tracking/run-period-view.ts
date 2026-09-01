@@ -46,6 +46,17 @@ export interface RunSignalMeta {
 
 /** Which run-period columns to render. The server owns the rule; the clients carry no logic. */
 export interface RunPeriodColumns {
+  /**
+   * Show the accumulated energy column (kWh).
+   *
+   * 🛑 Gated for the same reason `cost`/`emissions` are, and it was missed: a detector with no
+   * energy point has NULL energy on every row, the wire coalesces that to 0 (`?? 0` in the
+   * run-periods route, load-bearing for the sums where energy IS known), and an ungated column
+   * therefore printed "0.0" against every session — a confident claim that the EV drew nothing,
+   * on the card whose whole job is to say how much it drew. NULL means UNKNOWN here, exactly as
+   * `derived_intervals.energy_kwh` documents; an unknown quantity gets no column.
+   */
+  energy: boolean;
   /** Show the raw-signal average in its own unit. */
   signal: boolean;
   /**
@@ -109,6 +120,12 @@ export function planRunPeriodColumns(input: {
   /** Whether the detector binds a dedicated energy point (`source_points.energy`). */
   hasEnergyPoint: boolean;
   /**
+   * Whether the returned rows actually CARRY energy. Same principle as `provenance` below — the
+   * rows are the only thing that can say what a window contains, so a detector that gained an
+   * energy point mid-history still shows the column for the rows that have one.
+   */
+  rowsCarryEnergy?: boolean;
+  /**
    * Whether the rows being returned actually CARRY each provenance figure. Deliberately derived
    * from the data, not from the site's intensity config — provenance is accumulated at recompute
    * time, so config describes what future runs will be priced at, while only the rows say what was
@@ -143,6 +160,8 @@ export function planRunPeriodColumns(input: {
   // storing the unit. So the column is numeric if either end can name a unit.
   const numeric = currentNumeric || rowUnits.size > 0;
 
+  const energy = input.hasEnergyPoint || (input.rowsCarryEnergy ?? false);
+
   const avgPowerBasis = input.hasEnergyPoint ? "energy" : "signal";
   // Without an energy point the only possible power figure is the signal itself — so an avg-power
   // column is honest only when the signal genuinely is power AND every row is in that same unit.
@@ -162,6 +181,7 @@ export function planRunPeriodColumns(input: {
   const renewable = input.provenance?.renewable ?? false;
 
   return {
+    energy,
     signal,
     signalUnitPerRow,
     avgPower,
