@@ -37,6 +37,7 @@ import type { PointId } from "@/lib/ids";
 import { detectRunPeriods, type Sample } from "@/lib/run-tracking/detect";
 import {
   allocateCounterToWindows,
+  allocatePowerToWindows,
   energyFromAllocation,
   provenanceFromAllocation,
   NO_PROVENANCE,
@@ -206,15 +207,29 @@ export async function recomputeIntervalsForWindow(
     // Batched energy (one read for the whole window) — replaces the legacy per-event N+1.
     let energies: (number | null)[] = periods.map(() => null);
     let provenance: PeriodProvenance[] = periods.map(() => NO_PROVENANCE);
-    if (det.energyPoint && periods.length > 0) {
+    /**
+     * No counter, but the signal IS power — so integrate it rather than storing NULL.
+     *
+     * 🛑 Deliberately NARROW, and each clause earns its place. `signalUnit === "W"` keeps the
+     * Daylesford generator out: its signal is DSE engine speed in rpm, and integrating rpm produces
+     * a confident number that means nothing. `upperW != null && lowerW == null` keeps out the
+     * inverted, lower-bound detectors (the old grid-import proxy is "on" at −1000 W), whose sign
+     * convention `signalIntegrator` clamps to zero — they would integrate to a known 0.000, which is
+     * worse than the null they get today. What is left is exactly the case this is for: a load whose
+     * power is positive and rises when it runs.
+     */
+    const integratePower =
+      !det.energyPoint &&
+      det.signalUnit === "W" &&
+      det.detect.upperW != null &&
+      det.detect.lowerW == null;
+    if ((det.energyPoint || integratePower) && periods.length > 0) {
       // `readEndMs`, not `winEndMs`: a period that continues past the window is stored with its true
       // end, so the counter has to be read that far or its energy is silently understated.
-      const readings = await readPointSeries(
-        tx,
-        det.energyPoint,
-        readStartMs,
-        readEndMs,
-      );
+      // Skipped entirely on the integration path — there is no counter to read.
+      const readings = det.energyPoint
+        ? await readPointSeries(tx, det.energyPoint, readStartMs, readEndMs)
+        : [];
       const windows = periods.map((p) => ({
         startMs: p.startMs,
         endMs: p.endMs,
@@ -231,8 +246,9 @@ export async function recomputeIntervalsForWindow(
       // `winStartMs`/`winEndMs` would cover hours nobody is pricing; the runs' own span is the
       // smallest window that can answer the question.
       //
-      // Skipped entirely without an energy point (see the enclosing `if`): provenance is integrated
-      // over that counter's slices, so there would be nothing to apply a series to.
+      // Reached on BOTH paths: provenance is integrated over whichever allocation was produced, and
+      // the integrated one carries the same per-slice timestamps the counter one does — so a
+      // power-only detector is priced at the same instants, by the same code.
       // Read on the POOL, not `tx`: this is a read-only side query over tables this transaction
       // neither reads for correctness nor writes (bindings, agg_5m, learned params), and the load
       // leg's fold uses the pool internally regardless. It cannot deadlock against us — we hold an
@@ -248,7 +264,9 @@ export async function recomputeIntervalsForWindow(
       // to place these boundaries (no extra query — the same array `detectRunPeriods` consumed), so
       // the allocator divides a boundary-straddling counter step by how hard the device was actually
       // working either side of the edge, and models the switch AT the edge the detector chose.
-      const alloc = allocateCounterToWindows(windows, readings, nowMs, samples);
+      const alloc = det.energyPoint
+        ? allocateCounterToWindows(windows, readings, nowMs, samples)
+        : allocatePowerToWindows(windows, samples, nowMs);
       energies = energyFromAllocation(alloc);
       if (intensity) provenance = provenanceFromAllocation(alloc, intensity);
     }

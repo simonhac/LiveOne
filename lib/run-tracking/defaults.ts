@@ -8,9 +8,19 @@
  * bounded and persisted".
  *
  * These are BEHAVIOUR knobs, not thresholds, so they are per-ROLE rather than per-signal: every
- * generator run looks like a generator run regardless of which point is watched. A detector whose
- * signal has an unusual cadence overrides the delays in its own `params` (which are sparse — see
- * lib/derivations/resolve.ts), and only `boundaryMode` is code-only.
+ * generator run looks like a generator run regardless of which point is watched. Only `boundaryMode`
+ * is code-only; the rest can be overridden per detector in its own sparse `params` (see
+ * lib/derivations/resolve.ts).
+ *
+ * 🛑 `delayOffMs` HERE IS THE MERGE POLICY ONLY — how long a genuine pause may be before two runs
+ * are separate. It is NOT the gap tolerance, even though it is compared against a sample gap.
+ * Tolerating a late or dropped poll is a function of the signal's CADENCE, which no per-role
+ * constant can know: this file said "a detector whose signal has an unusual cadence overrides the
+ * delays in its own params", and relying on whoever creates the detector to notice is exactly how
+ * the Kutis EV detector shipped at 1.0x its cadence and reported one six-hour charge as 25 runs.
+ * `detect.ts` now floors the value at `k x` the observed on-sample cadence
+ * (`DetectConfig.delayOffCadenceMultiple`), so these numbers only have to answer the policy
+ * question — which is the only one a role can answer.
  */
 
 export interface DetectorDefaults {
@@ -37,9 +47,12 @@ const GENERATOR_DEFAULTS: DetectorDefaults = {
  *
  *  - `hysteresisW: 0` — there is no flapping band to damp. A deadband here would only widen the
  *    window in which the latch holds a stale state.
- *  - `delayOffMs` 300 s bridges two missed polls with margin over the worst observed gap (184 s).
- *    It also bounds how close two sessions can be before they merge — an unplug/replug inside five
- *    minutes reads as one session, which is the right call for a charge session.
+ *  - `delayOffMs` 300 s bounds how close two sessions can be before they merge — an unplug/replug
+ *    inside five minutes reads as one session, which is the right call for a charge session. That
+ *    MERGE decision is all this number now carries. It happens also to sit at 2.5x Kinkora's 120 s
+ *    cadence, which is why it worked here and why nothing noticed it was doing a second job; on a
+ *    300 s-cadence signal the same figure is 1.0x and detects nothing but fragments. The cadence
+ *    floor in `detect.ts` owns that half now.
  *  - `delayOnMs: 0` — at this cadence a single on-sample is a real two-minute charging observation,
  *    not a spike, so there is nothing to drop.
  *  - `boundaryMode: "midpoint"` — the one deviation from the generator. It matters BECAUSE

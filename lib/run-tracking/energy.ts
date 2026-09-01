@@ -145,6 +145,86 @@ export function allocateCounterToWindows(
   return out;
 }
 
+/** W·ms → kWh: 1000 W × 3,600,000 ms. */
+const WATT_MS_PER_KWH = 3_600_000_000;
+
+/**
+ * The counter allocator's SIBLING, for a detector with no energy point: integrate the run's own
+ * POWER signal instead.
+ *
+ * ## Why this exists
+ *
+ * A detector binds an energy point only if the device publishes a cumulative counter, and plenty do
+ * not — the Sigenergy EV charger reports `load.ev/power` and nothing else. Those runs used to store
+ * NULL energy, which is honest but useless: the card and the chart tooltip showed "—" against a
+ * six-hour charge whose kWh the site's own flow matrix had already integrated from the very same
+ * point. "No counter" was being read as "unknowable", and for a power signal it is neither.
+ *
+ * Energy here is DERIVED, not metered, and the difference is real — a trapezoid over 5-minute
+ * samples is not a revenue-grade register. It is also the same trapezoid the flow matrix integrates
+ * power with, so a run's kWh agrees with the Sankey band it sits under rather than contradicting it.
+ *
+ * ## Why it returns the same shape
+ *
+ * `CounterSlice[]` per window, one slice per sample-interval overlap, each stamped with the END of
+ * its overlap — byte-identical in contract to {@link allocateCounterToWindows}. That is the whole
+ * point: `energyFromAllocation` and `provenanceFromAllocation` read this without knowing which
+ * allocator produced it, so a power-only detector gets cost, emissions and renewable share for free
+ * and priced at the same instants. A second, parallel provenance path would have been the bug.
+ *
+ * `null` for a window remains UNKNOWN (no samples bound it), distinct from a known 0.000.
+ *
+ * ## The edge convention, and what it costs
+ *
+ * `signalIntegrator` reconstructs the signal as a STEP at each run boundary rather than a ramp
+ * through it, because the detector has already ruled the device switched there. At a run START that
+ * is exactly right and it is the reason to pass the edges at all: a `midpoint` boundary falls
+ * between the last off sample and the first on sample, and interpolating across it would both
+ * charge the run a ramp it never drew and leak the run's power backwards into the idle gap.
+ *
+ * At a run END the same rule holds the final sample interval flat at its LEFT value instead of
+ * trapezoiding down, which slightly over-reads a run whose power was falling as it finished. That is
+ * accepted rather than special-cased: it is one interval per run, it is nil for the near-constant
+ * loads this path serves (an EV charger holds its rate), and using a second reconstruction here
+ * would mean the two allocators disagreed about what the same signal did.
+ */
+export function allocatePowerToWindows(
+  windows: EnergyWindow[],
+  signal: SignalSample[],
+  nowMs: number,
+): (CounterSlice[] | null)[] {
+  const valid = sortValid(signal);
+  const out: (CounterSlice[] | null)[] = windows.map(() => null);
+  // One sample cannot bound an interval, so there is nothing to integrate — and that is UNKNOWN,
+  // not zero. Mirrors the counter path, which needs two readings before it can report anything.
+  if (valid.length < 2) return out;
+
+  const bounds = windows.map((w) => ({ lo: w.startMs, hi: w.endMs ?? nowMs }));
+  // Same edge treatment as the counter path: the detector has ruled the device switched at the run
+  // boundaries, so the signal is reconstructed as a step there rather than a ramp through it.
+  // Without this the trapezoid leading into a run leaks that run's power into the preceding gap.
+  const weigh = signalIntegrator(
+    signal,
+    bounds.flatMap((b) => [b.lo, b.hi]),
+  );
+
+  for (let i = 1; i < valid.length; i++) {
+    const a = valid[i - 1];
+    const b = valid[i];
+    if (b.tMs <= a.tMs) continue; // duplicate timestamps carry no span to integrate
+    for (let k = 0; k < bounds.length; k++) {
+      const lo = Math.max(a.tMs, bounds[k].lo);
+      const hi = Math.min(b.tMs, bounds[k].hi);
+      if (hi <= lo) continue;
+      if (out[k] === null) out[k] = [];
+      // Right-closed, matching `stepIntensity`'s lookup: energy accrued over `(lo, hi]` prices at hi.
+      out[k]!.push({ kwh: weigh(lo, hi) / WATT_MS_PER_KWH, tMs: hi });
+    }
+  }
+
+  return out;
+}
+
 /** Energy (kWh, 3dp) per window from an allocation already computed. */
 export function energyFromAllocation(
   alloc: (CounterSlice[] | null)[],
