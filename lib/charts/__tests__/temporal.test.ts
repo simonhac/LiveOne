@@ -73,11 +73,37 @@ describe("decodeRangeFromParams", () => {
     );
   });
 
-  it("decodes a stored M window from its inclusive-last-day ?end, deriving first day via calendar", () => {
-    const r = decodeRangeFromParams(params("period=M&end=2026-06-21"), OFFSET);
+  it("snaps a stored M window to the whole calendar month containing its ?end", () => {
+    const r = decodeRangeFromParams(params("period=M&end=2026-06-30"), OFFSET);
     expect(r.isLatest).toBe(false);
-    expect(dayOf(r.start)).toBe("2026-05-22");
-    expect(dayOf(r.end)).toBe("2026-06-21");
+    expect(dayOf(r.start)).toBe("2026-06-01");
+    expect(dayOf(r.end)).toBe("2026-06-30");
+  });
+
+  it("snaps a stored Y window to the whole calendar year containing its ?end", () => {
+    const r = decodeRangeFromParams(params("period=Y&end=2025-12-31"), OFFSET);
+    expect(r.isLatest).toBe(false);
+    expect(dayOf(r.start)).toBe("2025-01-01");
+    expect(dayOf(r.end)).toBe("2025-12-31");
+  });
+
+  /**
+   * The snap is self-healing, and that is the point: a hand-typed date and every link shared under
+   * the old TRAILING scheme (`?end=2026-06-21` used to mean 22 May – 21 Jun) both land on a window
+   * the navigator can actually reach, rather than one it could never step back to.
+   */
+  it("snaps a mid-month ?end — including links written under the old trailing scheme", () => {
+    for (const end of ["2026-06-01", "2026-06-15", "2026-06-21"]) {
+      const r = decodeRangeFromParams(params(`period=M&end=${end}`), OFFSET);
+      expect(dayOf(r.start)).toBe("2026-06-01");
+      expect(dayOf(r.end)).toBe("2026-06-30");
+    }
+  });
+
+  it("a snapped M window still carries UTC-midnight instants (no offset skew)", () => {
+    const r = decodeRangeFromParams(params("period=M&end=2026-06-30"), OFFSET);
+    expect(r.start!).toBe("2026-06-01T00:00:00.000Z");
+    expect(r.end!).toBe("2026-06-30T00:00:00.000Z");
   });
 
   it("the M/Y history request encodes to the exact inclusive UTC calendar days (no offset skew)", () => {
@@ -116,18 +142,58 @@ describe("computeOlder", () => {
     expect(dayOf(second.end)).toBe("2026-07-21");
   });
 
-  it("M: steps back one whole calendar month, contiguous with the default", () => {
+  /**
+   * M/Y stepping SNAPS: the latest window is trailing (22 Jun – 21 Jul), but every window older than
+   * it is a whole named calendar month/year. The first click therefore OVERLAPS the latest window —
+   * deliberately, and unlike D/W, which stay contiguous.
+   */
+  it("M: the first click off the trailing latest lands on the previous whole month", () => {
     const dflt = decodeRangeFromParams(params("period=M"), OFFSET);
     const older = computeOlder(dflt, OFFSET);
-    expect(dayOf(older.start)).toBe("2026-05-22");
-    expect(dayOf(older.end)).toBe("2026-06-21"); // day before the default's first day (22 Jun)
+    // Latest is 22 Jun – 21 Jul, so the month before July is June — overlapping 22–30 Jun.
+    expect(dayOf(older.start)).toBe("2026-06-01");
+    expect(dayOf(older.end)).toBe("2026-06-30");
   });
 
-  it("Y: steps back one whole calendar year, contiguous with the default", () => {
+  it("M: subsequent clicks walk whole calendar months, using each month's real length", () => {
+    let win = computeOlder(
+      decodeRangeFromParams(params("period=M"), OFFSET),
+      OFFSET,
+    );
+    const seen: string[][] = [];
+    for (let i = 0; i < 5; i++) {
+      seen.push([dayOf(win.start)!, dayOf(win.end)!]);
+      win = computeOlder(asRange("M", win), OFFSET);
+    }
+    expect(seen).toEqual([
+      ["2026-06-01", "2026-06-30"],
+      ["2026-05-01", "2026-05-31"],
+      ["2026-04-01", "2026-04-30"],
+      ["2026-03-01", "2026-03-31"],
+      ["2026-02-01", "2026-02-28"], // 2026 is not a leap year
+    ]);
+  });
+
+  it("M: steps across a year boundary into December", () => {
+    const jan = decodeRangeFromParams(
+      params("period=M&end=2026-01-31"),
+      OFFSET,
+    );
+    const older = computeOlder(jan, OFFSET);
+    expect(dayOf(older.start)).toBe("2025-12-01");
+    expect(dayOf(older.end)).toBe("2025-12-31");
+  });
+
+  it("Y: the first click off the trailing latest lands on the previous whole year", () => {
     const dflt = decodeRangeFromParams(params("period=Y"), OFFSET);
     const older = computeOlder(dflt, OFFSET);
-    expect(dayOf(older.start)).toBe("2024-07-22");
-    expect(dayOf(older.end)).toBe("2025-07-21");
+    // Latest is 22 Jul 2025 – 21 Jul 2026, so the year before 2026 is 2025.
+    expect(dayOf(older.start)).toBe("2025-01-01");
+    expect(dayOf(older.end)).toBe("2025-12-31");
+
+    const older2 = computeOlder(asRange("Y", older), OFFSET);
+    expect(dayOf(older2.start)).toBe("2024-01-01");
+    expect(dayOf(older2.end)).toBe("2024-12-31"); // leap year, real length
   });
 });
 
@@ -162,15 +228,67 @@ describe("computeNewer", () => {
     const dflt = decodeRangeFromParams(params("period=M"), OFFSET);
     expect(computeNewer(dflt, OFFSET)).toBe("live");
 
-    const older1 = asRange("M", computeOlder(dflt, OFFSET));
+    const older1 = asRange("M", computeOlder(dflt, OFFSET)); // June 2026
     expect(computeNewer(older1, OFFSET)).toBe("live");
 
-    const older2 = asRange("M", computeOlder(older1, OFFSET));
+    const older2 = asRange("M", computeOlder(older1, OFFSET)); // May 2026
     const back = computeNewer(older2, OFFSET);
     expect(back).not.toBe("live");
-    expect(dayOf((back as { start: string; end: string }).end)).toBe(
-      "2026-06-21",
+    expect(dayOf((back as { start: string; end: string }).start)).toBe(
+      "2026-06-01",
     );
+    expect(dayOf((back as { start: string; end: string }).end)).toBe(
+      "2026-06-30",
+    );
+  });
+
+  it("Y older-1 → live; Y older-2 → older-1", () => {
+    const dflt = decodeRangeFromParams(params("period=Y"), OFFSET);
+    const older1 = asRange("Y", computeOlder(dflt, OFFSET)); // 2025
+    expect(computeNewer(older1, OFFSET)).toBe("live");
+
+    const older2 = asRange("Y", computeOlder(older1, OFFSET)); // 2024
+    const back = computeNewer(older2, OFFSET);
+    expect(dayOf((back as { start: string; end: string }).start)).toBe(
+      "2025-01-01",
+    );
+    expect(dayOf((back as { start: string; end: string }).end)).toBe(
+      "2025-12-31",
+    );
+  });
+
+  /**
+   * computeNewer is the exact inverse of computeOlder, which is what keeps ‹ then › from stranding
+   * you: every older step is reachable again, and the walk terminates at "live" rather than at some
+   * window the URL can't express.
+   */
+  it("M/Y: ‹ n times then › n times returns to live, via every window it passed", () => {
+    for (const period of ["M", "Y"] as const) {
+      const stack: { start: string; end: string }[] = [];
+      let cur = computeOlder(
+        decodeRangeFromParams(params(`period=${period}`), OFFSET),
+        OFFSET,
+      );
+      for (let i = 0; i < 3; i++) {
+        stack.push(cur);
+        cur = computeOlder(asRange(period, cur), OFFSET);
+      }
+      // Walk back up: each › must land exactly on the window ‹ came from.
+      let up: { start: string; end: string } | "live" | null = cur;
+      for (const expected of [...stack].reverse()) {
+        up = computeNewer(
+          asRange(period, up as { start: string; end: string }),
+          OFFSET,
+        );
+        expect(up).toEqual(expected);
+      }
+      expect(
+        computeNewer(
+          asRange(period, up as { start: string; end: string }),
+          OFFSET,
+        ),
+      ).toBe("live");
+    }
   });
 });
 
@@ -195,12 +313,13 @@ describe("encodeRangeToParams", () => {
       period: "M",
       timezoneOffsetMin: OFFSET,
     });
-    expect(p.get("end")).toBe("2026-06-21");
+    // A snapped window's last day IS a month end, so the stored `?end` snaps straight back to it.
+    expect(p.get("end")).toBe("2026-06-30");
     expect(p.get("start")).toBeNull();
     expect(p.get("offset")).toBeNull();
     const r = decodeRangeFromParams(p, OFFSET);
-    expect(dayOf(r.start)).toBe("2026-05-22");
-    expect(dayOf(r.end)).toBe("2026-06-21");
+    expect(dayOf(r.start)).toBe("2026-06-01");
+    expect(dayOf(r.end)).toBe("2026-06-30");
     expect(r.isLatest).toBe(false);
   });
 
@@ -309,10 +428,13 @@ describe("decodeRangeFromParams — malformed params", () => {
     }
   });
 
-  it("still honours a canonical M ?end (the regression guard for the new decoder)", () => {
+  it("still honours a readable M ?end (the regression guard for the new decoder)", () => {
+    // Readable ⇒ used, not dropped. The day it names is then SNAPPED to its calendar month, so this
+    // is the whole of June rather than the trailing 22 May – 21 Jun the old decoder produced.
     const r = decodeRangeFromParams(params("period=M&end=2026-06-21"), OFFSET);
     expect(r.isLatest).toBe(false);
-    expect(dayOf(r.end)).toBe("2026-06-21");
-    expect(dayOf(r.start)).toBe("2026-05-22"); // 22 Jun minus one calendar month
+    expect(r.droppedParams).toBeUndefined();
+    expect(dayOf(r.start)).toBe("2026-06-01");
+    expect(dayOf(r.end)).toBe("2026-06-30");
   });
 });

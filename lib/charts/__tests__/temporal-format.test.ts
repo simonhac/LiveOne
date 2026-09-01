@@ -5,6 +5,7 @@ import {
   formatWindowLabel,
   getPeriodDuration,
   getPeriodIntervalMinutes,
+  isDateOnlyPeriod,
 } from "../temporal";
 
 /**
@@ -60,10 +61,13 @@ describe("temporal period algebra (fixed nominal durations)", () => {
 });
 
 /**
- * The navigator's exclusive-vs-inclusive end rule. D/W windows run local-midnight → local-midnight
- * with an EXCLUSIVE end, so they must read as the days they actually cover ("24 Aug 2026"), not as
- * their bookend instants ("12am, 24 Aug – 12am, 25 Aug 2026"). M/Y already carry an INCLUSIVE last
- * day and must pass through untouched.
+ * The navigator's two label rules.
+ *
+ * 1. Exclusive-vs-inclusive ends. D/W windows run local-midnight → local-midnight with an EXCLUSIVE
+ *    end, so they must read as the days they actually cover ("24 Aug 2026"), not as their bookend
+ *    instants ("12am, 24 Aug – 12am, 25 Aug 2026"). M/Y ends are already INCLUSIVE and pass through.
+ * 2. Whole calendar periods are NAMED ("August 2026", "2026") rather than spelled out as a range —
+ *    the usual case for M/Y, whose windows snap to the calendar once you step back off the latest.
  */
 describe("formatWindowLabel", () => {
   // Build a ZonedDateTime in a fixed +10 zone (no DST), matching the navigator's own
@@ -141,5 +145,126 @@ describe("formatWindowLabel", () => {
     expect(formatWindowLabel(start, end, "Y", mobile)).toBe(
       "25 Aug 2025 – 24 Aug 2026",
     );
+  });
+
+  /**
+   * Every M/Y window older than the latest is calendar-snapped, so this is their NORMAL spelling:
+   * once the range IS the period, naming it beats printing both endpoints.
+   */
+  describe("whole calendar periods collapse to their name", () => {
+    it("names a whole month", () => {
+      const start = zdt("2026-08-01T00:00:00Z");
+      const end = zdt("2026-08-31T00:00:00Z");
+      expect(formatWindowLabel(start, end, "M", mobile)).toBe("August 2026");
+    });
+
+    it("names a whole year", () => {
+      const start = zdt("2025-01-01T00:00:00Z");
+      const end = zdt("2025-12-31T00:00:00Z");
+      expect(formatWindowLabel(start, end, "Y", mobile)).toBe("2025");
+    });
+
+    it("uses the real month length (30-day, non-leap and leap February)", () => {
+      expect(
+        formatWindowLabel(
+          zdt("2026-09-01T00:00:00Z"),
+          zdt("2026-09-30T00:00:00Z"),
+          "M",
+          mobile,
+        ),
+      ).toBe("September 2026");
+      expect(
+        formatWindowLabel(
+          zdt("2026-02-01T00:00:00Z"),
+          zdt("2026-02-28T00:00:00Z"),
+          "M",
+          mobile,
+        ),
+      ).toBe("February 2026");
+      expect(
+        formatWindowLabel(
+          zdt("2028-02-01T00:00:00Z"),
+          zdt("2028-02-29T00:00:00Z"),
+          "M",
+          mobile,
+        ),
+      ).toBe("February 2028");
+    });
+
+    it("collapses under the opts the navigator actually passes, on both breakpoints", () => {
+      // TemporalNavigator passes `includeTime: !isDateOnlyPeriod(period)` on desktop and a flat
+      // `false` on mobile — so for M/Y both breakpoints are date-only and both show the name.
+      const start = zdt("2026-08-01T00:00:00Z");
+      const end = zdt("2026-08-31T00:00:00Z");
+      for (const period of ["M", "Y"] as const) {
+        const navDesktop = { includeTime: !isDateOnlyPeriod(period) };
+        expect(formatWindowLabel(start, end, period, navDesktop)).toBe(
+          "August 2026",
+        );
+        expect(formatWindowLabel(start, end, period, mobile)).toBe(
+          "August 2026",
+        );
+      }
+    });
+
+    it("a caller that asks for times still gets them", () => {
+      // The collapse is a DATE-ONLY spelling. `includeTime: true` means the endpoints matter, so it
+      // must not silently lose them — the guard that keeps this rule out of D/W's live windows.
+      expect(
+        formatWindowLabel(
+          zdt("2026-08-01T00:00:00Z"),
+          zdt("2026-08-31T00:00:00Z"),
+          "W",
+          desktop,
+        ),
+      ).toBe("10am, 1 Aug – 10am, 31 Aug 2026");
+    });
+
+    it("leaves a near-miss window spelled as a range", () => {
+      // One day short at either end is NOT the month, and must not be named as one.
+      expect(
+        formatWindowLabel(
+          zdt("2026-08-01T00:00:00Z"),
+          zdt("2026-08-30T00:00:00Z"),
+          "M",
+          mobile,
+        ),
+      ).toBe("1 – 30 Aug 2026");
+      expect(
+        formatWindowLabel(
+          zdt("2026-08-02T00:00:00Z"),
+          zdt("2026-08-31T00:00:00Z"),
+          "M",
+          mobile,
+        ),
+      ).toBe("2 – 31 Aug 2026");
+      expect(
+        formatWindowLabel(
+          zdt("2026-02-01T00:00:00Z"),
+          zdt("2026-02-27T00:00:00Z"),
+          "M",
+          mobile,
+        ),
+      ).toBe("1 – 27 Feb 2026");
+      expect(
+        formatWindowLabel(
+          zdt("2025-01-01T00:00:00Z"),
+          zdt("2025-12-30T00:00:00Z"),
+          "Y",
+          mobile,
+        ),
+      ).toBe("1 Jan – 30 Dec 2025");
+    });
+
+    it("does not name a 12-month window that is not a calendar year", () => {
+      expect(
+        formatWindowLabel(
+          zdt("2025-02-01T00:00:00Z"),
+          zdt("2026-01-31T00:00:00Z"),
+          "Y",
+          mobile,
+        ),
+      ).toBe("1 Feb 2025 – 31 Jan 2026");
+    });
   });
 });

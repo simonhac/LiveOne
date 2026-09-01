@@ -6,6 +6,10 @@ import {
   parseDate,
   now,
   fromDate,
+  startOfMonth,
+  endOfMonth,
+  startOfYear,
+  endOfYear,
 } from "@internationalized/date";
 import { formatTime12h } from "@/lib/fe-date-format";
 
@@ -581,6 +585,26 @@ export function calendarPeriodWindow(
   const startDay = anchorToday.subtract(amt(stepsBack + 1));
   const lastDay = endExclusive.subtract({ days: 1 });
   return { startDay, lastDay, endExclusive };
+}
+
+/**
+ * The whole calendar month/year CONTAINING `day`, as an inclusive `[firstDay, lastDay]`.
+ *
+ * Distinct from {@link calendarPeriodWindow}, which builds a TRAILING window anchored to today
+ * ("the last month", 15 Aug – 14 Sep). This one SNAPS: any day in August returns 1 – 31 Aug.
+ * Used by the navigator's prev/next stepping, where every window older than the latest is a whole
+ * named month/year.
+ *
+ * Delegates the month length to `@internationalized/date` rather than a hand-rolled table, so
+ * 30/31-day months and leap Februaries are correct by construction.
+ */
+export function containingCalendarPeriod(
+  day: CalendarDate,
+  unit: "month" | "year",
+): { firstDay: CalendarDate; lastDay: CalendarDate } {
+  return unit === "month"
+    ? { firstDay: startOfMonth(day), lastDay: endOfMonth(day) }
+    : { firstDay: startOfYear(day), lastDay: endOfYear(day) };
 }
 
 /**

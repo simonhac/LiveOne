@@ -76,9 +76,10 @@ export default function TemporalNavigator({
     const endMs = end ? Date.parse(end) : nowMs;
     const startZdt = fromUnixTimestamp(startMs / 1000, timezoneOffsetMin);
     const endZdt = fromUnixTimestamp(endMs / 1000, timezoneOffsetMin);
-    // formatWindowLabel owns the exclusive-vs-inclusive end rule: a whole-day D/W window collapses
-    // to its date-only spelling ("24 Aug 2026"), while M/Y already carry an INCLUSIVE last day and
-    // read as-is ("22 Jun – 21 Jul 2026").
+    // formatWindowLabel owns the spelling rules: a whole-day D/W window collapses to its date-only
+    // form ("24 Aug 2026"); M/Y already carry an INCLUSIVE last day and read as-is when trailing
+    // ("15 Aug – 14 Sep 2026"); and any window covering exactly one calendar month/year collapses to
+    // its name ("August 2026", "2026") — the usual case for M/Y once you step back from latest.
     return {
       desktop: formatWindowLabel(startZdt, endZdt, period, {
         includeTime: !isDateOnlyPeriod(period),

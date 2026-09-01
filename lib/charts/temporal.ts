@@ -11,11 +11,20 @@
  * Periods:
  *  - D/W — live trailing 24h / 7d (sub-daily), ending at NOW (today's partial day included). The
  *    first "older" click snaps the window END to local midnight of today.
- *  - M/Y — trailing CALENDAR month / year ending end-of-yesterday (daily data), so they NEVER include
- *    today's partial day. They are date-only and ALWAYS carry an explicit window (see below).
+ *  - M/Y — daily data, date-only, and ALWAYS carrying an explicit window (see below). They NEVER
+ *    include today's partial day. Their LATEST window is TRAILING — yesterday back one whole
+ *    month/year ("15 Aug – 14 Sep") — but every window OLDER than that SNAPS to a whole calendar
+ *    month/year, so prev/next browses named periods ("August 2026", "July 2026", …, "2025").
+ *    Consequence, accepted deliberately: the first "older" click off the latest window overlaps it
+ *    (on 15 Sep, latest is 15 Aug – 14 Sep and older is 1 – 31 Aug), so unlike D/W the M/Y windows
+ *    are not contiguous across that one step.
  */
 import { format } from "date-fns";
-import { formatTime12h, formatDateTimeRange } from "@/lib/fe-date-format";
+import {
+  formatTime12h,
+  formatDateTimeRange,
+  LONG_MONTHS,
+} from "@/lib/fe-date-format";
 import { parseDate } from "@internationalized/date";
 import type { ZonedDateTime } from "@internationalized/date";
 import {
@@ -25,6 +34,7 @@ import {
   periodWindowEndingAt,
   utcMidnightISO,
   utcDateFromIso,
+  containingCalendarPeriod,
 } from "@/lib/date-utils";
 import {
   encodeUrlDate,
@@ -189,6 +199,23 @@ export function isDateOnlyPeriod(period: ChartTimeRange): boolean {
   return period === "M" || period === "Y";
 }
 
+/**
+ * The calendar unit a date-only period snaps to. Only meaningful for M/Y — D/W never snap, so the
+ * callers below reach this exclusively from inside an {@link isDateOnlyPeriod} branch.
+ */
+function calendarUnitFor(period: ChartTimeRange): "month" | "year" {
+  return period === "Y" ? "year" : "month";
+}
+
+/** The whole calendar month/year window containing `day`, as the ISO window shape the navigator uses. */
+function snappedWindow(
+  day: import("@internationalized/date").CalendarDate,
+  unit: "month" | "year",
+): { start: string; end: string } {
+  const { firstDay, lastDay } = containingCalendarPeriod(day, unit);
+  return { start: utcMidnightISO(firstDay), end: utcMidnightISO(lastDay) };
+}
+
 /** True when a zoned instant sits exactly on local midnight. */
 function isLocalMidnight(zdt: ZonedDateTime): boolean {
   return (
@@ -200,6 +227,37 @@ function isLocalMidnight(zdt: ZonedDateTime): boolean {
 }
 
 /**
+ * The name of the whole calendar period an INCLUSIVE `[start, end]` day range covers exactly, or
+ * null when it covers anything else. A whole month reads as "August 2026" and a whole year as
+ * "2026" — spelling out both endpoints ("1 – 31 Aug 2026") is noise once the range IS the period.
+ *
+ * The month test asks whether `end` is the last day of its month by stepping a day and watching the
+ * month roll over, rather than consulting a month-length table.
+ */
+function wholeCalendarLabel(
+  start: ZonedDateTime,
+  end: ZonedDateTime,
+): string | null {
+  if (start.year !== end.year) return null;
+  if (
+    start.month === 1 &&
+    start.day === 1 &&
+    end.month === 12 &&
+    end.day === 31
+  ) {
+    return `${end.year}`;
+  }
+  if (
+    start.month === end.month &&
+    start.day === 1 &&
+    end.add({ days: 1 }).month !== end.month
+  ) {
+    return `${LONG_MONTHS[end.month - 1]} ${end.year}`;
+  }
+  return null;
+}
+
+/**
  * The navigator's range label for a window.
  *
  * D/W windows carry an EXCLUSIVE end, so a window running local-midnight -> local-midnight covers a
@@ -207,12 +265,16 @@ function isLocalMidnight(zdt: ZonedDateTime): boolean {
  * "18 – 24 Aug 2026") instead of printing the bookend times ("12am, 24 Aug – 12am, 25 Aug 2026").
  * A live trailing D/W window ends at `now`, so it is untouched and still shows its times.
  *
- * M/Y are never adjusted: their window is ALREADY an inclusive `[firstDay, lastDay]`
- * (see {@link decodeRangeFromParams}), so "22 Jun – 21 Jul 2026" is right as it stands.
+ * M/Y ends are never adjusted: their window is ALREADY an inclusive `[firstDay, lastDay]`
+ * (see {@link decodeRangeFromParams}), so "15 Aug – 14 Sep 2026" is right as it stands.
+ *
+ * Once the inclusive pair is settled, a window that covers exactly one calendar month/year collapses
+ * to its name ({@link wholeCalendarLabel}) — the normal spelling for every M/Y window older than the
+ * latest, since those snap to calendar periods.
  *
  * Lives here rather than in `formatDateTimeRange` because that formatter is generic and its other
- * callers (ViewDataModal's row cursors, SiteChartsCard's first/last bucket) pass INCLUSIVE ends —
- * the exclusive-end rule is the navigator's, not the formatter's.
+ * callers (ViewDataModal's row cursors, SiteChartsCard's first/last bucket) pass INCLUSIVE ends and
+ * must keep their endpoints — both rules are the navigator's, not the formatter's.
  */
 export function formatWindowLabel(
   start: ZonedDateTime,
@@ -220,14 +282,16 @@ export function formatWindowLabel(
   period: ChartTimeRange,
   opts: { includeTime: boolean },
 ): string {
-  if (
-    !isDateOnlyPeriod(period) &&
-    isLocalMidnight(start) &&
-    isLocalMidnight(end)
-  ) {
-    return formatDateTimeRange(start, end.subtract({ days: 1 }), false);
+  const wholeDayWindow =
+    !isDateOnlyPeriod(period) && isLocalMidnight(start) && isLocalMidnight(end);
+  const inclusiveEnd = wholeDayWindow ? end.subtract({ days: 1 }) : end;
+  const dateOnly = wholeDayWindow || !opts.includeTime;
+
+  if (dateOnly) {
+    const collapsed = wholeCalendarLabel(start, inclusiveEnd);
+    if (collapsed) return collapsed;
   }
-  return formatDateTimeRange(start, end, opts.includeTime);
+  return formatDateTimeRange(start, inclusiveEnd, !dateOnly);
 }
 
 /**
@@ -265,17 +329,35 @@ export function decodeRangeFromParams(
     const lastDay = endEncoded
       ? readParam("end", endEncoded, decodeDateOnlyParam, dropped)
       : undefined;
-    const resolvedLastDay =
-      lastDay ?? getTodayInTimezone(timezoneOffsetMin).subtract({ days: 1 });
-    const firstDay = resolvedLastDay
+
+    if (lastDay) {
+      // An explicit `?end` names a CALENDAR window: snap to the whole month/year containing that day.
+      // Self-healing, which is the point — a hand-typed mid-month `?end=2026-07-15` and every link
+      // shared under the old trailing scheme (`?end=2026-07-21`) both resolve to July 2026 rather
+      // than to a window nothing can now navigate to.
+      return withDropped({
+        period,
+        ...snappedWindow(lastDay, calendarUnitFor(period)),
+        isHistoricalMode: true,
+        isLatest: false,
+      });
+    }
+
+    // Latest (param-free): the TRAILING window ending end-of-yesterday — on 15 Sep, 15 Aug – 14 Sep.
+    // Deliberately NOT snapped: snapping would make the default either a one-day window on the 1st
+    // of the month or a mostly-empty current month.
+    const latestLastDay = getTodayInTimezone(timezoneOffsetMin).subtract({
+      days: 1,
+    });
+    const firstDay = latestLastDay
       .add({ days: 1 })
       .subtract(periodStep(period));
     return withDropped({
       period,
       start: utcMidnightISO(firstDay),
-      end: utcMidnightISO(resolvedLastDay),
+      end: utcMidnightISO(latestLastDay),
       isHistoricalMode: true,
-      isLatest: !lastDay,
+      isLatest: true,
     });
   }
 
@@ -345,13 +427,19 @@ export function computeOlder(
   const step = periodStep(range.period);
 
   if (isDateOnlyPeriod(range.period)) {
-    // M/Y always carry an inclusive [firstDay, lastDay]. Step back one whole period: the new window's
-    // last day is the day before the current first day (contiguous), and its first day is one step back.
-    const firstDay = utcDateFromIso(range.start as string);
-    return {
-      start: utcMidnightISO(firstDay.subtract(step)),
-      end: utcMidnightISO(firstDay.subtract({ days: 1 })),
-    };
+    // M/Y snap: the whole calendar month/year immediately BEFORE the one containing the current
+    // window's inclusive last day. One formula covers both starting points —
+    //   from the trailing latest on 15 Sep (last day 14 Sep) -> August;
+    //   from the trailing latest on 1 Sep (last day 31 Aug)  -> July, since August IS that window;
+    //   from a snapped August                                -> July.
+    // Subtracting a whole step from the 1st of a month can never hit @internationalized/date's
+    // month-end clamp, so consecutive clicks walk the calendar without drifting.
+    const unit = calendarUnitFor(range.period);
+    const currentStart = containingCalendarPeriod(
+      utcDateFromIso(range.end as string),
+      unit,
+    ).firstDay;
+    return snappedWindow(currentStart.subtract(step), unit);
   }
 
   // D/W: snap the window END to local midnight. From live (no explicit end) the new window ENDS at
@@ -377,15 +465,20 @@ export function computeNewer(
   const step = periodStep(range.period);
 
   if (isDateOnlyPeriod(range.period)) {
-    // Step the inclusive last day forward one whole period; once it reaches yesterday (the latest
-    // window's last day) revert to the default/live state.
-    const lastDay = utcDateFromIso(range.end);
-    const newLastDay = lastDay.add(step);
-    if (newLastDay.compare(today.subtract({ days: 1 })) >= 0) return "live";
-    return {
-      start: utcMidnightISO(newLastDay.add({ days: 1 }).subtract(step)),
-      end: utcMidnightISO(newLastDay),
-    };
+    // The exact inverse of computeOlder: step the current window's calendar-period START forward one
+    // whole period. Once that reaches the period containing yesterday — the latest window's last day
+    // — there is no snapped window left to show, so revert to the trailing default/live state.
+    const unit = calendarUnitFor(range.period);
+    const next = containingCalendarPeriod(
+      utcDateFromIso(range.end),
+      unit,
+    ).firstDay.add(step);
+    const latestStart = containingCalendarPeriod(
+      today.subtract({ days: 1 }),
+      unit,
+    ).firstDay;
+    if (next.compare(latestStart) >= 0) return "live";
+    return snappedWindow(next, unit);
   }
 
   // D/W: the newest historical window ends AT today (the partial live window is one interval beyond).
@@ -403,6 +496,9 @@ export function computeNewer(
  * `period`. "live" drops `start`/`end`/`offset` (the param-free latest state). A window for M/Y stores
  * the inclusive-LAST day (`?end`, date-only) and drops `start`/`offset`; a window for D/W stores `start`
  * (+`offset`) and drops `end`.
+ *
+ * M/Y windows are calendar-snapped, so the day stored is a month/year end (`?end=2026-08-31`) and
+ * round-trips exactly: {@link decodeRangeFromParams} snaps it back to the month/year it ends.
  */
 export function encodeRangeToParams(
   current: StringableParams,

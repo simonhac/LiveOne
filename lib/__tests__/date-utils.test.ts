@@ -18,6 +18,7 @@ import {
   endDateFromIso,
   periodWindowEndingAt,
   calendarPeriodWindow,
+  containingCalendarPeriod,
 } from "../date-utils";
 import { formatDateTimeRange } from "../fe-date-format";
 import { parseAbsolute, toZoned, CalendarDate } from "@internationalized/date";
@@ -523,5 +524,44 @@ describe("Calendar-window helpers (D/W/M/Y)", () => {
     expect(older1.lastDay.toString()).toBe("2026-02-27");
     // Contiguous: older-1's exclusive end is the default's start day.
     expect(older1.endExclusive.toString()).toBe(dflt.startDay.toString());
+  });
+
+  describe("containingCalendarPeriod", () => {
+    const month = (d: CalendarDate) => {
+      const { firstDay, lastDay } = containingCalendarPeriod(d, "month");
+      return [firstDay.toString(), lastDay.toString()];
+    };
+
+    it("snaps any day to its whole calendar month", () => {
+      // Unlike calendarPeriodWindow above, the anchor day's position is irrelevant — first, mid and
+      // last day of August all give the same window.
+      expect(month(new CalendarDate(2026, 8, 1))).toEqual([
+        "2026-08-01",
+        "2026-08-31",
+      ]);
+      expect(month(new CalendarDate(2026, 8, 15))).toEqual([
+        "2026-08-01",
+        "2026-08-31",
+      ]);
+      expect(month(new CalendarDate(2026, 8, 31))).toEqual([
+        "2026-08-01",
+        "2026-08-31",
+      ]);
+    });
+
+    it("uses the real month length, including leap Februaries", () => {
+      expect(month(new CalendarDate(2026, 9, 12))[1]).toBe("2026-09-30"); // 30-day
+      expect(month(new CalendarDate(2026, 2, 12))[1]).toBe("2026-02-28"); // non-leap
+      expect(month(new CalendarDate(2028, 2, 12))[1]).toBe("2028-02-29"); // leap
+    });
+
+    it("snaps any day to its whole calendar year", () => {
+      const { firstDay, lastDay } = containingCalendarPeriod(
+        new CalendarDate(2026, 8, 15),
+        "year",
+      );
+      expect(firstDay.toString()).toBe("2026-01-01");
+      expect(lastDay.toString()).toBe("2026-12-31");
+    });
   });
 });
