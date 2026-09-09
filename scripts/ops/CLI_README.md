@@ -109,7 +109,7 @@ Subcommands:
   area                   Inspect areas — membership, bindings, latest values, history, flows.
   derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
   user                   The user directory — who exists, what they own. Admin-only.
-  queue                  The observations ingest queue — status, and the levers to unblock it.
+  queue                  The observations ingest path — per-lane status, and the levers to unblock it.
   api                    One authenticated request to the deployed API, as you.  (writes)
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
@@ -2711,20 +2711,25 @@ Exit codes:
 
 ### liveone queue
 
-The observations ingest queue — status, and the levers to unblock it.
+The observations ingest path — per-lane status, and the levers to unblock it.
 
 ```
-The observations ingest queue — status, and the levers to unblock it.
+The observations ingest path — per-lane status, and the levers to unblock it.
 
 When to use:
   Reach for this when readings have stopped arriving, or before and after a large backfill.
-  `status` is the one-line health read; `parallelism` is the lever that clears a stall.
+  `status` is the one-screen health read; `parallelism` is the lever that clears a stall.
 
 Admin-only, http-only. Prints `target: <origin> as <you>` on stderr first.
 
-READ `stalled`, NOT `lag`. A rising lag is ambiguous — a busy queue and a blocked one both
-grow — and it was misread twice during the 2026-09-09 stall. Minutes since the last durable
-write is not ambiguous: a busy queue still ingests.
+READ `stalled` and `STUCK`, NOT `lag`. A rising lag is ambiguous — a busy path and a blocked
+one both grow — and it was misread twice during the 2026-09-09 stall. Minutes since the last
+durable write is not ambiguous: a busy path still ingests. `STUCK` on a lane (saturated AND
+backed up AND nothing landing) is the same question in its unambiguous form.
+
+Ingest runs as two lanes — `live` and `backfill` — so a multi-week backfill can no longer
+head-of-line block the minutely polls. Until the cutover the legacy FIFO queue is still the
+transport; `status` shows `mode:` so you know which one your write will land on.
 
 Usage:
   liveone queue <subcommand> [options]
@@ -2732,10 +2737,10 @@ Usage:
   Read-only. This command changes nothing.
 
 Subcommands:
-  status                 Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
-  pause                  Stop the queue dispatching. Messages accumulate; nothing is lost.  (writes)
+  status                 Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
+  pause                  Stop a lane dispatching. Messages accumulate; nothing is lost.  (writes)
   resume                 Resume dispatching after a pause.  (writes)
-  parallelism            Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.  (writes)
+  parallelism            Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.  (writes)
 
 Run `liveone queue <subcommand> --help` for a subcommand's own options.
 
@@ -2765,13 +2770,14 @@ Exit codes:
 
 #### liveone queue status
 
-Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
+Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
 
 ```
-Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
+Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
 
 When to use:
-  Start here. Exits 1 (findings) when ingest has stalled, so it composes into a check.
+  Start here. Exits 1 (findings) when ingest has stalled or any lane is STUCK, so it
+  composes into a check. `--lane` narrows the table; the verdict still spans the path.
 
 Usage:
   liveone queue status [options]
@@ -2779,6 +2785,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Options:
+  --lane <lane>              Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide).  (one of: live, backfill, all)
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
 
 Common options:
@@ -2798,6 +2805,7 @@ External access:
 
 Examples:
   liveone queue status
+  liveone queue status --lane=backfill
 
 Exit codes:
   0    success
@@ -2810,14 +2818,15 @@ Exit codes:
 
 #### liveone queue pause
 
-Stop the queue dispatching. Messages accumulate; nothing is lost.
+Stop a lane dispatching. Messages accumulate; nothing is lost.
 
 ```
-Stop the queue dispatching. Messages accumulate; nothing is lost.
+Stop a lane dispatching. Messages accumulate; nothing is lost.
 
 When to use:
   Use this to stop delivery while you diagnose, or before a change that would make the
   receiver fail. Publishing is unaffected — the outbox keeps accepting.
+  Pausing `backfill` alone is how you protect live ingest from a bulk import.
 
 Usage:
   liveone queue pause [options]
@@ -2825,6 +2834,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Options:
+  --lane <lane>              Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide).  (one of: live, backfill, all)
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
 
 Common options:
@@ -2847,6 +2857,7 @@ External access:
 
 Examples:
   liveone queue pause --apply
+  liveone queue pause --lane=backfill --apply
 
 Exit codes:
   0    success
@@ -2865,7 +2876,7 @@ Resume dispatching after a pause.
 Resume dispatching after a pause.
 
 When to use:
-  The inverse of `pause`.
+  The inverse of `pause`. Defaults to every lane.
 
 Usage:
   liveone queue resume [options]
@@ -2873,6 +2884,7 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Options:
+  --lane <lane>              Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide).  (one of: live, backfill, all)
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
 
 Common options:
@@ -2895,6 +2907,7 @@ External access:
 
 Examples:
   liveone queue resume --apply
+  liveone queue resume --lane=backfill --apply
 
 Exit codes:
   0    success
@@ -2907,14 +2920,22 @@ Exit codes:
 
 #### liveone queue parallelism
 
-Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.
+Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.
 
 ```
-Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.
+Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.
 
 When to use:
-  Raise this when one slow message is head-of-line blocking every device. With no
-  argument it reads the current value and writes nothing.
+  Raise this when one slow message is head-of-line blocking a lane. With no argument it
+  reads every lane and writes nothing. Setting a value requires `--lane`.
+
+Setting PINS the cap. Our own publishes carry a parallelism, so an unpinned change is
+reverted by the next published message within ~60s — pinning is what makes it stick.
+`--lane=<lane> 0` unpins, handing the lane back to the publish-time default.
+
+The ceiling is on the SUM across lanes, not on either lane alone: every in-flight
+delivery holds a Postgres connection, so starving the web app to drain a backlog trades
+one outage for another. The server owns that check and names the sum when it refuses.
 
 Usage:
   liveone queue parallelism [n] [options]
@@ -2922,9 +2943,10 @@ Usage:
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  [n]                    New concurrency, 1..PLANETSCALE_POOL_MAX (default 10). Omit to read.
+  [n]                    New concurrency for --lane, or 0 to unpin. Omit to read every lane.
 
 Options:
+  --lane <lane>              Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide).  (one of: live, backfill, all)
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
 
 Common options:
@@ -2947,7 +2969,8 @@ External access:
 
 Examples:
   liveone queue parallelism
-  liveone queue parallelism 5 --apply
+  liveone queue parallelism 5 --lane=live --apply
+  liveone queue parallelism 0 --lane=backfill --apply
 
 Exit codes:
   0    success
