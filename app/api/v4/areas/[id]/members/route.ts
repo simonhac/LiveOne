@@ -7,7 +7,6 @@ import {
 } from "@/lib/areas/create";
 import { loadAreaMembers } from "@/lib/areas/v4-load";
 import { areaMembersWire } from "@/lib/areas/v4-shapes";
-import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 
 /**
  * An Area's member devices, as ONE declarative collection (§9.2).
@@ -28,13 +27,22 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  * one that fails silently in both directions — see the DAO's header for why the proving case is a
  * two-member area with a binding on each.
  *
+ * An Area whose legacy integer handle ALSO names a device is no longer refused here. That guard was
+ * carried over verbatim from the legacy `POST /devices` handler and protected nothing this codebase
+ * still relies on: `lib/dashboard/subject.ts` pins a LOCKED device-first precedence for `?systemId=N`
+ * (so growing such an area cannot widen the legacy alias), and `lib/kv-subjects.ts` deliberately reads
+ * BOTH legs of a handle and unions them. The configuration it forbade already exists — `liveone-dev`
+ * handle 13 is a real Sigenergy device AND a 3-member Area with 12 bindings — because server-managed
+ * writers (the battery-provenance helper) never passed through this route. Retiring the integer handle
+ * itself is the real fix and is scoped in `docs/plans/retire-the-integer-handle.md`.
+ *
  * 🛑 One documented exception to "full replace": a `vendor='helper'` member is SERVER-MANAGED (the
  * battery-provenance writer mints it and binds the blend points onto it) and is never evicted by being
  * omitted. A client that read `members`, filtered to the devices its picker shows, and PUT the result
  * back would otherwise delete the area's blend bindings and blank its provenance card. See
  * `replaceMembers`.
  *
- * Owner or admin. 403 not yours / unreadable member · 404 unknown area · 409 area-of-one · 422 bad body.
+ * Owner or admin. 403 not yours / unreadable member · 404 unknown area · 422 bad body.
  */
 export async function PUT(
   request: NextRequest,
@@ -52,31 +60,6 @@ export async function PUT(
       { error: members.message },
       { status: members.status },
     );
-
-  // A legacy Area addressed by a REAL device handle is that device's own area: its member set is the
-  // device itself and cannot be restated without re-keying the handle. Carried over verbatim from the
-  // legacy `POST /devices` guard, including its machine-readable `code`, but checked here on ANY change
-  // rather than only on an add — restating the identical single member is the one no-op that is allowed
-  // through, so an idempotent PUT of the current state never 409s.
-  if (
-    area.legacySystemId != null &&
-    (await DeviceConfigRegistry.deviceByHandle(area.legacySystemId))
-  ) {
-    const current = await loadAreaMembers(area.id);
-    const unchanged =
-      current.length === members.deviceIds.length &&
-      current.every((m, i) => m.id === members.deviceIds[i]);
-    if (!unchanged) {
-      return NextResponse.json(
-        {
-          error:
-            "This is a single-device area. Create a site to combine it with other devices.",
-          code: "AREA_OF_ONE_CANNOT_ADD",
-        },
-        { status: 409 },
-      );
-    }
-  }
 
   try {
     await replaceMembers(area.id, members.deviceIds);

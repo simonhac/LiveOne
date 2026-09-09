@@ -1365,31 +1365,32 @@ async function main(): Promise<void> {
       );
     }
 
-    // The area-of-one guard: a device's OWN area cannot be given a second member.
+    // A device's OWN area takes a second member like any other area. The AREA_OF_ONE_CANNOT_ADD guard
+    // that used to refuse this was a legacy `POST /devices` carry-over; `?systemId=N` still resolves
+    // device-first (lib/dashboard/subject.ts) and a colliding handle already unions both legs on read
+    // (lib/kv-subjects.ts), so growing the area changes neither. Restored to one member afterwards so
+    // the fixture is left as it was found.
     const areaOfOne = list.find(
       (a: any) => fixture.handleOf.get(fixture.deviceA) === a.legacySystemId,
     );
     if (areaOfOne) {
-      const cannotAdd = await call(
-        "PUT",
-        `/api/v4/areas/${areaOfOne.id}/members`,
-        { body: { members: [fixture.deviceA, fixture.deviceB] } },
-      );
+      const grown = await call("PUT", `/api/v4/areas/${areaOfOne.id}/members`, {
+        body: { members: [fixture.deviceA, fixture.deviceB] },
+      });
       ok(
-        cannotAdd.status === 409 &&
-          cannotAdd.body?.code === "AREA_OF_ONE_CANNOT_ADD",
-        "a device's own area refuses a second member → 409 AREA_OF_ONE_CANNOT_ADD",
-        cannotAdd,
+        grown.status === 200 && grown.body?.members?.length === 2,
+        "a device's own area accepts a second member → 200",
+        grown,
       );
-      const idempotent = await call(
+      const restored = await call(
         "PUT",
         `/api/v4/areas/${areaOfOne.id}/members`,
         { body: { members: [fixture.deviceA] } },
       );
       ok(
-        idempotent.status === 200,
-        "…but restating its existing single member is a legal no-op (idempotent PUT)",
-        idempotent,
+        restored.status === 200 && restored.body?.members?.length === 1,
+        "…and shrinks back to its single member (fixture restored)",
+        restored,
       );
     }
 

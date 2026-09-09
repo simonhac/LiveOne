@@ -78,9 +78,16 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+    // 🛑 The DEVICE's `vendorSiteId` wins over the stored credential's `siteId`, exactly as the poll
+    // path does (`AmberAdapter.fetchData` → `credentialsWithSite`, and `coverage-repair.ts`). The
+    // credential's `siteId` is OPTIONAL in the Add Device form ("Leave empty to auto-discover"), so
+    // for any device onboarded without typing one it is `undefined` — and `fetchAmberUsage` /
+    // `fetchAmberPrices` interpolate it into the path with no discovery fallback, producing
+    // `/v1/sites/undefined/usage` and a bare `Amber API error: 404 Not Found`. `vendorSiteId` is
+    // never empty: `POST /api/devices` refuses to create the device without it.
     const credentials = {
       apiKey: storedCredentials.apiKey,
-      siteId: storedCredentials.siteId,
+      siteId: authResult.device.vendorSiteId || storedCredentials.siteId,
     };
 
     const encoder = new TextEncoder();
