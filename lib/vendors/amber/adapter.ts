@@ -458,15 +458,22 @@ export class AmberAdapter extends BaseVendorAdapter {
         `[Amber] Channels: ${site.channels.map((c) => `${c.identifier} (${c.type})`).join(", ")}`,
       );
 
-      // Fetch today's usage as a test
-      const today = new Date().toISOString().split("T")[0];
+      // Probe the same calls the poller makes, so a green test predicts a working device.
+      // `/usage` only ever serves SETTLED data, so asking for today returns [] by construction —
+      // fetchData() below asks for yesterday, and so do we. (The old code asked for today via
+      // `new Date().toISOString()`, which is also UTC, not site-local: it accidentally passed
+      // between 00:00 and 10:00 AEST — when the UTC date is still yesterday locally — and failed
+      // for the rest of the day.)
+      const usageDate = getYesterdayInTimezone(
+        device.timezoneOffsetMin,
+      ).toString();
       const usageData: AmberUsageRecord[] = await this.fetchWithAuth(
-        `${this.baseUrl}/sites/${site.id}/usage?startDate=${today}&endDate=${today}`,
+        `${this.baseUrl}/sites/${site.id}/usage?startDate=${usageDate}&endDate=${usageDate}`,
         credentials.apiKey,
       );
 
       console.log(
-        `[Amber] Retrieved ${usageData.length} usage records for today`,
+        `[Amber] Retrieved ${usageData.length} usage records for ${usageDate}`,
       );
 
       // Parse latest data for display (even though we don't have power measurements)
@@ -505,6 +512,34 @@ export class AmberAdapter extends BaseVendorAdapter {
         };
       }
 
+      // A site activated today has no settled usage yet. Fall back to the current price
+      // interval — the same call the poller makes for the live KV tile — which an active site
+      // always answers. Amber reports no instantaneous power at all, hence the nulls.
+      let currentIntervals: AmberPriceRecord[] = [];
+      if (!latestData) {
+        const priceData: AmberPriceRecord[] = await this.fetchWithAuth(
+          `${this.baseUrl}/sites/${site.id}/prices/current`,
+          credentials.apiKey,
+        );
+        currentIntervals = priceData.filter(
+          (record) => record.type === "CurrentInterval",
+        );
+        console.log(
+          `[Amber] No settled usage for ${usageDate}; got ${currentIntervals.length} current price interval(s)`,
+        );
+
+        if (currentIntervals.length > 0) {
+          latestData = {
+            timestamp: new Date(currentIntervals[0].endTime),
+            gridW: null,
+            solarW: null,
+            loadW: null,
+            batteryW: null,
+            batterySOC: null,
+          };
+        }
+      }
+
       return {
         success: true,
         deviceInfo: {
@@ -517,7 +552,9 @@ export class AmberAdapter extends BaseVendorAdapter {
         vendorResponse: {
           site,
           channelCount: site.channels.length,
-          todayRecords: usageData.length,
+          usageDate,
+          usageRecords: usageData.length,
+          currentIntervals: currentIntervals.length,
         },
       };
     } catch (error) {
