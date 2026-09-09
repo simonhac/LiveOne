@@ -10,10 +10,18 @@ import { NextResponse, type NextRequest } from "next/server";
  * import), which breaks `next build` in any environment without the `OBSERVATIONS_QSTASH_*` secrets —
  * Next evaluates the route module during page-data collection.
  *
- * So: when the signing key is present (prod), verification is applied exactly as before. When it is
- * absent, we return a handler that 503s — the route stays importable everywhere, and we NEVER accept an
- * unverified request into the receiver (which writes to the serving store). Verification is still
- * mandatory wherever QStash is wired up.
+ * So: when the signing keys are present (prod), verification is applied exactly as before. When they
+ * are absent, we return a handler that 503s — the route stays importable everywhere, and we NEVER
+ * accept an unverified request into the receiver (which writes to the serving store). Verification is
+ * still mandatory wherever QStash is wired up.
+ *
+ * 🛑 **BOTH keys are required, not just the current one.** From SDK 2.11 the receiver resolves its
+ * keys through `getReceiverSigningKeys`, which takes the config pair only when `currentSigningKey`
+ * AND `nextSigningKey` are both set; with only one it falls through to the bare
+ * `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` env vars (which we do not set — ours are
+ * `OBSERVATIONS_`-prefixed) and then throws *per request*. Under 2.8.4 that same half-configuration
+ * threw loudly at module load instead. Either way it is broken, so we check for it here and fail as
+ * a 503 the monitor can see, rather than as a 500 per delivered message.
  */
 type QstashRouteHandler = (
   request: NextRequest | Request,
@@ -26,10 +34,11 @@ export function withQstashSignatureVerification(
   const currentSigningKey = process.env.OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY;
   const nextSigningKey = process.env.OBSERVATIONS_QSTASH_NEXT_SIGNING_KEY;
 
-  if (!currentSigningKey) {
+  if (!currentSigningKey || !nextSigningKey) {
     console.warn(
-      "[observations] QStash signing key not configured — receiver disabled (returns 503). " +
-        "Expected in dev/preview; in production set OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY.",
+      "[observations] QStash signing keys not configured — receiver disabled (returns 503). " +
+        "Expected in dev/preview; in production set BOTH OBSERVATIONS_QSTASH_CURRENT_SIGNING_KEY " +
+        "and OBSERVATIONS_QSTASH_NEXT_SIGNING_KEY.",
     );
     return async () =>
       NextResponse.json(
