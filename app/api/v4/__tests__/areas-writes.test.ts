@@ -374,24 +374,21 @@ describe("PUT /api/v4/areas/{id}/members", () => {
     expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
   });
 
-  it("409s an add on a device's own area, but lets an unchanged restatement through", async () => {
+  // The inverse of the removed AREA_OF_ONE_CANNOT_ADD guard: an Area whose legacy handle ALSO names a
+  // device takes members like any other. `?systemId=N` is unaffected — `lib/dashboard/subject.ts` pins
+  // device-first resolution — and `lib/kv-subjects.ts` already unions both legs of a colliding handle.
+  it("adds to an area whose handle also names a device (no area-of-one refusal)", async () => {
     mockDeviceByHandle.mockResolvedValue({ id: 1000002 } as any);
-    const refused = await membersPUT(
+    const res = await membersPUT(
       req({ members: [DEVICE_A, DEVICE_B] }),
       params,
     );
-    expect(refused.status).toBe(409);
-    expect((await refused.json()).code).toBe("AREA_OF_ONE_CANNOT_ADD");
-    expect(mockReplaceMembers).not.toHaveBeenCalled();
-
-    mockResolveMembers.mockResolvedValueOnce({
-      ok: true,
-      deviceIds: [DEVICE_A],
-      systemIds: [1],
-    } as any);
-    const unchanged = await membersPUT(req({ members: [DEVICE_A] }), params);
-    expect(unchanged.status).toBe(200);
-    expect(mockReplaceMembers).toHaveBeenCalledWith(AREA_UUID, [DEVICE_A]);
+    expect(res.status).toBe(200);
+    expect(mockReplaceMembers).toHaveBeenCalledWith(AREA_UUID, [
+      DEVICE_A,
+      DEVICE_B,
+    ]);
+    expect(mockRefresh).toHaveBeenCalledWith(AREA_UUID);
   });
 
   it("422s the DAO's validation errors (last member, duplicate) without refreshing", async () => {
