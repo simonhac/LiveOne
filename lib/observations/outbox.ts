@@ -22,12 +22,9 @@ import {
   observationsOutbox,
   type NewObservationsOutbox,
 } from "@/lib/db/planetscale/schema";
-import {
-  qstash,
-  OBSERVATIONS_QUEUE_NAME,
-  getObservationsReceiverUrl,
-} from "@/lib/qstash";
+import { qstash, getObservationsReceiverUrl } from "@/lib/qstash";
 import { QueueMessage } from "./types";
+import { publishObservationMessage } from "./publish";
 
 /** Max rows a single relay run drains. A backlog spills to the next minute. */
 const DEFAULT_BATCH = Number(process.env.OUTBOX_RELAY_BATCH ?? 200);
@@ -116,7 +113,6 @@ export async function drainOutbox(limit = DEFAULT_BATCH): Promise<DrainResult> {
   const receiverUrl = getObservationsReceiverUrl();
   if (!receiverUrl) return result;
 
-  const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
   const seen = new Set<number>();
 
   while (result.claimed < limit) {
@@ -147,10 +143,9 @@ export async function drainOutbox(limit = DEFAULT_BATCH): Promise<DrainResult> {
         result.claimed++;
 
         try {
-          await queue.enqueueJSON({
-            url: receiverUrl,
-            body: row.payload as QueueMessage,
-          });
+          // The lane rides in the payload, so a replayed row lands in the same lane it was
+          // published on. Pre-lane rows have none and default to live — correct, they are all polls.
+          await publishObservationMessage(row.payload as QueueMessage);
           await tx
             .update(observationsOutbox)
             .set({

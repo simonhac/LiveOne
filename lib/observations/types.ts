@@ -115,12 +115,33 @@ export interface Session {
 }
 
 /**
+ * Which flow-control lane a message is delivered on.
+ *
+ * The lane is a property of the MESSAGE, not of the device: the same device emits live poll
+ * messages and (during a backfill) bulk ones, and they must not contend. Keying by lane is what
+ * makes a historical replay unable to delay live minutely ingest — the failure of 2026-09-09.
+ *
+ * Deliberately NOT derived from the session `cause`: `lib/coverage/runner.ts` and the live poll
+ * both use "CRON", so `cause` cannot tell them apart.
+ *
+ * See docs/plans/ingest-head-of-line-hardening.md.
+ */
+export type ObservationLane = "live" | "backfill";
+
+/**
  * Unified queue message for QStash
  * Can contain observations and/or session data
  */
 export interface QueueMessage {
   /** Environment: "prod" or "dev" */
   env: "prod" | "dev";
+
+  /**
+   * Delivery lane. Absent means "live" — which is correct for the rows already sitting in
+   * `observations_outbox` when this field shipped (they are all poll messages), so the relay needs
+   * no backfill of its own and there is no schema migration.
+   */
+  lane?: ObservationLane;
 
   /** Device ID for quick filtering */
   systemId: number;

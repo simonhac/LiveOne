@@ -265,7 +265,7 @@ export async function POST(request: NextRequest) {
           response: redactedBody,
           numRows: readingsToInsert.length,
         },
-        collector.observations,
+        collector,
       );
 
       return NextResponse.json({
@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
             response: redactedBody,
             numRows: 0,
           },
-          collector.observations,
+          collector,
         );
       } catch (recordError) {
         console.error(

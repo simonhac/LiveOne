@@ -129,7 +129,9 @@ export async function POST(request: NextRequest) {
 
         // Buffer readings so the session + all readings are emitted as ONE
         // combined QStash message at session close, on both success and failure.
-        const collector = createPollCollector();
+        // A historical sync — the BACKFILL lane, so a multi-week replay can never delay live
+        // minutely ingest. This is the exact path that took ingest down on 2026-09-09.
+        const collector = createPollCollector({ lane: "backfill" });
 
         try {
           // Create session at the start
@@ -386,7 +388,7 @@ export async function POST(request: NextRequest) {
                 numRows: totalRowsInserted,
                 response: audits,
               },
-              collector.observations,
+              collector,
             );
           }
 
@@ -407,7 +409,7 @@ export async function POST(request: NextRequest) {
                 error: error instanceof Error ? error.message : String(error),
                 numRows: totalRowsInserted,
               },
-              collector.observations,
+              collector,
             );
           }
 

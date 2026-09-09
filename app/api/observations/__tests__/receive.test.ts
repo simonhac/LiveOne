@@ -70,8 +70,9 @@ const { POST } = require("../receive/route") as {
   POST: WithProcessQueueMessage;
 };
 
-// Pull the internal processor off the POST export (attached by route.ts for tests).
+// Pull the internal processor + validator off the POST export (attached by route.ts for tests).
 const processQueueMessage = POST.__processQueueMessage;
+const invalidMessageReason = POST.__invalidMessageReason;
 
 /** Map an imported schema table back to a stable label for the order log. */
 function tableName(table: unknown): string {
@@ -96,6 +97,7 @@ function tableName(table: unknown): string {
  */
 function makeFakeDb(opts?: { vendorType?: string }) {
   const order: string[] = [];
+  const transactions = { count: 0 };
   const inserts: { table: string; conflict: "nothing" | "update" | null }[] =
     [];
 
@@ -135,13 +137,14 @@ function makeFakeDb(opts?: { vendorType?: string }) {
       }),
     }),
     async transaction<T>(fn: (txArg: typeof tx) => Promise<T>): Promise<T> {
+      transactions.count++;
       return fn(tx);
     },
   };
 
   // The helpers are typed against the real Db/Tx; the fake satisfies the runtime
   // contract used in processQueueMessage, so cast through unknown for the call.
-  return { db, order, inserts };
+  return { db, order, inserts, transactions };
 }
 
 /** The conflict mode recorded for the first insert into the given table, or undefined. */
@@ -336,5 +339,105 @@ describe.skip("processQueueMessage (5m conflict mode depends on vendor)", () => 
 
     expect(conflictFor(inserts, "point_readings")).toBe("nothing");
     expect(conflictFor(inserts, "point_readings_agg_1d")).toBe("update");
+  });
+});
+
+describe("transaction slicing (bounds a pre-cap replay)", () => {
+  const saved = process.env.OBSERVATIONS_RECEIVE_TX_OBSERVATIONS;
+  afterEach(() => {
+    if (saved === undefined)
+      delete process.env.OBSERVATIONS_RECEIVE_TX_OBSERVATIONS;
+    else process.env.OBSERVATIONS_RECEIVE_TX_OBSERVATIONS = saved;
+  });
+
+  it("uses ONE transaction when the message is within the cap — the old behaviour, unchanged", async () => {
+    const { db, transactions } = makeFakeDb();
+    await run(
+      db,
+      makeMessage({ session: SESSION, observations: [rawObs(), rawObs()] }),
+    );
+
+    expect(transactions.count).toBe(1);
+  });
+
+  it("splits a message that exceeds the cap into one transaction per slice", async () => {
+    process.env.OBSERVATIONS_RECEIVE_TX_OBSERVATIONS = "2";
+    const { db, transactions, order } = makeFakeDb();
+    await run(
+      db,
+      makeMessage({
+        session: SESSION,
+        observations: [rawObs(), rawObs(), rawObs(), rawObs(), rawObs()],
+      }),
+    );
+
+    expect(transactions.count).toBe(3); // ceil(5 / 2)
+    // The session is committed in the FIRST transaction, before any reading references it.
+    expect(order[0]).toBe("sessions");
+    expect(order.filter((t) => t === "sessions")).toHaveLength(1);
+    expect(order.filter((t) => t === "point_readings")).toHaveLength(3);
+  });
+
+  it("accumulates stats across slices rather than keeping only the last", async () => {
+    process.env.OBSERVATIONS_RECEIVE_TX_OBSERVATIONS = "1";
+    const { db } = makeFakeDb();
+    const stats = await run(
+      db,
+      makeMessage({ observations: [rawObs(), rawObs(), rawObs()] }),
+    );
+
+    // The fake's returning() yields [], so `inserted` is 0 per slice — but the SKIPPED tally is
+    // what proves accumulation: each slice contributes, and the total is not overwritten.
+    expect(stats.rawInserted).toBe(0);
+    expect(stats.sessionInserted).toBeUndefined();
+  });
+
+  it("still lands a session-only message, which has no slices at all", async () => {
+    const { db, order, transactions } = makeFakeDb();
+    await run(db, makeMessage({ session: SESSION }));
+
+    expect(transactions.count).toBe(1);
+    expect(order).toEqual(["sessions"]);
+  });
+});
+
+describe("invalidMessageReason — retry only what retrying can fix", () => {
+  it("accepts a well-formed message", () => {
+    expect(
+      invalidMessageReason(
+        makeMessage({ session: SESSION, observations: [rawObs()] }),
+      ),
+    ).toBeNull();
+    expect(invalidMessageReason(makeMessage({}))).toBeNull();
+  });
+
+  it.each([
+    ["a non-object body", "not an object"],
+    ["null", null],
+  ])("rejects %s", (_label, body) => {
+    expect(invalidMessageReason(body)).toBe("body is not an object");
+  });
+
+  it("rejects a message with no usable systemId", () => {
+    expect(invalidMessageReason({ batchTime: "x" })).toMatch(/systemId/);
+    expect(invalidMessageReason({ systemId: "1" })).toMatch(/systemId/);
+    expect(invalidMessageReason({ systemId: Number.NaN })).toMatch(/systemId/);
+  });
+
+  it("rejects malformed observations / session containers", () => {
+    expect(invalidMessageReason({ systemId: 1, observations: "nope" })).toMatch(
+      /observations/,
+    );
+    expect(invalidMessageReason({ systemId: 1, session: "nope" })).toMatch(
+      /session/,
+    );
+  });
+
+  it("does NOT reject on per-observation problems — those skip-and-count downstream", () => {
+    // A poison pill must not be created here; resolvePointId already handles a bad observation by
+    // skipping it, precisely so the message is never retried forever.
+    expect(
+      invalidMessageReason({ systemId: 1, observations: [{ garbage: true }] }),
+    ).toBeNull();
   });
 });

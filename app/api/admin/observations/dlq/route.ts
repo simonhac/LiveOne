@@ -9,7 +9,9 @@
  */
 
 import { NextResponse } from "next/server";
-import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
+import { qstash } from "@/lib/qstash";
+import { publishObservationMessage } from "@/lib/observations/publish";
+import type { QueueMessage } from "@/lib/observations/types";
 
 const LIMIT = 50;
 
@@ -77,18 +79,21 @@ export async function POST(request: Request) {
     const { action } = body;
 
     if (action === "retry-all") {
-      const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
       const dlqMessages = await qstash.dlq.listMessages({ count: 1000 });
       let retried = 0;
 
       for (const msg of dlqMessages.messages ?? []) {
         try {
           await qstash.dlq.delete(msg.dlqId);
-          // Re-enqueue the message
-          await queue.enqueueJSON({
-            url: msg.url,
-            body: JSON.parse(msg.body || "{}"),
-          });
+          // Republish through the shared publisher, so a replay gets the same delivery bounds and
+          // the same transport as live traffic. The lane rides in the body, so a failed backfill
+          // message replays on the backfill lane and cannot crowd out live ingest.
+          //
+          // 🛑 This must be migrated off the legacy queue BEFORE that queue is deleted — otherwise
+          // a retry-all silently resurrects it.
+          await publishObservationMessage(
+            JSON.parse(msg.body || "{}") as QueueMessage,
+          );
           retried++;
         } catch (error) {
           console.error(

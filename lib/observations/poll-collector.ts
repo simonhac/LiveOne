@@ -3,32 +3,21 @@
  *
  * Buffers a poll's raw observation inputs and emits a single combined QStash
  * message at session close — the completed session plus all of its readings,
- * chunked if the serialized message would exceed QStash's ~1MB size limit.
+ * chunked by `./chunk` so no one message exceeds either the byte or the
+ * observation-count bound.
  *
  * This is the sole publish path for polls: one co-enqueued session+readings
  * message per chunk (replacing the old per-insert + separate-session flow).
  */
 
-import {
-  qstash,
-  OBSERVATIONS_QUEUE_NAME,
-  getObservationsReceiverUrl,
-} from "@/lib/qstash";
-import { Observation, QueueMessage, Session } from "./types";
+import { qstash, getObservationsReceiverUrl } from "@/lib/qstash";
+import { ObservationLane, QueueMessage, Session } from "./types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import { buildObservations, RawObservationInput } from "./publisher";
 import { persistOutbox } from "./outbox";
-
-/**
- * Default maximum serialized message size in bytes.
- *
- * QStash limits messages to ~1MB; we leave headroom and allow override via the
- * OBSERVATIONS_MAX_MESSAGE_BYTES environment variable.
- */
-function getDefaultMaxBytes(): number {
-  return Number(process.env.OBSERVATIONS_MAX_MESSAGE_BYTES ?? 900000);
-}
+import { publishObservationMessage } from "./publish";
+import { buildChunkedMessages } from "./chunk";
 
 /**
  * Accumulates raw observation inputs over the course of a poll, preserving
@@ -40,13 +29,23 @@ export interface PollCollector {
   add(inputs: RawObservationInput[]): void;
   /** All accumulated inputs, in insertion order. */
   readonly observations: RawObservationInput[];
+  /**
+   * Which flow-control lane this poll's messages ride.
+   *
+   * Carried on the COLLECTOR rather than passed separately at publish time so there is one source
+   * of truth: the site that decides "this is a backfill" is the site that creates the collector.
+   */
+  readonly lane: ObservationLane;
 }
 
 /**
  * Create a new poll collector that buffers observation inputs in memory.
  */
-export function createPollCollector(): PollCollector {
+export function createPollCollector(opts?: {
+  lane?: ObservationLane;
+}): PollCollector {
   const buffer: RawObservationInput[] = [];
+  const lane: ObservationLane = opts?.lane ?? "live";
   return {
     add(inputs: RawObservationInput[]): void {
       for (const input of inputs) {
@@ -56,92 +55,45 @@ export function createPollCollector(): PollCollector {
     get observations(): RawObservationInput[] {
       return buffer;
     },
+    lane,
   };
-}
-
-/**
- * Compute the serialized byte length of a queue message.
- */
-function messageByteLength(message: QueueMessage): number {
-  return Buffer.byteLength(JSON.stringify(message), "utf8");
 }
 
 /**
  * Build the combined QStash message(s) for a completed poll.
  *
  * PURE (no I/O). Produces one or more QueueMessages, each carrying the same
- * `session` and a contiguous slice of the poll's observations. The union of
- * all chunks' observations equals the full ordered observation list with no
- * duplicates or gaps.
- *
- * - If there are no observations, returns exactly one message (session only).
- * - Observations are packed into as few chunks as possible such that each
- *   serialized message is <= maxBytes.
- * - A single observation whose own message exceeds maxBytes is STILL emitted
- *   alone — data is never dropped.
+ * `session` and a contiguous slice of the poll's observations. Chunking (and
+ * both of its bounds) lives in `./chunk` — see that module for why the count
+ * cap exists alongside the byte cap.
  */
 export function buildPollMessages(args: {
   device: DeviceConfigView;
   session: Session;
   inputs: RawObservationInput[];
+  lane?: ObservationLane;
   maxBytes?: number;
+  maxCount?: number;
 }): QueueMessage[] {
   const { device, session, inputs } = args;
-  const maxBytes = args.maxBytes ?? getDefaultMaxBytes();
 
   const env: QueueMessage["env"] =
     process.env.NODE_ENV === "production" ? "prod" : "dev";
   const batchTime = formatTime_fromJSDate(new Date(), device.timezoneOffsetMin);
 
-  const baseMessage = (): QueueMessage => ({
-    env,
-    systemId: device.id,
-    systemName: device.displayName,
-    batchTime,
-    session,
+  return buildChunkedMessages({
+    base: () => ({
+      env,
+      lane: args.lane ?? "live",
+      systemId: device.id,
+      systemName: device.displayName,
+      batchTime,
+      session,
+    }),
+    observations: buildObservations(device, inputs),
+    maxBytes: args.maxBytes,
+    maxCount: args.maxCount,
   });
-
-  const observations = buildObservations(device, inputs);
-
-  // No observations → a single session-only message.
-  if (observations.length === 0) {
-    return [baseMessage()];
-  }
-
-  const messages: QueueMessage[] = [];
-  let chunk: Observation[] = [];
-
-  const flush = (): void => {
-    if (chunk.length > 0) {
-      messages.push({ ...baseMessage(), observations: chunk });
-      chunk = [];
-    }
-  };
-
-  for (const observation of observations) {
-    const candidate: Observation[] = [...chunk, observation];
-    const candidateMessage: QueueMessage = {
-      ...baseMessage(),
-      observations: candidate,
-    };
-
-    if (messageByteLength(candidateMessage) <= maxBytes) {
-      // Fits in the current chunk.
-      chunk = candidate;
-      continue;
-    }
-
-    // Doesn't fit. Flush the current chunk (if any) and start a new one.
-    flush();
-
-    // Place this observation in a fresh chunk. Even if a single observation
-    // alone exceeds maxBytes, it is still emitted (never dropped).
-    chunk = [observation];
-  }
-
-  flush();
-
-  return messages;
 }
 
 /**
@@ -156,7 +108,7 @@ export function buildPollMessages(args: {
 export async function publishPoll(
   device: DeviceConfigView,
   session: Session,
-  inputs: RawObservationInput[],
+  collector: PollCollector,
 ): Promise<void> {
   // Skip if no QStash client configured.
   if (!qstash) {
@@ -170,7 +122,12 @@ export async function publishPoll(
   }
 
   try {
-    const messages = buildPollMessages({ device, session, inputs });
+    const messages = buildPollMessages({
+      device,
+      session,
+      inputs: collector.observations,
+      lane: collector.lane,
+    });
 
     // Durably capture the messages in PG first (a tee, in parallel with the live
     // direct enqueue below). Best-effort — never throws — so the direct enqueue and
@@ -178,12 +135,8 @@ export async function publishPoll(
     // anchor: the relay re-drains anything the direct enqueue drops.
     await persistOutbox(messages);
 
-    const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
     for (const message of messages) {
-      await queue.enqueueJSON({
-        url: receiverUrl,
-        body: message,
-      });
+      await publishObservationMessage(message);
     }
 
     const totalObservations = messages.reduce(
@@ -191,7 +144,7 @@ export async function publishPoll(
       0,
     );
     console.log(
-      `[PollCollector] Published poll for system ${device.id}: ` +
+      `[PollCollector] Published poll for system ${device.id} on lane ${collector.lane}: ` +
         `${messages.length} message(s), ${totalObservations} observations, ` +
         `session ${session.sessionId}`,
     );

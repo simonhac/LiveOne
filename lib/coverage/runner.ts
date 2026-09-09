@@ -327,7 +327,8 @@ export async function runCoverageRepair(
               cause: "CRON",
               started: new Date(),
             });
-            const collector = createPollCollector();
+            // Gap repair is bulk, not live — see docs/plans/ingest-head-of-line-hardening.md.
+            const collector = createPollCollector({ lane: "backfill" });
             const startTime = Date.now();
             for (const g of gaps) {
               if (repairBudget <= 0) {
@@ -363,7 +364,7 @@ export async function runCoverageRepair(
                     .length,
                 },
               },
-              collector.observations,
+              collector,
             );
           }
         }

@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
     cause: dryRun ? "ADMIN-DRYRUN" : "ADMIN",
     started: new Date(),
   });
-  const collector = createPollCollector();
+  const collector = createPollCollector({ lane: "backfill" });
   const startTime = Date.now();
 
   try {
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
         numRows: result.intervalsIngested,
         response: result,
       },
-      collector.observations,
+      collector,
     );
 
     return NextResponse.json({
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
         error: message,
         numRows: 0,
       },
-      collector.observations,
+      collector,
     );
     return NextResponse.json({ error: message }, { status: 500 });
   }
