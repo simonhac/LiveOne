@@ -4,9 +4,15 @@
 cause was understood, and again on 2026-09-10 to match what shipped.
 
 **Landed:** delivery bounding + batch cap + the lane-keyed publish path behind
-`OBSERVATIONS_PUBLISH_MODE` (#432), the SDK bump to 2.11.3 (#433), and the flow-control control
-plane. **Not yet done:** the `liveone queue --lane` CLI, retiring the admin `info`/`messages` twins,
-the cutover itself (`OBSERVATIONS_PUBLISH_MODE=flow`, dev then prod), and deleting the queue.
+`OBSERVATIONS_PUBLISH_MODE` (#432), the SDK bump to 2.11.3 (#433), the flow-control control plane
+(#434), and the `liveone queue --lane` CLI. **Not yet done:** retiring the admin `info`/`messages`
+twins, the cutover itself (`OBSERVATIONS_PUBLISH_MODE=flow`, dev then prod), and deleting the queue.
+
+🛑 **The CLI must ship BEFORE the cutover, and did — this ordering is load-bearing.** The route
+requires `lane` to set parallelism once `mode` is `flow`, so the moment the cutover flips, a build
+of `liveone queue parallelism` that sends no lane starts returning 422. That is the primary incident
+lever. The CLI now resolves its write body against the origin's reported `mode`, so one command line
+is correct on both sides of the flip.
 
 🛑 **Keyed by LANE, not by device — this doc's original headline was revised.** See the section
 below.
@@ -212,5 +218,6 @@ the system of record either way.
 - Assert emitted message size stays within the poll-sized bound (a unit test on the publisher — the
   bound is the contract, not an integration detail).
 - After a sync reports success, read the serving store for the synced range and assert non-empty.
-- `liveone queue status` reports `waitListSize` **and** `parallelismCount`, and still exits 1 on a
-  stall.
+- ✅ `liveone queue status` reports `waitListSize` **and** `parallelismCount` — per lane, as a table —
+  and still exits 1 on a stall. It now also exits 1 on `STUCK`, which is the stronger signal: the
+  stall exit needs five minutes of silence to fire, `stuck` is true from minute one.

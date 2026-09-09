@@ -2463,16 +2463,25 @@
     },
     {
       "name": "liveone__queue__parallelism",
-      "summary": "Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.",
-      "when": "Raise this when one slow message is head-of-line blocking every device. With no\nargument it reads the current value and writes nothing.",
-      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.",
-      "description": "npm run liveone -- queue parallelism — Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.\n\nRaise this when one slow message is head-of-line blocking every device. With no\nargument it reads the current value and writes nothing.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue parallelism\n  liveone queue parallelism 5 --apply",
+      "summary": "Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.",
+      "when": "Raise this when one slow message is head-of-line blocking a lane. With no argument it\nreads every lane and writes nothing. Setting a value requires `--lane`.",
+      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.",
+      "description": "npm run liveone -- queue parallelism — Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.\n\nRaise this when one slow message is head-of-line blocking a lane. With no argument it\nreads every lane and writes nothing. Setting a value requires `--lane`.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.\n\nSetting PINS the cap. Our own publishes carry a parallelism, so an unpinned change is\nreverted by the next published message within ~60s — pinning is what makes it stick.\n`--lane=<lane> 0` unpins, handing the lane back to the publish-time default.\n\nThe ceiling is on the SUM across lanes, not on either lane alone: every in-flight\ndelivery holds a Postgres connection, so starving the web app to drain a backlog trades\none outage for another. The server owns that check and names the sum when it refuses.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue parallelism\n  liveone queue parallelism 5 --lane=live --apply\n  liveone queue parallelism 0 --lane=backfill --apply",
       "input_schema": {
         "type": "object",
         "properties": {
           "n": {
             "type": "string",
-            "description": "New concurrency, 1..PLANETSCALE_POOL_MAX (default 10). Omit to read."
+            "description": "New concurrency for --lane, or 0 to unpin. Omit to read every lane."
+          },
+          "lane": {
+            "type": "string",
+            "description": "Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide). (lane)",
+            "enum": [
+              "live",
+              "backfill",
+              "all"
+            ]
           },
           "base-url": {
             "type": "string",
@@ -2496,7 +2505,7 @@
           }
         }
       },
-      "signature": "liveone queue parallelism [n] { --base-url?: string }",
+      "signature": "liveone queue parallelism [n] { --lane?: \"live\"|\"backfill\"|\"all\"; --base-url?: string }",
       "invocation": "npm run liveone -- queue parallelism",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -2511,13 +2520,22 @@
     },
     {
       "name": "liveone__queue__pause",
-      "summary": "Stop the queue dispatching. Messages accumulate; nothing is lost.",
-      "when": "Use this to stop delivery while you diagnose, or before a change that would make the\nreceiver fail. Publishing is unaffected — the outbox keeps accepting.",
-      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.",
-      "description": "npm run liveone -- queue pause — Stop the queue dispatching. Messages accumulate; nothing is lost.\n\nUse this to stop delivery while you diagnose, or before a change that would make the\nreceiver fail. Publishing is unaffected — the outbox keeps accepting.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue pause --apply",
+      "summary": "Stop a lane dispatching. Messages accumulate; nothing is lost.",
+      "when": "Use this to stop delivery while you diagnose, or before a change that would make the\nreceiver fail. Publishing is unaffected — the outbox keeps accepting.\nPausing `backfill` alone is how you protect live ingest from a bulk import.",
+      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.",
+      "description": "npm run liveone -- queue pause — Stop a lane dispatching. Messages accumulate; nothing is lost.\n\nUse this to stop delivery while you diagnose, or before a change that would make the\nreceiver fail. Publishing is unaffected — the outbox keeps accepting.\nPausing `backfill` alone is how you protect live ingest from a bulk import.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue pause --apply\n  liveone queue pause --lane=backfill --apply",
       "input_schema": {
         "type": "object",
         "properties": {
+          "lane": {
+            "type": "string",
+            "description": "Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide). (lane)",
+            "enum": [
+              "live",
+              "backfill",
+              "all"
+            ]
+          },
           "base-url": {
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
@@ -2540,7 +2558,7 @@
           }
         }
       },
-      "signature": "liveone queue pause { --base-url?: string }",
+      "signature": "liveone queue pause { --lane?: \"live\"|\"backfill\"|\"all\"; --base-url?: string }",
       "invocation": "npm run liveone -- queue pause",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -2556,12 +2574,21 @@
     {
       "name": "liveone__queue__resume",
       "summary": "Resume dispatching after a pause.",
-      "when": "The inverse of `pause`.",
-      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.",
-      "description": "npm run liveone -- queue resume — Resume dispatching after a pause.\n\nThe inverse of `pause`.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue resume --apply",
+      "when": "The inverse of `pause`. Defaults to every lane.",
+      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.",
+      "description": "npm run liveone -- queue resume — Resume dispatching after a pause.\n\nThe inverse of `pause`. Defaults to every lane.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.\n\nWRITES. Dry by default: without --apply nothing changes and the report says what would. Off a terminal --apply additionally requires --yes, or it refuses with exit 2.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue resume --apply\n  liveone queue resume --lane=backfill --apply",
       "input_schema": {
         "type": "object",
         "properties": {
+          "lane": {
+            "type": "string",
+            "description": "Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide). (lane)",
+            "enum": [
+              "live",
+              "backfill",
+              "all"
+            ]
+          },
           "base-url": {
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
@@ -2584,7 +2611,7 @@
           }
         }
       },
-      "signature": "liveone queue resume { --base-url?: string }",
+      "signature": "liveone queue resume { --lane?: \"live\"|\"backfill\"|\"all\"; --base-url?: string }",
       "invocation": "npm run liveone -- queue resume",
       "file": "scripts/ops/liveone.ts",
       "writes": true,
@@ -2599,13 +2626,22 @@
     },
     {
       "name": "liveone__queue__status",
-      "summary": "Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.",
-      "when": "Start here. Exits 1 (findings) when ingest has stalled, so it composes into a check.",
-      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.",
-      "description": "npm run liveone -- queue status — Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.\n\nStart here. Exits 1 (findings) when ingest has stalled, so it composes into a check.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-line health read; `parallelism` is the lever that clears a stall.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue status",
+      "summary": "Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.",
+      "when": "Start here. Exits 1 (findings) when ingest has stalled or any lane is STUCK, so it\ncomposes into a check. `--lane` narrows the table; the verdict still spans the path.",
+      "parentWhen": "Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.",
+      "description": "npm run liveone -- queue status — Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.\n\nStart here. Exits 1 (findings) when ingest has stalled or any lane is STUCK, so it\ncomposes into a check. `--lane` narrows the table; the verdict still spans the path.\n\nAbout `queue` generally: Reach for this when readings have stopped arriving, or before and after a large backfill.\n`status` is the one-screen health read; `parallelism` is the lever that clears a stall.\n\nRead-only. This command changes nothing.\n\nCalls the deployed LiveOne API as the signed-in user. A missing, expired or revoked CLI token is exit 3.\n\nExit codes: 0, 1, 2, 3, 5, 130.\n\nExamples:\n  liveone queue status\n  liveone queue status --lane=backfill",
       "input_schema": {
         "type": "object",
         "properties": {
+          "lane": {
+            "type": "string",
+            "description": "Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide). (lane)",
+            "enum": [
+              "live",
+              "backfill",
+              "all"
+            ]
+          },
           "base-url": {
             "type": "string",
             "description": "Target origin (default: your stored default, else https://www.liveone.energy) (origin)"
@@ -2620,7 +2656,7 @@
           }
         }
       },
-      "signature": "liveone queue status { --base-url?: string }",
+      "signature": "liveone queue status { --lane?: \"live\"|\"backfill\"|\"all\"; --base-url?: string }",
       "invocation": "npm run liveone -- queue status",
       "file": "scripts/ops/liveone.ts",
       "writes": false,
