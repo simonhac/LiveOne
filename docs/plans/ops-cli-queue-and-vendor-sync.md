@@ -37,9 +37,12 @@ against `now` is not. Have `status` exit **1 (findings)** when the stall exceeds
 composes into a check.
 
 - `pause`/`resume` already exist behind `POST /api/admin/observations/info`.
-- **`parallelism` does not exist anywhere in the app** and is the one new server capability this
-  plan needs: a route that proxies the QStash queue update. Without it the CLI can diagnose the
-  2026-09-09 stall and still not fix it.
+- **`parallelism` already exists too** — `POST /api/admin/observations/info` with
+  `{action: "set-parallelism"}` — it was simply unreachable from a CLI token, which is the whole gap.
+  Shipped as `PATCH /api/v4/queue`.
+- 🛑 Under Flow Control (see `ingest-head-of-line-hardening.md`) `parallelism` must be set with
+  `flowControl.pin`, not passed per-publish: an unpinned value is silently overridden by the next
+  published message, which would make an operator's incident-time change quietly revert.
 
 ### 2. `liveone area devices` and `liveone area role` — rename as they land
 
@@ -72,13 +75,11 @@ Per-vendor differences belong in the adapter, not the caller:
   (`"Range requested is too large. Maximum 7 days."`) while `/api/admin/amber-sync` validates
   `days ≤ 30` — so any call in 8–30 fails with an opaque `422`. The caller should never have to know
   this number.
-- **Chunking to a safe MESSAGE size.** See `ingest-head-of-line-hardening.md`: emitting one message
-  per 7-day window produced ~1650-observation messages against a ~13-reading norm and stalled all
-  ingestion for 50 minutes. The sync verb must emit poll-sized batches.
-- **Reporting rows RECEIVED, not published.** `amber-sync` reports `numRowsInserted` at the publish
-  step, so a backfill that materialised **nothing** reported ten consecutive "Rows inserted: 1008 /
-  Success: YES". This is the single most important correctness property of the new verb: a green
-  sync must mean the data is queryable. Poll the serving store, or report "published, N pending".
+- **Chunking to a safe MESSAGE size**, and **reporting rows RECEIVED rather than published**. Both
+  are pipeline properties that bind every producer, so they are specified once in
+  `ingest-head-of-line-hardening.md` (secondary fixes 1 and 3) rather than restated here. `liveone
+  sync` is the verb that must *honour* them: it emits the messages, and it is the thing that reported
+  ten consecutive "Rows inserted: 1008 / Success: YES" for a backfill that materialised zero rows.
 
 Dry-run by default with `--apply`, like every other writer in `scripts/ops/`.
 
