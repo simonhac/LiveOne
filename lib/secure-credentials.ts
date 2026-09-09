@@ -22,21 +22,18 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { auth } from "@clerk/nextjs/server";
 
-// Note: "fronius" kept temporarily for backward compatibility with existing Clerk credentials
-export type VendorType =
-  | "selectronic"
-  | "enphase"
-  | "mondo"
-  | "fusher"
-  | "fronius"
-  | "tesla"
-  | "sigenergy"
-  | "deepsea";
+// `vendorType` is deliberately a plain string, not a union. It arrives as untrusted JSON or as a
+// `string` column off the device row, so it can only be validated at runtime — and it already is:
+// every caller resolves `VendorRegistry.getAdapter(vendorType)` and 400s on an unknown vendor
+// before reaching this module. A hand-maintained union here would be a second copy of the
+// registry's list that silently drifts — it had gone stale in both directions, missing "amber"
+// while still listing "fronius" (no adapter; legacy Clerk records carry it) — and every call site
+// laundered it through `any` or an `as` cast anyway. `VendorRegistry.getVendorTypes()` is the list.
 
 // Generic credentials interface - vendors define their own specific shapes
 export interface VendorCredentials {
   systemId: number;
-  vendorType: VendorType;
+  vendorType: string;
   created_at: string; // ISO8601 timestamp when credentials were stored
   [key: string]: any; // Allow vendor-specific fields
 }
@@ -53,7 +50,7 @@ export interface CredentialsMetadataV11 {
 export async function storeDeviceCredentials(
   userId: string,
   systemId: number,
-  vendor: VendorType,
+  vendor: string,
   credentials: Omit<
     VendorCredentials,
     "systemId" | "vendorType" | "created_at"

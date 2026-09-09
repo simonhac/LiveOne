@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireDeviceAccess } from "@/lib/api-auth";
-import {
-  storeDeviceCredentials,
-  type VendorType,
-} from "@/lib/secure-credentials";
+import { storeDeviceCredentials } from "@/lib/secure-credentials";
 import { VendorRegistry } from "@/lib/vendors/registry";
 
 /**
@@ -87,9 +84,7 @@ export async function PUT(
   const result = await storeDeviceCredentials(
     ownerClerkUserId,
     systemId,
-    // The adapter was resolved from this vendorType above, so it's a known vendor;
-    // the device record types it only as `string`.
-    vendorType as VendorType,
+    vendorType,
     credentials,
   );
   if (!result.success) {
