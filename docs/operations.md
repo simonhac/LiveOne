@@ -39,9 +39,10 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 | `device_poll_stale`                                            | **One** device's last successful poll is too old — that vendor is failing while the fleet looks healthy.  | > 3× the device's own slot | `MONITOR_DEVICE_STALE_SLOTS`          |
 | `device_never_polled` (warn)                                   | An active polled device has no successful poll on record at all — newly added, or never worked.           | —                          | —                                     |
 | `response_presence_low`                                        | < 80% of recent successful CRON sessions carry a `response` — the mirror pipeline is degraded.            | 0.8                        | `MONITOR_RESPONSE_PRESENCE_MIN`       |
-| `queue_lag_high`                                               | QStash queue lag too high — the receiver isn't keeping up.                                                | > 1000                     | `MONITOR_QUEUE_LAG_MAX`               |
+| `ingest_lane_stuck`                                            | A lane is saturated AND backed up AND nothing is landing — head-of-line blocking. **Read this one.**       | in flight = cap, waiting > 0, stalled > 5 min | — |
+| `ingest_backlog_high`                                          | Ingest backlog too high — the receiver isn't keeping up. Ambiguous on its own; see below.                 | > 1000                     | `MONITOR_QUEUE_LAG_MAX`               |
 | `dlq_high` (alert) / `dlq_present` (warn)                      | Messages stuck in the dead-letter queue — failed deliveries piling up.                                    | ≥ 50 alert; any > 0 warns  | `MONITOR_DLQ_ALERT`                   |
-| `queue_paused` (warn)                                          | The observations queue is paused — ingestion halted.                                                      | —                          | —                                     |
+| `ingest_paused` (warn)                                         | An ingest lane (or the legacy queue) is paused — ingestion halted. The message names which.               | —                          | —                                     |
 | `outbox_backlog_high`                                          | Phase-4 relay stalled — too many unpublished `observations_outbox` rows.                                  | > 500 rows                 | `MONITOR_OUTBOX_BACKLOG_MAX`          |
 | `outbox_stale`                                                 | Phase-4 relay isn't draining — oldest unpublished row too old.                                            | > 10 min                   | `MONITOR_OUTBOX_STALE_MINUTES`        |
 | `batprov_blend_stale` (alert) / `batprov_blend_missing` (warn) | Battery-provenance live blend hasn't advanced — the minutely provenance reconcile may be failing.         | > 15 min                   | `MONITOR_BATPROV_BLEND_STALE_MINUTES` |
@@ -60,8 +61,14 @@ that runs **every 15 minutes** (`vercel.json`, `*/15 * * * *`; `maxDuration = 30
 - **Companion signals localise the break.** The normal path is
   `poll-collector → observations_outbox + QStash → /api/observations/receive
 (single writer) → point_readings`. If sessions are still succeeding but raw
-  stopped, the break is downstream of polling; the `dlq_high` / `queue_lag_high` /
+  stopped, the break is downstream of polling; the `dlq_high` / `ingest_backlog_high` /
   `outbox_stale` values from that window point at which stage.
+- **A backlog alone proves nothing; `ingest_lane_stuck` does.** On 2026-09-09 the backlog climbed
+  199 → 1053 and was read twice as "the receiver isn't keeping up", when in fact one 34-minute
+  message was holding the FIFO lane and nothing behind it had been attempted. A busy path and a
+  blocked one both grow. The discriminator is minutes since the last durable write, and
+  `ingest_lane_stuck` is that joined to per-lane in-flight/waiting. **An empty DLQ is not "nothing
+  is wrong"** either — it stayed at 0 for the whole 2h20m.
 - **`device_poll_stale` is the per-device counterpart.** `raw_landing_stale` is a
   fleet-wide `max()`, so one healthy device masks every other one going dark. This
   check holds each active polled device to its OWN declared slot (hourly Enphase and

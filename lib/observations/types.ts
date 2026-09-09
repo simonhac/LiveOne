@@ -126,7 +126,9 @@ export interface Session {
  *
  * See docs/plans/ingest-head-of-line-hardening.md.
  */
-export type ObservationLane = "live" | "backfill";
+export const OBSERVATION_LANES = ["live", "backfill"] as const;
+
+export type ObservationLane = (typeof OBSERVATION_LANES)[number];
 
 /**
  * Unified queue message for QStash

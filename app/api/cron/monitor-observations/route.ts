@@ -16,7 +16,8 @@
  *   2b. PER-DEVICE poll staleness — each active polled device against its OWN slot. Signal 2 is a
  *      fleet-wide max(), so a single healthy device masks every other one going dark; this is the
  *      check that notices one vendor failing silently.
- *   3. Queue health — QStash queue lag + DLQ depth (+ paused state).
+ *   3. Ingest-path health — per-lane backlog / in-flight / paused, the `stuck` head-of-line
+ *      predicate, and DLQ depth. `stuck` is the check that would have caught 2026-09-09.
  *   4. Outbox relay — unpublished backlog + oldest-unpublished age.
  *   5. Battery-provenance — live-blend freshness (minutely), rollup freshness (daily heal), and the
  *      recent estimated fraction (attribution leaning on estimated/missing inputs). Skipped where no
@@ -46,7 +47,8 @@ import { planetscaleDb } from "@/lib/db/planetscale";
 import { ReadingsDao } from "@/lib/readings";
 import { DeviceRegistry } from "@/lib/registry";
 import { checkSocMeterDivergence } from "@/lib/battery-provenance/soc-meter-check";
-import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
+import { qstash } from "@/lib/qstash";
+import { readIngestState } from "@/lib/observations/flow-control";
 
 export const maxDuration = 30;
 
@@ -522,31 +524,78 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // ── 3: queue lag + DLQ depth ──
+  // ── 3: ingest backlog + lane health + DLQ depth ──
+  //
+  // 🛑 `lag`/backlog ALONE is not the signal. During the 2026-09-09 outage it climbed monotonically
+  // (199 → 1053) and was read twice as "the receiver isn't keeping up"; a busy path and a blocked one
+  // both grow. `ingest_lane_stuck` is the unambiguous form — saturated, backed up, and nothing
+  // landing — and it would have been true from minute one, while `dlqCount` sat at 0 for 2h20m.
   if (!qstash) {
     checks.queue = { configured: false };
   } else {
     try {
-      const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
-      let lag = 0;
-      let paused = false;
-      try {
-        const info = await queue.get();
-        lag = info.lag ?? 0;
-        paused = info.paused ?? false;
-      } catch (e: any) {
-        if (!(e?.message?.includes("not found") || e?.status === 404)) throw e;
-      }
+      const ingest = await readIngestState();
       const dlq = await qstash.dlq.listMessages({ count: 100 });
       const dlqCount = (dlq.messages ?? []).length;
 
-      checks.queue = { lag, paused, dlqCount, lagMax: QUEUE_LAG_MAX };
+      checks.queue = {
+        mode: ingest.mode,
+        waiting: ingest.waiting,
+        inFlight: ingest.inFlight,
+        paused: ingest.paused,
+        pausedLanes: ingest.pausedLanes,
+        stalledMinutes: ingest.stalledMinutes,
+        lanes: ingest.lanes.map((l) => ({
+          lane: l.lane,
+          waiting: l.waiting,
+          inFlight: l.inFlight,
+          parallelism: l.parallelism,
+          pinned: l.pinned,
+          paused: l.paused,
+          idle: l.idle,
+          stuck: l.stuck,
+          error: l.error,
+        })),
+        globalParallelism: ingest.globalParallelism,
+        dlqCount,
+        lagMax: QUEUE_LAG_MAX,
+        // compat: the historical field name, for anything reading this JSON body.
+        lag: ingest.waiting,
+      };
 
-      if (lag > QUEUE_LAG_MAX) {
+      if (ingest.legacyQueue?.error)
+        issues.push({
+          severity: "warn",
+          code: "ingest_lane_unreadable",
+          message:
+            `Could not read the legacy queue "${ingest.legacyQueue.name}" from QStash: ` +
+            `${ingest.legacyQueue.error}. Its numbers are zeros, NOT a measurement.`,
+        });
+      for (const lane of ingest.lanes) {
+        if (lane.error)
+          issues.push({
+            severity: "warn",
+            code: "ingest_lane_unreadable",
+            message:
+              `Could not read ingest lane "${lane.lane}" (${lane.key}) from QStash: ${lane.error}. ` +
+              `Its numbers below are zeros, NOT a measurement.`,
+          });
+        if (!lane.stuck) continue;
         issues.push({
           severity: "alert",
-          code: "queue_lag_high",
-          message: `QStash queue lag is ${lag} (> ${QUEUE_LAG_MAX}) — the receiver isn't keeping up.`,
+          code: "ingest_lane_stuck",
+          message:
+            `Ingest lane "${lane.lane}" is STUCK — ${lane.inFlight}/${lane.parallelism} deliveries ` +
+            `in flight, ${lane.waiting} waiting, and nothing has landed in PG for ` +
+            `${ingest.stalledMinutes} min. Head-of-line blocking.`,
+        });
+      }
+
+      if (ingest.waiting > QUEUE_LAG_MAX) {
+        issues.push({
+          severity: "alert",
+          code: "ingest_backlog_high",
+          message: `Ingest backlog is ${ingest.waiting} (> ${QUEUE_LAG_MAX}) — the receiver isn't keeping up.`,
         });
       }
       if (dlqCount >= DLQ_ALERT) {
@@ -562,19 +611,27 @@ export async function GET(request: NextRequest) {
           message: `${dlqCount} message(s) in the DLQ — investigate failed deliveries.`,
         });
       }
-      if (paused) {
+      // Only the lanes actually carrying messages can halt ingest: under `mode: "queue"` a paused
+      // flow-control lane is inert, and vice versa.
+      const pausedWhereItMatters =
+        ingest.mode === "flow"
+          ? ingest.pausedLanes
+          : ingest.legacyQueue?.paused
+            ? [ingest.legacyQueue.name]
+            : [];
+      if (pausedWhereItMatters.length > 0) {
         issues.push({
           severity: "warn",
-          code: "queue_paused",
-          message: `The observations queue is PAUSED — ingestion into PG is halted.`,
+          code: "ingest_paused",
+          message: `Observations ingest is PAUSED (${pausedWhereItMatters.join(", ")}) — ingestion into PG is halted.`,
         });
       }
     } catch (err) {
-      console.error("[MonitorObservations] queue checks failed:", err);
+      console.error("[MonitorObservations] ingest checks failed:", err);
       issues.push({
         severity: "warn",
-        code: "queue_check_failed",
-        message: `Could not query QStash queue/DLQ: ${String(err)}`,
+        code: "ingest_check_failed",
+        message: `Could not query the observations ingest path / DLQ: ${String(err)}`,
       });
     }
   }

@@ -1,84 +1,93 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/api-auth";
-import { qstash, OBSERVATIONS_QUEUE_NAME } from "@/lib/qstash";
-import { ReadingsDao } from "@/lib/readings";
-import { planetscaleDb } from "@/lib/db/planetscale";
+import { qstash } from "@/lib/qstash";
+import {
+  readIngestState,
+  pinLaneParallelism,
+  unpinLaneParallelism,
+  setLanePaused,
+  updateLegacyQueue,
+  type IngestState,
+} from "@/lib/observations/flow-control";
+import {
+  OBSERVATION_LANES,
+  type ObservationLane,
+} from "@/lib/observations/types";
 
 /**
- * The observations queue — status and control, for `liveone queue`.
+ * The observations ingest path — status and control, for `liveone queue`.
  *
- * The v4 twin of `/api/admin/observations/info`, and it exists as a SEPARATE address rather than by
- * admitting the admin one to the CLI-token allowlist: `/api/admin/*` is deliberately outside that
- * allowlist ("a stray `lo_cli_` bearer can never skip the edge on admin, control or vendor routes"),
- * and `auth.protect()` rewrites it to a 404 before any handler sees the bearer. Verified 2026-09-09:
- * a valid CLI token against `/api/admin/amber-sync` returns `404` with
- * `x-clerk-auth-reason: protect-rewrite, token-invalid`. So the capability moves to a v4 route that
- * authorizes in-handler; the admin route and its dashboard UI are untouched.
+ * "queue" now names the INGEST PATH, not a QStash Queue: the path is two flow-control lanes
+ * (`live`, `backfill`) plus, for the length of the coexistence window, the legacy FIFO Queue. The
+ * name and the address are kept deliberately — they are in the generated CLI reference and they are
+ * the muscle memory built during the 2026-09-09 incident.
  *
- *   GET   → { name, paused, lag, parallelism, lastIngestedAt, stalledMinutes }
- *   PATCH { paused?, parallelism? } → the same shape, after applying
+ * It exists as a SEPARATE address rather than by admitting `/api/admin/observations/info` to the
+ * CLI-token allowlist: `/api/admin/*` is deliberately outside that allowlist ("a stray `lo_cli_`
+ * bearer can never skip the edge on admin, control or vendor routes"), and `auth.protect()` rewrites
+ * it to a 404 before any handler sees the bearer. Verified 2026-09-09: a valid CLI token against
+ * `/api/admin/amber-sync` returns `404` with `x-clerk-auth-reason: protect-rewrite, token-invalid`.
  *
- * 🛑 **`stalledMinutes` is the field that matters, not `lag`.** During the 2026-09-09 ingest stall a
- * rising `lag` was read twice as a throughput deficit; it is ambiguous, because a busy queue and a
- * blocked one both grow. `lastIngestedAt` aged against now is not: a busy queue still ingests. The
- * per-minute series had a clean 34-minute hole in an otherwise steady 42.9/min. See
- * `docs/plans/ingest-head-of-line-hardening.md`.
+ *   GET   → the aggregate below
+ *   PATCH { lane, paused?, parallelism? } → the same shape, after applying
+ *
+ * 🛑 **`stalledMinutes` is the field that matters, not `lag`.** During the stall a rising `lag` was
+ * read twice as a throughput deficit; it is ambiguous, because a busy path and a blocked one both
+ * grow. `lastIngestedAt` aged against now is not: a busy path still ingests. `stuck` per lane —
+ * saturated AND backed up AND nothing landing — is the unambiguous form of the same question.
  *
  * Admin only (`requireAdmin`), which a CLI token resolves through exactly like a browser session.
+ * See `docs/plans/ingest-head-of-line-hardening.md`.
  */
 
-interface QueueView {
-  name: string;
-  paused: boolean;
-  lag: number;
-  parallelism: number;
-  /** ISO8601, or null when nothing has ever been ingested. */
-  lastIngestedAt: string | null;
-  /** Minutes since the last durable write. `null` when `lastIngestedAt` is null. */
-  stalledMinutes: number | null;
+/** Concurrency ceiling. See the 🛑 on `validateParallelism` — the invariant is on the SUM. */
+function poolMax(): number {
+  return Number(process.env.PLANETSCALE_POOL_MAX ?? 10);
+}
+
+const err = (message: string, status = 422) =>
+  NextResponse.json({ error: message }, { status });
+
+type LaneScope = ObservationLane | "all";
+
+function parseLane(value: unknown): LaneScope | null {
+  if (value === "all") return "all";
+  return OBSERVATION_LANES.find((l) => l === value) ?? null;
+}
+
+/** The lanes a scope names. */
+function lanesOf(scope: LaneScope): ObservationLane[] {
+  return scope === "all" ? [...OBSERVATION_LANES] : [scope];
 }
 
 /**
- * Queue facts from QStash, joined with ingest recency from Postgres.
- *
- * A queue that does not exist yet is reported as paused rather than raised — the same tolerance
- * `/api/admin/observations/info` has, and for the same reason: a fresh environment has no queue
- * until its first publish, and that is a state, not a failure.
+ * 🛑 The ceiling is the Postgres pool, and the invariant is on the SUM ACROSS LANES, not on either
+ * lane alone. Every in-flight delivery is a concurrent receiver invocation and therefore a Postgres
+ * connection, so `live + backfill` must stay within `PLANETSCALE_POOL_MAX` — starving the web app to
+ * drain a backlog trades one outage for another. The error names the sum, because that is the number
+ * nobody will otherwise think about.
  */
-async function readQueue(): Promise<QueueView> {
-  const queue = qstash!.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
+function validateParallelism(
+  state: IngestState,
+  scope: LaneScope,
+  n: number,
+): string | null {
+  const max = poolMax();
+  if (!Number.isInteger(n) || n < 1)
+    return `parallelism must be a positive integer (or null to unpin)`;
 
-  let paused = true;
-  let lag = 0;
-  let parallelism = 1;
-  try {
-    const info = await queue.get();
-    paused = info.paused ?? false;
-    lag = info.lag ?? 0;
-    parallelism = info.parallelism ?? 1;
-  } catch (error) {
-    const err = error as { message?: string; status?: number };
-    if (!(err?.message?.includes("not found") || err?.status === 404))
-      throw error;
-  }
-
-  // Ingest recency is a Postgres fact, not a queue fact — the queue can be empty because everything
-  // was delivered or because nothing is being dispatched, and only this tells the two apart.
-  const lastMs = planetscaleDb
-    ? await ReadingsDao.latestRawCreatedAtMs()
-    : null;
-
-  return {
-    name: OBSERVATIONS_QUEUE_NAME,
-    paused,
-    lag,
-    parallelism,
-    lastIngestedAt: lastMs ? new Date(lastMs).toISOString() : null,
-    stalledMinutes:
-      lastMs != null
-        ? Math.round(((Date.now() - lastMs) / 60000) * 10) / 10
-        : null,
-  };
+  const targets = new Set<ObservationLane>(lanesOf(scope));
+  const sum = state.lanes.reduce(
+    (acc, l) => acc + (targets.has(l.lane) ? n : l.parallelism),
+    0,
+  );
+  if (sum > max)
+    return (
+      `parallelism ${n} on ${scope} would put the SUM across lanes at ${sum}, over the ` +
+      `Postgres pool of ${max} (PLANETSCALE_POOL_MAX). Every in-flight delivery holds a ` +
+      `connection — lower another lane first.`
+    );
+  return null;
 }
 
 export async function GET(request: NextRequest) {
@@ -90,7 +99,7 @@ export async function GET(request: NextRequest) {
       { status: 503 },
     );
 
-  return NextResponse.json(await readQueue());
+  return NextResponse.json(await readIngestState());
 }
 
 export async function PATCH(request: NextRequest) {
@@ -103,42 +112,89 @@ export async function PATCH(request: NextRequest) {
     );
 
   const body = (await request.json().catch(() => null)) as {
+    lane?: unknown;
     paused?: unknown;
     parallelism?: unknown;
   } | null;
   if (!body || (body.paused === undefined && body.parallelism === undefined))
-    return NextResponse.json(
-      { error: "Body must set at least one of: paused, parallelism" },
-      { status: 422 },
+    return err("Body must set at least one of: paused, parallelism");
+
+  const wantsParallelism = body.parallelism !== undefined;
+  const before = await readIngestState();
+
+  // Scope resolution, and the one place a write can be refused for being too broad.
+  //
+  // `lane` is REQUIRED for a parallelism write under flow control — a per-lane cap applied
+  // fleet-wide is exactly the accident worth refusing, and the sum-vs-pool check below only means
+  // something when the operator has said which lane they meant. Everything else defaults to `all`:
+  //   • pause/resume has always meant the whole path, and
+  //   • the legacy queue IS one undifferentiated lane, so under `mode: "queue"` there is nothing to
+  //     scope to. Requiring a lane there would 422 the `liveone queue` build that is deployed today,
+  //     mid-incident, for no safety gained.
+  const laneRequired = wantsParallelism && before.mode === "flow";
+  const scope: LaneScope | null =
+    body.lane === undefined
+      ? laneRequired
+        ? null
+        : "all"
+      : parseLane(body.lane);
+  if (!scope)
+    return err(
+      `lane must be one of: ${OBSERVATION_LANES.join(", ")}, all` +
+        (body.lane === undefined
+          ? " — required when setting parallelism, so a per-lane cap is never applied fleet-wide"
+          : ""),
     );
 
-  const patch: { paused?: boolean; parallelism?: number } = {};
+  // A lane-scoped write against the legacy queue would report success and change nothing about what
+  // is actually being delivered, which is worse than refusing it.
+  if (before.mode === "queue" && scope !== "all")
+    return err(
+      `OBSERVATIONS_PUBLISH_MODE is "queue", and the legacy queue has no lanes — ` +
+        `use lane "all" until the flow-control cutover.`,
+    );
 
+  let parallelism: number | null | undefined;
+  if (wantsParallelism) {
+    if (body.parallelism === null) {
+      parallelism = null; // unpin
+    } else {
+      const n = Number(body.parallelism);
+      const invalid =
+        before.mode === "queue"
+          ? !Number.isInteger(n) || n < 1 || n > poolMax()
+            ? `parallelism must be an integer between 1 and ${poolMax()} (the Postgres pool size)`
+            : null
+          : validateParallelism(before, scope, n);
+      if (invalid) return err(invalid);
+      parallelism = n;
+    }
+  }
+
+  let paused: boolean | undefined;
   if (body.paused !== undefined) {
     if (typeof body.paused !== "boolean")
-      return NextResponse.json(
-        { error: "paused must be a boolean" },
-        { status: 422 },
-      );
-    patch.paused = body.paused;
+      return err("paused must be a boolean");
+    paused = body.paused;
   }
 
-  if (body.parallelism !== undefined) {
-    const n = Number(body.parallelism);
-    // 🛑 The ceiling is the Postgres pool, not a QStash limit: each concurrent receiver invocation
-    // takes a connection, and starving the web app to drain a backlog trades one outage for another.
-    // `getPoolConfig` reads `PLANETSCALE_POOL_MAX ?? 10`, so 10 is the honest maximum here.
-    const max = Number(process.env.PLANETSCALE_POOL_MAX ?? 10);
-    if (!Number.isInteger(n) || n < 1 || n > max)
-      return NextResponse.json(
-        {
-          error: `parallelism must be an integer between 1 and ${max} (the Postgres pool size)`,
-        },
-        { status: 422 },
+  if (before.mode === "queue") {
+    if (parallelism === null)
+      return err(
+        `the legacy queue cannot be unpinned — parallelism: null applies to flow-control lanes only`,
       );
-    patch.parallelism = n;
+    await updateLegacyQueue({
+      ...(paused !== undefined ? { paused } : {}),
+      ...(parallelism !== undefined ? { parallelism } : {}),
+    });
+  } else {
+    for (const lane of lanesOf(scope)) {
+      if (paused !== undefined) await setLanePaused(lane, paused);
+      if (parallelism === null) await unpinLaneParallelism(lane);
+      else if (parallelism !== undefined)
+        await pinLaneParallelism(lane, parallelism);
+    }
   }
 
-  await qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME }).upsert(patch);
-  return NextResponse.json(await readQueue());
+  return NextResponse.json(await readIngestState());
 }

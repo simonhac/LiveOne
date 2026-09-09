@@ -1,4 +1,5 @@
 import { Client } from "@upstash/qstash";
+import { OBSERVATION_LANES, type ObservationLane } from "./observations/types";
 
 /**
  * QStash client for publishing observations to the queue.
@@ -39,15 +40,13 @@ export const OBSERVATIONS_FLOW_PREFIX =
  * unpaginated, there is no atomic global pause, and total in-flight would be
  * `devices × parallelism`, which passes the Postgres pool long before "thousands of devices".
  */
-export function observationsFlowKey(lane: "live" | "backfill"): string {
+export function observationsFlowKey(lane: ObservationLane): string {
   return `${OBSERVATIONS_FLOW_PREFIX}:${lane}`;
 }
 
 /** Parse one of our flow-control keys back to its lane. `null` when it is not ours. */
-export function parseObservationsFlowKey(
-  key: string,
-): "live" | "backfill" | null {
-  for (const lane of ["live", "backfill"] as const) {
+export function parseObservationsFlowKey(key: string): ObservationLane | null {
+  for (const lane of OBSERVATION_LANES) {
     if (key === observationsFlowKey(lane)) return lane;
   }
   return null;

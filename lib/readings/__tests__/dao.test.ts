@@ -844,6 +844,52 @@ describe("ReadingsDao maintenance — non-point-keyed range ops", () => {
     expect(await ReadingsDao.latestRawCreatedAtMs(empty.exec)).toBeNull();
   });
 
+  it("latestIngestCreatedAtMs takes the max across raw AND 5m, so a 5m-native fleet isn't a false stall", async () => {
+    // Per-table rows: `latestIngestCreatedAtMs` issues one indexed `ORDER BY … DESC LIMIT 1` per
+    // serving table, and the whole point of the method is that they can disagree.
+    const byTable = (rows: Record<string, any[]>) => {
+      const result = (t: unknown): any => {
+        const p: any = Promise.resolve(rows[tableName(t)] ?? []);
+        p.orderBy = () => result(t);
+        p.limit = () => result(t);
+        return p;
+      };
+      return { select: () => ({ from: (t: unknown) => result(t) }) } as any;
+    };
+
+    // 5m ahead of raw — the shape when the newest thing to land was an Amber batch.
+    expect(
+      await ReadingsDao.latestIngestCreatedAtMs(
+        byTable({
+          point_readings: [{ createdAt: new Date(1_700_000_500_000) }],
+          point_readings_agg_5m: [{ createdAt: new Date(1_700_000_900_000) }],
+        }),
+      ),
+    ).toBe(1_700_000_900_000);
+
+    // 🛑 The bug this replaces: a 5m-only fleet reported "nothing has ever landed" while ingest was
+    // healthy, because 5m-native vendors never put a raw row down.
+    expect(
+      await ReadingsDao.latestIngestCreatedAtMs(
+        byTable({
+          point_readings: [],
+          point_readings_agg_5m: [{ createdAt: new Date(1_700_000_900_000) }],
+        }),
+      ),
+    ).toBe(1_700_000_900_000);
+
+    // Raw ahead of 5m, and both empty.
+    expect(
+      await ReadingsDao.latestIngestCreatedAtMs(
+        byTable({
+          point_readings: [{ createdAt: new Date(1_700_000_900_000) }],
+          point_readings_agg_5m: [{ createdAt: new Date(1_700_000_500_000) }],
+        }),
+      ),
+    ).toBe(1_700_000_900_000);
+    expect(await ReadingsDao.latestIngestCreatedAtMs(byTable({}))).toBeNull();
+  });
+
   it("maxAgg5mIntervalMsForDevices returns max for a set; null for empty set or no rows", async () => {
     const d1 = device(1);
     const d2 = device(2);
