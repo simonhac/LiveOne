@@ -11,9 +11,47 @@ export const qstash = process.env.OBSERVATIONS_QSTASH_TOKEN
 /**
  * Queue name for observation batches.
  * Uses environment-specific names to separate dev and prod messages.
+ *
+ * @deprecated Being replaced by the flow-control lane keys below. Kept for the whole coexistence
+ * window — `OBSERVATIONS_PUBLISH_MODE` still defaults to `"queue"`, and the old queue must remain
+ * readable and drainable until it is retired.
  */
 export const OBSERVATIONS_QUEUE_NAME =
   process.env.NODE_ENV === "production" ? "observations" : "observations-dev";
+
+/**
+ * Flow-control key prefix, split by environment.
+ *
+ * 🛑 The two prefixes must be DISJOINT UNDER PREFIX MATCHING, not merely different. Dev and prod
+ * share one QStash account and one `OBSERVATIONS_QSTASH_TOKEN`, so any prod-side "is this ours?"
+ * filter is a prefix test — and `"obs:dev:live".startsWith("obs:")` is `true`, which would sweep
+ * dev keys into a prod view. `"obs-dev:live".startsWith("obs:")` is `false`. That is why the
+ * environment goes in the PREFIX and not in a middle segment.
+ */
+export const OBSERVATIONS_FLOW_PREFIX =
+  process.env.NODE_ENV === "production" ? "obs" : "obs-dev";
+
+/**
+ * The flow-control key for a lane, e.g. `obs:live` / `obs-dev:backfill`.
+ *
+ * Fixed cardinality — two keys per environment, forever. Keying per DEVICE (the shape originally
+ * proposed) does not scale: key cardinality would grow with the fleet, `GET /v2/flowControl` is
+ * unpaginated, there is no atomic global pause, and total in-flight would be
+ * `devices × parallelism`, which passes the Postgres pool long before "thousands of devices".
+ */
+export function observationsFlowKey(lane: "live" | "backfill"): string {
+  return `${OBSERVATIONS_FLOW_PREFIX}:${lane}`;
+}
+
+/** Parse one of our flow-control keys back to its lane. `null` when it is not ours. */
+export function parseObservationsFlowKey(
+  key: string,
+): "live" | "backfill" | null {
+  for (const lane of ["live", "backfill"] as const) {
+    if (key === observationsFlowKey(lane)) return lane;
+  }
+  return null;
+}
 
 /**
  * Stable public production domain for the receiver. Must be a public, custom

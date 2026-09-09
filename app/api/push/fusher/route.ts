@@ -319,7 +319,7 @@ export async function POST(request: NextRequest) {
           response: data,
           numRows: readingsToInsert.length,
         },
-        collector.observations,
+        collector,
       );
 
       console.log(
@@ -364,7 +364,7 @@ export async function POST(request: NextRequest) {
           response: data,
           numRows: 0,
         },
-        collector.observations,
+        collector,
       );
 
       // Check if it's a duplicate entry error

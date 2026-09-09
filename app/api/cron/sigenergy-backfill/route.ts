@@ -219,7 +219,7 @@ async function backfillOneDevice(
     cause: dryRun ? "ADMIN-DRYRUN" : "ADMIN",
     started: new Date(),
   });
-  const collector = createPollCollector();
+  const collector = createPollCollector({ lane: "backfill" });
   const startTime = Date.now();
 
   try {
@@ -245,7 +245,7 @@ async function backfillOneDevice(
         numRows: result.days.reduce((a, d) => a + d.readingsWritten, 0),
         response: result,
       },
-      dryRun ? [] : collector.observations,
+      dryRun ? createPollCollector({ lane: collector.lane }) : collector,
     );
 
     return {
@@ -266,7 +266,7 @@ async function backfillOneDevice(
         error: message,
         numRows: 0,
       },
-      dryRun ? [] : collector.observations,
+      dryRun ? createPollCollector({ lane: collector.lane }) : collector,
     );
     return {
       systemId: device.id,

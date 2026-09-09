@@ -3,8 +3,11 @@ import { uuidv7 } from "uuidv7";
 import { transformForStorage } from "@/lib/json";
 import type { SessionInfo } from "@/lib/point/point-manager";
 import { buildSessionPayload } from "@/lib/observations/session-publisher";
-import { publishPoll } from "@/lib/observations/poll-collector";
-import type { RawObservationInput } from "@/lib/observations/publisher";
+import {
+  publishPoll,
+  createPollCollector,
+  type PollCollector,
+} from "@/lib/observations/poll-collector";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import {
@@ -152,7 +155,7 @@ export class SessionManager {
       response?: any | null;
       numRows: number;
     },
-    pollObservations: RawObservationInput[],
+    collector: PollCollector,
   ): Promise<void> {
     try {
       // ⚠️  CRITICAL: Transform response data before storage
@@ -210,7 +213,7 @@ export class SessionManager {
         await publishPoll(
           device,
           buildSessionPayload(sessionPublishInput, device.timezoneOffsetMin),
-          pollObservations,
+          collector,
         );
       }
       pendingSessions.delete(sessionId);
@@ -264,7 +267,8 @@ export class SessionManager {
         await publishPoll(
           device,
           buildSessionPayload(sessionPublishInput, device.timezoneOffsetMin),
-          [],
+          // Session-only, no readings — and always live: this deprecated path has no bulk caller.
+          createPollCollector(),
         );
       }
     } catch (error) {

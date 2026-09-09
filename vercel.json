@@ -50,6 +50,9 @@
     "app/api/history/route.ts": {
       "maxDuration": 30
     },
+    "app/api/observations/receive/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/cron/repair-coverage/route.ts": {
       "maxDuration": 300
     }

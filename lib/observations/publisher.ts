@@ -5,16 +5,14 @@
  * Designed for dual-write: publish to queue synchronously before DB insert.
  */
 
-import {
-  qstash,
-  OBSERVATIONS_QUEUE_NAME,
-  getObservationsReceiverUrl,
-} from "@/lib/qstash";
+import { qstash, getObservationsReceiverUrl } from "@/lib/qstash";
 import { Observation, QueueMessage } from "./types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import { formatTime_fromJSDate } from "@/lib/date-utils";
 import type { PointInfoRow } from "@/lib/point/point-manager";
 import { persistOutbox } from "./outbox";
+import { publishObservationMessage } from "./publish";
+import { buildChunkedMessages } from "./chunk";
 
 // Type for point info (the served point_info row shape).
 type PointInfo = PointInfoRow;
@@ -115,30 +113,35 @@ export async function publishObservationBatch(
   }
 
   try {
-    // Build the observation batch
+    // Build the observation batch. Chunked on the same bounds as the poll path — this route had
+    // NO chunking at all, so a large caller could emit one unbounded message straight past both
+    // caps. See ./chunk for why the count cap matters as much as the byte cap.
     const observations = buildObservations(device, inputs);
-    const message: QueueMessage = {
-      env: process.env.NODE_ENV === "production" ? "prod" : "dev",
-      systemId: device.id,
-      systemName: device.displayName,
-      batchTime: formatTimestamp(Date.now(), device.timezoneOffsetMin),
+    const env: QueueMessage["env"] =
+      process.env.NODE_ENV === "production" ? "prod" : "dev";
+    const batchTime = formatTimestamp(Date.now(), device.timezoneOffsetMin);
+    const messages = buildChunkedMessages({
+      base: () => ({
+        env,
+        systemId: device.id,
+        systemName: device.displayName,
+        batchTime,
+      }),
       observations,
-    };
+    });
 
     // Durably capture in PG first (a tee, in parallel with the direct enqueue
     // below). Best-effort — never throws. The outbox is the durability anchor;
     // the relay re-drains anything the direct enqueue drops.
-    await persistOutbox([message]);
+    await persistOutbox(messages);
 
-    // Get the queue and publish
-    const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
-    await queue.enqueueJSON({
-      url: receiverUrl,
-      body: message,
-    });
+    for (const message of messages) {
+      await publishObservationMessage(message);
+    }
 
     console.log(
-      `[ObservationPublisher] Published batch: ${observations.length} observations for system ${device.id}`,
+      `[ObservationPublisher] Published batch: ${observations.length} observations ` +
+        `in ${messages.length} message(s) for system ${device.id}`,
     );
   } catch (error) {
     // Log error but don't throw - database writes should not be blocked by queue failures

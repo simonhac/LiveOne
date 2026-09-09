@@ -449,7 +449,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         response: rawResponse,
         numRows,
       },
-      collector.observations,
+      collector,
     );
     // `startedAt`, NOT "now": the slot rule asks which slot this poll belongs to, and a poll that
     // began at 10:04:58 and finished at 10:05:02 belongs to 10:00. Stamping the completion time
@@ -477,7 +477,7 @@ export abstract class BaseVendorAdapter implements VendorAdapter {
         response: result.rawResponse,
         numRows: 0,
       },
-      collector.observations,
+      collector,
     );
     await updatePollingStatusError(
       systemId,
