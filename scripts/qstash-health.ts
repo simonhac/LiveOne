@@ -1,7 +1,11 @@
 #!/usr/bin/env tsx
 /**
- * READ-ONLY live snapshot of the observations mirror pipeline: QStash queue lag + DLQ depth +
- * paused state, plus PG response-presence / raw-landing (mirrors app/api/cron/monitor-observations).
+ * READ-ONLY live snapshot of the observations mirror pipeline: per-lane backlog / in-flight /
+ * paused + the legacy queue + DLQ depth, plus PG response-presence / raw-landing. Shares its
+ * ingest read with app/api/cron/monitor-observations via lib/observations/flow-control.
+ *
+ * This is the snapshot you run when the APP ITSELF is suspect — `liveone queue status` goes
+ * through the deployed route, this one talks to QStash directly.
  * Run: TZ=UTC NODE_ENV=production ALLOW_PROD_DB_IN_DEV=true npx tsx scripts/qstash-health.ts
  */
 import * as dotenv from "dotenv";
@@ -11,33 +15,48 @@ import { Pool } from "pg";
 import { ReadingsDao } from "@/lib/readings";
 
 async function main() {
-  const { qstash, OBSERVATIONS_QUEUE_NAME } = await import("@/lib/qstash");
+  const { qstash } = await import("@/lib/qstash");
+  const { readLanes, readGlobalParallelism, readLegacyQueue } = await import(
+    "@/lib/observations/flow-control"
+  );
+  const { publishMode } = await import("@/lib/observations/publish");
   const line = "─".repeat(70);
 
   console.log(line);
-  console.log(`QStash queue "${OBSERVATIONS_QUEUE_NAME}" + DLQ:`);
+  console.log(`Observations ingest path (mode=${publishMode()}) + DLQ:`);
   if (!qstash) {
     console.log("  (qstash not configured — OBSERVATIONS_QSTASH_TOKEN unset)");
   } else {
     try {
-      const queue = qstash.queue({ queueName: OBSERVATIONS_QUEUE_NAME });
-      let lag: number | string = "n/a",
-        paused: boolean | string = "n/a",
-        parallelism: any = "n/a";
-      try {
-        const info: any = await queue.get();
-        lag = info.lag ?? 0;
-        paused = info.paused ?? false;
-        parallelism = info.parallelism ?? info.maxParallelism ?? "n/a";
-      } catch (e: any) {
-        if (e?.message?.includes("not found") || e?.status === 404)
-          lag = "(queue not found)";
-        else throw e;
+      // Lanes are enumerated, never discovered: a key with nothing waiting, nothing in flight and
+      // no pin may not exist in QStash at all, so "0 keys" is what a TOTAL STOP looks like too.
+      const [lanes, global, queue] = await Promise.all([
+        readLanes(),
+        readGlobalParallelism().catch(() => null),
+        readLegacyQueue(),
+      ]);
+      for (const l of lanes) {
+        console.log(
+          `  lane ${l.lane.padEnd(8)} waiting=${l.waiting}  inFlight=${l.inFlight}  ` +
+            `parallelism=${l.parallelism}${l.pinned ? " PINNED" : ""}` +
+            `${l.paused ? "  PAUSED" : ""}${l.idle ? "  (idle — no flow-control state)" : ""}`,
+        );
       }
+      console.log(
+        `  global   parallelism=${global ? `${global.inFlight}/${global.max}` : "n/a"}`,
+      );
+      console.log(
+        `  legacy queue "${queue?.name ?? "n/a"}"  ${
+          queue?.exists
+            ? `lag=${queue.lag}  paused=${queue.paused}  parallelism=${queue.parallelism}`
+            : "(not created)"
+        }`,
+      );
+
       const dlq = await qstash.dlq.listMessages({ count: 100 });
       const dlqCount = (dlq.messages ?? []).length;
       console.log(
-        `  lag=${lag}  paused=${paused}  parallelism=${parallelism}  dlqCount=${dlqCount}${dlqCount >= 100 ? "+ (capped at 100)" : ""}`,
+        `  dlqCount=${dlqCount}${dlqCount >= 100 ? "+ (capped at 100)" : ""}`,
       );
       if (dlqCount > 0) {
         for (const m of (dlq.messages ?? []).slice(0, 5))
@@ -46,7 +65,7 @@ async function main() {
           );
       }
     } catch (e) {
-      console.log("  queue/DLQ query failed:", String(e));
+      console.log("  ingest/DLQ query failed:", String(e));
     }
   }
 

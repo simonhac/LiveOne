@@ -1,7 +1,15 @@
 # Ingest: head-of-line blocking on the observations queue
 
-**Status:** proposed, not started · written from a live incident on 2026-09-09, revised the same day
-once the cause was understood
+**Status:** in progress · written from a live incident on 2026-09-09, revised the same day once the
+cause was understood, and again on 2026-09-10 to match what shipped.
+
+**Landed:** delivery bounding + batch cap + the lane-keyed publish path behind
+`OBSERVATIONS_PUBLISH_MODE` (#432), the SDK bump to 2.11.3 (#433), and the flow-control control
+plane. **Not yet done:** the `liveone queue --lane` CLI, retiring the admin `info`/`messages` twins,
+the cutover itself (`OBSERVATIONS_PUBLISH_MODE=flow`, dev then prod), and deleting the queue.
+
+🛑 **Keyed by LANE, not by device — this doc's original headline was revised.** See the section
+below.
 
 ## The incident
 
@@ -68,7 +76,7 @@ keep flowing. It is a strict superset of what we use Queues for:
 | rate limiting | ✗ | ✅ `rate` + `period` |
 | backlog | `lag` | `waitListSize` |
 | **in-flight count** | ✗ | ✅ `parallelismCount` |
-| list | ✅ | ✅ `flowControl.list()` |
+| list | ✅ | ✗ — **no `list()` in the SDK** at any version (see below); `get(key)` per known key |
 | ordering | **FIFO** | none — which is what we want |
 | how many | one named queue | unlimited keys, no quota |
 
@@ -79,16 +87,27 @@ rateMax, rateCount, ratePeriod, ratePeriodStart, isPinnedParallelism, isPinnedRa
 nothing showed what was *in flight*; `parallelismMax: 5, parallelismCount: 5, waitListSize: 1000`
 states the diagnosis in one line. `lag` alone was misread as a throughput deficit twice.
 
-### 🛑 Key by DEVICE — this is the headline, not the mechanism
+### 🛑 Key by LANE — superseding this doc's original "key by device"
 
 ```ts
-flowControl: { key: `obs:${deviceRid}`, parallelism: 3 }
+flowControl: { key: observationsFlowKey(lane), parallelism: laneParallelism(lane) }
+// obs:live (5) · obs:backfill (2) — `obs-dev:` in dev. lib/qstash.ts, lib/observations/publish.ts
 ```
 
-Keys are per-publish and unlimited. Keying by device means a slow Amber backfill message can only
-ever contend with **other Amber messages**. On 2026-09-09 that would have confined the incident to
-one device instead of taking out all six — Selectronic, Fronius, Tesla and the generator would never
-have noticed. Nothing else in this plan comes close to that as a blast-radius reduction.
+**What shipped is two fixed keys per environment, `live` and `backfill`, not one key per device.**
+Per-device keying was the original headline here and it does not survive contact with the API: key
+cardinality grows with the fleet, `GET /v2/flowControl` is unpaginated, there is no atomic global
+pause, and total in-flight becomes `devices × parallelism`, which passes the Postgres pool long
+before "thousands of devices". The lane is a property of the MESSAGE, not the device — the same
+device emits live poll messages and (during a backfill) bulk ones, and it is those that must not
+contend.
+
+**What that buys, and what it doesn't.** Backfill-vs-live is fully fixed: a 64-day Amber replay can
+no longer delay minutely ingest for anyone, which is the property that actually failed on
+2026-09-09. What remains is that one slow *live* device can still delay other *live* devices —
+bounded now by parallelism 5 rather than the queue's strict FIFO 1, and by the ~5-minute worst-case
+slot occupancy the delivery options impose. That is a latency ceiling measured in minutes, not the
+2h20m total-ingest outage.
 
 Ordering loss is a non-issue: the receiver is an idempotent UPSERT keyed on `(point, interval)`, so
 observations may land in any order. We have been paying for a guarantee we do not use, and its price
@@ -103,13 +122,19 @@ Four enqueue sites move from `queue.enqueueJSON` to `client.publishJSON({ …, f
 - `lib/observations/poll-collector.ts:183`
 - `app/api/cron/monitor-observations/route.ts:530`
 
-`OBSERVATIONS_QUEUE_NAME` (`lib/qstash.ts:15`) becomes a key *prefix*; the env split
-(`observations` / `observations-dev`) must survive as `obs:{env}:{deviceRid}` or dev and prod will
-share flow-control keys.
+`OBSERVATIONS_QUEUE_NAME` becomes a key *prefix* (`OBSERVATIONS_FLOW_PREFIX`); the env split must
+survive, and the two prefixes must be **disjoint under prefix matching**, not merely different —
+`"obs:dev:live".startsWith("obs:")` is `true`, `"obs-dev:live".startsWith("obs:")` is `false`. That
+is why the environment goes in the prefix and not in a middle segment.
 
 `liveone queue` survives the migration — the verbs map 1:1 (`status`→`get`, `pause`/`resume`→same,
 `parallelism n`→`pin({parallelism: n})`) and only the client calls behind `/api/v4/queue` change.
-`list()` then makes `status` genuinely better: a wait list **per device**.
+
+🛑 **There is no `flowControl.list()`** — `FlowControlApi` has no `list` method at any SDK version,
+contrary to the table above. It does not matter: with two fixed lanes, two `get()` calls cover the
+whole view. And they MUST be enumerated rather than discovered — a key with nothing waiting, nothing
+in flight and no pin may not exist at all, so "the keys QStash returns" renders a totally stopped
+fleet as zero lanes and reads as healthy.
 
 ### 🛑 Traps
 
@@ -167,7 +192,12 @@ Still worth doing; Flow Control reduces their urgency but does not replace them.
 1. Receiver bound + batch-size cap (2) — cheap, independent, stops the worst input.
 2. Flow Control migration behind the existing `OBSERVATIONS_QSTASH_TOKEN`, dev first
    (`observations-dev` keys), then prod.
-3. Re-point `/api/v4/queue` at `flowControl.*`; `liveone queue` verbs unchanged.
+3. Re-point `/api/v4/queue` at `flowControl.*` (`lib/observations/flow-control.ts`, shared with the
+   monitor cron and `scripts/qstash-health.ts`); `liveone queue` verbs unchanged.
+   🛑 The control plane must read **both** transports for the whole coexistence window. It ships
+   before the cutover, so while `OBSERVATIONS_PUBLISH_MODE` is still `"queue"` the lanes are
+   genuinely empty and reporting them alone would blind the very surface this step exists to fix.
+   Writes go to the transport actually in use, for the same reason.
 4. Chunking + received-not-published (1, 3) with the `liveone sync` verb.
 5. Retire the `observations` queue once nothing enqueues to it.
 

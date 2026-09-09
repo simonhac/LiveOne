@@ -1290,6 +1290,45 @@ async function latestRawCreatedAtMs(
   return row ? row.createdAt.getTime() : null;
 }
 
+/**
+ * Latest durable write by the receiver (epoch-ms UTC) across BOTH serving tables, or null when
+ * neither has a row — the "last ingested at" clock behind `stalledMinutes`.
+ *
+ * 🛑 Not `latestRawCreatedAtMs`. 5m-native vendors (Amber, Enphase — `isFiveMinuteNativeVendor`)
+ * write ONLY `point_readings_agg_5m`; the receiver never puts a raw row down for them. So a raw-only
+ * clock reports "nothing has landed" for ingest that is in fact healthy — a false stall on any fleet
+ * whose remaining traffic is 5m-native.
+ *
+ * It is deliberately a fleet-wide `max()`, which is what makes it cheap and unambiguous: a busy
+ * pipeline still ingests, so an aged value means a STOP. What it cannot see is one vendor going dark
+ * behind five healthy ones — that is `monitor-observations`' per-device `device_poll_stale` check,
+ * and the two are companions, not substitutes.
+ *
+ * Two indexed `ORDER BY … DESC LIMIT 1` reads (`pr_created_at_idx`,
+ * `pr5m_created_at_idx`) — never an aggregate over either big table.
+ */
+async function latestIngestCreatedAtMs(
+  exec?: ReadingsExec,
+): Promise<number | null> {
+  const db = exec ?? requirePlanetscaleDb();
+  const [raw, agg] = await Promise.all([
+    db
+      .select({ createdAt: pointReadings.createdAt })
+      .from(pointReadings)
+      .orderBy(desc(pointReadings.createdAt))
+      .limit(1),
+    db
+      .select({ createdAt: pointReadingsAgg5m.createdAt })
+      .from(pointReadingsAgg5m)
+      .orderBy(desc(pointReadingsAgg5m.createdAt))
+      .limit(1),
+  ]);
+  const times = [raw[0]?.createdAt, agg[0]?.createdAt]
+    .filter((d): d is Date => d != null)
+    .map((d) => d.getTime());
+  return times.length > 0 ? Math.max(...times) : null;
+}
+
 /** Fleet raw landing count over a DB-clock-relative lookback plus the all-time latest arrival. */
 async function rawLandingHealth(
   lookbackMs: number,
@@ -1765,6 +1804,7 @@ export const ReadingsDao = {
   createdAtHistogramSince,
   distinctDevicesByRawCreatedAtSince,
   latestRawCreatedAtMs,
+  latestIngestCreatedAtMs,
   rawLandingHealth,
   maxAgg5mIntervalMsForDevices,
   delete1dRange,
