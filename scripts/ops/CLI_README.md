@@ -70,6 +70,11 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone user](#liveone-user)
     - [liveone user list](#liveone-user-list)
     - [liveone user show](#liveone-user-show)
+  - [liveone queue](#liveone-queue)
+    - [liveone queue status](#liveone-queue-status)
+    - [liveone queue pause](#liveone-queue-pause)  _(writes)_
+    - [liveone queue resume](#liveone-queue-resume)  _(writes)_
+    - [liveone queue parallelism](#liveone-queue-parallelism)  _(writes)_
   - [liveone api](#liveone-api)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
@@ -104,6 +109,7 @@ Subcommands:
   area                   Inspect areas — membership, bindings, latest values, history, flows.
   derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
   user                   The user directory — who exists, what they own. Admin-only.
+  queue                  The observations ingest queue — status, and the levers to unblock it.
   api                    One authenticated request to the deployed API, as you.  (writes)
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
@@ -2693,6 +2699,255 @@ External access:
 Examples:
   liveone user show simon@example.com
   liveone user show user_2yjTPLLmU2vMs4Vy4Q7g0Yy0abc
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone queue
+
+The observations ingest queue — status, and the levers to unblock it.
+
+```
+The observations ingest queue — status, and the levers to unblock it.
+
+When to use:
+  Reach for this when readings have stopped arriving, or before and after a large backfill.
+  `status` is the one-line health read; `parallelism` is the lever that clears a stall.
+
+Admin-only, http-only. Prints `target: <origin> as <you>` on stderr first.
+
+READ `stalled`, NOT `lag`. A rising lag is ambiguous — a busy queue and a blocked one both
+grow — and it was misread twice during the 2026-09-09 stall. Minutes since the last durable
+write is not ambiguous: a busy queue still ingests.
+
+Usage:
+  liveone queue <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  status                 Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
+  pause                  Stop the queue dispatching. Messages accumulate; nothing is lost.  (writes)
+  resume                 Resume dispatching after a pause.  (writes)
+  parallelism            Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.  (writes)
+
+Run `liveone queue <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone queue status
+
+Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
+
+```
+Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
+
+When to use:
+  Start here. Exits 1 (findings) when ingest has stalled, so it composes into a check.
+
+Usage:
+  liveone queue status [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone queue status
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone queue pause
+
+Stop the queue dispatching. Messages accumulate; nothing is lost.
+
+```
+Stop the queue dispatching. Messages accumulate; nothing is lost.
+
+When to use:
+  Use this to stop delivery while you diagnose, or before a change that would make the
+  receiver fail. Publishing is unaffected — the outbox keeps accepting.
+
+Usage:
+  liveone queue pause [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone queue pause --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone queue resume
+
+Resume dispatching after a pause.
+
+```
+Resume dispatching after a pause.
+
+When to use:
+  The inverse of `pause`.
+
+Usage:
+  liveone queue resume [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone queue resume --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone queue parallelism
+
+Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.
+
+```
+Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.
+
+When to use:
+  Raise this when one slow message is head-of-line blocking every device. With no
+  argument it reads the current value and writes nothing.
+
+Usage:
+  liveone queue parallelism [n] [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  [n]                    New concurrency, 1..PLANETSCALE_POOL_MAX (default 10). Omit to read.
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone queue parallelism
+  liveone queue parallelism 5 --apply
 
 Exit codes:
   0    success

@@ -73,6 +73,11 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone user](../scripts/ops/CLI_README.md#liveone-user) — The user directory — who exists, what they own. Admin-only.
     - [liveone user list](../scripts/ops/CLI_README.md#liveone-user-list) — List users: Clerk id, email, devices owned.
     - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.
+  - [liveone queue](../scripts/ops/CLI_README.md#liveone-queue) — The observations ingest queue — status, and the levers to unblock it.
+    - [liveone queue status](../scripts/ops/CLI_README.md#liveone-queue-status) — Is ingest flowing? Reports lag, parallelism, and minutes since the last durable write.
+    - [liveone queue pause](../scripts/ops/CLI_README.md#liveone-queue-pause) — Stop the queue dispatching. Messages accumulate; nothing is lost.  _(writes)_
+    - [liveone queue resume](../scripts/ops/CLI_README.md#liveone-queue-resume) — Resume dispatching after a pause.  _(writes)_
+    - [liveone queue parallelism](../scripts/ops/CLI_README.md#liveone-queue-parallelism) — Read, or set, how many messages the queue delivers concurrently. Capped by the PG pool.  _(writes)_
   - [liveone api](../scripts/ops/CLI_README.md#liveone-api) — One authenticated request to the deployed API, as you.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.
