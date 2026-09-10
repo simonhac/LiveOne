@@ -595,6 +595,16 @@ function createComparisonStage(
  */
 
 /**
+ * The largest window Amber's `/usage` and `/prices` endpoints will answer, in days.
+ *
+ * 🛑 The vendor enforces this — `"Range requested is too large. Maximum 7 days."` — and nothing on
+ * our side did. The admin sync route validated `days <= 30`, so any call in 8..30 sailed through
+ * our validation and failed at Amber with an opaque 422 that named neither the real limit nor the
+ * field. Callers must never have to know this number: `POST /api/v4/devices/{id}/sync` chunks to it.
+ */
+export const AMBER_MAX_SYNC_DAYS = 7;
+
+/**
  * Fetch usage data from Amber API
  * @param credentials - Amber API credentials
  * @param firstDay - Starting day of the range

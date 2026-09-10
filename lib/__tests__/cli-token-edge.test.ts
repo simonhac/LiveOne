@@ -196,6 +196,13 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // terms `loadReadableArea` did — it does not shortcut an authorization, it adds a scope check on
     // top of one. It is the only reason `…/derivations/:dxid{,/recompute,/intervals}` may be listed.
     "loadDerivationForOwner",
+    // The per-device gate (lib/api-auth.ts): it resolves the auth context and then decides
+    // owner-or-admin against THAT device's `ownerClerkUserId`, so like the two loaders above it adds
+    // a scope check on top of an authentication rather than shortcutting one. Needed by
+    // `/api/v4/devices/{id}/sync`, which passes `{ requireWrite: true }` — and `canWrite` is
+    // admin-or-owner only, never the `isPublic` read term, so an ownerless (public) device is not
+    // syncable by a stranger holding a CLI token.
+    "requireDeviceAccess",
   ];
 
   /** Every route.ts under app/api, with the URL path it serves. */

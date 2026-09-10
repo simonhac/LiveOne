@@ -319,17 +319,21 @@ the duplicate pairs and would fail identically.
 
 Still worth doing; Flow Control reduces their urgency but does not replace them.
 
-1. **Chunk publishes to poll-sized batches.** The *message* is the unit that matters, not the API
+1. ✅ **Chunk publishes to poll-sized batches.** The *message* is the unit that matters, not the API
    request. Amber's 7-day API cap and a safe message size are different numbers and the sync path
-   conflates them. Owner of this property: the generic `liveone sync` verb — see
-   `ops-cli-queue-and-vendor-sync.md`.
+   conflated them. Both now hold: `POST /api/v4/devices/{id}/sync` walks the window in
+   `AMBER_MAX_SYNC_DAYS` chunks (the caller passes the range it wants and never the vendor's
+   number), and `publishPoll`'s byte budget splits each chunk into poll-sized messages.
 2. **Bound the receiver.** Give `observations/receive` an explicit `maxDuration`, and cap the
    accepted batch size so an oversized publish fails **fast at the producer** instead of silently
    wedging the consumer.
-3. **Make "inserted" mean received.** `amber-sync` reports `numRowsInserted` from the publish step,
-   so ten consecutive `Rows inserted: 1008 / Success: YES` accompanied a backfill that materialised
-   **zero** rows. A sync that reports success while its data is unqueryable is worse than one that
-   fails.
+3. ✅ **Make "inserted" mean received.** `amber-sync` reported `numRowsInserted` — which counts what
+   the sync COMPARED — so ten consecutive `Rows inserted: 1008 / Success: YES` accompanied a
+   backfill that materialised **zero** rows. `liveone sync` reports `published` and `landed` as two
+   separate numbers and never says "inserted"; `landed` is a read of the serving store after the
+   lane drains, through the same `/api/history` path a dashboard uses. 🛑 A verification that timed
+   out reports `UNKNOWN`, never a measured zero — "I stopped waiting" and "nothing arrived" produce
+   the same number, and reporting the first as the second is the original defect wearing a new hat.
 
 ## Sequencing
 
@@ -346,7 +350,7 @@ Still worth doing; Flow Control reduces their urgency but does not replace them.
    queue transport in code: the switch, the `mode`/`legacyQueue`/compat fields, the admin twins.
 5. Delete the `observations` queue object — see the 🛑 at the top: gate it on a DRAINED queue read
    from QStash, not on "nothing enqueues to it".
-6. Chunking + received-not-published (1, 3) with the `liveone sync` verb.
+6. ✅ Chunking + received-not-published (1, 3), as the `liveone sync` verb.
 
 🛑 **The rollback stopped being an env-var flip at step 4, and that is fine.** It never needed to be
 one: `observations_outbox` is teed BEFORE publish, so a publish that throws leaves the row
@@ -355,12 +359,15 @@ one: `observations_outbox` is teed BEFORE publish, so a publish that throws leav
 
 ## Verification
 
-- Replay a multi-week backfill against a device on `liveone-dev` and assert `lastIngestedAt` never
-  ages beyond one poll interval **for other devices** while it runs. That is the property that
-  actually failed, and per-device keys are what make it hold.
+- Replay a multi-week backfill and assert `lastIngestedAt` never ages beyond one poll interval
+  **for other devices** while it runs. That is the property that actually failed. The natural
+  subject is no longer a `liveone-dev` fixture but the real thing: device 10002's missing usage
+  window, replayed with `liveone sync … --apply` on the `backfill` lane with `liveone queue timing`
+  watching. Dev cannot test it anyway — it has no fleet traffic to be delayed.
 - Assert emitted message size stays within the poll-sized bound (a unit test on the publisher — the
   bound is the contract, not an integration detail).
-- After a sync reports success, read the serving store for the synced range and assert non-empty.
+- ✅ After a sync reports success, read the serving store for the synced range and assert non-empty —
+  `liveone sync` does this itself and exits 1 when it published rows that never appeared.
 - ✅ `liveone queue status` reports `waitListSize` **and** `parallelismCount` — per lane, as a table —
   and still exits 1 on a stall. It now also exits 1 on `STUCK`, which is the stronger signal: the
   stall exit needs five minutes of silence to fire, `stuck` is true from minute one.

@@ -246,7 +246,8 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 
 **Open**
 
-- [ ] **Recover device 10002, 2026-07-07 → 2026-09-08.** Only the `/usage`-derived series are
+- [ ] **Recover device 10002, 2026-07-07 → 2026-09-08.** Now has a CLI path:
+      `liveone sync 10002 --start=2026-07-07 --end=2026-09-08 --action=usage --apply`. Only the `/usage`-derived series are
       missing (energy and cost); the `/prices` half survived back to 2026-07-11. Run with
       `action: "usage"` — usage-only never calls the pricing endpoint, so it cannot collide.
       Routes: the Amber API (rolling ~90 days, so ~2026-10-05), an `observations_outbox` replay
@@ -260,8 +261,11 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 - [ ] **The DLQ retry path cannot choose a lane.** It calls `publishObservationMessage(row.payload)`
       and pre-lane payloads default to `live`, so retrying the 8 stored messages would put ~13,000
       observations on the live lane.
-- [ ] Make `amber-sync` report rows **received**, not published — a sync that reports success while
-      its data is unqueryable is worse than one that fails.
+- [x] Report rows **received**, not published. `liveone sync` (`POST /api/v4/devices/{id}/sync`)
+      replaces the browser-only SSE path: it reports `published` and `landed` as two separate
+      numbers, never says "inserted", chunks to the VENDOR's window rather than a number we invented,
+      and publishes on the `backfill` lane. A verification that timed out reports `UNKNOWN`, not a
+      measured zero.
 
 ## Status
 

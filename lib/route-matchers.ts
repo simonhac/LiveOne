@@ -142,6 +142,12 @@ const cliTokenRoutes = [
   // this domain grows next, including a mutating one.
   "/api/v4/queue/timing",
   "/api/v4/queue/outbox",
+  // The vendor re-fetch — `liveone sync`. A JSON sibling of `/api/admin/amber-sync` (an SSE stream
+  // shaped for a browser, and behind the admin edge), added rather than widening this bypass to
+  // `/api/admin`. It authorizes in-handler through `requireDeviceAccess(..., { requireWrite: true })`,
+  // so a token whose user does not own the device 403s — and the device is a PATH SEGMENT, so there
+  // is no unscoped form to reach, the same property that made `derivations/:dxid/recompute` safe.
+  "/api/v4/devices/:id/sync",
   "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
   // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
   // independently (each only declines to 404 its own credential shape) and the handler's
