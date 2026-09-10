@@ -391,22 +391,35 @@ The `db:pg:generate` / `db:pg:migrate` basics are in **PostgreSQL (primary)** ab
 
 `db:pg:migrate` targets whatever `PLANETSCALE_DATABASE_URL_MIGRATIONS` (or the `DB_*` vars) in `.env.local` points at. Always confirm the host before applying; override the env var to target a specific branch.
 
-**Branches & connections (`liveone` PlanetScale db).** Prod is the standalone `sydney` branch (`aws-ap-southeast-2`); the old us-east `main` branch was decommissioned 2026-06-11. PG branches use **`pscale role`**, not `pscale password`. There is no stored Sydney connection string — mint a short-TTL one:
+**Branches & connections (`liveone` PlanetScale db).** Prod is the standalone `sydney` branch (`aws-ap-southeast-2`); the old us-east `main` branch was decommissioned 2026-06-11. PG branches use **`pscale role`**, not `pscale password`. There is no stored Sydney connection string — every connection mints a short-TTL role.
+
+**To apply a migration, do not do that by hand** — `npm run pg-migrate` mints, applies, reassigns and releases in one step:
 
 ```bash
-pscale role create liveone sydney <name> --inherited-roles postgres --ttl 1h --format json
-# then: PLANETSCALE_DATABASE_URL_MIGRATIONS="<that database_url>" npm run db:pg:migrate
+npm run pg-migrate                # report: target, pending, ownership audit (dry-run by default)
+npm run pg-migrate -- --apply     # mint a role, apply, reassign ownership, prove it, release
+npm run pg-migrate -- --audit     # ownership sweep alone (read-only role)
 ```
 
-**⚠️ Table-ownership trap (learned the hard way).** A migration applied via a freshly-minted `pscale role` makes that role the **owner** of the tables it creates. Consequences: (a) the app connects as `postgres` and will get _"permission denied"_ on a non-`postgres`-owned table; (b) the temp role **cannot be dropped while it owns objects** (`DROP ROLE` is refused — Postgres does NOT cascade-drop owned tables, so the data is safe, but the role lingers and the TTL delete fails the same way). Every normal table here is owned by `postgres`. So either:
+For a one-off prod **read**, mint by hand — and prefer `pg_read_all_data`, which cannot own anything:
 
-- Apply as the persistent `postgres` role (`pscale role reset-default liveone <branch>` to get its creds), **or**
-- After applying with a temp role, reassign + clean up:
-  ```bash
-  pscale role reassign liveone <branch> <temp-role-id> --successor postgres --force
-  pscale role delete   liveone <branch> <temp-role-id> --force
-  ```
-  (Control-plane `reassign` works even though SQL `ALTER ... OWNER` / `SET ROLE postgres` fail with "must be owner" — `postgres` here is not a superuser.)
+```bash
+pscale role create liveone sydney <name> --inherited-roles pg_read_all_data --ttl 30m --format json
+# then: PSQL_URL="<that database_url>" npm run db:psql -- -c "…"     ... and delete the role after
+```
+
+🛑 **Use `npm run pg-migrate` for prod, not `db:pg:migrate`** — it exists to close the ownership trap below, and its cleanup runs in a `finally` (on success, on failure, on a guard refusal, on Ctrl-C). The skill is `.claude/skills/pg-migrate-prod/`; the tool is `scripts/ops/pg-migrate.ts`. For `liveone-dev`, plain `npm run db:pg:migrate` is right: `.env.local` points at the persistent `postgres` role, so nothing is minted and the trap cannot arise.
+
+**⚠️ Table-ownership trap (learned the hard way).** A migration applied via a freshly-minted `pscale role` makes that role the **owner** of the tables it creates — `--inherited-roles postgres` grants the privileges to create, it does not make `postgres` the owner of the result. Consequences: (a) the app connects as `postgres` and will get _"permission denied"_ on a non-`postgres`-owned table, and not at apply time — whenever the dependent code finally ships; (b) the temp role **cannot be dropped while it owns objects** (`DROP ROLE` is refused — Postgres does NOT cascade-drop owned tables, so the data is safe, but the role lingers and the TTL delete fails the same way). Every normal table here is owned by `postgres`. The fix, which `npm run pg-migrate` does for you:
+
+```bash
+pscale role reassign liveone <branch> <temp-role-id> --successor postgres --force
+pscale role delete   liveone <branch> <temp-role-id> --force
+```
+
+(Control-plane `reassign` works even though SQL `ALTER ... OWNER` / `SET ROLE postgres` fail with "must be owner" — `postgres` here is not a superuser. Reassign *then* delete; the other order is what fails.)
+
+🛑 **Do NOT use `pscale role reset-default` to sidestep this.** It ROTATES the `postgres` password — its own help says "any connections using the `postgres` role will need to be updated" — so on prod it is an **outage**: Vercel captures env at build time, so recovery needs the Production env updated *and* a redeploy. Minting a temp role costs nothing and breaks nothing.
 
 **Parallel-agent collisions.** Multiple Conductor workspaces can each `db:pg:generate` and grab the **same `NNNN` number** for different migrations (e.g. two `0004_*`). Before generating/applying, `git fetch origin main` and check `drizzle-planetscale/` + the live `drizzle.__drizzle_migrations`; if main already shipped your number, sync main and regenerate so yours lands as the next free number. Migrations are additive/independent objects, so the only real damage is the drizzle journal/numbering — fix it by renumbering, not by force.
 

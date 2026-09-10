@@ -6,7 +6,7 @@
 
 **Generated — do not edit.**
 
-3 tool(s). Indexed from [docs/cli-reference.md](../../docs/cli-reference.md).
+4 tool(s). Indexed from [docs/cli-reference.md](../../docs/cli-reference.md).
 
 Every command takes `--help` and `--format human|json` (human at a terminal, json when piped);
 the data-download commands also accept `--format csv` — their help says so.
@@ -111,6 +111,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone api](#liveone-api)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
+- [pg-migrate](#pg-migrate)  _(writes)_
 
 ## liveone
 
@@ -5012,5 +5013,74 @@ Exit codes:
   0    success
   1    at least one finding
   2    usage error
+  130  interrupted
+```
+
+## pg-migrate
+
+Apply pending Postgres migrations to a PlanetScale branch, leaving nothing owned by a temp role.
+
+`npm run pg-migrate` — `scripts/ops/pg-migrate.ts`
+
+```
+Apply pending Postgres migrations to a PlanetScale branch, leaving nothing owned by a temp role.
+
+When to use:
+  Use this for EVERY migration applied to prod `sydney`, in place of `npm run db:pg:migrate`.
+  Prod has no stored connection string, so applying there means minting a role — and Postgres
+  makes that role the OWNER of what it creates, which the app (connecting as `postgres`) then
+  cannot read. Also reach for it with --audit when a `pscale role delete` refuses, or when a
+  table that exists returns 'permission denied'.
+  For liveone-dev use plain `npm run db:pg:migrate`: .env.local already points at the
+  persistent `postgres` role, so nothing is minted and the trap cannot arise.
+
+Reports the target (with the branch id read from the CONNECTION USERNAME, the only place it
+is legible), the pending migrations, and any object in `public` not owned by `postgres`.
+With --apply it applies, reassigns ownership to `postgres`, and re-sweeps to prove it.
+The reassign+delete runs in a `finally`, so an interrupted or failed run still cleans up.
+🛑 It does NOT check that the migration was correct — gates belong in the migration file,
+inside the migrator's transaction. This guarantees ownership, and nothing else.
+
+Usage:
+  pg-migrate [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Options:
+  --database <name>          PlanetScale database  (default: liveone)
+  --branch <name>            Branch to apply to (prod is `sydney`)  (default: sydney)
+  --role-ttl <duration>      TTL for the minted role  (default: 1h)
+  --audit                    Ownership sweep only — mints a READ-ONLY role and applies nothing
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+
+Examples:
+  npm run db:pg:migrate:prod
+  npm run db:pg:migrate:prod -- --apply
+  npm run db:pg:migrate:prod -- --audit
+  npm run db:pg:migrate:prod -- --branch restore-drill --audit
+
+Exit codes:
+  0    success
+  1    ownership debt found, or migrations are pending in a dry run
+  2    usage error
+  5    upstream failure
   130  interrupted
 ```

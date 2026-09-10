@@ -110,7 +110,11 @@ export interface ResolvedRunDetector {
 
 export interface ResolvedHwsModel {
   id: string;
-  areaId: string;
+  /**
+   * Nullable since 0063 demoted `derivations.area_id` to a dual-written vestige, and this query
+   * has no `areas` join to narrow it. The field has no consumers — it goes with the column.
+   */
+  areaId: string | null;
   /** The output point's own owning-device handle (`devices.rid`) — the KV latest cache key, as before. */
   systemId: number;
   powerPoint: PointId;
@@ -192,6 +196,11 @@ function resolveRunDetector(
     );
     return null;
   }
+  // 0063 made `area_id` nullable (a dual-written vestige until 0064). Unreachable in practice:
+  // every caller reaches this helper through a LEFT JOIN of `legacy_handles` on `area_id`, so a
+  // null area could never have produced the handle the guard above already demanded. Narrowed
+  // explicitly rather than asserted, and it goes when the column does.
+  if (row.areaId == null) return null;
   return {
     id: row.id,
     areaId: row.areaId,

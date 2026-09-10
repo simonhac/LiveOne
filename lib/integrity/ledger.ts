@@ -62,6 +62,7 @@ import {
   dashboardRevisions,
   dashboards,
   derivations,
+  derivationSources,
   derivedIntervals,
   deviceState,
   devices,
@@ -523,10 +524,58 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   // -- Derivations and automations.
   {
     column: derivations.areaId,
-    verdict: { protectedBy: "fk", onDelete: "no action" },
+    // 🛑 A VESTIGE, not a reference, since 0063. The site is now derived from the derivation's
+    // sources; this column is dual-written and read by nothing, and 0064 drops it. The FK became
+    // ON DELETE SET NULL together with dropping NOT NULL — the pair, because SET NULL on a NOT NULL
+    // column aborts the delete instead of clearing it. So an area delete no longer NAMES its
+    // derivations as dependents: it silently clears a column nobody reads. The protection did not
+    // vanish, it MOVED — `derivation_sources.point_id` below now refuses to let you delete a point
+    // a live derivation reads, which is what the area FK was standing in for all along.
+    verdict: { protectedBy: "fk", onDelete: "set null" },
   },
   {
     column: derivations.outputPointId,
+    verdict: { protectedBy: "fk", onDelete: "no action" },
+  },
+
+  // -- derivation_sources (0063): the typed input ports that replace `derivations.source_points`.
+  // Every column here is a reference, and every one is a `fk` — which is the entire point of the
+  // table. The jsonb it replaces could name a point on any device, or none at all, and nothing
+  // noticed until the detector silently derived nothing forever.
+  {
+    column: derivationSources.derivationId,
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: derivationSources.pointId,
+    // 🛑 The composite FK (point_id, device_id) → points(id, device_id), ON DELETE NO ACTION. This
+    // is where `derivations.area_id`'s protection went, and it is better aimed: "you cannot delete
+    // a point a live derivation reads" rather than "you cannot delete the area the detector was
+    // filed under". `derivation_sources_point_idx` is what lets a refusal NAME the dependents.
+    verdict: { protectedBy: "fk", onDelete: "no action" },
+  },
+  {
+    column: derivationSources.kind,
+    // 🛑 Not a reference to anything you could dangle — it is a COPY of `derivations.kind`, and the
+    // census sees it only because it is a leg of the composite FK (derivation_id, kind, role) that
+    // proves the copy. Recorded rather than exempted: an FK leg is exactly the kind of column a
+    // hand-kept list drops, and the copy is what the per-kind slot CHECK is written against.
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: derivationSources.role,
+    // Same composite FK as `kind`, and the reason FK 1 exists separately: this leg is NULLABLE (the
+    // hws-model has no role), the FK is MATCH SIMPLE, and MATCH SIMPLE is not checked AT ALL when
+    // any leg is NULL. So for an hws-model source row this constraint proves NOTHING, and the
+    // plain `derivation_id` FK is the only thing holding it to a parent.
+    verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    column: derivationSources.deviceId,
+    // Not an independent reference: it is the second leg of the same composite FK as `point_id`,
+    // which is what PROVES it equals `points.device_id` rather than merely copying it. Reaching
+    // `devices` at all is a consequence of that, not a separate claim — and it is why deriving a
+    // detector's site from this column is sound.
     verdict: { protectedBy: "fk", onDelete: "no action" },
   },
   {
@@ -545,7 +594,7 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
       protectedBy: "assertNotReliedUpon",
       subject: "derivation",
       reason:
-        "raw point uuids in jsonb with no FK. A dangling one is only a `console.warn` in `resolveRunDetector` and the detector then derives nothing, forever. 🛑 This entry is scheduled to become `fk`: migration 0063 turns the column into the `derivation_sources` table, whose composite FK into `points` makes the same guarantee structurally.",
+        "raw point uuids in jsonb with no FK. A dangling one is only a `console.warn` in `resolveRunDetector` and the detector then derives nothing, forever. 🛑 DUAL-WRITTEN since 0063: `derivation_sources` is the relational twin and it, not this column, is what the database enforces. This entry stays `assertNotReliedUpon` only while the jsonb is still written — it goes when the column does, and until then the two must be kept in step.",
     },
   },
   {

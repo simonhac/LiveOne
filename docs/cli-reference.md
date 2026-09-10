@@ -114,3 +114,4 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone api](../scripts/ops/CLI_README.md#liveone-api) — One authenticated request to the deployed API, as you.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.
+- [pg-migrate](../scripts/ops/CLI_README.md#pg-migrate) — Apply pending Postgres migrations to a PlanetScale branch, leaving nothing owned by a temp role.  _(writes)_

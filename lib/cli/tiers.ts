@@ -50,6 +50,10 @@ export const TIERS: TierManifest = {
     "scripts/ops/cli-reference.ts",
     // The census + conformance checker.
     "scripts/ops/cli-conformance.ts",
+    // Applying a migration to prod. Tier A rather than B because the thing it guarantees — that a
+    // minted role owns nothing when it is deleted — is invisible at apply time and only surfaces
+    // later, as "permission denied" on a table that plainly exists.
+    "scripts/ops/pg-migrate.ts",
   ],
   b: [
     // Config-document migrations. Run by hand against prod, rarely, with a minted role. Not yet on
