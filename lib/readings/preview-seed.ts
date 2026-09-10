@@ -80,6 +80,9 @@ const CONFIG_TABLES = [
   "area_members",
   "area_bindings",
   "derivations",
+  // 🛑 Invisible to tsc: without this a preview renders run cards EMPTY with no error at all —
+  // the derivation row is there, its wiring is not (migration 0063).
+  "derivation_sources",
   "device_state",
   "share_tokens",
   "dashboard_grants",

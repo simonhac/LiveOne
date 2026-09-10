@@ -107,6 +107,7 @@ describe("prod→dev readings transfer", () => {
       "legacy_handles",
       "area_bindings",
       "derivations",
+      "derivation_sources",
       "sessions",
       "point_readings",
       "point_readings_agg_5m",
@@ -126,8 +127,15 @@ describe("prod→dev readings transfer", () => {
     expect(names.indexOf("dashboards")).toBeLessThan(
       names.indexOf("share_tokens"),
     );
-    // derivations.area_id is a NOT NULL FK, so areas must land first.
+    // derivations.area_id FKs areas (nullable since migration 0063), so areas must land first.
     expect(names.indexOf("areas")).toBeLessThan(names.indexOf("derivations"));
+    // derivation_sources has FKs into BOTH derivations and points, so both must land first.
+    expect(names.indexOf("derivations")).toBeLessThan(
+      names.indexOf("derivation_sources"),
+    );
+    expect(names.indexOf("points")).toBeLessThan(
+      names.indexOf("derivation_sources"),
+    );
     // config-v4 v4 registries. devices.primary_area_id is a NOT NULL FK to areas; points, area_members,
     // device_state and legacy_handles all FK devices.id (points.device_id NOT NULL). So the group is
     // strictly ordered areas → devices → the rest.
@@ -202,6 +210,66 @@ describe("prod→dev readings transfer", () => {
     ]);
   });
 
+  // 🛑 The one leg that DELETES. `derivation_sources` (migration 0063) is the first jsonb → join
+  // table conversion in this manifest, and it brings the general hazard with it: while a detector's
+  // wiring was one jsonb object, clearing a slot propagated to dev for free because the whole column
+  // was overwritten. As rows, an upsert never removes what it does not mention.
+  it("reconciles derivation_sources by deleting slots prod has unwired, scoped to staged parents", async () => {
+    const table = prodDevSyncManifest().find(
+      (entry) => entry.name === "derivation_sources",
+    )!;
+    expect(table).toMatchObject({
+      mode: "full",
+      onConflict: "update",
+      reconcileBy: ["derivation_id"],
+    });
+    // No idDrift: the PK IS the natural key, and device_id rides the composite FK's ON UPDATE
+    // CASCADE when the `devices` leg repoints `points`.
+    expect(table).not.toHaveProperty("idDrift");
+
+    const { prod, dev, devSql } = copyClients();
+    await syncTable(
+      prod,
+      dev,
+      table,
+      new Map([
+        [
+          "derivation_sources",
+          ["derivation_id", "slot", "point_id", "device_id", "kind", "role"],
+        ],
+      ]),
+      new Map([["derivation_sources", ["derivation_id", "slot"]]]),
+    );
+
+    const sql = devSql.at(-1)!;
+    // Scoped BOTH ways: the parent must be in the staged slice (so a partial COPY can never empty
+    // the table, and dev-only rows under a parent prod has never sent are untouched), and the row
+    // itself must not be.
+    expect(sql).toContain("DELETE FROM public.derivation_sources d");
+    expect(sql).toContain(
+      "EXISTS (SELECT 1 FROM sync_staging.derivation_sources s WHERE d.derivation_id = s.derivation_id)",
+    );
+    expect(sql).toContain(
+      "NOT EXISTS (SELECT 1 FROM sync_staging.derivation_sources s WHERE d.derivation_id = s.derivation_id AND d.slot = s.slot)",
+    );
+    // Atomic with the upsert, and in that order — a delete that committed alone would leave dev
+    // briefly holding a detector with no wiring at all.
+    const at = (needle: string) => {
+      const i = sql.indexOf(needle);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at("BEGIN;")).toBeLessThan(
+      at("DELETE FROM public.derivation_sources d"),
+    );
+    expect(at("DELETE FROM public.derivation_sources d")).toBeLessThan(
+      at("INSERT INTO public.derivation_sources"),
+    );
+    expect(at("INSERT INTO public.derivation_sources")).toBeLessThan(
+      at("COMMIT;"),
+    );
+  });
+
   it("syncs dashboards via a slug-keyed idDrift, not the retired serial mirror", async () => {
     const table = prodDevSyncManifest().find(
       (entry) => entry.name === "dashboards",
@@ -265,6 +333,11 @@ describe("prod→dev readings transfer", () => {
   // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id and
   // derivations.area_id are NOT NULL / NO ACTION, so a drifted area that owns a dark-mirror device
   // can't be deleted — those rows must be MOVED to prod's uuid instead.
+  //
+  // `derivations.area_id`'s FK became ON DELETE SET NULL in migration 0063, so this repoint no
+  // longer UNBLOCKS the delete — it is retained because the area-scoped HTTP surface still resolves
+  // a derivation through the column, and a dev-only row cleared to NULL would be un-listable with no
+  // prod row following to restore it. Pinned so its eventual removal is a deliberate act.
   it("realigns a drifted area by repointing its NOT NULL dependants, never deleting devices", async () => {
     const table = prodDevSyncManifest().find(
       (entry) => entry.name === "areas",

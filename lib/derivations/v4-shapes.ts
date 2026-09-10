@@ -2,7 +2,14 @@
  * Wire shapes for the config-v4 derivations resource (`/api/v4/areas/{ar_}/derivations`).
  *
  * A derivation is stored with two kind-specific jsonb columns — `params` (behaviour knobs, SPARSE)
- * and `source_points` (raw `points.id` uuids). The wire speaks TypeIDs like the rest of `/api/v4`, so
+ * and `source_points` (raw `points.id` uuids).
+ *
+ * 🛑 `source_points` is the VESTIGE since migration 0063 — `derivation_sources` is what the engines
+ * resolve from — and this projection still reads it deliberately, because it is still the WIRE
+ * shape and the wire has not moved yet. That is only safe because every writer keeps the two in
+ * step inside ONE transaction (`ensureRunDetector`, `ensureHwsDerivation`, and PATCH's boundary
+ * leg, which builds both from the TABLE). If a writer ever escapes that rule, this is where the
+ * disagreement becomes visible to a caller. The wire speaks TypeIDs like the rest of `/api/v4`, so
  * the uuids in `source_points` cross as `pt_` ids. That translation is per-kind and explicit rather
  * than a "encode anything uuid-shaped" sweep: a future kind whose source_points carries a non-point
  * uuid would be silently mislabelled by the generic version, and the failure would surface as a
@@ -32,8 +39,15 @@ export interface DerivationRowFacts {
 function sourcePointsWire(kind: string, raw: unknown): Record<string, unknown> {
   const src = (raw ?? {}) as Record<string, unknown>;
   const pt = (v: unknown) => (typeof v === "string" ? Point.encode(v) : null);
+  // `boundary` is emitted, not omitted. It was write-only until 0063: PATCH permits re-pointing it
+  // (it is the one slot that changes where runs are DIVIDED without changing what they measure) and
+  // this projection then refused to show the result back.
   if (kind === RUN_DETECTOR_KIND)
-    return { signal: pt(src.signal), energy: pt(src.energy) };
+    return {
+      signal: pt(src.signal),
+      energy: pt(src.energy),
+      boundary: pt(src.boundary),
+    };
   if (kind === HWS_MODEL_KIND) return { power: pt(src.power) };
   // An unknown kind is served with its source_points withheld rather than guessed at — the row is
   // still listed (so it can be seen and disabled) but nothing claims to know what its uuids mean.

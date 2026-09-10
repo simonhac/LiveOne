@@ -51,9 +51,10 @@ export const derivationCommand = defineCommand({
   description:
     "Http-only: every verb calls the deployed v4 API as you (`liveone auth login`), and prints\n" +
     "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
-    "A derivation lives on an AREA, and must live on the area-of-one of the device it watches: a\n" +
-    "detector on a composite is invisible to the capability probe, and `create` refuses with the\n" +
-    "member handles that would work. Ids are per-environment.",
+    "A derivation's SITE is DERIVED from its source points, not configured: the device that owns its\n" +
+    "energy point (else its signal point) is the device it is addressed by, so there is no placement\n" +
+    "to get wrong. `create` refuses only if that device already has a detector for the same role.\n" +
+    "Ids are per-environment.",
   uses: ["api"],
   subcommands: {
     list: {

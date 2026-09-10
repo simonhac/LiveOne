@@ -276,10 +276,11 @@ export type HeatmapCardConfig = z.infer<typeof heatmapConfigSchema>;
  * (deriving the enum from `TRACKABLE_ROLE_IDS`) would make a zod *value* out of the role registry and
  * drag it into every validator call site, the same trade `HEATMAP_PALETTE_KEYS` above documents.
  *
- * 🛑 The role does NOT choose the device: `area`/`device` live in the node envelope (§8.3). Because
- * a detector hangs off a member area-of-one rather than the composite (see `ensureRunDetector`), a
- * `runs` card on a multi-device area must carry `device: dv_…` or it resolves no detector and renders
- * empty.
+ * 🛑 The role does NOT choose the device: `area`/`device` live in the node envelope (§8.3). A `runs`
+ * card on a multi-device area still wants `device: dv_…` when the area has more than one detector for
+ * a role — the resolver takes the first — but since migration 0063 an UNPINNED card on a composite
+ * does resolve: a detector is reachable from every device it draws a source point from, so the
+ * member set finds it (`getRunDetectorForDevices`).
  */
 export const runsConfigSchema = z
   .strictObject({

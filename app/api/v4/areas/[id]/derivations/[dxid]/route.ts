@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { loadAreaForOwner } from "@/lib/areas/http";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
-import { derivations, points } from "@/lib/db/planetscale/schema";
+import {
+  derivations,
+  derivationSources,
+  points,
+} from "@/lib/db/planetscale/schema";
 import { derivationWire } from "@/lib/derivations/v4-shapes";
+import { writeDerivationSources } from "@/lib/derivations/sources";
+import { RUN_DETECTOR_KIND } from "@/lib/derivations/resolve";
 import { Derivation } from "@/lib/ids";
 
 /**
@@ -12,11 +18,13 @@ import { Derivation } from "@/lib/ids";
  *
  * ## What is NOT patchable, and why
  *
- * 🛑 `area`, `kind` and `role` are the derivation's IDENTITY: `deriveDerivationId(area, kind, role)`
- * is a uuidv5 over exactly those three, so "changing" one does not edit this derivation — it names a
- * different one, while leaving this row's id (and therefore every `derived_intervals` row hanging
- * off it) attached to the old meaning. That is a silent corruption, so the fields are simply absent
- * from the patch surface; create the other derivation instead.
+ * 🛑 `kind` and `role` are the derivation's IDENTITY: `deriveDerivationId` is a uuidv5 over the
+ * source point plus exactly those two (the AREA was the anchor until migration 0063), so "changing"
+ * one does not edit this derivation — it names a different one, while leaving this row's id (and
+ * therefore every `derived_intervals` row hanging off it) attached to the old meaning. That is a
+ * silent corruption, so the fields are simply absent from the patch surface; create the other
+ * derivation instead. `area` stays unpatchable for a different reason now: it is a vestige, so
+ * moving it would edit nothing but the row's own listing address.
  *
  * `sourcePoints` is excluded for a softer but real reason: re-pointing a detector's signal changes
  * what its ALREADY-STORED intervals mean, and the stored rows carry the old signal's unit
@@ -60,11 +68,13 @@ export async function PATCH(
   if (!body)
     return NextResponse.json({ error: "Body must be JSON" }, { status: 422 });
 
+  // Set (to a uuid or to null) only when the body asked to move the boundary — `undefined` means
+  // "not in this patch", which is why it cannot just be read off `patch.sourcePoints`.
+  let boundaryPointUid: string | null | undefined;
   const patch: {
     enabled?: boolean;
     name?: string;
     params?: unknown;
-    sourcePoints?: unknown;
     updatedAt?: Date;
   } = {};
   if (body.enabled !== undefined) {
@@ -120,7 +130,7 @@ export async function PATCH(
         );
     }
     const [current] = await requirePlanetscaleDb()
-      .select({ sourcePoints: derivations.sourcePoints })
+      .select({ kind: derivations.kind })
       .from(derivations)
       .where(eq(derivations.id, uuid))
       .limit(1);
@@ -129,10 +139,17 @@ export async function PATCH(
         { error: `Unknown derivation: ${dxid}` },
         { status: 404 },
       );
-    patch.sourcePoints = {
-      ...((current.sourcePoints as Record<string, unknown>) ?? {}),
-      boundary: uid,
-    };
+    // 🛑 Refuse before ANYTHING is written. `boundary` is a run-detector slot; an `hws-model` has
+    // only `power`, so accepting this on one would delete its sole source row and write nothing back
+    // — the model would vanish from `listEnabledHwsModels` with a 200 and no warning.
+    if (current.kind !== RUN_DETECTOR_KIND)
+      return NextResponse.json(
+        {
+          error: `boundaryPointUid applies only to ${RUN_DETECTOR_KIND} derivations (this one is '${current.kind}')`,
+        },
+        { status: 422 },
+      );
+    boundaryPointUid = uid;
   }
   for (const forbidden of [
     "kind",
@@ -149,7 +166,10 @@ export async function PATCH(
         { status: 422 },
       );
   }
-  if (Object.keys(patch).length === 0)
+  // `boundaryPointUid` no longer contributes to `patch` (it is applied from `derivation_sources`
+  // inside the transaction below), so it has to be counted separately or a boundary-only patch would
+  // be refused as empty.
+  if (Object.keys(patch).length === 0 && boundaryPointUid === undefined)
     return NextResponse.json(
       {
         error: "Nothing to patch (enabled | name | params | boundaryPointUid)",
@@ -160,13 +180,58 @@ export async function PATCH(
 
   // The area is in the WHERE, not merely checked: it is what makes the ownership check above cover
   // this row. Without it a caller who owns any area could patch any derivation by id.
-  const [row] = await requirePlanetscaleDb()
-    .update(derivations)
-    .set(patch)
-    .where(
-      and(eq(derivations.id, uuid), eq(derivations.areaId, authed.area.id)),
-    )
-    .returning();
+  //
+  // 🛑 ONE TRANSACTION, because a boundary patch is a dual-write: the jsonb column the wire still
+  // shows and the `derivation_sources` rows the resolver actually acts on. Split across two commits,
+  // a failure between them leaves detection cutting runs at a boundary the API denies having — or,
+  // worse, leaves the delete committed and the insert not.
+  const row = await requirePlanetscaleDb().transaction(async (tx) => {
+    // Read the CURRENT slots from `derivation_sources`, not from the jsonb. Both are written, but
+    // only the table is enforced, so it is the one to build the next state from — reconstructing
+    // signal/energy out of the vestige would let a stale column overwrite correct wiring.
+    const existing =
+      boundaryPointUid === undefined
+        ? []
+        : await tx
+            .select({
+              slot: derivationSources.slot,
+              pointId: derivationSources.pointId,
+            })
+            .from(derivationSources)
+            .where(eq(derivationSources.derivationId, uuid));
+
+    const [updated] = await tx
+      .update(derivations)
+      .set(patch)
+      .where(
+        and(eq(derivations.id, uuid), eq(derivations.areaId, authed.area.id)),
+      )
+      .returning();
+    if (!updated) return null;
+
+    if (boundaryPointUid !== undefined) {
+      const slots = new Map(existing.map((e) => [e.slot, e.pointId]));
+      const next: Record<string, string | null> = {
+        signal: slots.get("signal") ?? null,
+        energy: slots.get("energy") ?? null,
+        boundary: boundaryPointUid,
+      };
+      await writeDerivationSources(tx, {
+        derivationId: updated.id,
+        kind: updated.kind,
+        role: updated.role,
+        slots: next,
+      });
+      // The jsonb vestige, derived from the same source of truth so the two cannot disagree.
+      const [rewritten] = await tx
+        .update(derivations)
+        .set({ sourcePoints: next })
+        .where(eq(derivations.id, updated.id))
+        .returning();
+      return rewritten ?? updated;
+    }
+    return updated;
+  });
   if (!row)
     return NextResponse.json(
       { error: "Derivation not found on this area" },

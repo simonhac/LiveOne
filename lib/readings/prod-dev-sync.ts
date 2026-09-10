@@ -143,6 +143,17 @@ type FullTable = {
   replaceConflicts?: string[][];
   excludeCols?: string[]; // drop the surrogate id so dev keeps/assigns its own
   idDrift?: IdDrift; // clear divergent-id collisions before the by-PK upsert (see IdDrift)
+  // DELETE dev rows that prod no longer has — the one place this sync removes anything.
+  //
+  // Scoped to the PARENTS prod actually sent: a row is deleted only when its `reconcileBy` tuple
+  // appears in the staged slice AND the row itself does not. That scoping is the whole safety
+  // argument. An unscoped "delete what isn't staged" would empty the table on any run where prod's
+  // COPY was partial, and dev-only rows under a parent prod has never heard of stay untouched.
+  //
+  // Needed by any table whose rows are the DECOMPOSITION of something that used to be a single
+  // overwritten value — `derivation_sources` is the first (a jsonb object of slots became one row
+  // per slot), and it will not be the last. Runs in the same transaction as the upsert.
+  reconcileBy?: string[];
 };
 type IncrementalTable = {
   name: string;
@@ -248,6 +259,16 @@ const FULL: FullTable[] = [
       // LOGICAL area as prod's incoming row, so they are MOVED onto prod's uuid instead of deleted.
       // derivations moved out of `children` for the same reason — repointing it also preserves its
       // derived_intervals (CASCADE, migration 0040) rather than forcing a recompute.
+      //
+      // 🛑 `derivations.area_id` STAYS here even though migration 0063 made it optional. 0063
+      // flipped the FK to ON DELETE SET NULL (with NOT NULL dropped — SET NULL on a NOT NULL column
+      // aborts the delete instead of clearing it, so the pair goes together), so the repoint is no
+      // longer what UNBLOCKS the delete. But the column is not dead yet: the area-scoped HTTP
+      // surface still resolves a derivation through it (`loadDerivationForOwner`, the GET listing,
+      // PATCH's WHERE, `derivationBelongsToArea`). Dropping the repoint now would let a DEV-ONLY
+      // derivation under a realigning area take `area_id = NULL` — no prod row follows to restore
+      // it — and it would then be un-listable and un-patchable on dev while its engine kept running.
+      // This goes when those readers do, in the HTTP-surface PR, not here.
       repoint: [
         { table: "devices", cols: ["primary_area_id"] },
         { table: "derivations", cols: ["area_id"] },
@@ -365,6 +386,32 @@ const FULL: FullTable[] = [
     name: "derivations",
     mode: "full",
     onConflict: "update",
+  },
+  // The derivation's typed input ports (migration 0063). After BOTH parents: `derivations` above
+  // and `points` further up.
+  //
+  // 🛑 `reconcileBy` is here because this is the general hazard of every jsonb → join-table
+  // conversion, and this is the first one. The sync has never deleted anything: while the wiring
+  // was a jsonb object, clearing a detector's `boundary` propagated to dev for free, because the
+  // whole column was overwritten. As ROWS, a slot prod has dropped would simply not appear in the
+  // staged copy — and an upsert never removes what it does not mention, so the stale row would live
+  // on dev forever, and dev's detector would keep cutting runs at a boundary prod no longer has.
+  //
+  // ⚠️ KNOWN LIMIT, stated rather than discovered: the parent scope is taken from the staged CHILD
+  // rows, so a derivation prod has stripped of EVERY slot vanishes from staging entirely and its
+  // dev rows survive. That shape is not reachable through any writer here (both `ensure` paths
+  // always write a slot, and 0063's gate G3 required one), and scoping off a separately-staged
+  // parent list would be real machinery for a case that cannot occur — but it is the seam to widen
+  // if a zero-source derivation ever becomes legal.
+  //
+  // No `idDrift`: the PK is the natural key `(derivation_id, slot)` — the `area_members` pattern —
+  // and `device_id` needs no repoint of its own, because the `devices` idDrift leg's `points`
+  // repoint carries it through the `ON UPDATE CASCADE` on the composite FK into `points`.
+  {
+    name: "derivation_sources",
+    mode: "full",
+    onConflict: "update",
+    reconcileBy: ["derivation_id"],
   },
 ];
 
@@ -720,6 +767,7 @@ export async function syncTable(
 
   const idDrift = t.mode === "full" ? t.idDrift : undefined;
   const replaceConflicts = t.mode === "full" ? t.replaceConflicts : undefined;
+  const reconcileBy = t.mode === "full" ? t.reconcileBy : undefined;
 
   // 2b. Stage prod's slice of each cross-key satellite table (see CrossKey). Must happen BEFORE the
   // `_drift` computation reads it, and it is a separate helper table because the satellite's own
@@ -868,6 +916,25 @@ export async function syncTable(
        DELETE FROM public.${t.name} d
          USING sync_staging.${t.name} s
          WHERE (${match}) AND NOT (${sameConflict});
+       ${upsert}
+       COMMIT;
+       DROP TABLE sync_staging.${t.name};`,
+      );
+    } else if (reconcileBy?.length) {
+      const parentMatch = reconcileBy
+        .map((c) => `d.${c} = s.${c}`)
+        .join(" AND ");
+      const selfMatch = conflictCols
+        .map((c) => `d.${c} = s.${c}`)
+        .join(" AND ");
+      // Delete-then-upsert, atomically. The DELETE names rows whose parent prod DID send but whose
+      // own key prod did NOT — i.e. a slot that has been unwired upstream. The parent scoping is
+      // what keeps dev-only rows under a parent prod has never sent untouched.
+      await dev.query(
+        `BEGIN;
+       DELETE FROM public.${t.name} d
+         WHERE EXISTS (SELECT 1 FROM sync_staging.${t.name} s WHERE ${parentMatch})
+           AND NOT EXISTS (SELECT 1 FROM sync_staging.${t.name} s WHERE ${selfMatch});
        ${upsert}
        COMMIT;
        DROP TABLE sync_staging.${t.name};`,

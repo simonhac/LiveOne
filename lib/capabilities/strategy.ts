@@ -84,13 +84,12 @@ const card = (type: string, extra?: Partial<CardNode>): CardNode => ({
 /**
  * One `runs` card per trackable role the area actually tracks, in registry order.
  *
- * Deliberately UNPINNED, exactly as the single generator-only `runs` card always was. A detector hangs
- * off the area-of-one of the device owning its signal point, so a card on a multi-device area needs
- * `device: dv_…` to resolve one — but the strategy has no member→role mapping to pin WITH (it sees
- * a capability set, not which member provided it), and inventing one here would be a second, weaker
- * copy of the resolution `getRunDetectorForHandleRole` already does. Both live dashboards pin these
- * cards by hand; a seeded one renders empty on a composite until it is pinned, which is the
- * pre-existing behaviour and not a regression introduced here.
+ * Deliberately UNPINNED, exactly as the single generator-only `runs` card always was — and since
+ * migration 0063 that is no longer a compromise. A detector is reachable from every device it draws
+ * a source point from, so an unpinned card on a multi-device area resolves through the member set
+ * (`getRunDetectorForDevices`) instead of rendering empty until someone pinned it by hand. Pinning
+ * still MATTERS only where an area has two detectors for one role, which is not a shape that exists
+ * here; the resolver takes the first and says so.
  */
 function runsCards(caps: CapabilitySet): CardNode[] {
   return (Object.keys(RUN_TRACKING_CAPABILITY) as TrackableRoleId[])

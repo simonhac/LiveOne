@@ -3126,9 +3126,10 @@ When to use:
 
 Http-only: every verb calls the deployed v4 API as you (`liveone auth login`), and prints
 `target: <origin> as <you>` on stderr first — read it to know which environment answered.
-A derivation lives on an AREA, and must live on the area-of-one of the device it watches: a
-detector on a composite is invisible to the capability probe, and `create` refuses with the
-member handles that would work. Ids are per-environment.
+A derivation's SITE is DERIVED from its source points, not configured: the device that owns its
+energy point (else its signal point) is the device it is addressed by, so there is no placement
+to get wrong. `create` refuses only if that device already has a detector for the same role.
+Ids are per-environment.
 
 Usage:
   liveone derivation <subcommand> [options]

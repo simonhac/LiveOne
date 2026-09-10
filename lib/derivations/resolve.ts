@@ -12,36 +12,53 @@
  * - **`params` is SPARSE.** A key is present only when it was explicitly configured; anything
  *   absent inherits the per-role code defaults (`lib/run-tracking/defaults.ts`). Thresholds are
  *   always explicit — they have no sensible default.
- * - **`source_points` holds raw uuids**, not the legacy `(system_id, index)` address pair. They are
- *   `points.id` values, so a consumer encodes straight to a `PointId` and hands it to the DAO — no
- *   `RegistryCache.pointForAddr` round-trip, and a point rename can't break the wiring.
+ * - **The wiring is read from `derivation_sources`, not from `source_points jsonb`** (migration
+ *   0063). The jsonb is still WRITTEN — 0064 drops it — but nothing here reads it, because only the
+ *   table proves what it holds: the slot is checked, the point exists, and `device_id` is provably
+ *   the point's own device.
  *
- * The integer `legacyHandle` is still carried because `point_info` and the KV latest keyspace stay
- * int-addressed until Phase 13; it is the area's `legacy_handles.handle`, i.e. exactly the `systemId`
- * these engines used before.
+ * ## A derivation's SITE is derived, never configured
+ *
+ * `derivations.area_id` used to say where a detector lived, and it could disagree with where its
+ * points actually were — nothing checked. It is now a dual-written vestige read by nothing. The site
+ * comes from the wiring instead:
+ *
+ *     owner point → `points.device_id` → `devices.rid`   (the `legacyHandle`)
+ *
+ * 🛑 **The owner slot is `energy` first, then `signal`** (`power` for the hws-model), and that
+ * precedence is load-bearing rather than aesthetic. Daylesford's generator detector reads its signal
+ * from device 14 (the DeepSea genset's Engine Speed) and its energy from device 1 (the Selectronic's
+ * Import counter), and the handle it has always been addressed by is 1. Signal-first would move its
+ * `legacyHandle` to 14 — and with it a live KV key and the `/device/{rid}/run-periods` address of
+ * every stored interval. Migration 0063's gate G5 proved the energy-first collapse preserves every
+ * handle on prod before anything was written.
+ *
+ * The integer `legacyHandle` is still carried because the KV latest keyspace stays int-addressed;
+ * it is now the OWNER DEVICE's `devices.rid` rather than the area's `legacy_handles.handle`. Those
+ * were the same number for every live detector — that is what G5 checked.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, type SQL } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
-  areaMembers,
   areas,
   derivations,
+  derivationSources,
   devices,
-  legacyHandles,
   points,
 } from "@/lib/db/planetscale/schema";
 import { Device, Point, type PointId } from "@/lib/ids";
 import { DeviceRegistry } from "@/lib/registry/device-registry";
 import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import { deriveDerivationId } from "./ids";
+import { HWS_MODEL_KIND, RUN_DETECTOR_KIND } from "./kinds";
+import { findDerivationBySource, writeDerivationSources } from "./sources";
 import { mergeDetectConfig, type DetectConfig } from "./params";
 import {
   DEFAULT_HWS_MODEL_OPTIONS,
   type HwsModelOptions,
 } from "@/lib/hws-model";
 
-export const RUN_DETECTOR_KIND = "run-detector";
-export const HWS_MODEL_KIND = "hws-model";
+export { HWS_MODEL_KIND, RUN_DETECTOR_KIND };
 
 // ---------------------------------------------------------------------------
 // Persisted jsonb contracts
@@ -58,7 +75,13 @@ export interface RunDetectorParams {
   delayOffSeconds?: number;
 }
 
-/** `derivations.source_points` for kind='run-detector'. Raw `points.id` uuids. */
+/**
+ * `derivations.source_points` for kind='run-detector'. Raw `points.id` uuids.
+ *
+ * 🛑 DUAL-WRITTEN, never read (0063). `derivation_sources` is what the engines resolve from; this
+ * shape survives only because it is still the WIRE shape and still the stored column. It goes with
+ * the column in 0064.
+ */
 export interface RunDetectorSourcePoints {
   signal: string;
   energy?: string | null;
@@ -72,11 +95,6 @@ export interface RunDetectorSourcePoints {
 /** `derivations.params` for kind='hws-model'. Sparse overrides on the model constants. */
 export type HwsModelParams = Partial<HwsModelOptions>;
 
-/** `derivations.source_points` for kind='hws-model'. Raw `points.id` uuid of the power signal. */
-export interface HwsSourcePoints {
-  power: string;
-}
-
 // ---------------------------------------------------------------------------
 // Resolved shapes
 // ---------------------------------------------------------------------------
@@ -84,19 +102,21 @@ export interface HwsSourcePoints {
 export interface ResolvedRunDetector {
   /** `derivations.id` — the identity `derived_intervals` rows hang off. */
   id: string;
-  areaId: string;
-  /** The area's `legacy_handles.handle`: the integer this detector used to be keyed by. */
+  /** `devices.id` of the OWNER device (energy point's, else signal point's). The detector's site. */
+  ownerDeviceId: string;
+  /** The owner device's `devices.rid`: the integer this detector is addressed by. */
   legacyHandle: number;
   role: string;
   name: string;
   signalPoint: PointId;
   /**
-   * The RAW `points.unit` of `signalPoint` ('W', 'rpm', …), or null when the point has no `points`
-   * row. This is what `derived_intervals.signal_unit` is stamped with, so a stored statistic says
-   * what it measures instead of being assumed to be Watts (migration 0055).
+   * The RAW `points.unit` of `signalPoint` ('W', 'rpm', …). This is what
+   * `derived_intervals.signal_unit` is stamped with, so a stored statistic says what it measures
+   * instead of being assumed to be Watts (migration 0055).
    *
-   * Null is a broken binding, not a normal state — `source_points.signal` should always name a live
-   * point. The writer treats it as "refuse to store an unlabelled number" rather than guessing.
+   * Since 0063 it comes from the same join that finds the source row, so unlike the jsonb era it can
+   * no longer be null-because-the-uuid-dangled: the composite FK makes a dangling source
+   * unrepresentable. It stays nullable only because `points.unit` itself is.
    */
   signalUnit: string | null;
   energyPoint: PointId | null;
@@ -104,17 +124,13 @@ export interface ResolvedRunDetector {
   boundaryPoint: PointId | null;
   detect: DetectConfig;
   detectorVersion: number;
+  /** From the owner device's primary area — the site's clock, not the detector's own. */
   timezoneOffsetMin: number;
   displayTimezone: string;
 }
 
 export interface ResolvedHwsModel {
   id: string;
-  /**
-   * Nullable since 0063 demoted `derivations.area_id` to a dual-written vestige, and this query
-   * has no `areas` join to narrow it. The field has no consumers — it goes with the column.
-   */
-  areaId: string | null;
   /** The output point's own owning-device handle (`devices.rid`) — the KV latest cache key, as before. */
   systemId: number;
   powerPoint: PointId;
@@ -134,8 +150,8 @@ export interface ResolvedHwsModel {
  * The old integer handle → owning area uuid. Area-first (a handle naming both an area-of-one and
  * its device must resolve as the area), else the device's `primary_area_id`.
  *
- * This is deliberately the ONE mapping used by both the fill script and every runtime lookup, so a
- * derivation can never be written against an area the readers don't resolve to.
+ * 🛑 Since 0063 this feeds ONLY the dual-write of the `derivations.area_id` vestige — no reader
+ * resolves a derivation through it. It goes when the column does.
  */
 export async function resolveAreaIdForHandle(
   handle: number,
@@ -152,101 +168,29 @@ export async function resolveAreaIdForHandle(
   return row?.areaId ?? null;
 }
 
+/**
+ * The integer handle → the `devices.id` it names, or null.
+ *
+ * The device-era counterpart of {@link resolveAreaIdForHandle}, and deliberately NOT expanded to an
+ * area's members: its one caller is {@link RunDetectorFilter}, which feeds
+ * `recomputeRange`/`deleteRange` — both of which delete-and-reinsert. Widening a handle to its
+ * members would turn a previously-inert CLI invocation into a destructive pass over detectors the
+ * caller never named.
+ */
+async function resolveDeviceIdForHandle(
+  handle: number,
+): Promise<string | null> {
+  const [row] = await requirePlanetscaleDb()
+    .select({ id: devices.id })
+    .from(devices)
+    .where(eq(devices.rid, handle))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Run detectors
 // ---------------------------------------------------------------------------
-
-type DerivationRow = typeof derivations.$inferSelect;
-type AreaFacts = {
-  legacySystemId: number | null;
-  tzOffset: number;
-  tz: string;
-};
-
-// config-v4 Phase 13 PR 5: `legacySystemId` is read from `legacy_handles`, not the dropped
-// `areas.legacy_system_id`. Every query using this projection must therefore also LEFT JOIN
-// `legacyHandles` on `area_id` — left, so the field stays `number | null` and `resolveRunDetector`'s
-// existing "area has no legacy handle — skipping" guard keeps its referent instead of the detector
-// silently disappearing from the result set with no log line.
-const areaFactsProjection = {
-  legacySystemId: legacyHandles.handle,
-  tzOffset: areas.timezoneOffsetMin,
-  tz: areas.displayTimezone,
-};
-
-function resolveRunDetector(
-  row: DerivationRow,
-  area: AreaFacts,
-): ResolvedRunDetector | null {
-  if (area.legacySystemId == null) {
-    console.warn(
-      `[Derivations] run-detector ${row.id}: area ${row.areaId} has no legacy handle — skipping`,
-    );
-    return null;
-  }
-  if (row.role == null) {
-    console.warn(`[Derivations] run-detector ${row.id}: no role — skipping`);
-    return null;
-  }
-  const params = row.params as RunDetectorParams;
-  const src = row.sourcePoints as RunDetectorSourcePoints;
-  if (!src?.signal) {
-    console.warn(
-      `[Derivations] run-detector ${row.id}: no signal source point — skipping`,
-    );
-    return null;
-  }
-  // 0063 made `area_id` nullable (a dual-written vestige until 0064). Unreachable in practice:
-  // every caller reaches this helper through a LEFT JOIN of `legacy_handles` on `area_id`, so a
-  // null area could never have produced the handle the guard above already demanded. Narrowed
-  // explicitly rather than asserted, and it goes when the column does.
-  if (row.areaId == null) return null;
-  return {
-    id: row.id,
-    areaId: row.areaId,
-    legacyHandle: area.legacySystemId,
-    role: row.role,
-    name: row.name,
-    signalPoint: Point.encode(src.signal),
-    signalUnit: null, // filled by attachSignalUnits — one batched read for the whole result set
-    energyPoint: src.energy ? Point.encode(src.energy) : null,
-    boundaryPoint: src.boundary ? Point.encode(src.boundary) : null,
-    detect: mergeDetectConfig(params, row.role),
-    detectorVersion: row.detectorVersion,
-    timezoneOffsetMin: area.tzOffset,
-    displayTimezone: area.tz,
-  };
-}
-
-/**
- * Fill `signalUnit` on every detector, in ONE `points` read for the whole set.
- *
- * Deliberately a second query rather than a join: `source_points.signal` is a jsonb key, so joining
- * it needs a hand-written `(source_points ->> 'signal')::uuid` fragment — and raw SQL is invisible
- * to tsc, which the execution plan names as the single most reliable failure mode of this whole
- * migration. `inArray` over the already-decoded uuids is typed end to end and costs one round trip.
- */
-async function attachSignalUnits(
-  detectors: ResolvedRunDetector[],
-): Promise<ResolvedRunDetector[]> {
-  if (detectors.length === 0) return detectors;
-  const uuids = [...new Set(detectors.map((d) => Point.toUuid(d.signalPoint)))];
-  const rows = await requirePlanetscaleDb()
-    .select({ id: points.id, unit: points.unit })
-    .from(points)
-    .where(inArray(points.id, uuids));
-  const unitById = new Map(rows.map((r) => [r.id, r.unit]));
-  for (const d of detectors) {
-    const unit = unitById.get(Point.toUuid(d.signalPoint));
-    if (unit === undefined) {
-      console.warn(
-        `[Derivations] run-detector ${d.id}: signal point ${Point.toUuid(d.signalPoint)} has no points row — its interval statistics will be stored WITHOUT values, since they cannot be labelled`,
-      );
-    }
-    d.signalUnit = unit ?? null;
-  }
-  return detectors;
-}
 
 /**
  * Narrow a detector listing to ONE detector — by its `derivations.id`, or by the (handle, role) pair
@@ -263,6 +207,84 @@ export type RunDetectorFilter =
   | { derivationId: string }
   | { handle: number; role: string };
 
+/** One `derivation_sources` row joined to its point, as the listing query returns it. */
+type SourceJoinRow = {
+  slot: string;
+  pointId: string;
+  deviceId: string;
+  unit: string | null;
+};
+
+/** The owner device's facts: the handle and the clock every resolved detector carries. */
+type OwnerFacts = { legacyHandle: number; tzOffset: number; tz: string };
+
+/**
+ * The owner point's slot, in precedence order — see the SITE note at the top of this file.
+ *
+ * `energy` before `signal`, and the reason is a specific live row rather than a preference. Changing
+ * the order re-addresses Daylesford's generator from handle 1 to handle 14.
+ */
+const OWNER_SLOTS = ["energy", "signal"] as const;
+
+/**
+ * Every enabled run-detector's rows, with its sources — ONE query.
+ *
+ * The join replaces both the old `areas`/`legacy_handles` join AND `attachSignalUnits`, the separate
+ * batched `points` read that existed only because `source_points.signal` was a jsonb key and joining
+ * it needed a hand-written `(source_points ->> 'signal')::uuid` fragment. A real table is joinable,
+ * so the unit arrives with the row and raw SQL — the failure mode tsc cannot see — is gone.
+ */
+async function loadRunDetectorRows(conds: SQL[]) {
+  return (
+    requirePlanetscaleDb()
+      .select({
+        d: derivations,
+        slot: derivationSources.slot,
+        pointId: derivationSources.pointId,
+        deviceId: derivationSources.deviceId,
+        unit: points.unit,
+      })
+      .from(derivations)
+      .innerJoin(
+        derivationSources,
+        eq(derivationSources.derivationId, derivations.id),
+      )
+      // Total by the composite FK `(point_id, device_id) → points(id, device_id)`: a source row cannot
+      // name a point that does not exist, so INNER drops nothing.
+      .innerJoin(points, eq(points.id, derivationSources.pointId))
+      .where(and(...conds))
+  );
+}
+
+/**
+ * The owner devices' handles and clocks, in one read.
+ *
+ * `devices.primary_area_id` is NOT NULL with an FK into `areas`, so both joins are total — which is
+ * why a detector can no longer silently vanish from a listing the way the old
+ * "area has no legacy handle — skipping" branch let it.
+ */
+async function ownerFacts(
+  deviceUuids: string[],
+): Promise<Map<string, OwnerFacts>> {
+  if (deviceUuids.length === 0) return new Map();
+  const rows = await requirePlanetscaleDb()
+    .select({
+      id: devices.id,
+      rid: devices.rid,
+      tzOffset: areas.timezoneOffsetMin,
+      tz: areas.displayTimezone,
+    })
+    .from(devices)
+    .innerJoin(areas, eq(areas.id, devices.primaryAreaId))
+    .where(inArray(devices.id, deviceUuids));
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { legacyHandle: r.rid, tzOffset: r.tzOffset, tz: r.tz },
+    ]),
+  );
+}
+
 /** All enabled run-detector derivations, resolved. Unresolvable rows are dropped with a warning. */
 export async function listEnabledRunDetectors(
   filter?: RunDetectorFilter,
@@ -271,85 +293,260 @@ export async function listEnabledRunDetectors(
     eq(derivations.kind, RUN_DETECTOR_KIND),
     eq(derivations.enabled, true),
   ];
+  let ownerMustBe: string | null = null;
   if (filter) {
     if ("derivationId" in filter) {
       conds.push(eq(derivations.id, filter.derivationId));
     } else {
-      const areaId = await resolveAreaIdForHandle(filter.handle);
+      const deviceId = await resolveDeviceIdForHandle(filter.handle);
       // An unresolvable handle must select NOTHING, never everything. The caller asked to be
       // narrowed; silently widening back to the whole fleet is how a scoped backfill becomes a
       // fleet-wide delete-and-reinsert.
-      if (!areaId) return [];
-      conds.push(
-        eq(derivations.areaId, areaId),
-        eq(derivations.role, filter.role),
-      );
+      if (!deviceId) return [];
+      ownerMustBe = deviceId;
+      conds.push(eq(derivations.role, filter.role));
+      // Narrowed in SQL on ANY slot (the `derivation_sources_device_idx` hot path), then narrowed
+      // again in JS to detectors this device actually OWNS. Two steps because the owner slot is a
+      // per-row precedence, not a column — and matching any slot here would otherwise hand a
+      // recompute the detector whose signal merely happens to sit on this device.
+      conds.push(eq(derivationSources.deviceId, deviceId));
     }
   }
-  const rows = await requirePlanetscaleDb()
-    .select({ d: derivations, a: areaFactsProjection })
-    .from(derivations)
-    .innerJoin(areas, eq(areas.id, derivations.areaId))
-    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-    .where(and(...conds));
-  return attachSignalUnits(
-    rows
-      .map(({ d, a }) => resolveRunDetector(d, a))
-      .filter((t): t is ResolvedRunDetector => t !== null),
-  );
+
+  // When the query is narrowed by device, that predicate also drops the detector's OTHER slots, so
+  // re-read its full source set by id rather than resolving a detector from a partial wiring.
+  let rows = await loadRunDetectorRows(conds);
+  if (ownerMustBe) {
+    const ids = [...new Set(rows.map((r) => r.d.id))];
+    if (ids.length === 0) return [];
+    // The kind/enabled predicates are RE-STATED, not dropped: the two reads are separate snapshots,
+    // so a detector disabled between them would otherwise come back as enabled.
+    rows = await loadRunDetectorRows([
+      inArray(derivations.id, ids),
+      eq(derivations.kind, RUN_DETECTOR_KIND),
+      eq(derivations.enabled, true),
+    ]);
+  }
+
+  const byDerivation = new Map<
+    string,
+    { d: (typeof rows)[number]["d"]; sources: SourceJoinRow[] }
+  >();
+  for (const r of rows) {
+    const entry = byDerivation.get(r.d.id) ?? { d: r.d, sources: [] };
+    entry.sources.push({
+      slot: r.slot,
+      pointId: r.pointId,
+      deviceId: r.deviceId,
+      unit: r.unit,
+    });
+    byDerivation.set(r.d.id, entry);
+  }
+
+  const staged = [...byDerivation.values()].flatMap((entry) => {
+    const slots = new Map(entry.sources.map((s) => [s.slot, s]));
+    const signal = slots.get("signal");
+    if (!signal) {
+      // Unreachable for a well-formed row — `derivation_sources_slot_check` permits it, so slot
+      // PRESENCE is the one thing about the wiring the database still does not enforce. Migration
+      // 0063's gate G3 proved every live detector has one.
+      console.warn(
+        `[Derivations] run-detector ${entry.d.id}: no signal source — skipping`,
+      );
+      return [];
+    }
+    if (entry.d.role == null) {
+      console.warn(
+        `[Derivations] run-detector ${entry.d.id}: no role — skipping`,
+      );
+      return [];
+    }
+    const energy = slots.get("energy") ?? null;
+    const owner = OWNER_SLOTS.map((s) => slots.get(s)).find((s) => s != null)!;
+    return [
+      {
+        entry,
+        signal,
+        energy,
+        boundary: slots.get("boundary") ?? null,
+        owner,
+        role: entry.d.role,
+      },
+    ];
+  });
+
+  const facts = await ownerFacts([
+    ...new Set(staged.map((s) => s.owner.deviceId)),
+  ]);
+
+  const resolved: ResolvedRunDetector[] = [];
+  for (const s of staged) {
+    if (ownerMustBe && s.owner.deviceId !== ownerMustBe) continue;
+    const f = facts.get(s.owner.deviceId);
+    if (!f) continue; // unreachable: both joins in `ownerFacts` are total.
+    const params = s.entry.d.params as RunDetectorParams;
+    resolved.push({
+      id: s.entry.d.id,
+      ownerDeviceId: s.owner.deviceId,
+      legacyHandle: f.legacyHandle,
+      role: s.role,
+      name: s.entry.d.name,
+      signalPoint: Point.encode(s.signal.pointId),
+      signalUnit: s.signal.unit,
+      energyPoint: s.energy ? Point.encode(s.energy.pointId) : null,
+      boundaryPoint: s.boundary ? Point.encode(s.boundary.pointId) : null,
+      detect: mergeDetectConfig(params, s.role),
+      detectorVersion: s.entry.d.detectorVersion,
+      timezoneOffsetMin: f.tzOffset,
+      displayTimezone: f.tz,
+    });
+  }
+  return resolved;
 }
 
-/** The enabled run detector for a legacy (handle, role), or null. */
+/**
+ * The enabled run detector a legacy (handle, role) OWNS, or null.
+ *
+ * "Owns", not "touches": the handle must be the detector's owner device. See
+ * {@link resolveDeviceIdForHandle}.
+ */
 export async function getRunDetectorForHandleRole(
   handle: number,
   role: string,
 ): Promise<ResolvedRunDetector | null> {
-  const areaId = await resolveAreaIdForHandle(handle);
-  if (!areaId) return null;
-  const [row] = await requirePlanetscaleDb()
-    .select({ d: derivations, a: areaFactsProjection })
-    .from(derivations)
-    .innerJoin(areas, eq(areas.id, derivations.areaId))
-    .leftJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
-    .where(
-      and(
-        eq(derivations.areaId, areaId),
-        eq(derivations.role, role),
-        eq(derivations.kind, RUN_DETECTOR_KIND),
-        eq(derivations.enabled, true),
-      ),
-    )
-    .limit(1);
-  if (!row) return null;
-  const det = resolveRunDetector(row.d, row.a);
-  return det ? (await attachSignalUnits([det]))[0] : null;
+  const [det] = await listEnabledRunDetectors({ handle, role });
+  return det ?? null;
 }
 
-/** Cheap existence check: does this legacy (handle, role) have an enabled run detector? */
-export async function hasEnabledRunDetector(
-  handle: number,
+/**
+ * The enabled run detector for `role` that any of these devices is a SOURCE of, or null.
+ *
+ * What `/api/device/{rid}/run-periods` asks. The handle it is given is usually the COMPOSITE — the
+ * stacked chart is keyed on Kinkora Unified (8) while the EV detector's points sit on Kinkora Mondo
+ * (6) — so the caller passes the member set and this asks all of them at once. Before 0063 that was
+ * "ask the handle, then walk `memberSystemIds` asking each in turn", one round trip per member.
+ *
+ * 🛑 **First wins, and the ambiguity is left visible.** A site with two detectors for one role is not
+ * a shape that exists here (a role is one physical thing per site), and merging them would be a
+ * worse answer than picking one — but neither is a GOOD answer, so the choice is an explicit
+ * `ORDER BY` rather than whatever Postgres happened to emit first.
+ */
+export async function getRunDetectorForDevices(
+  deviceUuids: string[],
   role: string,
-): Promise<boolean> {
-  const areaId = await resolveAreaIdForHandle(handle);
-  if (!areaId) return false;
-  const [row] = await requirePlanetscaleDb()
-    .select({ id: derivations.id })
-    .from(derivations)
+): Promise<ResolvedRunDetector | null> {
+  if (deviceUuids.length === 0) return null;
+  const [hit] = await requirePlanetscaleDb()
+    .selectDistinct({ id: derivations.id })
+    .from(derivationSources)
+    .innerJoin(derivations, eq(derivations.id, derivationSources.derivationId))
     .where(
       and(
-        eq(derivations.areaId, areaId),
-        eq(derivations.role, role),
-        eq(derivations.kind, RUN_DETECTOR_KIND),
+        inArray(derivationSources.deviceId, deviceUuids),
+        eq(derivationSources.kind, RUN_DETECTOR_KIND),
+        eq(derivationSources.role, role),
         eq(derivations.enabled, true),
       ),
     )
+    .orderBy(derivations.id)
     .limit(1);
-  return !!row;
+  if (!hit) return null;
+  const [det] = await listEnabledRunDetectors({ derivationId: hit.id });
+  return det ?? null;
+}
+
+/**
+ * Which trackable roles do these devices have an enabled run detector for?
+ *
+ * Replaces `hasEnabledRunDetector(handle, role)` — one `DISTINCT role` read served by
+ * `derivation_sources_device_idx`, for the whole member set at once. The old shape was
+ * `≈ 2·M·R` SEQUENTIAL round trips inside `capabilitiesForDevice` (`await` in a `for`, M members,
+ * R trackable roles): ~40 for a 7-member area, mitigated only by a short-circuit that stopped
+ * probing a role once any member answered.
+ *
+ * 🛑 It also answers a slightly DIFFERENT question, deliberately: a device is now credited with a
+ * role if it carries ANY of the detector's source points, not only if the detector was filed under
+ * its area-of-one. That is the point of the change — Daylesford's generator detector reads its
+ * signal from device 14, so `/device/14` gains the generator-runs card it could never have shown
+ * while placement was a configured fact. Signed off with the design.
+ *
+ * `enabled` lives on the PARENT and is deliberately not denormalised onto the child: it is the one
+ * mutable lever the PATCH route offers, and copying it would make every toggle a two-table write.
+ */
+export async function runDetectorRolesForDevices(
+  deviceUuids: string[],
+): Promise<Set<RoleId>> {
+  if (deviceUuids.length === 0) return new Set();
+  const rows = await requirePlanetscaleDb()
+    .selectDistinct({ role: derivationSources.role })
+    .from(derivationSources)
+    .innerJoin(derivations, eq(derivations.id, derivationSources.derivationId))
+    .where(
+      and(
+        inArray(derivationSources.deviceId, deviceUuids),
+        eq(derivationSources.kind, RUN_DETECTOR_KIND),
+        eq(derivations.enabled, true),
+      ),
+    );
+  const out = new Set<RoleId>();
+  for (const r of rows) {
+    if (r.role && (TRACKABLE_ROLE_IDS as readonly string[]).includes(r.role))
+      out.add(r.role as RoleId);
+  }
+  return out;
+}
+
+/**
+ * The enabled-or-not run detector for `role` whose OWNER device is `deviceId`, or null.
+ *
+ * Resolves each candidate's owner with the same energy-then-signal precedence the reader uses,
+ * rather than asking "does any source row of a same-role detector sit on this device" — which would
+ * also match a detector that merely reads a boundary point here and does not own it.
+ *
+ * 🛑 Not concurrency-safe, and cannot be: two creates whose signals sit on DIFFERENT devices but
+ * whose energy points resolve to the SAME owner both pass this check, and
+ * `derivation_sources_signal_role_unique` (keyed on the signal device) cannot catch them either.
+ * That is the honest cost of an invariant no index can express; it is a single-operator system and
+ * the loser is a duplicate row, not lost data.
+ */
+async function ownerOfRoleOnDevice(
+  db: ReturnType<typeof requirePlanetscaleDb>,
+  role: string,
+  deviceId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({
+      derivationId: derivationSources.derivationId,
+      slot: derivationSources.slot,
+      deviceId: derivationSources.deviceId,
+    })
+    .from(derivationSources)
+    .where(
+      and(
+        eq(derivationSources.kind, RUN_DETECTOR_KIND),
+        eq(derivationSources.role, role),
+      ),
+    );
+  const byDerivation = new Map<string, Map<string, string>>();
+  for (const r of rows) {
+    const slots = byDerivation.get(r.derivationId) ?? new Map();
+    slots.set(r.slot, r.deviceId);
+    byDerivation.set(r.derivationId, slots);
+  }
+  for (const [id, slots] of byDerivation) {
+    const owner = OWNER_SLOTS.map((sl) => slots.get(sl)).find((d) => d != null);
+    if (owner === deviceId) return id;
+  }
+  return null;
 }
 
 export interface EnsureRunDetectorInput {
-  /** The area the detector hangs off — see the placement note below. */
-  areaId: string;
+  /**
+   * The area to stamp on the dual-written `derivations.area_id` vestige. 🛑 It no longer decides
+   * anything: a detector's site is its owner device, so there is no placement rule left to get
+   * wrong and no `area-not-probed` refusal. Optional, and it goes with the column in 0064.
+   */
+  areaId?: string | null;
   role: RoleId;
   name: string;
   /** `points.id` uuid of the series the detector thresholds. */
@@ -364,63 +561,54 @@ export interface EnsureRunDetectorInput {
 export type EnsureRunDetectorStatus =
   | "created"
   | "exists"
-  | "no-area"
   | "not-trackable"
   | "no-signal-point"
   | "no-energy-point"
   | "no-bounds"
-  | "area-not-probed";
+  | "owner-role-taken"
+  | "area-role-vestige-taken";
 
 export interface EnsureRunDetectorResult {
   status: EnsureRunDetectorStatus;
   role: string;
   derivationId?: string;
-  areaId?: string;
-  /** For `area-not-probed`: the member handles that ARE eligible to carry the detector. */
-  memberHandles?: number[];
+  areaId?: string | null;
+  /** For `owner-role-taken`: the derivation already holding this (owner device, role). */
+  conflictingDerivationId?: string;
 }
 
 /**
- * Ensure the run-detector derivation for `(areaId, role)` exists. The write-side twin of
- * {@link getRunDetectorForHandleRole}, modelled on `ensureHwsDerivation` (lib/hws/register.ts) —
- * until now the only derivation with a writer at all, which is why Daylesford's generator row was
- * hand-written SQL.
+ * Ensure the run-detector derivation wired to `signalPointUid` for `role` exists.
  *
- * Idempotent via the deterministic id (`deriveDerivationId`), which is also what lets
- * `prod-dev-sync` copy `derivations` as a plain by-PK upsert: seed prod and dev inherits the same
- * row, pointing at the same `derived_intervals`.
+ * Idempotent by NATURAL KEY: it asks `derivation_sources` whether this (signal point, kind, role) is
+ * already wired, and only mints an id on the insert path. 🛑 The old shape minted the deterministic
+ * id *in order to look it up*, which quietly made `derivations.id` the answer to a question that is
+ * really about the wiring — and it meant a caller reasoning about devices could never find a
+ * pre-0063 row whose id was anchored on an area. Existing ids are NEVER recomputed; see
+ * `lib/derivations/ids.ts`.
  *
- * 🛑 **WHICH AREA.** A detector belongs on a device's own AREA-OF-ONE, never on the composite site
- * area you want the card on. `capabilitiesForDevice` probes `hasEnabledRunDetector` for each MEMBER
- * handle of an area and never for the area's own handle, so a detector parked on the composite is
- * invisible to the capability that lights its card up. Daylesford's generator detector lives on
- * handle 1 (a member of the Daylesford composite) for exactly this reason. The consequence is that
- * the dashboard card must be pinned with `device:`.
+ * ⚠️ There is deliberately no rule about where the signal point LIVES relative to anything else. A
+ * detector may watch a point on one device and count energy on another, and one does: Daylesford's
+ * generator takes its signal from the DeepSea genset's Engine Speed (device 14) and its energy from
+ * the Selectronic's Import counter (device 1), because handle 1's Grid-import proxy was measurably
+ * unable to tell a running genset from a stopped one. The site falls out of that wiring rather than
+ * being asserted alongside it.
  *
- * That rule used to be a docstring a caller had to read and obey; it is now ENFORCED, and stated in
- * the same terms as the probe it protects: **the area's own handle must be one of its member
- * devices' handles** — precisely the condition under which `memberSystemIds` will hand this area's
- * handle to `hasEnabledRunDetector`. A composite fails it (its handle names no device); an
- * area-of-one passes. Refusal is `area-not-probed`, carrying the member handles that would work.
- *
- * ⚠️ What is deliberately NOT checked is where the SIGNAL POINT lives. A detector may watch a point
- * on a different device entirely, and one does: Daylesford's generator sits on area/handle 1
- * (Selectronic) with its energy point there, but takes its signal from the DeepSea genset's Engine
- * Speed on handle 14 — because handle 1's Grid-import proxy was measurably unable to tell a running
- * genset from a stopped one. `resolveRunDetector` has always allowed this. An earlier version of
- * this guard required the signal point's device to own the area and would have refused to recreate
- * Daylesford's own detector; `scripts/utils/v4-surface-smoke.ts` caught it by driving the real row.
+ * 🛑 `owner-role-taken` is the ONE invariant carried by code rather than by a constraint, and
+ * honestly so: `derivation_sources_signal_role_unique` covers `(device, kind, role)` for the SIGNAL
+ * slot, but two detectors whose signals sit on different devices can still resolve to the same OWNER
+ * device and fight over one `<stem>/running` point. The index cannot express that; this check can.
  *
  * Every failure mode is a distinct status rather than a throw, because the callers are a dry-run
  * script and an API route, both of which want to report rather than crash. The point existence
- * checks matter: `resolveRunDetector` only WARNS on a dangling `source_points.signal`, so a typo'd
- * uuid would otherwise persist as a detector that silently derives nothing forever.
+ * checks matter even now that the FK would catch a dangling uuid: a 422 naming the slot is a better
+ * answer than a constraint violation surfacing as a 500.
  */
 export async function ensureRunDetector(
   input: EnsureRunDetectorInput,
 ): Promise<EnsureRunDetectorResult> {
   const { areaId, role, signalPointUid, energyPointUid, params, apply } = input;
-  const base = { role, areaId };
+  const base = { role, areaId: areaId ?? null };
 
   if (!TRACKABLE_ROLE_IDS.includes(role))
     return { ...base, status: "not-trackable" };
@@ -430,58 +618,93 @@ export async function ensureRunDetector(
 
   const db = requirePlanetscaleDb();
   const wanted = [signalPointUid, ...(energyPointUid ? [energyPointUid] : [])];
-  const found = new Set(
+  const found = new Map(
     (
       await db
-        .select({ id: points.id })
+        .select({ id: points.id, deviceId: points.deviceId })
         .from(points)
         .where(inArray(points.id, wanted))
-    ).map((r) => r.id),
+    ).map((r) => [r.id, r.deviceId]),
   );
-  if (!found.has(signalPointUid)) return { ...base, status: "no-signal-point" };
-  if (energyPointUid && !found.has(energyPointUid))
+  const signalDeviceId = found.get(signalPointUid);
+  if (!signalDeviceId) return { ...base, status: "no-signal-point" };
+  const energyDeviceId = energyPointUid ? found.get(energyPointUid) : undefined;
+  if (energyPointUid && !energyDeviceId)
     return { ...base, status: "no-energy-point" };
 
-  // Is this an area the capability probe will ask? See the WHICH AREA note above.
-  const [handleRow] = await db
-    .select({ handle: legacyHandles.handle })
-    .from(legacyHandles)
-    .where(eq(legacyHandles.areaId, areaId))
-    .limit(1);
-  const memberHandles = (
-    await db
-      .select({ rid: devices.rid })
-      .from(areaMembers)
-      .innerJoin(devices, eq(devices.id, areaMembers.deviceId))
-      .where(eq(areaMembers.areaId, areaId))
-  ).map((r) => r.rid);
-  if (handleRow == null) return { ...base, status: "no-area" };
-  if (!memberHandles.includes(handleRow.handle))
-    return { ...base, status: "area-not-probed", memberHandles };
+  const existingId = await findDerivationBySource(
+    db,
+    RUN_DETECTOR_KIND,
+    role,
+    "signal",
+    signalPointUid,
+  );
+  if (existingId)
+    return { ...base, status: "exists", derivationId: existingId };
 
-  const id = deriveDerivationId(areaId, RUN_DETECTOR_KIND, role);
-  const [existing] = await db
-    .select({ id: derivations.id })
-    .from(derivations)
-    .where(eq(derivations.id, id))
-    .limit(1);
-  if (existing) return { ...base, status: "exists", derivationId: id };
+  // The owner this detector WOULD have — energy first, then signal, exactly as the resolver reads it.
+  const ownerDeviceId = energyDeviceId ?? signalDeviceId;
+  // 🛑 Compare OWNERS, not "does any existing row touch this device". A detector that merely reads a
+  // BOUNDARY point on this device does not own it, and refusing that would forbid a legal second
+  // detector — the check has to resolve each candidate's owner the same way the reader does.
+  const takenBy = await ownerOfRoleOnDevice(db, role, ownerDeviceId);
+  if (takenBy)
+    return {
+      ...base,
+      status: "owner-role-taken",
+      conflictingDerivationId: takenBy,
+    };
+
+  // 🛑 The `derivations_area_role_unique` VESTIGE. `area_id` decides nothing any more, but the index
+  // on `(area_id, role) WHERE role IS NOT NULL` is still there until 0064 drops it — so two
+  // detectors for one role stamped with the same area cannot both be stored, however legal their
+  // wiring now is. Refused here, by name, rather than surfacing as a 500 on the INSERT.
+  if (areaId) {
+    const [clash] = await db
+      .select({ id: derivations.id })
+      .from(derivations)
+      .where(and(eq(derivations.areaId, areaId), eq(derivations.role, role)))
+      .limit(1);
+    if (clash)
+      return {
+        ...base,
+        status: "area-role-vestige-taken",
+        conflictingDerivationId: clash.id,
+      };
+  }
+
+  // Anchored on the SIGNAL POINT uuid, not the area: deterministic AND cross-environment stable
+  // (`points.id` is a uuidv5, `devices.id` is not). Minted on the insert path only.
+  const id = deriveDerivationId(signalPointUid, RUN_DETECTOR_KIND, role);
   if (!apply) return { ...base, status: "created", derivationId: id };
 
-  await db.insert(derivations).values({
-    id,
-    areaId,
-    kind: RUN_DETECTOR_KIND,
-    role,
-    name: input.name,
-    enabled: true,
-    output: "intervals",
-    // Sparse by convention: anything absent inherits `detectorDefaultsForRole` at resolve time.
-    params,
-    sourcePoints: {
-      signal: signalPointUid,
-      energy: energyPointUid ?? null,
-    } satisfies RunDetectorSourcePoints,
+  // 🛑 BOTH WRITES OR NEITHER. The parent alone is worse than nothing: `findDerivationBySource`
+  // above would not see it, so the next call re-mints the SAME deterministic id and dies on the
+  // primary key — an unrecoverable create, by hand, with no way to tell what happened.
+  await db.transaction(async (tx) => {
+    await tx.insert(derivations).values({
+      id,
+      areaId: areaId ?? null,
+      kind: RUN_DETECTOR_KIND,
+      role,
+      name: input.name,
+      enabled: true,
+      output: "intervals",
+      // Sparse by convention: anything absent inherits `detectorDefaultsForRole` at resolve time.
+      params,
+      // Dual-written and read by nothing (0063). `derivation_sources` below is the twin the engines
+      // resolve from.
+      sourcePoints: {
+        signal: signalPointUid,
+        energy: energyPointUid ?? null,
+      } satisfies RunDetectorSourcePoints,
+    });
+    await writeDerivationSources(tx, {
+      derivationId: id,
+      kind: RUN_DETECTOR_KIND,
+      role,
+      slots: { signal: signalPointUid, energy: energyPointUid },
+    });
   });
 
   return { ...base, status: "created", derivationId: id };
@@ -489,14 +712,13 @@ export async function ensureRunDetector(
 
 /**
  * `ensureRunDetector` addressed by the legacy integer handle — what the seed script's `--handle`
- * flag means. Kept as a thin wrapper rather than a second implementation so the placement rule is
- * enforced in exactly one place.
+ * flag means. The handle now only supplies the `area_id` vestige; the detector's site comes from
+ * its signal/energy points either way.
  */
 export async function ensureRunDetectorForHandle(
   input: Omit<EnsureRunDetectorInput, "areaId"> & { handle: number },
 ): Promise<EnsureRunDetectorResult> {
   const areaId = await resolveAreaIdForHandle(input.handle);
-  if (!areaId) return { role: input.role, status: "no-area" };
   const { handle: _handle, ...rest } = input;
   return ensureRunDetector({ ...rest, areaId });
 }
@@ -506,58 +728,52 @@ export async function ensureRunDetectorForHandle(
 // ---------------------------------------------------------------------------
 
 /**
- * All enabled hws-model derivations, resolved. The output point's integer address / unit / display
- * name still come from `point_info` (primary until Phase 12), looked up by its uuid.
+ * All enabled hws-model derivations, resolved.
+ *
+ * One query, where this used to issue a `points ⋈ devices` read PER ROW (an N+1 that existed
+ * because the power source lived in jsonb and the output point had to be looked up separately).
+ * Both reachable through joins now: `derivation_sources` for the power slot, `output_point_id` for
+ * the temperature point.
  */
 export async function listEnabledHwsModels(): Promise<ResolvedHwsModel[]> {
   const rows = await requirePlanetscaleDb()
-    .select({ d: derivations })
+    .select({
+      d: derivations,
+      powerPointId: derivationSources.pointId,
+      systemId: devices.rid,
+      stem: points.logicalPath,
+      metric: points.metricType,
+      unit: points.unit,
+      displayName: points.name,
+    })
     .from(derivations)
+    .innerJoin(
+      derivationSources,
+      and(
+        eq(derivationSources.derivationId, derivations.id),
+        eq(derivationSources.slot, "power"),
+      ),
+    )
+    // INNER on the OUTPUT point: an hws-model with no output point has nowhere to write, and
+    // `output_point_id` has an FK, so this drops only the (illegal) null case the old code warned
+    // about.
+    .innerJoin(points, eq(points.id, derivations.outputPointId))
+    .innerJoin(devices, eq(devices.id, points.deviceId))
     .where(
       and(eq(derivations.kind, HWS_MODEL_KIND), eq(derivations.enabled, true)),
     );
 
-  const resolved: ResolvedHwsModel[] = [];
-  for (const { d } of rows) {
-    const src = d.sourcePoints as HwsSourcePoints;
-    if (!d.outputPointId || !src?.power) {
-      console.warn(
-        `[Derivations] hws-model ${d.id}: missing output point or power source — skipping`,
-      );
-      continue;
-    }
-    const [out] = await requirePlanetscaleDb()
-      .select({
-        systemId: devices.rid,
-        stem: points.logicalPath,
-        metric: points.metricType,
-        unit: points.unit,
-        displayName: points.name,
-      })
-      .from(points)
-      .innerJoin(devices, eq(devices.id, points.deviceId))
-      .where(eq(points.id, d.outputPointId))
-      .limit(1);
-    if (!out) {
-      console.warn(
-        `[Derivations] hws-model ${d.id}: output point ${d.outputPointId} has no points row — skipping`,
-      );
-      continue;
-    }
-    resolved.push({
-      id: d.id,
-      areaId: d.areaId,
-      systemId: out.systemId,
-      powerPoint: Point.encode(src.power),
-      tempPoint: Point.encode(d.outputPointId),
-      tempPath: `${out.stem}/${out.metric}`,
-      tempUnit: out.unit,
-      tempDisplayName: out.displayName,
-      options: {
-        ...DEFAULT_HWS_MODEL_OPTIONS,
-        ...(d.params as HwsModelParams),
-      },
-    });
-  }
-  return resolved;
+  return rows.map((r) => ({
+    id: r.d.id,
+    systemId: r.systemId,
+    powerPoint: Point.encode(r.powerPointId),
+    tempPoint: Point.encode(r.d.outputPointId!),
+    tempPath: `${r.stem}/${r.metric}`,
+    tempUnit: r.unit,
+    tempDisplayName: r.displayName,
+    options: {
+      ...DEFAULT_HWS_MODEL_OPTIONS,
+      ...(r.d.params as HwsModelParams),
+    },
+  }));
 }
