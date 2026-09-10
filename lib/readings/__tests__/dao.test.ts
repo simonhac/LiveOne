@@ -239,6 +239,114 @@ describe("ReadingsDao writes — rid-keyed value-building", () => {
     expect(first.inserts[0].mode).toBe("nothing");
   });
 
+  /**
+   * The 2026-09-09 data loss, in miniature.
+   *
+   * Postgres refuses the WHOLE `ON CONFLICT DO UPDATE` statement when one command proposes the same
+   * constrained key twice ("cannot affect row a second time", SQLSTATE 21000) — so a single collision
+   * discards every other row travelling with it. Five weeks of Amber readings were lost that way, and
+   * no batch cap prevents it: two rows fail exactly as 1,652 did.
+   */
+  describe("intra-statement primary-key collisions", () => {
+    const at = (rid: number, ms: number, dataQuality: string, avg: number) => ({
+      point: point(rid, 2),
+      intervalEndMs: ms,
+      avg,
+      min: avg,
+      max: avg,
+      last: avg,
+      delta: null,
+      valueStr: null,
+      sampleCount: 1,
+      errorCount: 0,
+      dataQuality,
+      sessionId: null,
+    });
+    // Same rid + same interval => same PK. `point()` mints a fresh PointId per call, so passing the
+    // same rid twice is exactly the production shape: two observations that resolve to one row.
+    const collide = (dq1: string, dq2: string, a1 = 10, a2 = 10) => [
+      at(246, 1_700_000_000_000, dq1, a1),
+      at(246, 1_700_000_000_000, dq2, a2),
+    ];
+
+    it("never emits the same (point_rid, interval_end) twice in one statement", async () => {
+      const ex = makeFakeExec();
+      await ReadingsDao.insert5m(collide("a", "b"), { upsert: true }, ex.exec);
+      expect(ex.inserts[0].rows).toHaveLength(1);
+    });
+
+    it("keeps the most-final grading, whichever order it arrives in", async () => {
+      // The real case: `usage` graded the interval `b`(illable), `pricing` graded the same interval
+      // `a`(ctual), same value. Billable is the invoiced number and must survive either ordering.
+      for (const [first, second] of [
+        ["a", "b"],
+        ["b", "a"],
+      ]) {
+        const ex = makeFakeExec();
+        await ReadingsDao.insert5m(
+          collide(first, second),
+          { upsert: true },
+          ex.exec,
+        );
+        expect(ex.inserts[0].rows[0].dataQuality).toBe("b");
+      }
+    });
+
+    it("never lets a forecast displace a settled reading", async () => {
+      // A re-fetch that reaches forward into un-settled intervals must not downgrade what we know.
+      const ex = makeFakeExec();
+      await ReadingsDao.insert5m(
+        collide("b", "f", 10, 99),
+        { upsert: true },
+        ex.exec,
+      );
+      expect(ex.inserts[0].rows[0].dataQuality).toBe("b");
+      expect(ex.inserts[0].rows[0].avg).toBe(10);
+    });
+
+    it("falls back to last-wins when the gradings tie", async () => {
+      const ex = makeFakeExec();
+      await ReadingsDao.insert5m(
+        collide("good", "good", 10, 20),
+        { upsert: true },
+        ex.exec,
+      );
+      expect(ex.inserts[0].rows[0].avg).toBe(20);
+    });
+
+    it("leaves distinct keys alone, in arrival order", async () => {
+      const ex = makeFakeExec();
+      const rows = [
+        at(246, 1_700_000_000_000, "b", 1),
+        at(247, 1_700_000_000_000, "b", 2),
+        at(246, 1_700_000_300_000, "b", 3),
+      ];
+      await ReadingsDao.insert5m(rows, { upsert: true }, ex.exec);
+      expect(ex.inserts[0].rows.map((r: any) => r.avg)).toEqual([1, 2, 3]);
+    });
+
+    it("collapses agg_1d day collisions too", async () => {
+      // Same refusal, same table shape — but no quality column, so it is plain last-wins.
+      const p1 = point(300, 2);
+      const p2 = point(300, 2);
+      const day = (pt: any, avg: number) => ({
+        point: pt,
+        day: "2026-07-07",
+        avg,
+        min: avg,
+        max: avg,
+        last: avg,
+        delta: null,
+        sampleCount: 1,
+        errorCount: 0,
+      });
+      const ex = makeFakeExec();
+      await ReadingsDao.upsert1d([day(p1, 1), day(p2, 2)], ex.exec);
+      expect(ex.inserts[0].rows).toHaveLength(1);
+      expect(ex.inserts[0].rows[0].avg).toBe(2);
+    });
+  });
+
   it("insert5m skipUnchanged adds a setWhere over exactly the columns the SET writes", async () => {
     const p = point(15, 2);
     const base = {

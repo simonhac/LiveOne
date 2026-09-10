@@ -37,6 +37,9 @@ function makeInput(index: number, value: number): RawObservationInput {
   return {
     sessionId: session.sessionId,
     point: {
+      // `pointUid` is the collector's merge address (and NOT NULL in production) — a fixture that
+      // omitted it would make every point in a test collide on one address.
+      pointUid: `0192f000-0000-7000-8000-00000000${String(index).padStart(4, "0")}`,
       metricType: "power",
       metricUnit: "W",
       displayName: `Point ${index}`,
@@ -179,5 +182,90 @@ describe("createPollCollector", () => {
   it("starts empty", () => {
     const collector = createPollCollector();
     expect(collector.observations).toHaveLength(0);
+  });
+});
+
+/**
+ * The producer half of the 2026-09-09 loss.
+ *
+ * Amber's `usage` and `pricing` fetches both report a channel's `perKwh`, and a backfill runs both
+ * into ONE collector — so the same (point, interval) arrived twice, graded `b` by one and `a` by
+ * the other. Downstream that made a duplicate PK inside a single `ON CONFLICT DO UPDATE`, which
+ * Postgres rejects WHOLESALE (SQLSTATE 21000), discarding every other reading in the statement.
+ */
+describe("PollCollector merges observations that address the same row", () => {
+  const agg = (dataQuality: string, avg: number) => ({
+    avg,
+    min: avg,
+    max: avg,
+    last: avg,
+    delta: null,
+    valueStr: null,
+    sampleCount: 1,
+    errorCount: 0,
+    dataQuality,
+  });
+  /** Two inputs at the SAME address — same point, same interval, same measurement time. */
+  const priced = (dataQuality: string, avg: number): RawObservationInput => ({
+    ...makeInput(1, avg),
+    interval: "5m",
+    measurementTimeMs: 1_700_000_000_000,
+    agg: agg(dataQuality, avg) as RawObservationInput["agg"],
+  });
+
+  it("keeps one row per address, and counts the merge", () => {
+    const c = createPollCollector();
+    c.add([priced("b", 25.32844)]);
+    c.add([priced("a", 25.32844)]);
+    expect(c.observations).toHaveLength(1);
+    expect(c.mergedCount).toBe(1);
+  });
+
+  it("keeps the billable grading whichever fetch lands first", () => {
+    for (const [first, second] of [
+      ["b", "a"],
+      ["a", "b"],
+    ]) {
+      const c = createPollCollector();
+      c.add([priced(first, 25.32844)]);
+      c.add([priced(second, 25.32844)]);
+      expect(c.observations[0].agg?.dataQuality).toBe("b");
+    }
+  });
+
+  it("never lets a forecast displace a settled reading", () => {
+    const c = createPollCollector();
+    c.add([priced("b", 25.32844)]);
+    c.add([priced("f", 99)]);
+    expect(c.observations).toHaveLength(1);
+    expect(c.observations[0].agg?.dataQuality).toBe("b");
+    expect(c.observations[0].agg?.avg).toBe(25.32844);
+  });
+
+  it("keeps the FIRST raw sample, matching insertRaw's DO NOTHING", () => {
+    // Raw is `ON CONFLICT DO NOTHING`, so the store would have kept the first. Merging must not
+    // quietly change which value survives.
+    const c = createPollCollector();
+    c.add([{ ...makeInput(1, 111), measurementTimeMs: 1_700_000_000_000 }]);
+    c.add([{ ...makeInput(1, 222), measurementTimeMs: 1_700_000_000_000 }]);
+    expect(c.observations).toHaveLength(1);
+    expect(c.observations[0].value).toBe(111);
+  });
+
+  it("treats the same instant at different intervals as different rows", () => {
+    // raw and 5m are separate tables; collapsing across them would destroy data.
+    const c = createPollCollector();
+    c.add([{ ...makeInput(1, 5), measurementTimeMs: 1_700_000_000_000 }]);
+    c.add([priced("b", 5)]);
+    expect(c.observations).toHaveLength(2);
+    expect(c.mergedCount).toBe(0);
+  });
+
+  it("leaves an ordinary poll untouched, in insertion order", () => {
+    const c = createPollCollector();
+    c.add([makeInput(1, 100), makeInput(2, 200)]);
+    c.add([makeInput(3, 300)]);
+    expect(c.observations.map((o) => o.value)).toEqual([100, 200, 300]);
+    expect(c.mergedCount).toBe(0);
   });
 });

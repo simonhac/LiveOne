@@ -177,6 +177,70 @@ signing keys, and leaves message logs and DLQ contents behind in the old region.
 message from the old region fail signature verification. Drain the old region first (pause publishing,
 let it empty, then switch), or teach the receiver to accept two key pairs for the cutover.
 
+## 🛑 The data loss had a SECOND, unrelated cause — PK collisions in one statement
+
+Found 2026-09-10, reading the 8 DLQ messages the incident left behind. The head-of-line analysis in
+this doc is correct but **incomplete**: wedging the queue is what stopped ingest, and it is what the
+lanes fix. It is not what destroyed the data.
+
+Every one of the 8 messages failed with HTTP 500 on `insert into point_readings_agg_5m`, and each
+carried ~215 rows whose `(point_rid, interval_end)` duplicated another row **in the same statement**.
+Postgres refuses that outright:
+
+> ON CONFLICT DO UPDATE command cannot affect row a second time — SQLSTATE 21000
+
+It refuses the WHOLE statement, so one collision discards every row travelling with it.
+
+**It is not a size limit.** The statement was 181 kB with ~19,800 bind parameters — under a third of
+Postgres's 65,535 ceiling. Two colliding rows fail exactly as 1,652 did. No batch cap, delivery
+bound, lane or Flow Control setting in this document prevents it, and slicing a message into
+producer-cap transactions does not either: at ~13% collision density nearly every slice still
+contains a pair.
+
+**Where the duplicates come from.** `usagePointFilter` and `pricingPointFilter`
+(`lib/vendors/amber/client.ts`) overlap on exactly one suffix — `/perKwh`. The usage sync and the
+pricing sync are two API fetches that share one `PollCollector`, so a backfill emits that channel's
+rate twice for every interval the two windows share: identical value, graded `b` (billable) by
+`usage` and `a` (actual) by `pricing`. Measured on the real payload — one topic at 551 rows where
+the others sat at 336 (= 336 real half-hours + 215 collisions), the 215 matching the pricing fetch's
+coverage exactly, the two fetches 417 ms apart.
+
+**Why only backfills.** A live poll carries one interval per point, so it cannot collide with
+itself. Only a multi-day window is long enough to span a settlement boundary where Amber holds two
+gradings.
+
+**The fix** is `collapseByKey` in `lib/readings/dao.ts`: collapse rows sharing a PK before the
+statement, keeping the highest `qualityRank` (`lib/data-quality.ts`), last-wins on a tie. It lives in
+the DAO deliberately — it is the single writer, it protects every vendor, and it is the only place
+that can help a REPLAY, because the outbox payloads already contain the duplicate pairs. Amber's
+private `QUALITY_RANK` now delegates to the shared ordering.
+
+**The producer overlap is fixed too, and NOT by changing the filters.** Both endpoints are entitled
+to report `perKwh`: only `pricing` has current/forecast intervals, and only `usage` carries the
+billed grading — the live poll path (`lib/vendors/amber/adapter.ts`) reads the rate from prices, so
+narrowing either filter would lose a series. What the two fetches lack is any view of each other,
+and the one thing they share is the `PollCollector`. So `add()` now merges on
+`(pointUid, interval, measurementTime)` — the serving store's own key — resolving exactly as the
+store would: FIRST wins for `raw` (`ON CONFLICT DO NOTHING`), highest `qualityRank` for `5m`/`1d`
+(upserts). No stored value changes; the redundant row simply never gets built, and the flush log
+reports `N merged` so an overlap appearing on a vendor that should have none is visible.
+
+### Consequence: five weeks of Amber data are missing, and recoverable only until ~2026-10-05
+
+Device handle 10002 (Amber – CitiPower) reports `firstData: 2026-09-08` on every series. The
+backfill that would have populated **2026-07-07 → 2026-08-11** is the batch that failed. Three
+recovery routes, all needing a deliberate action — none self-heals, and the coverage-repair cron
+cannot see it because its window floor is `commissioned_on`:
+
+| Route | Expires | Note |
+| --- | --- | --- |
+| QStash DLQ payload | unconfirmed | Retention not verified; likely the tightest. |
+| `observations_outbox` replay | ~2026-10-09 | Rows exist (the tee precedes publish) but `published_at` is set, so the relay will never re-send. Needs it cleared. |
+| Amber `/usage` re-fetch | ~2026-10-05 | Rolling ~90-day window against the oldest needed day. |
+
+🛑 Do **not** attempt recovery before the collapse fix is deployed — the stored payloads still carry
+the duplicate pairs and would fail identically.
+
 ## Secondary fixes
 
 Still worth doing; Flow Control reduces their urgency but does not replace them.

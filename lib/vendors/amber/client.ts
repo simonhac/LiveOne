@@ -28,6 +28,7 @@ import {
 } from "@/lib/point/point-manager";
 import type { PollCollector } from "@/lib/observations/poll-collector";
 import { formatDateAEST } from "@/lib/date-utils";
+import { qualityRank } from "@/lib/data-quality";
 import { AmberReadingsBatch } from "./amber-readings-batch";
 import {
   createChannelPoint,
@@ -46,18 +47,6 @@ import { DeviceConfigRegistry } from "@/lib/registry/device-config";
  * Set to false to strip sampleRecords from AmberSyncResult (reduces payload size)
  */
 const INCLUDE_SAMPLE_RECORDS = false;
-
-/**
- * Quality rank for comparison (single-character codes)
- * Higher values = higher precedence/quality
- */
-const QUALITY_RANK: Record<string, number> = {
-  b: 4, // billable
-  a: 3, // actual
-  e: 2, // estimated
-  f: 1, // forecast
-  ".": 0, // null/missing
-};
 
 /**
  * Stage tracker for auto-numbering
@@ -130,8 +119,10 @@ function compareReadings(
   if (!local) return 1;
 
   // Case 2: Compare quality ranks
-  const localRank = QUALITY_RANK[local.dataQuality] ?? 0;
-  const remoteRank = QUALITY_RANK[remote.dataQuality] ?? 0;
+  // One ordering for the whole codebase (lib/data-quality). Only the RELATIVE order is read here,
+  // and it is unchanged: b > a > e > f > '.'.
+  const localRank = qualityRank(local.dataQuality);
+  const remoteRank = qualityRank(remote.dataQuality);
 
   if (remoteRank > localRank) return 1;
   if (localRank > remoteRank) return -1;

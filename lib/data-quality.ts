@@ -83,3 +83,52 @@ export function isSettledQuality(dataQuality: string): boolean {
 export function isDerivedQuality(dataQuality: string): boolean {
   return DERIVED_QUALITIES.has(dataQuality);
 }
+
+/**
+ * Precedence for `data_quality`, used to pick a winner when the SAME (point, interval) is written
+ * twice and only one row can survive. Higher wins; unknown markers rank 0 (never beat a known one).
+ *
+ * 🛑 This exists because two markers for one interval is NOT a corruption — it is the normal shape
+ * of a settling series. Amber reports an interval as `f`orecast, then `e`stimated, then `a`ctual,
+ * then `b`illable, and a backfill that spans a settlement boundary legitimately sees two of those
+ * for the same half-hour. The rank is what turns "two rows" into "the later word on the same
+ * reading" instead of a collision.
+ *
+ * The tiers, most-final first:
+ *   5  billable  — Amber's final, invoiced number
+ *   4  measured  — good / actual: a vendor's settled reading
+ *   3  calculated — derived exactly, by identity, from another MEASURED series
+ *   2  interpolated / estimated — a genuine guess, ours
+ *   1  forecast  — a vendor's guess
+ *   0  unknown   — `.`, or any marker not listed
+ *
+ * `good` and `actual` deliberately SHARE a tier: they are the same claim in two vendors' words, and
+ * ordering them against each other would be inventing a distinction no vendor makes. Ties are
+ * broken by arrival order (last wins), which matches what consecutive statements would have done.
+ */
+const QUALITY_PRECEDENCE: ReadonlyMap<string, number> = new Map([
+  ["billable", 5],
+  ["b", 5],
+  ["good", 4],
+  ["actual", 4],
+  ["a", 4],
+  ["calculated", 3],
+  ["interpolated", 2],
+  ["estimated", 2],
+  ["e", 2], // Amber abbreviated estimated
+  ["forecast", 1],
+  ["f", 1],
+  ["unknown", 0],
+  [".", 0],
+]);
+
+/**
+ * Rank a `data_quality` marker for last-writer-wins arbitration. See `QUALITY_PRECEDENCE`.
+ *
+ * Null/undefined/unrecognised all rank 0 — an unknown marker must never displace a known one, for
+ * the same reason `isSettledQuality` is an allow-list.
+ */
+export function qualityRank(dataQuality: string | null | undefined): number {
+  if (dataQuality == null) return 0;
+  return QUALITY_PRECEDENCE.get(dataQuality) ?? 0;
+}
