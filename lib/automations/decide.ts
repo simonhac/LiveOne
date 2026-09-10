@@ -29,7 +29,7 @@
  * so far is simply unknowable from this counter — that is the whole baseline story.
  */
 import type {
-  AutomationArmedContext,
+  ChargeArmedContext,
   AutomationMode,
 } from "@/lib/db/planetscale/schema";
 
@@ -53,13 +53,13 @@ export interface DecisionInputs {
   afterMinutes: number | null;
   afterKwh: number | null;
   armedAtMs: number | null;
-  armedContext: AutomationArmedContext | null;
+  armedContext: ChargeArmedContext | null;
   lastTriggeredRunStartMs: number | null;
 }
 
 export type Decision =
   | { kind: "none" }
-  | { kind: "arm"; armedContext: AutomationArmedContext | null }
+  | { kind: "arm"; armedContext: ChargeArmedContext | null }
   | { kind: "disarm"; disable: boolean }
   | { kind: "fire"; anchorMs: number }
   /** Counted in the summary; writes nothing. */
@@ -140,7 +140,10 @@ export function decideAutomation(
       if (a.sourceKind === "point") {
         // No counter reading yet and a kWh leg to serve ⇒ refuse to arm. Arming without a
         // baseline would leave the cap silently unenforced for the whole session.
-        if (!src.counter) return a.afterKwh != null ? { kind: "none" } : { kind: "arm", armedContext: null };
+        if (!src.counter)
+          return a.afterKwh != null
+            ? { kind: "none" }
+            : { kind: "arm", armedContext: null };
         return {
           kind: "arm",
           armedContext: {

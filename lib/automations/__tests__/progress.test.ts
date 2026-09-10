@@ -20,6 +20,7 @@ import {
   describeChargeLimit,
   formatChargeLimitCompact,
   formatChargeLimitLine,
+  chargeTrigger,
   selectChargeLimits,
   summaryWords,
   targetWords,
@@ -400,7 +401,8 @@ describe("cross-check against decideAutomation", () => {
     counterKwh: number | null,
     nowMs: number,
   ) {
-    const trigger = row.trigger!;
+    // This cross-check is about the charge-session kWh rule, so it narrows to that trigger.
+    const trigger = chargeTrigger(row)!;
     const inputs: DecisionInputs = {
       mode: row.mode as "once" | "standing",
       sourceKind: "point",

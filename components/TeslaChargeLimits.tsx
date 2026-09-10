@@ -12,6 +12,7 @@ import ControlNotice, {
   type ControlNoticeValue,
 } from "@/components/ControlNotice";
 import {
+  chargeTrigger,
   compareChargeLimits,
   describeChargeLimit,
   formatChargeLimitLine,
@@ -246,11 +247,15 @@ export default function TeslaChargeLimits({
     const k = parseField(editKwh);
     if (!m.ok || !k.ok) return;
     if (m.value === undefined && k.value === undefined) return;
-    if (!row.trigger) return;
+    // Only a charge-session row has thresholds to edit. `selectChargeLimits` already keeps other
+    // kinds out of this list, so this is the belt to that braces — but it also does the narrowing
+    // the rewrite below needs.
+    const current = chargeTrigger(row);
+    if (!current) return;
     const trigger: Record<string, unknown> = {
       kind: "charge-session",
       // Same source — this is a whole-object replace, not a merge.
-      source: row.trigger.source,
+      source: current.source,
     };
     if (m.value !== undefined) trigger.afterMinutes = m.value;
     if (k.value !== undefined) trigger.afterKwh = k.value;
@@ -286,8 +291,8 @@ export default function TeslaChargeLimits({
                 <div className="min-w-0">
                   <div className="font-medium">
                     {targetWords(
-                      row.trigger?.afterMinutes,
-                      row.trigger?.afterKwh,
+                      chargeTrigger(row)?.afterMinutes,
+                      chargeTrigger(row)?.afterKwh,
                     )}
                     <span className="ml-2 text-xs text-gray-400">
                       {row.mode === "once" ? "this session" : "every charge"}
@@ -329,16 +334,11 @@ export default function TeslaChargeLimits({
                     disabled={busy || !row.trigger}
                     onClick={() => {
                       setEditing(editing === row.id ? null : row.id);
+                      const t = chargeTrigger(row);
                       setEditMinutes(
-                        row.trigger?.afterMinutes != null
-                          ? String(row.trigger.afterMinutes)
-                          : "",
+                        t?.afterMinutes != null ? String(t.afterMinutes) : "",
                       );
-                      setEditKwh(
-                        row.trigger?.afterKwh != null
-                          ? String(row.trigger.afterKwh)
-                          : "",
-                      );
+                      setEditKwh(t?.afterKwh != null ? String(t.afterKwh) : "");
                     }}
                   >
                     Edit

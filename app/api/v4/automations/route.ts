@@ -3,10 +3,15 @@ import { loadAreaForOwner } from "@/lib/areas/http";
 import type { AutomationMode } from "@/lib/db/planetscale/schema";
 import { checkReferences } from "@/lib/automations/references";
 import * as store from "@/lib/automations/store";
-import { actionFromWire, automationWire, triggerFromWire } from "@/lib/automations/wire";
+import {
+  actionFromWire,
+  automationWire,
+  triggerFromWire,
+} from "@/lib/automations/wire";
 
 /**
- * Charge-limit automations — "stop charging after x minutes and/or y kWh".
+ * Automations — "stop charging after x minutes and/or y kWh" (charge-session), and "run the
+ * generator for N minutes every Thursday unless it has already run under load" (exercise).
  *
  *   GET  /api/v4/automations?area=ar_…  → 200 { automations: [...] }
  *   POST /api/v4/automations            → 201 { automation }
@@ -81,7 +86,9 @@ export async function POST(request: NextRequest) {
   const name =
     typeof body.name === "string" && body.name.trim() !== ""
       ? body.name
-      : "Charge limit";
+      : trigger.value.kind === "exercise"
+        ? "Generator exercise"
+        : "Charge limit";
 
   const row = await store.create({
     areaId: areaUuid,
@@ -91,5 +98,8 @@ export async function POST(request: NextRequest) {
     action: action.value,
     enabled: body.enabled as boolean | undefined,
   });
-  return NextResponse.json({ automation: automationWire(row) }, { status: 201 });
+  return NextResponse.json(
+    { automation: automationWire(row) },
+    { status: 201 },
+  );
 }

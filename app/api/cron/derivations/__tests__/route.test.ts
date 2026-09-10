@@ -53,6 +53,7 @@ const AUTOMATIONS_SUMMARY = {
   fired: 1,
   skipped: 0,
   errors: 0,
+  exercise: { due: 0, fired: 0, satisfied: 0, waiting: 0, missed: 0 },
 };
 
 beforeEach(() => {

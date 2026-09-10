@@ -99,7 +99,11 @@ const refuseUnlessOwner = (async (
  * If the action-point check ever slips back to `requireWrite`, this mock lets it through and the
  * tests using it go red.
  */
-const adminNotOwner = (async (_req: unknown, _rid: number, opts?: AccessOpts) =>
+const adminNotOwner = (async (
+  _req: unknown,
+  _rid: number,
+  opts?: AccessOpts,
+) =>
   opts?.requireOwner
     ? NextResponse.json(
         { error: "Only the device owner can control this device" },
@@ -146,6 +150,22 @@ const derivTrigger = {
 };
 const action = { kind: "point-action", pointId: ACT_PT, action: "turn_off" };
 
+const LOAD_PT = Point.generate();
+const LOAD_PT_UUID = Point.toUuid(LOAD_PT);
+/** A Thursday-09:00 exercise trigger, wire-shaped (TypeIDs, not uuids). */
+const exerciseTrigger = {
+  kind: "exercise",
+  source: { kind: "derivation", derivationId: DX },
+  schedule: { weekdays: ["thu"], time: "09:00" },
+  unless: { loadPointId: LOAD_PT },
+};
+const setValueAction = {
+  kind: "point-action",
+  pointId: ACT_PT,
+  action: "set_value",
+  value: 30,
+};
+
 function get(url: string) {
   return GET(new NextRequest(url));
 }
@@ -188,15 +208,19 @@ beforeEach(() => {
     ownerClerkUserId: OWNER,
   } as never);
   mockDeviceAccess.mockResolvedValue({ canWrite: true } as never);
-  mockLoadPoint.mockImplementation(async (uuid: string) => ({
-    point: {
-      id: uuid,
-      logicalPath: "ev.charge",
-      metricType: uuid === SRC_PT_UUID ? "added" : "active",
-      unit: uuid === SRC_PT_UUID ? "kWh" : null,
-    },
-    deviceRid: 10,
-  }) as never);
+  mockLoadPoint.mockImplementation(
+    async (uuid: string) =>
+      ({
+        point: {
+          id: uuid,
+          logicalPath: uuid === LOAD_PT_UUID ? "bidi.grid" : "ev.charge",
+          metricType: uuid === SRC_PT_UUID ? "added" : "active",
+          unit:
+            uuid === SRC_PT_UUID ? "kWh" : uuid === LOAD_PT_UUID ? "W" : null,
+        },
+        deviceRid: 10,
+      }) as never,
+  );
   mockSibling.mockResolvedValue({ id: "sibling" } as never);
   mockStore.derivationBelongsToArea.mockResolvedValue(true);
   mockStore.listForArea.mockResolvedValue([]);
@@ -302,9 +326,140 @@ describe("POST /api/v4/automations", () => {
   });
 
   it("422s an action other than turn_off", async () => {
-    const res = await post({ ...good, action: { ...action, action: "turn_on" } });
+    const res = await post({
+      ...good,
+      action: { ...action, action: "turn_on" },
+    });
     expect(res.status).toBe(422);
     expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  // ── Exercise triggers ──────────────────────────────────────────────────────────────────────────
+
+  it("creates an exercise rule, decoding BOTH point ids and defaulting the knobs", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: exerciseTrigger,
+      action: setValueAction,
+    });
+
+    expect(res.status).toBe(201);
+    expect(mockStore.create).toHaveBeenCalledWith({
+      areaId: AREA_UUID,
+      name: "Generator exercise",
+      mode: "standing",
+      trigger: {
+        kind: "exercise",
+        source: { kind: "derivation", derivationId: DX_UUID },
+        schedule: { weekdays: ["thu"], time: "09:00", graceMinutes: 180 },
+        // `loadPointId` lives under `unless`, not `source` — a decoder that only walked `source`
+        // would store a raw pt_ string here.
+        unless: {
+          loadPointId: LOAD_PT_UUID,
+          minMinutes: 30,
+          minLoadKw: 1.5,
+          dipToleranceSeconds: 180,
+          withinDays: 7,
+        },
+      },
+      action: {
+        kind: "point-action",
+        pointId: ACT_PT_UUID,
+        action: "set_value",
+        value: 30,
+      },
+      enabled: undefined,
+    });
+  });
+
+  it("🛑 422s a set_value of 0 — that is a STOP, not a run", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: exerciseTrigger,
+      action: { ...setValueAction, value: 0 },
+    });
+    expect(res.status).toBe(422);
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 422s a load point that is not in W", async () => {
+    // `minLoadKw` is compared against watts. Against a kW point a 1.5 kW floor becomes 1500 kW —
+    // never met, so the rule would exercise every week regardless and look like it was working.
+    mockLoadPoint.mockImplementation(
+      async (uuid: string) =>
+        ({
+          point: { id: uuid, logicalPath: "bidi.grid", unit: "kW" },
+          deviceRid: 10,
+        }) as never,
+    );
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: exerciseTrigger,
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("must be in W");
+  });
+
+  it("🛑 422s set_value paired with a charge-session trigger", async () => {
+    const res = await post({ ...good, action: setValueAction });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("exercise trigger");
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("🛑 422s turn_off paired with an exercise trigger", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: exerciseTrigger,
+      action,
+    });
+    expect(res.status).toBe(422);
+    expect(mockStore.create).not.toHaveBeenCalled();
+  });
+
+  it("422s a schedule time inside the daylight-saving gap hour", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        schedule: { weekdays: ["thu"], time: "02:30" },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it("422s a malformed load point id rather than storing it raw", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        unless: { loadPointId: "not-a-typeid" },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toContain("pt_ point id");
+  });
+
+  it("422s an exercise trigger with an empty weekday list", async () => {
+    const res = await post({
+      areaId: AREA,
+      mode: "standing",
+      trigger: {
+        ...exerciseTrigger,
+        schedule: { weekdays: [], time: "09:00" },
+      },
+      action: setValueAction,
+    });
+    expect(res.status).toBe(422);
   });
 
   it("422s a derivation from another area", async () => {
@@ -354,10 +509,13 @@ describe("POST /api/v4/automations", () => {
   });
 
   it("422s afterKwh against a non-kWh point (the unit trap gets no second life)", async () => {
-    mockLoadPoint.mockImplementation(async (uuid: string) => ({
-      point: { id: uuid, logicalPath: "ev.charge", unit: "W" },
-      deviceRid: 10,
-    }) as never);
+    mockLoadPoint.mockImplementation(
+      async (uuid: string) =>
+        ({
+          point: { id: uuid, logicalPath: "ev.charge", unit: "W" },
+          deviceRid: 10,
+        }) as never,
+    );
     const res = await post(good);
     expect(res.status).toBe(422);
     expect((await res.json()).error).toContain("afterKwh requires a kWh");

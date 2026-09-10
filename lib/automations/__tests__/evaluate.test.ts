@@ -42,6 +42,9 @@ jest.mock("@/lib/automations/store", () => ({
   disarmAutomation: jest.fn(),
   recordFired: jest.fn(),
   disableAutomation: jest.fn(),
+  intervalsOverlapping: jest.fn(),
+  recordExerciseOutcome: jest.fn(),
+  claimExerciseDispatch: jest.fn(),
 }));
 jest.mock("@/lib/run-tracking/live", () => ({ getOpenRun: jest.fn() }));
 jest.mock("@/lib/derivations/resolve", () => ({
@@ -56,7 +59,9 @@ jest.mock("@/lib/control/repoll", () => ({ scheduleRepoll: jest.fn() }));
 jest.mock("@/lib/registry/device-config", () => ({
   DeviceConfigRegistry: { deviceByHandle: jest.fn() },
 }));
-jest.mock("@/lib/readings/dao", () => ({ ReadingsDao: { readRaw: jest.fn() } }));
+jest.mock("@/lib/readings/dao", () => ({
+  ReadingsDao: { readRaw: jest.fn() },
+}));
 
 import * as store from "@/lib/automations/store";
 import { getOpenRun } from "@/lib/run-tracking/live";
@@ -164,6 +169,9 @@ beforeEach(() => {
   mockStore.disarmAutomation.mockResolvedValue(undefined);
   mockStore.recordFired.mockResolvedValue(undefined);
   mockStore.disableAutomation.mockResolvedValue(undefined);
+  mockStore.intervalsOverlapping.mockResolvedValue([]);
+  mockStore.recordExerciseOutcome.mockResolvedValue(undefined);
+  mockStore.claimExerciseDispatch.mockResolvedValue(true);
 
   mockDetectors.mockResolvedValue([detector()]);
   mockOpenRun.mockResolvedValue(openRun(T0 - 90 * MIN));
@@ -531,15 +539,22 @@ describe("resolvePointSource", () => {
     expect(mockLoadPoint).toHaveBeenCalledWith(SRC_PT_UUID);
     expect(mockSibling).toHaveBeenCalledWith(DEVICE_RID, "ev.charge", "active");
     const [ids, window] = mockReadRaw.mock.calls[0];
-    expect(ids).toEqual([Point.encode(SRC_PT_UUID), Point.encode(ACTIVE_PT_UUID)]);
+    expect(ids).toEqual([
+      Point.encode(SRC_PT_UUID),
+      Point.encode(ACTIVE_PT_UUID),
+    ]);
     expect(window.toMs).toBe(T0);
     expect(window.fromMs).toBe(T0 - 30 * 60_000);
 
     // Active + a counter ⇒ arm with the counter's OWN timestamp as the baseline.
-    expect(mockStore.armAutomation).toHaveBeenCalledWith(AU_UUID, new Date(T0), {
-      baselineKwh: 42.5,
-      baselineAt: T0 - MIN,
-    });
+    expect(mockStore.armAutomation).toHaveBeenCalledWith(
+      AU_UUID,
+      new Date(T0),
+      {
+        baselineKwh: 42.5,
+        baselineAt: T0 - MIN,
+      },
+    );
   });
 
   it("takes the LATEST non-null sample of each series", async () => {
@@ -560,10 +575,14 @@ describe("resolvePointSource", () => {
 
     await evaluateAutomations(T0);
 
-    expect(mockStore.armAutomation).toHaveBeenCalledWith(AU_UUID, new Date(T0), {
-      baselineKwh: 12.25,
-      baselineAt: T0 - 2 * MIN,
-    });
+    expect(mockStore.armAutomation).toHaveBeenCalledWith(
+      AU_UUID,
+      new Date(T0),
+      {
+        baselineKwh: 12.25,
+        baselineAt: T0 - 2 * MIN,
+      },
+    );
   });
 
   it("🛑 a kWh limit refuses to arm without a counter — an unenforceable cap must not look armed", async () => {
@@ -679,10 +698,7 @@ describe("resolvePointSource", () => {
   });
 
   it.each([
-    [
-      "the point does not exist",
-      () => mockLoadPoint.mockResolvedValue(null),
-    ],
+    ["the point does not exist", () => mockLoadPoint.mockResolvedValue(null)],
     [
       "the point has no logical path",
       () =>
@@ -767,11 +783,311 @@ describe("evaluateAutomations — the batch", () => {
   it("an empty enabled set is a clean zero summary", async () => {
     expect(await evaluateAutomations(T0)).toEqual({
       evaluated: 0,
+      exercise: { due: 0, fired: 0, satisfied: 0, waiting: 0, missed: 0 },
       armed: 0,
       disarmed: 0,
       fired: 0,
       skipped: 0,
       errors: 0,
     });
+  });
+});
+
+// ── Scheduled exercise ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * A Thursday-09:00 Melbourne exercise rule. `EX_NOW` is Thu 10 Sep 2026, 09:05 local — five
+ * minutes into the slot, well inside the three-hour grace.
+ */
+const EX_SLOT = new Date("2026-09-10T09:00:00+10:00").getTime();
+const EX_NOW = EX_SLOT + 5 * MIN;
+const LOAD_PT_UUID = Point.toUuid(Point.generate());
+
+function exerciseRow(over: Partial<AutomationRow> = {}): AutomationRow {
+  return row({
+    name: "Generator exercise",
+    trigger: {
+      kind: "exercise",
+      source: { kind: "derivation", derivationId: DX_UUID },
+      schedule: { weekdays: ["thu"], time: "09:00", graceMinutes: 180 },
+      unless: {
+        loadPointId: LOAD_PT_UUID,
+        minMinutes: 30,
+        minLoadKw: 1.5,
+        dipToleranceSeconds: 180,
+        withinDays: 7,
+      },
+    },
+    action: {
+      kind: "point-action",
+      pointId: ACT_PT_UUID,
+      action: "set_value",
+      value: 30,
+    },
+    createdAt: new Date(EX_SLOT - 30 * 24 * 60 * MIN),
+    ...over,
+  });
+}
+
+/** A closed run interval, `minutes` long, ending `endedAgoMin` before EX_NOW. */
+function runInterval(
+  endedAgoMin: number,
+  minutes: number,
+): { startTime: Date; endTime: Date } {
+  const endTime = new Date(EX_NOW - endedAgoMin * MIN);
+  return {
+    startTime: new Date(endTime.getTime() - minutes * MIN),
+    endTime,
+  };
+}
+
+/** Minutely load samples covering a whole interval, at a constant kW of import. */
+function loadSeries(from: number, to: number, kw: number) {
+  const out: { measurementTimeMs: number; value: number }[] = [];
+  for (let t = from; t <= to; t += MIN)
+    out.push({ measurementTimeMs: t, value: -kw * 1000 });
+  return new Map([[Point.encode(LOAD_PT_UUID), out]]) as never;
+}
+
+describe("evaluateExercise", () => {
+  beforeEach(() => {
+    mockDetectors.mockResolvedValue([
+      detector({ displayTimezone: "Australia/Melbourne" }),
+    ]);
+    mockOpenRun.mockResolvedValue(null);
+  });
+
+  it("dispatches set_value with the configured minutes and consumes the slot", async () => {
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "set_value", value: 30 }),
+    );
+    expect(summary.exercise).toEqual({
+      due: 1,
+      fired: 1,
+      satisfied: 0,
+      waiting: 0,
+      missed: 0,
+    });
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        consume: true,
+        context: expect.objectContaining({ outcome: "fired", slotAt: EX_SLOT }),
+      }),
+    );
+  });
+
+  it("does nothing at all when the slot has already been consumed", async () => {
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({ lastTriggeredRunStart: new Date(EX_SLOT) }),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.due).toBe(0);
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockStore.recordExerciseOutcome).not.toHaveBeenCalled();
+  });
+
+  it("skips as satisfied when a loaded run already happened in the lookback", async () => {
+    const iv = runInterval(2 * 24 * 60, 45);
+    mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+    mockReadRaw.mockResolvedValue(
+      loadSeries(iv.startTime.getTime(), iv.endTime.getTime(), 2.6),
+    );
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary.exercise.satisfied).toBe(1);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        consume: true,
+        context: expect.objectContaining({ outcome: "satisfied" }),
+      }),
+    );
+  });
+
+  it("🛑 an UNLOADED run does not satisfy the condition", async () => {
+    // The measured 0.26 kW Aug-30 run: long enough, but it does nothing about wet stacking, and
+    // treating it as an exercise would let the engine glaze indefinitely.
+    const iv = runInterval(2 * 24 * 60, 45);
+    mockStore.intervalsOverlapping.mockResolvedValue([iv] as never);
+    mockReadRaw.mockResolvedValue(
+      loadSeries(iv.startTime.getTime(), iv.endTime.getTime(), 0.26),
+    );
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.fired).toBe(1);
+    expect(mockDispatch).toHaveBeenCalled();
+  });
+
+  it("🛑 waits WITHOUT consuming while a run is in progress", async () => {
+    mockOpenRun.mockResolvedValue(openRun(EX_NOW - 20 * MIN));
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    // Dispatching here would recompute the hub's stop deadline from now and truncate the run.
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary.exercise.waiting).toBe(1);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({ consume: false }),
+    );
+  });
+
+  it("writes the slot off as missed once grace has expired", async () => {
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_SLOT + 200 * MIN);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary.exercise.missed).toBe(1);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        consume: true,
+        context: expect.objectContaining({ outcome: "missed" }),
+      }),
+    );
+  });
+
+  it("distinguishes a grace expiry spent running", async () => {
+    mockOpenRun.mockResolvedValue(openRun(EX_SLOT));
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_SLOT + 200 * MIN);
+
+    expect(summary.exercise.missed).toBe(1);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        context: expect.objectContaining({ outcome: "missed-running" }),
+      }),
+    );
+  });
+
+  it("completed{ok:false}: the hub declined — retry, do not consume", async () => {
+    mockDispatch.mockResolvedValue({
+      kind: "completed",
+      ok: false,
+      reason: "panel_not_in_auto",
+      commandId: "cmd-9",
+    });
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.exercise.waiting).toBe(1);
+    expect(summary.exercise.fired).toBe(0);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({
+        consume: false,
+        context: expect.objectContaining({
+          outcome: "waiting",
+          reason: "panel_not_in_auto",
+        }),
+      }),
+    );
+  });
+
+  it("unavailable: transient — the slot stays due", async () => {
+    // The dev shape: a DeepSea device with no passkey configured.
+    mockDispatch.mockResolvedValue({
+      kind: "unavailable",
+      error: "no passkey configured",
+      httpStatus: 503,
+    });
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(summary.errors).toBe(1);
+    expect(mockStore.recordExerciseOutcome).toHaveBeenCalledWith(
+      AU_UUID,
+      expect.objectContaining({ consume: false }),
+    );
+  });
+
+  it("rejected: permanent — disable the rule", async () => {
+    mockDispatch.mockResolvedValue({
+      kind: "rejected",
+      error: "not controllable",
+      code: "unsupported",
+      commandId: "cmd-2",
+    });
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    await evaluateAutomations(EX_NOW);
+
+    expect(mockStore.disableAutomation).toHaveBeenCalledWith(AU_UUID);
+  });
+
+  it("🛑 losing the claim means NOT dispatching", async () => {
+    // Two overlapping cron ticks. The loser must not re-extend the engine's stop deadline.
+    mockStore.claimExerciseDispatch.mockResolvedValue(false);
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockStore.recordExerciseOutcome).not.toHaveBeenCalled();
+  });
+
+  it("refuses to dispatch when the detector has gone away", async () => {
+    // Without the detector we can read neither "running now" nor "ran recently".
+    mockDetectors.mockResolvedValue([]);
+    mockStore.listEnabled.mockResolvedValue([exerciseRow()]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary.errors).toBe(1);
+  });
+
+  it("🛑 refuses a turn_off action on an exercise rule", async () => {
+    mockStore.listEnabled.mockResolvedValue([
+      exerciseRow({
+        action: {
+          kind: "point-action",
+          pointId: ACT_PT_UUID,
+          action: "turn_off",
+        },
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(EX_NOW);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary.errors).toBe(1);
+  });
+
+  it("🛑 refuses a set_value action on a charge-session rule", async () => {
+    // `fire()` hardcodes turn_off; honouring a set_value there could START a charge.
+    mockStore.listEnabled.mockResolvedValue([
+      firingRow({
+        action: {
+          kind: "point-action",
+          pointId: ACT_PT_UUID,
+          action: "set_value",
+          value: 30,
+        },
+      }),
+    ]);
+
+    const summary = await evaluateAutomations(T0);
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(summary.errors).toBe(1);
   });
 });

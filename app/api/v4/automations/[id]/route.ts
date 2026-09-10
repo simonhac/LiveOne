@@ -7,7 +7,11 @@ import type {
   AutomationRow,
 } from "@/lib/db/planetscale/schema";
 import * as store from "@/lib/automations/store";
-import { actionFromWire, automationWire, triggerFromWire } from "@/lib/automations/wire";
+import {
+  actionFromWire,
+  automationWire,
+  triggerFromWire,
+} from "@/lib/automations/wire";
 import { checkReferences } from "@/lib/automations/references";
 
 /**
@@ -85,7 +89,9 @@ export async function PATCH(
   // Identity: an automation belongs to the area that authorizes it. Moving one is delete+recreate,
   // so the area-owner check above can never be evaluated against the wrong area.
   if (body.areaId !== undefined)
-    return unprocessable("areaId is not patchable — delete and recreate instead");
+    return unprocessable(
+      "areaId is not patchable — delete and recreate instead",
+    );
 
   const patch: store.AutomationPatch = {};
 
@@ -124,6 +130,11 @@ export async function PATCH(
   if (body.trigger !== undefined) {
     // A baseline snapshotted against the OLD source is meaningless against the new one, and a
     // stale anchor could suppress the first fire outright.
+    //
+    // For an `exercise` trigger this also clears the consumed-slot key, so a rule edited inside a
+    // slot it has already dealt with can fire again for that same slot. That is the correct
+    // reading of "I changed the schedule" — the new schedule has never run — but it does mean
+    // editing a rule at 09:30 on exercise day can start the engine a second time.
     patch.armedAt = null;
     patch.armedContext = null;
     patch.lastTriggeredRunStart = null;
@@ -140,7 +151,9 @@ export async function PATCH(
     // a different cable session. `lastTriggeredRunStart` is KEPT: it preserves same-run
     // suppression for a derivation source re-enabled mid-run (the tolerance check), while the
     // fresh `armedAt` on re-arm deliberately re-qualifies a point source. Re-enabling is an
-    // explicit user action: "start over".
+    // explicit user action: "start over". Keeping it is right for an `exercise` rule too, and for
+    // a sharper reason: the slot key lives there, so re-enabling inside an already-consumed slot
+    // must NOT hand the rule a second chance to start the engine.
     //
     // A SAME-VALUE write resets nothing — PR-G's enable toggle re-sending the current value must
     // not wipe a live baseline mid-session.
@@ -176,7 +189,9 @@ export async function PATCH(
   if (refused) return refused;
 
   if (Object.keys(patch).length === 0)
-    return unprocessable("Nothing to patch (name | enabled | mode | trigger | action)");
+    return unprocessable(
+      "Nothing to patch (name | enabled | mode | trigger | action)",
+    );
 
   const updated = await store.patch(row.id, patch);
   if (!updated) return notFound();

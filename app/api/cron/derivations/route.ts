@@ -138,8 +138,10 @@ async function handle(request: NextRequest) {
       } catch (err) {
         console.error("[Cron] HWS temperature reconcile failed:", err);
       }
-      // Charge-limit automations: evaluate against the intervals the reconcile above just
-      // refreshed, so a derivation-sourced limit reads an open run that is as of THIS minute.
+      // Automations: evaluate against the intervals the reconcile above just refreshed, so a
+      // derivation-sourced limit reads an open run that is as of THIS minute. The scheduled
+      // generator exercise depends on the same freshness in the other direction — it must see an
+      // in-progress run before deciding whether to start one.
       // Best-effort like the two steps before it — and `null` rather than zeros when the step
       // itself failed, so a broken evaluator is distinguishable from an idle one.
       let automations: AutomationsSummary | null = null;

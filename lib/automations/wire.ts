@@ -20,25 +20,44 @@ import {
   type ParseOutcome,
 } from "./types";
 
+/** Trigger source with its uuid already encoded. */
+type WireSource =
+  | { kind: "derivation"; derivationId: string } // dx_…
+  | { kind: "point"; pointId: string }; // pt_…
+
+export type WireTrigger =
+  | {
+      kind: "charge-session";
+      source: WireSource;
+      afterMinutes?: number;
+      afterKwh?: number;
+    }
+  | {
+      kind: "exercise";
+      source: WireSource;
+      schedule: { weekdays: string[]; time: string; graceMinutes: number };
+      unless: {
+        loadPointId: string; // pt_…
+        minMinutes: number;
+        minLoadKw: number;
+        dipToleranceSeconds: number;
+        withinDays: number;
+      };
+    };
+
+export type WireAction = {
+  kind: "point-action";
+  pointId: string; // pt_…
+} & ({ action: "turn_off" } | { action: "set_value"; value: number });
+
 export interface AutomationWire {
   id: string; // au_…
   areaId: string; // ar_…
   name: string;
   enabled: boolean;
   mode: string;
-  trigger: {
-    kind: "charge-session";
-    source:
-      | { kind: "derivation"; derivationId: string } // dx_…
-      | { kind: "point"; pointId: string }; // pt_…
-    afterMinutes?: number;
-    afterKwh?: number;
-  } | null;
-  action: {
-    kind: "point-action";
-    pointId: string; // pt_…
-    action: "turn_off";
-  } | null;
+  trigger: WireTrigger | null;
+  action: WireAction | null;
   armedAt: Date | null;
   lastTriggeredAt: Date | null;
   lastTriggeredRunStart: Date | null;
@@ -52,16 +71,25 @@ function triggerWire(raw: unknown): AutomationWire["trigger"] {
   // listable (so it can be seen and deleted) but nothing claims to know what it means.
   if (!parsed.ok) return null;
   const t = parsed.value;
-  const out: NonNullable<AutomationWire["trigger"]> = {
-    kind: "charge-session",
-    source:
-      t.source.kind === "derivation"
-        ? {
-            kind: "derivation",
-            derivationId: Derivation.encode(t.source.derivationId),
-          }
-        : { kind: "point", pointId: Point.encode(t.source.pointId) },
-  };
+  const source: WireSource =
+    t.source.kind === "derivation"
+      ? {
+          kind: "derivation",
+          derivationId: Derivation.encode(t.source.derivationId),
+        }
+      : { kind: "point", pointId: Point.encode(t.source.pointId) };
+
+  if (t.kind === "exercise")
+    return {
+      kind: "exercise",
+      source,
+      schedule: t.schedule,
+      // 🛑 `loadPointId` is the second uuid in this trigger and it is easy to miss: it lives under
+      // `unless`, not `source`, so a sweep that only looked at `source` would ship a raw uuid.
+      unless: { ...t.unless, loadPointId: Point.encode(t.unless.loadPointId) },
+    };
+
+  const out: WireTrigger = { kind: "charge-session", source };
   if (t.afterMinutes !== undefined) out.afterMinutes = t.afterMinutes;
   if (t.afterKwh !== undefined) out.afterKwh = t.afterKwh;
   return out;
@@ -70,11 +98,11 @@ function triggerWire(raw: unknown): AutomationWire["trigger"] {
 function actionWire(raw: unknown): AutomationWire["action"] {
   const parsed = parseAutomationAction(raw);
   if (!parsed.ok) return null;
-  return {
-    kind: "point-action",
-    pointId: Point.encode(parsed.value.pointId),
-    action: "turn_off",
-  };
+  const a = parsed.value;
+  const pointId = Point.encode(a.pointId);
+  return a.action === "set_value"
+    ? { kind: "point-action", pointId, action: "set_value", value: a.value }
+    : { kind: "point-action", pointId, action: "turn_off" };
 }
 
 /** Stored row → wire shape. `Date`s serialize to ISO via `NextResponse.json`. */
@@ -125,7 +153,35 @@ export function triggerFromWire(raw: unknown): ParseOutcome<AutomationTrigger> {
       decodedSource = { kind: "point", pointId: uuid };
     }
   }
-  return parseAutomationTrigger({ ...t, source: decodedSource });
+  // The exercise trigger carries a SECOND point id, under `unless`. Decoded here rather than in
+  // `types.ts` for the same reason as `source`: TypeID translation is this module's job, and
+  // `parseAutomationTrigger` is entitled to assume every id it sees is already a raw uuid.
+  let decodedUnless: unknown = t.unless;
+  if (
+    typeof t.unless === "object" &&
+    t.unless !== null &&
+    !Array.isArray(t.unless)
+  ) {
+    const u = t.unless as Record<string, unknown>;
+    if (u.loadPointId !== undefined) {
+      const uuid =
+        typeof u.loadPointId === "string"
+          ? Point.toUuidOrNull(u.loadPointId)
+          : null;
+      if (!uuid)
+        return {
+          ok: false,
+          error: "trigger.unless.loadPointId must be a pt_ point id",
+        };
+      decodedUnless = { ...u, loadPointId: uuid };
+    }
+  }
+
+  return parseAutomationTrigger({
+    ...t,
+    source: decodedSource,
+    unless: decodedUnless,
+  });
 }
 
 /** Wire body → STORED form for the action. */

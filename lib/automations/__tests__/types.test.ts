@@ -62,7 +62,7 @@ describe("parseAutomationTrigger", () => {
     [
       "the wrong kind",
       { ...good, kind: "schedule" },
-      "trigger.kind must be 'charge-session'",
+      "trigger.kind must be one of: charge-session, exercise",
     ],
     [
       "a bad source kind",
@@ -111,7 +111,11 @@ describe("parseAutomationTrigger", () => {
 
 describe("parseAutomationAction", () => {
   it("accepts the one v1 action", () => {
-    const a = { kind: "point-action", pointId: ACTION_PT_UUID, action: "turn_off" };
+    const a = {
+      kind: "point-action",
+      pointId: ACTION_PT_UUID,
+      action: "turn_off",
+    };
     expect(parseAutomationAction(a)).toEqual({ ok: true, value: a });
   });
 
@@ -128,11 +132,11 @@ describe("parseAutomationAction", () => {
       "action.pointId must be a point id",
     ],
     [
-      // The v1 action set is CLOSED — opening it is a later PR's decision, not something a body
-      // may smuggle past us into a stored row the evaluator will one day dispatch.
+      // The action set is CLOSED — `turn_on`/`press` are a later PR's decision, not something a
+      // body may smuggle past us into a stored row the evaluator will one day dispatch.
       "turn_on",
       { kind: "point-action", pointId: ACTION_PT_UUID, action: "turn_on" },
-      "action.action must be 'turn_off' (the v1 action set is closed)",
+      "action.action must be one of: turn_off, set_value",
     ],
   ])("rejects %s", (_label, raw, error) => {
     expect(parseAutomationAction(raw)).toEqual({ ok: false, error });
@@ -208,9 +212,10 @@ describe("wire codecs", () => {
         afterMinutes: 1,
       }).ok,
     ).toBe(false);
-    expect(actionFromWire({ kind: "point-action", pointId: DX, action: "turn_off" }).ok).toBe(
-      false,
-    );
+    expect(
+      actionFromWire({ kind: "point-action", pointId: DX, action: "turn_off" })
+        .ok,
+    ).toBe(false);
   });
 
   it("actionFromWire decodes pt_ to a raw uuid", () => {
