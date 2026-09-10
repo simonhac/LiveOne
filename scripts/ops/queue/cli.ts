@@ -17,6 +17,7 @@
  * built during the incident.
  */
 import {
+  bool,
   defineCommand,
   EXIT,
   str,
@@ -105,6 +106,21 @@ const LANE_FLAG = {
     placeholder: "lane",
     values: [...LANES, "all"],
     help: "Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide).",
+  },
+} as const satisfies Record<string, FlagSpec>;
+
+/**
+ * The same flag on a READ verb, where it only narrows the view.
+ *
+ * Separate wording rather than one shared string: "required to set parallelism" is a write-gate
+ * rule, and printing it under a read verb describes a constraint that does not exist there.
+ */
+const LANE_FILTER_FLAG = {
+  lane: {
+    type: "string",
+    placeholder: "lane",
+    values: [...LANES, "all"],
+    help: "Only this lane: live, backfill, or all (default: all).",
   },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -216,10 +232,64 @@ export const queueCommand = defineCommand({
       when:
         "Start here. Exits 1 (findings) when ingest has stalled or any lane is STUCK, so it\n" +
         "composes into a check. `--lane` narrows the table; the verdict still spans the path.",
-      flags: { ...LANE_FLAG, ...BASE_URL_FLAG },
+      flags: { ...LANE_FILTER_FLAG, ...BASE_URL_FLAG },
       examples: [
         "liveone queue status",
         "liveone queue status --lane=backfill",
+      ],
+    },
+    timing: {
+      name: "timing",
+      summary:
+        "How long each batch actually took — per-message wait, duration, attempts and outcome.",
+      when:
+        "Reach for this after `status` says something is wrong, to find out WHICH kind of wrong.\n" +
+        "Read `wait` and `duration` as a pair: a long wait with a short duration means something\n" +
+        "AHEAD of that batch held the delivery slot (head-of-line); a long duration is the batch's\n" +
+        "own work. `lag` cannot tell those apart, and conflating them misdiagnosed 2026-09-09 twice.\n" +
+        "Also the way to watch a large backfill: durations should stay flat as it runs.",
+      description:
+        "A windowed forensic read, paged out of QStash's delivery log, so keep the window tight —\n" +
+        "`--last` defaults to 1h.\n\n" +
+        "🛑 The retention is QStash's, not ours: old windows simply return nothing, which is NOT\n" +
+        "the same as a quiet window. `truncated` marks a window that outran the page budget, and\n" +
+        "every count under it is an undercount.\n\n" +
+        "A batch that fails FAST still occupies its slot for the whole retry schedule, so watch\n" +
+        "`retries` and `occupancy` alongside `duration` — a wedged FIFO queue looks the same either\n" +
+        "way from the outside.",
+      flags: {
+        last: {
+          type: "string",
+          placeholder: "2h",
+          help: "Window ending now: 90s / 15m / 2h / 7d (default: 1h). Mutually exclusive with --from.",
+        },
+        from: {
+          type: "string",
+          placeholder: "when",
+          help: "Window start — an ISO instant or epoch-ms. Use with --to for a fixed window.",
+        },
+        to: {
+          type: "string",
+          placeholder: "when",
+          help: "Window end (default: now). Only with --from.",
+        },
+        failed: {
+          type: "boolean",
+          help: "Only batches that did not deliver — the ones worth reading first.",
+        },
+        limit: {
+          type: "string",
+          placeholder: "n",
+          help: "Show at most this many batches (default: 20). The summary always spans them all.",
+        },
+        ...LANE_FILTER_FLAG,
+        ...BASE_URL_FLAG,
+      },
+      examples: [
+        "liveone queue timing",
+        "liveone queue timing --last=6h --failed",
+        "liveone queue timing --lane=backfill --last=30m",
+        "liveone queue timing --from=2026-09-09T10:30:00Z --to=2026-09-09T13:00:00Z",
       ],
     },
     pause: {
@@ -518,8 +588,178 @@ async function runParallelism(ctx: Ctx): Promise<number> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// timing
+// ---------------------------------------------------------------------------
+
+interface WireAttempt {
+  startedAt: number;
+  endedAt: number | null;
+  durationMs: number | null;
+  state: string;
+  error?: string;
+}
+
+interface WireMessage {
+  messageId: string;
+  lane: Lane | null;
+  transport: "queue" | "flow" | "unknown";
+  createdAt: number | null;
+  waitMs: number | null;
+  attempts: WireAttempt[];
+  durationMs: number | null;
+  occupancyMs: number | null;
+  state: string;
+  settled: boolean;
+  observations: number | null;
+  systemId: number | null;
+  error?: string;
+}
+
+interface WirePercentiles {
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+}
+
+interface WireLog {
+  window: { fromMs: number; toMs: number };
+  mode: "queue" | "flow";
+  messages: WireMessage[];
+  summary: {
+    messages: number;
+    delivered: number;
+    failed: number;
+    inFlight: number;
+    retries: number;
+    durationMs: WirePercentiles;
+    waitMs: WirePercentiles;
+    occupancyMs: WirePercentiles;
+    byTransport: { queue: number; flow: number; unknown: number };
+  };
+  truncated: boolean;
+  foreign: number;
+}
+
+/** Milliseconds, at a width a human can scan. `null` renders as a dash, never as 0. */
+const ms = (v: number | null): string => {
+  if (v === null) return "—";
+  if (v < 1000) return `${v}ms`;
+  if (v < 60_000) return `${(v / 1000).toFixed(1)}s`;
+  return `${Math.floor(v / 60_000)}m${String(Math.round((v % 60_000) / 1000)).padStart(2, "0")}s`;
+};
+
+const clock = (t: number | null): string =>
+  t === null ? "—" : new Date(t).toISOString().slice(11, 23);
+
+const pct = (p: WirePercentiles): string =>
+  `p50 ${ms(p.p50)}  p95 ${ms(p.p95)}  max ${ms(p.max)}`;
+
+function renderTiming(w: WireLog, shown: WireMessage[]): string {
+  const out: string[] = [
+    `window       ${new Date(w.window.fromMs).toISOString()} → ${new Date(w.window.toMs).toISOString()}  (mode: ${w.mode})`,
+    `batches      ${w.summary.messages}  —  ${w.summary.delivered} delivered · ${w.summary.failed} failed · ${w.summary.inFlight} in flight · ${w.summary.retries} retries`,
+    `duration     ${pct(w.summary.durationMs)}`,
+    `wait         ${pct(w.summary.waitMs)}`,
+    `occupancy    ${pct(w.summary.occupancyMs)}`,
+  ];
+  const t = w.summary.byTransport;
+  if (t.flow && t.queue)
+    out.push(
+      `transport    ${t.queue} queue · ${t.flow} flow  (coexistence window)`,
+    );
+
+  if (shown.length) {
+    out.push(
+      "",
+      "created       lane      obs   wait      duration  try  outcome",
+    );
+    for (const m of shown) {
+      out.push(
+        [
+          clock(m.createdAt).padEnd(13),
+          (m.lane ?? "—").padEnd(9),
+          String(m.observations ?? "—").padStart(5),
+          ms(m.waitMs).padStart(8),
+          ms(m.durationMs).padStart(10),
+          String(m.attempts.length).padStart(4),
+          "  " + m.state + (m.error ? ` — ${m.error.slice(0, 60)}` : ""),
+        ].join(" "),
+      );
+    }
+    if (shown.length < w.summary.messages)
+      out.push(
+        `(${shown.length} of ${w.summary.messages} shown — raise --limit, or narrow the window)`,
+      );
+  } else {
+    out.push("", "(no batches in this window)");
+  }
+
+  // 🛑 Both of these change how the numbers above must be read, so they go BELOW them, where a
+  // reader ends up, rather than above where a header is skimmed.
+  if (w.truncated)
+    out.push(
+      "",
+      "TRUNCATED — the page budget ran out before the window did. Every count above is an",
+      "undercount; narrow --last rather than trusting it.",
+    );
+  if (w.foreign)
+    out.push(
+      `(${w.foreign} log rows in this window belong to something other than observations ingest)`,
+    );
+  return out.join("\n");
+}
+
+async function runTiming(ctx: Ctx): Promise<number> {
+  const last = str(ctx, "last");
+  const from = str(ctx, "from");
+  const to = str(ctx, "to");
+  if (last !== undefined && from !== undefined)
+    throw usage(
+      "--last and --from are mutually exclusive",
+      "one names a window ending now, the other a fixed window",
+      "drop one of them",
+    );
+  if (to !== undefined && from === undefined)
+    throw usage(
+      "--to needs --from",
+      "a window end with no start would be unbounded, and this read pages through QStash",
+      "pass --from, or use --last for a window ending now",
+    );
+
+  const rawLimit = str(ctx, "limit");
+  const limit = rawLimit === undefined ? 20 : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1)
+    throw usage(
+      `invalid --limit "${rawLimit}"`,
+      "the number of batches to show must be a positive integer",
+      "omit it for the default of 20",
+    );
+
+  const lane = str(ctx, "lane");
+  const query = new URLSearchParams();
+  if (from !== undefined) query.set("from", from);
+  if (to !== undefined) query.set("to", to);
+  if (from === undefined) query.set("last", last ?? "1h");
+  if (lane !== undefined && lane !== "all") query.set("lane", lane);
+
+  return withApiSession(ctx, async (s) => {
+    const w = await s.get<WireLog>(`/api/v4/queue/timing?${query.toString()}`);
+    const failedOnly = bool(ctx, "failed");
+    const matching = failedOnly
+      ? w.messages.filter((m) => m.settled && m.state !== "DELIVERED")
+      : w.messages;
+    const shown = matching.slice(0, limit);
+    ctx.emit({ ...w, messages: shown }, () => renderTiming(w, shown));
+    // A findings exit on failures, so `queue timing --failed || alert` composes. A truncated window is
+    // also a finding: it means the answer is incomplete, which is not the same as "nothing wrong".
+    return w.summary.failed > 0 || w.truncated ? EXIT.FINDINGS : EXIT.OK;
+  });
+}
+
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   status: runStatus,
+  timing: runTiming,
   pause: runPause,
   resume: runResume,
   parallelism: runParallelism,

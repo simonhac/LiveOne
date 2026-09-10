@@ -516,6 +516,11 @@ async function handler(request: NextRequest) {
 
   try {
     const observationCount = body.observations?.length ?? 0;
+    // 🛑 The DURABLE half of per-batch timing. `lib/observations/message-log.ts` derives the same
+    // span from QStash's own logs, but those age out on Upstash's retention and disappear entirely
+    // when the queue is retired. This line is ours: it survives both, and it is the receiver's own
+    // clock rather than a delivery round-trip, so it excludes network and cold start.
+    const startedAtMs = Date.now();
 
     console.log(
       `[ObservationsReceiver] Received: systemId=${body.systemId}, ` +
@@ -542,7 +547,13 @@ async function handler(request: NextRequest) {
     const stats = await processQueueMessage(planetscaleDb, body);
     if (observationCount > maxObservations) stats.oversized = 1;
 
-    console.log(`[ObservationsReceiver] Processed: ${JSON.stringify(stats)}`);
+    // Read this against `waitMs` in `liveone queue timing`: a long wait with a short duration is
+    // head-of-line blocking (something ahead held the slot), a long duration is this batch's own
+    // work. Conflating them is what made 2026-09-09 look like a throughput deficit twice.
+    const durationMs = Date.now() - startedAtMs;
+    console.log(
+      `[ObservationsReceiver] Processed in ${durationMs}ms: ${JSON.stringify(stats)}`,
+    );
 
     // Once this message's raw readings have durably landed (tx committed above),
     // recompute the raw-vendor 5m aggregates for the touched intervals from PG's

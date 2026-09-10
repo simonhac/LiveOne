@@ -72,6 +72,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone user show](#liveone-user-show)
   - [liveone queue](#liveone-queue)
     - [liveone queue status](#liveone-queue-status)
+    - [liveone queue timing](#liveone-queue-timing)
     - [liveone queue pause](#liveone-queue-pause)  _(writes)_
     - [liveone queue resume](#liveone-queue-resume)  _(writes)_
     - [liveone queue parallelism](#liveone-queue-parallelism)  _(writes)_
@@ -2738,6 +2739,7 @@ Usage:
 
 Subcommands:
   status                 Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
+  timing                 How long each batch actually took — per-message wait, duration, attempts and outcome.
   pause                  Stop a lane dispatching. Messages accumulate; nothing is lost.  (writes)
   resume                 Resume dispatching after a pause.  (writes)
   parallelism            Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.  (writes)
@@ -2785,7 +2787,7 @@ Usage:
   Read-only. This command changes nothing.
 
 Options:
-  --lane <lane>              Which lane: live, backfill, or all. Required to SET parallelism (a per-lane cap is never applied fleet-wide).  (one of: live, backfill, all)
+  --lane <lane>              Only this lane: live, backfill, or all (default: all).  (one of: live, backfill, all)
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
 
 Common options:
@@ -2806,6 +2808,75 @@ External access:
 Examples:
   liveone queue status
   liveone queue status --lane=backfill
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone queue timing
+
+How long each batch actually took — per-message wait, duration, attempts and outcome.
+
+```
+How long each batch actually took — per-message wait, duration, attempts and outcome.
+
+When to use:
+  Reach for this after `status` says something is wrong, to find out WHICH kind of wrong.
+  Read `wait` and `duration` as a pair: a long wait with a short duration means something
+  AHEAD of that batch held the delivery slot (head-of-line); a long duration is the batch's
+  own work. `lag` cannot tell those apart, and conflating them misdiagnosed 2026-09-09 twice.
+  Also the way to watch a large backfill: durations should stay flat as it runs.
+
+A windowed forensic read, paged out of QStash's delivery log, so keep the window tight —
+`--last` defaults to 1h.
+
+🛑 The retention is QStash's, not ours: old windows simply return nothing, which is NOT
+the same as a quiet window. `truncated` marks a window that outran the page budget, and
+every count under it is an undercount.
+
+A batch that fails FAST still occupies its slot for the whole retry schedule, so watch
+`retries` and `occupancy` alongside `duration` — a wedged FIFO queue looks the same either
+way from the outside.
+
+Usage:
+  liveone queue timing [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --last <2h>                Window ending now: 90s / 15m / 2h / 7d (default: 1h). Mutually exclusive with --from.
+  --from <when>              Window start — an ISO instant or epoch-ms. Use with --to for a fixed window.
+  --to <when>                Window end (default: now). Only with --from.
+  --failed                   Only batches that did not deliver — the ones worth reading first.
+  --limit <n>                Show at most this many batches (default: 20). The summary always spans them all.
+  --lane <lane>              Only this lane: live, backfill, or all (default: all).  (one of: live, backfill, all)
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone queue timing
+  liveone queue timing --last=6h --failed
+  liveone queue timing --lane=backfill --last=30m
+  liveone queue timing --from=2026-09-09T10:30:00Z --to=2026-09-09T13:00:00Z
 
 Exit codes:
   0    success
