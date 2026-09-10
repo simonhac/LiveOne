@@ -539,7 +539,6 @@ export async function GET(request: NextRequest) {
       const dlqCount = (dlq.messages ?? []).length;
 
       checks.queue = {
-        mode: ingest.mode,
         waiting: ingest.waiting,
         inFlight: ingest.inFlight,
         paused: ingest.paused,
@@ -563,14 +562,6 @@ export async function GET(request: NextRequest) {
         lag: ingest.waiting,
       };
 
-      if (ingest.legacyQueue?.error)
-        issues.push({
-          severity: "warn",
-          code: "ingest_lane_unreadable",
-          message:
-            `Could not read the legacy queue "${ingest.legacyQueue.name}" from QStash: ` +
-            `${ingest.legacyQueue.error}. Its numbers are zeros, NOT a measurement.`,
-        });
       for (const lane of ingest.lanes) {
         if (lane.error)
           issues.push({
@@ -611,19 +602,11 @@ export async function GET(request: NextRequest) {
           message: `${dlqCount} message(s) in the DLQ — investigate failed deliveries.`,
         });
       }
-      // Only the lanes actually carrying messages can halt ingest: under `mode: "queue"` a paused
-      // flow-control lane is inert, and vice versa.
-      const pausedWhereItMatters =
-        ingest.mode === "flow"
-          ? ingest.pausedLanes
-          : ingest.legacyQueue?.paused
-            ? [ingest.legacyQueue.name]
-            : [];
-      if (pausedWhereItMatters.length > 0) {
+      if (ingest.pausedLanes.length > 0) {
         issues.push({
           severity: "warn",
           code: "ingest_paused",
-          message: `Observations ingest is PAUSED (${pausedWhereItMatters.join(", ")}) — ingestion into PG is halted.`,
+          message: `Observations ingest is PAUSED (${ingest.pausedLanes.join(", ")}) — ingestion into PG is halted.`,
         });
       }
     } catch (err) {

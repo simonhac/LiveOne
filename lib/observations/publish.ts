@@ -11,17 +11,20 @@
  * The point of this module is that it must never again be possible to add a publish site that
  * silently inherits those defaults. Import `observationDeliveryOptions()` and spread it.
  *
- * It also owns the QUEUE→FLOW CONTROL cutover: `publishObservationMessage()` is the single place
- * that decides which transport a message takes, switched by `OBSERVATIONS_PUBLISH_MODE`. That switch
- * is the rollback mechanism — reverting an ingest change is an env-var flip observable within one
- * poll, not a deploy.
+ * It also owns the delivery TRANSPORT: `publishObservationMessage()` is the single place that
+ * publishes, and since the 2026-09-10 cutover it publishes to a flow-control lane. The legacy FIFO
+ * Queue and the `OBSERVATIONS_PUBLISH_MODE` switch that selected it are gone.
+ *
+ * 🛑 The rollback is no longer an env-var flip, and does not need to be: `observations_outbox` is
+ * teed BEFORE publish, so a publish that throws leaves the row `published_at = NULL` and the relay
+ * cron retries it every minute. A broken publish path costs latency, not data — which is what the
+ * 2026-09-10 attempt demonstrated, recovering a 2m45s backlog unaided.
  *
  * See docs/plans/ingest-head-of-line-hardening.md.
  */
 
 import {
   qstash,
-  OBSERVATIONS_QUEUE_NAME,
   observationsFlowKey,
   OBSERVATIONS_FLOW_PREFIX,
   getObservationsReceiverUrl,
@@ -110,20 +113,10 @@ export function messageLane(message: QueueMessage): ObservationLane {
 }
 
 /**
- * Publish transport.
+ * Publish ONE observations message, onto its lane.
  *
- * `"queue"` (default) → the legacy FIFO QStash Queue. `"flow"` → Flow Control, keyed by lane.
- * Flipping this env var is the cutover, and flipping it back is the rollback.
- */
-export function publishMode(): "queue" | "flow" {
-  return process.env.OBSERVATIONS_PUBLISH_MODE === "flow" ? "flow" : "queue";
-}
-
-/**
- * Publish ONE observations message.
- *
- * The single publish path. Both transports carry an identical option set, so the cutover changes
- * only which lane the message waits in — never how long a bad one can hold it.
+ * The single publish path. Every message carries the same delivery option set, so a lane changes
+ * only what a message waits behind — never how long a bad one can hold it.
  *
  * Throws on failure: callers decide whether that is fatal (the relay marks the row unpublished and
  * retries next minute) or best-effort (the producers log and let the poll continue).
@@ -136,27 +129,16 @@ export async function publishObservationMessage(
   if (!receiverUrl) return;
 
   const lane = messageLane(message);
-  const common = {
+  await qstash.publishJSON({
     url: receiverUrl,
     body: message,
     ...observationDeliveryOptions(),
-  };
-
-  if (publishMode() === "flow") {
-    await qstash.publishJSON({
-      ...common,
-      flowControl: {
-        key: observationsFlowKey(lane),
-        parallelism: laneParallelism(lane),
-      },
-      // Filterable in `qstash.logs()`. Load-bearing once we stop using a queue: the admin
-      // pending-messages view identifies our traffic by `queueName`, which then goes empty.
-      label: OBSERVATIONS_FLOW_PREFIX,
-    });
-    return;
-  }
-
-  await qstash
-    .queue({ queueName: OBSERVATIONS_QUEUE_NAME })
-    .enqueueJSON(common);
+    flowControl: {
+      key: observationsFlowKey(lane),
+      parallelism: laneParallelism(lane),
+    },
+    // Filterable in `qstash.logs()`, and the ONLY way our traffic is identifiable now that there is
+    // no `queueName` on the wire — `queue timing` classifies by this and by the lane key.
+    label: OBSERVATIONS_FLOW_PREFIX,
+  });
 }

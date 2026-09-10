@@ -2729,9 +2729,9 @@ one both grow — and it was misread twice during the 2026-09-09 stall. Minutes 
 durable write is not ambiguous: a busy path still ingests. `STUCK` on a lane (saturated AND
 backed up AND nothing landing) is the same question in its unambiguous form.
 
-Ingest runs as two lanes — `live` and `backfill` — so a multi-week backfill can no longer
-head-of-line block the minutely polls. Until the cutover the legacy FIFO queue is still the
-transport; `status` shows `mode:` so you know which one your write will land on.
+Ingest runs as two flow-control lanes — `live` and `backfill` — so a multi-week backfill can
+no longer head-of-line block the minutely polls. The legacy FIFO queue it replaced was retired
+at the 2026-09-10 cutover.
 
 Usage:
   liveone queue <subcommand> [options]

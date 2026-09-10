@@ -72,7 +72,7 @@ describe("a Vercel preview is not production", () => {
 
   it("does not give a preview prod's queue name", async () => {
     const q = await bare(PREVIEW);
-    expect(q.OBSERVATIONS_QUEUE_NAME).toBe("observations-dev");
+    expect(q.RETIRED_QUEUE_NAME).toBe("observations-dev");
   });
 
   it("does not point a preview at the production receiver", async () => {
@@ -114,7 +114,7 @@ describe("production still resolves to production", () => {
       VERCEL_ENV: "production",
     });
     expect(q.OBSERVATIONS_FLOW_PREFIX).toBe("obs");
-    expect(q.OBSERVATIONS_QUEUE_NAME).toBe("observations");
+    expect(q.RETIRED_QUEUE_NAME).toBe("observations");
     expect(q.observationsFlowKey("backfill")).toBe("obs.backfill");
     expect(q.getObservationsReceiverUrl()).toBe(
       "https://www.liveone.energy/api/observations/receive",
@@ -194,6 +194,6 @@ describe("local development", () => {
       VERCEL_ENV: undefined,
     });
     expect(q.OBSERVATIONS_FLOW_PREFIX).toBe("obs-dev");
-    expect(q.OBSERVATIONS_QUEUE_NAME).toBe("observations-dev");
+    expect(q.RETIRED_QUEUE_NAME).toBe("observations-dev");
   });
 });

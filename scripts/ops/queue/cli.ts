@@ -50,35 +50,25 @@ export interface WireLane {
 }
 
 /**
- * `/api/v4/queue`'s v2 body (`IngestState`).
+ * `/api/v4/queue`'s body (`IngestState`).
  *
- * The compat fields (`paused`/`lag`/`parallelism`) are the ones the PREVIOUS build of this CLI read,
- * and they are typed optional here for the mirror-image reason: this build may be pointed at an
- * origin that predates the lane split (a rollback, or a preview). Nothing below indexes `lanes`
- * without a fallback, so an old origin degrades to the one-line read rather than a TypeError.
+ * 🛑 `lanes` is typed OPTIONAL, and stays that way. This CLI runs against a DEPLOYED origin, not
+ * against this checkout — point it at a rollback or a preview that predates the lane split and the
+ * field is simply absent. Nothing below indexes it without a fallback, so an old origin degrades to
+ * a stated "this origin reports no lanes" rather than a TypeError, which is the wrong thing to
+ * discover mid-incident.
  */
 export interface WireQueue {
   name: string;
-  mode: "queue" | "flow";
   globalParallelism: { max: number; inFlight: number } | null;
   waiting: number;
   inFlight: number | null;
   pausedLanes: Lane[];
   lanes?: WireLane[];
-  legacyQueue?: {
-    name: string;
-    paused: boolean;
-    lag: number;
-    parallelism: number;
-    exists: boolean;
-    error?: string;
-  } | null;
   lastIngestedAt: string | null;
   stalledMinutes: number | null;
   stalled?: boolean;
   paused: boolean;
-  lag: number;
-  parallelism: number;
 }
 
 /**
@@ -162,7 +152,7 @@ export function render(q: WireQueue): string {
       ? "never ingested"
       : `${q.stalledMinutes} min since last ingest`;
   const lines = [
-    `ingest       ${q.name}  (mode: ${q.mode})`,
+    `ingest       ${q.name}`,
     `last ingest  ${q.lastIngestedAt ?? "(none)"}  — ${stalled}`,
   ];
 
@@ -177,8 +167,7 @@ export function render(q: WireQueue): string {
     // An origin that predates the lane split. Say so, rather than printing an empty table.
     lines.push(
       "",
-      `lag          ${q.lag}`,
-      `parallelism  ${q.parallelism}${q.paused ? "  PAUSED" : ""}`,
+      `waiting      ${q.waiting}${q.paused ? "  PAUSED" : ""}`,
       "(this origin reports no lanes — it predates the flow-control split)",
     );
   }
@@ -188,16 +177,6 @@ export function render(q: WireQueue): string {
       "",
       `account-wide in flight ${q.globalParallelism.inFlight}/${q.globalParallelism.max}` +
         " — a cap here holds down every lane at once",
-    );
-
-  const lq = q.legacyQueue;
-  if (lq)
-    lines.push(
-      lq.exists
-        ? `legacy queue "${lq.name}"  lag ${lq.lag}  parallelism ${lq.parallelism}${
-            lq.paused ? "  PAUSED" : ""
-          }`
-        : `legacy queue "${lq.name}"  (not created)`,
     );
 
   return lines.join("\n");
@@ -220,9 +199,9 @@ export const queueCommand = defineCommand({
     "one both grow — and it was misread twice during the 2026-09-09 stall. Minutes since the last\n" +
     "durable write is not ambiguous: a busy path still ingests. `STUCK` on a lane (saturated AND\n" +
     "backed up AND nothing landing) is the same question in its unambiguous form.\n\n" +
-    "Ingest runs as two lanes — `live` and `backfill` — so a multi-week backfill can no longer\n" +
-    "head-of-line block the minutely polls. Until the cutover the legacy FIFO queue is still the\n" +
-    "transport; `status` shows `mode:` so you know which one your write will land on.",
+    "Ingest runs as two flow-control lanes — `live` and `backfill` — so a multi-week backfill can\n" +
+    "no longer head-of-line block the minutely polls. The legacy FIFO queue it replaced was retired\n" +
+    "at the 2026-09-10 cutover.",
   uses: ["api"],
   subcommands: {
     status: {
@@ -389,51 +368,22 @@ export type Resolved =
   | { ok: false; what: string; why: string; next: string };
 
 /**
- * Turn "what the operator asked for" into "what this origin will accept", given its `mode`.
+ * Turn "what the operator asked for" into "what this origin will accept".
  *
- * 🛑 This exists because the two transports disagree about lanes, and the disagreement is
- * load-bearing during the coexistence window:
+ * 🛑 `lane` is REQUIRED to set parallelism. A per-lane cap applied fleet-wide is exactly the
+ * accident worth refusing, and the server's sum-vs-pool check only means something once the
+ * operator has said which lane they meant.
  *
- *   • Under `flow`, `lane` is REQUIRED to set parallelism. A per-lane cap applied fleet-wide is
- *     exactly the accident worth refusing, and the server's sum-vs-pool check only means something
- *     once the operator has said which lane they meant.
- *   • Under `queue`, there are no lanes to scope to, and the server refuses a lane-scoped write
- *     outright rather than reporting a success that changes nothing.
- *
- * The server enforces both. This is not a second enforcement point — it is the difference between a
- * refusal that names the lever and a bare 422, at the moment an operator is mid-incident. The
- * server's answer still wins: anything this lets through is re-checked there.
+ * The server enforces this too. This is not a second enforcement point — it is the difference
+ * between a refusal that names the lever and a bare 422, at the moment an operator is mid-incident.
+ * The server's answer still wins: anything this lets through is re-checked there.
  */
-export function resolveWrite(
-  state: Pick<WireQueue, "mode">,
-  want: { lane?: string; paused?: boolean; parallelism?: number | null },
-): Resolved {
+export function resolveWrite(want: {
+  lane?: string;
+  paused?: boolean;
+  parallelism?: number | null;
+}): Resolved {
   const setsParallelism = want.parallelism !== undefined;
-
-  if (state.mode === "queue") {
-    if (want.lane !== undefined && want.lane !== "all")
-      return {
-        ok: false,
-        what: `this origin has no lane "${want.lane}" yet`,
-        why:
-          "it still publishes through the legacy FIFO queue (mode: queue), which is one " +
-          "undifferentiated lane — a lane-scoped write would change nothing",
-        next: "drop --lane until the flow-control cutover; `liveone queue status` shows the mode",
-      };
-    if (want.parallelism === null)
-      return {
-        ok: false,
-        what: "the legacy queue cannot be unpinned",
-        why: "pinning is a flow-control concept; the queue's parallelism is simply a setting",
-        next: "pass a concrete concurrency instead, e.g. `liveone queue parallelism 5 --apply`",
-      };
-    // No `lane` on the wire at all: the route defaults an absent lane to `all`, and sending "all"
-    // explicitly would be a second thing to keep in step for no gain.
-    const body: WriteBody = {};
-    if (want.paused !== undefined) body.paused = want.paused;
-    if (setsParallelism) body.parallelism = want.parallelism;
-    return { ok: true, body };
-  }
 
   if (setsParallelism && (want.lane === undefined || want.lane === "all"))
     return {
@@ -475,7 +425,7 @@ const QUEUE_ERRORS = {
       typeof body.error === "string"
         ? body.error
         : "no reason given (the route returned 422 with no `error`)",
-    next: "run `liveone queue status` to see the lanes, their caps, and the mode",
+    next: "run `liveone queue status` to see the lanes and their caps",
   },
 } as const;
 
@@ -534,9 +484,9 @@ async function patch(
   const lane = str(ctx, "lane");
   return withApiSession(ctx, async (s) => {
     const before = await s.get<WireQueue>("/api/v4/queue");
-    // Resolved AFTER the read, because the answer depends on the origin's `mode` — which is a
-    // property of the deployment, not of this checkout, and flips at the cutover.
-    const resolved = resolveWrite(before, { lane, ...want });
+    // Read first, so the dry-run sentence can name what the value is CHANGING FROM. The refusal
+    // rules themselves are local — the server re-checks every one of them.
+    const resolved = resolveWrite({ lane, ...want });
     if (!resolved.ok) throw usage(resolved.what, resolved.why, resolved.next);
     const body = resolved.body;
 
@@ -578,7 +528,10 @@ async function runParallelism(ctx: Ctx): Promise<number> {
       const q = narrow(await s.get<WireQueue>("/api/v4/queue"), only);
       ctx.emit(q, () => {
         const lanes = q.lanes ?? [];
-        if (!lanes.length) return String(q.parallelism);
+        // An origin that predates the lane split reports no lanes at all — say so rather than
+        // printing nothing, which reads as "zero lanes configured".
+        if (!lanes.length)
+          return "(this origin reports no lanes — it predates the flow-control split)";
         const w = Math.max(...lanes.map((l) => l.lane.length));
         return lanes
           .map(
@@ -606,7 +559,7 @@ async function runParallelism(ctx: Ctx): Promise<number> {
     const current =
       body.lane && body.lane !== "all"
         ? b.lanes?.find((l) => l.lane === body.lane)?.parallelism
-        : b.parallelism;
+        : undefined;
     return current === parallelism
       ? `pin ${target} at ${parallelism} (already there)`
       : `set ${target} parallelism ${current ?? "?"} → ${parallelism}`;
@@ -649,7 +602,6 @@ interface WirePercentiles {
 
 interface WireLog {
   window: { fromMs: number; toMs: number };
-  mode: "queue" | "flow";
   messages: WireMessage[];
   summary: {
     messages: number;
@@ -683,16 +635,18 @@ const pct = (p: WirePercentiles): string =>
 
 function renderTiming(w: WireLog, shown: WireMessage[]): string {
   const out: string[] = [
-    `window       ${new Date(w.window.fromMs).toISOString()} → ${new Date(w.window.toMs).toISOString()}  (mode: ${w.mode})`,
+    `window       ${new Date(w.window.fromMs).toISOString()} → ${new Date(w.window.toMs).toISOString()}`,
     `batches      ${w.summary.messages}  —  ${w.summary.delivered} delivered · ${w.summary.failed} failed · ${w.summary.inFlight} in flight · ${w.summary.retries} retries`,
     `duration     ${pct(w.summary.durationMs)}`,
     `wait         ${pct(w.summary.waitMs)}`,
     `occupancy    ${pct(w.summary.occupancyMs)}`,
   ];
+  // Only worth a line when the window straddles the 2026-09-10 cutover, where a `queue` row is a
+  // retained log from the retired FIFO transport rather than anything still in use.
   const t = w.summary.byTransport;
   if (t.flow && t.queue)
     out.push(
-      `transport    ${t.queue} queue · ${t.flow} flow  (coexistence window)`,
+      `transport    ${t.queue} on the retired queue · ${t.flow} on lanes`,
     );
 
   if (shown.length) {

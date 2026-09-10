@@ -6,7 +6,6 @@ import {
   pinLaneParallelism,
   unpinLaneParallelism,
   setLanePaused,
-  updateLegacyQueue,
   type IngestState,
 } from "@/lib/observations/flow-control";
 import {
@@ -17,10 +16,10 @@ import {
 /**
  * The observations ingest path — status and control, for `liveone queue`.
  *
- * "queue" now names the INGEST PATH, not a QStash Queue: the path is two flow-control lanes
- * (`live`, `backfill`) plus, for the length of the coexistence window, the legacy FIFO Queue. The
- * name and the address are kept deliberately — they are in the generated CLI reference and they are
- * the muscle memory built during the 2026-09-09 incident.
+ * "queue" names the INGEST PATH, not a QStash Queue: since the 2026-09-10 cutover the path is two
+ * flow-control lanes (`live`, `backfill`) and nothing else. The name and the address are kept
+ * deliberately — they are in the generated CLI reference and they are the muscle memory built
+ * during the 2026-09-09 incident.
  *
  * It exists as a SEPARATE address rather than by admitting `/api/admin/observations/info` to the
  * CLI-token allowlist: `/api/admin/*` is deliberately outside that allowlist ("a stray `lo_cli_`
@@ -124,17 +123,13 @@ export async function PATCH(request: NextRequest) {
 
   // Scope resolution, and the one place a write can be refused for being too broad.
   //
-  // `lane` is REQUIRED for a parallelism write under flow control — a per-lane cap applied
-  // fleet-wide is exactly the accident worth refusing, and the sum-vs-pool check below only means
-  // something when the operator has said which lane they meant. Everything else defaults to `all`:
-  //   • pause/resume has always meant the whole path, and
-  //   • the legacy queue IS one undifferentiated lane, so under `mode: "queue"` there is nothing to
-  //     scope to. Requiring a lane there would 422 the `liveone queue` build that is deployed today,
-  //     mid-incident, for no safety gained.
-  const laneRequired = wantsParallelism && before.mode === "flow";
+  // `lane` is REQUIRED for a parallelism write — a per-lane cap applied fleet-wide is exactly the
+  // accident worth refusing, and the sum-vs-pool check below only means something once the operator
+  // has said which lane they meant. Pause/resume defaults to `all`, because it has always meant the
+  // whole path and "stop everything" is the one instruction that should not need qualifying.
   const scope: LaneScope | null =
     body.lane === undefined
-      ? laneRequired
+      ? wantsParallelism
         ? null
         : "all"
       : parseLane(body.lane);
@@ -146,26 +141,13 @@ export async function PATCH(request: NextRequest) {
           : ""),
     );
 
-  // A lane-scoped write against the legacy queue would report success and change nothing about what
-  // is actually being delivered, which is worse than refusing it.
-  if (before.mode === "queue" && scope !== "all")
-    return err(
-      `OBSERVATIONS_PUBLISH_MODE is "queue", and the legacy queue has no lanes — ` +
-        `use lane "all" until the flow-control cutover.`,
-    );
-
   let parallelism: number | null | undefined;
   if (wantsParallelism) {
     if (body.parallelism === null) {
       parallelism = null; // unpin
     } else {
       const n = Number(body.parallelism);
-      const invalid =
-        before.mode === "queue"
-          ? !Number.isInteger(n) || n < 1 || n > poolMax()
-            ? `parallelism must be an integer between 1 and ${poolMax()} (the Postgres pool size)`
-            : null
-          : validateParallelism(before, scope, n);
+      const invalid = validateParallelism(before, scope, n);
       if (invalid) return err(invalid);
       parallelism = n;
     }
@@ -178,22 +160,11 @@ export async function PATCH(request: NextRequest) {
     paused = body.paused;
   }
 
-  if (before.mode === "queue") {
-    if (parallelism === null)
-      return err(
-        `the legacy queue cannot be unpinned — parallelism: null applies to flow-control lanes only`,
-      );
-    await updateLegacyQueue({
-      ...(paused !== undefined ? { paused } : {}),
-      ...(parallelism !== undefined ? { parallelism } : {}),
-    });
-  } else {
-    for (const lane of lanesOf(scope)) {
-      if (paused !== undefined) await setLanePaused(lane, paused);
-      if (parallelism === null) await unpinLaneParallelism(lane);
-      else if (parallelism !== undefined)
-        await pinLaneParallelism(lane, parallelism);
-    }
+  for (const lane of lanesOf(scope)) {
+    if (paused !== undefined) await setLanePaused(lane, paused);
+    if (parallelism === null) await unpinLaneParallelism(lane);
+    else if (parallelism !== undefined)
+      await pinLaneParallelism(lane, parallelism);
   }
 
   return NextResponse.json(await readIngestState());

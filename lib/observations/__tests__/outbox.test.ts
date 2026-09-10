@@ -19,7 +19,6 @@ jest.mock("@/lib/db/planetscale", () => ({ planetscaleDb: null }));
 jest.mock("@/lib/db/planetscale/schema", () => ({ observationsOutbox: {} }));
 jest.mock("@/lib/qstash", () => ({
   qstash: null,
-  OBSERVATIONS_QUEUE_NAME: "observations-test",
   getObservationsReceiverUrl: () =>
     "https://example.test/api/observations/receive",
 }));

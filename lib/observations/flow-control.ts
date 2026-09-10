@@ -14,25 +14,19 @@
  * TOTALLY STOPPED fleet as "0 lanes" and read as healthy. So we enumerate `OBSERVATION_LANES` and
  * left-join, rendering a missing key as `idle`.
  *
- * 🛑 **The transport in use is `publishMode()`, not "whatever we can read".** This module ships
- * BEFORE the cutover, so during the coexistence window the lanes are genuinely empty and the truth
- * is in the legacy Queue. Reporting lanes while `OBSERVATIONS_PUBLISH_MODE` is still `"queue"` would
- * blind the control plane in the other direction — the exact failure this PR exists to prevent.
- * Both transports are therefore read on every call, and the compat/summary fields are derived from
- * whichever one is actually carrying messages.
+ * 🛑 **A lane that reads clean is not proof that publishing works.** `flowControl.get()` answers
+ * 200 for a key `publishJSON` would reject outright, which is how the 2026-09-10 cutover reported
+ * two healthy lanes while nothing at all was being published. `stalledMinutes` and
+ * `liveone queue outbox` are the checks that see through that; the lane numbers alone are not.
  *
  * See docs/plans/ingest-head-of-line-hardening.md.
  */
 
-import {
-  qstash,
-  OBSERVATIONS_QUEUE_NAME,
-  observationsFlowKey,
-} from "@/lib/qstash";
+import { qstash, observationsFlowKey } from "@/lib/qstash";
 import { ReadingsDao } from "@/lib/readings";
 import { planetscaleDb } from "@/lib/db/planetscale";
 import { OBSERVATION_LANES, type ObservationLane } from "./types";
-import { laneParallelism, publishMode } from "./publish";
+import { laneParallelism } from "./publish";
 
 /**
  * Minutes without a durable write before ingest counts as stalled.
@@ -43,6 +37,15 @@ import { laneParallelism, publishMode } from "./publish";
  * because the CLI runs against a *deployed* origin and cannot import this module.
  */
 export const INGEST_STALL_THRESHOLD_MIN = 5;
+
+/**
+ * What the ingest path is called.
+ *
+ * It was the QStash Queue's name until the 2026-09-10 cutover, and it stays the name afterwards on
+ * purpose: it is what `liveone queue` prints, what the CLI reference documents, and the muscle
+ * memory built during the incident. It now names the PATH — two flow-control lanes — not a Queue.
+ */
+const INGEST_PATH_NAME = "observations";
 
 /** One flow-control lane, as QStash reports it (or as it renders when QStash has no state). */
 export interface LaneState {
@@ -89,52 +92,29 @@ interface LaneView extends LaneState {
   stuck: boolean;
 }
 
-/** The legacy FIFO Queue, while it still exists. Retired with the queue itself. */
-export interface LegacyQueueState {
-  name: string;
-  paused: boolean;
-  lag: number;
-  parallelism: number;
-  /** False when the queue has never been created (a fresh environment), which is not an error. */
-  exists: boolean;
-  /** Set when the queue could not be read at all — see the 🛑 on `LaneState.error`. */
-  error?: string;
-}
-
 export interface IngestState {
   /** Historical name of the ingest path. Since the lane split this names the PATH, not a Queue. */
   name: string;
-  /** Which transport is actually carrying messages right now. */
-  mode: "queue" | "flow";
   /**
    * Account-wide concurrency, across every flow-control key. Answers the question that went
    * unanswered during the incident — *"I raised parallelism and nothing changed, why?"* Never
    * alert on it: a healthy busy fleet can touch it.
    */
   globalParallelism: { max: number; inFlight: number } | null;
-  /** Σ waiting across lanes (flow), or the queue's `lag` (queue). */
+  /** Σ waiting across lanes. */
   waiting: number;
-  /** Σ in flight across lanes. `null` under the legacy queue, which cannot report it. */
-  inFlight: number | null;
+  /** Σ in flight across lanes. */
+  inFlight: number;
   pausedLanes: ObservationLane[];
   lanes: LaneView[];
-  legacyQueue: LegacyQueueState | null;
   /** ISO8601 of the last durable write by the receiver, or null when nothing ever landed. */
   lastIngestedAt: string | null;
   /** Minutes since that write. `null` when `lastIngestedAt` is null. */
   stalledMinutes: number | null;
   /** `stalledMinutes > INGEST_STALL_THRESHOLD_MIN`. */
   stalled: boolean;
-
-  // ── compat, ONE release only (dropped when the queue is retired) ──
-  // The CLI runs against a DEPLOYED origin, not this checkout. An operator on an older `liveone`
-  // build hitting the new route mid-incident is the wrong moment to discover a wire break.
-  /** Every lane paused (flow), or the queue paused (queue). */
+  /** Every lane paused. */
   paused: boolean;
-  /** Alias of `waiting`. */
-  lag: number;
-  /** The largest cap in force — global if pinned account-wide, else the largest lane cap. */
-  parallelism: number;
 }
 
 /** True for the "this key/queue does not exist" response, which is a state and not a failure. */
@@ -199,50 +179,13 @@ export async function readGlobalParallelism(): Promise<{
   };
 }
 
-/**
- * The legacy queue, while it exists.
- *
- * Read on every call for the whole coexistence window: until `OBSERVATIONS_PUBLISH_MODE=flow` this
- * is where the messages actually are, and after the flip a non-zero `lag` here means undrained
- * residue that still has to land.
- */
-export async function readLegacyQueue(): Promise<LegacyQueueState | null> {
-  if (!qstash) return null;
-  try {
-    const info = await qstash
-      .queue({ queueName: OBSERVATIONS_QUEUE_NAME })
-      .get();
-    return {
-      name: OBSERVATIONS_QUEUE_NAME,
-      paused: info.paused ?? false,
-      lag: info.lag ?? 0,
-      parallelism: info.parallelism ?? 1,
-      exists: true,
-    };
-  } catch (error) {
-    return {
-      name: OBSERVATIONS_QUEUE_NAME,
-      paused: false,
-      lag: 0,
-      parallelism: 1,
-      exists: false,
-      // A 404 means "never created", which is a state. Anything else means we could not see, and
-      // the zeros above are the absence of a reading — never a clean bill of health.
-      ...(isNotFound(error) ? {} : { error: String(error) }),
-    };
-  }
-}
-
-/** The full control-plane read: both transports, plus ingest recency from Postgres. */
+/** The full control-plane read: every lane, plus ingest recency from Postgres. */
 export async function readIngestState(): Promise<IngestState> {
-  const mode = publishMode();
-
-  const [lanes, global, legacyQueue, lastMs] = await Promise.all([
+  const [lanes, global, lastMs] = await Promise.all([
     readLanes(),
     // Account-wide parallelism is a hint, never a signal — a failure here must not take down the
     // one view an operator has during an outage.
     readGlobalParallelism().catch(() => null),
-    readLegacyQueue(),
     planetscaleDb ? ReadingsDao.latestIngestCreatedAtMs() : null,
   ]);
 
@@ -260,32 +203,17 @@ export async function readIngestState(): Promise<IngestState> {
     stuck: !l.error && l.inFlight >= l.parallelism && l.waiting > 0 && stalled,
   }));
 
-  const laneWaiting = laneViews.reduce((n, l) => n + l.waiting, 0);
-  const laneInFlight = laneViews.reduce((n, l) => n + l.inFlight, 0);
-
-  const flow = mode === "flow";
-  const waiting = flow ? laneWaiting : (legacyQueue?.lag ?? 0);
-
   return {
-    name: OBSERVATIONS_QUEUE_NAME,
-    mode,
+    name: INGEST_PATH_NAME,
     globalParallelism: global,
-    waiting,
-    inFlight: flow ? laneInFlight : null,
+    waiting: laneViews.reduce((n, l) => n + l.waiting, 0),
+    inFlight: laneViews.reduce((n, l) => n + l.inFlight, 0),
     pausedLanes: laneViews.filter((l) => l.paused).map((l) => l.lane),
     lanes: laneViews,
-    legacyQueue,
     lastIngestedAt: lastMs != null ? new Date(lastMs).toISOString() : null,
     stalledMinutes,
     stalled,
-
-    paused: flow
-      ? laneViews.every((l) => l.paused)
-      : (legacyQueue?.paused ?? false),
-    lag: waiting,
-    parallelism: flow
-      ? Math.max(...laneViews.map((l) => l.parallelism))
-      : (legacyQueue?.parallelism ?? 1),
+    paused: laneViews.every((l) => l.paused),
   };
 }
 
@@ -330,14 +258,4 @@ export async function setLanePaused(
   const fc = requireQstash().flowControl;
   const key = observationsFlowKey(lane);
   await (paused ? fc.pause(key) : fc.resume(key));
-}
-
-/** The legacy queue's pause/parallelism lever, for as long as it is the transport in use. */
-export async function updateLegacyQueue(patch: {
-  paused?: boolean;
-  parallelism?: number;
-}): Promise<void> {
-  await requireQstash()
-    .queue({ queueName: OBSERVATIONS_QUEUE_NAME })
-    .upsert(patch);
 }

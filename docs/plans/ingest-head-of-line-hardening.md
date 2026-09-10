@@ -5,14 +5,28 @@ cause was understood, and again on 2026-09-10 to match what shipped.
 
 **Landed:** delivery bounding + batch cap + the lane-keyed publish path behind
 `OBSERVATIONS_PUBLISH_MODE` (#432), the SDK bump to 2.11.3 (#433), the flow-control control plane
-(#434), and the `liveone queue --lane` CLI. **Not yet done:** retiring the admin `info`/`messages`
-twins, the cutover itself (`OBSERVATIONS_PUBLISH_MODE=flow`, dev then prod), and deleting the queue.
+(#434), the `liveone queue --lane` CLI (#435), the PK collapse (#436), `liveone queue timing`
+(#437/#438), preview ≠ production in `lib/qstash.ts` (#439), and legal flow-control keys plus
+`liveone queue outbox` (#440).
 
-🛑 **The CLI must ship BEFORE the cutover, and did — this ordering is load-bearing.** The route
-requires `lane` to set parallelism once `mode` is `flow`, so the moment the cutover flips, a build
-of `liveone queue parallelism` that sends no lane starts returning 422. That is the primary incident
-lever. The CLI now resolves its write body against the origin's reported `mode`, so one command line
-is correct on both sides of the flip.
+**Cut over 2026-09-10 03:39 UTC.** `OBSERVATIONS_PUBLISH_MODE=flow` in the Production scope, then a
+redeploy. Verified over 12 minutes: `mode: flow`, ingest monotonic, `stalledMinutes` never above
+0.4, `failing: 0` on the outbox throughout, and `queue timing` reporting p50 691 ms against a
+pre-cutover baseline of 684 ms — indistinguishable.
+
+**Then retired, in the same day's follow-up:** the FIFO queue transport, the `OBSERVATIONS_PUBLISH_MODE`
+switch, the `mode`/`legacyQueue`/compat fields on `/api/v4/queue`, and the admin `info`/`messages`
+twins (the admin page now reads `/api/v4/queue` + `/api/v4/queue/timing`, the same endpoints the
+CLI does). **Not yet done:** deleting the QStash queue object itself, and the Amber recovery.
+
+🛑 **Deleting the queue object destroys anything still waiting in it, and those messages' outbox
+rows are already marked published — the relay would never re-send them.** "Nothing enqueues to it"
+is not "nothing is waiting in it". Gate the deletion on a drained queue, read directly from QStash,
+not on the code change alone.
+
+🛑 **The CLI shipped BEFORE the cutover, and that ordering was load-bearing.** The route requires
+`lane` to set parallelism, so a build of `liveone queue parallelism` that sends no lane 422s. That
+is the primary incident lever, and it had to speak the new contract before the flip, not after.
 
 🛑 **Keyed by LANE, not by device — this doc's original headline was revised.** See the section
 below.
@@ -328,11 +342,16 @@ Still worth doing; Flow Control reduces their urgency but does not replace them.
    before the cutover, so while `OBSERVATIONS_PUBLISH_MODE` is still `"queue"` the lanes are
    genuinely empty and reporting them alone would blind the very surface this step exists to fix.
    Writes go to the transport actually in use, for the same reason.
-4. Chunking + received-not-published (1, 3) with the `liveone sync` verb.
-5. Retire the `observations` queue once nothing enqueues to it.
+4. ✅ Cut over (`OBSERVATIONS_PUBLISH_MODE=flow`, Production scope + redeploy), then retire the
+   queue transport in code: the switch, the `mode`/`legacyQueue`/compat fields, the admin twins.
+5. Delete the `observations` queue object — see the 🛑 at the top: gate it on a DRAINED queue read
+   from QStash, not on "nothing enqueues to it".
+6. Chunking + received-not-published (1, 3) with the `liveone sync` verb.
 
-Rollback at any point is reverting the publish call sites: the queue still exists and the outbox is
-the system of record either way.
+🛑 **The rollback stopped being an env-var flip at step 4, and that is fine.** It never needed to be
+one: `observations_outbox` is teed BEFORE publish, so a publish that throws leaves the row
+`published_at = NULL` and the relay retries it every minute. The failed 2026-09-10 attempt proved it
+— 2m45s of no publishing, a backlog of 19, and it drained itself with nothing lost.
 
 ## Verification
 

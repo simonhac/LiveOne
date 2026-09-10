@@ -66,8 +66,6 @@ const flowState = (over: Partial<Record<string, number | boolean>> = {}) => ({
 });
 
 describe("the ingest control plane", () => {
-  const savedMode = process.env.OBSERVATIONS_PUBLISH_MODE;
-
   beforeEach(() => {
     fake().setFlow(LIVE, null);
     fake().setFlow(BACKFILL, null);
@@ -75,11 +73,6 @@ describe("the ingest control plane", () => {
     fake().flowCalls.length = 0;
     mockLatest.mockReset();
     mockLatest.mockResolvedValue(minutesAgo(0.2));
-  });
-
-  afterEach(() => {
-    if (savedMode === undefined) delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    else process.env.OBSERVATIONS_PUBLISH_MODE = savedMode;
   });
 
   it("renders a lane QStash has never heard of as idle, not as absent", async () => {
@@ -93,7 +86,6 @@ describe("the ingest control plane", () => {
   });
 
   it("a total stop is not reported as an empty, healthy path", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     mockLatest.mockResolvedValue(minutesAgo(140));
 
     const state = await readIngestState();
@@ -104,7 +96,6 @@ describe("the ingest control plane", () => {
   });
 
   it("flags a lane stuck only when saturated AND backed up AND nothing is landing", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(
       LIVE,
       flowState({ waitListSize: 1000, parallelismCount: 5, parallelismMax: 5 }),
@@ -122,7 +113,6 @@ describe("the ingest control plane", () => {
   });
 
   it("summarises across lanes and exposes in-flight, which the queue could not", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(
       LIVE,
       flowState({ waitListSize: 7, parallelismCount: 5, isPaused: true }),
@@ -133,37 +123,24 @@ describe("the ingest control plane", () => {
     );
 
     const state = await readIngestState();
-    expect(state.mode).toBe("flow");
     expect(state.waiting).toBe(10);
     expect(state.inFlight).toBe(6);
     expect(state.pausedLanes).toEqual(["live"]);
     expect(state.paused).toBe(false); // not EVERY lane is paused
-    expect(state.lag).toBe(10); // compat alias
-    expect(state.parallelism).toBe(5);
   });
 
-  it("reports the LEGACY QUEUE while that is the transport actually in use", async () => {
-    // The whole point of reading both: shipping the control plane before the cutover must not blind
-    // it in the other direction. Lanes are empty here because nothing publishes to them yet.
-    delete process.env.OBSERVATIONS_PUBLISH_MODE;
+  it("never reads the retired FIFO queue, however busy it looks", async () => {
+    // 🛑 The read half of the 2026-09-10 retirement. A queue left over with messages in it is not
+    // this path's business any more, and folding its `lag` back into `waiting` would report a
+    // backlog that nothing is publishing to and nothing will drain.
     fake().setQueue({ paused: true, lag: 1053, parallelism: 5 });
 
     const state = await readIngestState();
-    expect(state.mode).toBe("queue");
-    expect(state.waiting).toBe(1053);
-    expect(state.paused).toBe(true);
-    expect(state.parallelism).toBe(5);
-    // The observability gap that made the incident invisible, stated rather than faked.
-    expect(state.inFlight).toBeNull();
-    expect(state.legacyQueue?.exists).toBe(true);
-  });
-
-  it("tolerates a queue that has never been created", async () => {
-    delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    const state = await readIngestState();
-    expect(state.legacyQueue?.exists).toBe(false);
     expect(state.waiting).toBe(0);
+    expect(state.inFlight).toBe(0);
     expect(state.paused).toBe(false);
+    expect(state).not.toHaveProperty("legacyQueue");
+    expect(state).not.toHaveProperty("mode");
   });
 
   it("sets concurrency by PINNING it — an unpinned change is reverted by the next poll", async () => {
@@ -180,7 +157,6 @@ describe("the ingest control plane", () => {
   });
 
   it("an UNREADABLE lane renders as an error, never as a healthy idle one", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(BACKFILL, flowState());
     // Not a 404 — an unexpected response. Throwing here would 500 the entire status view at the one
     // moment an operator needs it, so the lane degrades instead.

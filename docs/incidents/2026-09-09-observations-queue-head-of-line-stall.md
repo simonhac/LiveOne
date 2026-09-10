@@ -234,6 +234,15 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 - [x] Flow-control keys use a legal separator, with the charset AND the prefix-disjointness both
       asserted (`FLOW_KEY_CHARSET`); `liveone queue outbox` surfaces `observations_outbox.last_error`,
       which is where the cutover's cause was recorded and unreadable.
+- [x] **Cut over** to flow control, 2026-09-10 03:39 UTC — `OBSERVATIONS_PUBLISH_MODE=flow` in the
+      Production scope plus a redeploy. Twelve minutes of verification: ingest monotonic,
+      `stalledMinutes` never above 0.4, `failing: 0` on the outbox, and batch durations p50 691 ms
+      against a pre-cutover baseline of 684 ms. Lanes now carry the traffic they were named for.
+- [x] **Retire the queue transport in code.** The `OBSERVATIONS_PUBLISH_MODE` switch, the FIFO
+      publish branch, the `mode`/`legacyQueue`/compat fields on `/api/v4/queue`, and the admin
+      `info`/`messages` twins are gone; the admin page reads `/api/v4/queue` and
+      `/api/v4/queue/timing`, the same two endpoints `liveone queue` does. One aggregate is what
+      stops the browser and the terminal disagreeing about whether ingest is healthy.
 
 **Open**
 
@@ -243,13 +252,11 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
       Routes: the Amber API (rolling ~90 days, so ~2026-10-05), an `observations_outbox` replay
       (~2026-10-09, and needs `published_at` cleared), or **a CSV from Amber support, which has no
       deadline** — the route already used for a 4½-month gap in 2025-11.
-- [ ] **Cut over** to `OBSERVATIONS_PUBLISH_MODE=flow`. Attempted 2026-09-10 and rolled back in
-      2m45s (see above); the illegal-key defect is fixed and the charset is now asserted, so this is
-      ready to retry. Until then the lanes are carried in the payload but the legacy FIFO queue is
-      still the transport.
-- [ ] **Retire the `observations` queue.** 🛑 Deleting it destroys anything still waiting, and those
-      messages' outbox rows are already marked `published_at`, so the relay would never re-send them.
-      "Nothing enqueues" is not "nothing is waiting" — gate on a drained queue, verified.
+- [ ] **Delete the `observations` queue object.** Nothing publishes to it as of the cutover, but the
+      object still exists on the QStash account. 🛑 Deleting it destroys anything still waiting, and
+      those messages' outbox rows are already marked `published_at`, so the relay would never
+      re-send them. "Nothing enqueues" is not "nothing is waiting" — gate on a drained queue read
+      from QStash, verified, not on the code change.
 - [ ] **The DLQ retry path cannot choose a lane.** It calls `publishObservationMessage(row.payload)`
       and pre-lane payloads default to `live`, so retrying the 8 stored messages would put ~13,000
       observations on the live lane.
