@@ -52,6 +52,7 @@ import {
   date,
   pgSequence,
   check,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { AreaLocation } from "@/lib/areas/types";
@@ -862,9 +863,15 @@ export const derivations = pgTable(
   "derivations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    areaId: uuid("area_id")
-      .notNull()
-      .references(() => areas.id),
+    // VESTIGE since 0063. A derivation's site is now derived from its sources
+    // (`derivation_sources` → `points.device_id`), so this column is DUAL-WRITTEN and read by
+    // nothing; 0064 drops it. Two changes came with the demotion, and they go together:
+    // NOT NULL was dropped and the FK became ON DELETE SET NULL, because SET NULL on a NOT NULL
+    // column aborts the delete instead of clearing it. That pair is what let `prod-dev-sync` drop
+    // its `derivations.area_id` repoint with a zero window.
+    areaId: uuid("area_id").references(() => areas.id, {
+      onDelete: "set null",
+    }),
     kind: text("kind").notNull(), // 'run-detector' | 'hws-model' | future kinds
     role: text("role"), // nullable; CHECK below (6 roles). NULL passes the CHECK (UNKNOWN ≠ FALSE).
     name: text("name").notNull(),
@@ -894,6 +901,110 @@ export const derivations = pgTable(
       .on(table.areaId, table.role)
       .where(sql`role IS NOT NULL`),
     areaIdx: index("derivations_area_idx").on(table.areaId),
+    // Redundant-but-legal: `id` is already the PK. Exists ONLY as the target of
+    // `derivation_sources`' composite FK on (derivation_id, kind, role), which is what makes the
+    // child's denormalised kind/role ENFORCED rather than merely asserted. Delete it only with
+    // that FK.
+    idKindRoleUnique: uniqueIndex("derivations_id_kind_role_unique").on(
+      table.id,
+      table.kind,
+      table.role,
+    ),
+  }),
+);
+
+// derivation_sources — the typed input ports of a derivation, one row per slot (block-model
+// increment 1). Replaces `derivations.source_points jsonb`, which is dual-written until 0064.
+//
+// Three columns are denormalised copies (device_id, kind, role) and all three are PROVED by a
+// composite FK rather than trusted, which is the entire point of the table: a jsonb object could
+// name a point on any device, spell its key "signl", and nothing would notice until the detector
+// silently derived nothing forever.
+//
+// A derivation's SITE is now derived from here: owner point = energy-then-signal (power for
+// hws-model) → points.device_id → devices.rid. That precedence is load-bearing, not arbitrary —
+// Daylesford's generator detector reads its signal from device 14 (Engine Speed) and its energy
+// from device 1 (Selectronic Import), and the area handle is 1. Signal-first would move the
+// legacyHandle and with it a live KV key. Migration 0063's gate G5 is what proves it.
+export const derivationSources = pgTable(
+  "derivation_sources",
+  {
+    derivationId: uuid("derivation_id").notNull(),
+    slot: text("slot").notNull(), // 'signal' | 'energy' | 'boundary' | 'power'
+    pointId: uuid("point_id").notNull(),
+    deviceId: uuid("device_id").notNull(), // = points.device_id, ENFORCED by pointDeviceFk
+    kind: text("kind").notNull(), // = derivations.kind,  ENFORCED by derivationKindRoleFk
+    role: text("role"), // = derivations.role,  ENFORCED by derivationKindRoleFk
+  },
+  (table) => ({
+    // One point per slot — exactly what a jsonb object with fixed keys meant. Composite natural
+    // key, no surrogate (the `area_members` pattern), which is what lets prod-dev-sync copy this
+    // table with a plain by-PK upsert.
+    pk: primaryKey({
+      columns: [table.derivationId, table.slot],
+      name: "derivation_sources_pk",
+    }),
+    // FK 1 — sources are pure wiring, so they die with their derivation. Kept SEPARATE from FK 3
+    // because FK 3 is MATCH SIMPLE and therefore not checked AT ALL when role IS NULL (the
+    // hws-model); without this one, an hws-model source row would be unenforced.
+    derivationFk: foreignKey({
+      name: "derivation_sources_derivation_id_fk",
+      columns: [table.derivationId],
+      foreignColumns: [derivations.id],
+    }).onDelete("cascade"),
+    // FK 2 — three jobs, and each is load-bearing:
+    //   • device_id is PROVABLY the point's device, so the site can be derived from it;
+    //   • ON DELETE NO ACTION replaces the protection `derivations.area_id` used to give, and aims
+    //     it better: you cannot delete a point a live derivation reads (vs "you cannot delete the
+    //     area the detector was filed under");
+    //   • ON UPDATE CASCADE carries device_id along when prod-dev-sync's `devices` idDrift leg
+    //     repoints points.device_id — which is why `devices` needs no new repoint child.
+    // 🛑 A silently-NO-ACTION-on-update FK breaks that sync leg; 0063's gate G10 checks
+    // confupdtype/confdeltype by name for exactly this reason.
+    pointDeviceFk: foreignKey({
+      name: "derivation_sources_point_device_fk",
+      columns: [table.pointId, table.deviceId],
+      foreignColumns: [points.id, points.deviceId],
+    })
+      .onUpdate("cascade")
+      .onDelete("no action"),
+    // FK 3 — kind/role are identity: the PATCH route already refuses to change them, which is what
+    // makes denormalising them safe. This makes "safe" mean ENFORCED rather than asserted.
+    derivationKindRoleFk: foreignKey({
+      name: "derivation_sources_derivation_kind_role_fk",
+      columns: [table.derivationId, table.kind, table.role],
+      foreignColumns: [derivations.id, derivations.kind, derivations.role],
+    })
+      .onUpdate("cascade")
+      .onDelete("cascade"),
+    // Slot vocabulary is PER-KIND, deliberately: this refuses `power` on a run-detector, not just a
+    // misspelled slot. The cost is honest — a new `kind` needs a migration to widen it.
+    slotCheck: check(
+      "derivation_sources_slot_check",
+      sql`(${table.kind} = 'run-detector' AND ${table.slot} IN ('signal','energy','boundary'))
+       OR (${table.kind} = 'hws-model' AND ${table.slot} = 'power')`,
+    ),
+    // The batched "what does this device derive?" probe — the capability hot path.
+    deviceIdx: index("derivation_sources_device_idx").on(
+      table.deviceId,
+      table.kind,
+      table.role,
+    ),
+    // FK 2's child-side index, and the reverse "what derives from this point?" lookup that a
+    // delete-refusal message wants in order to NAME the dependents.
+    pointIdx: index("derivation_sources_point_idx").on(
+      table.pointId,
+      table.deviceId,
+    ),
+    // One derivation per (device owning the SIGNAL point, kind, role). Restricted to slot='signal'
+    // because it HAS to be: Kinkora's EV detector puts signal AND energy on device 6, so an index
+    // spanning both slots would refuse a single legal detector's own rows.
+    // 🛑 This does NOT cover the remaining hazard — two detectors for the same role whose signals
+    // sit on DIFFERENT devices can still share an OWNER device and fight over one `<stem>/running`
+    // point. That one is `ensureRunDetector`'s `owner-role-taken` refusal: code, not constraint.
+    signalRoleUnique: uniqueIndex("derivation_sources_signal_role_unique")
+      .on(table.deviceId, table.kind, table.role)
+      .where(sql`role IS NOT NULL AND slot = 'signal'`),
   }),
 );
 
@@ -1153,6 +1264,14 @@ export const points = pgTable(
       "points_device_logical_metric_unique",
     ).on(table.deviceId, table.logicalPath, table.metricType),
     deviceIdx: index("points_device_idx").on(table.deviceId),
+    // Redundant-but-legal: `id` is already the PK, so this index adds no constraint. It exists ONLY
+    // as the target of `derivation_sources`' composite FK on (point_id, device_id) — which is what
+    // turns that table's denormalised `device_id` from a copy-that-can-rot into a column the
+    // database PROVES equal to `points.device_id`. Delete it only with that FK.
+    idDeviceUnique: uniqueIndex("points_id_device_unique").on(
+      table.id,
+      table.deviceId,
+    ),
   }),
 );
 
