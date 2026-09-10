@@ -111,6 +111,46 @@ The outage ended because the queue was **purged**, not because it drained: the l
   before anyone measured a batch. Those are all worth having, and none of them would have saved the
   data.
 
+### The cutover attempt, 2026-09-10 — a third defect, found by trying
+
+The flow-control cutover was attempted on prod at 13:00 AEST and **rolled back after 2m45s**. Zero
+data lost: the outbox backlog rose to 19 with `oldestUnpublishedAt` pinned at the exact moment of
+the flip, and drained itself once queue mode returned. The tee-before-publish design did exactly
+what it exists for.
+
+```
+flow   13:00:09  stalled 0.1  lastIngest 03:00:02
+flow   13:02:33  stalled 2.5  lastIngest 03:00:02   ← frozen
+queue  13:03:21  stalled 0.5  lastIngest 03:02:48   ← recovered
+```
+
+The cause, from the Vercel runtime log:
+
+```
+[PollCollector] Failed to publish poll for system 5: Error [QstashError]:
+{"error":"flowControlKey must be alphanumeric, hyphen, underscore, or period"}   status: 400
+```
+
+**The colon in `obs:live` is not a legal flow-control key character.** Every publish 400'd.
+
+The colon was chosen deliberately, by the 🛑 in `lib/qstash.ts` arguing the environment must live in
+the *prefix* so `"obs-dev:live".startsWith("obs:")` is false. That reasoning is sound; the separator
+it picked is illegal. And the obvious repair is a trap — `-` gives prod `obs-live` and dev
+`obs-dev-live`, where `"obs-dev-live".startsWith("obs-")` is **true**, silently reintroducing the
+collision the prefix split exists to prevent. `.` satisfies both constraints, and both are now
+asserted.
+
+🛑 **An illegal key is invisible from the read side and fatal on the write side.**
+`flowControl.get("obs:live")` returns 200 for a key `publishJSON` will not accept, so `readLane`
+reported `idle: false` and `liveone queue status` showed two present, healthy lanes for the entire
+outage — lanes that could never have received a message. This is the module header's own warning
+("a key that may not exist at all … would read as healthy") in a worse form.
+
+**And the test that should have caught it could not fail.** `publish.test.ts` asserted
+`expect("obs-dev:live".startsWith("obs:")).toBe(false)` — a property of two string *literals*, true
+regardless of what the code minted. It stayed green for the whole time the code was producing keys
+QStash rejects. It now derives the separator from the real key.
+
 ## Detection
 
 Manual, by a human noticing readings had stopped. No alert fired. `monitor-observations`' queue
@@ -166,7 +206,14 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
    one the retry budget is pure occupancy.
 6. **Postgres rejects the whole statement on an intra-statement PK collision.** Multi-row upserts
    must dedupe on the conflict target first. Cardinality is a property of the batch, not its size.
-7. **Two endpoints legitimately reporting one field is not a bug in either.** It has to be resolved
+7. **A read path that tolerates what the write path rejects will report health that cannot exist.**
+   `flowControl.get()` answered 200 for a key `publishJSON` 400s on. Any identifier that crosses a
+   service boundary needs its constraints asserted where it is MINTED, not inferred from whichever
+   endpoint happens to be more forgiving.
+8. **A test asserting a property of string literals cannot fail when the code is wrong.** The
+   disjointness test hardcoded both keys and passed throughout. Assert against what the code
+   produces.
+9. **Two endpoints legitimately reporting one field is not a bug in either.** It has to be resolved
    where they meet — for us, the `PollCollector` — not by narrowing a filter and losing a series.
 
 ## Action Items
@@ -184,6 +231,10 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
       `liveone queue pause` would have paused **prod's** lane; a preview that published anything
       would have written into the **production** serving store.
 
+- [x] Flow-control keys use a legal separator, with the charset AND the prefix-disjointness both
+      asserted (`FLOW_KEY_CHARSET`); `liveone queue outbox` surfaces `observations_outbox.last_error`,
+      which is where the cutover's cause was recorded and unreadable.
+
 **Open**
 
 - [ ] **Recover device 10002, 2026-07-07 → 2026-09-08.** Only the `/usage`-derived series are
@@ -192,8 +243,10 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
       Routes: the Amber API (rolling ~90 days, so ~2026-10-05), an `observations_outbox` replay
       (~2026-10-09, and needs `published_at` cleared), or **a CSV from Amber support, which has no
       deadline** — the route already used for a 4½-month gap in 2025-11.
-- [ ] **Cut over** to `OBSERVATIONS_PUBLISH_MODE=flow`, dev then prod. Until then the lanes are
-      carried in the payload but the legacy FIFO queue is still the transport.
+- [ ] **Cut over** to `OBSERVATIONS_PUBLISH_MODE=flow`. Attempted 2026-09-10 and rolled back in
+      2m45s (see above); the illegal-key defect is fixed and the charset is now asserted, so this is
+      ready to retry. Until then the lanes are carried in the payload but the legacy FIFO queue is
+      still the transport.
 - [ ] **Retire the `observations` queue.** 🛑 Deleting it destroys anything still waiting, and those
       messages' outbox rows are already marked `published_at`, so the relay would never re-send them.
       "Nothing enqueues" is not "nothing is waiting" — gate on a drained queue, verified.

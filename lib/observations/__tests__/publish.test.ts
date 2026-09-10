@@ -61,6 +61,7 @@ import {
   observationsFlowKey,
   OBSERVATIONS_FLOW_PREFIX,
   parseObservationsFlowKey,
+  FLOW_KEY_CHARSET,
 } from "@/lib/qstash";
 import type { QueueMessage } from "../types";
 import { publishPoll, createPollCollector } from "../poll-collector";
@@ -218,10 +219,14 @@ describe("no publish site may bypass the shared publisher", () => {
     // The whole point of the module: exactly ONE place decides the transport and the delivery
     // bounds. A raw `enqueueJSON`/`publishJSON` anywhere else is a site that inherits QStash's
     // defaults — which is what took ingest down on 2026-09-09.
+    //
+    // The pattern requires a CALL — a leading dot and an opening paren — not a bare mention. A
+    // codebase that documents these APIs heavily will name them in prose, and a guard that trips on
+    // a doc comment gets weakened or deleted rather than fixed.
     const { execSync } =
       require("node:child_process") as typeof import("node:child_process");
     const hits = execSync(
-      "grep -rln 'enqueueJSON\\|publishJSON' --include='*.ts' lib app scripts packages || true",
+      "grep -rln '\\.\\(enqueueJSON\\|publishJSON\\)(' --include='*.ts' lib app scripts packages || true",
       { cwd: process.cwd(), encoding: "utf8" },
     )
       .split("\n")
@@ -235,21 +240,41 @@ describe("flow-control keys", () => {
   it("names one key per lane, prefixed by environment", () => {
     // Tests run with NODE_ENV=test, so this is the non-production prefix.
     expect(OBSERVATIONS_FLOW_PREFIX).toBe("obs-dev");
-    expect(observationsFlowKey("live")).toBe("obs-dev:live");
-    expect(observationsFlowKey("backfill")).toBe("obs-dev:backfill");
+    expect(observationsFlowKey("live")).toBe("obs-dev.live");
+    expect(observationsFlowKey("backfill")).toBe("obs-dev.backfill");
+  });
+
+  it("🛑 mints a key QStash will accept — no colon", () => {
+    // The 2026-09-10 cutover failure: `publishJSON` 400s with "flowControlKey must be alphanumeric,
+    // hyphen, underscore, or period" and the whole ingest path stops. `flowControl.get()` does NOT
+    // enforce it, so the read side reported both lanes healthy the entire time.
+    for (const lane of ["live", "backfill"] as const) {
+      expect(observationsFlowKey(lane)).toMatch(FLOW_KEY_CHARSET);
+    }
   });
 
   it("🛑 keeps the environment prefixes DISJOINT under prefix matching", () => {
     // dev and prod share one QStash account, so an "is this ours?" filter is a prefix test.
-    // `"obs:dev:live".startsWith("obs:")` would be true — which is why the env is the prefix.
-    expect("obs-dev:live".startsWith("obs:")).toBe(false);
-    expect("obs-dev:backfill".startsWith("obs:")).toBe(false);
+    //
+    // 🛑 Derived from the REAL key, never from a literal. The previous version of this test asserted
+    // `"obs-dev:live".startsWith("obs:")` — a property of two string constants, true regardless of
+    // what the code minted. It stayed green for the entire time the code was producing keys QStash
+    // would reject. A test that cannot fail when the code is wrong is worse than no test.
+    const prodPrefix = "obs"; // the production value of OBSERVATIONS_FLOW_PREFIX
+    for (const lane of ["live", "backfill"] as const) {
+      const devKey = observationsFlowKey(lane);
+      const separator = devKey.slice(
+        OBSERVATIONS_FLOW_PREFIX.length,
+        -lane.length,
+      );
+      expect(devKey.startsWith(prodPrefix + separator)).toBe(false);
+    }
   });
 
   it("round-trips a key back to its lane, and rejects anything else", () => {
-    expect(parseObservationsFlowKey("obs-dev:live")).toBe("live");
-    expect(parseObservationsFlowKey("obs-dev:backfill")).toBe("backfill");
-    expect(parseObservationsFlowKey("obs:live")).toBeNull(); // the other environment
+    expect(parseObservationsFlowKey("obs-dev.live")).toBe("live");
+    expect(parseObservationsFlowKey("obs-dev.backfill")).toBe("backfill");
+    expect(parseObservationsFlowKey("obs.live")).toBeNull(); // the other environment
     expect(parseObservationsFlowKey("something-else")).toBeNull();
   });
 
@@ -311,11 +336,11 @@ describe("the transport switch", () => {
 
     expect(fake().published.map((p) => p.via)).toEqual(["flow", "flow"]);
     expect(fake().published[0].request.flowControl).toEqual({
-      key: "obs-dev:backfill",
+      key: "obs-dev.backfill",
       parallelism: laneParallelism("backfill"),
     });
     expect(fake().published[1].request.flowControl).toEqual({
-      key: "obs-dev:live",
+      key: "obs-dev.live",
       parallelism: laneParallelism("live"),
     });
   });

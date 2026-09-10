@@ -27,8 +27,8 @@ export const OBSERVATIONS_QUEUE_NAME = isProduction()
  *
  * 🛑 The two prefixes must be DISJOINT UNDER PREFIX MATCHING, not merely different. Dev and prod
  * share one QStash account and one `OBSERVATIONS_QSTASH_TOKEN`, so any prod-side "is this ours?"
- * filter is a prefix test — and `"obs:dev:live".startsWith("obs:")` is `true`, which would sweep
- * dev keys into a prod view. `"obs-dev:live".startsWith("obs:")` is `false`. That is why the
+ * filter is a prefix test — and `"obs.dev.live".startsWith("obs.")` is `true`, which would sweep
+ * dev keys into a prod view. `"obs-dev.live".startsWith("obs.")` is `false`. That is why the
  * environment goes in the PREFIX and not in a middle segment.
  *
  * 🛑 **`isProduction()`, NOT `NODE_ENV`** — and this is the whole reason it matters. A Vercel
@@ -42,7 +42,35 @@ export const OBSERVATIONS_QUEUE_NAME = isProduction()
 export const OBSERVATIONS_FLOW_PREFIX = isProduction() ? "obs" : "obs-dev";
 
 /**
- * The flow-control key for a lane, e.g. `obs:live` / `obs-dev:backfill`.
+ * The character set QStash accepts in a flow-control key.
+ *
+ * 🛑 **No colon.** `publishJSON` rejects anything else with
+ * `{"error":"flowControlKey must be alphanumeric, hyphen, underscore, or period"}` — a 400 on
+ * EVERY publish, i.e. total ingest failure. This is asserted by test rather than trusted, because
+ * `flowControl.get()` does NOT enforce it: on 2026-09-10 the prod cutover published nothing for
+ * 2m45s while `liveone queue status` cheerfully reported both lanes as present and healthy, because
+ * a GET on the impossible key `obs:live` returned 200. An illegal key is invisible from the read
+ * side and fatal on the write side.
+ */
+export const FLOW_KEY_CHARSET = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * The separator between the environment prefix and the lane.
+ *
+ * 🛑 It must satisfy TWO constraints at once, and the obvious choice fails the second:
+ *
+ *   1. **Legal** — in `FLOW_KEY_CHARSET`. That rules out the `:` this used until 2026-09-10.
+ *   2. **Prefix-disjoint** — no dev key may start with `<prod prefix><separator>`. `-` LOOKS like
+ *      the natural substitute and breaks this: prod `obs-live` vs dev `obs-dev-live`, and
+ *      `"obs-dev-live".startsWith("obs-")` is `true`. Swapping `:` for `-` would have fixed the
+ *      400 and silently reintroduced the collision the prefix split exists to prevent.
+ *
+ * `.` satisfies both: `"obs-dev.live".startsWith("obs.")` is `false`.
+ */
+const FLOW_KEY_SEPARATOR = ".";
+
+/**
+ * The flow-control key for a lane, e.g. `obs.live` / `obs-dev.backfill`.
  *
  * Fixed cardinality — two keys per environment, forever. Keying per DEVICE (the shape originally
  * proposed) does not scale: key cardinality would grow with the fleet, `GET /v2/flowControl` is
@@ -50,7 +78,7 @@ export const OBSERVATIONS_FLOW_PREFIX = isProduction() ? "obs" : "obs-dev";
  * `devices × parallelism`, which passes the Postgres pool long before "thousands of devices".
  */
 export function observationsFlowKey(lane: ObservationLane): string {
-  return `${OBSERVATIONS_FLOW_PREFIX}:${lane}`;
+  return `${OBSERVATIONS_FLOW_PREFIX}${FLOW_KEY_SEPARATOR}${lane}`;
 }
 
 /** Parse one of our flow-control keys back to its lane. `null` when it is not ours. */

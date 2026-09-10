@@ -207,3 +207,140 @@ export async function drainOutbox(limit = DEFAULT_BATCH): Promise<DrainResult> {
 
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Reading the outbox — why publishing failed
+// ---------------------------------------------------------------------------
+
+/** One row the relay could not publish, with the reason it recorded. */
+export interface OutboxFailure {
+  id: number;
+  deviceRid: number;
+  createdAt: string;
+  attempts: number;
+  /** `observations_outbox.last_error` — the publish exception, verbatim. */
+  lastError: string | null;
+  observations: number | null;
+  lane: string | null;
+}
+
+export interface OutboxHealth {
+  /** Rows the relay has not yet published. A steady single-digit number is normal. */
+  backlog: number;
+  oldestUnpublishedAt: string | null;
+  oldestAgeMinutes: number | null;
+  /**
+   * Unpublished rows that have been TRIED and failed. The number that matters.
+   *
+   * A backlog of rows with `attempts: 0` is just the relay not having run yet; a backlog with
+   * attempts and a `lastError` is publishing being broken, and they need telling apart at a glance.
+   */
+  failing: number;
+  published24h: number;
+  /** Newest first. Capped — one reason repeated 200 times is one finding. */
+  failures: OutboxFailure[];
+  /** Distinct `lastError` strings across the failing rows, most frequent first. */
+  reasons: { error: string; count: number }[];
+}
+
+/**
+ * Why is publishing failing?
+ *
+ * 🛑 This exists because the answer was already being RECORDED and could not be READ. The relay
+ * writes `last_error` on every failed publish, and until 2026-09-10 nothing surfaced that column —
+ * not the CLI, not `monitor-observations`, not the admin stats route, which counts the backlog and
+ * drops the reason. When the flow-control cutover failed on prod, the outbox held the exception and
+ * the only way to it was the Vercel dashboard.
+ *
+ * The backlog alone cannot answer it: an unpublished row means "not yet published", which is the
+ * normal steady state between relay runs. `attempts > 0` with a `lastError` is the difference
+ * between a queue that is merely behind and one that is broken.
+ */
+export async function readOutboxHealth(limit = 20): Promise<OutboxHealth> {
+  const db = planetscaleDb;
+  const empty: OutboxHealth = {
+    backlog: 0,
+    oldestUnpublishedAt: null,
+    oldestAgeMinutes: null,
+    failing: 0,
+    published24h: 0,
+    failures: [],
+    reasons: [],
+  };
+  if (!db) return empty;
+
+  const [summary] = await db
+    .execute<{
+      backlog: number;
+      oldest_at: Date | null;
+      failing: number;
+      published_24h: number;
+    }>(
+      sql`
+    SELECT
+      (SELECT count(*)::int FROM observations_outbox WHERE published_at IS NULL) AS backlog,
+      (SELECT min(created_at) FROM observations_outbox WHERE published_at IS NULL) AS oldest_at,
+      (SELECT count(*)::int FROM observations_outbox
+         WHERE published_at IS NULL AND attempts > 0) AS failing,
+      (SELECT count(*)::int FROM observations_outbox
+         WHERE published_at >= now() - interval '24 hours') AS published_24h
+  `,
+    )
+    .then((r) => (r.rows ?? []) as never[]);
+
+  const s = (summary ?? {}) as {
+    backlog?: number;
+    oldest_at?: Date | null;
+    failing?: number;
+    published_24h?: number;
+  };
+  const oldest = s.oldest_at ? new Date(s.oldest_at) : null;
+
+  // Only rows that have actually been attempted — an untried backlog has no reason to report.
+  const rows = await db
+    .select({
+      id: observationsOutbox.id,
+      deviceRid: observationsOutbox.deviceRid,
+      createdAt: observationsOutbox.createdAt,
+      attempts: observationsOutbox.attempts,
+      lastError: observationsOutbox.lastError,
+      payload: observationsOutbox.payload,
+    })
+    .from(observationsOutbox)
+    .where(and(isNull(observationsOutbox.publishedAt), sql`attempts > 0`))
+    .orderBy(sql`created_at DESC`)
+    .limit(limit);
+
+  const failures: OutboxFailure[] = rows.map((r) => {
+    const payload = r.payload as QueueMessage | null;
+    return {
+      id: Number(r.id),
+      deviceRid: r.deviceRid,
+      createdAt: new Date(r.createdAt).toISOString(),
+      attempts: r.attempts,
+      lastError: r.lastError,
+      observations: payload?.observations?.length ?? null,
+      lane: payload?.lane ?? null,
+    };
+  });
+
+  const byReason = new Map<string, number>();
+  for (const f of failures) {
+    if (!f.lastError) continue;
+    byReason.set(f.lastError, (byReason.get(f.lastError) ?? 0) + 1);
+  }
+
+  return {
+    backlog: Number(s.backlog ?? 0),
+    oldestUnpublishedAt: oldest ? oldest.toISOString() : null,
+    oldestAgeMinutes: oldest
+      ? Math.round(((Date.now() - oldest.getTime()) / 60_000) * 10) / 10
+      : null,
+    failing: Number(s.failing ?? 0),
+    published24h: Number(s.published_24h ?? 0),
+    failures,
+    reasons: [...byReason.entries()]
+      .map(([error, count]) => ({ error, count }))
+      .sort((a, b) => b.count - a.count),
+  };
+}

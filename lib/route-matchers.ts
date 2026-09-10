@@ -141,6 +141,7 @@ const cliTokenRoutes = [
   // read-only forensic view (`requireAdmin`, GET only); a wildcard would pre-admit whatever verb
   // this domain grows next, including a mutating one.
   "/api/v4/queue/timing",
+  "/api/v4/queue/outbox",
   "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
   // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
   // independently (each only declines to 404 its own credential shape) and the handler's

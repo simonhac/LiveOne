@@ -159,7 +159,7 @@ describe("drainOutbox", () => {
     }
 
     expect(fake().published[0].request.flowControl).toMatchObject({
-      key: "obs-dev:backfill",
+      key: "obs-dev.backfill",
     });
   });
 
@@ -174,7 +174,7 @@ describe("drainOutbox", () => {
     }
 
     expect(fake().published[0].request.flowControl).toMatchObject({
-      key: "obs-dev:live",
+      key: "obs-dev.live",
     });
   });
 

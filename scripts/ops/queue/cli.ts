@@ -292,6 +292,31 @@ export const queueCommand = defineCommand({
         "liveone queue timing --from=2026-09-09T10:30:00Z --to=2026-09-09T13:00:00Z",
       ],
     },
+    outbox: {
+      name: "outbox",
+      summary:
+        "Why is publishing failing? The durable buffer's backlog, and the error the relay recorded.",
+      when:
+        "Reach for this when `status` says ingest has stalled but BOTH transports read empty —\n" +
+        "nothing waiting, nothing in flight. That is what a broken PUBLISH looks like: the message\n" +
+        "never reached QStash at all, so no QStash view can explain it. The reason is in Postgres.",
+      description:
+        "🛑 Read `failing`, not `backlog`. An unpublished row means the relay has not got to it\n" +
+        "yet, which is the normal steady state between minutes. `attempts > 0` with a `lastError`\n" +
+        "is the difference between an ingest path that is behind and one that is broken.\n\n" +
+        "Exits 1 (findings) when anything is failing, so it composes into a check.\n\n" +
+        "Nothing here is lost: the outbox is teed BEFORE publishing and retains payloads for 30\n" +
+        "days, so a failing publish is a latency problem that the relay clears once it can send.",
+      flags: {
+        limit: {
+          type: "string",
+          placeholder: "n",
+          help: "How many failing rows to show, 1..200 (default: 20). One reason repeated is one finding.",
+        },
+        ...BASE_URL_FLAG,
+      },
+      examples: ["liveone queue outbox", "liveone queue outbox --limit=50"],
+    },
     pause: {
       name: "pause",
       summary: "Stop a lane dispatching. Messages accumulate; nothing is lost.",
@@ -765,8 +790,78 @@ async function runTiming(ctx: Ctx): Promise<number> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// outbox
+// ---------------------------------------------------------------------------
+
+interface WireOutboxFailure {
+  id: number;
+  deviceRid: number;
+  createdAt: string;
+  attempts: number;
+  lastError: string | null;
+  observations: number | null;
+  lane: string | null;
+}
+
+interface WireOutbox {
+  backlog: number;
+  oldestUnpublishedAt: string | null;
+  oldestAgeMinutes: number | null;
+  failing: number;
+  published24h: number;
+  failures: WireOutboxFailure[];
+  reasons: { error: string; count: number }[];
+}
+
+function renderOutbox(o: WireOutbox): string {
+  const out = [
+    `backlog      ${o.backlog}${o.oldestAgeMinutes !== null ? `  (oldest ${o.oldestAgeMinutes} min)` : ""}`,
+    `failing      ${o.failing}${o.failing ? "  ← tried and failed" : "  (nothing has failed to publish)"}`,
+    `published    ${o.published24h} in the last 24h`,
+  ];
+
+  if (o.reasons.length) {
+    // The reason first and whole: this is the line an operator came for, and truncating it to fit a
+    // column is how a 400 with a precise message becomes "something went wrong".
+    out.push("", "reasons:");
+    for (const r of o.reasons) out.push(`  ${r.count}×  ${r.error}`);
+  }
+
+  if (o.failures.length) {
+    out.push("", "created                   device  lane      obs  tries");
+    for (const f of o.failures)
+      out.push(
+        `  ${f.createdAt}  ${String(f.deviceRid).padStart(6)}  ` +
+          `${(f.lane ?? "—").padEnd(8)}  ${String(f.observations ?? "—").padStart(4)}  ${String(f.attempts).padStart(5)}`,
+      );
+    if (o.failures.length < o.failing)
+      out.push(
+        `(${o.failures.length} of ${o.failing} failing rows shown — raise --limit)`,
+      );
+  }
+  return out.join("\n");
+}
+
+async function runOutbox(ctx: Ctx): Promise<number> {
+  const raw = str(ctx, "limit");
+  const limit = raw === undefined ? 20 : Number(raw);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200)
+    throw usage(
+      `invalid --limit "${raw}"`,
+      "the number of failing rows to show must be an integer between 1 and 200",
+      "omit it for the default of 20",
+    );
+  return withApiSession(ctx, async (s) => {
+    const o = await s.get<WireOutbox>(`/api/v4/queue/outbox?limit=${limit}`);
+    ctx.emit(o, () => renderOutbox(o));
+    return o.failing > 0 ? EXIT.FINDINGS : EXIT.OK;
+  });
+}
+
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   status: runStatus,
+  outbox: runOutbox,
   timing: runTiming,
   pause: runPause,
   resume: runResume,
