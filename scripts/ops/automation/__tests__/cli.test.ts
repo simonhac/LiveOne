@@ -19,7 +19,7 @@ import {
   triggerWords,
   type WireAutomation,
 } from "../model";
-import type { WireArea } from "../../derivation/model";
+import type { WireArea } from "../../shared";
 
 const TTY: Tty = { stdoutIsTTY: true, stdinIsTTY: true };
 const at = (argv: string[]) => parse(automationCommand, argv, TTY, ["liveone"]);

@@ -185,7 +185,8 @@ terminal additionally requires `--yes`.
 
 `npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
 `auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), `derivation` (run detectors
-and the HWS model: list, create, enable/disable, recompute, intervals), and the read-only
+and the HWS model: list, create, set, enable/disable, delete, recompute, intervals — addressed by
+`dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), and the read-only
 `device` / `area` / `user` (list, show, latest values, history; `area flows` downloads the
 rolled-up Sankey matrix for a period). Run `-- <domain> --help` for verbs; the generated
 reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
@@ -200,7 +201,8 @@ reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
   `npm run liveone:dev -- dashboard <command>`): required for repairing a doc whose refs the owner
   cannot read (the repairing PUT would itself be 403'd), bulk sweeps, and outages. **`dashboard`
   only** — `derivation` is http-only by design, because what makes a derivation correct
-  (`ensureRunDetector`'s placement rules, the locked recompute) is all server-side.
+  (`ensureRunDetector`'s owner-role invariant, the device-set authorization, the locked recompute)
+  is all server-side.
 - Mutations are **dry-run by default**; `--apply` writes (CAS on `revision` both ways). Off a
   terminal `--apply` additionally requires `--yes`.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
@@ -211,6 +213,10 @@ reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
   unscoped form. Use it rather than the cron (`POST /api/cron/derivations?action=regenerate`),
   whose filter is optional and through which a full-range unscoped regenerate once collapsed 71
   dev rows to 3.
+- 🛑 `derivation delete` destroys every interval the detector ever produced (`derived_intervals`
+  CASCADEs). It refuses until the derivation is **disabled** — `--force` does not waive that — and
+  then names what still relies on it; `--force` is the answer to that list, not a shortcut past it.
+  To stop a detector whose history you want, `disable` is the whole operation.
 
 #### Development API Authentication
 
@@ -391,7 +397,18 @@ The `db:pg:generate` / `db:pg:migrate` basics are in **PostgreSQL (primary)** ab
 
 `db:pg:migrate` targets whatever `PLANETSCALE_DATABASE_URL_MIGRATIONS` (or the `DB_*` vars) in `.env.local` points at. Always confirm the host before applying; override the env var to target a specific branch.
 
-**Branches & connections (`liveone` PlanetScale db).** Prod is the standalone `sydney` branch (`aws-ap-southeast-2`); the old us-east `main` branch was decommissioned 2026-06-11. PG branches use **`pscale role`**, not `pscale password`. There is no stored Sydney connection string — every connection mints a short-TTL role.
+**Branches & connections (`liveone` PlanetScale db).** Prod is the standalone `sydney` branch (`aws-ap-southeast-2`); the old us-east `main` branch was decommissioned 2026-06-11. PG branches use **`pscale role`**, not `pscale password`.
+
+🛑 **The running app holds a DURABLE Sydney credential, and deleting that role is a full prod outage.** Every *ad-hoc* connection (a migration, a one-off read) mints a short-TTL role — but Vercel's **Production** `PLANETSCALE_DATABASE_URL` carries a permanent, never-expiring role, currently `liveone-prod-vercel-runtime-do-not-delete` (id `gpohd2xe1zc9`, inheriting `pg_read_all_data,pg_write_all_data` — the app does zero runtime DDL, so it must NOT be an admin/`postgres`-inheriting role). The four roles on `sydney` and who owns each:
+
+| role | used by | deleting it |
+| --- | --- | --- |
+| `liveone-prod-vercel-runtime-do-not-delete` | the deployed app (Vercel Production env) | 🛑 **prod down** — every request 500s |
+| `liveone-pg-backup-ro` | the `pg-backup` GitHub Action | off-site backups stop |
+| `liveone-dev-sync-ro` | `db:sync-dev-db` (prod→dev) | the dev mirror stops updating |
+| `sydney-…` (`postgres.<branch-id>`) | the default role; nothing durable | see the `reset-default` warning below |
+
+Anything else on the list is an abandoned temp role and is safe to delete. **Before deleting any role, check it is not the one in Production's `PLANETSCALE_DATABASE_URL`** — the username embeds the role id, so `vercel env pull` + compare against `pscale role list liveone sydney` settles it in one step. This is not hypothetical: prod was down for ~8.5 hours on 2026-09-11 because its role was deleted as if it were a leftover.
 
 **To apply a migration, do not do that by hand** — `npm run pg-migrate` mints, applies, reassigns and releases in one step:
 
@@ -425,7 +442,7 @@ pscale role delete   liveone <branch> <temp-role-id> --force
 
 ### `liveone-dev` — the shared dev/preview database
 
-`liveone-dev` is a **separate** single-node PlanetScale database (`aws-ap-southeast-2`), the sole datastore for **both local dev and Vercel preview**. It is never prod: the app's `assertDbEnvironmentMatches` guard (armed by `PLANETSCALE_PROD_BRANCH_ID`) refuses, in dev/preview, any connection whose identity carries the prod token (fail-closed), and — in production — alerts if the connection does NOT carry it (drift detection, fail-open: it logs + posts to `OBSERVATIONS_ALERT_WEBHOOK_URL` but never throws, so a stale token can't take prod down). **Note:** PlanetScale puts every branch/database in a region on the **same gateway host** (e.g. `aws-ap-southeast-2-1.pg.psdb.cloud`) and distinguishes them by the role/username (`postgres.<branch-id>`) — so the token is the prod **branch id**, not the hostname, and `liveone-dev` is told apart from prod by its username. The token must be set in **all** scopes (incl. Production, for the drift check). Routing is via env: prod connects through the discrete `DB_*` vars (Production scope); dev + preview set `PLANETSCALE_DATABASE_URL` to `liveone-dev` (it takes precedence over `DB_*` in `getPoolConfig`). Keep prod's `DB_*`/URL out of the Preview/Development scopes.
+`liveone-dev` is a **separate** single-node PlanetScale database (`aws-ap-southeast-2`), the sole datastore for **both local dev and Vercel preview**. It is never prod: the app's `assertDbEnvironmentMatches` guard (armed by `PLANETSCALE_PROD_BRANCH_ID`) refuses, in dev/preview, any connection whose identity carries the prod token (fail-closed), and — in production — alerts if the connection does NOT carry it (drift detection, fail-open: it logs + posts to `OBSERVATIONS_ALERT_WEBHOOK_URL` but never throws, so a stale token can't take prod down). **Note:** PlanetScale puts every branch/database in a region on the **same gateway host** (e.g. `aws-ap-southeast-2-1.pg.psdb.cloud`) and distinguishes them by the role/username (`postgres.<branch-id>`) — so the token is the prod **branch id**, not the hostname, and `liveone-dev` is told apart from prod by its username. The token must be set in **all** scopes (incl. Production, for the drift check). Routing is via env, and **every scope now uses `PLANETSCALE_DATABASE_URL`** — prod's points at the `sydney` branch (through the pooler, port **6432**), dev + preview at `liveone-dev`. (`getPoolConfig` still reads discrete `DB_*` vars, and `PLANETSCALE_DATABASE_URL` takes precedence over them, but no scope sets `DB_*` any more; the older "prod connects through the discrete `DB_*` vars" note was wrong and cost time during the 2026-09-11 outage.) Keep prod's URL out of the Preview/Development scopes.
 
 - **Seed / reset from prod:** restore the latest off-site R2 dump into `liveone-dev` (schema + data in one shot). Reuse the `scripts/utils/restore-drill-pg.sh` flow, but target `liveone-dev` and **run as the persistent `postgres` role** (table-ownership trap above). A restore reverts `liveone-dev` to prod's migration version — re-apply any in-progress test migration afterward.
 - **Keep in sync (between restores):** `npm run db:sync-dev-db` (`scripts/utils/sync-prod-to-dev-db.ts`) does an incremental top-up — reads prod with a **SELECT-only** role (`pg_read_all_data`), copies new `point_readings`/agg/session rows + refreshes small config tables into `liveone-dev`. It writes **only** to dev and refuses to run if the write target resolves to the prod host. A second leg, `npm run db:rebuild-dev-kv` (`scripts/utils/rebuild-dev-kv-from-db.ts`), then rebuilds the `dev:` KV cache from that DB (crons are off in dev/preview so KV isn't written organically). Both run every 2h via `.github/workflows/sync-prod-to-dev.yml` (+ `workflow_dispatch`). Needs `PG_PROD_RO_DATABASE_URL` (read-only prod role), `LIVEONE_DEV_DATABASE_URL` (dev write role), and `KV_REST_API_URL`/`KV_REST_API_TOKEN` for the KV leg. See `docs/sync-prod-to-dev.md`.

@@ -84,6 +84,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone derivation set](#liveone-derivation-set)  _(writes)_
     - [liveone derivation enable](#liveone-derivation-enable)  _(writes)_
     - [liveone derivation disable](#liveone-derivation-disable)  _(writes)_
+    - [liveone derivation delete](#liveone-derivation-delete)  _(writes)_
     - [liveone derivation recompute](#liveone-derivation-recompute)  _(writes)_
     - [liveone derivation intervals](#liveone-derivation-intervals)
   - [liveone owner](#liveone-owner)
@@ -141,7 +142,7 @@ Subcommands:
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
   device                 Inspect devices — config, metadata, points, latest values, history.
   area                   Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
-  derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
+  derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
   owner                  Who owns devices, areas and dashboards — and how to hand them over.
   automation             Scheduled and reactive rules — including the generator exercise run.
   user                   The user directory — who exists, what they own. Admin-only.
@@ -3114,10 +3115,10 @@ Exit codes:
 
 ### liveone derivation
 
-Derived signals — run detectors and the HWS model: list, create, enable, recompute.
+Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
 
 ```
-Derived signals — run detectors and the HWS model: list, create, enable, recompute.
+Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
 
 When to use:
   Reach for this when a device's RUNS are the question — whether the generator/EV-charge detector
@@ -3128,8 +3129,9 @@ Http-only: every verb calls the deployed v4 API as you (`liveone auth login`), a
 `target: <origin> as <you>` on stderr first — read it to know which environment answered.
 A derivation's SITE is DERIVED from its source points, not configured: the device that owns its
 energy point (else its signal point) is the device it is addressed by, so there is no placement
-to get wrong. `create` refuses only if that device already has a detector for the same role.
-Ids are per-environment.
+to get wrong and no area to name. `create` refuses only if that device already has a detector
+for the same role. Access is checked against EVERY device a derivation touches — a detector
+whose signal and energy sit on different devices needs write on both. Ids are per-environment.
 
 Usage:
   liveone derivation <subcommand> [options]
@@ -3137,11 +3139,12 @@ Usage:
   Read-only. This command changes nothing.
 
 Subcommands:
-  list                   The derivations on an area: id, kind, role, enabled, sources.
-  create                 Add a derivation to an area.  (writes)
-  set                    Change a derivation's threshold params, or rename it.  (writes)
+  list                   The derivations you can read: id, kind, role, enabled, devices, sources.
+  create                 Add a derivation to a device.  (writes)
+  set                    Change a derivation's threshold params, its boundary point, or rename it.  (writes)
   enable                 Re-enable a derivation, so it is recomputed again.  (writes)
   disable                Stop a derivation being recomputed. Its existing rows are untouched.  (writes)
+  delete                 Destroy a derivation, and every interval it ever produced.  (writes)
   recompute              Rebuild ONE derivation's intervals over a window.  (writes)
   intervals              The rows a derivation has produced — runs, newest first.
 
@@ -3173,28 +3176,36 @@ Exit codes:
 
 #### liveone derivation list
 
-The derivations on an area: id, kind, role, enabled, sources.
+The derivations you can read: id, kind, role, enabled, devices, sources.
 
 ```
-The derivations on an area: id, kind, role, enabled, sources.
+The derivations you can read: id, kind, role, enabled, devices, sources.
 
 When to use:
   Start here — to find a dx_… id, or to check whether a detector exists at all.
 
-Per area, still: the API grew a fleet-wide collection when derivations stopped being
-addressed by area, but this verb has not moved onto it yet, so 'which detectors exist
-anywhere' is still one call per area.
+Fleet-wide by default: the collection returns every derivation you can read, so 'which
+detectors exist anywhere' is one call. Narrow it with a positional scope (resolved as a
+DEVICE first, then as an area — every device has an area of one with the same name) or
+with the explicit --device/--area flags. Access is all-or-nothing per derivation: one
+whose device set you cannot fully read is absent rather than partially shown.
 
 Usage:
-  liveone derivation list <area> [options]
+  liveone derivation list [scope] [options]
 
   Read-only. This command changes nothing.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
+  [scope]                Optional: only derivations touching this DEVICE (or, failing that, this area). Bare = everything you can read
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
+  --kind <string>            Only this kind of derivation  (one of: run-detector, hws-model)
+  --role <string>            Only detectors for this role  (one of: generator, ev)
+  --enabled                  Only enabled derivations
+  --disabled                 Only disabled derivations
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3212,12 +3223,14 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone derivation list kutis
-  liveone derivation list 13 --format json
+  liveone derivation list
+  liveone derivation list daylesford
+  liveone derivation list --role=generator --disabled
+  liveone derivation list --format json
 
 Exit codes:
   0    success
-  1    the area has no derivations
+  1    nothing matched
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -3226,17 +3239,24 @@ Exit codes:
 
 #### liveone derivation create
 
-Add a derivation to an area.
+Add a derivation to a device.
 
 ```
-Add a derivation to an area.
+Add a derivation to a device.
 
 When to use:
   Use this to start tracking a device's runs — a generator, or an EV charger. For the HWS
   thermal model pass --kind=hws-model, which takes no points (it finds its own).
 
---signal/--energy take a LOGICAL PATH (`load.ev/power`) or a pt_… id; prefer the path,
-since a mis-pinned uuid fails silently — the detector simply never fires.
+<device> is what the detector is ABOUT: it is the scope --signal/--energy resolve in, and
+(via its points) what the derivation ends up addressed by. It is not a placement — the
+server derives the site from the wiring either way, so naming a device whose points you
+then do not use simply resolves nothing.
+
+--signal/--energy take a LOGICAL PATH (`load.ev/power`) on <device>, a qualified
+`<other-device>:<path>` for the cross-device case, or a pt_… id; prefer a path, since a
+mis-pinned uuid fails silently — the detector simply never fires. Write access is required
+on EVERY device the points land on, not just one of them.
 
 One of --upper/--lower is required: they are the threshold the run is detected against.
 Every OTHER knob is sparse by contract — a flag you do not pass is not written, so it
@@ -3248,12 +3268,12 @@ counter still records duration and signal statistics, and the runs card drops th
 cost, emissions and renewable columns rather than showing them empty.
 
 Usage:
-  liveone derivation create <area> [options]
+  liveone derivation create <device> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
+  <device>               The device the derivation is about: its dv_… id, integer handle, slug, or name
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
@@ -3289,6 +3309,7 @@ External access:
 Examples:
   liveone derivation create kutis --role=ev --name='EV charging' --signal=load.ev/power --upper=100 --delay-off=300
   liveone derivation create kutis --role=ev --signal=load.ev/power --upper=100 --apply
+  liveone derivation create 14 --role=generator --signal=source.generator/power --energy=1:source.generator/energy.total --upper=500 --apply
   liveone derivation create kink --kind=hws-model --apply
 
 Exit codes:
@@ -3302,10 +3323,10 @@ Exit codes:
 
 #### liveone derivation set
 
-Change a derivation's threshold params, or rename it.
+Change a derivation's threshold params, its boundary point, or rename it.
 
 ```
-Change a derivation's threshold params, or rename it.
+Change a derivation's threshold params, its boundary point, or rename it.
 
 When to use:
   Use this when a detector is firing wrongly — most often when it FRAGMENTS one long run into
@@ -3321,24 +3342,32 @@ stay exactly as they were until you `recompute` the window you care about.
 The signal and energy points are deliberately not editable here: re-pointing a detector
 changes what its already-stored rows MEAN, and those rows carry the old signal's unit with
 no way to know they predate the change. That is a considered manual operation, not a flag.
+--boundary is the ONE exception, and it is safe in exactly the way the others are not: the
+boundary point does not change what the stored numbers measure, only where two adjacent
+runs are divided. It resolves against the devices this derivation already touches; a
+qualified `<device>:<path>` reaches elsewhere and WIDENS the device set, so write access is
+then required on that device too.
 
 Usage:
-  liveone derivation set <area> <derivation> [options]
+  liveone derivation set <derivation> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
-  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+  <derivation>           A derivation: its dx_… id, its name, or its role (narrow with --device= if a role names more than one)
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
   --upper <W>                Above this, the device is ON
   --lower <W>                Below this, the device is OFF
   --hysteresis <W>           Deadband around the threshold
   --delay-on <seconds>       Ignore an on-signal shorter than this
   --delay-off <seconds>      Bridge a gap shorter than this. 🛑 Must comfortably EXCEED the point's sample interval, or every poll gap closes a run
   --name <text>              Rename it
+  --boundary <path|pt_>      run-detector only: the control point whose edges cut runs apart
+  --clear-boundary           Remove the boundary point, so nothing forces a run to end
   --unset <knob>             Drop a pinned knob, so it inherits the role default again  (one of: upper, lower, hysteresis, delayOn, delayOff; repeatable)
 
 Common options:
@@ -3360,9 +3389,10 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone derivation set kutis ev --delay-off=900
-  liveone derivation set kutis ev --delay-off=900 --apply
-  liveone derivation set daylesford generator --unset=hysteresis --apply
+  liveone derivation set ev --delay-off=900
+  liveone derivation set ev --delay-off=900 --apply
+  liveone derivation set generator --device=daylesford --unset=hysteresis --apply
+  liveone derivation set dx_01k9y6vdqefyz8p4wsy5j5hgcx --boundary=source.generator.control.request/duration --apply
 
 Exit codes:
   0    success
@@ -3384,16 +3414,17 @@ When to use:
   Use this after a `disable`, once whatever was wrong with its inputs is fixed.
 
 Usage:
-  liveone derivation enable <area> <derivation> [options]
+  liveone derivation enable <derivation> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
-  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+  <derivation>           A derivation: its dx_… id, its name, or its role (narrow with --device= if a role names more than one)
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3414,7 +3445,7 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone derivation enable kutis ev --apply
+  liveone derivation enable ev --apply
 
 Exit codes:
   0    success
@@ -3433,22 +3464,23 @@ Stop a derivation being recomputed. Its existing rows are untouched.
 Stop a derivation being recomputed. Its existing rows are untouched.
 
 When to use:
-  This is the safe lever, and the only one: there is deliberately no delete, because
-  `derived_intervals` CASCADEs — removing a derivation would destroy every interval it ever
-  produced. A disabled derivation stops being recomputed and stops advertising its
-  capability, while its history stays exactly as it was.
+  This is the safe lever, and the reversible one: a disabled derivation stops being
+  recomputed and stops advertising its capability, while its history stays exactly as it was.
+  It is also the required first step of a `delete` — deliberately, so the thing is watched
+  stopping before it is destroyed.
 
 Usage:
-  liveone derivation disable <area> <derivation> [options]
+  liveone derivation disable <derivation> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
-  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+  <derivation>           A derivation: its dx_… id, its name, or its role (narrow with --device= if a role names more than one)
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
@@ -3469,11 +3501,77 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone derivation disable kutis ev --apply
+  liveone derivation disable ev --apply
 
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone derivation delete
+
+Destroy a derivation, and every interval it ever produced.
+
+```
+Destroy a derivation, and every interval it ever produced.
+
+When to use:
+  Use this only for a detector that should never have existed — a duplicate, or one wired to
+  the wrong device. To stop a detector you still want the history of, use `disable`.
+
+🛑 `derived_intervals` CASCADEs: deleting a derivation destroys every run it ever recorded,
+and a recompute afterwards can only rebuild what the underlying readings still cover.
+
+Two interlocks, and only one of them is waivable. The derivation must ALREADY be disabled —
+--force does not waive that, because disabling is one reversible command and it makes you
+watch the thing stop first. Then anything still relying on it (its intervals, an hws model's
+output point, an automation whose trigger names it) refuses the delete and NAMES what would
+break; --force is your answer to that list, and the result reports what it overrode.
+
+Usage:
+  liveone derivation delete <derivation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <derivation>           A derivation: its dx_… id, its name, or its role (narrow with --device= if a role names more than one)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
+  --force                    Proceed even though something still relies on it (does NOT waive the disabled-first interlock)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone derivation delete dx_01k9y6vdqefyz8p4wsy5j5hgcx
+  liveone derivation delete dx_01k9y6vdqefyz8p4wsy5j5hgcx --apply
+  liveone derivation delete dx_01k9y6vdqefyz8p4wsy5j5hgcx --force --apply
+
+Exit codes:
+  0    success
+  1    the server refused the delete (the reason names what)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -3502,16 +3600,17 @@ budget; run it in --last=30d slices if so (the server chunks at 14 days internal
 retries transient database errors, so a re-run is cheap and safe to repeat).
 
 Usage:
-  liveone derivation recompute <area> <derivation> [options]
+  liveone derivation recompute <derivation> [options]
 
   This command WRITES. It is dry by default: nothing changes without --apply.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
-  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+  <derivation>           A derivation: its dx_… id, its name, or its role (narrow with --device= if a role names more than one)
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
   --last <30d>               Relative window ending now
   --date <YYYY-MM-DD>        A single UTC day
   --start <YYYY-MM-DD>       Window start (UTC)
@@ -3537,8 +3636,8 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone derivation recompute kutis ev --start=2026-07-06 --end=2026-09-01
-  liveone derivation recompute kutis ev --last=30d --apply
+  liveone derivation recompute ev --device=kutis --start=2026-07-06 --end=2026-09-01
+  liveone derivation recompute ev --last=30d --apply
 
 Exit codes:
   0    success
@@ -3567,16 +3666,17 @@ A run belongs to a window if it STARTED in it, which is the same rule `recompute
 by — so these are exactly the rows a recompute over the same window would replace.
 
 Usage:
-  liveone derivation intervals <area> <derivation> [options]
+  liveone derivation intervals <derivation> [options]
 
   Read-only. This command changes nothing.
 
 Arguments:
-  <area>                 An area: its ar_… id, integer handle, or display name
-  <derivation>           A derivation on that area: its dx_… id, its name, or its role
+  <derivation>           A derivation: its dx_… id, its name, or its role (narrow with --device= if a role names more than one)
 
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --device <ref>             Only derivations touching this device (dv_… id, handle, slug or name)
+  --area <ref>               Only derivations touching one of this area's member devices
   --last <30d>               Relative window ending now
   --date <YYYY-MM-DD>        A single UTC day
   --start <YYYY-MM-DD>       Window start (UTC)
@@ -3600,8 +3700,8 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone derivation intervals kutis ev --last=60d
-  liveone derivation intervals kutis ev --last=7d --format json
+  liveone derivation intervals ev --device=kutis --last=60d
+  liveone derivation intervals ev --last=7d --format json
 
 Exit codes:
   0    success

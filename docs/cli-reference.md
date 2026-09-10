@@ -81,12 +81,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
       - [liveone area role list](../scripts/ops/CLI_README.md#liveone-area-role-list) — The area's role→point bindings, grouped by slot.
       - [liveone area role set](../scripts/ops/CLI_README.md#liveone-area-role-set) — Fill one (role, metric) slot — priority follows argument order.  _(writes)_
       - [liveone area role clear](../scripts/ops/CLI_README.md#liveone-area-role-clear) — Empty a (role, metric) slot, or every slot of a role.  _(writes)_
-  - [liveone derivation](../scripts/ops/CLI_README.md#liveone-derivation) — Derived signals — run detectors and the HWS model: list, create, enable, recompute.
-    - [liveone derivation list](../scripts/ops/CLI_README.md#liveone-derivation-list) — The derivations on an area: id, kind, role, enabled, sources.
-    - [liveone derivation create](../scripts/ops/CLI_README.md#liveone-derivation-create) — Add a derivation to an area.  _(writes)_
-    - [liveone derivation set](../scripts/ops/CLI_README.md#liveone-derivation-set) — Change a derivation's threshold params, or rename it.  _(writes)_
+  - [liveone derivation](../scripts/ops/CLI_README.md#liveone-derivation) — Derived signals — run detectors and the HWS model: list, create, enable, recompute, delete.
+    - [liveone derivation list](../scripts/ops/CLI_README.md#liveone-derivation-list) — The derivations you can read: id, kind, role, enabled, devices, sources.
+    - [liveone derivation create](../scripts/ops/CLI_README.md#liveone-derivation-create) — Add a derivation to a device.  _(writes)_
+    - [liveone derivation set](../scripts/ops/CLI_README.md#liveone-derivation-set) — Change a derivation's threshold params, its boundary point, or rename it.  _(writes)_
     - [liveone derivation enable](../scripts/ops/CLI_README.md#liveone-derivation-enable) — Re-enable a derivation, so it is recomputed again.  _(writes)_
     - [liveone derivation disable](../scripts/ops/CLI_README.md#liveone-derivation-disable) — Stop a derivation being recomputed. Its existing rows are untouched.  _(writes)_
+    - [liveone derivation delete](../scripts/ops/CLI_README.md#liveone-derivation-delete) — Destroy a derivation, and every interval it ever produced.  _(writes)_
     - [liveone derivation recompute](../scripts/ops/CLI_README.md#liveone-derivation-recompute) — Rebuild ONE derivation's intervals over a window.  _(writes)_
     - [liveone derivation intervals](../scripts/ops/CLI_README.md#liveone-derivation-intervals) — The rows a derivation has produced — runs, newest first.
   - [liveone owner](../scripts/ops/CLI_README.md#liveone-owner) — Who owns devices, areas and dashboards — and how to hand them over.
