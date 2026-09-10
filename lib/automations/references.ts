@@ -24,6 +24,8 @@ import type {
   AutomationTrigger,
 } from "@/lib/db/planetscale/schema";
 import { derivationBelongsToArea } from "./store";
+import { loadDerivation } from "@/lib/derivations/scope";
+import { Derivation } from "@/lib/ids";
 
 function unprocessable(error: string): NextResponse {
   return NextResponse.json({ error }, { status: 422 });
@@ -50,8 +52,25 @@ export async function checkReferences(
     return unprocessable("an exercise trigger requires a set_value action");
 
   if (trigger.source.kind === "derivation") {
-    // Same-area scoping is what makes the area-owner check cover the trigger — without it, owning
-    // any area would let a caller follow any derivation by id.
+    // 🛑 READABILITY FIRST, and the order is the whole point. The caller must be able to READ this
+    // derivation, judged against its own device set — scoping alone used to carry that job too ("it
+    // is in your area" implied "you may see it", because the area's owner check preceded it), and it
+    // no longer does: a derivation belongs to an area by MEMBERSHIP now, and an area can hold a
+    // device you do not own. This is the same check the derivations surface makes, through the same
+    // loader, so the two cannot drift.
+    //
+    // Doing it SECOND would rebuild the existence oracle the 404 exists to prevent: an unknown
+    // derivation would fail the membership check with a 422 while an existing-but-unreadable one
+    // reached this and answered 404, and the difference between those two replies is precisely the
+    // fact the collapse is there to withhold. First, both are 404.
+    const readable = await loadDerivation(
+      request,
+      Derivation.encode(trigger.source.derivationId),
+      "read",
+    );
+    if ("error" in readable) return readable.error;
+    // Same-area scoping, still: an automation IS scoped to a site (`automations.area_id` stays NOT
+    // NULL), so a trigger naming a derivation you CAN see but that lives elsewhere is a body error.
     const ok = await derivationBelongsToArea(
       trigger.source.derivationId,
       areaUuid,

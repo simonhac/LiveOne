@@ -8,8 +8,8 @@
 import { and, asc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  areaMembers,
   automations,
-  derivations,
   derivedIntervals,
   type AutomationAction,
   type AutomationArmedContext,
@@ -19,6 +19,7 @@ import {
   type DerivedInterval,
   type ExerciseArmedContext,
 } from "@/lib/db/planetscale/schema";
+import { ownerDeviceIdForDerivation } from "@/lib/derivations/resolve";
 
 export async function listForArea(areaUuid: string): Promise<AutomationRow[]> {
   return requirePlanetscaleDb()
@@ -255,16 +256,33 @@ export async function claimExerciseDispatch(
   return rows.length > 0;
 }
 
-/** Referential check for a derivation-sourced trigger: does this derivation belong to this area? */
+/**
+ * Referential check for a derivation-sourced trigger: does this derivation belong to this area?
+ *
+ * 🛑 The question is unchanged; what answers it is not. It used to read `derivations.area_id` — the
+ * column that said where a derivation was FILED — and since migration 0063 a derivation's site is
+ * DERIVED from its wiring instead. So: the derivation's owner device (energy point's, else
+ * signal's; `power` for an hws-model) must be a member of this area.
+ *
+ * That is a slightly different set, and deliberately: a detector reading points on a composite
+ * area's member device now belongs to that composite, which is exactly the case `area_id` could
+ * never express. It is NOT an authorization check on its own — the caller's read access to the
+ * derivation's device set is checked beside it, in `checkReferences`.
+ */
 export async function derivationBelongsToArea(
   derivationUuid: string,
   areaUuid: string,
 ): Promise<boolean> {
+  const ownerDeviceId = await ownerDeviceIdForDerivation(derivationUuid);
+  if (!ownerDeviceId) return false;
   const [row] = await requirePlanetscaleDb()
-    .select({ id: derivations.id })
-    .from(derivations)
+    .select({ deviceId: areaMembers.deviceId })
+    .from(areaMembers)
     .where(
-      and(eq(derivations.id, derivationUuid), eq(derivations.areaId, areaUuid)),
+      and(
+        eq(areaMembers.areaId, areaUuid),
+        eq(areaMembers.deviceId, ownerDeviceId),
+      ),
     )
     .limit(1);
   return !!row;

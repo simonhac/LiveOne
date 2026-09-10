@@ -525,7 +525,9 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   {
     column: derivations.areaId,
     // 🛑 A VESTIGE, not a reference, since 0063. The site is now derived from the derivation's
-    // sources; this column is dual-written and read by nothing, and 0064 drops it. The FK became
+    // sources; this column is dual-written and nothing resolves a derivation through it — the one
+    // reader left is `areaDependents` in ./relied-upon.ts, i.e. this census itself. 0064 drops the
+    // column and that leg together. The FK became
     // ON DELETE SET NULL together with dropping NOT NULL — the pair, because SET NULL on a NOT NULL
     // column aborts the delete instead of clearing it. So an area delete no longer NAMES its
     // derivations as dependents: it silently clears a column nobody reads. The protection did not
@@ -591,10 +593,9 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
     column: derivations.sourcePoints,
     extract: derivationSourceRefs,
     verdict: {
-      protectedBy: "assertNotReliedUpon",
-      subject: "derivation",
+      protectedBy: "deliberately-unprotected",
       reason:
-        "raw point uuids in jsonb with no FK. A dangling one is only a `console.warn` in `resolveRunDetector` and the detector then derives nothing, forever. 🛑 DUAL-WRITTEN since 0063: `derivation_sources` is the relational twin and it, not this column, is what the database enforces. This entry stays `assertNotReliedUpon` only while the jsonb is still written — it goes when the column does, and until then the two must be kept in step.",
+        "raw point uuids in jsonb with no FK — and, since the HTTP surface moved onto `derivation_sources` (block-model increment 1, PR 3), READ BY NOTHING. It is written and never consulted: the engines resolve from `derivation_sources`, and so does the wire projection, so a stale or dangling uuid here changes no behaviour anywhere. That is what demotes it from `assertNotReliedUpon` — naming a dependent that cannot be affected would pad every refusal with a row nobody needs to act on. 🛑 The real protection is `derivation_sources.point_id`'s composite FK, which refuses to delete a point a live derivation reads. This entry, the dual-write and the column all go together in 0064.",
     },
   },
   {

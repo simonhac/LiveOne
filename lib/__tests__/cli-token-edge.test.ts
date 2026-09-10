@@ -53,6 +53,13 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/areas/ar_x/derivations/dx_x",
       "/api/v4/areas/ar_x/derivations/dx_x/recompute",
       "/api/v4/areas/ar_x/derivations/dx_x/intervals",
+      // The same resource at its own address — where it now lives; the four above are shims.
+      // DELETE is admitted here and nowhere else in this list; see the note in route-matchers.ts
+      // for the two interlocks that make it admissible.
+      "/api/v4/derivations",
+      "/api/v4/derivations/dx_x",
+      "/api/v4/derivations/dx_x/recompute",
+      "/api/v4/derivations/dx_x/intervals",
       // The area WIRING surface, admitted for `liveone area devices` / `liveone area role`. Both
       // authorize in-handler through `loadAreaForOwner`, and the area is a path segment, so there
       // is no unscoped form.
@@ -209,11 +216,18 @@ describe("every route the bypass exposes authorizes for itself", () => {
     // The owner-scoped sibling (same file): requireAuth then owner-or-admin on the resolved area.
     // Needed by `/api/v4/areas/{id}/derivations`, whose GET and POST both use it.
     "loadAreaForOwner",
-    // The per-derivation wrapper (lib/derivations/http.ts): it CALLS loadAreaForOwner on every path
-    // and then loads the row with the area in the WHERE clause. It earns its place here on the same
-    // terms `loadReadableArea` did — it does not shortcut an authorization, it adds a scope check on
-    // top of one. It is the only reason `…/derivations/:dxid{,/recompute,/intervals}` may be listed.
-    "loadDerivationForOwner",
+    // The derivations surface (`/api/v4/derivations*` and the area-scoped shims onto it). Its route
+    // modules are two-line delegations, so the string that appears in them is the IMPORT — and that
+    // is the honest thing to match on here, because the property being asserted is about the
+    // module, not about one function name: EVERY export of `lib/derivations/v4-routes.ts` begins
+    // with `loadDerivation` (which wraps `requireAuth`, then authorizes against the derivation's own
+    // device set) or, for the two collection handlers, with `requireAuth` plus a per-device write
+    // check on the create path. `derivations-scope.test.ts` pins that claim per handler, so this
+    // entry cannot quietly become true of only some of them.
+    //
+    // 🛑 A new export added to that module inherits this listing. It must authorize on every path
+    // before it is exported, exactly as a new route under `isCliTokenRoute` must.
+    "@/lib/derivations/v4-routes",
     // The per-device gate (lib/api-auth.ts): it resolves the auth context and then decides
     // owner-or-admin against THAT device's `ownerClerkUserId`, so like the two loaders above it adds
     // a scope check on top of an authentication rather than shortcutting one. Needed by
@@ -263,6 +277,10 @@ describe("every route the bypass exposes authorizes for itself", () => {
         "app/api/v4/areas/[id]/derivations/[dxid]/route.ts",
         "app/api/v4/areas/[id]/derivations/[dxid]/recompute/route.ts",
         "app/api/v4/areas/[id]/derivations/[dxid]/intervals/route.ts",
+        "app/api/v4/derivations/route.ts",
+        "app/api/v4/derivations/[dxid]/route.ts",
+        "app/api/v4/derivations/[dxid]/recompute/route.ts",
+        "app/api/v4/derivations/[dxid]/intervals/route.ts",
         "app/api/v4/users/[id]/route.ts",
         "app/api/data/route.ts",
         "app/api/history/route.ts",
