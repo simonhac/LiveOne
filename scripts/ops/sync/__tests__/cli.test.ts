@@ -41,6 +41,17 @@ describe("flags", () => {
     );
   });
 
+  it("verifies by DEFAULT, and only --no-verify turns it off", () => {
+    // 🛑 The regression this pins. `verify` was written to default on and did not: the parser
+    // initialises an absent boolean to `false`, so the handler's `=== undefined ? true : …` tested
+    // a state that never occurs and the landing check silently never ran. The first real recovery
+    // published 12,096 observations and reported "landed: not checked".
+    expect(success([...WINDOW, "--apply"]).flags.verify).toBe(true);
+    expect(success([...WINDOW, "--apply", "--no-verify"]).flags.verify).toBe(
+      false,
+    );
+  });
+
   it("rejects an action the vendor has no notion of", () => {
     expect(failure([...WINDOW, "--action=everything"])).toMatch(/action/);
   });
@@ -148,6 +159,7 @@ describe("the run", () => {
   it("says plainly when landing was not checked at all", () => {
     const out = renderRun({ ...base, landed: null });
     expect(out).toMatch(/not checked/);
+    expect(out).toMatch(/--no-verify/);
     expect(out).toMatch(/NOT a landing claim/);
   });
 

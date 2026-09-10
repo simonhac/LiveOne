@@ -17,7 +17,7 @@
 import { defineCommand, EXIT, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { BASE_URL_FLAG, resolveRef, str, usage } from "../shared";
+import { BASE_URL_FLAG, bool, resolveRef, str, usage } from "../shared";
 
 interface WireDevice {
   id: string | null;
@@ -174,7 +174,14 @@ export const syncCommand = defineCommand({
     },
     verify: {
       type: "boolean",
-      help: "After publishing, wait for the lane to drain and read the serving store back (default: on with --apply)",
+      // 🛑 `default: true`, DECLARED — not inferred from `undefined` in the handler. The parser
+      // initialises an absent boolean to `false`, so a handler testing `=== undefined` tests a
+      // state that never occurs and the check silently never runs. That shipped in the first cut
+      // of this flag and cost the first real recovery its verification: the run reported "landed
+      // not checked" and was right to, for the wrong reason. A check that quietly does not run is
+      // the exact defect this verb exists to prevent.
+      default: true,
+      help: "After publishing, wait for the lane to drain and read the serving store back. --no-verify skips it, and the report then says the landing was NOT checked.",
     },
   },
   mutates: true,
@@ -253,9 +260,7 @@ export async function runSync(ctx: Ctx): Promise<number> {
       const failed = chunks.filter((c) => !c.ok);
       const finished = runs[runs.length - 1].done && failed.length === 0;
 
-      const wantVerify =
-        ctx.flags.verify === undefined ? true : ctx.flags.verify === true;
-      const landed = wantVerify
+      const landed = bool(ctx, "verify")
         ? await verifyLanded(s, device.id, start, end, published)
         : null;
 
@@ -437,7 +442,7 @@ export function renderRun(r: RunResult): string {
   // serving store can answer for it.
   if (r.landed === null)
     out.push(
-      "landed       not checked (--verify=false) — published is NOT a landing claim",
+      "landed       not checked (--no-verify) — published is NOT a landing claim",
     );
   else if (!r.landed.settled)
     out.push(

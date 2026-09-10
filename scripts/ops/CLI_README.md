@@ -3149,7 +3149,7 @@ Options:
   --start <YYYY-MM-DD>       First local day to re-fetch (inclusive)
   --end <YYYY-MM-DD>         Last local day to re-fetch (inclusive)
   --action <action>          Which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap.  (one of: usage, pricing, both)
-  --verify                   After publishing, wait for the lane to drain and read the serving store back (default: on with --apply)
+  --verify                   After publishing, wait for the lane to drain and read the serving store back. --no-verify skips it, and the report then says the landing was NOT checked.  (default: true)
 
 Common options:
   --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)

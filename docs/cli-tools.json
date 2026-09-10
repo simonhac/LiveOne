@@ -2810,7 +2810,8 @@
           },
           "verify": {
             "type": "boolean",
-            "description": "After publishing, wait for the lane to drain and read the serving store back (default: on with --apply)"
+            "description": "After publishing, wait for the lane to drain and read the serving store back. --no-verify skips it, and the report then says the landing was NOT checked.",
+            "default": true
           },
           "format": {
             "type": "string",
