@@ -10,7 +10,13 @@
  */
 import { describe, it, expect } from "@jest/globals";
 import { parse, type Tty } from "@/lib/cli/cli";
-import { syncCommand, renderPlan, renderRun, type WireSync } from "../cli";
+import {
+  syncCommand,
+  renderPlan,
+  renderRun,
+  describeChunk,
+  type WireSync,
+} from "../cli";
 
 const TTY: Tty = { stdoutIsTTY: true, stdinIsTTY: true };
 const at = (argv: string[]) => parse(syncCommand, argv, TTY, ["liveone"]);
@@ -191,5 +197,111 @@ describe("the run", () => {
       chunks: [chunk({ merged: 215 })],
     });
     expect(out).toMatch(/merged\s+215 duplicate/);
+  });
+});
+
+/**
+ * The two zeros. On 2026-09-10 a recovery over 2026-06-12 → 2026-07-06 published 0 because Amber
+ * has nothing that far back, and a control re-run of the already-recovered 2026-07-07 → 2026-07-13
+ * published 0 because we already held it and the vendor was never called. Both rendered as
+ * `0  ok`. Telling them apart required minting a prod database role to read the archived audit.
+ */
+describe("a zero that says why", () => {
+  const chunk = (over: Partial<WireSync["chunks"][0]> = {}) => ({
+    start: "2026-06-12",
+    end: "2026-06-18",
+    days: 7,
+    observations: 0,
+    merged: 0,
+    durationMs: 1665,
+    ok: true,
+    ...over,
+  });
+
+  const base = {
+    device: { id: "dv_x", systemId: 10002, name: "Amber" },
+    window: { start: "2026-06-12", end: "2026-07-06" },
+    action: "usage",
+    lane: "backfill",
+    chunks: [] as WireSync["chunks"],
+    published: 0,
+    merged: 0,
+    failed: 0,
+    done: true,
+    landed: {
+      seriesCovering: 0,
+      seriesTotal: 34,
+      waitedMs: 0,
+      settled: true,
+    },
+  };
+
+  const vendorEmpty = chunk({
+    audits: [
+      {
+        action: "updateUsage",
+        outcome: "vendor-empty",
+        discovery: "remote usage data for this interval is NOT AVAILABLE",
+      },
+    ],
+  });
+  const alreadyHeld = chunk({
+    start: "2026-07-07",
+    end: "2026-07-13",
+    audits: [
+      {
+        action: "updateUsage",
+        outcome: "already-held",
+        discovery:
+          "yay, we already have BILLABLE usage data locally for this period",
+      },
+    ],
+  });
+
+  it("distinguishes an empty vendor from a vendor that was never called", () => {
+    expect(describeChunk(vendorEmpty)).toMatch(/vendor has no data/i);
+    expect(describeChunk(alreadyHeld)).toMatch(/NOT called/i);
+    // The whole point: the two must not render alike.
+    expect(describeChunk(vendorEmpty)).not.toEqual(describeChunk(alreadyHeld));
+  });
+
+  it("does not let 'already held' read as evidence about the vendor", () => {
+    const out = renderRun({ ...base, chunks: [alreadyHeld] });
+    expect(out).toMatch(/NEVER CALLED/);
+    expect(out).toMatch(/not evidence about what the vendor has/i);
+  });
+
+  it("says an empty vendor IS evidence the history is not upstream", () => {
+    const out = renderRun({ ...base, chunks: [vendorEmpty, vendorEmpty] });
+    expect(out).toMatch(/had no data/i);
+    expect(out).toMatch(/does not exist upstream/i);
+  });
+
+  it("keeps disagreeing actions apart rather than averaging them", () => {
+    // `--action=both` where usage found nothing upstream but pricing was already held: collapsing
+    // these to one word loses whichever one the operator was asking about.
+    const out = describeChunk(
+      chunk({
+        audits: [
+          { action: "updateUsage", outcome: "vendor-empty" },
+          { action: "updateForecasts", outcome: "already-held" },
+        ],
+      }),
+    );
+    expect(out).toMatch(/updateUsage/);
+    expect(out).toMatch(/updateForecasts/);
+  });
+
+  it("says nothing rather than inventing an outcome on an older deployment", () => {
+    // A CLI newer than the deployment it is talking to: no `audits` field on the wire.
+    expect(describeChunk(chunk())).toBe("ok");
+  });
+
+  it("still reports a failure as a failure, whatever the audits say", () => {
+    expect(
+      describeChunk(
+        chunk({ ok: false, error: "429 Too Many Requests", audits: [] }),
+      ),
+    ).toMatch(/FAILED — 429/);
   });
 });

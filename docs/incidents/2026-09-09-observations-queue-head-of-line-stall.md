@@ -262,6 +262,22 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
       Routes: the Amber API (rolling ~90 days, so ~2026-10-05), an `observations_outbox` replay
       (~2026-10-09, and needs `published_at` cleared), or **a CSV from Amber support, which has no
       deadline** — the route already used for a 4½-month gap in 2025-11.
+- [x] **There is no history below 2026-07-07 to recover, and no clock on finding out.** The
+      recovery started at 2026-07-07 because that is where the *original* backfill started, which
+      was never a statement about where Amber's data ends — Amber's rolling ~90-day window reaches
+      back to ~2026-06-12, so ~3½ weeks looked recoverable and decaying by a day per day. It is
+      not: `liveone sync 10002 --start=2026-06-12 --end=2026-07-06 --action=usage --apply` on
+      2026-09-10 walked 4 windows and published **0**, and the archived audit says why —
+      stage 1 `NO BILLABLE USAGE DATA held locally`, then stage 2 **`remote usage data for this
+      interval is NOT AVAILABLE`**. It never reached the compare stage. The site's Amber data
+      begins at 2026-07-07 and the store now covers it in full.
+      🛑 `observations: 0` from `liveone sync` is TWO different outcomes and the number cannot tell
+      them apart. `updateUsage` exits at stage 1 when local already holds billable data —
+      *without calling the vendor at all* — and at stage 2 when the vendor returns nothing. A
+      control re-run of the known-good 2026-07-07 → 2026-07-13 window also published 0, by the
+      first path (`yay, we already have BILLABLE usage data locally`). What separates them is
+      `landed.seriesCovering` (22 vs **0**) and the `discovery` strings archived in
+      `sessions.response`; read those before concluding a vendor is empty.
 - [ ] **Delete the `observations` queue object.** Nothing publishes to it as of the cutover, but the
       object still exists on the QStash account. 🛑 Deleting it destroys anything still waiting, and
       those messages' outbox rows are already marked `published_at`, so the relay would never
@@ -278,7 +294,10 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 
 ## Status
 
-**Availability: resolved** 2026-09-09. **Data: recovered** 2026-09-10 — see the Action Item above.
+**Availability: resolved** 2026-09-09. **Data: recovered** 2026-09-10, and the recovery is
+**complete rather than merely done** — the window below it was probed on the same day and Amber has
+nothing there, so no further history is retrievable and nothing is expiring. See the Action Items
+above.
 
 The recovery also happens to be the plan's headline verification, run for real rather than on a
 fixture: while 12,096 observations queued on the `backfill` lane (12 messages waiting at one

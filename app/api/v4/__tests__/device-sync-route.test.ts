@@ -216,6 +216,76 @@ describe("POST /api/v4/devices/{id}/sync", () => {
     expect(JSON.stringify(body)).not.toMatch(/inserted/i);
   });
 
+  /**
+   * 🛑 `observations: 0` is several outcomes. On 2026-09-10 a run over 2026-06-12 → 2026-07-06
+   * published 0 because Amber had nothing, and a control over the already-recovered
+   * 2026-07-07 → 2026-07-13 published 0 because stage 1 exited WITHOUT CALLING AMBER. Both looked
+   * identical on the wire; separating them meant reading `sessions.response` out of prod.
+   */
+  describe("why a window published what it did", () => {
+    /** `updateUsage` pushes one entry per stage it reaches and stops at the first early exit. */
+    const withStages = (n: number, discovery: string) =>
+      ({
+        action: "updateUsage",
+        success: true,
+        summary: { numRowsInserted: 0 },
+        stages: Array.from({ length: n }, (_, i) => ({
+          stage: `usage stage ${i + 1}`,
+          ...(i === n - 1 ? { discovery } : {}),
+        })),
+      }) as never;
+
+    it("reports an empty vendor and a vendor never called as DIFFERENT outcomes", async () => {
+      mockUsage.mockResolvedValue(
+        withStages(2, "remote usage data for this interval is NOT AVAILABLE"),
+      );
+      const empty = await (
+        await post({ start: "2026-07-07", end: "2026-07-08", action: "usage" })
+      ).json();
+      expect(empty.chunks[0].audits[0].outcome).toBe("vendor-empty");
+
+      mockUsage.mockResolvedValue(
+        withStages(1, "yay, we already have BILLABLE usage data locally"),
+      );
+      const held = await (
+        await post({ start: "2026-07-07", end: "2026-07-08", action: "usage" })
+      ).json();
+      expect(held.chunks[0].audits[0].outcome).toBe("already-held");
+    });
+
+    it("carries the stage that STOPPED the walk, not an earlier one", async () => {
+      // An earlier stage's text describes a step that then continued — the opposite of the finding.
+      mockUsage.mockResolvedValue(
+        withStages(2, "remote usage data for this interval is NOT AVAILABLE"),
+      );
+      const body = await (
+        await post({ start: "2026-07-07", end: "2026-07-08", action: "usage" })
+      ).json();
+      expect(body.chunks[0].audits[0].discovery).toMatch(/NOT AVAILABLE/);
+    });
+
+    it("refuses to classify an audit it does not recognise", async () => {
+      // Reaching for the happy answer here is how "0 published" came to read as "vendor is empty".
+      mockUsage.mockResolvedValue(withStages(0, ""));
+      const body = await (
+        await post({ start: "2026-07-07", end: "2026-07-08", action: "usage" })
+      ).json();
+      expect(body.chunks[0].audits[0].outcome).toBe("unknown");
+    });
+
+    it("reports one audit per action, so `both` cannot hide half its answer", async () => {
+      mockUsage.mockResolvedValue(withStages(2, "nothing upstream"));
+      mockForecasts.mockResolvedValue(withStages(1, "already held"));
+      const body = await (
+        await post({ start: "2026-07-07", end: "2026-07-08", action: "both" })
+      ).json();
+      expect(body.chunks[0].audits).toHaveLength(2);
+      expect(
+        body.chunks[0].audits.map((a: { outcome: string }) => a.outcome),
+      ).toEqual(["vendor-empty", "already-held"]);
+    });
+  });
+
   it("stops the walk at a failed window rather than repeating the error", async () => {
     mockUsage
       .mockResolvedValueOnce(audit(true))

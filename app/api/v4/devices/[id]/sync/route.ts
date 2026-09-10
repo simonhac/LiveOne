@@ -54,6 +54,62 @@ const BUDGET_MS = 45_000;
 const err = (message: string, status = 422) =>
   NextResponse.json({ error: message }, { status });
 
+/**
+ * Where one vendor window stopped, and so WHY it published what it did.
+ *
+ * 🛑 `observations: 0` is not one outcome, it is three, and the number cannot tell them apart.
+ * On 2026-09-10 a recovery run over 2026-06-12 → 2026-07-06 published 0 and a control re-run of the
+ * already-recovered 2026-07-07 → 2026-07-13 published 0, for opposite reasons — the first because
+ * Amber has no data that far back, the second because we already held it and the vendor was never
+ * called. Separating them meant minting a prod database role to read `discovery` out of
+ * `sessions.response`, which is an absurd cost for "did the vendor have anything?" and exactly the
+ * class of unreadable number this route exists to abolish.
+ */
+type ChunkOutcome =
+  /** Stage 4 ran: superior records were fetched and published. */
+  | "published"
+  /** Stage 1 exit — local already holds complete billable data. THE VENDOR WAS NOT CALLED. */
+  | "already-held"
+  /** Stage 2 exit — the vendor answered, with nothing for this window. */
+  | "vendor-empty"
+  /** Stage 3 exit — the vendor had records, none better than what is already stored. */
+  | "nothing-superior"
+  /** A stage errored; see `error`. */
+  | "failed"
+  /** The audit's shape is not one this classifier recognises. Say so; do not pick a plausible one. */
+  | "unknown";
+
+/**
+ * Classify by HOW FAR the audit got, not by matching its prose. `updateUsage`/`updateForecasts`
+ * push exactly one entry per stage they reach and stop at the first early exit, so the stage COUNT
+ * is the exit point — a structural fact, where `discovery` is human text that may be reworded.
+ */
+function classifyAudit(audit: AmberSyncResult): ChunkOutcome {
+  if (!audit.success) return "failed";
+  // Stage 4 is the only stage that STORES, so reaching it is what "published" means. Keyed off the
+  // count reaching 4 rather than a bare `default:`, so an audit with no stages at all — which
+  // should be impossible, stage 1 always runs — cannot fall through into the happy answer.
+  if (audit.stages.length >= 4) return "published";
+  switch (audit.stages.length) {
+    case 1:
+      return "already-held";
+    case 2:
+      return "vendor-empty";
+    case 3:
+      return "nothing-superior";
+    default:
+      return "unknown";
+  }
+}
+
+/** What the vendor path said about itself, carried back so a zero explains itself. */
+interface ChunkAudit {
+  action: AmberSyncResult["action"];
+  outcome: ChunkOutcome;
+  /** The audit's own last words — the most specific thing known about this window. */
+  discovery?: string;
+}
+
 /** One vendor window's outcome. `observations` is what was PUBLISHED — see the 🛑 above. */
 interface ChunkResult {
   start: string;
@@ -63,6 +119,8 @@ interface ChunkResult {
   merged: number;
   durationMs: number;
   ok: boolean;
+  /** Per action, why this window published what it did. Never empty on a chunk that ran. */
+  audits: ChunkAudit[];
   error?: string;
 }
 
@@ -285,6 +343,15 @@ export async function POST(
       merged,
       durationMs: Date.now() - startedAt,
       ok,
+      audits: audits.map((audit) => ({
+        action: audit.action,
+        outcome: classifyAudit(audit),
+        // The LAST stage's discovery, which is the one describing why the walk stopped. An
+        // earlier stage's text would describe a step that then continued.
+        ...(audit.stages.at(-1)?.discovery
+          ? { discovery: audit.stages.at(-1)!.discovery }
+          : {}),
+      })),
       ...(error ? { error } : {}),
     });
 
