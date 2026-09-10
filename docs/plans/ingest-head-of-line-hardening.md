@@ -17,7 +17,8 @@ pre-cutover baseline of 684 ms — indistinguishable.
 **Then retired, in the same day's follow-up:** the FIFO queue transport, the `OBSERVATIONS_PUBLISH_MODE`
 switch, the `mode`/`legacyQueue`/compat fields on `/api/v4/queue`, and the admin `info`/`messages`
 twins (the admin page now reads `/api/v4/queue` + `/api/v4/queue/timing`, the same endpoints the
-CLI does). **Not yet done:** deleting the QStash queue object itself, and the Amber recovery.
+CLI does). **Not yet done:** deleting the QStash queue object itself. The Amber recovery is ✅ done
+(2026-09-10) — see the incident report.
 
 🛑 **Deleting the queue object destroys anything still waiting in it, and those messages' outbox
 rows are already marked published — the relay would never re-send them.** "Nothing enqueues to it"
@@ -359,11 +360,12 @@ one: `observations_outbox` is teed BEFORE publish, so a publish that throws leav
 
 ## Verification
 
-- Replay a multi-week backfill and assert `lastIngestedAt` never ages beyond one poll interval
-  **for other devices** while it runs. That is the property that actually failed. The natural
-  subject is no longer a `liveone-dev` fixture but the real thing: device 10002's missing usage
-  window, replayed with `liveone sync … --apply` on the `backfill` lane with `liveone queue timing`
-  watching. Dev cannot test it anyway — it has no fleet traffic to be delayed.
+- ✅ Replay a multi-week backfill and assert `lastIngestedAt` never ages beyond one poll interval
+  **for other devices** while it runs. That is the property that actually failed, and it was tested
+  for real rather than on a fixture — device 10002's missing usage window, 2026-09-10: 12,096
+  observations across 10 vendor windows, 12 messages queued on `backfill` at one sample, and live
+  ingest never aged past **0.4 minutes** with nothing ever waiting on the `live` lane. 23 batches
+  delivered, 0 failed, 0 retries. Dev could not have tested this — it has no fleet traffic to delay.
 - Assert emitted message size stays within the poll-sized bound (a unit test on the publisher — the
   bound is the contract, not an integration detail).
 - ✅ After a sync reports success, read the serving store for the synced range and assert non-empty —

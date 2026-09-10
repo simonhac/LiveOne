@@ -246,8 +246,17 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 
 **Open**
 
-- [ ] **Recover device 10002, 2026-07-07 → 2026-09-08.** Now has a CLI path:
-      `liveone sync 10002 --start=2026-07-07 --end=2026-09-08 --action=usage --apply`. Only the `/usage`-derived series are
+- [x] **Recovered device 10002, 2026-07-07 → 2026-09-08**, on 2026-09-10 with
+      `liveone sync 10002 --start=2026-07-07 --end=2026-09-08 --action=usage --apply` — 10 vendor
+      windows, 12,096 observations published on the `backfill` lane, no failures and no duplicate
+      collapses. **24 of 34 series** moved their first-data back and **+45,344 samples** landed
+      (13,844 → 59,188): `import/value` and `import/energy.delta` from 2026-09-08 back to
+      **2026-07-07** (96 → 3,120 samples each), and `import/rate` from 2026-07-11 back to
+      2026-07-07 (800 → 3,216), the usage fetch filling in days the pricing fetch never had.
+      Re-running the first window afterwards published **0** and reported the window already
+      covered — the sync is idempotent, and that is the landing proof.
+      ⚠️ The `export/*` series start **2026-08-18** and stop there. That is not a shortfall: the
+      site had no export before then, which is also why the last three windows published double. Only the `/usage`-derived series are
       missing (energy and cost); the `/prices` half survived back to 2026-07-11. Run with
       `action: "usage"` — usage-only never calls the pricing endpoint, so it cannot collide.
       Routes: the Amber API (rolling ~90 days, so ~2026-10-05), an `observations_outbox` replay
@@ -269,9 +278,16 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 
 ## Status
 
-**Availability: resolved** 2026-09-09. **Data: outstanding** — device 10002's usage series for
-2026-07-07 → 2026-09-08 are still missing, recoverable, and not self-healing (the coverage-repair
-cron cannot see the gap: its window floor is `commissioned_on`, and the device was only created
-2026-09-08).
+**Availability: resolved** 2026-09-09. **Data: recovered** 2026-09-10 — see the Action Item above.
+
+The recovery also happens to be the plan's headline verification, run for real rather than on a
+fixture: while 12,096 observations queued on the `backfill` lane (12 messages waiting at one
+sample), live ingest never aged past **0.4 minutes** and the `live` lane never had anything
+waiting. `queue timing` over the window: 23 batches, 23 delivered, **0 failed, 0 retries**, live
+batches at 767 ms and a wait of 171 ms. Under the FIFO queue those 12 backfill messages would have
+been ahead of every live poll — which is precisely what happened on 2026-09-09.
+
+One thing worth noting about the gap that made this necessary: the coverage-repair cron could never
+have found it. Its window floor is `commissioned_on`, and the device was only created 2026-09-08.
 
 Working notes and the migration plan: `docs/plans/ingest-head-of-line-hardening.md`.
