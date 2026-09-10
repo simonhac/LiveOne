@@ -20,8 +20,11 @@
  * ## A derivation's SITE is derived, never configured
  *
  * `derivations.area_id` used to say where a detector lived, and it could disagree with where its
- * points actually were — nothing checked. It is now a dual-written vestige read by nothing. The site
- * comes from the wiring instead:
+ * points actually were — nothing checked. It is now a dual-written vestige that NOTHING RESOLVES A
+ * DERIVATION THROUGH: not this file, not the HTTP surface (which authorizes against the derivation's
+ * own device set), not the sync. One reader survives and it is not a resolver — `areaDependents`
+ * (`lib/integrity/relied-upon.ts`) lists an area's derivations when refusing to delete that area —
+ * and 0064 deletes that leg along with the column. The site comes from the wiring instead:
  *
  *     owner point → `points.device_id` → `devices.rid`   (the `legacyHandle`)
  *
@@ -46,8 +49,7 @@ import {
   devices,
   points,
 } from "@/lib/db/planetscale/schema";
-import { Device, Point, type PointId } from "@/lib/ids";
-import { DeviceRegistry } from "@/lib/registry/device-registry";
+import { Point, type PointId } from "@/lib/ids";
 import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import { deriveDerivationId } from "./ids";
 import { HWS_MODEL_KIND, RUN_DETECTOR_KIND } from "./kinds";
@@ -143,37 +145,14 @@ export interface ResolvedHwsModel {
 }
 
 // ---------------------------------------------------------------------------
-// Handle → area
+// Handle → device
 // ---------------------------------------------------------------------------
-
-/**
- * The old integer handle → owning area uuid. Area-first (a handle naming both an area-of-one and
- * its device must resolve as the area), else the device's `primary_area_id`.
- *
- * 🛑 Since 0063 this feeds ONLY the dual-write of the `derivations.area_id` vestige — no reader
- * resolves a derivation through it. It goes when the column does.
- */
-export async function resolveAreaIdForHandle(
-  handle: number,
-): Promise<string | null> {
-  const targets = await DeviceRegistry.resolveHandle(handle);
-  if (!targets) return null;
-  if (targets.areaId) return targets.areaId;
-  if (!targets.deviceId) return null;
-  const [row] = await requirePlanetscaleDb()
-    .select({ areaId: devices.primaryAreaId })
-    .from(devices)
-    .where(eq(devices.id, Device.toUuid(targets.deviceId)))
-    .limit(1);
-  return row?.areaId ?? null;
-}
 
 /**
  * The integer handle → the `devices.id` it names, or null.
  *
- * The device-era counterpart of {@link resolveAreaIdForHandle}, and deliberately NOT expanded to an
- * area's members: its one caller is {@link RunDetectorFilter}, which feeds
- * `recomputeRange`/`deleteRange` — both of which delete-and-reinsert. Widening a handle to its
+ * Deliberately NOT expanded to an area's members: its one caller is {@link RunDetectorFilter}, which
+ * feeds `recomputeRange`/`deleteRange` — both of which delete-and-reinsert. Widening a handle to its
  * members would turn a previously-inert CLI invocation into a destructive pass over detectors the
  * caller never named.
  */
@@ -219,12 +198,20 @@ type SourceJoinRow = {
 type OwnerFacts = { legacyHandle: number; tzOffset: number; tz: string };
 
 /**
- * The owner point's slot, in precedence order — see the SITE note at the top of this file.
+ * The owner point's slot, in precedence order, PER KIND — see the SITE note at the top of this file.
  *
- * `energy` before `signal`, and the reason is a specific live row rather than a preference. Changing
- * the order re-addresses Daylesford's generator from handle 1 to handle 14.
+ * For a run-detector: `energy` before `signal`, and the reason is a specific live row rather than a
+ * preference. Changing the order re-addresses Daylesford's generator from handle 1 to handle 14.
+ * An hws-model has exactly one input, so its precedence is a list of one — stated anyway, so that
+ * "which device does this derivation belong to" has ONE answer for every kind rather than a
+ * run-detector rule plus a special case.
  */
-const OWNER_SLOTS = ["energy", "signal"] as const;
+const OWNER_SLOTS_BY_KIND: Record<string, readonly string[]> = {
+  [RUN_DETECTOR_KIND]: ["energy", "signal"],
+  [HWS_MODEL_KIND]: ["power"],
+};
+
+const OWNER_SLOTS = OWNER_SLOTS_BY_KIND[RUN_DETECTOR_KIND];
 
 /**
  * Every enabled run-detector's rows, with its sources — ONE query.
@@ -541,12 +528,6 @@ async function ownerOfRoleOnDevice(
 }
 
 export interface EnsureRunDetectorInput {
-  /**
-   * The area to stamp on the dual-written `derivations.area_id` vestige. 🛑 It no longer decides
-   * anything: a detector's site is its owner device, so there is no placement rule left to get
-   * wrong and no `area-not-probed` refusal. Optional, and it goes with the column in 0064.
-   */
-  areaId?: string | null;
   role: RoleId;
   name: string;
   /** `points.id` uuid of the series the detector thresholds. */
@@ -565,14 +546,12 @@ export type EnsureRunDetectorStatus =
   | "no-signal-point"
   | "no-energy-point"
   | "no-bounds"
-  | "owner-role-taken"
-  | "area-role-vestige-taken";
+  | "owner-role-taken";
 
 export interface EnsureRunDetectorResult {
   status: EnsureRunDetectorStatus;
   role: string;
   derivationId?: string;
-  areaId?: string | null;
   /** For `owner-role-taken`: the derivation already holding this (owner device, role). */
   conflictingDerivationId?: string;
 }
@@ -607,8 +586,8 @@ export interface EnsureRunDetectorResult {
 export async function ensureRunDetector(
   input: EnsureRunDetectorInput,
 ): Promise<EnsureRunDetectorResult> {
-  const { areaId, role, signalPointUid, energyPointUid, params, apply } = input;
-  const base = { role, areaId: areaId ?? null };
+  const { role, signalPointUid, energyPointUid, params, apply } = input;
+  const base = { role };
 
   if (!TRACKABLE_ROLE_IDS.includes(role))
     return { ...base, status: "not-trackable" };
@@ -655,24 +634,6 @@ export async function ensureRunDetector(
       conflictingDerivationId: takenBy,
     };
 
-  // 🛑 The `derivations_area_role_unique` VESTIGE. `area_id` decides nothing any more, but the index
-  // on `(area_id, role) WHERE role IS NOT NULL` is still there until 0064 drops it — so two
-  // detectors for one role stamped with the same area cannot both be stored, however legal their
-  // wiring now is. Refused here, by name, rather than surfacing as a 500 on the INSERT.
-  if (areaId) {
-    const [clash] = await db
-      .select({ id: derivations.id })
-      .from(derivations)
-      .where(and(eq(derivations.areaId, areaId), eq(derivations.role, role)))
-      .limit(1);
-    if (clash)
-      return {
-        ...base,
-        status: "area-role-vestige-taken",
-        conflictingDerivationId: clash.id,
-      };
-  }
-
   // Anchored on the SIGNAL POINT uuid, not the area: deterministic AND cross-environment stable
   // (`points.id` is a uuidv5, `devices.id` is not). Minted on the insert path only.
   const id = deriveDerivationId(signalPointUid, RUN_DETECTOR_KIND, role);
@@ -684,7 +645,13 @@ export async function ensureRunDetector(
   await db.transaction(async (tx) => {
     await tx.insert(derivations).values({
       id,
-      areaId: areaId ?? null,
+      // 🛑 NULL, deliberately. `area_id` is a vestige 0064 drops, and nothing decides anything from
+      // it — so stamping a plausible-looking area would be inventing a placement fact for a column
+      // whose whole point is that there isn't one. NULL also keeps the vestigial
+      // `derivations_area_role_unique` index out of the way: a unique index does not constrain
+      // NULLs, so two same-role detectors on different devices can both be stored, which is exactly
+      // what the owner rule below permits and the index (written for the old model) would not.
+      areaId: null,
       kind: RUN_DETECTOR_KIND,
       role,
       name: input.name,
@@ -712,15 +679,18 @@ export async function ensureRunDetector(
 
 /**
  * `ensureRunDetector` addressed by the legacy integer handle — what the seed script's `--handle`
- * flag means. The handle now only supplies the `area_id` vestige; the detector's site comes from
- * its signal/energy points either way.
+ * flag means.
+ *
+ * 🛑 The handle is now IGNORED, and the wrapper is kept only so the seed script's flag keeps
+ * parsing. A detector's site is its owner device, computed from the signal/energy points; the
+ * handle used to supply the `area_id` vestige and there is nothing left for it to supply. It goes
+ * when the script's flag does.
  */
 export async function ensureRunDetectorForHandle(
-  input: Omit<EnsureRunDetectorInput, "areaId"> & { handle: number },
+  input: EnsureRunDetectorInput & { handle: number },
 ): Promise<EnsureRunDetectorResult> {
-  const areaId = await resolveAreaIdForHandle(input.handle);
   const { handle: _handle, ...rest } = input;
-  return ensureRunDetector({ ...rest, areaId });
+  return ensureRunDetector(rest);
 }
 
 // ---------------------------------------------------------------------------
@@ -776,4 +746,33 @@ export async function listEnabledHwsModels(): Promise<ResolvedHwsModel[]> {
       ...(r.d.params as HwsModelParams),
     },
   }));
+}
+
+/**
+ * The device a derivation BELONGS to — its owner point's device — for any kind, or null.
+ *
+ * The one answer to "where does this derivation live", shared by the resolver (which computes it
+ * inline from a listing it already has) and by callers holding nothing but an id:
+ * `derivationBelongsToArea` and the block-model graph report. Null means the row has no owner slot
+ * wired, which is a broken derivation rather than a placeless one.
+ */
+export async function ownerDeviceIdForDerivation(
+  derivationId: string,
+): Promise<string | null> {
+  const rows = await requirePlanetscaleDb()
+    .select({
+      slot: derivationSources.slot,
+      deviceId: derivationSources.deviceId,
+      kind: derivationSources.kind,
+    })
+    .from(derivationSources)
+    .where(eq(derivationSources.derivationId, derivationId));
+  if (rows.length === 0) return null;
+  const slots = new Map(rows.map((r) => [r.slot, r.deviceId]));
+  const precedence = OWNER_SLOTS_BY_KIND[rows[0].kind] ?? [];
+  for (const slot of precedence) {
+    const deviceId = slots.get(slot);
+    if (deviceId) return deviceId;
+  }
+  return null;
 }

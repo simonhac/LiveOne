@@ -330,14 +330,16 @@ describe("prod→dev readings transfer", () => {
   });
 
   // Regression: from 2026-07-25 every sync run aborted on
-  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id and
-  // derivations.area_id are NOT NULL / NO ACTION, so a drifted area that owns a dark-mirror device
-  // can't be deleted — those rows must be MOVED to prod's uuid instead.
+  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id is NOT NULL
+  // / NO ACTION, so a drifted area that owns a dark-mirror device can't be deleted — those rows must
+  // be MOVED to prod's uuid instead.
   //
-  // `derivations.area_id`'s FK became ON DELETE SET NULL in migration 0063, so this repoint no
-  // longer UNBLOCKS the delete — it is retained because the area-scoped HTTP surface still resolves
-  // a derivation through the column, and a dev-only row cleared to NULL would be un-listable with no
-  // prod row following to restore it. Pinned so its eventual removal is a deliberate act.
+  // 🛑 `derivations.area_id` is deliberately NOT in this list any more. Migration 0063 flipped its
+  // FK to ON DELETE SET NULL, so the repoint stopped unblocking the delete; it survived one PR
+  // longer only because the area-scoped HTTP surface still resolved a derivation through the
+  // column. Nothing reads it now (authorization is against the derivation's own device set), so a
+  // dev-only derivation whose area realigns simply takes NULL. Pinned NEGATIVELY below so putting
+  // it back is a deliberate act too.
   it("realigns a drifted area by repointing its NOT NULL dependants, never deleting devices", async () => {
     const table = prodDevSyncManifest().find(
       (entry) => entry.name === "areas",
@@ -345,10 +347,7 @@ describe("prod→dev readings transfer", () => {
     expect(table).toMatchObject({
       mode: "full",
       idDrift: {
-        repoint: [
-          { table: "devices", cols: ["primary_area_id"] },
-          { table: "derivations", cols: ["area_id"] },
-        ],
+        repoint: [{ table: "devices", cols: ["primary_area_id"] }],
         // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
         // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
         neutralize: ["slug"],
@@ -429,9 +428,10 @@ describe("prod→dev readings transfer", () => {
     expect(sql).toContain(
       "UPDATE public.devices x SET primary_area_id = b.new_id FROM _drift b WHERE x.primary_area_id = b.id;",
     );
-    expect(sql).toContain(
-      "UPDATE public.derivations x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
-    );
+    // 🛑 And derivations is NOT repointed — the SQL leg is gone with the manifest entry. A
+    // dev-only derivation under a realigning area takes `area_id = NULL` via the FK, which is
+    // harmless now that nothing reads the column.
+    expect(sql).not.toContain("UPDATE public.derivations");
 
     // Ordering is load-bearing: neutralize → upsert → repoint → delete the drifted parent.
     const at = (needle: string) => {
@@ -447,7 +447,7 @@ describe("prod→dev readings transfer", () => {
     expect(at("INSERT INTO public.areas")).toBeLessThan(
       at("UPDATE public.devices x SET primary_area_id"),
     );
-    expect(at("UPDATE public.derivations x SET area_id")).toBeLessThan(
+    expect(at("UPDATE public.devices x SET primary_area_id")).toBeLessThan(
       at("DELETE FROM public.areas d USING _drift"),
     );
 

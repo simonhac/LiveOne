@@ -133,6 +133,32 @@ const cliTokenRoutes = [
   "/api/v4/areas/:id/derivations/:dxid",
   "/api/v4/areas/:id/derivations/:dxid/recompute",
   "/api/v4/areas/:id/derivations/:dxid/intervals",
+  // The same resource at its own address, which is where it now lives: a derivation's site is
+  // DERIVED from its source points, so there is no area to address it by and the four routes above
+  // are shims onto these. Named segments, never `(.*)`, exactly as the area tree is.
+  //
+  // 🛑 The authorization argument CHANGED with the address, and it got stronger. The old one was
+  // "each puts the AREA in its WHERE clause, so the area's owner check covers the derivation" — a
+  // property of a clause someone could forget to write. These routes authorize against the
+  // derivation's OWN device set (`lib/derivations/scope.ts`): write access is required on EVERY
+  // device it touches, and an unreadable one is a 404 rather than a 403 so the URL is not an
+  // existence oracle over `dx_` ids. There is no scope for the caller to name, so there is nothing
+  // to forget.
+  //
+  // `recompute` is still the one worth pausing on — it is a delete-and-reinsert, and admitting a
+  // route that rewrites history is a real widening. It is safe here for the same reason as before:
+  // the derivation is a PATH SEGMENT, so there is no unscoped form to reach, unlike
+  // `/api/cron/derivations`, whose filter is optional and which stays outside this bypass.
+  //
+  // 🛑 DELETE is admitted, and it is the first destructive verb on this domain. It is admissible
+  // because it cannot be reached casually: the derivation must ALREADY be disabled (409
+  // `derivation-enabled`, and `?force=true` does not waive it), and `assertNotReliedUpon` then
+  // names the intervals, the output point and any automation that would break. Two deliberate acts,
+  // the first of which is reversible and observable.
+  "/api/v4/derivations",
+  "/api/v4/derivations/:dxid",
+  "/api/v4/derivations/:dxid/recompute",
+  "/api/v4/derivations/:dxid/intervals",
   // The two area sub-resources §2 of the ops-CLI plan named, admitted when `liveone area devices`
   // and `liveone area role` were written. Named segments, never `(.*)` — `eligibility`,
   // `by-handle`, `default-group`, `recompute-provenance` and the two `provenance-*` reads stay

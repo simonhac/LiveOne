@@ -52,6 +52,11 @@ jest.mock("@/lib/control/point-actions", () => ({
   loadPointByUuid: jest.fn(),
   loadPointByStemMetric: jest.fn(),
 }));
+// The derivation-trigger leg gained a second question in the block-model increment: "does it belong
+// to this area" (store, above) AND "may this caller read it", judged against the derivation's own
+// device set. Mocked here because it is the derivations surface's own loader — its behaviour is
+// pinned in `lib/derivations/__tests__/scope.test.ts`, not re-litigated per caller.
+jest.mock("@/lib/derivations/scope", () => ({ loadDerivation: jest.fn() }));
 jest.mock("@/lib/automations/store", () => ({
   listForArea: jest.fn(),
   getById: jest.fn(),
@@ -68,6 +73,7 @@ import {
   loadPointByUuid,
 } from "@/lib/control/point-actions";
 import * as store from "@/lib/automations/store";
+import { loadDerivation } from "@/lib/derivations/scope";
 import type { AutomationRow } from "@/lib/db/planetscale/schema";
 import { GET, POST } from "../automations/route";
 import { DELETE, PATCH } from "../automations/[id]/route";
@@ -229,6 +235,9 @@ beforeEach(() => {
   );
   mockSibling.mockResolvedValue({ id: "sibling" } as never);
   mockStore.derivationBelongsToArea.mockResolvedValue(true);
+  jest
+    .mocked(loadDerivation)
+    .mockResolvedValue({ userId: OWNER, isAdmin: false } as never);
   mockStore.listForArea.mockResolvedValue([]);
   mockStore.getById.mockResolvedValue(row());
   mockStore.create.mockImplementation(async (v) => row(v as never));

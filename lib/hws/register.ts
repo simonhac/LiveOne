@@ -14,10 +14,7 @@ import { derivations, devices, points } from "@/lib/db/planetscale/schema";
 import { findPointByStemMetric, mintPoint } from "@/lib/point/mint-point";
 import { refreshServingForMintedPoints } from "@/lib/kv-cache-manager";
 import { deriveDerivationId } from "@/lib/derivations/ids";
-import {
-  HWS_MODEL_KIND,
-  resolveAreaIdForHandle,
-} from "@/lib/derivations/resolve";
+import { HWS_MODEL_KIND } from "@/lib/derivations/resolve";
 import {
   findDerivationBySource,
   writeDerivationSources,
@@ -151,10 +148,6 @@ export async function ensureHwsDerivation(
   if (existingId)
     return { status: "exists", systemId, derivationId: existingId };
 
-  // The `derivations.area_id` vestige, dual-written and read by nothing (0063). A handle that
-  // resolves to no area is no longer a refusal: the model's site is its power point's device.
-  const areaId = await resolveAreaIdForHandle(systemId);
-
   // Anchored on the POWER POINT uuid rather than the area: deterministic and cross-environment
   // stable (`points.id` is a uuidv5). Minted on the insert path only.
   const id = deriveDerivationId(power.pointUid, HWS_MODEL_KIND, null);
@@ -166,7 +159,9 @@ export async function ensureHwsDerivation(
   await db.transaction(async (tx) => {
     await tx.insert(derivations).values({
       id,
-      areaId,
+      // 🛑 NULL — see the same note in `ensureRunDetector`. `area_id` is a vestige 0064 drops, and
+      // the model's site is its power point's device.
+      areaId: null,
       kind: HWS_MODEL_KIND,
       role: null,
       name: temp.displayName,

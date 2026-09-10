@@ -3181,8 +3181,9 @@ The derivations on an area: id, kind, role, enabled, sources.
 When to use:
   Start here — to find a dx_… id, or to check whether a detector exists at all.
 
-There is no fleet-wide listing: the API serves derivations per area, so 'which detectors
-exist anywhere' means one call per area.
+Per area, still: the API grew a fleet-wide collection when derivations stopped being
+addressed by area, but this verb has not moved onto it yet, so 'which detectors exist
+anywhere' is still one call per area.
 
 Usage:
   liveone derivation list <area> [options]

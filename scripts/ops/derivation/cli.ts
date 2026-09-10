@@ -4,11 +4,12 @@
  *
  * A COMPOSABLE module (spec + dispatcher, no entrypoint), mounted by `scripts/ops/liveone.ts`.
  * Http-only, and every verb speaks the v4 API: there is no `--via=db`, because everything that makes
- * a derivation correct is server-side. `ensureRunDetector` decides whether the area can host a
- * detector at all (a detector on a composite is invisible to the capability probe that lights its
- * card up — it refuses with `area-not-probed` and NAMES the member handles that would work), and the
- * recompute is a delete-and-reinsert under an advisory lock. A db leg would re-implement both to be
- * equally right, and would get the interesting cases wrong.
+ * a derivation correct is server-side. `ensureRunDetector` decides whether the wiring is legal at
+ * all (`owner-role-taken`: two detectors for one role resolving to the same OWNER device would
+ * fight over one `<stem>/running` point — an invariant no index can express), the authorization is
+ * computed from the derivation's own device set, and the recompute is a delete-and-reinsert under
+ * an advisory lock. A db leg would re-implement all three to be equally right, and would get the
+ * interesting cases wrong.
  *
  * ## Why this domain exists
  *
@@ -62,8 +63,9 @@ export const derivationCommand = defineCommand({
       summary: "The derivations on an area: id, kind, role, enabled, sources.",
       when: "Start here — to find a dx_… id, or to check whether a detector exists at all.",
       description:
-        "There is no fleet-wide listing: the API serves derivations per area, so 'which detectors\n" +
-        "exist anywhere' means one call per area.",
+        "Per area, still: the API grew a fleet-wide collection when derivations stopped being\n" +
+        "addressed by area, but this verb has not moved onto it yet, so 'which detectors exist\n" +
+        "anywhere' is still one call per area.",
       args: [AREA_ARG],
       flags: { ...BASE_URL_FLAG },
       exitCodes: { 1: "the area has no derivations" },

@@ -48,6 +48,13 @@ jest.mock("@/lib/automations/store", () => ({
   remove: jest.fn(async () => true),
   derivationBelongsToArea: jest.fn(async () => true),
 }));
+// The other half of the derivation-trigger check (block-model increment 1): "may this caller READ
+// that derivation", against its own device set. Stubbed open like the store above — the gate these
+// cases exercise is `requireDeviceAccess` on the ACTION point, and nothing here uses a derivation
+// trigger.
+jest.mock("@/lib/derivations/scope", () => ({
+  loadDerivation: jest.fn(async () => ({ userId: "u", isAdmin: false })),
+}));
 
 import { auth } from "@clerk/nextjs/server";
 import { isUserAdmin } from "@/lib/auth-utils";

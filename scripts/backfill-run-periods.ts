@@ -124,8 +124,7 @@ async function seed() {
 
   console.log(
     `${tag} seed handle=${handle} role=${role} → ${result.status}` +
-      (result.derivationId ? ` (${result.derivationId})` : "") +
-      (result.areaId ? ` on area ${result.areaId}` : ""),
+      (result.derivationId ? ` (${result.derivationId})` : ""),
   );
   console.log(`      params: ${JSON.stringify(params)}`);
   console.log(`      source_points: ${JSON.stringify({ signal, energy })}`);

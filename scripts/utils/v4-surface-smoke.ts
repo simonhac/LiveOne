@@ -836,51 +836,95 @@ async function main(): Promise<void> {
       resolution.body.slots?.[0],
     );
 
-    // ------------------------------------------------ 4d. GET/POST/PATCH /areas/{id}/derivations
+    // ---------------------------------------------------- 4d. the derivations surface
     //
-    // Driven against a REAL area that already carries a run detector, not a scratch one: a detector
-    // needs a real signal point on a device that really belongs to the area, and the placement rule
-    // this section exists to pin (below) is only expressible between two real areas.
+    // Driven against the REAL production detectors, not scratch ones: a detector needs a real
+    // signal point on a real device, and the property this section exists to pin — that a
+    // derivation is addressed and authorized BY ITS OWN DEVICE SET — is only visible on the row
+    // whose devices disagree with each other. Daylesford's generator is that row: its signal is the
+    // DeepSea genset's Engine Speed (handle 14) and its energy is the Selectronic's Import counter
+    // (handle 1).
     //
     // Every write here is idempotent BY VALUE — the create re-sends the detector's own body (→
     // `exists`, no write) and the patch re-sends its own name. `enabled` is deliberately never
     // toggled: a crash between the two halves of a toggle would leave a live detector switched off,
     // which is a silent outage of the thing this whole surface exists to configure.
-    section("GET /api/v4/areas/{id}/derivations");
+    section("GET /api/v4/derivations");
+    const fleet = await call("GET", "/api/v4/derivations");
+    ok(fleet.status === 200, "200 for the fleet-wide collection", fleet.status);
+    const fleetRows = fleet.body?.derivations ?? [];
+    ok(Array.isArray(fleetRows), "{ derivations: [...] }", fleet.body);
+    ok(
+      fleetRows.every(
+        (d: any) =>
+          typeof d.id === "string" &&
+          d.id.startsWith("dx_") &&
+          typeof d.kind === "string" &&
+          typeof d.enabled === "boolean" &&
+          ["point", "intervals"].includes(d.output),
+      ),
+      "every row is { id: dx_…, kind, enabled, output }",
+      fleetRows[0],
+    );
+    // 🛑 THE REPLACEMENT FOR THE OLD PLACEMENT ASSERTION. A derivation no longer says where it
+    // lives; it says which devices it touches, and that set is what every read and write on this
+    // surface is authorized against. A row with an empty set would be one nothing could authorize.
+    ok(
+      fleetRows.every(
+        (d: any) =>
+          Array.isArray(d.devices) &&
+          d.devices.length > 0 &&
+          d.devices.every(
+            (x: any) => typeof x === "string" && x.startsWith("dv_"),
+          ),
+      ),
+      "every row carries a non-empty `devices: [dv_…]` set",
+      fleetRows[0]?.devices,
+    );
+
     let detectorArea: any = null;
-    let detector: any = null;
+    // 🛑 ENABLED, and that is a SAFETY predicate rather than a preference. The DELETE probe below
+    // drives a refusal, and what makes the refusal certain is that the detector is live — the first
+    // interlock (`derivation-enabled`) is the one that cannot be waived. Pick a DISABLED detector
+    // and the same probe reaches the second interlock instead, which `?force=true` WILL waive:
+    // against a disabled detector with history that is a real delete of real run periods. Prefer the
+    // widest device set too, so the row driving this is the one whose devices disagree (Daylesford's
+    // generator: signal on handle 14, energy on handle 1).
+    let detector: any = fleetRows
+      .filter((d: any) => d.kind === "run-detector" && d.enabled)
+      .sort((a: any, b: any) => b.devices.length - a.devices.length)[0];
+
+    // The area-scoped tree still serves the same rows (the CLI speaks it until PR 4). It is a
+    // NARROWING of the fleet listing now, not a different query — so every row it returns must
+    // appear in the fleet-wide one, and none may appear that the fleet listing withheld.
+    section("GET /api/v4/areas/{id}/derivations (shim)");
+    const fleetIds = new Set(fleetRows.map((d: any) => d.id));
     for (const a of list) {
       const r = await call("GET", `/api/v4/areas/${a.id}/derivations`);
       ok(r.status === 200, `200 for ${a.displayName}`, r.status);
       const rows = r.body?.derivations ?? [];
-      ok(Array.isArray(rows), "{ derivations: [...] }", r.body);
       ok(
-        rows.every(
-          (d: any) =>
-            typeof d.id === "string" &&
-            d.id.startsWith("dx_") &&
-            typeof d.kind === "string" &&
-            typeof d.enabled === "boolean" &&
-            ["point", "intervals"].includes(d.output),
-        ),
-        `every row is { id: dx_…, kind, enabled, output } (${a.displayName})`,
-        rows[0],
+        rows.every((d: any) => fleetIds.has(d.id)),
+        `the shim is a subset of the fleet listing (${a.displayName})`,
+        rows.map((d: any) => d.id),
       );
-      const run = rows.find((d: any) => d.kind === "run-detector");
-      if (run && !detector) {
-        detector = run;
+      // An area to drive the POST shim through — any area that lists the chosen detector.
+      if (
+        detector &&
+        !detectorArea &&
+        rows.some((d: any) => d.id === detector.id)
+      )
         detectorArea = a;
-      }
     }
 
     if (!detector) {
       skip(
-        "POST/PATCH /api/v4/areas/{id}/derivations",
-        "no readable area carries a run detector to drive idempotently",
+        "POST/PATCH/DELETE /api/v4/derivations",
+        "no readable ENABLED run detector to drive idempotently",
       );
     } else {
       console.log(
-        `  detector: ${detector.id} (${detectorArea.displayName} · ${detector.role})`,
+        `  detector: ${detector.id} (${detector.role} · devices ${detector.devices.join(", ")})`,
       );
       // Source points must cross as `pt_` TypeIDs — the wire is TypeID-native, and a raw uuid here
       // would be a "point not found" 422 rather than a decode error, a long way from its cause.
@@ -890,8 +934,32 @@ async function main(): Promise<void> {
         "sourcePoints.signal crosses as a pt_ TypeID",
         detector.sourcePoints,
       );
+      // `boundary` is EMITTED, not omitted, and that is new: PATCH has always permitted re-pointing
+      // it, and the old jsonb projection then refused to show the result back. `null` means unwired;
+      // an absent key would mean the kind has no such slot.
+      ok(
+        "boundary" in (detector.sourcePoints ?? {}),
+        "…and `boundary` is projected (null when unwired), no longer write-only",
+        detector.sourcePoints,
+      );
 
-      section("POST /api/v4/areas/{id}/derivations");
+      // Each device in the set must ANSWER for the derivation: the `?device=` narrowing is the same
+      // membership the authorization is computed from, so a device that appears here and cannot be
+      // filtered by would mean the two disagree.
+      section("GET /api/v4/derivations?device=");
+      for (const dv of detector.devices) {
+        const filtered = await call("GET", `/api/v4/derivations?device=${dv}`);
+        ok(
+          filtered.status === 200 &&
+            (filtered.body?.derivations ?? []).some(
+              (d: any) => d.id === detector.id,
+            ),
+          `?device=${dv} lists this detector`,
+          filtered.body,
+        );
+      }
+
+      section("POST /api/v4/derivations");
       const body = {
         kind: "run-detector",
         role: detector.role,
@@ -899,83 +967,82 @@ async function main(): Promise<void> {
         params: detector.params,
         sourcePoints: detector.sourcePoints,
       };
-      const again = await call(
-        "POST",
-        `/api/v4/areas/${detectorArea.id}/derivations`,
-        { body },
-      );
+      // 🛑 THE MOST IMPORTANT ASSERTION IN THIS SECTION. Re-posting the real detector's own body
+      // must report `exists` — not 403, and not a second row. Daylesford's generator spans two
+      // devices (signal on handle 14, energy on handle 1), so this is what proves the all-devices
+      // write rule is right for production: a rule that authorized "the signal point's device" or
+      // "one of them" would either refuse this or admit too much. A 403 here means shipping stops.
+      const again = await call("POST", "/api/v4/derivations", { body });
       ok(again.status === 200, "re-posting an existing detector → 200", again);
       ok(
-        again.body?.status === "exists",
-        "…reports `exists` rather than creating a second row",
+        again.body?.status === "exists" &&
+          again.body?.derivation?.id === detector.id,
+        "…reports `exists` and names the SAME dx_, rather than creating a second row",
         again.body,
       );
 
-      // 🛑 THERE IS NO PLACEMENT RULE ANY MORE — this asserts its ABSENCE, which is the whole point
-      // of migration 0063. A detector used to have to hang off a device's area-of-one, because
-      // `capabilitiesForDevice` probed each MEMBER handle and never the composite's own, so a
-      // detector filed on a composite was invisible to the capability that lights its card up. The
-      // site is now DERIVED from the source points (owner = energy point's device, else signal's),
-      // so the area in the URL decides nothing.
-      //
-      // The assertion is therefore the inverse of the old one: posting the SAME body at a DIFFERENT
-      // area must report `exists` and create nothing. 🛑 It is driven against the real production
-      // detector deliberately — Daylesford's generator watches the DeepSea genset's Engine Speed on
-      // handle 14 while counting energy on handle 1, and an earlier version of the old guard read as
-      // "the signal point's device must own the area", which would have refused to recreate a row
-      // that exists in production. Driving the real row is what caught that, and it is what would
-      // catch an owner-precedence regression here.
-      const composite = list.find(
-        (a: any) => a.id !== detectorArea.id && a.chartCapable,
-      );
-      const wrongArea =
-        list.find((a: any) => a.displayName?.includes("Unified")) ?? composite;
-      if (!wrongArea) {
-        skip(
-          "area-independent placement",
-          "no second readable area to post against",
-        );
-      } else {
-        const elsewhere = await call(
+      // The area-scoped POST is a shim onto the same handler and must agree, including for a body
+      // whose devices have nothing to do with the area in the URL — the area decides nothing.
+      if (detectorArea) {
+        const viaShim = await call(
           "POST",
-          `/api/v4/areas/${wrongArea.id}/derivations`,
+          `/api/v4/areas/${detectorArea.id}/derivations`,
           { body },
         );
         ok(
-          elsewhere.status === 200,
-          `the same detector posted at ${wrongArea.displayName} → 200 (the area decides nothing)`,
-          elsewhere,
-        );
-        ok(
-          elsewhere.body?.status === "exists" &&
-            elsewhere.body?.derivation?.id === detector.id,
-          "…reports `exists` and names the SAME dx_, rather than creating a second row",
-          elsewhere.body,
+          viaShim.status === 200 &&
+            viaShim.body?.derivation?.id === detector.id,
+          `the shim at ${detectorArea.displayName} agrees (the area decides nothing)`,
+          viaShim.body,
         );
       }
-      // ⚠️ GAP, stated rather than discovered: `owner-role-taken` — the one invariant carried by
-      // code rather than by a constraint — is not driven here. Provoking it needs a SECOND signal
-      // point, on a different device, whose energy point resolves to an owner that already has a
-      // detector for the role, and no such fixture exists on prod. Covered in unit tests only.
 
-      const badKind = await call(
-        "POST",
-        `/api/v4/areas/${detectorArea.id}/derivations`,
-        { body: { ...body, kind: "vibes" } },
-      );
+      // 🛑 `owner-role-taken` — the ONE invariant carried by code rather than by a constraint, and
+      // therefore invisible to tsc. Provoked by re-posting the detector's own body with a DIFFERENT
+      // signal point on a device the same owner would resolve to: the natural key misses (so it is
+      // not `exists`), the owner check hits. The `energy` point is the owner slot, so re-using it as
+      // the signal keeps the owner identical while changing the identity.
+      if (detector.sourcePoints?.energy) {
+        const collide = await call("POST", "/api/v4/derivations", {
+          body: {
+            ...body,
+            sourcePoints: {
+              signal: detector.sourcePoints.energy,
+              energy: detector.sourcePoints.energy,
+            },
+          },
+        });
+        ok(
+          collide.status === 422 && collide.body?.status === "owner-role-taken",
+          "a second detector for the same role on the same OWNER device → 422 owner-role-taken",
+          collide.body,
+        );
+        ok(
+          collide.body?.detail?.includes(detector.id),
+          "…and the refusal names the derivation that already owns it",
+          collide.body?.detail,
+        );
+      } else {
+        skip(
+          "owner-role-taken",
+          "the driving detector has no energy point to re-use as a colliding signal",
+        );
+      }
+
+      const badKind = await call("POST", "/api/v4/derivations", {
+        body: { ...body, kind: "vibes" },
+      });
       ok(badKind.status === 422, "unknown kind → 422", badKind);
-      const badParams = await call(
-        "POST",
-        `/api/v4/areas/${detectorArea.id}/derivations`,
-        { body: { ...body, params: { upperW: "loads" } } },
-      );
+      const badParams = await call("POST", "/api/v4/derivations", {
+        body: { ...body, params: { upperW: "loads" } },
+      });
       ok(badParams.status === 422, "non-numeric params → 422", badParams);
 
-      section("PATCH /api/v4/areas/{id}/derivations/{dxid}");
-      const base = `/api/v4/areas/${detectorArea.id}/derivations/${detector.id}`;
-      // Identity is not patchable: `deriveDerivationId` is a uuidv5 over (area, kind, role), so
-      // "changing" one of those names a DIFFERENT derivation while leaving this row's id — and every
-      // `derived_intervals` row hanging off it — attached to the old meaning.
+      section("PATCH /api/v4/derivations/{dxid}");
+      const base = `/api/v4/derivations/${detector.id}`;
+      // Identity is not patchable: `deriveDerivationId` is a uuidv5 over (source point, kind, role),
+      // so "changing" one of those names a DIFFERENT derivation while leaving this row's id — and
+      // every `derived_intervals` row hanging off it — attached to the old meaning.
       for (const forbidden of ["kind", "role", "sourcePoints", "output"]) {
         const r = await call("PATCH", base, { body: { [forbidden]: "x" } });
         ok(r.status === 422, `patching ${forbidden} → 422`, r);
@@ -992,22 +1059,54 @@ async function main(): Promise<void> {
         "…round-trips unchanged",
         rename.body,
       );
-      // The area is in the UPDATE's WHERE, not merely authorized: without it, anyone who owns any
-      // area could patch any derivation by id.
-      if (wrongArea) {
-        const crossed = await call(
-          "PATCH",
-          `/api/v4/areas/${wrongArea.id}/derivations/${detector.id}`,
-          { body: { name: detector.name } },
-        );
-        ok(crossed.status === 404, "…on the wrong area → 404", crossed);
-      }
-      const badId = await call(
-        "PATCH",
-        `/api/v4/areas/${detectorArea.id}/derivations/dx_notanid`,
-        { body: { name: "x" } },
-      );
+      // There is no cross-area 404 to assert any more, and its absence is the point: the area was
+      // never a fact about the derivation, so the old check could only ever have been "did you name
+      // the area we happened to stamp on it". What replaces it is the device set, driven above.
+      const badId = await call("PATCH", `/api/v4/derivations/dx_notanid`, {
+        body: { name: "x" },
+      });
       ok(badId.status === 400, "a malformed dx_ id → 400", badId);
+
+      section("DELETE /api/v4/derivations/{dxid}");
+      // 🛑 Driven NON-DESTRUCTIVELY, and the safety is STRUCTURAL rather than hoped-for: the
+      // detector was selected `enabled` above, so the first interlock — the one `?force=true` cannot
+      // waive — refuses before anything is evaluated, let alone deleted. That interlock is what
+      // stands between a mistyped id and a year of run history, so it is worth driving for real.
+      //
+      // 🛑 The `?force=true` leg is GATED on the plain one having refused. Without that gate this
+      // loop is a live `DELETE …?force=true` against a production detector whenever the assumption
+      // above stops holding — `ok()` only RECORDS a failure, it does not stop the run, so a
+      // disabled fixture would have been reported as one failed assertion and then genuinely
+      // deleted, cascading its intervals. Never send a forcing verb after an assertion you have not
+      // checked.
+      const plain = await call("DELETE", base);
+      ok(
+        plain.status === 409 &&
+          plain.body?.detail?.code === "derivation-enabled",
+        "deleting a live detector → 409 derivation-enabled",
+        plain.body,
+      );
+      if (
+        plain.status === 409 &&
+        plain.body?.detail?.code === "derivation-enabled"
+      ) {
+        const forced = await call("DELETE", `${base}?force=true`);
+        ok(
+          forced.status === 409 &&
+            forced.body?.detail?.code === "derivation-enabled",
+          "…and `?force=true` does not waive it",
+          forced.body,
+        );
+      } else {
+        skip(
+          "DELETE …?force=true does not waive the enabled interlock",
+          "the plain DELETE did not refuse as expected — not sending a forcing verb after that",
+        );
+      }
+      // ⚠️ GAP, stated rather than discovered: the SECOND interlock (`assertNotReliedUpon` naming
+      // the intervals, the output point and any automation) is unreachable from here — provoking it
+      // would mean disabling a live production detector. Covered in
+      // `app/api/v4/__tests__/derivations-routes.test.ts`.
     }
 
     // ======================================================= the SEVEN area mutations (stage 10)
