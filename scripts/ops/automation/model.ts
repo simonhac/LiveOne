@@ -1,15 +1,25 @@
 /**
  * `automation` wire shapes, resolution and rendering — no I/O decisions, no `ctx`.
  *
- * The area/point/derivation resolvers are the `derivation` domain's (`../derivation/model`) rather
- * than copies: an exercise rule is defined against a run detector and its area's points, so it is
- * addressing exactly the same things by exactly the same refs, and two implementations of "which
- * point is `bidi.grid/power`" would eventually disagree.
+ * The area and point resolvers are `../shared`'s, and the derivation resolvers are the `derivation`
+ * domain's, rather than copies: an exercise rule is defined against a run detector and its area's
+ * points, so it is addressing exactly the same things by exactly the same refs, and two
+ * implementations of "which point is `bidi.grid/power`" would eventually disagree.
+ *
+ * 🛑 An automation stays AREA-SCOPED (`automations.area_id` is NOT NULL) even though a derivation no
+ * longer is. That divergence is deliberate — an automation acts on a site, a derivation merely reads
+ * points — which is why the area fan-out moved to `../shared` rather than being deleted with the
+ * derivation domain's copy.
  */
-import { usage, resolveRef } from "../shared";
+import {
+  pointInArea,
+  pointOnDevice,
+  resolveRef,
+  usage,
+  type WireArea,
+} from "../shared";
 import type { ApiSession } from "@/lib/cli-kit/api-session";
 import { Point } from "@/lib/ids";
-import { resolvePoint, type WireArea } from "../derivation/model";
 
 /** The seven weekday keys the API accepts, in week order. */
 export const WEEKDAYS = [
@@ -212,12 +222,6 @@ interface WireDevice {
   slug: string | null;
 }
 
-interface DevicePoint {
-  id: string;
-  logicalPath: string | null;
-  unit: string | null;
-}
-
 /**
  * Resolve a `--load-point`/`--action-point` value to a `pt_` id.
  *
@@ -242,7 +246,7 @@ export async function resolvePointFlag(
   if (Point.is(ref)) return ref;
 
   const colon = ref.indexOf(":");
-  if (colon === -1) return resolvePoint(s, area, ref, flag);
+  if (colon === -1) return pointInArea(s, area, ref, flag);
 
   const deviceRef = ref.slice(0, colon);
   const path = ref.slice(colon + 1);
@@ -260,22 +264,5 @@ export async function resolvePointFlag(
     noun: "device",
     listCmd: "liveone device list",
   });
-  const { points = [] } = await s.get<{ points?: DevicePoint[] }>(
-    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points`,
-  );
-  const hits = points.filter((p) => p.logicalPath === path);
-
-  if (hits.length === 0)
-    throw usage(
-      `${device.name} has no point with the logical path "${path}"`,
-      `--${flag} named a device that exists, so it is the path that is wrong`,
-      `run \`liveone device points ${device.id}\` for the paths it publishes`,
-    );
-  if (hits.length > 1)
-    throw usage(
-      `"${path}" is ambiguous on ${device.name}`,
-      `it matches ${hits.length} points:\n${hits.map((h) => `  ${h.id}`).join("\n")}`,
-      "address it by its pt_… id instead",
-    );
-  return hits[0].id;
+  return pointOnDevice(s, device, path, flag);
 }

@@ -9,7 +9,7 @@
 import { EXIT, num, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { str, usage } from "../../shared";
+import { dependentLines, str, usage } from "../../shared";
 import { resolveUserId } from "../../user/cli";
 
 type Role = "viewer" | "admin";
@@ -68,19 +68,8 @@ export const SHARE_ERRORS = {
   409: {
     exit: EXIT.FINDINGS,
     what: "something still relies on this dashboard",
-    why: (b: Record<string, unknown>) => {
-      const detail = b.detail as Record<string, unknown> | undefined;
-      const deps = detail?.dependents;
-      if (!Array.isArray(deps) || deps.length === 0)
-        return String(b.error ?? "conflict");
-      return deps
-        .map((d) => {
-          const x = d as Record<string, unknown>;
-          const name = x.name ? ` ${String(x.name)}` : "";
-          return `  ${String(x.kind)}${name} (${String(x.id)}) — via ${String(x.via)}, ${String(x.effect)}`;
-        })
-        .join("\n");
-    },
+    why: (b: Record<string, unknown>) =>
+      dependentLines(b)?.join("\n") ?? String(b.error ?? "conflict"),
     next: "resolve them, or re-run with --force to proceed anyway — nothing was written",
   },
 } as const;

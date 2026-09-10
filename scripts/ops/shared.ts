@@ -26,6 +26,10 @@ export const usage = (what: string, why: string, next: string) =>
  * At most one of `names` may be supplied. `names` are DECLARATION keys (`ctx.flags` is keyed by
  * them), but the message shows the kebab form, because that is what the caller typed and what the
  * parser will accept back.
+ *
+ * 🛑 STRING/NUMBER flags only. The parser defaults an unsupplied BOOLEAN to `false` rather than
+ * leaving it undefined, so a boolean is always "present" here and a pair of them would refuse every
+ * invocation. Compare `bool(ctx, …)` directly instead.
  */
 export function atMostOne(ctx: Ctx, names: string[]): void {
   const present = names.filter((n) => ctx.flags[n] !== undefined);
@@ -64,6 +68,31 @@ export interface RefCandidate {
 }
 
 /**
+ * The MATCHING half of {@link resolveRef}, without the refusals: exact TypeID, else the integer
+ * data-addressing handle, else slug, else case-insensitive name — returning every hit.
+ *
+ * Exported because one caller genuinely has to see "no match" without it being an error: a scope
+ * that may name EITHER a device or an area (`liveone derivation list <scope>`) has to try the first
+ * list, learn it missed, and try the second. Written as a second copy of the ladder, that caller
+ * would be free to disagree with this one about what a handle or a slug means.
+ */
+export function matchRef<T extends RefCandidate>(
+  candidates: T[],
+  ref: string,
+): T[] {
+  const byId = candidates.find((c) => c.id === ref);
+  if (byId) return [byId];
+  return /^\d+$/.test(ref)
+    ? candidates.filter((c) => c.legacySystemId === Number(ref))
+    : ((): T[] => {
+        const bySlug = candidates.filter((c) => c.slug === ref);
+        if (bySlug.length > 0) return bySlug;
+        const lc = ref.toLowerCase();
+        return candidates.filter((c) => c.name?.toLowerCase() === lc);
+      })();
+}
+
+/**
  * Resolve a caller-supplied ref against a caller-scoped list: exact TypeID, else the integer
  * data-addressing handle, else slug, else case-insensitive name. The same ambiguity rule as the
  * dashboard domain — >1 hit is an error naming the ids, never a silent first-match.
@@ -73,16 +102,7 @@ export function resolveRef<T extends RefCandidate>(
   ref: string,
   opts: { noun: string; listCmd: string },
 ): T {
-  const byId = candidates.find((c) => c.id === ref);
-  if (byId) return byId;
-  const hits = /^\d+$/.test(ref)
-    ? candidates.filter((c) => c.legacySystemId === Number(ref))
-    : ((): T[] => {
-        const bySlug = candidates.filter((c) => c.slug === ref);
-        if (bySlug.length > 0) return bySlug;
-        const lc = ref.toLowerCase();
-        return candidates.filter((c) => c.name?.toLowerCase() === lc);
-      })();
+  const hits = matchRef(candidates, ref);
   if (hits.length === 0)
     throw usage(
       `no ${opts.noun} matches "${ref}"`,
@@ -96,6 +116,145 @@ export function resolveRef<T extends RefCandidate>(
       `address it by its id instead`,
     );
   return hits[0];
+}
+
+/** The fields a device ref has to carry to be resolvable and printable. */
+export interface DeviceRef {
+  id: string | null;
+  name: string;
+}
+
+/** An area, as `/api/v4/areas` lists it. */
+export interface WireArea {
+  id: string | null;
+  displayName: string;
+  legacySystemId: number | null;
+}
+
+/**
+ * List + resolve an area ref. Lives here rather than in a domain because three domains address
+ * areas (`automation` scopes a rule by one, `derivation` narrows a listing by one, `area` is one),
+ * and `displayName` → `name` is exactly the kind of adapter that goes subtly different when copied.
+ */
+export async function resolveArea(
+  s: ApiSession,
+  ref: string,
+): Promise<WireArea> {
+  const { areas } = await s.get<{ areas: WireArea[] }>("/api/v4/areas");
+  return resolveRef(
+    areas.map((a) => ({ ...a, name: a.displayName })),
+    ref,
+    { noun: "area", listCmd: "liveone area list" },
+  );
+}
+
+/** One point of a device's inventory, as `?include=points` serves it. */
+interface WireDevicePoint {
+  id: string;
+  logicalPath: string | null;
+}
+
+/**
+ * Resolve a LOGICAL PATH on one named device to its `pt_` id.
+ *
+ * The path form is the one to reach for, and the reason is not ergonomics: a point binding pinned
+ * to the wrong uuid does not error — it silently follows the wrong series, or none — so the only
+ * defence is naming what you meant and having it checked against what the device actually
+ * publishes. `flag` is the flag being resolved, so a refusal names the input the operator typed.
+ */
+export async function pointOnDevice(
+  s: ApiSession,
+  device: DeviceRef,
+  path: string,
+  flag: string,
+): Promise<string> {
+  const { points = [] } = await s.get<{ points?: WireDevicePoint[] }>(
+    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points`,
+  );
+  const hits = points.filter((p) => p.logicalPath === path);
+  if (hits.length === 0)
+    throw usage(
+      `${device.name} has no point with the logical path "${path}"`,
+      `--${flag} named a device that exists, so it is the path that is wrong`,
+      `run \`liveone device points ${device.id}\` for the paths it publishes`,
+    );
+  if (hits.length > 1)
+    throw usage(
+      `"${path}" is ambiguous on ${device.name}`,
+      `it matches ${hits.length} points:\n${hits.map((h) => `  ${h.id}`).join("\n")}`,
+      "address it by its pt_… id instead",
+    );
+  return hits[0].id;
+}
+
+/**
+ * Resolve a LOGICAL PATH across every member device of an AREA.
+ *
+ * The area-shaped twin of {@link pointOnDevice}, and the right shape for anything an area genuinely
+ * scopes — an automation is defined against one area, so "the grid meter" means the one its members
+ * publish. It is deliberately NOT how a derivation resolves its points any more: a derivation's site
+ * is derived from its wiring rather than configured, so it names a device and the fan-out (with its
+ * ambiguity apology) has nothing left to be ambiguous about.
+ */
+export async function pointInArea(
+  s: ApiSession,
+  area: WireArea,
+  path: string,
+  flag: string,
+): Promise<string> {
+  // Shape-checked BEFORE the fan-out: a ref with no `/` is not a logical path at all (a mistyped
+  // `pt_`, usually), and without this it would be answered by one GET per member device and then a
+  // "no point has that path" that says nothing about which of the three forms was meant.
+  if (!path.includes("/"))
+    throw usage(
+      `"${path}" for --${flag}`,
+      "expected a pt_… point id, a logical path, or <device>:<logical-path>",
+      "a logical path looks like `bidi.grid/power` — run `liveone device points <device>` for the ones a device publishes",
+    );
+  const { members } = await s.get<{ members: { id: string; name: string }[] }>(
+    `/api/v4/areas/${encodeURIComponent(area.id!)}`,
+  );
+  const hits: { pointId: string; device: string }[] = [];
+  for (const m of members) {
+    const { points = [] } = await s.get<{ points?: WireDevicePoint[] }>(
+      `/api/v4/devices/${encodeURIComponent(m.id)}?include=points`,
+    );
+    for (const p of points)
+      if (p.logicalPath === path) hits.push({ pointId: p.id, device: m.name });
+  }
+
+  if (hits.length === 0)
+    throw usage(
+      `no point on ${area.displayName} has the logical path "${path}"`,
+      `--${flag} would have nothing to follow`,
+      `run \`liveone device points <device>\` for the paths this site publishes`,
+    );
+  if (hits.length > 1)
+    throw usage(
+      `"${path}" is ambiguous on ${area.displayName}`,
+      `${hits.length} members publish it:\n${hits.map((h) => `  ${h.pointId}  ${h.device}`).join("\n")}`,
+      "name the device (`<device>:<path>`), or pass the pt_… id of the one you mean",
+    );
+  return hits[0].pointId;
+}
+
+/**
+ * Render the `detail.dependents` of a referential-integrity 409 (`lib/integrity`), or null when the
+ * refusal carries none.
+ *
+ * Shared because the shape is the server's, not any one domain's: `assertNotReliedUpon` answers for
+ * dashboards, areas, automations and derivations alike, and `via`/`effect` are the two fields that
+ * make a refusal actionable — the ones a second, hand-rolled renderer is most likely to drop.
+ */
+export function dependentLines(body: Record<string, unknown>): string[] | null {
+  const detail = body.detail as Record<string, unknown> | undefined;
+  const deps = detail?.dependents;
+  if (!Array.isArray(deps) || deps.length === 0) return null;
+  return deps.map((d) => {
+    const x = d as Record<string, unknown>;
+    const name = x.name ? ` ${String(x.name)}` : "";
+    return `  ${String(x.kind)}${name} (${String(x.id)}) — via ${String(x.via)}, ${String(x.effect)}`;
+  });
 }
 
 // ---------------------------------------------------------------------------

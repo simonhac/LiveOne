@@ -9,13 +9,8 @@
 import { EXIT, num, str, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { usage } from "../shared";
-import {
-  listDerivations,
-  resolveArea,
-  resolveDerivation,
-  type WireArea,
-} from "../derivation/model";
+import { resolveArea, usage, type WireArea } from "../shared";
+import { listDerivations, resolveDerivation } from "../derivation/model";
 import {
   actionWords,
   automationLine,
@@ -129,10 +124,13 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
         );
 
       const area = await resolveArea(s, ctx.args[0]);
+      // `?area=` NARROWS the fleet-wide collection to derivations touching one of this area's
+      // member devices — the same set the retired area-scoped listing served, asked for in the
+      // vocabulary that survives 0064. An automation is still area-scoped; a derivation is not.
       const detector = resolveDerivation(
-        await listDerivations(s, area),
+        await listDerivations(s, { area: area.id! }),
         str(ctx, "derivation")!,
-        area,
+        area.displayName,
       );
       const loadPointId = await resolvePointFlag(
         s,

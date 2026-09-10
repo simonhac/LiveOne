@@ -68,15 +68,24 @@ GET is listed as `:id`, not `(.*)`, so `members`/`bindings` stay outside until a
 and the admin tree and point-control routes are outside entirely.
 
 The `derivations` sub-tree is the worked example of "until a verb needs them". `liveone derivation`
-needed four of them, so four named segments were admitted — the resource, the member (PATCH), and
-its `recompute`/`intervals` sub-resources — each authorizing through `loadDerivationForOwner`, which
-calls `loadAreaForOwner` and then puts the AREA in its WHERE clause. The interesting one is
-`recompute`: it is a delete-and-reinsert over history, and it was admitted only because **its scope
-is a path segment**. Its cron twin, `/api/cron/derivations`, takes the same actions with an
-*optional* filter and therefore has an unscoped form; it stays outside the bypass, and
-`cli-token-edge.test.ts` asserts that it does. That is the rule the sub-tree illustrates — the
-question is never "is this route related to one we already trust", it is "what is the worst call
-this address can spell".
+needed four named segments — the collection, the member (PATCH/DELETE), and its
+`recompute`/`intervals` sub-resources. They are addressed by IDENTITY (`/api/v4/derivations/{dx_}`),
+because a derivation's site is derived from its source points rather than configured, so there is no
+area for a caller to name. Each authorizes against the derivation's own device set
+(`lib/derivations/scope.ts`): read on every device it touches to see it, write on every device to
+change it, and an unreadable one is a 404 rather than a 403 so the URL is not an existence oracle
+over `dx_` ids. That is stronger than what it replaced — "each puts the AREA in its WHERE clause"
+was a property of a clause someone could forget to write; here there is no scope for the caller to
+name, so there is nothing to forget. The interesting one is `recompute`: it is a delete-and-reinsert
+over history, and it was admitted only because **its scope is a path segment**. Its cron twin,
+`/api/cron/derivations`, takes the same actions with an *optional* filter and therefore has an
+unscoped form; it stays outside the bypass, and `cli-token-edge.test.ts` asserts that it does. That
+is the rule the sub-tree illustrates — the question is never "is this route related to one we
+already trust", it is "what is the worst call this address can spell". `DELETE` is the newest
+admission and the first destructive verb here: admissible because it cannot be reached casually, the
+derivation having to be disabled first (409 `derivation-enabled`, which `?force=true` does not
+waive) before `assertNotReliedUpon` names the intervals, the output point and any automation that
+would break.
 
 ## The generated reference
 

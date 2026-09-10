@@ -185,7 +185,8 @@ terminal additionally requires `--yes`.
 
 `npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
 `auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), `derivation` (run detectors
-and the HWS model: list, create, enable/disable, recompute, intervals), and the read-only
+and the HWS model: list, create, set, enable/disable, delete, recompute, intervals — addressed by
+`dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), and the read-only
 `device` / `area` / `user` (list, show, latest values, history; `area flows` downloads the
 rolled-up Sankey matrix for a period). Run `-- <domain> --help` for verbs; the generated
 reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
@@ -200,7 +201,8 @@ reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
   `npm run liveone:dev -- dashboard <command>`): required for repairing a doc whose refs the owner
   cannot read (the repairing PUT would itself be 403'd), bulk sweeps, and outages. **`dashboard`
   only** — `derivation` is http-only by design, because what makes a derivation correct
-  (`ensureRunDetector`'s placement rules, the locked recompute) is all server-side.
+  (`ensureRunDetector`'s owner-role invariant, the device-set authorization, the locked recompute)
+  is all server-side.
 - Mutations are **dry-run by default**; `--apply` writes (CAS on `revision` both ways). Off a
   terminal `--apply` additionally requires `--yes`.
 - 🛑 Durable edits go to **prod** — the 2-hourly prod→dev sync reverts dev-only dashboard edits.
@@ -211,6 +213,10 @@ reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
   unscoped form. Use it rather than the cron (`POST /api/cron/derivations?action=regenerate`),
   whose filter is optional and through which a full-range unscoped regenerate once collapsed 71
   dev rows to 3.
+- 🛑 `derivation delete` destroys every interval the detector ever produced (`derived_intervals`
+  CASCADEs). It refuses until the derivation is **disabled** — `--force` does not waive that — and
+  then names what still relies on it; `--force` is the answer to that list, not a shortcut past it.
+  To stop a detector whose history you want, `disable` is the whole operation.
 
 #### Development API Authentication
 
