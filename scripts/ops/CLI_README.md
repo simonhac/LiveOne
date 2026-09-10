@@ -73,6 +73,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone queue](#liveone-queue)
     - [liveone queue status](#liveone-queue-status)
     - [liveone queue timing](#liveone-queue-timing)
+    - [liveone queue outbox](#liveone-queue-outbox)
     - [liveone queue pause](#liveone-queue-pause)  _(writes)_
     - [liveone queue resume](#liveone-queue-resume)  _(writes)_
     - [liveone queue parallelism](#liveone-queue-parallelism)  _(writes)_
@@ -2740,6 +2741,7 @@ Usage:
 Subcommands:
   status                 Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
   timing                 How long each batch actually took — per-message wait, duration, attempts and outcome.
+  outbox                 Why is publishing failing? The durable buffer's backlog, and the error the relay recorded.
   pause                  Stop a lane dispatching. Messages accumulate; nothing is lost.  (writes)
   resume                 Resume dispatching after a pause.  (writes)
   parallelism            Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.  (writes)
@@ -2877,6 +2879,64 @@ Examples:
   liveone queue timing --last=6h --failed
   liveone queue timing --lane=backfill --last=30m
   liveone queue timing --from=2026-09-09T10:30:00Z --to=2026-09-09T13:00:00Z
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone queue outbox
+
+Why is publishing failing? The durable buffer's backlog, and the error the relay recorded.
+
+```
+Why is publishing failing? The durable buffer's backlog, and the error the relay recorded.
+
+When to use:
+  Reach for this when `status` says ingest has stalled but BOTH transports read empty —
+  nothing waiting, nothing in flight. That is what a broken PUBLISH looks like: the message
+  never reached QStash at all, so no QStash view can explain it. The reason is in Postgres.
+
+🛑 Read `failing`, not `backlog`. An unpublished row means the relay has not got to it
+yet, which is the normal steady state between minutes. `attempts > 0` with a `lastError`
+is the difference between an ingest path that is behind and one that is broken.
+
+Exits 1 (findings) when anything is failing, so it composes into a check.
+
+Nothing here is lost: the outbox is teed BEFORE publishing and retains payloads for 30
+days, so a failing publish is a latency problem that the relay clears once it can send.
+
+Usage:
+  liveone queue outbox [options]
+
+  Read-only. This command changes nothing.
+
+Options:
+  --limit <n>                How many failing rows to show, 1..200 (default: 20). One reason repeated is one finding.
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone queue outbox
+  liveone queue outbox --limit=50
 
 Exit codes:
   0    success

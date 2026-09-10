@@ -67,7 +67,7 @@ describe("a Vercel preview is not production", () => {
     // The control-plane handle. Same prefix = same keys = a preview's pause hits prod's lane.
     const q = await bare(PREVIEW);
     expect(q.OBSERVATIONS_FLOW_PREFIX).toBe("obs-dev");
-    expect(q.observationsFlowKey("live")).toBe("obs-dev:live");
+    expect(q.observationsFlowKey("live")).toBe("obs-dev.live");
   });
 
   it("does not give a preview prod's queue name", async () => {
@@ -93,13 +93,13 @@ describe("a Vercel preview is not production", () => {
     const preview = await bare(PREVIEW);
     expect(
       preview.OBSERVATIONS_FLOW_PREFIX.startsWith(
-        prod.OBSERVATIONS_FLOW_PREFIX + ":",
+        prod.OBSERVATIONS_FLOW_PREFIX + ".",
       ),
     ).toBe(false);
     expect(
       preview
         .observationsFlowKey("live")
-        .startsWith(prod.OBSERVATIONS_FLOW_PREFIX + ":"),
+        .startsWith(prod.OBSERVATIONS_FLOW_PREFIX + "."),
     ).toBe(false);
   });
 });
@@ -115,7 +115,7 @@ describe("production still resolves to production", () => {
     });
     expect(q.OBSERVATIONS_FLOW_PREFIX).toBe("obs");
     expect(q.OBSERVATIONS_QUEUE_NAME).toBe("observations");
-    expect(q.observationsFlowKey("backfill")).toBe("obs:backfill");
+    expect(q.observationsFlowKey("backfill")).toBe("obs.backfill");
     expect(q.getObservationsReceiverUrl()).toBe(
       "https://www.liveone.energy/api/observations/receive",
     );
@@ -126,9 +126,64 @@ describe("production still resolves to production", () => {
       NODE_ENV: "production",
       VERCEL_ENV: "production",
     });
-    expect(q.parseObservationsFlowKey("obs:backfill")).toBe("backfill");
+    expect(q.parseObservationsFlowKey("obs.backfill")).toBe("backfill");
     // A dev key must never read as ours in a prod view — the point of the disjointness rule.
-    expect(q.parseObservationsFlowKey("obs-dev:backfill")).toBeNull();
+    expect(q.parseObservationsFlowKey("obs-dev.backfill")).toBeNull();
+  });
+});
+
+describe("the flow-control key charset", () => {
+  /**
+   * 🛑 The regression that took prod ingest down for 2m45s on 2026-09-10.
+   *
+   * `publishJSON` rejects a key outside this set with
+   * `{"error":"flowControlKey must be alphanumeric, hyphen, underscore, or period"}` — a 400 on
+   * EVERY publish. We were minting `obs:live`. The colon was a deliberate choice (it made the two
+   * environment prefixes disjoint under prefix matching) and it is simply not a legal character.
+   *
+   * What made it expensive is that `flowControl.get()` does NOT enforce the same rule: a GET on the
+   * impossible key returned 200, so `liveone queue status` reported both lanes present and healthy
+   * throughout. An illegal key is invisible from the read side and fatal on the write side, which
+   * is exactly why this is asserted here rather than trusted.
+   */
+  it("mints keys QStash will actually accept, in every environment", async () => {
+    for (const env of [
+      { NODE_ENV: "production", VERCEL_ENV: "production" },
+      { NODE_ENV: "production", VERCEL_ENV: "preview" },
+      { NODE_ENV: "development", VERCEL_ENV: undefined },
+    ]) {
+      const q = await loadUnder(env);
+      for (const lane of ["live", "backfill"] as const) {
+        const key = q.observationsFlowKey(lane);
+        expect(key).toMatch(q.FLOW_KEY_CHARSET);
+        // Named explicitly: this is the character that broke it, and a regex failure alone would
+        // not say so in the output.
+        expect(key).not.toContain(":");
+      }
+    }
+  });
+
+  it("does not let the separator undo the prefix split", async () => {
+    // 🛑 `-` is the obvious substitute for `:` and it is WRONG: prod `obs-live` vs dev
+    // `obs-dev-live` means `dev.startsWith("obs-")` is true, silently reintroducing the collision
+    // the environment prefix exists to prevent. Fixing the 400 must not cost the disjointness.
+    const prod = await loadUnder({
+      NODE_ENV: "production",
+      VERCEL_ENV: "production",
+    });
+    const dev = await loadUnder({
+      NODE_ENV: "development",
+      VERCEL_ENV: undefined,
+    });
+    for (const lane of ["live", "backfill"] as const) {
+      const prodKey = prod.observationsFlowKey(lane);
+      const devKey = dev.observationsFlowKey(lane);
+      // Everything up to and including the separator — the string any prefix filter would use.
+      const prodScope = prodKey.slice(0, prodKey.indexOf(lane));
+      const devScope = devKey.slice(0, devKey.indexOf(lane));
+      expect(devKey.startsWith(prodScope)).toBe(false);
+      expect(prodKey.startsWith(devScope)).toBe(false);
+    }
   });
 });
 

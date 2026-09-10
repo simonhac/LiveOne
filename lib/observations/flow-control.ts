@@ -47,7 +47,7 @@ export const INGEST_STALL_THRESHOLD_MIN = 5;
 /** One flow-control lane, as QStash reports it (or as it renders when QStash has no state). */
 export interface LaneState {
   lane: ObservationLane;
-  /** The flow-control key, e.g. `obs:live`. Environment-prefixed — see `lib/qstash.ts`. */
+  /** The flow-control key, e.g. `obs.live`. Environment-prefixed — see `lib/qstash.ts`. */
   key: string;
   /** Messages accepted but not yet dispatched (`waitListSize`). */
   waiting: number;
