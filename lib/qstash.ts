@@ -1,4 +1,5 @@
 import { Client } from "@upstash/qstash";
+import { isProduction } from "./env";
 import { OBSERVATION_LANES, type ObservationLane } from "./observations/types";
 
 /**
@@ -17,8 +18,9 @@ export const qstash = process.env.OBSERVATIONS_QSTASH_TOKEN
  * window — `OBSERVATIONS_PUBLISH_MODE` still defaults to `"queue"`, and the old queue must remain
  * readable and drainable until it is retired.
  */
-export const OBSERVATIONS_QUEUE_NAME =
-  process.env.NODE_ENV === "production" ? "observations" : "observations-dev";
+export const OBSERVATIONS_QUEUE_NAME = isProduction()
+  ? "observations"
+  : "observations-dev";
 
 /**
  * Flow-control key prefix, split by environment.
@@ -28,9 +30,16 @@ export const OBSERVATIONS_QUEUE_NAME =
  * filter is a prefix test — and `"obs:dev:live".startsWith("obs:")` is `true`, which would sweep
  * dev keys into a prod view. `"obs-dev:live".startsWith("obs:")` is `false`. That is why the
  * environment goes in the PREFIX and not in a middle segment.
+ *
+ * 🛑 **`isProduction()`, NOT `NODE_ENV`** — and this is the whole reason it matters. A Vercel
+ * PREVIEW build runs with `NODE_ENV=production` (it is a production build of Next.js) while
+ * `VERCEL_ENV=preview`, so keying off `NODE_ENV` gave every preview deployment prod's `obs:`
+ * prefix and prod's queue name. `OBSERVATIONS_QSTASH_TOKEN` is set in the Preview scope, so those
+ * are live handles, not inert strings: after the flow-control cutover a preview-targeted
+ * `liveone queue pause` would have paused PROD's ingest lane. `lib/env.ts` is the one discriminator
+ * that knows preview is not production.
  */
-export const OBSERVATIONS_FLOW_PREFIX =
-  process.env.NODE_ENV === "production" ? "obs" : "obs-dev";
+export const OBSERVATIONS_FLOW_PREFIX = isProduction() ? "obs" : "obs-dev";
 
 /**
  * The flow-control key for a lane, e.g. `obs:live` / `obs-dev:backfill`.
@@ -85,7 +94,13 @@ export function getObservationsReceiverUrl(): string | null {
   }
 
   // Production: stable public custom domain (NOT VERCEL_URL — see above).
-  if (process.env.NODE_ENV === "production") {
+  //
+  // 🛑 `isProduction()` for the same reason as the prefix above, and the stakes here are the
+  // highest of the three: a Vercel preview has `NODE_ENV=production` but no
+  // `OBSERVATIONS_QSTASH_RECEIVER_URL` of its own, so it fell through to THIS line and would have
+  // delivered preview-originated readings into the PRODUCTION serving store. Preview now falls
+  // through to the dev receiver below, which logs and writes nothing.
+  if (isProduction()) {
     return PRODUCTION_RECEIVER_URL;
   }
 

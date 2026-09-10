@@ -178,6 +178,11 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 - [x] `stuck` predicate + `ingest_lane_stuck` alert — the check that was missing (#434)
 - [x] Collapse duplicate PKs at the writer **and** the producer (#436)
 - [x] Per-batch timing, and a durable `Processed in {N}ms` in the receiver (#437)
+- [x] Key the QStash environment off `VERCEL_ENV`, not `NODE_ENV` — a Vercel preview build has
+      `NODE_ENV=production`, so it resolved prod's queue name, prod's `obs:` flow prefix and prod's
+      receiver URL, with a live token in Preview scope. After the cutover a preview-targeted
+      `liveone queue pause` would have paused **prod's** lane; a preview that published anything
+      would have written into the **production** serving store.
 
 **Open**
 
@@ -192,11 +197,6 @@ The delivery bounds alone would have cut that 2m40s occupancy ~30×.
 - [ ] **Retire the `observations` queue.** 🛑 Deleting it destroys anything still waiting, and those
       messages' outbox rows are already marked `published_at`, so the relay would never re-send them.
       "Nothing enqueues" is not "nothing is waiting" — gate on a drained queue, verified.
-- [ ] **`lib/qstash.ts` keys the environment off `NODE_ENV`, not `VERCEL_ENV`.** A Vercel preview
-      build has `NODE_ENV=production`, so it resolves prod's queue name and `obs:` flow prefix;
-      `OBSERVATIONS_QSTASH_TOKEN` is set in Preview scope. Latched shut today (`CRONS_ENABLED` is
-      Production-only), but after the cutover a preview-targeted `liveone queue pause` would pause
-      **prod's** lane. `lib/env.ts` already has the right discriminator.
 - [ ] **The DLQ retry path cannot choose a lane.** It calls `publishObservationMessage(row.payload)`
       and pre-lane payloads default to `live`, so retrying the 8 stored messages would put ~13,000
       observations on the live lane.

@@ -350,12 +350,18 @@ export async function readMessageLog(opts: {
     cursor = String(res.cursor);
   }
 
-  const folded = foldMessageLogs(raw);
+  // 🛑 Applied BEFORE the fold, not just before `covered`. A row with no usable clock cannot
+  // contribute to any span, and left in it does worse than nothing: it sorts to the front of its
+  // message and turns `waitMs` into "time since the epoch". QStash does return them — one on the
+  // 2026-09-09 window rendered as "Only 1970-01-01 → … was read", which turned the field added to
+  // make truncation honest into a fresh lie.
+  const dated = raw.filter((r) => Number.isFinite(r.time) && r.time > 0);
+  const folded = foldMessageLogs(dated);
   const messages = opts.lane
     ? folded.messages.filter((m) => m.lane === opts.lane)
     : folded.messages;
 
-  const times = raw.map((r) => r.time);
+  const times = dated.map((r) => r.time);
   return {
     window,
     mode,

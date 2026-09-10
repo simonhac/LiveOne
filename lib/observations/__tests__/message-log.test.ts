@@ -284,6 +284,30 @@ describe("readMessageLog budget", () => {
     expect(out.covered!.fromMs).toBeGreaterThan(askedFrom);
   });
 
+  it("discards rows with no usable clock rather than dating the read to the epoch", async () => {
+    // 🛑 Observed live: QStash returned a row with `time: 0` in the 2026-09-09 window, and one was
+    // enough to render "Only 1970-01-01 → … was read" — the field added to make truncation honest,
+    // lying. Left in the fold it is worse than cosmetic: it sorts to the front of its message and
+    // turns `waitMs` into time-since-the-epoch.
+    const good = { messageId: "ok", queueName: OBSERVATIONS_QUEUE_NAME };
+    const { readMessageLog } = await load({
+      logs: async () => ({
+        logs: [
+          { ...good, time: T0, state: "CREATED" },
+          { ...good, time: T0 + 100, state: "ACTIVE" },
+          { ...good, time: T0 + 800, state: "DELIVERED" },
+          // The clockless intruder, on our own queue.
+          { ...good, time: 0, state: "CREATED" },
+        ],
+        cursor: undefined,
+      }),
+    });
+    const out = await readMessageLog({ fromMs: T0 - 1000, toMs: T0 + 1000 });
+    expect(out.covered).toEqual({ fromMs: T0, toMs: T0 + 800 });
+    expect(out.summary.waitMs.max).toBe(100);
+    expect(out.summary.durationMs.max).toBe(700);
+  });
+
   it("leaves covered null when the window held nothing", async () => {
     const { readMessageLog } = await load({
       logs: async () => ({ logs: [], cursor: undefined }),
