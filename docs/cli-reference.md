@@ -75,6 +75,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.
   - [liveone queue](../scripts/ops/CLI_README.md#liveone-queue) — The observations ingest path — per-lane status, and the levers to unblock it.
     - [liveone queue status](../scripts/ops/CLI_README.md#liveone-queue-status) — Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
+    - [liveone queue timing](../scripts/ops/CLI_README.md#liveone-queue-timing) — How long each batch actually took — per-message wait, duration, attempts and outcome.
     - [liveone queue pause](../scripts/ops/CLI_README.md#liveone-queue-pause) — Stop a lane dispatching. Messages accumulate; nothing is lost.  _(writes)_
     - [liveone queue resume](../scripts/ops/CLI_README.md#liveone-queue-resume) — Resume dispatching after a pause.  _(writes)_
     - [liveone queue parallelism](../scripts/ops/CLI_README.md#liveone-queue-parallelism) — Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.  _(writes)_
