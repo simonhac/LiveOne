@@ -81,6 +81,9 @@ export const TIERS: TierManifest = {
     "scripts/ops/sync/cli.ts",
     // The `derivation` domain — read+write over the v4 derivations resource, same rules as above.
     "scripts/ops/derivation/cli.ts",
+    // The `owner` domain — ownership transfer with share-back, the one CLI that can move an object
+    // out of a user's control.
+    "scripts/ops/owner/index.ts",
     // Cross-domain plumbing (flag groups, ref resolution, the shared history verb).
     "scripts/ops/shared.ts",
     // The `api` escape-hatch verb — composed by liveone.ts, same rules as the other modules.

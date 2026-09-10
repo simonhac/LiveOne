@@ -43,6 +43,9 @@ export async function GET(
       name: d.displayName,
       slug: d.alias,
       revision: d.revision,
+      // Carried so ownership is READABLE. The list's `access` says what YOU are to this dashboard;
+      // it cannot say who the owner IS, which is the question a transfer preview has to answer.
+      ownerUserId: d.ownerClerkUserId,
       doc: d.doc,
     },
     { headers: { ETag: `"${d.revision}"` } },

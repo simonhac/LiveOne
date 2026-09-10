@@ -133,6 +133,26 @@ const cliTokenRoutes = [
   "/api/v4/areas/:id/derivations/:dxid",
   "/api/v4/areas/:id/derivations/:dxid/recompute",
   "/api/v4/areas/:id/derivations/:dxid/intervals",
+  // The two area sub-resources §2 of the ops-CLI plan named, admitted when `liveone area devices`
+  // and `liveone area role` were written. Named segments, never `(.*)` — `eligibility`,
+  // `by-handle`, `default-group`, `recompute-provenance` and the two `provenance-*` reads stay
+  // outside until each is judged on its own, exactly as `members`/`bindings` did until now.
+  //
+  // Both writers authorize in-handler through `loadAreaForOwner`, the same owner-or-admin check
+  // `derivations` uses, and the area is a PATH SEGMENT so there is no unscoped form to reach.
+  //
+  // 🛑 `members` is the widening to actually weigh, because its blast radius is larger than its
+  // name: PUT is a full replace, and dropping a member also DELETES that member's bindings
+  // (`replaceMembers`). So a careless membership write can blank an area's wiring, not merely its
+  // device list. That is a property of the route, not of the credential — the browser has had it
+  // all along — and it is why `liveone area devices` refuses to shrink membership without naming
+  // the bindings that would go with it.
+  "/api/v4/areas/:id/members",
+  "/api/v4/areas/:id/bindings",
+  // Read-only (`loadReadableArea`, GET only): the deterministic "what filled each slot, and how"
+  // report. Admitted with the two writers because it is how an operator CHECKS a write landed —
+  // separating them would leave the CLI able to change resolution and unable to see the result.
+  "/api/v4/areas/:id/resolution",
   // The observations queue — `liveone queue`. A SEPARATE address from
   // `/api/admin/observations/info` precisely so this bypass does not have to widen to
   // `/api/admin`; the handler is `requireAdmin`, so a non-admin token 403s here.
@@ -149,6 +169,16 @@ const cliTokenRoutes = [
   // is no unscoped form to reach, the same property that made `derivations/:dxid/recompute` safe.
   "/api/v4/devices/:id/sync",
   "/api/v4/users(.*)", // the user directory — requireAdmin in-handler, so a non-admin token 403s there
+  // Ownership transfer — `liveone owner transfer`. `requireAdmin` in-handler, so a non-admin token
+  // gets past the edge and 403s there.
+  //
+  // 🛑 The most consequential entry in this list: it is the one route that can move an object OUT
+  // of a user's control, and it writes devices, areas, dashboards and grants in one transaction.
+  // It is admitted anyway because the alternative is worse — ownership was previously reachable
+  // only through `/api/admin/devices/{id}/admin-settings`, one device at a time, from a browser,
+  // with no share-back, which is how a site comes to be half-transferred. Enumerated, never
+  // `/api/v4/ownership(.*)`: whatever this domain grows next is judged on its own.
+  "/api/v4/ownership/transfer",
   // The card-data reads. Both are ALSO in `shareableRoutes`; the two presence-only bypasses compose
   // independently (each only declines to 404 its own credential shape) and the handler's
   // `requireDashboardAccess` is the enforcement point either way — a CLI token here reaches nothing

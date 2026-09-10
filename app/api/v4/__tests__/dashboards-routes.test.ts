@@ -232,6 +232,10 @@ describe("GET /api/v4/dashboards/{id}", () => {
       name: "Home",
       slug: "home",
       revision: 7,
+      // Carried so ownership is READABLE. The LIST's `access` field says what YOU are to a
+      // dashboard ("owner"/"granted"); it cannot say who the owner IS, which is what an ownership
+      // transfer has to show before it moves anything.
+      ownerUserId: "user_owner",
       doc: { version: 4, root: { id: "n_0", kind: "group", children: [] } },
     });
     expect(body).not.toHaveProperty("alias");

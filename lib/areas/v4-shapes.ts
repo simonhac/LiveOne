@@ -15,6 +15,8 @@ export interface AreaDetailSource {
     capabilities: string[];
     /** The integer data-addressing handle — see `legacySystemId` on the emitted shape below. */
     legacySystemId: number | null;
+    /** Clerk id of the owner, or null for an ownerless (public-read) area. */
+    ownerUserId: string | null;
   };
   members: {
     id: DeviceId;
@@ -69,6 +71,10 @@ export function areaDetailResponse(source: AreaDetailSource) {
       config: source.area.config ?? {},
       capabilities: [...source.area.capabilities].sort(),
       legacySystemId: source.area.legacySystemId,
+      // Carried so ownership is READABLE, not just writable. `liveone owner show` and the transfer
+      // preview both need to say who holds an area today; without this the only way to answer was a
+      // direct database read, which is the gap the ops CLI exists to close.
+      ownerUserId: source.area.ownerUserId,
     },
     members: areaMembersWire(source.members),
     bindings: areaBindingsWire(source.bindings),

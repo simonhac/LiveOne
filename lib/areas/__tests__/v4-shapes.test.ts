@@ -30,6 +30,7 @@ const source = () => {
         config: null,
         capabilities: ["solar/power"],
         legacySystemId: 7 as number | null,
+        ownerUserId: null as string | null,
       },
       members: [
         {
@@ -72,6 +73,7 @@ describe("final v4 area detail wire shape", () => {
         config: {},
         capabilities: ["solar/power"],
         legacySystemId: 7,
+        ownerUserId: null,
       },
       members: [
         {
