@@ -7,7 +7,9 @@
  * point is `bidi.grid/power`" would eventually disagree.
  */
 import { usage, resolveRef } from "../shared";
-import type { WireArea } from "../derivation/model";
+import type { ApiSession } from "@/lib/cli-kit/api-session";
+import { Point } from "@/lib/ids";
+import { resolvePoint, type WireArea } from "../derivation/model";
 
 /** The seven weekday keys the API accepts, in week order. */
 export const WEEKDAYS = [
@@ -197,4 +199,83 @@ export function decisionLines(ctx: WireArmedContext | null): string[] {
         `${ctx.evidence.peakKw.toFixed(2)} kW, ending ${new Date(ctx.evidence.endedAt).toISOString()}`,
     );
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Point resolution
+// ---------------------------------------------------------------------------
+
+interface WireDevice {
+  id: string | null;
+  legacySystemId: number;
+  name: string;
+  slug: string | null;
+}
+
+interface DevicePoint {
+  id: string;
+  logicalPath: string | null;
+  unit: string | null;
+}
+
+/**
+ * Resolve a `--load-point`/`--action-point` value to a `pt_` id.
+ *
+ * Three accepted forms, and the third exists for a real reason rather than as a convenience:
+ *   pt_…                      an id, passed through
+ *   bidi.grid/power           a logical path on one of the AREA's member devices
+ *   generator:load.hws/power  a logical path on a NAMED device, anywhere you can read
+ *
+ * 🛑 The qualified form is needed because only the DERIVATION is area-scoped by the API — the
+ * action point merely has to be one you OWN. At Daylesford that is exactly the case: the run
+ * detector lives on the `Daylesford Selectronic` area while the run-request point is on the
+ * `Daylesford Generator` device, which is not a member of it. Without this form that rule is simply
+ * not expressible except by pasting a raw id, which is the form that says nothing and is checked
+ * against nothing.
+ */
+export async function resolvePointFlag(
+  s: ApiSession,
+  area: WireArea,
+  ref: string,
+  flag: string,
+): Promise<string> {
+  if (Point.is(ref)) return ref;
+
+  const colon = ref.indexOf(":");
+  if (colon === -1) return resolvePoint(s, area, ref, flag);
+
+  const deviceRef = ref.slice(0, colon);
+  const path = ref.slice(colon + 1);
+  if (deviceRef === "" || path === "")
+    throw usage(
+      `"${ref}" for --${flag}`,
+      "the device-qualified form is <device>:<logical-path>",
+      "for example --" +
+        flag +
+        "=generator:source.generator.control.request/duration",
+    );
+
+  const { devices } = await s.get<{ devices: WireDevice[] }>("/api/v4/devices");
+  const device = resolveRef(devices, deviceRef, {
+    noun: "device",
+    listCmd: "liveone device list",
+  });
+  const { points = [] } = await s.get<{ points?: DevicePoint[] }>(
+    `/api/v4/devices/${encodeURIComponent(device.id!)}?include=points`,
+  );
+  const hits = points.filter((p) => p.logicalPath === path);
+
+  if (hits.length === 0)
+    throw usage(
+      `${device.name} has no point with the logical path "${path}"`,
+      `--${flag} named a device that exists, so it is the path that is wrong`,
+      `run \`liveone device points ${device.id}\` for the paths it publishes`,
+    );
+  if (hits.length > 1)
+    throw usage(
+      `"${path}" is ambiguous on ${device.name}`,
+      `it matches ${hits.length} points:\n${hits.map((h) => `  ${h.id}`).join("\n")}`,
+      "address it by its pt_… id instead",
+    );
+  return hits[0].id;
 }

@@ -3968,6 +3968,10 @@ Three points are involved and they are not interchangeable:
                   the DeepSea controller has no CTs, so load is read from the inverter
   --action-point  the writable run-request point the run is commanded through
 
+A point is a pt_… id, a logical path on one of the AREA's devices, or the qualified form
+`<device>:<path>`. The qualified form is not a nicety: only the DERIVATION has to live in
+the area, so the run-request point is routinely on a device that is not a member of it.
+
 The rule never dispatches while a run is already in progress: a second request would
 recompute the hub's stop deadline from now and truncate the run someone else asked for.
 
@@ -3984,8 +3988,8 @@ Arguments:
 Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --derivation <dx_|role>    The run detector: dx_… id, its name, or its role (e.g. generator)  (required)
-  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power)  (required)
-  --action-point <path|pt_>  Writable run-request point (e.g. source.generator.control.request/duration)  (required)
+  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)  (required)
+  --action-point <path|pt_>  Writable run-request point, often on another device (e.g. generator:source.generator.control.request/duration)  (required)
   --weekdays <thu>           Comma-separated: sun, mon, tue, wed, thu, fri, sat  (required)
   --time <09:00>             24-hour local wall-clock start time (not 02:00–02:59)  (required)
   --minutes <30>             How long to run for. Must be > 0 — 0 is a STOP, not a run  (required)
@@ -4015,7 +4019,7 @@ External access:
             A missing, expired or revoked token is exit 3; an API failure is exit 5.
 
 Examples:
-  liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point=source.generator.control.request/duration --weekdays=thu --time=09:00 --minutes=30
+  liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point='Daylesford Generator':source.generator.control.request/duration --weekdays=thu --time=09:00 --minutes=30
 
 Exit codes:
   0    success

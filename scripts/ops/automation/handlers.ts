@@ -14,7 +14,6 @@ import {
   listDerivations,
   resolveArea,
   resolveDerivation,
-  resolvePoint,
   type WireArea,
 } from "../derivation/model";
 import {
@@ -24,6 +23,7 @@ import {
   parseTime,
   parseWeekdays,
   resolveAutomation,
+  resolvePointFlag,
   triggerWords,
   type WireAutomation,
 } from "./model";
@@ -134,13 +134,13 @@ async function runCreateExercise(ctx: Ctx): Promise<number> {
         str(ctx, "derivation")!,
         area,
       );
-      const loadPointId = await resolvePoint(
+      const loadPointId = await resolvePointFlag(
         s,
         area,
         str(ctx, "loadPoint")!,
         "load-point",
       );
-      const actionPointId = await resolvePoint(
+      const actionPointId = await resolvePointFlag(
         s,
         area,
         str(ctx, "actionPoint")!,

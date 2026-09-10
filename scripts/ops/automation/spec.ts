@@ -55,6 +55,10 @@ export const AUTOMATION_SUBCOMMANDS = {
       "                  the DeepSea controller has no CTs, so load is read from the inverter\n" +
       "  --action-point  the writable run-request point the run is commanded through\n" +
       "\n" +
+      "A point is a pt_… id, a logical path on one of the AREA's devices, or the qualified form\n" +
+      "`<device>:<path>`. The qualified form is not a nicety: only the DERIVATION has to live in\n" +
+      "the area, so the run-request point is routinely on a device that is not a member of it.\n" +
+      "\n" +
       "The rule never dispatches while a run is already in progress: a second request would\n" +
       "recompute the hub's stop deadline from now and truncate the run someone else asked for.\n" +
       "\n" +
@@ -73,13 +77,13 @@ export const AUTOMATION_SUBCOMMANDS = {
         type: "string",
         required: true,
         placeholder: "path|pt_",
-        help: "Power point in W used to judge load (e.g. bidi.grid/power)",
+        help: "Power point in W used to judge load (e.g. bidi.grid/power, or dev:bidi.grid/power)",
       },
       actionPoint: {
         type: "string",
         required: true,
         placeholder: "path|pt_",
-        help: "Writable run-request point (e.g. source.generator.control.request/duration)",
+        help: "Writable run-request point, often on another device (e.g. generator:source.generator.control.request/duration)",
       },
       weekdays: {
         type: "string",
@@ -125,7 +129,7 @@ export const AUTOMATION_SUBCOMMANDS = {
     examples: [
       "liveone automation create-exercise daylesford --derivation=generator " +
         "--load-point=bidi.grid/power " +
-        "--action-point=source.generator.control.request/duration " +
+        "--action-point='Daylesford Generator':source.generator.control.request/duration " +
         "--weekdays=thu --time=09:00 --minutes=30",
     ],
   },
