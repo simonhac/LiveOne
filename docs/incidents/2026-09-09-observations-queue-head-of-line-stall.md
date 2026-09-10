@@ -1,0 +1,213 @@
+# Observations ingest stall — a poison backfill, head-of-line blocking a FIFO queue
+
+## Summary
+
+On **2026-09-09**, a 64-day Amber backfill (device handle `10002`, 2026-07-07 → 09-08) published
+through `POST /api/admin/amber-sync` **stopped all observation ingest, for every device, for
+~2h20m** — and did not materialise its own data.
+
+Two **independent** defects, which is the thing this report exists to keep straight. They were
+conflated for a day, and the conflation is what made the first round of fixes miss the one that
+mattered:
+
+| | Defect | Effect | Fixed by |
+| --- | --- | --- | --- |
+| **A** | Duplicate primary key inside one `ON CONFLICT DO UPDATE` — Postgres rejects the **whole statement** (SQLSTATE 21000) | The backfill's data never landed | #436 |
+| **B** | A deterministically-failing message holds a **strictly FIFO** queue slot for its entire retry schedule | All ingest stopped, ~2h20m | #432 (bounds), lanes/Flow Control (isolation) |
+
+**A is why the data was lost. B is why everyone else's ingest stopped.** Neither fixes the other:
+lanes would have kept live ingest flowing while the backfill still failed; the collapse would have
+let the backfill succeed with the queue still FIFO.
+
+Availability was restored the same day. **The data is still missing** — see Action Items.
+
+No data was corrupted, and nothing was silently overwritten: the failing statement rolled back
+whole, and `observations_outbox` retained every payload.
+
+## What Went Wrong
+
+### The trigger
+
+A newly-connected Amber device (added 2026-09-08) had no history, so a 64-day backfill was run with
+`action: "both"` — usage **and** pricing. `updateUsage` and `updateForecasts` are separate API
+fetches that share one `PollCollector`, and the point filters
+(`lib/vendors/amber/client.ts`) overlap on exactly one suffix:
+
+```
+usageSuffixes   = ["/kwh", "/cost", "/perKwh"]
+pricingSuffixes = ["/renewables", "/spotPerKwh", "/perKwh"]
+```
+
+Both are right to report `perKwh` — only `pricing` has current/forecast intervals, only `usage`
+carries the billed grading, and the live poll path reads the rate from prices. But run together
+over one window they emit that channel's rate **twice per interval**: identical value, graded `b`
+(billable) by usage and `a` (actual) by pricing.
+
+Measured on the surviving payload: one topic carried **551** rows where every other carried 336
+(= 336 real half-hours + **215** collisions), and the 215 matched the pricing fetch's coverage
+exactly. The two fetches were **417 ms apart** — this was never a settlement race.
+
+### Defect A — the statement Postgres refuses
+
+`point_readings_agg_5m`'s primary key is `(point_rid, interval_end)`, and the receiver builds one
+multi-row `INSERT … ON CONFLICT (point_rid, interval_end) DO UPDATE`. Postgres refuses when a single
+command proposes the same constrained key twice:
+
+> ON CONFLICT DO UPDATE command cannot affect row a second time — SQLSTATE 21000
+
+It refuses the **entire statement**, so one collision discards every row travelling with it, and
+`processSlice` wraps raw + 5m + 1d in one transaction, so the slice rolled back whole.
+
+🛑 **This is size-independent.** Two colliding rows fail exactly as 1,652 did. No batch cap,
+delivery bound, lane or Flow Control setting prevents it, and slicing a message into
+producer-cap transactions does not either — at ~13% collision density nearly every slice still
+contains a pair.
+
+### Defect B — FIFO charges the queue for the backoff
+
+From the QStash docs:
+
+> Messages are sent sequentially, with each message waiting for the previous one to complete
+> delivery **or exhaust retries** before becoming active.
+
+Every backfill message failed deterministically, so retrying could only fail again — and each
+message held its slot through the full backoff. Replayed from QStash's delivery log on 2026-09-10:
+
+```
+  obs  tries   duration   occupancy  state        ← the backfill batches
+ 1650      2     4037ms    159924ms  RETRY          attempt 1 3871ms → ERROR
+                                                    attempt 2 4037ms → ERROR
+ 1651      1     4142ms      4142ms  RETRY
+ 1647      1     4135ms      4135ms  RETRY
+ 1650      1     4078ms      4078ms  RETRY
+ 1652      1     3974ms      3974ms  RETRY
+                                                  ← normal traffic, same window
+  ~13    n=548  p50 666ms   max 1345ms  DELIVERED
+```
+
+A 1,650-observation batch carried **127× the rows** of a normal batch and took **6× the time**. The
+receiver handled the volume comfortably. The one batch that retried did **7.9s of work** while
+occupying its slot for **2m40s** — a ratio of 40×, i.e. ~97.5% backoff.
+
+The outage ended because the queue was **purged**, not because it drained: the log shows a run of
+`CANCELED` batches, and many others that never got past `CREATED`.
+
+### Why it wasn't caught, and then misdiagnosed twice
+
+- **The DLQ stayed at 0 for the whole outage.** With one message retrying and everything behind it
+  unattempted, nothing reaches the DLQ — and `dlq_present` was the only queue alert. The monitor
+  never fired; detection was a human noticing stale charts.
+- **`lag` is ambiguous.** A busy path and a blocked one both grow. It was read as a throughput
+  deficit **twice**, and `parallelism` was raised 1 → 5 in response — which did nothing, because
+  five strictly-ordered lanes still deliver in order.
+- **Nothing reported what was *in flight*.** `parallelismCount: 5, waitListSize: 1000` states the
+  diagnosis in one line and was not being read.
+- **A log line was misread as a duration.** `[ObservationsReceiver] Received: … observations=1650`
+  logged at 11:11 for a batch created at 10:36:44 was taken to mean *"one message took 34 minutes"*.
+  `Received:` is logged on **arrival** — that is queue **wait**, not work. Nothing in the original
+  evidence measured processing at all.
+- **That misreading became a hypothesis, and the hypothesis shaped a day of work.** "The messages
+  were too big" survived for a day and drove the batch cap, the receiver bound and the lane split
+  before anyone measured a batch. Those are all worth having, and none of them would have saved the
+  data.
+
+## Detection
+
+Manual, by a human noticing readings had stopped. No alert fired. `monitor-observations`' queue
+check was DLQ-depth only, and the DLQ was empty throughout — the precise blind spot.
+
+## Resolution
+
+**Same-day (availability).** Empty the queue from the Upstash console, then replay 516 rows from
+`observations_outbox` (`published_at = NULL`) excluding `device_rid = 10002`. Verified complete:
+Daylesford Selectronic and Kinkora Fronius 135/135 minutes of the window; Tesla and the generator
+matched a pre-stall control window exactly.
+
+**Subsequent (code).** In order:
+
+| PR | What |
+| --- | --- |
+| #432 | Bounded delivery (`retries 3`, backoff `5s/15s/45s`, timeout 65s), capped batch size at 500 observations, laned the publish path behind `OBSERVATIONS_PUBLISH_MODE` |
+| #433 | QStash SDK 2.11.3 for the Flow Control API; require both signing keys |
+| #434 | `lib/observations/flow-control.ts` — one ingest aggregate for the route, the monitor and `qstash-health`; adds the `stuck` predicate and `ingest_lane_stuck` |
+| #435 | `liveone queue --lane` — per-lane status and lane-scoped levers, correct on both sides of the cutover |
+| #436 | **`collapseByKey`** — the PK collapse, at the writer and at the producer. The fix for defect A |
+| #437 | `liveone queue timing` — per-batch wait/duration/occupancy, which is what settled the diagnosis above |
+
+The delivery bounds alone would have cut that 2m40s occupancy ~30×.
+
+## Timeline (UTC, 2026-09-09 unless noted)
+
+| Time | Event |
+| --- | --- |
+| 10:36:24 | Backfill publishes; usage and pricing fetches 417 ms apart into one collector |
+| 10:36:35 – 10:37:31 | 8 messages fail `ERROR` on `point_readings_agg_5m`, ~4s per attempt; land in the DLQ |
+| 10:36 → 11:10 | Ingest hole: per-minute 61 → 13. `lag` climbs 199 → 1053, monotonic |
+| — | `parallelism` raised 1 → 5. No effect (FIFO) |
+| — | DLQ observed at 0 throughout. Outbox backlog 4–6, seconds old — publishing was never the problem |
+| ~13:00 | Queue purged; 516 outbox rows replayed |
+| 2026-09-10 | Root cause A found by reading the DLQ payloads; #436 ships |
+| 2026-09-10 | Delivery log replayed with #437; the size hypothesis disproved and this report written |
+
+## Lessons Learned
+
+1. **An empty DLQ is not "nothing is wrong."** It is what a *blocked* queue looks like: nothing has
+   exhausted retries because nothing after the first message has been attempted.
+2. **`lag` cannot distinguish busy from blocked.** `lastIngestedAt` aged against now can — a busy
+   path still ingests. `stuck` (saturated AND backed up AND nothing landing) is the same question in
+   its unambiguous form, and would have been true from minute one.
+3. **A log line that says `Received:` measures arrival, not work.** If a duration matters, measure it
+   explicitly. The receiver now logs `Processed in {N}ms`.
+4. **Measure before building.** The size hypothesis was plausible, wrong, and expensive: it directed
+   a day of work at blast radius while the actual defect — a duplicate key — went unexamined. One
+   `ACTIVE → terminal` delta would have refuted it on day one.
+5. **A slow message and a deterministically-failing one are indistinguishable from outside a FIFO
+   queue**, and have different fixes. Retries only help a *transient* failure; against a deterministic
+   one the retry budget is pure occupancy.
+6. **Postgres rejects the whole statement on an intra-statement PK collision.** Multi-row upserts
+   must dedupe on the conflict target first. Cardinality is a property of the batch, not its size.
+7. **Two endpoints legitimately reporting one field is not a bug in either.** It has to be resolved
+   where they meet — for us, the `PollCollector` — not by narrowing a filter and losing a series.
+
+## Action Items
+
+**Done**
+
+- [x] Bound delivery and cap batch size (#432)
+- [x] Lane the publish path, `live` / `backfill` (#432, #434)
+- [x] `stuck` predicate + `ingest_lane_stuck` alert — the check that was missing (#434)
+- [x] Collapse duplicate PKs at the writer **and** the producer (#436)
+- [x] Per-batch timing, and a durable `Processed in {N}ms` in the receiver (#437)
+
+**Open**
+
+- [ ] **Recover device 10002, 2026-07-07 → 2026-09-08.** Only the `/usage`-derived series are
+      missing (energy and cost); the `/prices` half survived back to 2026-07-11. Run with
+      `action: "usage"` — usage-only never calls the pricing endpoint, so it cannot collide.
+      Routes: the Amber API (rolling ~90 days, so ~2026-10-05), an `observations_outbox` replay
+      (~2026-10-09, and needs `published_at` cleared), or **a CSV from Amber support, which has no
+      deadline** — the route already used for a 4½-month gap in 2025-11.
+- [ ] **Cut over** to `OBSERVATIONS_PUBLISH_MODE=flow`, dev then prod. Until then the lanes are
+      carried in the payload but the legacy FIFO queue is still the transport.
+- [ ] **Retire the `observations` queue.** 🛑 Deleting it destroys anything still waiting, and those
+      messages' outbox rows are already marked `published_at`, so the relay would never re-send them.
+      "Nothing enqueues" is not "nothing is waiting" — gate on a drained queue, verified.
+- [ ] **`lib/qstash.ts` keys the environment off `NODE_ENV`, not `VERCEL_ENV`.** A Vercel preview
+      build has `NODE_ENV=production`, so it resolves prod's queue name and `obs:` flow prefix;
+      `OBSERVATIONS_QSTASH_TOKEN` is set in Preview scope. Latched shut today (`CRONS_ENABLED` is
+      Production-only), but after the cutover a preview-targeted `liveone queue pause` would pause
+      **prod's** lane. `lib/env.ts` already has the right discriminator.
+- [ ] **The DLQ retry path cannot choose a lane.** It calls `publishObservationMessage(row.payload)`
+      and pre-lane payloads default to `live`, so retrying the 8 stored messages would put ~13,000
+      observations on the live lane.
+- [ ] Make `amber-sync` report rows **received**, not published — a sync that reports success while
+      its data is unqueryable is worse than one that fails.
+
+## Status
+
+**Availability: resolved** 2026-09-09. **Data: outstanding** — device 10002's usage series for
+2026-07-07 → 2026-09-08 are still missing, recoverable, and not self-healing (the coverage-repair
+cron cannot see the gap: its window floor is `commissioned_on`, and the device was only created
+2026-09-08).
+
+Working notes and the migration plan: `docs/plans/ingest-head-of-line-hardening.md`.

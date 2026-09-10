@@ -19,6 +19,9 @@ below.
 
 ## The incident
 
+> The durable record is **[docs/incidents/2026-09-09-observations-queue-head-of-line-stall.md](../incidents/2026-09-09-observations-queue-head-of-line-stall.md)** — this section is the
+> working narrative that drove the design, and goes when this plan does.
+
 A 64-day Amber backfill (device 10002, 2026-07-07 → 09-08) published through
 `POST /api/admin/amber-sync` **stopped all observation ingest for every device for ~2h20m**, and did
 not materialise its own data.
@@ -40,10 +43,50 @@ The receiver log that named the culprit, emitted at **11:11** for a batch create
                        batchTime=2026-09-09T20:36:44+10:00
 ```
 
-One message took 34 minutes. Recovery was: empty the queue from the Upstash console, then replay
-516 rows from `observations_outbox` (`published_at = NULL`) excluding `device_rid = 10002`. Verified
-complete: Daylesford Selectronic and Kinkora Fronius 135/135 minutes of the window, Tesla and the
-generator matching a pre-stall control window exactly.
+Recovery was: empty the queue from the Upstash console, then replay 516 rows from
+`observations_outbox` (`published_at = NULL`) excluding `device_rid = 10002`. Verified complete:
+Daylesford Selectronic and Kinkora Fronius 135/135 minutes of the window, Tesla and the generator
+matching a pre-stall control window exactly.
+
+### 🛑 The batches were NOT slow — measured 2026-09-10, and it corrects this doc
+
+That receiver line was read at the time as *"one message took 34 minutes"*. It does not say that.
+`Received:` is logged when the message ARRIVES, so 10:36:44 → 11:11 is how long it sat in the queue —
+**wait**, not work. Nothing here measured processing at all, which is why `liveone queue timing`
+now reports the two separately (`lib/observations/message-log.ts`).
+
+Replayed out of QStash's own delivery log for 10:20–13:00:
+
+```
+  obs  tries   duration   occupancy  state        ← the backfill batches
+ 1650      2     4037ms    159924ms  RETRY          attempt 1 3871ms → ERROR
+                                                    attempt 2 4037ms → ERROR
+ 1651      1     4142ms      4142ms  RETRY
+ 1647      1     4135ms      4135ms  RETRY
+ 1650      1     4078ms      4078ms  RETRY
+ 1652      1     3974ms      3974ms  RETRY
+                                                  ← normal traffic, same window
+  ~13    n=548  p50 666ms   max 1345ms  DELIVERED
+```
+
+**A 1,650-observation batch carried 127× the rows of a normal one and took 6× the time.** The
+receiver handled the volume comfortably; size was never the constraint. Every attempt ended in
+`ERROR` — the PK collision (below), which is deterministic, so retrying could only ever fail again.
+
+**What held the queue was BACKOFF, not work.** The one batch that got a second attempt did 7.9s of
+work across two attempts while occupying its delivery slot for **2m40s** — a ratio of 40×, i.e.
+~97.5% of the slot was the wait between retries. FIFO releases a slot only when a message
+"completes delivery **or exhausts retries**", so ~128 poison messages each held it for a multi-minute
+schedule. That is the 2h20m, and it ended because the queue was PURGED, not because it drained — the
+log shows a run of `CANCELED` batches at 1,608–1,682 observations, and many others that never got
+past `CREATED`.
+
+The backoff between those two attempts was ~2m32s. The bounds added in #432 (`5s/15s/45s`) would
+have cut it ~30×.
+
+⚠️ That window also reported ~6,500 log rows as `foreign` (DLQ and purge events carrying neither a
+queue name nor a flow key). Two quiet control windows report zero, so the classifier is sound on
+normal traffic — but counts inside the incident window are a FLOOR, not a total.
 
 ## Cause
 
@@ -52,7 +95,7 @@ generator matching a pre-stall control window exactly.
 > Messages are sent sequentially, with each message waiting for the previous one to complete
 > delivery **or exhaust retries** before becoming active.
 
-So one message that keeps timing out holds the lane for its entire retry schedule. Three factors
+So one message that never succeeds holds the lane for its entire retry schedule. Three factors
 combined:
 
 1. **Oversized messages.** The backfill emitted one message per 7-day window: ~1650 observations
@@ -65,6 +108,23 @@ combined:
    defect.
 
 Self-inflicted and reproducible: any large historical backfill through the current path repeats it.
+
+🛑 **Read 1 and 2 against the measurement above: neither is why it wedged.** Written the same day,
+this section assumed the big messages were SLOW — the "keeps timing out" reading. They were not: a
+1,650-observation batch committed in ~4s, six times a normal batch for 127× the rows, and no attempt
+ever came close to a timeout. The size framing survived here for a day and shaped what was built.
+
+The operative cause is **3 plus determinism**: every attempt failed on a duplicate primary key
+inside one `ON CONFLICT DO UPDATE`, which no retry could ever clear, and FIFO charged the queue the
+full backoff for each. Fixed separately (#436) — and worth being precise about what each change
+buys, because they are not substitutes:
+
+- **Lanes / Flow Control** stop a backfill from blocking live ingest. They do not stop the batch
+  failing.
+- **The batch cap and delivery bounds (#432)** shrink the blast radius of any poison message —
+  ~30× less occupancy here — and remain worth having. They do not stop the batch failing either.
+- **The PK collapse (#436)** is the one that stops it failing, and it is the only one that could
+  have saved the data.
 
 ## The fix: publish with Flow Control instead of enqueueing to a Queue
 
@@ -227,7 +287,7 @@ reports `N merged` so an overlap appearing on a vendor that should have none is 
 
 ### Consequence: five weeks of Amber data are missing, and recoverable only until ~2026-10-05
 
-Device handle 10002 (Amber – CitiPower) reports `firstData: 2026-09-08` on every series. The
+Device handle 10002 (Amber) reports `firstData: 2026-09-08` on every series. The
 backfill that would have populated **2026-07-07 → 2026-08-11** is the batch that failed. Three
 recovery routes, all needing a deliberate action — none self-heals, and the coverage-repair cron
 cannot see it because its window floor is `commissioned_on`:

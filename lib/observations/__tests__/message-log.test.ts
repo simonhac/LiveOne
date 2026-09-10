@@ -205,3 +205,92 @@ describe("summarise", () => {
     expect(s.durationMs).toEqual({ p50: 400, p95: 400, max: 400 });
   });
 });
+
+/**
+ * The read budget, and what a partial answer must admit to.
+ *
+ * `readMessageLog` pages QStash, so the only interesting behaviour here is what happens when the
+ * window is bigger than the budget — which is not hypothetical: a 2h50m window over the 2026-09-09
+ * incident outran the route's 60s `maxDuration` and returned a bare 504, teaching the caller
+ * nothing, from a tool whose whole job is to answer during an incident.
+ */
+describe("readMessageLog budget", () => {
+  const T0 = 1_700_000_000_000;
+
+  /** A fake QStash whose `logs()` pages forever, one row per page, newest first. */
+  function endlessQstash(pageDelayMs = 0) {
+    let page = 0;
+    return {
+      calls: () => page,
+      logs: async ({ cursor }: { cursor?: string }) => {
+        const time = T0 - page * 1000;
+        page++;
+        if (pageDelayMs) await new Promise((r) => setTimeout(r, pageDelayMs));
+        return {
+          logs: [
+            {
+              messageId: `m${page}`,
+              time,
+              state: "CREATED",
+              queueName: OBSERVATIONS_QUEUE_NAME,
+            },
+          ],
+          cursor: String(cursor ?? time),
+        };
+      },
+    };
+  }
+
+  const load = async (fake: unknown) => {
+    let mod!: typeof import("../message-log");
+    await jest.isolateModulesAsync(async () => {
+      jest.doMock("@/lib/qstash", () => {
+        const actual =
+          jest.requireActual<typeof import("@/lib/qstash")>("@/lib/qstash");
+        return { ...actual, qstash: fake };
+      });
+      mod = await import("../message-log");
+    });
+    return mod;
+  };
+
+  afterEach(() => {
+    delete process.env.QUEUE_TIMING_BUDGET_MS;
+    jest.resetModules();
+  });
+
+  it("stops on the wall-clock budget and says so, instead of running forever", async () => {
+    // 🛑 The budget was a PAGE count first, which bounds memory and not time — the wrong unit, and
+    // the reason a dense window 504'd. An endless pager proves it is time that stops us now.
+    process.env.QUEUE_TIMING_BUDGET_MS = "60";
+    const fake = endlessQstash(20);
+    const { readMessageLog } = await load(fake);
+    const out = await readMessageLog({ fromMs: T0 - 86_400_000, toMs: T0 });
+    expect(out.truncated).toBe(true);
+    // Far short of the 40-page memory backstop: time bound, not pages.
+    expect(fake.calls()).toBeLessThan(40);
+  });
+
+  it("reports the span it actually READ, not the span it was asked for", async () => {
+    // Paging walks backwards from the newest row, so a truncated read holds the recent end. Naming
+    // the requested window there would claim coverage of hours nobody looked at.
+    process.env.QUEUE_TIMING_BUDGET_MS = "60";
+    const { readMessageLog } = await load(endlessQstash(20));
+    const askedFrom = T0 - 86_400_000;
+    const out = await readMessageLog({ fromMs: askedFrom, toMs: T0 });
+    expect(out.window.fromMs).toBe(askedFrom);
+    expect(out.covered).not.toBeNull();
+    expect(out.covered!.toMs).toBe(T0);
+    expect(out.covered!.fromMs).toBeGreaterThan(askedFrom);
+  });
+
+  it("leaves covered null when the window held nothing", async () => {
+    const { readMessageLog } = await load({
+      logs: async () => ({ logs: [], cursor: undefined }),
+    });
+    const out = await readMessageLog({ fromMs: T0 - 1000, toMs: T0 });
+    expect(out.covered).toBeNull();
+    expect(out.truncated).toBe(false);
+    expect(out.summary.messages).toBe(0);
+  });
+});
