@@ -62,6 +62,7 @@ async function areaAggregateResponse(
       displayTimezone: areas.displayTimezone,
       location: areas.location,
       config: areas.config,
+      ownerUserId: areas.ownerUserId,
     })
     .from(areas)
     .where(eq(areas.id, areaUuid))

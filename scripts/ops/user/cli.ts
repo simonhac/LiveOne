@@ -5,7 +5,13 @@
  * ADMIN-ONLY over http: the `/api/v4/users` routes are `requireAdmin`, so a non-admin token gets
  * the mapped 403. Identity lives in Clerk; the directory joins it with device ownership.
  */
-import { defineCommand, EXIT, type CommandSpec, type Ctx } from "@/lib/cli/cli";
+import {
+  defineCommand,
+  EXIT,
+  failWith,
+  type CommandSpec,
+  type Ctx,
+} from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { BASE_URL_FLAG, usage } from "../shared";
 
@@ -33,16 +39,36 @@ const USER_ARG = {
   help: "A user: their user_… Clerk id, email, or username",
 } as const;
 
-/** user_… goes straight to the show route; anything else matches email/username over the list. */
-async function resolveUserId(s: ApiSession, ref: string): Promise<string> {
+/**
+ * `user_…` goes straight through; anything else matches email/username over the directory, and then
+ * over CLERK.
+ *
+ * 🛑 The Clerk fall-through is not a convenience. The directory is derived from DEVICE OWNERSHIP, so
+ * a user who owns nothing is not in it — which is exactly the person you are about to transfer
+ * something TO. Resolving only against the list would make `--to=someone@new` unresolvable for
+ * precisely the case ownership transfer exists for, and would send the operator to the Clerk
+ * dashboard to copy an id by hand.
+ */
+export async function resolveUserId(
+  s: ApiSession,
+  ref: string,
+): Promise<string> {
   if (ref.startsWith("user_")) return ref;
   const { users } = await s.get<{ users: WireUser[] }>("/api/v4/users");
-  const hits = users.filter((u) => u.email === ref || u.username === ref);
+  let hits = users.filter((u) => u.email === ref || u.username === ref);
+  if (hits.length === 0) {
+    // Exact only. A fuzzy `query` match is fine for `user find`, where a human reads the rows, and
+    // wrong here, where the next step hands someone else's data to whoever came back first. If the
+    // deployment cannot search, `searchUsers` throws and says so — better than resolving against a
+    // list that was never filtered.
+    const found = await searchUsers(s, ref);
+    hits = found.filter((u) => u.email === ref || u.username === ref);
+  }
   if (hits.length === 0)
     throw usage(
       `no user matches "${ref}"`,
-      "no directory entry has that id, email or username",
-      "run `liveone user list`",
+      "no directory entry and no Clerk user has that id, email or username",
+      "run `liveone user find <partial>` to search Clerk, or `liveone user list` for owners",
     );
   if (hits.length > 1)
     throw usage(
@@ -82,6 +108,30 @@ export const userCommand = defineCommand({
         "liveone user show user_2yjTPLLmU2vMs4Vy4Q7g0Yy0abc",
       ],
     },
+    find: {
+      name: "find",
+      summary: "Search CLERK for a user — including one who owns nothing.",
+      when:
+        "Use this when `list` does not show them. `list` is derived from device ownership, so a\n" +
+        "newly invited user is invisible to it by definition — and that is the user a transfer is\n" +
+        "usually about to hand something to.",
+      description:
+        "An exact email is matched as an email; anything else is a fuzzy search over name,\n" +
+        "username and email. Exit 1 when nothing matches, so it composes into a check.",
+      args: [
+        {
+          name: "search",
+          required: true,
+          help: "An email, or part of a name/username",
+        },
+      ],
+      flags: { ...BASE_URL_FLAG },
+      exitCodes: { 1: "no user matched" },
+      examples: [
+        "liveone user find karoline@example.com",
+        "liveone user find karoline",
+      ],
+    },
   },
 } satisfies CommandSpec);
 
@@ -116,9 +166,56 @@ async function runShow(ctx: Ctx): Promise<number> {
   });
 }
 
+/**
+ * 🛑 An unknown query parameter is IGNORED by an older deployment, which answers the unfiltered
+ * list with a 200. So a search against a deployment that predates `?q=` does not fail — it returns
+ * every device-owning user and renders them as "matches", which is the most dangerous possible
+ * answer to "does this person exist?". The route echoes `query` back for exactly this reason;
+ * its absence means the search never ran.
+ */
+async function searchUsers(s: ApiSession, term: string): Promise<WireUser[]> {
+  const body = await s.get<{ users: WireUser[]; query?: string }>(
+    `/api/v4/users?q=${encodeURIComponent(term)}`,
+  );
+  if (body.query === undefined)
+    throw failWith(
+      EXIT.UPSTREAM,
+      "this deployment cannot search Clerk",
+      "it ignored `?q=` and returned the ownership-derived list instead — those rows are NOT matches",
+      "check the deployed build with `liveone auth whoami`; `?q=` needs the release that added it",
+    );
+  return body.users;
+}
+
+async function runFind(ctx: Ctx): Promise<number> {
+  return withApiSession(ctx, async (s) => {
+    const term = ctx.args[0];
+    const users = await searchUsers(s, term);
+    ctx.emit({ query: term, count: users.length, users }, () =>
+      users.length
+        ? [
+            ...users.map(
+              (u) =>
+                `${u.clerkUserId}  ${(u.email ?? "(no email)").padEnd(30)} ` +
+                `${[u.firstName, u.lastName].filter(Boolean).join(" ").padEnd(24)} ` +
+                `devices=${String(u.devices.length).padEnd(3)}` +
+                (u.isPlatformAdmin ? " admin" : ""),
+            ),
+            "",
+            `${users.length} match(es) in Clerk.`,
+          ].join("\n")
+        : `No Clerk user matches "${term}".`,
+    );
+    // A search that found nobody is a FINDING, not an error — it composes into a check, and it is
+    // the honest answer to "does this person exist yet?".
+    return users.length ? EXIT.OK : EXIT.FINDINGS;
+  });
+}
+
 const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   list: runList,
   show: runShow,
+  find: runFind,
 };
 
 /** Run whichever `user` verb was selected (the LAST path element under `liveone`). */

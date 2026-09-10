@@ -24,6 +24,7 @@ import { dashboardCommand, runDashboard } from "./dashboard/cli";
 import { deviceCommand, runDevice } from "./device/cli";
 import { areaCommand, runArea } from "./area/cli";
 import { derivationCommand, runDerivation } from "./derivation/cli";
+import { ownerCommand, runOwner } from "./owner";
 import { userCommand, runUser } from "./user/cli";
 import { authCommand, runAuth } from "./auth/cli";
 import { findCommand, runFind } from "./find/cli";
@@ -50,6 +51,7 @@ export const cmd = defineCommand({
     device: deviceCommand,
     area: areaCommand,
     derivation: derivationCommand,
+    owner: ownerCommand,
     user: userCommand,
     queue: queueCommand,
     // A root-level VERB like `find`, not a domain group: a sync names ONE device and ONE window,
@@ -71,6 +73,7 @@ const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
   device: runDevice,
   area: runArea,
   derivation: runDerivation,
+  owner: runOwner,
   user: runUser,
   queue: runQueue,
   sync: runSync,

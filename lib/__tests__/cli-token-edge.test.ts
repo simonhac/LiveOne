@@ -53,8 +53,25 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/v4/areas/ar_x/derivations/dx_x",
       "/api/v4/areas/ar_x/derivations/dx_x/recompute",
       "/api/v4/areas/ar_x/derivations/dx_x/intervals",
+      // The area WIRING surface, admitted for `liveone area devices` / `liveone area role`. Both
+      // authorize in-handler through `loadAreaForOwner`, and the area is a path segment, so there
+      // is no unscoped form.
+      //
+      // 🛑 `members` is the one with the surprising blast radius: PUT is a full replace, and
+      // dropping a member also DELETES that member's bindings. That was true of the browser's
+      // access to it all along — admitting it here does not create the hazard — but it is why the
+      // CLI names the doomed bindings before shrinking membership.
+      "/api/v4/areas/ar_x/members",
+      "/api/v4/areas/ar_x/bindings",
+      // Read-only, and admitted WITH the two writers: it is how an operator checks a wiring write
+      // landed. Admitting a mutator without the read that verifies it is a half-usable tool.
+      "/api/v4/areas/ar_x/resolution",
       "/api/v4/users",
       "/api/v4/users/user_x",
+      // 🛑 The most consequential admitted route: the only one that can move an object OUT of a
+      // user's control. `requireAdmin` in-handler is the enforcement point, and the "every exposed
+      // route authorizes for itself" check below covers it.
+      "/api/v4/ownership/transfer",
       "/api/data",
       "/api/history",
       "/api/cli-auth/tokens",
@@ -75,11 +92,12 @@ describe("isCliTokenRoute — what the bypass is bounded to", () => {
       "/api/auth/tesla/callback",
       "/api/cron/db-stats",
       "/api/device/1/latest",
-      // The areas matcher is a single named segment (`:id`), NOT `(.*)` — the sub-resources and the
-      // control surface stay outside the bypass, each to be judged on its own.
-      "/api/v4/areas/ar_x/members",
-      "/api/v4/areas/ar_x/bindings",
+      // The areas matcher is a single named segment (`:id`), NOT `(.*)` — every sub-resource is
+      // judged on its own. `members`/`bindings`/`resolution` have since been admitted (see above);
+      // these have NOT, and remain outside precisely because being a sibling is not an argument.
       "/api/v4/areas/ar_x/eligibility",
+      "/api/v4/areas/ar_x/default-group",
+      "/api/v4/areas/ar_x/recompute-provenance",
       // 🛑 The CRON twin of the recompute that IS admitted above. Its `derivation=`/`handle=`+`role=`
       // filter is OPTIONAL, so it has an unscoped form that rebuilds every detector in the fleet —
       // which is precisely why `…/derivations/:dxid/recompute` exists and why this stays outside.

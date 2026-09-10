@@ -152,3 +152,52 @@ export async function userDirectoryEntry(
     ? unresolvedEntry(clerkUserId, ownedDevices)
     : null;
 }
+
+/**
+ * Search Clerk for users, by email or free text — the leg the ownership-derived list cannot serve.
+ *
+ * 🛑 `listUserDirectory` enumerates by DEVICE OWNERSHIP, so a user who owns nothing is invisible to
+ * it. That is fine for "who owns the fleet" and useless for the question that actually precedes a
+ * transfer: "who am I about to hand this to?" A newly invited user owns nothing by definition, so
+ * the directory could never name the one person a transfer needs, and the id had to be copied out
+ * of the Clerk dashboard by hand.
+ *
+ * An exact email is matched as an EMAIL (Clerk's `emailAddress` filter) rather than through the
+ * fuzzy `query`, so `a@b.com` cannot return a near-miss that a caller then transfers ownership to.
+ * Anything else falls back to `query`, which matches name/username/email substrings.
+ *
+ * `devices` is populated the same way as everywhere else, so a search result and a list row are the
+ * same shape — a caller can act on either without re-fetching.
+ */
+export async function findUsersInClerk(
+  search: string,
+  limit = 20,
+): Promise<UserDirectoryEntry[]> {
+  const term = search.trim();
+  if (!term) return [];
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(term);
+
+  const client = await clerkClient();
+  const { data } = await client.users.getUserList(
+    looksLikeEmail ? { emailAddress: [term], limit } : { query: term, limit },
+  );
+
+  const allDevices = await DeviceConfigRegistry.allDevices();
+  return data.map((clerkUser) => {
+    const devices = allDevices
+      .filter((d) => d.ownerClerkUserId === clerkUser.id)
+      .map(toDeviceAccess);
+    const meta = (clerkUser.privateMetadata ?? {}) as Record<string, unknown>;
+    return {
+      clerkUserId: clerkUser.id,
+      email: clerkUser.emailAddresses[0]?.emailAddress,
+      firstName: clerkUser.firstName,
+      lastName: clerkUser.lastName,
+      username: clerkUser.username,
+      createdAt: clerkUser.createdAt,
+      lastSignIn: clerkUser.lastSignInAt,
+      devices,
+      isPlatformAdmin: meta.isPlatformAdmin === true,
+    };
+  });
+}

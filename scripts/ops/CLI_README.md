@@ -47,6 +47,16 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard history](#liveone-dashboard-history)
     - [liveone dashboard restore](#liveone-dashboard-restore)  _(writes)_
     - [liveone dashboard backfill-history](#liveone-dashboard-backfill-history)  _(writes)_
+    - [liveone dashboard share](#liveone-dashboard-share)
+      - [liveone dashboard share list](#liveone-dashboard-share-list)
+      - [liveone dashboard share add](#liveone-dashboard-share-add)  _(writes)_
+      - [liveone dashboard share remove](#liveone-dashboard-share-remove)  _(writes)_
+      - [liveone dashboard share set](#liveone-dashboard-share-set)  _(writes)_
+    - [liveone dashboard link](#liveone-dashboard-link)
+      - [liveone dashboard link list](#liveone-dashboard-link-list)
+      - [liveone dashboard link create](#liveone-dashboard-link-create)  _(writes)_
+      - [liveone dashboard link revoke](#liveone-dashboard-link-revoke)  _(writes)_
+    - [liveone dashboard delete](#liveone-dashboard-delete)  _(writes)_
   - [liveone device](#liveone-device)
     - [liveone device list](#liveone-device-list)
     - [liveone device show](#liveone-device-show)
@@ -59,6 +69,15 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone area latest](#liveone-area-latest)
     - [liveone area history](#liveone-area-history)
     - [liveone area flows](#liveone-area-flows)
+    - [liveone area devices](#liveone-area-devices)
+      - [liveone area devices list](#liveone-area-devices-list)
+      - [liveone area devices add](#liveone-area-devices-add)  _(writes)_
+      - [liveone area devices remove](#liveone-area-devices-remove)  _(writes)_
+      - [liveone area devices set](#liveone-area-devices-set)  _(writes)_
+    - [liveone area role](#liveone-area-role)
+      - [liveone area role list](#liveone-area-role-list)
+      - [liveone area role set](#liveone-area-role-set)  _(writes)_
+      - [liveone area role clear](#liveone-area-role-clear)  _(writes)_
   - [liveone derivation](#liveone-derivation)
     - [liveone derivation list](#liveone-derivation-list)
     - [liveone derivation create](#liveone-derivation-create)  _(writes)_
@@ -67,9 +86,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone derivation disable](#liveone-derivation-disable)  _(writes)_
     - [liveone derivation recompute](#liveone-derivation-recompute)  _(writes)_
     - [liveone derivation intervals](#liveone-derivation-intervals)
+  - [liveone owner](#liveone-owner)
+    - [liveone owner show](#liveone-owner-show)
+    - [liveone owner transfer](#liveone-owner-transfer)  _(writes)_
   - [liveone user](#liveone-user)
     - [liveone user list](#liveone-user-list)
     - [liveone user show](#liveone-user-show)
+    - [liveone user find](#liveone-user-find)
   - [liveone queue](#liveone-queue)
     - [liveone queue status](#liveone-queue-status)
     - [liveone queue timing](#liveone-queue-timing)
@@ -109,8 +132,9 @@ Subcommands:
   auth                   Sign the CLI in as you, and manage its tokens.
   dashboard              Inspect and edit stored dashboard documents (`dashboards.doc`, the v4 node tree).
   device                 Inspect devices — config, metadata, points, latest values, history.
-  area                   Inspect areas — membership, bindings, latest values, history, flows.
+  area                   Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
   derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
+  owner                  Who owns devices, areas and dashboards — and how to hand them over.
   user                   The user directory — who exists, what they own. Admin-only.
   queue                  The observations ingest path — per-lane status, and the levers to unblock it.
   sync                   Re-fetch a historical window from a device's vendor, on the backfill lane.  (writes)
@@ -539,6 +563,9 @@ Subcommands:
   history                The dashboard's edit history — who changed it, when, revision by revision.
   restore                Restore a recorded revision — as a NEW revision, never a counter rewind.  (writes)
   backfill-history       Seed a history row for every dashboard whose current revision has none.  (writes)
+  share                  Named users granted on a dashboard (writes: add, remove, set).
+  link                   Anonymous share links for a dashboard (writes: create, revoke).
+  delete                 Delete a dashboard — and every grant and share link on it.  (writes)
 
 Run `liveone dashboard <subcommand> --help` for a subcommand's own options.
 
@@ -1417,6 +1444,543 @@ Exit codes:
   130  interrupted
 ```
 
+#### liveone dashboard share
+
+Named users granted on a dashboard (writes: add, remove, set).
+
+```
+Named users granted on a dashboard (writes: add, remove, set).
+
+When to use:
+  A grant is how a NAMED user sees a dashboard — and, through it, the devices the doc
+  references. For an anonymous link use `dashboard link`.
+
+🛑 A grant is read-scoped LIVE to the doc's refs, not to a snapshot: editing the document
+re-aims every grant on it. Granting someone is therefore not a promise about which devices
+they will see tomorrow.
+
+Usage:
+  liveone dashboard share <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   The dashboard's members, and each one's grant role.
+  add                    Grant users on a dashboard, keeping existing members.  (writes)
+  remove                 Revoke users from a dashboard, keeping the rest.  (writes)
+  set                    Declare the exact membership — anyone omitted is revoked.  (writes)
+
+Run `liveone dashboard share <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard share list
+
+The dashboard's members, and each one's grant role.
+
+```
+The dashboard's members, and each one's grant role.
+
+Usage:
+  liveone dashboard share list <dash> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard share list kew
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard share add
+
+Grant users on a dashboard, keeping existing members.
+
+```
+Grant users on a dashboard, keeping existing members.
+
+When to use:
+  The incremental verb. The route is a full replace, so this reads the membership first —
+  sending one member alone would evict everyone else.
+
+Usage:
+  liveone dashboard share add <dash> <user>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+  <user>                 Users: user_… id, email, or username
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --role <viewer>            Grant role (default: viewer)  (one of: viewer, admin)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard share add kew karoline@example.com
+  liveone dashboard share add kew karoline@example.com --role=admin --apply
+
+Exit codes:
+  0    success
+  1    the server refused the membership (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard share remove
+
+Revoke users from a dashboard, keeping the rest.
+
+```
+Revoke users from a dashboard, keeping the rest.
+
+Usage:
+  liveone dashboard share remove <dash> <user>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+  <user>                 Users to revoke
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard share remove kew someone@example.com --apply
+
+Exit codes:
+  0    success
+  1    the server refused the membership (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard share set
+
+Declare the exact membership — anyone omitted is revoked.
+
+```
+Declare the exact membership — anyone omitted is revoked.
+
+When to use:
+  The full-replace form, matching the route. Prefer `add`/`remove` unless you mean 'these
+  and only these'.
+
+Usage:
+  liveone dashboard share set <dash> [user]... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+  [user]                 The complete membership (none = revoke everyone)
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --role <viewer>            Grant role for everyone named (default: viewer)  (one of: viewer, admin)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard share set kew simon@example.com --apply
+
+Exit codes:
+  0    success
+  1    the server refused the membership (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard link
+
+Anonymous share links for a dashboard (writes: create, revoke).
+
+```
+Anonymous share links for a dashboard (writes: create, revoke).
+
+When to use:
+  A link lets someone with the URL read the dashboard WITHOUT signing in. For a named user
+  use `dashboard share`.
+
+🛑 A link's scope is derived live from the doc's refs, exactly like a grant — so editing the
+document re-aims every live link. Revocation is the only way to narrow one.
+
+Usage:
+  liveone dashboard link <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   The dashboard's links: label, created, expiry, last use, revoked.
+  create                 Mint a new share link.  (writes)
+  revoke                 Revoke a share link. Idempotent.  (writes)
+
+Run `liveone dashboard link <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard link list
+
+The dashboard's links: label, created, expiry, last use, revoked.
+
+```
+The dashboard's links: label, created, expiry, last use, revoked.
+
+Usage:
+  liveone dashboard link list <dash> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard link list kew
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard link create
+
+Mint a new share link.
+
+```
+Mint a new share link.
+
+Usage:
+  liveone dashboard link create <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --label <text>             What this link is for — the only way to tell two links apart later
+  --expires-in-days <30>     Expire after N days (default: never)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard link create kew --label='for the installer' --expires-in-days=30 --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone dashboard link revoke
+
+Revoke a share link. Idempotent.
+
+```
+Revoke a share link. Idempotent.
+
+Usage:
+  liveone dashboard link revoke <dash> <token> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+  <token>                The token to revoke
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard link revoke kew abc123 --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone dashboard delete
+
+Delete a dashboard — and every grant and share link on it.
+
+```
+Delete a dashboard — and every grant and share link on it.
+
+When to use:
+  🛑 IRREVERSIBLE, and wider than it looks. `dashboard_grants`, `share_tokens` and the whole
+  revision history all cascade from `dashboards.id`, so deleting a document silently revokes
+  every live link on it. The dry run names them before you commit to that.
+
+A share token's SCOPE comes from the doc's refs, so a card-less dashboard can still be
+conveying read access to whole areas — which is exactly the kind that looks safe to delete
+and is the most important to look at first.
+
+Usage:
+  liveone dashboard delete <dash> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <dash>                 A dashboard: its db_… id or its slug
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  Database  Connects DIRECTLY to Postgres using the connection string in the environment.
+            Read the printed `target:` line before writing — it names the database, the
+            role and the host. A connection or query failure is exit 5.
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone dashboard delete legacy-share-keen-fruity-tapir
+  liveone dashboard delete legacy-share-keen-fruity-tapir --apply
+
+Exit codes:
+  0    success
+  1    the server refused (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
 ### liveone device
 
 Inspect devices — config, metadata, points, latest values, history.
@@ -1743,18 +2307,22 @@ Exit codes:
 
 ### liveone area
 
-Inspect areas — membership, bindings, latest values, history, flows.
+Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
 
 ```
-Inspect areas — membership, bindings, latest values, history, flows.
+Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
 
 When to use:
   Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the
   physical/vendor layer use `device`; for what a dashboard shows use `dashboard`.
 
-Read-only, and http-only: every verb calls the deployed API as you (`liveone auth login`),
-and prints `target: <origin> as <you>` on stderr first — read it to know which environment
-answered. Ids are per-environment.
+Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints
+`target: <origin> as <you>` on stderr first — read it to know which environment answered.
+Ids are per-environment.
+
+The reads (list, show, latest, history, flows) change nothing. The two WIRING sub-domains do:
+`devices` sets which devices an area is made of, and `role` sets which point fills each
+(role, metric) slot. Both are dry-run by default and state their change as a diff.
 
 Usage:
   liveone area <subcommand> [options]
@@ -1767,6 +2335,8 @@ Subcommands:
   latest                 The area's current values, from the serving cache.
   history                Time series for an area, in the OpenNEM shape /api/history serves.
   flows                  The rolled-up source×load energy-flow matrix (the Sankey) for a period.
+  devices                Which devices an area is made of (writes: add, remove, set).
+  role                   Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
 
 Run `liveone area <subcommand> --help` for a subcommand's own options.
 
@@ -2066,6 +2636,467 @@ Examples:
 Exit codes:
   0    success
   1    no attributed flow for the window (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area devices
+
+Which devices an area is made of (writes: add, remove, set).
+
+```
+Which devices an area is made of (writes: add, remove, set).
+
+When to use:
+  Membership is the POOL a binding may draw from — a point can only fill a role slot if its
+  device is already a member. So this comes first, and `area role` picks within it.
+
+Usage:
+  liveone area devices <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   The area's member devices.
+  add                    Add one or more devices to the area, keeping the rest.  (writes)
+  remove                 Remove devices from the area — and their bindings with them.  (writes)
+  set                    Declare the exact membership — anything omitted is removed.  (writes)
+
+Run `liveone area devices <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area devices list
+
+The area's member devices.
+
+```
+The area's member devices.
+
+Usage:
+  liveone area devices list <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area devices list kew
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area devices add
+
+Add one or more devices to the area, keeping the rest.
+
+```
+Add one or more devices to the area, keeping the rest.
+
+When to use:
+  Adding is the safe direction: it grows the pool and cannot orphan a binding.
+
+Usage:
+  liveone area devices add <area> <device>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <device>               Devices to add
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area devices add kew 10002
+  liveone area devices add kew 10002 --apply
+
+Exit codes:
+  0    success
+  1    the server refused the membership (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area devices remove
+
+Remove devices from the area — and their bindings with them.
+
+```
+Remove devices from the area — and their bindings with them.
+
+When to use:
+  🛑 Removing a member DELETES that member's bindings. This verb names them before it does,
+  and refuses to proceed silently.
+
+Usage:
+  liveone area devices remove <area> <device>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <device>               Devices to remove
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area devices remove kew 10002 --apply
+
+Exit codes:
+  0    success
+  1    the server refused the membership (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area devices set
+
+Declare the exact membership — anything omitted is removed.
+
+```
+Declare the exact membership — anything omitted is removed.
+
+When to use:
+  The full-replace form, matching the route. Prefer `add`/`remove` unless you genuinely mean
+  'these and only these'.
+
+Usage:
+  liveone area devices set <area> <device>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <device>               The complete membership
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area devices set kew 13 10002 --apply
+
+Exit codes:
+  0    success
+  1    the server refused the membership (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone area role
+
+Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
+
+```
+Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
+
+When to use:
+  Reach for this when an area renders a card empty, or a metric it should have is missing —
+  most often because the device is a member but nothing binds its points to a role.
+
+A binding is AREA-SCOPED ROLE RESOLUTION, not point metadata: it says which point fills
+`grid/rate` IN THIS AREA. The same point may be bound in one area and unbound in another.
+Priority is the slot's selection order, and `set` takes it from ARGUMENT ORDER.
+
+Usage:
+  liveone area role <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   The area's role→point bindings, grouped by slot.
+  set                    Fill one (role, metric) slot — priority follows argument order.  (writes)
+  clear                  Empty a (role, metric) slot, or every slot of a role.  (writes)
+
+Run `liveone area role <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area role list
+
+The area's role→point bindings, grouped by slot.
+
+```
+The area's role→point bindings, grouped by slot.
+
+Usage:
+  liveone area role list <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --points                   Also list every bindable point on the area's devices, marking which are unbound
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area role list kew
+  liveone area role list kew --points
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area role set
+
+Fill one (role, metric) slot — priority follows argument order.
+
+```
+Fill one (role, metric) slot — priority follows argument order.
+
+When to use:
+  Replaces THAT SLOT and leaves every other slot untouched. Naming several points sets the
+  slot's whole priority order in one write, which is how a fallback chain is expressed.
+
+Usage:
+  liveone area role set <area> <role> <metric> <point>... [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <role>                 e.g. grid, solar, battery, load, ev
+  <metric>               e.g. rate, value, energy, power, proportion
+  <point>                Points, highest priority first: pt_ id, logicalPath, or device:logicalPath
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area role set kew grid rate 'amber:bidi.grid.import/rate'
+  liveone area role set kew grid rate 'amber:bidi.grid.import/rate' 'amber:bidi.grid.export/rate' --apply
+
+Exit codes:
+  0    success
+  1    the server refused the binding (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+##### liveone area role clear
+
+Empty a (role, metric) slot, or every slot of a role.
+
+```
+Empty a (role, metric) slot, or every slot of a role.
+
+When to use:
+  Give a role alone to clear all of its metrics; give both to clear one slot. The area falls
+  back to union-default resolution for whatever is cleared.
+
+Usage:
+  liveone area role clear <area> <role> [metric] [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 An area: its ar_… id, integer handle, or display name
+  <role>                 The role to clear
+  [metric]               Optional: just this metric of that role
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone area role clear kew grid rate --apply
+  liveone area role clear kew grid --apply
+
+Exit codes:
+  0    success
+  1    the server refused the change (the reason says why)
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -2570,6 +3601,181 @@ Exit codes:
   130  interrupted
 ```
 
+### liveone owner
+
+Who owns devices, areas and dashboards — and how to hand them over.
+
+```
+Who owns devices, areas and dashboards — and how to hand them over.
+
+When to use:
+  Reach for this when something changes hands. For what an area is MADE of use `area`; for
+  what a dashboard shows use `dashboard`.
+
+Http-only, and admin-only for the write: every verb calls the deployed API as you and prints
+`target: <origin> as <you>` on stderr first.
+
+🛑 `transfer` moves ownership AND writes the share-back grants in ONE server-side
+transaction, and the server refuses a transfer after which a share-back recipient could not
+read a transferred device. Ownership carries access; handing it over without the grant is how
+someone loses sight of their own site.
+
+Usage:
+  liveone owner <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  show                   Who owns a device, an area or a dashboard.
+  transfer               Move devices/areas/dashboards to a new owner, and share them back — one transaction.  (writes)
+
+Run `liveone owner <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone owner show
+
+Who owns a device, an area or a dashboard.
+
+```
+Who owns a device, an area or a dashboard.
+
+When to use:
+  Ownership is what carries data access, so this is the first question before any transfer.
+  Give any ref — the verb works out which kind of thing it is.
+
+Usage:
+  liveone owner show <thing> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <thing>                A device, area or dashboard: its TypeID, handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone owner show kutis
+  liveone owner show 13
+
+Exit codes:
+  0    success
+  1    nothing of any kind matched that ref
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone owner transfer
+
+Move devices/areas/dashboards to a new owner, and share them back — one transaction.
+
+```
+Move devices/areas/dashboards to a new owner, and share them back — one transaction.
+
+When to use:
+  Reach for this when a site changes hands. 🛑 Read access is DERIVED from ownership plus
+  dashboard grants, so the moment ownership moves the outgoing owner loses access — and
+  granting is itself an owner-side action. Transfer and share-back therefore happen in ONE
+  server-side transaction: either both, or neither.
+
+The share-back is checked, not assumed: the server REFUSES a transfer after which a
+share-back recipient could not read a transferred device, and names the devices. That is
+what catches the common mistake of moving devices without the dashboard that shows them.
+
+`--cascade` expands an area to its member DEVICES only. Dashboards are never swept in
+implicitly — they are what grants are written against, so moving one silently would change
+who can see what. Any dashboard referencing a moving device is listed in the plan instead.
+
+Usage:
+  liveone owner transfer <to> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <to>                   The new owner: user_… id, email, or username
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --devices <a,b>            Devices to move (comma-separated refs)
+  --areas <a,b>              Areas to move (comma-separated refs)
+  --dashboards <a,b>         Dashboards to move (comma-separated refs)
+  --cascade                  Also move each named area's member devices
+  --share-back <user>        Users to grant on the moved dashboards (comma-separated); defaults to you
+  --no-share-back            Transfer with NO share-back — only the new owner and admins will see it
+  --role <viewer>            Grant role for the share-back (default: viewer)  (one of: viewer, admin)
+  --force                    Proceed even if the share-back would not restore read access
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone owner transfer karoline@example.com --areas=kutis --cascade --dashboards=kew,kew-stacked
+  liveone owner transfer karoline@example.com --areas=kutis --cascade --dashboards=kew --apply
+
+Exit codes:
+  0    success
+  1    the server refused the transfer (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
 ### liveone user
 
 The user directory — who exists, what they own. Admin-only.
@@ -2592,6 +3798,7 @@ Usage:
 Subcommands:
   list                   List users: Clerk id, email, devices owned.
   show                   One user's directory entry, with their owned devices.
+  find                   Search CLERK for a user — including one who owns nothing.
 
 Run `liveone user <subcommand> --help` for a subcommand's own options.
 
@@ -2707,6 +3914,60 @@ Examples:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone user find
+
+Search CLERK for a user — including one who owns nothing.
+
+```
+Search CLERK for a user — including one who owns nothing.
+
+When to use:
+  Use this when `list` does not show them. `list` is derived from device ownership, so a
+  newly invited user is invisible to it by definition — and that is the user a transfer is
+  usually about to hand something to.
+
+An exact email is matched as an email; anything else is a fuzzy search over name,
+username and email. Exit 1 when nothing matches, so it composes into a check.
+
+Usage:
+  liveone user find <search> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <search>               An email, or part of a name/username
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone user find karoline@example.com
+  liveone user find karoline
+
+Exit codes:
+  0    success
+  1    no user matched
   2    usage error
   3    authentication failure
   5    upstream failure

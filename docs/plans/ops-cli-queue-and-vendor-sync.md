@@ -2,9 +2,9 @@
 
 **Status:** in progress · raised 2026-09-09, out of the ingest stall of the same day
 
-**Landed:** §1 `liveone queue` (status/pause/resume/parallelism, plus `timing` and `outbox`, which
-this doc did not anticipate), and §3 `liveone sync`. **Not started:** §2, the two area sub-resources
-(`area devices`, `area role`).
+**Landed:** all three. §1 `liveone queue` (status/pause/resume/parallelism, plus `timing` and
+`outbox`, which this doc did not anticipate), §2 `liveone area devices` + `liveone area role`, and
+§3 `liveone sync`.
 
 ## Why
 
@@ -48,7 +48,7 @@ composes into a check.
   `flowControl.pin`, not passed per-publish: an unpinned value is silently overridden by the next
   published message, which would make an operator's incident-time change quietly revert.
 
-### 2. `liveone area devices` and `liveone area role` — rename as they land
+### 2. ✅ `liveone area devices` and `liveone area role` — rename as they land
 
 The two area sub-resources are already unreachable by CLI token, so they arrive together. Take the
 opportunity to drop the table names from the operator vocabulary:
@@ -66,6 +66,25 @@ and with `GET …/resolution`, which already reports "what resolved and how".
 
 Ordering is enforced server-side and the CLI should surface it: a bound point's device must already
 be a member, so `area devices` populates the pool and `area role` picks within it.
+
+**As shipped**, with three things the sketch above did not anticipate:
+
+- 🛑 **The routes are full replace; the verbs are incremental.** `PUT …/members` and
+  `PUT …/bindings` each take the whole collection. An operator thinks "bind `grid/rate` to these
+  three points", so every writer reads the current collection, changes one thing, and PUTs it all
+  back. Getting that wrong does not error — it deletes everything the caller did not mention. Hence
+  `rewriteSlot` (exported and tested directly, not reimplemented in the test) and a diff on every
+  write: `bindings: 12 → 15  (12 kept, 3 added, 0 removed)`. The kept count is the assertion.
+- **`role set` takes the whole slot, priority = argument order.** A `(role, metric)` slot is a
+  fallback CHAIN (`grid/rate` is export, import, spot), so setting it one point at a time would mean
+  three read-modify-write round trips to express one intent.
+- **A point ref may need its device.** In a composite area the same `logicalPath` routinely exists on
+  two members — Kutis and the Amber account both offer `bidi.grid.export/energy` — so a bare path
+  that matches more than one is REFUSED, naming both, rather than resolved by sort order.
+
+`area devices remove` names the bindings a shrink would destroy before doing it, and loads the point
+pool specifically to be able to (`replaceMembers` deletes a departing member's bindings, and a
+warning that cannot fire reads as "nothing to lose").
 
 ### 3. ✅ `liveone sync` — one shape for every syncable vendor
 
@@ -138,3 +157,49 @@ ownerless device is not syncable by a stranger holding a CLI token).
   the natural fixture, since it is the case that exposed the gap.
 - `liveone sync` over a range whose data is known absent, then a serving-store read proving the rows
   are queryable — the check `amber-sync` did not have.
+
+## What building §2 surfaced (input to the next two PRs)
+
+Wiring an area from a terminal meant reading the integrity model properly for the first time. Two
+findings are worth carrying forward rather than rediscovering.
+
+### Soft references in `jsonb` have no protection, and fail silently
+
+The declared foreign keys are sound — `points→devices`, `area_bindings→points`,
+`derivations.area_id→areas` and `derivations.output_point_id→points` are all RESTRICT, so the
+obvious destructive moves are already refused at the database. Every gap is a reference that lives
+inside `jsonb` instead, where no constraint can see it:
+
+| Reference | Stored as | On delete of the target |
+| --- | --- | --- |
+| `derivations.source_points` | `jsonb` uuid refs | dangles — the detector survives and **never fires again** |
+| `users.default_dashboard_id` | plain column, **no FK** | dangles — the user lands somewhere broken, days later |
+| `dashboards.doc` `area`/`device` refs | `jsonb` TypeIDs | `resolveScope` **silently drops** the unresolvable one |
+
+All three fail the same way: no error, no log, something that quietly stops working. Two have already
+happened on prod — a deleted-area ref inside the retired `legacy-share-…` dashboard, and the
+landing-page hazard `liveone dashboard delete` now warns about.
+
+🛑 `derived_intervals` CASCADEs from `derivations`, so deleting a detector **destroys its run
+history**. That is the one cascade worth pausing over: the history is not reconstructible from the
+derivation row, only by recompute from readings.
+
+The intended fix is a shared `assertNotReliedUpon(kind, id)` at the API boundary — 409 with the
+dependents NAMED, `?force=true` to override — because only the boundary can see the `jsonb` refs an
+FK cannot. It is the same shape as `transferOwnership`'s share-back check: refuse, and say exactly
+what would break.
+
+### A run detector cannot live on a composite area, by design
+
+`ensureRunDetector` refuses one with `area-not-probed`:
+
+> This area's own handle names no device, so `capabilitiesForDevice` never probes it — a run
+> detector here would be invisible.
+
+So a detector must sit on a device-backed area-of-one, which is why the Kutis EV detector is on
+handle 13 and not on the composite that is now the real site. The refusal is correct — it declines
+to create something that could never light up a card — but it means run detection is pinned to the
+physical layer while everything else about a site has moved to the semantic one.
+
+That is the case for making a detector bind by ROLE and attach to one or more DEVICES, with no area
+relationship at all. Scoped as its own change; it is a data-model move, not a CLI one.

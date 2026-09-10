@@ -23,7 +23,6 @@ import {
   type EnergyFlowMatrixWithMetrics,
 } from "@/lib/energy-flow-matrix";
 import {
-  atMostOne,
   BASE_URL_FLAG,
   bool,
   HISTORY_FLAGS,
@@ -35,6 +34,7 @@ import {
   toCsv,
   usage,
 } from "../shared";
+import { DEVICES_SPEC, ROLE_SPEC, WIRING_HANDLERS } from "./wiring";
 
 const AREA_ARG = {
   name: "area",
@@ -66,14 +66,18 @@ async function resolveArea(s: ApiSession, ref: string): Promise<WireArea> {
 export const areaCommand = defineCommand({
   name: "area",
   summary:
-    "Inspect areas — membership, bindings, latest values, history, flows.",
+    "Inspect and WIRE areas — devices, role bindings, latest values, history, flows.",
   when:
     "Reach for this for the SEMANTIC layer: what an area is made of and what it measured. For the\n" +
     "physical/vendor layer use `device`; for what a dashboard shows use `dashboard`.",
   description:
-    "Read-only, and http-only: every verb calls the deployed API as you (`liveone auth login`),\n" +
-    "and prints `target: <origin> as <you>` on stderr first — read it to know which environment\n" +
-    "answered. Ids are per-environment.",
+    "Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints\n" +
+    "`target: <origin> as <you>` on stderr first — read it to know which environment answered.\n" +
+    "Ids are per-environment.\n" +
+    "\n" +
+    "The reads (list, show, latest, history, flows) change nothing. The two WIRING sub-domains do:\n" +
+    "`devices` sets which devices an area is made of, and `role` sets which point fills each\n" +
+    "(role, metric) slot. Both are dry-run by default and state their change as a diff.",
   uses: ["api"],
   subcommands: {
     list: {
@@ -189,6 +193,8 @@ export const areaCommand = defineCommand({
         "liveone area flows daylesford --start=2026-01-01 --end=2026-06-30 --format=csv --out=flows.csv",
       ],
     },
+    devices: DEVICES_SPEC,
+    role: ROLE_SPEC,
   },
 } satisfies CommandSpec);
 
@@ -425,13 +431,20 @@ const HANDLERS: Record<string, (ctx: Ctx) => Promise<number>> = {
   flows: runFlows,
 };
 
-/** Run whichever `area` verb was selected (the LAST path element under `liveone`). */
+/**
+ * Run whichever `area` verb was selected.
+ *
+ * 🛑 Keyed on the FULL path under `area`, not its last element. `area devices set` and
+ * `area role set` share a last element, and dispatching on it would silently route one to the
+ * other — a membership replace arriving at the binding writer, or the reverse.
+ */
 export async function runArea(ctx: Ctx): Promise<number> {
-  const verb = ctx.subcommandPath[ctx.subcommandPath.length - 1];
-  const handler = HANDLERS[verb];
+  const path = ctx.subcommandPath.slice(1); // drop "area"
+  const handler =
+    WIRING_HANDLERS[path.join(".")] ?? HANDLERS[path[path.length - 1] ?? ""];
   if (!handler)
     throw usage(
-      `unknown area command "${verb}"`,
+      `unknown area command "${path.join(" ")}"`,
       "this verb has no handler",
       "run `npm run liveone -- area --help`",
     );

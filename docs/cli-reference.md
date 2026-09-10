@@ -50,18 +50,37 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone dashboard history](../scripts/ops/CLI_README.md#liveone-dashboard-history) — The dashboard's edit history — who changed it, when, revision by revision.
     - [liveone dashboard restore](../scripts/ops/CLI_README.md#liveone-dashboard-restore) — Restore a recorded revision — as a NEW revision, never a counter rewind.  _(writes)_
     - [liveone dashboard backfill-history](../scripts/ops/CLI_README.md#liveone-dashboard-backfill-history) — Seed a history row for every dashboard whose current revision has none.  _(writes)_
+    - [liveone dashboard share](../scripts/ops/CLI_README.md#liveone-dashboard-share) — Named users granted on a dashboard (writes: add, remove, set).
+      - [liveone dashboard share list](../scripts/ops/CLI_README.md#liveone-dashboard-share-list) — The dashboard's members, and each one's grant role.
+      - [liveone dashboard share add](../scripts/ops/CLI_README.md#liveone-dashboard-share-add) — Grant users on a dashboard, keeping existing members.  _(writes)_
+      - [liveone dashboard share remove](../scripts/ops/CLI_README.md#liveone-dashboard-share-remove) — Revoke users from a dashboard, keeping the rest.  _(writes)_
+      - [liveone dashboard share set](../scripts/ops/CLI_README.md#liveone-dashboard-share-set) — Declare the exact membership — anyone omitted is revoked.  _(writes)_
+    - [liveone dashboard link](../scripts/ops/CLI_README.md#liveone-dashboard-link) — Anonymous share links for a dashboard (writes: create, revoke).
+      - [liveone dashboard link list](../scripts/ops/CLI_README.md#liveone-dashboard-link-list) — The dashboard's links: label, created, expiry, last use, revoked.
+      - [liveone dashboard link create](../scripts/ops/CLI_README.md#liveone-dashboard-link-create) — Mint a new share link.  _(writes)_
+      - [liveone dashboard link revoke](../scripts/ops/CLI_README.md#liveone-dashboard-link-revoke) — Revoke a share link. Idempotent.  _(writes)_
+    - [liveone dashboard delete](../scripts/ops/CLI_README.md#liveone-dashboard-delete) — Delete a dashboard — and every grant and share link on it.  _(writes)_
   - [liveone device](../scripts/ops/CLI_README.md#liveone-device) — Inspect devices — config, metadata, points, latest values, history.
     - [liveone device list](../scripts/ops/CLI_README.md#liveone-device-list) — List the devices you can read: id, handle, vendor, status, name.
     - [liveone device show](../scripts/ops/CLI_README.md#liveone-device-show) — A device's full aggregate: metadata, config, adapter state, capabilities, points.
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
     - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
-  - [liveone area](../scripts/ops/CLI_README.md#liveone-area) — Inspect areas — membership, bindings, latest values, history, flows.
+  - [liveone area](../scripts/ops/CLI_README.md#liveone-area) — Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
     - [liveone area list](../scripts/ops/CLI_README.md#liveone-area-list) — List the areas you can read: id, handle, name.
     - [liveone area show](../scripts/ops/CLI_README.md#liveone-area-show) — An area's full aggregate: meta, members, bindings, capabilities.
     - [liveone area latest](../scripts/ops/CLI_README.md#liveone-area-latest) — The area's current values, from the serving cache.
     - [liveone area history](../scripts/ops/CLI_README.md#liveone-area-history) — Time series for an area, in the OpenNEM shape /api/history serves.
     - [liveone area flows](../scripts/ops/CLI_README.md#liveone-area-flows) — The rolled-up source×load energy-flow matrix (the Sankey) for a period.
+    - [liveone area devices](../scripts/ops/CLI_README.md#liveone-area-devices) — Which devices an area is made of (writes: add, remove, set).
+      - [liveone area devices list](../scripts/ops/CLI_README.md#liveone-area-devices-list) — The area's member devices.
+      - [liveone area devices add](../scripts/ops/CLI_README.md#liveone-area-devices-add) — Add one or more devices to the area, keeping the rest.  _(writes)_
+      - [liveone area devices remove](../scripts/ops/CLI_README.md#liveone-area-devices-remove) — Remove devices from the area — and their bindings with them.  _(writes)_
+      - [liveone area devices set](../scripts/ops/CLI_README.md#liveone-area-devices-set) — Declare the exact membership — anything omitted is removed.  _(writes)_
+    - [liveone area role](../scripts/ops/CLI_README.md#liveone-area-role) — Which point fills an area's (role, metric) slot, and in what order (writes: set, clear).
+      - [liveone area role list](../scripts/ops/CLI_README.md#liveone-area-role-list) — The area's role→point bindings, grouped by slot.
+      - [liveone area role set](../scripts/ops/CLI_README.md#liveone-area-role-set) — Fill one (role, metric) slot — priority follows argument order.  _(writes)_
+      - [liveone area role clear](../scripts/ops/CLI_README.md#liveone-area-role-clear) — Empty a (role, metric) slot, or every slot of a role.  _(writes)_
   - [liveone derivation](../scripts/ops/CLI_README.md#liveone-derivation) — Derived signals — run detectors and the HWS model: list, create, enable, recompute.
     - [liveone derivation list](../scripts/ops/CLI_README.md#liveone-derivation-list) — The derivations on an area: id, kind, role, enabled, sources.
     - [liveone derivation create](../scripts/ops/CLI_README.md#liveone-derivation-create) — Add a derivation to an area.  _(writes)_
@@ -70,9 +89,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone derivation disable](../scripts/ops/CLI_README.md#liveone-derivation-disable) — Stop a derivation being recomputed. Its existing rows are untouched.  _(writes)_
     - [liveone derivation recompute](../scripts/ops/CLI_README.md#liveone-derivation-recompute) — Rebuild ONE derivation's intervals over a window.  _(writes)_
     - [liveone derivation intervals](../scripts/ops/CLI_README.md#liveone-derivation-intervals) — The rows a derivation has produced — runs, newest first.
+  - [liveone owner](../scripts/ops/CLI_README.md#liveone-owner) — Who owns devices, areas and dashboards — and how to hand them over.
+    - [liveone owner show](../scripts/ops/CLI_README.md#liveone-owner-show) — Who owns a device, an area or a dashboard.
+    - [liveone owner transfer](../scripts/ops/CLI_README.md#liveone-owner-transfer) — Move devices/areas/dashboards to a new owner, and share them back — one transaction.  _(writes)_
   - [liveone user](../scripts/ops/CLI_README.md#liveone-user) — The user directory — who exists, what they own. Admin-only.
     - [liveone user list](../scripts/ops/CLI_README.md#liveone-user-list) — List users: Clerk id, email, devices owned.
     - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.
+    - [liveone user find](../scripts/ops/CLI_README.md#liveone-user-find) — Search CLERK for a user — including one who owns nothing.
   - [liveone queue](../scripts/ops/CLI_README.md#liveone-queue) — The observations ingest path — per-lane status, and the levers to unblock it.
     - [liveone queue status](../scripts/ops/CLI_README.md#liveone-queue-status) — Is ingest flowing? Per-lane waiting / in-flight / parallelism, and minutes since the last durable write.
     - [liveone queue timing](../scripts/ops/CLI_README.md#liveone-queue-timing) — How long each batch actually took — per-message wait, duration, attempts and outcome.
