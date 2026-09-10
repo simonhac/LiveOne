@@ -18,17 +18,49 @@ import { buildObservations, RawObservationInput } from "./publisher";
 import { persistOutbox } from "./outbox";
 import { publishObservationMessage } from "./publish";
 import { buildChunkedMessages } from "./chunk";
+import { qualityRank } from "@/lib/data-quality";
 
 /**
  * Accumulates raw observation inputs over the course of a poll, preserving
  * insertion order, so they can be flushed as a single combined message at
  * session close.
+ *
+ * 🛑 **One observation per addressable row.** A poll may call several vendor endpoints, and two of
+ * them can legitimately report the same reading — see `add()`. The collector is the only place that
+ * can notice, because the fetches are independent functions that share nothing but this buffer.
  */
 export interface PollCollector {
-  /** Append observation inputs (in insertion order). */
+  /**
+   * Append observation inputs, MERGING any that address a row already held.
+   *
+   * The address is `(pointUid, interval, measurementTime)` — precisely what the serving store keys
+   * on — and the survivor is whichever one the store itself would have ended up with:
+   *
+   *   • `raw` keeps the FIRST, because `insertRaw` is `ON CONFLICT DO NOTHING`.
+   *   • `5m` / `1d` keep the most-final `data_quality` (`qualityRank`), last-wins on a tie, because
+   *     those are upserts.
+   *
+   * So merging here changes no stored value. What it removes is the redundant row — and with it a
+   * whole class of failure, since a duplicate PK inside one `ON CONFLICT DO UPDATE` statement makes
+   * Postgres reject the ENTIRE statement (SQLSTATE 21000). `lib/readings/dao.ts` collapses again at
+   * the writer, which is what protects replays of already-built payloads; this is what stops us
+   * building them.
+   *
+   * The live case: Amber's `usage` and `pricing` fetches both report a channel's `perKwh` — usage
+   * graded `b`illable, pricing graded `a`ctual — and a backfill runs both into one collector. Each
+   * is right to report it (only `pricing` has current/forecast intervals, only `usage` has the
+   * billed grading), so this is a genuine overlap to resolve, not a bug in either.
+   */
   add(inputs: RawObservationInput[]): void;
-  /** All accumulated inputs, in insertion order. */
+  /** All accumulated inputs, in first-appearance order, one per address. */
   readonly observations: RawObservationInput[];
+  /**
+   * How many inputs were merged into an existing row rather than appended.
+   *
+   * Surfaced (not silently swallowed) because a rising count on a vendor that should have no
+   * overlapping endpoints is the visible edge of a producer bug.
+   */
+  readonly mergedCount: number;
   /**
    * Which flow-control lane this poll's messages ride.
    *
@@ -38,6 +70,11 @@ export interface PollCollector {
   readonly lane: ObservationLane;
 }
 
+/** The address an observation writes to — the serving store's key, not the vendor's. */
+function observationAddress(input: RawObservationInput): string {
+  return `${input.point.pointUid}|${input.interval}|${input.measurementTimeMs}`;
+}
+
 /**
  * Create a new poll collector that buffers observation inputs in memory.
  */
@@ -45,15 +82,34 @@ export function createPollCollector(opts?: {
   lane?: ObservationLane;
 }): PollCollector {
   const buffer: RawObservationInput[] = [];
+  const indexByAddress = new Map<string, number>();
   const lane: ObservationLane = opts?.lane ?? "live";
+  let mergedCount = 0;
   return {
     add(inputs: RawObservationInput[]): void {
       for (const input of inputs) {
-        buffer.push(input);
+        const address = observationAddress(input);
+        const at = indexByAddress.get(address);
+        if (at === undefined) {
+          indexByAddress.set(address, buffer.length);
+          buffer.push(input);
+          continue;
+        }
+        mergedCount++;
+        // Mirror the store, per interval — see the `add()` doc.
+        if (input.interval === "raw") continue;
+        if (
+          qualityRank(input.agg?.dataQuality) >=
+          qualityRank(buffer[at].agg?.dataQuality)
+        )
+          buffer[at] = input;
       }
     },
     get observations(): RawObservationInput[] {
       return buffer;
+    },
+    get mergedCount(): number {
+      return mergedCount;
     },
     lane,
   };
@@ -146,6 +202,9 @@ export async function publishPoll(
     console.log(
       `[PollCollector] Published poll for system ${device.id} on lane ${collector.lane}: ` +
         `${messages.length} message(s), ${totalObservations} observations, ` +
+        // Two endpoints reporting one reading is expected for Amber and nothing else — so this
+        // number appearing on another vendor is worth chasing. See PollCollector.add.
+        (collector.mergedCount ? `${collector.mergedCount} merged, ` : "") +
         `session ${session.sessionId}`,
     );
   } catch (error) {

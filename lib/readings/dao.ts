@@ -31,6 +31,7 @@ import {
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { DeviceRegistry, RegistryCache } from "@/lib/registry";
 import { Device, Point, type DeviceId, type PointId } from "@/lib/ids";
+import { qualityRank } from "@/lib/data-quality";
 // The `points` identity table is broadly importable (NOT one of the three seam-restricted hot symbols),
 // and joining it is how the rid-keyed twins recover the device address they no longer carry inline.
 import { points } from "@/lib/db/planetscale/schema";
@@ -970,7 +971,7 @@ async function insert5m(
   );
   const db = exec ?? requirePlanetscaleDb();
   // SEAM: rid-keyed value-building.
-  const values = rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     pointRid: ridByPoint.get(r.point)!,
     intervalEnd: new Date(r.intervalEndMs),
     sessionId: r.sessionId,
@@ -984,6 +985,11 @@ async function insert5m(
     errorCount: r.errorCount,
     dataQuality: r.dataQuality,
   }));
+  const values = collapseByKey(
+    mapped,
+    (v) => `${v.pointRid}|${v.intervalEnd.getTime()}`,
+    (v) => qualityRank(v.dataQuality),
+  );
   const insert = db.insert(pointReadingsAgg5m).values(values);
   // The owned-column difference test behind `skipUnchanged` — one IS DISTINCT FROM per column the
   // SET writes (null-safe, unlike <>). `data_quality` joins the list only when this writer owns it
@@ -1050,6 +1056,46 @@ async function insert5m(
   return { written: res.length };
 }
 
+/**
+ * Collapse rows that share a PRIMARY KEY, keeping the most-final `data_quality`.
+ *
+ * 🛑 Postgres refuses `ON CONFLICT DO UPDATE` when one command proposes the same constrained key
+ * twice — *"cannot affect row a second time"* (SQLSTATE 21000) — and it refuses the WHOLE statement,
+ * so a single collision discards every other row with it. This is not a size limit and no batch cap
+ * prevents it: two rows fail exactly as 1,652 do.
+ *
+ * It is reached whenever one batch spans a settling boundary. The case that cost us five weeks of
+ * Amber data on 2026-09-09: `usage` and `pricing` are two API fetches that BOTH report a channel's
+ * `perKwh`, and a backfill runs them into ONE collector, so every interval the two windows shared
+ * arrived twice — same value, graded `b` by one and `a` by the other.
+ * See `docs/plans/ingest-head-of-line-hardening.md`.
+ *
+ * Last-wins on a tie, which is what consecutive statements would have done; otherwise the higher
+ * `qualityRank` wins, so a re-fetch can never downgrade a billable interval back to a forecast.
+ * Order is preserved (first appearance), because a stable statement is easier to diff in a log.
+ */
+function collapseByKey<T>(
+  rows: T[],
+  keyOf: (row: T) => string,
+  // Default 0 makes every row tie, i.e. plain last-wins — right for a table with no quality column.
+  rankOf: (row: T) => number = () => 0,
+): T[] {
+  const at = new Map<string, number>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const key = keyOf(row);
+    const seen = at.get(key);
+    if (seen === undefined) {
+      at.set(key, out.length);
+      out.push(row);
+      continue;
+    }
+    // >= keeps last-wins on an equal rank.
+    if (rankOf(row) >= rankOf(out[seen])) out[seen] = row;
+  }
+  return out;
+}
+
 /** point_readings_agg_1d — always upsert (a day is recomputed as late readings land). */
 async function upsert1d(
   rows: Agg1dUpsert[],
@@ -1061,7 +1107,7 @@ async function upsert1d(
   );
   const db = exec ?? requirePlanetscaleDb();
   // SEAM: rid-keyed value-building.
-  const values = rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     pointRid: ridByPoint.get(r.point)!,
     day: r.day,
     avg: r.avg,
@@ -1072,6 +1118,9 @@ async function upsert1d(
     sampleCount: r.sampleCount,
     errorCount: r.errorCount,
   }));
+  // Same PK-collision refusal as the 5m upsert. These rows carry no `data_quality`, so every rank
+  // ties and this is plain last-wins — correct for a day that is recomputed as late readings land.
+  const values = collapseByKey(mapped, (v) => `${v.pointRid}|${v.day}`);
   const res = await db
     .insert(pointReadingsAgg1d)
     .values(values)
