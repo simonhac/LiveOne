@@ -89,6 +89,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone owner](#liveone-owner)
     - [liveone owner show](#liveone-owner-show)
     - [liveone owner transfer](#liveone-owner-transfer)  _(writes)_
+  - [liveone automation](#liveone-automation)
+    - [liveone automation list](#liveone-automation-list)
+    - [liveone automation show](#liveone-automation-show)
+    - [liveone automation create-exercise](#liveone-automation-create-exercise)  _(writes)_
+    - [liveone automation enable](#liveone-automation-enable)  _(writes)_
+    - [liveone automation disable](#liveone-automation-disable)  _(writes)_
+    - [liveone automation delete](#liveone-automation-delete)  _(writes)_
   - [liveone user](#liveone-user)
     - [liveone user list](#liveone-user-list)
     - [liveone user show](#liveone-user-show)
@@ -135,6 +142,7 @@ Subcommands:
   area                   Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
   derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
   owner                  Who owns devices, areas and dashboards — and how to hand them over.
+  automation             Scheduled and reactive rules — including the generator exercise run.
   user                   The user directory — who exists, what they own. Admin-only.
   queue                  The observations ingest path — per-lane status, and the levers to unblock it.
   sync                   Re-fetch a historical window from a device's vendor, on the backfill lane.  (writes)
@@ -3770,6 +3778,397 @@ Examples:
 Exit codes:
   0    success
   1    the server refused the transfer (the reason says why)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone automation
+
+Scheduled and reactive rules — including the generator exercise run.
+
+```
+Scheduled and reactive rules — including the generator exercise run.
+
+When to use:
+  Reach for this to see or change what fires by itself. For what a run DETECTOR measures use
+  `derivation`; automations act on what those detectors report.
+
+Http-only: every verb calls the deployed API as you and prints `target: <origin> as <you>`
+on stderr first. There is no --via=db, because the checks that make a deferred command safe
+(ownership of the action point, the trigger/action pairing, the load point's unit) are all
+server-side — a direct write would store a rule none of them had seen.
+
+🛑 Writers are dry-run by default. `create-exercise` creates something that starts an engine
+on a schedule, with nobody present; read the printed rule before --apply.
+
+Usage:
+  liveone automation <subcommand> [options]
+
+  Read-only. This command changes nothing.
+
+Subcommands:
+  list                   Every automation on an area, and what each one does.
+  show                   One automation in full, including the last decision the evaluator made.
+  create-exercise        Schedule a generator exercise run — unless it has already run under load recently.  (writes)
+  enable                 Re-enable a disabled automation.  (writes)
+  disable                Stop an automation being evaluated, without deleting it.  (writes)
+  delete                 Delete an automation.  (writes)
+
+Run `liveone automation <subcommand> --help` for a subcommand's own options.
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation list
+
+Every automation on an area, and what each one does.
+
+```
+Every automation on an area, and what each one does.
+
+When to use:
+  The first call — `au_` ids are per-environment, so start here before any other verb.
+
+One line each: id, enabled, a summary of the trigger, name. A row whose stored trigger
+could not be parsed shows UNREADABLE rather than a guess — it is still listable, and still
+deletable, which is the point.
+
+Usage:
+  liveone automation list <area> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation list daylesford
+
+Exit codes:
+  0    success
+  1    the area has no automations
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation show
+
+One automation in full, including the last decision the evaluator made.
+
+```
+One automation in full, including the last decision the evaluator made.
+
+When to use:
+  Reach for this to answer 'why didn't it run last Thursday'. For an exercise rule the
+  outcome, the reason and the load evidence are all recorded on the row.
+
+There is no GET-by-id route, so the automation is resolved from the area's list — which is
+why this verb takes the area as well.
+
+Usage:
+  liveone automation show <area> <automation> [options]
+
+  Read-only. This command changes nothing.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation show daylesford 'Generator exercise'
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation create-exercise
+
+Schedule a generator exercise run — unless it has already run under load recently.
+
+```
+Schedule a generator exercise run — unless it has already run under load recently.
+
+When to use:
+  Reach for this for anti-wet-stacking: a diesel that idles for weeks glazes its bores. The
+  rule fires on a weekly wall-clock slot and SKIPS itself when the engine has already done
+  real work, so a generator in normal use is never exercised unnecessarily.
+
+🛑 This creates something that STARTS AN ENGINE, on a schedule, unattended. Dry-run is the
+default; read the printed rule before `--apply`.
+
+Three points are involved and they are not interchangeable:
+  --derivation    the run detector, which answers 'is it running' and 'did it run'
+  --load-point    a power point in WATTS (negative = import) that says how HARD it ran;
+                  the DeepSea controller has no CTs, so load is read from the inverter
+  --action-point  the writable run-request point the run is commanded through
+
+The rule never dispatches while a run is already in progress: a second request would
+recompute the hub's stop deadline from now and truncate the run someone else asked for.
+
+Times are the AREA's local wall clock and stay that way across daylight saving.
+
+Usage:
+  liveone automation create-exercise <area> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --derivation <dx_|role>    The run detector: dx_… id, its name, or its role (e.g. generator)  (required)
+  --load-point <path|pt_>    Power point in W used to judge load (e.g. bidi.grid/power)  (required)
+  --action-point <path|pt_>  Writable run-request point (e.g. source.generator.control.request/duration)  (required)
+  --weekdays <thu>           Comma-separated: sun, mon, tue, wed, thu, fri, sat  (required)
+  --time <09:00>             24-hour local wall-clock start time (not 02:00–02:59)  (required)
+  --minutes <30>             How long to run for. Must be > 0 — 0 is a STOP, not a run  (required)
+  --name <string>            Name (default: 'Generator exercise')
+  --grace-minutes <number>   How long a missed slot stays due before it is written off (default 180)
+  --min-minutes <number>     Continuous loaded minutes that count as already exercised (default 30)
+  --min-load-kw <number>     Load floor in kW — an idle run does not clear wet stacking (default 1.5)
+  --dip-seconds <number>     Brief sub-threshold dips bridged rather than splitting a stretch (default 180)
+  --within-days <number>     How far back to look for such a run (default 7)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone automation create-exercise daylesford --derivation=generator --load-point=bidi.grid/power --action-point=source.generator.control.request/duration --weekdays=thu --time=09:00 --minutes=30
+
+Exit codes:
+  0    success
+  1    the server refused the rule (422) — nothing was written
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation enable
+
+Re-enable a disabled automation.
+
+```
+Re-enable a disabled automation.
+
+When to use:
+  Re-enabling an exercise rule inside a slot it has already dealt with does NOT give it a
+  second chance to fire — the consumed-slot key survives the toggle, by design.
+
+Usage:
+  liveone automation enable <area> <automation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation disable
+
+Stop an automation being evaluated, without deleting it.
+
+```
+Stop an automation being evaluated, without deleting it.
+
+When to use:
+  The reversible way to park a rule — useful before site work, when an unattended engine
+  start would be unwelcome.
+
+Usage:
+  liveone automation disable <area> <automation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone automation delete
+
+Delete an automation.
+
+```
+Delete an automation.
+
+When to use:
+  Permanent. `disable` is the reversible option and is almost always the one you want.
+
+Usage:
+  liveone automation delete <area> <automation> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <area>                 The area: ar_… id, legacy handle, slug or name
+  <automation>           The automation: au_… id or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
   2    usage error
   3    authentication failure
   5    upstream failure

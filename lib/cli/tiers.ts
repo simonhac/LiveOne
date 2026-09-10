@@ -84,6 +84,9 @@ export const TIERS: TierManifest = {
     // The `owner` domain — ownership transfer with share-back, the one CLI that can move an object
     // out of a user's control.
     "scripts/ops/owner/index.ts",
+    // The `automation` domain — the deferred-action rules, including the one that can start a
+    // diesel engine on a schedule.
+    "scripts/ops/automation/index.ts",
     // Cross-domain plumbing (flag groups, ref resolution, the shared history verb).
     "scripts/ops/shared.ts",
     // The `api` escape-hatch verb — composed by liveone.ts, same rules as the other modules.

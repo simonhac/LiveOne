@@ -92,6 +92,13 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
   - [liveone owner](../scripts/ops/CLI_README.md#liveone-owner) — Who owns devices, areas and dashboards — and how to hand them over.
     - [liveone owner show](../scripts/ops/CLI_README.md#liveone-owner-show) — Who owns a device, an area or a dashboard.
     - [liveone owner transfer](../scripts/ops/CLI_README.md#liveone-owner-transfer) — Move devices/areas/dashboards to a new owner, and share them back — one transaction.  _(writes)_
+  - [liveone automation](../scripts/ops/CLI_README.md#liveone-automation) — Scheduled and reactive rules — including the generator exercise run.
+    - [liveone automation list](../scripts/ops/CLI_README.md#liveone-automation-list) — Every automation on an area, and what each one does.
+    - [liveone automation show](../scripts/ops/CLI_README.md#liveone-automation-show) — One automation in full, including the last decision the evaluator made.
+    - [liveone automation create-exercise](../scripts/ops/CLI_README.md#liveone-automation-create-exercise) — Schedule a generator exercise run — unless it has already run under load recently.  _(writes)_
+    - [liveone automation enable](../scripts/ops/CLI_README.md#liveone-automation-enable) — Re-enable a disabled automation.  _(writes)_
+    - [liveone automation disable](../scripts/ops/CLI_README.md#liveone-automation-disable) — Stop an automation being evaluated, without deleting it.  _(writes)_
+    - [liveone automation delete](../scripts/ops/CLI_README.md#liveone-automation-delete) — Delete an automation.  _(writes)_
   - [liveone user](../scripts/ops/CLI_README.md#liveone-user) — The user directory — who exists, what they own. Admin-only.
     - [liveone user list](../scripts/ops/CLI_README.md#liveone-user-list) — List users: Clerk id, email, devices owned.
     - [liveone user show](../scripts/ops/CLI_README.md#liveone-user-show) — One user's directory entry, with their owned devices.
