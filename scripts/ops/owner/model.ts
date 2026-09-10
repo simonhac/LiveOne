@@ -7,6 +7,7 @@
 import { EXIT, failWith } from "@/lib/cli/cli";
 import { type ApiSession } from "@/lib/cli-kit/api-session";
 import { resolveRef } from "../shared";
+import { scanDocRefs } from "@/lib/dashboard/doc-refs";
 
 export interface WireDeviceRow {
   id: string;
@@ -95,9 +96,9 @@ export async function areaMemberDevices(
 /**
  * Which dashboards reference any of these areas/devices?
  *
- * 🛑 A dashboard doc addresses its subjects with `"area": "ar_…"` / `"device": "dv_…"` keys, so this
- * walks the doc for those keys rather than substring-matching the serialised JSON — a substring
- * scan would also hit an id that happens to appear inside a label or a saved query.
+ * The walk itself is `scanDocRefs` (`lib/dashboard/doc-refs.ts`), which is where the
+ * three-walkers-and-why note lives. Re-exported here so the CLI's own tests keep addressing it at
+ * this path.
  *
  * 🛑 It is used to WARN, never to auto-include. A cascade that silently swept in dashboards would
  * transfer documents the operator never named, and dashboards are the thing share-back grants are
@@ -105,27 +106,7 @@ export async function areaMemberDevices(
  * warning safe to ignore is server-side: `transferOwnership` refuses a transfer whose share-back
  * would not restore read access, so forgetting a dashboard fails loudly rather than silently.
  */
-export function scanDocRefs(doc: unknown): Set<string> {
-  const found = new Set<string>();
-  const walk = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const x of node) walk(x);
-      return;
-    }
-    if (!node || typeof node !== "object") return;
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (
-        (k === "area" || k === "device") &&
-        typeof v === "string" &&
-        /^(ar|dv)_[0-9a-z]{26}$/.test(v)
-      )
-        found.add(v);
-      else walk(v);
-    }
-  };
-  walk(doc);
-  return found;
-}
+export { scanDocRefs };
 
 export async function dashboardsReferencing(
   s: ApiSession,

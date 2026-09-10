@@ -47,6 +47,7 @@
         "lib/readings/**",
         "lib/registry/**",
         "lib/db/planetscale/index.ts",
+        "lib/integrity/ledger.ts",
         "**/__tests__/**"
       ],
       "rules": { "no-restricted-imports": "off" }

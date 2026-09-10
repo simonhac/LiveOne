@@ -173,10 +173,13 @@ inside `jsonb` instead, where no constraint can see it:
 | Reference | Stored as | On delete of the target |
 | --- | --- | --- |
 | `derivations.source_points` | `jsonb` uuid refs | dangles — the detector survives and **never fires again** |
-| `users.default_dashboard_id` | plain column, **no FK** | dangles — the user lands somewhere broken, days later |
+| `users.default_dashboard_id` | uuid column, FK `ON DELETE SET NULL` | **silently cleared** — the user lands somewhere else, days later, with nothing connecting it to the deletion |
 | `dashboards.doc` `area`/`device` refs | `jsonb` TypeIDs | `resolveScope` **silently drops** the unresolvable one |
 
-All three fail the same way: no error, no log, something that quietly stops working. Two have already
+All three fail the same way: no error, no log, something that quietly stops working — and note that
+the middle one has an FK and fails anyway. `SET NULL` guarantees the column never dangles, which is a
+different promise from the user noticing. (Corrected 2026-09-10; this row previously said "no FK".
+The census that now proves such claims is `lib/integrity/ledger.ts`.) Two have already
 happened on prod — a deleted-area ref inside the retired `legacy-share-…` dashboard, and the
 landing-page hazard `liveone dashboard delete` now warns about.
 

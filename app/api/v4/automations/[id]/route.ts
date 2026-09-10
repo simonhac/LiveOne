@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import { requireAuth } from "@/lib/api-auth";
 import { loadAreaForAuth } from "@/lib/areas/http";
 import { Automation } from "@/lib/ids";
@@ -213,6 +214,13 @@ export async function PATCH(
  * revoking a token). Gating it on device ownership would also mean an admin could not clear an
  * automation belonging to a device whose owner has left, which is a real administrative need.
  * PATCH cannot be argued the same way precisely because PATCH can arm.
+ *
+ * `refuseIfReliedUpon` is wired here even though NOTHING references an automation today, and it is
+ * wired for exactly that reason: the gate is the place the next reference has to be declared. An
+ * empty finder that is called is a question with the answer "none"; a finder nobody calls is a
+ * question nobody asked, which is how `automations.trigger` came to reference a derivation for a
+ * year with no FK and no check. (`point_commands.requested_by` holds `automation:au_…` and is
+ * deliberately not counted — an audit row must outlive what it audited.)
  */
 export async function DELETE(
   request: NextRequest,
@@ -222,7 +230,10 @@ export async function DELETE(
   const loaded = await loadOwnedAutomation(request, id);
   if ("error" in loaded) return loaded.error;
 
+  const relied = await refuseIfReliedUpon(request, "automation", loaded.row.id);
+  if ("response" in relied) return relied.response;
+
   const removed = await store.remove(loaded.row.id);
   if (!removed) return notFound();
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, forced: relied.forced });
 }

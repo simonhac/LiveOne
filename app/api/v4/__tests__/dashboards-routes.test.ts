@@ -13,6 +13,7 @@
  * 503 device-mapping branch, and a DAO that throws.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import { NextRequest, NextResponse } from "next/server";
 import { Area, Device } from "@/lib/ids";
 
@@ -26,6 +27,9 @@ jest.mock("@/lib/api-auth", () => ({
 jest.mock("@/lib/areas/list", () => ({ listReadableAreas: jest.fn() }));
 jest.mock("@/lib/devices/list", () => ({ listReadableDevices: jest.fn() }));
 jest.mock("@/lib/areas/http", () => ({ findReadableArea: jest.fn() }));
+// The referential-integrity gate — a collaborator with its own tests (lib/integrity). Mocked so
+// these stay route tests; that it is CALLED, and that its refusal stops the delete, is asserted.
+jest.mock("@/lib/integrity/http", () => ({ refuseIfReliedUpon: jest.fn() }));
 jest.mock("@/lib/dashboard/v4-seed", () => {
   class MissingDeviceMappingError extends Error {
     constructor(public readonly handles: number[]) {
@@ -396,11 +400,36 @@ describe("PATCH /api/v4/dashboards/{id}", () => {
 
 // ---------------------------------------------------------------------------
 describe("DELETE /api/v4/dashboards/{id}", () => {
+  const mockRelied = jest.mocked(refuseIfReliedUpon);
+  beforeEach(() => {
+    mockRelied.mockResolvedValue({ forced: [] } as never);
+  });
+
   it("deletes and returns success", async () => {
     const res = await DELETE(req("DELETE"), params);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true });
+    expect(await res.json()).toEqual({ success: true, forced: [] });
     expect(mockDelete).toHaveBeenCalledWith(DASHBOARD_ID);
+  });
+
+  // The FKs clean up (grants + share tokens CASCADE, users.default_dashboard_id SET NULL) and tell
+  // nobody. This is the only delete in the tree that is HARD, so the gate is the only warning.
+  it("consults the referential-integrity gate first", async () => {
+    await DELETE(req("DELETE"), params);
+    expect(mockRelied).toHaveBeenCalledWith(
+      expect.anything(),
+      "dashboard",
+      DASHBOARD_ID,
+    );
+  });
+
+  it("deletes nothing when the gate refuses", async () => {
+    mockRelied.mockResolvedValueOnce({
+      response: NextResponse.json({ error: "relied upon" }, { status: 409 }),
+    } as never);
+    const res = await DELETE(req("DELETE"), params);
+    expect(res.status).toBe(409);
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 });
 
