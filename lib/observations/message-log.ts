@@ -102,12 +102,20 @@ export interface MessageLog {
     byTransport: { queue: number; flow: number; unknown: number };
   };
   /**
-   * True when the page budget ran out before the window did.
+   * True when the budget ran out before the window did.
    *
    * 🛑 Surfaced rather than swallowed: a truncated read under-reports every count, so a caller must
    * never conclude "quiet window" from it.
    */
   truncated: boolean;
+  /**
+   * The span actually READ — the oldest and newest log rows seen. `null` when nothing was.
+   *
+   * 🛑 Not the same as `window` once `truncated` is true. Paging walks backwards from the newest
+   * row, so a truncated read holds the RECENT end of the requested window and silently omits the
+   * old end. Reporting only `window` there would name a span we did not look at.
+   */
+  covered: { fromMs: number; toMs: number } | null;
   /** Log rows seen that belong to something other than observations ingest. */
   foreign: number;
 }
@@ -271,8 +279,27 @@ export function summarise(messages: MessageTiming[]): MessageLog["summary"] {
 
 /** Rows per QStash page. Its documented maximum; fewer pages is fewer round trips. */
 const PAGE = 1000;
-/** Page budget. 20 × 1000 covers the 2026-09-09 incident window with room to spare. */
-const MAX_PAGES = 20;
+/**
+ * How long the paging loop may run before giving up and reporting `truncated`.
+ *
+ * 🛑 The budget is WALL-CLOCK, not a page count. It was a page count first, and that is the wrong
+ * unit: 20 pages is a fine bound on memory and no bound at all on time, so a dense window (the
+ * 2026-09-09 incident at 2h50m) simply ran past the route's 60s `maxDuration` and returned a bare
+ * 504 — the caller learned nothing, from a tool whose entire job is to answer during an incident.
+ * A budget that ends in a partial answer marked `truncated` beats one that ends in no answer.
+ *
+ * 45s leaves the route ~15s to fold and serialise. One in-flight page can overrun it, which is why
+ * it is not 55.
+ *
+ * Read per call, not at module load — the same posture as `observationRetries()` and friends in
+ * `./publish`. A `const` here would bake in whatever the environment looked like at import time,
+ * which is the trap that makes env-dependent behaviour untestable and, under `tsx`, sometimes wrong.
+ */
+function budgetMs(): number {
+  return Number(process.env.QUEUE_TIMING_BUDGET_MS ?? 45_000);
+}
+/** Memory backstop, in the unit a page count IS good for. Time is the binding constraint. */
+const MAX_PAGES = 40;
 
 /**
  * Read the delivery log for a window.
@@ -299,6 +326,7 @@ export async function readMessageLog(opts: {
       messages: [],
       summary: summarise([]),
       truncated: false,
+      covered: null,
       foreign: 0,
     };
   }
@@ -306,8 +334,9 @@ export async function readMessageLog(opts: {
   const raw: RawLog[] = [];
   let cursor: string | undefined;
   let truncated = false;
+  const deadline = Date.now() + budgetMs();
   for (let page = 0; ; page++) {
-    if (page >= MAX_PAGES) {
+    if (page >= MAX_PAGES || Date.now() >= deadline) {
       truncated = true;
       break;
     }
@@ -326,12 +355,17 @@ export async function readMessageLog(opts: {
     ? folded.messages.filter((m) => m.lane === opts.lane)
     : folded.messages;
 
+  const times = raw.map((r) => r.time);
   return {
     window,
     mode,
     messages,
     summary: summarise(messages),
     truncated,
+    // Spans every row READ, including foreign ones — it describes the read, not the result.
+    covered: times.length
+      ? { fromMs: Math.min(...times), toMs: Math.max(...times) }
+      : null,
     foreign: folded.foreign,
   };
 }

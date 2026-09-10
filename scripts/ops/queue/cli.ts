@@ -638,6 +638,7 @@ interface WireLog {
     byTransport: { queue: number; flow: number; unknown: number };
   };
   truncated: boolean;
+  covered: { fromMs: number; toMs: number } | null;
   foreign: number;
 }
 
@@ -697,12 +698,19 @@ function renderTiming(w: WireLog, shown: WireMessage[]): string {
 
   // 🛑 Both of these change how the numbers above must be read, so they go BELOW them, where a
   // reader ends up, rather than above where a header is skimmed.
-  if (w.truncated)
+  if (w.truncated) {
     out.push(
       "",
-      "TRUNCATED — the page budget ran out before the window did. Every count above is an",
-      "undercount; narrow --last rather than trusting it.",
+      "TRUNCATED — the read budget ran out before the window did. Every count above is an",
+      "undercount; narrow the window rather than trusting it.",
     );
+    // Paging walks backwards from the newest row, so what survived is the RECENT end. Naming the
+    // span actually read is the difference between a partial answer and a misleading one.
+    if (w.covered)
+      out.push(
+        `Only ${new Date(w.covered.fromMs).toISOString()} → ${new Date(w.covered.toMs).toISOString()} was read.`,
+      );
+  }
   if (w.foreign)
     out.push(
       `(${w.foreign} log rows in this window belong to something other than observations ingest)`,
