@@ -40,10 +40,12 @@ import {
 } from "./decide";
 import * as store from "./store";
 import {
+  chargeArmedContext,
   parseArmedContext,
   parseAutomationAction,
   parseAutomationTrigger,
 } from "./types";
+import { evaluateExercise, type ExerciseSummary } from "./evaluate-exercise";
 
 export interface AutomationsSummary {
   evaluated: number;
@@ -52,6 +54,8 @@ export interface AutomationsSummary {
   fired: number;
   skipped: number;
   errors: number;
+  /** Scheduled-exercise counters. Kept separate: `fired` above means "a charge limit stopped a car". */
+  exercise: ExerciseSummary;
 }
 
 const UNKNOWN: SourceState = {
@@ -91,8 +95,7 @@ async function resolveDerivationSource(
     ANCHOR_TOLERANCE_FLOOR_MS,
   );
   const run = await getOpenRun(det.id);
-  if (!run)
-    return { ...UNKNOWN, status: "inactive", anchorToleranceMs };
+  if (!run) return { ...UNKNOWN, status: "inactive", anchorToleranceMs };
   return {
     status: "active",
     runStartMs: run.startTime.getTime(),
@@ -113,7 +116,9 @@ async function resolvePointSource(
   }
   const { point, deviceRid } = loaded;
   if (!point.logicalPath) {
-    console.warn(`[automations] trigger point ${pointUuid} has no logical path`);
+    console.warn(
+      `[automations] trigger point ${pointUuid} has no logical path`,
+    );
     return UNKNOWN;
   }
   // The counter alone cannot say whether a session is live (it is retained for hours after a
@@ -156,6 +161,7 @@ export async function evaluateAutomations(
     fired: 0,
     skipped: 0,
     errors: 0,
+    exercise: { due: 0, fired: 0, satisfied: 0, waiting: 0, missed: 0 },
   };
   const rows = await store.listEnabled();
   for (const row of rows) {
@@ -180,13 +186,35 @@ async function evaluateOne(
   const trigger = parseAutomationTrigger(row.trigger);
   if (!trigger.ok) {
     summary.errors++;
-    console.error(`[automations] ${row.id} has an unreadable trigger: ${trigger.error}`);
+    console.error(
+      `[automations] ${row.id} has an unreadable trigger: ${trigger.error}`,
+    );
     return;
   }
   const action = parseAutomationAction(row.action);
   if (!action.ok) {
     summary.errors++;
-    console.error(`[automations] ${row.id} has an unreadable action: ${action.error}`);
+    console.error(
+      `[automations] ${row.id} has an unreadable action: ${action.error}`,
+    );
+    return;
+  }
+
+  // A scheduled rule shares nothing with the reactive path below — no arming, no source state, a
+  // slot instead of a threshold — so it forks here rather than growing conditionals downstream.
+  if (trigger.value.kind === "exercise") {
+    await evaluateExercise(row, trigger.value, action.value, nowMs, summary);
+    return;
+  }
+
+  // Past this point the trigger is charge-session, whose whole design is "stop it once it has done
+  // enough". `fire()` hardcodes turn_off to match; a set_value here would mean the two halves had
+  // drifted apart, and dispatching one anyway could START something.
+  if (action.value.action !== "turn_off") {
+    summary.errors++;
+    console.error(
+      `[automations] ${row.id} has a charge-session trigger with a '${action.value.action}' action — refusing to dispatch`,
+    );
     return;
   }
 
@@ -201,7 +229,7 @@ async function evaluateOne(
     afterMinutes: trigger.value.afterMinutes ?? null,
     afterKwh: trigger.value.afterKwh ?? null,
     armedAtMs: row.armedAt ? row.armedAt.getTime() : null,
-    armedContext: parseArmedContext(row.armedContext),
+    armedContext: chargeArmedContext(parseArmedContext(row.armedContext)),
     lastTriggeredRunStartMs: row.lastTriggeredRunStart
       ? row.lastTriggeredRunStart.getTime()
       : null,

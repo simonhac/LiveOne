@@ -5,16 +5,19 @@
  * bare drizzle chains (a route test that asserts on a chain is asserting on drizzle, not on us).
  * Every write stamps `updatedAt`, like the derivations PATCH does.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
   automations,
   derivations,
+  derivedIntervals,
   type AutomationAction,
   type AutomationArmedContext,
   type AutomationMode,
   type AutomationRow,
   type AutomationTrigger,
+  type DerivedInterval,
+  type ExerciseArmedContext,
 } from "@/lib/db/planetscale/schema";
 
 export async function listForArea(areaUuid: string): Promise<AutomationRow[]> {
@@ -167,6 +170,89 @@ export async function disableAutomation(uuid: string): Promise<void> {
     .update(automations)
     .set({ enabled: false, updatedAt: new Date() })
     .where(eq(automations.id, uuid));
+}
+
+// ── Scheduled exercise ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every run interval of `derivationId` that OVERLAPS [fromMs, toMs].
+ *
+ * Same predicate as the run-periods route: a period is in range if it starts at/before the range
+ * end and is either still open or ends at/after the range start. Overlap, not containment — a run
+ * that began before the lookback still did real work inside it.
+ */
+export async function intervalsOverlapping(
+  derivationId: string,
+  fromMs: number,
+  toMs: number,
+): Promise<DerivedInterval[]> {
+  return requirePlanetscaleDb()
+    .select()
+    .from(derivedIntervals)
+    .where(
+      and(
+        eq(derivedIntervals.derivationId, derivationId),
+        lte(derivedIntervals.startTime, new Date(toMs)),
+        or(
+          isNull(derivedIntervals.endTime),
+          gte(derivedIntervals.endTime, new Date(fromMs)),
+        ),
+      ),
+    )
+    .orderBy(asc(derivedIntervals.startTime));
+}
+
+/**
+ * Record what the evaluator decided about an exercise slot.
+ *
+ * `consume` is the whole point: it writes the slot instant into `lastTriggeredRunStart`, which is
+ * what stops the slot being considered again. A `waiting` decision deliberately does NOT consume —
+ * the slot must stay due so the next tick can retry inside the grace window.
+ *
+ * `lastTriggeredAt` means "we actually dispatched something", so it is stamped ONLY on `fired`.
+ * Stamping it for a satisfied or missed slot would make "when did this rule last run the engine"
+ * unanswerable.
+ */
+export async function recordExerciseOutcome(
+  uuid: string,
+  opts: {
+    context: ExerciseArmedContext;
+    consume: boolean;
+    nowMs: number;
+  },
+): Promise<void> {
+  const now = new Date(opts.nowMs);
+  await requirePlanetscaleDb()
+    .update(automations)
+    .set({
+      armedContext: opts.context,
+      ...(opts.consume
+        ? { lastTriggeredRunStart: new Date(opts.context.slotAt) }
+        : {}),
+      ...(opts.context.outcome === "fired" ? { lastTriggeredAt: now } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(automations.id, uuid));
+}
+
+/**
+ * Compare-and-set on `updatedAt`, taken immediately before dispatching a start.
+ *
+ * `/api/cron/derivations` holds no cron lease, so two invocations really can overlap. For a charge
+ * limit a duplicate `turn_off` is harmless; here a duplicate dispatch re-extends a running engine's
+ * stop deadline, so the race is worth one extra round trip. Returns false if another tick got
+ * there first.
+ */
+export async function claimExerciseDispatch(
+  uuid: string,
+  updatedAt: Date,
+): Promise<boolean> {
+  const rows = await requirePlanetscaleDb()
+    .update(automations)
+    .set({ updatedAt: new Date() })
+    .where(and(eq(automations.id, uuid), eq(automations.updatedAt, updatedAt)))
+    .returning({ id: automations.id });
+  return rows.length > 0;
 }
 
 /** Referential check for a derivation-sourced trigger: does this derivation belong to this area? */

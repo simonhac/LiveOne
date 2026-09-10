@@ -38,18 +38,42 @@ export interface ChargeLimitJson {
   name: string;
   enabled: boolean;
   mode: string; // "once" | "standing"
-  trigger: {
-    kind: "charge-session";
-    source:
-      | { kind: "derivation"; derivationId: string }
-      | { kind: "point"; pointId: string };
-    afterMinutes?: number;
-    afterKwh?: number;
+  trigger: ChargeSessionTriggerJson | OtherTriggerJson | null;
+  action: {
+    kind: "point-action";
+    pointId: string;
+    action: "turn_off" | "set_value";
   } | null;
-  action: { kind: "point-action"; pointId: string; action: "turn_off" } | null;
   armedAt: string | null;
   lastTriggeredAt: string | null;
-  armedContext: { baselineKwh?: number; baselineAt?: number } | null;
+  /** Charge rows carry a baseline; other kinds put their own state here, so `kind` may be present. */
+  armedContext: {
+    kind?: string;
+    baselineKwh?: number;
+    baselineAt?: number;
+  } | null;
+}
+
+export interface ChargeSessionTriggerJson {
+  kind: "charge-session";
+  source:
+    | { kind: "derivation"; derivationId: string }
+    | { kind: "point"; pointId: string };
+  afterMinutes?: number;
+  afterKwh?: number;
+}
+
+/**
+ * The scheduled-exercise trigger, deliberately OPAQUE to this module.
+ *
+ * The automations resource is area-scoped and an area holds rules for several devices, so the
+ * exercise rule on a generator arrives in the same payload as the car's charge limits. This UI has
+ * nothing to say about it, and the honest way to express that is a variant with no readable fields:
+ * reading `afterKwh` off one is then a compile error rather than an `undefined` that renders as a
+ * blank target.
+ */
+export interface OtherTriggerJson {
+  kind: "exercise";
 }
 
 /**
@@ -81,7 +105,24 @@ export function selectChargeLimits(
   activePt: string | null,
 ): ChargeLimitJson[] {
   if (!activePt) return [];
-  return rows.filter((r) => r.action?.pointId === activePt);
+  // The action-point match already excludes a generator's exercise rule, since its action point is
+  // the generator's run-request point and not this car's switch. The `kind` test is belt and
+  // braces for the day two rules do share a point: this dialog edits charge limits, and showing a
+  // scheduled engine start in it would invite someone to "fix" its blank thresholds.
+  return rows.filter(
+    (r) => r.action?.pointId === activePt && r.trigger?.kind !== "exercise",
+  );
+}
+
+/**
+ * Narrow a row's trigger to the charge-session shape, or null if it is another kind.
+ *
+ * Exported because the dialog needs the same narrowing before it reads or rewrites thresholds.
+ */
+export function chargeTrigger(
+  row: ChargeLimitJson,
+): ChargeSessionTriggerJson | null {
+  return row.trigger?.kind === "charge-session" ? row.trigger : null;
 }
 
 export type ChargeLimitState = "armed" | "waiting" | "stopped" | "off";
@@ -116,7 +157,7 @@ export function describeChargeLimit(
   addedPt: string | null,
   nowMs: number,
 ): ChargeLimitDescription {
-  const trigger = row.trigger;
+  const trigger = chargeTrigger(row);
   const armedAtMs = row.armedAt ? Date.parse(row.armedAt) : NaN;
   const armed = row.enabled && Number.isFinite(armedAtMs);
 

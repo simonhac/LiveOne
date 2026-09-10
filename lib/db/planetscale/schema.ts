@@ -1217,11 +1217,17 @@ export const deviceState = pgTable("device_state", {
 // answerable from SQL a month later.
 //
 // automations is the HA-automation-shaped limit store: mode='once' (this-session timer that
-// self-disarms) vs 'standing'. trigger/action are a CLOSED v1 vocabulary
-// (trigger: {kind:'charge-session', source, afterMinutes?, afterKwh?}; action:
-// {kind:'point-action', pointId, action:'turn_off'}) — typed below (PR-F) and applied with
-// .$type<>. `PointControl`'s precedent applies: the vocabulary's home is this file, never
+// self-disarms) vs 'standing'. trigger/action are a CLOSED vocabulary, typed below and applied
+// with .$type<>. `PointControl`'s precedent applies: the vocabulary's home is this file, never
 // re-homed, and `lib/automations/types.ts` imports it from here (type-only).
+//
+// Two trigger kinds so far, and they are near-opposites — worth stating, because the shared table
+// is the only thing they have in common:
+//   'charge-session' (PR-F) is REACTIVE and STOPS something. It watches a source that is already
+//     running and dispatches turn_off once a threshold is crossed. It arms and disarms.
+//   'exercise' is SCHEDULED and STARTS something. It fires at a wall-clock slot unless the engine
+//     has already had a loaded run recently, and dispatches set_value (a run duration). It never
+//     arms — `armed_at` stays null and `armed_context` is used as a decision LOG instead.
 // ============================================================================
 
 /**
@@ -1232,20 +1238,82 @@ export type AutomationTriggerSource =
   | { kind: "derivation"; derivationId: string } // raw derivations.id uuid
   | { kind: "point"; pointId: string }; // raw points.id uuid (the per-cable-session counter)
 
-/** Closed v1 trigger vocabulary. At least one of afterMinutes/afterKwh is present, each > 0. */
-export interface AutomationTrigger {
+/** Reactive "stop it once it has done enough". At least one of afterMinutes/afterKwh, each > 0. */
+export interface ChargeSessionTrigger {
   kind: "charge-session";
   source: AutomationTriggerSource;
   afterMinutes?: number;
   afterKwh?: number;
 }
 
-/** Closed v1 action vocabulary — the WHOLE set. */
-export interface AutomationAction {
-  kind: "point-action";
-  pointId: string; // raw points.id uuid of the writable point
-  action: "turn_off";
+/** The seven weekday keys, aligned to `Date.prototype.getUTCDay()` so index === value. */
+export const AUTOMATION_WEEKDAYS = [
+  "sun",
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+] as const;
+export type AutomationWeekday = (typeof AUTOMATION_WEEKDAYS)[number];
+
+/**
+ * When the exercise is due. `time` is LOCAL WALL CLOCK ("09:00") in the AREA's display_timezone —
+ * there is deliberately no per-rule timezone column, because a generator's owner thinks in the
+ * generator's local time and nothing else.
+ */
+export interface ExerciseSchedule {
+  weekdays: AutomationWeekday[]; // non-empty
+  time: string; // "HH:MM", 24h
+  graceMinutes: number; // how long a missed slot stays due before it is written off
 }
+
+/**
+ * The skip condition: don't exercise if the engine has ALREADY done real work recently.
+ *
+ * Load is not measurable on the DeepSea controller (no CTs), so it is read from a separate power
+ * point — at off-grid Daylesford the Selectronic `bidi.grid/power`, where NEGATIVE means the house
+ * is importing from the generator. `lib/automations/exercise.ts` owns that sign convention.
+ */
+export interface ExerciseUnless {
+  loadPointId: string; // raw points.id uuid; unit must be W (checked in references.ts)
+  minMinutes: number; // continuous minutes above minLoadKw that count as "already exercised"
+  minLoadKw: number; // an unloaded idle run does NOT clear wet stacking, so this is a real floor
+  dipToleranceSeconds: number; // brief sub-threshold dips are bridged rather than splitting a stretch
+  withinDays: number; // how far back to look for such a stretch
+}
+
+/** Scheduled "start it unless it has already run under load". */
+export interface ExerciseTrigger {
+  kind: "exercise";
+  source: AutomationTriggerSource; // must be a derivation (the run detector), enforced when parsing
+  schedule: ExerciseSchedule;
+  unless: ExerciseUnless;
+}
+
+export type AutomationTrigger = ChargeSessionTrigger | ExerciseTrigger;
+
+/**
+ * Closed action vocabulary — the WHOLE set.
+ *
+ * 🛑 `value` is meaningless for `turn_off` and REQUIRED (and > 0) for `set_value`. Zero is not a
+ * harmless default here: on the generator's run-request point 0 RELEASES the latch, i.e. it is a
+ * STOP. An automation that silently scheduled a stop would be the exact opposite of the rule its
+ * owner wrote, so `lib/automations/types.ts` refuses it.
+ */
+export type AutomationAction =
+  | {
+      kind: "point-action";
+      pointId: string; // raw points.id uuid of the writable point
+      action: "turn_off";
+    }
+  | {
+      kind: "point-action";
+      pointId: string;
+      action: "set_value";
+      value: number; // > 0; range is enforced later against points.control's min/max
+    };
 
 /**
  * Per-arming STATE (not config), snapshotted at arm time. Times are epoch-ms.
@@ -1254,10 +1322,43 @@ export interface AutomationAction {
  * `armed_context` column comment below. Absent for a derivation source (the run carries its own
  * energy) and for a minutes-only rule.
  */
-export interface AutomationArmedContext {
+export interface ChargeArmedContext {
   baselineKwh?: number; // point-source only: counter value at arm
   baselineAt?: number; // epoch-ms of that counter reading
 }
+
+/** What the evaluator decided about an exercise slot. */
+export const EXERCISE_OUTCOMES = [
+  "fired", // dispatched, and the hub accepted
+  "satisfied", // skipped: a loaded run already happened inside the lookback
+  "waiting", // still due: a run is in progress, or the dispatch did not land — retry next tick
+  "missed", // grace expired without firing
+  "missed-running", // grace expired while a run was in progress the whole time
+] as const;
+export type ExerciseOutcome = (typeof EXERCISE_OUTCOMES)[number];
+
+/**
+ * The last exercise decision, kept for `liveone automation show`.
+ *
+ * This is a LOG, not arming state — an exercise rule never arms. It is stored in `armed_context`
+ * because it is per-decision state of exactly the kind that column exists to hold, and inventing a
+ * second jsonb column for it would have meant DDL for a display nicety.
+ */
+export interface ExerciseArmedContext {
+  kind: "exercise";
+  slotAt: number; // epoch-ms of the slot this decision was about
+  outcome: ExerciseOutcome;
+  at: number; // epoch-ms the decision was taken
+  reason?: string; // e.g. the hub's decline message, for a `waiting`
+  evidence?: {
+    // the best loaded stretch found in the lookback — informational only
+    minutes: number;
+    peakKw: number;
+    endedAt: number;
+  };
+}
+
+export type AutomationArmedContext = ChargeArmedContext | ExerciseArmedContext;
 
 export const pointCommands = pgTable(
   "point_commands",
@@ -1315,18 +1416,28 @@ export const automations = pgTable(
     // row must degrade to a logged error, not a crash.
     trigger: jsonb("trigger").notNull().$type<AutomationTrigger>(), // v1 closed vocabulary
     action: jsonb("action").notNull().$type<AutomationAction>(), // v1 closed vocabulary
-    armedAt: timestamp("armed_at"), // set while the trigger source is live (charging); cleared when not
+    // charge-session: set while the trigger source is live (charging); cleared when not.
+    // exercise: always null — a scheduled rule has nothing to arm against.
+    armedAt: timestamp("armed_at"),
     lastTriggeredAt: timestamp("last_triggered_at"),
-    // Idempotence anchor: the derived run's start_time when this automation last fired. Compared
-    // with TOLERANCE (>= the detector's delayOffSeconds) — an open run's start_time can move
-    // between ticks (recomputeIntervalsForWindow is delete-and-reinsert with boundaryMode
-    // 'midpoint'), so exact equality is NOT a stable key.
+    // Idempotence anchor. What it anchors depends on the trigger kind:
+    //
+    //  charge-session: the derived run's start_time when this automation last fired. Compared with
+    //    TOLERANCE (>= the detector's delayOffSeconds) — an open run's start_time can move between
+    //    ticks (recomputeIntervalsForWindow is delete-and-reinsert with boundaryMode 'midpoint'),
+    //    so exact equality is NOT a stable key.
+    //  exercise: the SLOT INSTANT that has been dealt with (fired, satisfied or written off).
+    //    Compared for EXACT equality, and that is safe precisely because a slot is computed from
+    //    the schedule and the clock rather than observed from data, so it cannot drift. A consumed
+    //    slot never re-fires.
     lastTriggeredRunStart: timestamp("last_triggered_run_start"),
     // Per-arming STATE, not config. `charge_energy_added` (the Tesla counter a kWh limit follows)
     // is energy-above-plug-in-baseline and resets per CABLE session, not per charge leg — a car
     // re-entering `Charging` on an overnight top-up already reads ~42 kWh, so an absolute kWh
     // threshold would fire instantly. PR-F snapshots {baselineKwh, baselineAt} here at arm time and
     // compares the delta; `armed_at` is a timestamp and `trigger` is config, so neither can hold it.
+    // For an `exercise` trigger this column holds the last DECISION instead (see
+    // `ExerciseArmedContext`) — same "per-decision state that fits nowhere else" role.
     armedContext: jsonb("armed_context").$type<AutomationArmedContext | null>(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),

@@ -36,6 +36,19 @@ export async function checkReferences(
   trigger: AutomationTrigger,
   action: AutomationAction,
 ): Promise<NextResponse | null> {
+  // 🛑 The action vocabulary is gated on the TRIGGER kind, not just checked in isolation.
+  // `set_value` on this table means "start something for N units", and the only rule that has been
+  // designed to decide that safely — never while a run is in progress, never twice for one slot —
+  // is `exercise`. The charge-session path calls `fire()`, which hardcodes `turn_off`, so letting a
+  // `set_value` be stored against one would either be ignored or, worse, later honoured by a
+  // refactor that "fixed" the inconsistency in the wrong direction.
+  if (action.action === "set_value" && trigger.kind !== "exercise")
+    return unprocessable(
+      "set_value actions are only valid with an exercise trigger",
+    );
+  if (action.action !== "set_value" && trigger.kind === "exercise")
+    return unprocessable("an exercise trigger requires a set_value action");
+
   if (trigger.source.kind === "derivation") {
     // Same-area scoping is what makes the area-owner check cover the trigger — without it, owning
     // any area would let a caller follow any derivation by id.
@@ -43,7 +56,8 @@ export async function checkReferences(
       trigger.source.derivationId,
       areaUuid,
     );
-    if (!ok) return unprocessable("trigger derivation must belong to this area");
+    if (!ok)
+      return unprocessable("trigger derivation must belong to this area");
   } else {
     const loaded = await loadPointByUuid(trigger.source.pointId);
     if (!loaded) return unprocessable("trigger source point not found");
@@ -51,7 +65,11 @@ export async function checkReferences(
     if (access instanceof NextResponse) return access;
     const stem = loaded.point.logicalPath;
     if (!stem) return unprocessable("trigger source point has no logical path");
-    const sibling = await loadPointByStemMetric(loaded.deviceRid, stem, "active");
+    const sibling = await loadPointByStemMetric(
+      loaded.deviceRid,
+      stem,
+      "active",
+    );
     if (!sibling)
       return unprocessable(
         `trigger source point has no ${stem}/active sibling to signal the charge session`,
@@ -59,9 +77,28 @@ export async function checkReferences(
     // The unit trap (a detector's watts threshold read against a kW point) must not get a second
     // life here: a kWh limit against a non-kWh counter is wrong by whatever the factor happens
     // to be, silently.
-    if (trigger.afterKwh !== undefined && loaded.point.unit !== "kWh")
+    if (
+      trigger.kind === "charge-session" &&
+      trigger.afterKwh !== undefined &&
+      loaded.point.unit !== "kWh"
+    )
       return unprocessable(
         `afterKwh requires a kWh trigger point (this one is in '${loaded.point.unit ?? "?"}')`,
+      );
+  }
+
+  if (trigger.kind === "exercise") {
+    const load = await loadPointByUuid(trigger.unless.loadPointId);
+    if (!load) return unprocessable("trigger load point not found");
+    const access = await requireDeviceAccess(request, load.deviceRid);
+    if (access instanceof NextResponse) return access;
+    // The unit trap again, and here it is worse than a wrong number: `minLoadKw` is compared
+    // against watts converted by `importKw`. Against a point already in kW, a 1.5 kW floor would
+    // become a 1500 kW floor — never met, so the rule would exercise the engine every single week
+    // regardless of how much work it had already done, and look like it was working.
+    if (load.point.unit !== "W")
+      return unprocessable(
+        `the load point must be in W (this one is in '${load.point.unit ?? "?"}')`,
       );
   }
 
