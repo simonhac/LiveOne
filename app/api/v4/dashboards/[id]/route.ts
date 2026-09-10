@@ -142,7 +142,8 @@ export async function PATCH(
 }
 
 /**
- * DELETE — a HARD delete, and the only one in the v4 tree that is.
+ * DELETE — a hard delete. (So is the automations one; unlike that, this one destroys objects other
+ * people hold.)
  *
  * The FKs do clean up: grants, share tokens and revisions all CASCADE, and
  * `users.default_dashboard_id` is SET NULL. What none of them do is TELL ANYONE. A grantee loses

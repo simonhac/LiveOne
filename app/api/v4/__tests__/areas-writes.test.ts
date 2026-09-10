@@ -378,6 +378,75 @@ describe("DELETE /api/v4/areas/{id}", () => {
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * 🛑 `DELETE` on an area IS `PATCH {status:"archived"}` plus a serving refresh — same writer, same
+ * column, same user-visible outcome. The first version of the referential gate covered only the
+ * verb, so anything that could not be deleted could still be archived, silently: the refusal read
+ * as protection and was a formality. These tests pin the gate to the TRANSITION.
+ */
+describe("archiving is a delete, whichever verb spells it", () => {
+  const archive = (status: string) => areaPATCH(req({ status }), params);
+
+  it("gates PATCH status=archived exactly as DELETE is gated", async () => {
+    mockRelied.mockResolvedValueOnce({
+      response: NextResponse.json({ error: "relied upon" }, { status: 409 }),
+    } as any);
+    const res = await archive("archived");
+    expect(res.status).toBe(409);
+    expect(mockUpdateMeta).not.toHaveBeenCalled();
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it("archives when nothing relies on it", async () => {
+    const res = await archive("archived");
+    expect(res.status).toBe(200);
+    expect(mockRelied).toHaveBeenCalledWith(
+      expect.anything(),
+      "area",
+      AREA_UUID,
+    );
+    expect(mockUpdateMeta).toHaveBeenCalledWith(
+      AREA_UUID,
+      expect.objectContaining({ status: "archived" }),
+    );
+  });
+
+  it("does NOT gate un-archiving — it breaks nothing", async () => {
+    const res = await archive("active");
+    expect(res.status).toBe(200);
+    expect(mockRelied).not.toHaveBeenCalled();
+    expect(mockUpdateMeta).toHaveBeenCalledWith(
+      AREA_UUID,
+      expect.objectContaining({ status: "active" }),
+    );
+  });
+
+  it("does NOT gate a no-op re-archive — refusing a no-op teaches operators the gate is noise", async () => {
+    mockLoadOwner.mockResolvedValueOnce({
+      userId: "user_1",
+      isAdmin: false,
+      area: {
+        id: AREA_UUID,
+        ownerClerkUserId: "user_1",
+        legacySystemId: 1000002,
+        status: "archived",
+        displayName: "Area",
+        location: { country: "AU", state: "VIC" },
+      },
+    } as any);
+    const res = await archive("archived");
+    expect(res.status).toBe(200);
+    expect(mockRelied).not.toHaveBeenCalled();
+  });
+
+  it("does not gate an unrelated meta edit", async () => {
+    const res = await areaPATCH(req({ name: "Renamed" }), params);
+    expect(res.status).toBe(200);
+    expect(mockRelied).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe("PUT /api/v4/areas/{id}/members", () => {
   it("propagates the member-ref resolver's status and writes nothing", async () => {
     mockResolveMembers.mockResolvedValueOnce({

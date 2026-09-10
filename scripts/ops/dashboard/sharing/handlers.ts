@@ -36,7 +36,7 @@ interface WireDash {
   slug: string | null;
 }
 
-const SHARE_ERRORS = {
+export const SHARE_ERRORS = {
   422: {
     exit: EXIT.FINDINGS,
     what: "the server refused this change",
@@ -60,6 +60,28 @@ const SHARE_ERRORS = {
     what: "not your dashboard",
     why: (b: Record<string, unknown>) => String(b.error ?? "forbidden"),
     next: "grants and links are owner-or-admin; check `liveone auth whoami`",
+  },
+  // The referential-integrity refusal (lib/integrity). Handled HERE rather than falling through to
+  // the shared 409 case, which is written for a slug collision and would advise "pick a different
+  // slug" — advice that is not merely unhelpful but points at the wrong field entirely. It also
+  // drops `detail.dependents`, which is the only part of the refusal worth reading.
+  409: {
+    exit: EXIT.FINDINGS,
+    what: "something still relies on this dashboard",
+    why: (b: Record<string, unknown>) => {
+      const detail = b.detail as Record<string, unknown> | undefined;
+      const deps = detail?.dependents;
+      if (!Array.isArray(deps) || deps.length === 0)
+        return String(b.error ?? "conflict");
+      return deps
+        .map((d) => {
+          const x = d as Record<string, unknown>;
+          const name = x.name ? ` ${String(x.name)}` : "";
+          return `  ${String(x.kind)}${name} (${String(x.id)}) — via ${String(x.via)}, ${String(x.effect)}`;
+        })
+        .join("\n");
+    },
+    next: "resolve them, or re-run with --force to proceed anyway — nothing was written",
   },
 } as const;
 
@@ -347,10 +369,15 @@ async function runDelete(ctx: Ctx): Promise<number> {
         landsHere.push("(could not check — directory is admin-only)");
       }
 
+      // 🛑 `?force=true` — and the dry run above is what earns it. The server's gate refuses while
+      // grants, live links or a landing preference exist; this command has just ENUMERATED all
+      // three by name and printed them, and `--apply` is the operator's answer to that list. Making
+      // them type a second flag to confirm a list they were shown by the same command would be
+      // ceremony, not consent. The force is visible in the emitted record either way.
       if (!ctx.dryRun)
         await apiFetch<{ success: boolean }>(
           s.origin,
-          `/api/v4/dashboards/${encodeURIComponent(d.id)}`,
+          `/api/v4/dashboards/${encodeURIComponent(d.id)}?force=true`,
           { method: "DELETE", token: s.token, errors: SHARE_ERRORS },
         );
 

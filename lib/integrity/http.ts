@@ -1,10 +1,14 @@
 /**
  * The route adapter for `assertNotReliedUpon` — one call, so that no handler can forget `?force`.
  *
- * Same "return a response or null" refusal contract as `checkReferences` (`lib/automations/`) and
- * `checkDocRefsReadable` (`lib/dashboard/v4-routes.ts`): a handler either gets a response to return
- * immediately, or `null` meaning proceed. The contract matters here more than usual — the
- * alternative shape (throw, and let each route catch) is one where a route that forgets the catch
+ * Kin to the "return a response or null" refusal contract of `checkReferences`
+ * (`lib/automations/references.ts`) and `checkDocRefsReadable` (`lib/dashboard/v4-routes.ts`), and
+ * deliberately one step further: it returns a DISCRIMINATED UNION, never `null`. `{response}` means
+ * return that immediately; `{forced}` means proceed, and carries the list that was overridden so the
+ * handler can report it. A bare `null` could not, and "I overrode three dependents" would look
+ * exactly like "there was nothing to override" in the response and in the log.
+ *
+ * Either shape beats throwing and letting each route catch, where a route that forgets the catch
  * turns a considered refusal into a 500.
  *
  * `force` is parsed HERE rather than in each handler for the same reason. It is the difference

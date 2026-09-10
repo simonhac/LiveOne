@@ -125,8 +125,10 @@ async function areaDependents(uuid: string): Promise<Dependent[]> {
       fix: "delete the automation, or move it to another area",
     });
 
-  // Until migration 0064 drops the column. Afterwards a derivation does not reference an area at
-  // all and this leg simply finds nothing — which is the correct answer, not a stale one.
+  // 🛑 Until migration 0064 drops the column, at which point this leg must be DELETED, not left to
+  // "find nothing": the column will not exist, so an un-migrated deployment gets a 42703 and a
+  // migrated one gets a compile error here. It is listed in the block-model increment-1 plan as
+  // part of the contract step for exactly that reason.
   for (const d of await db
     .select({ id: derivations.id, name: derivations.name })
     .from(derivations)
@@ -172,7 +174,7 @@ async function dashboardDependents(uuid: string): Promise<Dependent[]> {
       name: g.role,
       via: "dashboard_grants.dashboard_id",
       effect: "loses-access",
-      fix: "grant that user another dashboard covering the same devices first",
+      fix: "give them another dashboard covering the same devices, then revoke this grant — or ?force=true if the loss is intended",
     });
 
   for (const t of await db
@@ -201,6 +203,32 @@ async function dashboardDependents(uuid: string): Promise<Dependent[]> {
   return out;
 }
 
+/**
+ * `YYYY-MM-DD` from whatever the driver hands back for an aggregated `timestamp`.
+ *
+ * Two hazards, and the second is the one that bites quietly:
+ *
+ * 🛑 `sql<Date>` is a COMPILE-TIME annotation on a raw fragment — drizzle attaches no runtime
+ * decoder to it, so the value is whatever node-postgres produced, which for an aggregate is not
+ * reliably a `Date`. Calling `.toISOString()` on it directly throws. `lib/readings/dao.ts` reached
+ * the same conclusion for `min/max(interval_end)` and casts through `string | number | Date`.
+ *
+ * 🛑 But casting is not enough. Every timestamp in this database is NAIVE UTC, and the driver
+ * renders one as `"2025-10-04 03:15:00"` — no zone. `new Date()` of that parses it as LOCAL time,
+ * so on an AEST machine the day comes back as the 3rd. A refusal that misreports which day a year
+ * of run history starts on is worse than one that says nothing, so a string is read as the naive
+ * UTC it is: take the date part, construct nothing.
+ */
+function isoDay(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const day = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+    return day ? day[1] : null;
+  }
+  const d = value instanceof Date ? value : new Date(value as number);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
 async function derivationDependents(uuid: string): Promise<Dependent[]> {
   const db = requirePlanetscaleDb();
   const out: Dependent[] = [];
@@ -222,8 +250,8 @@ async function derivationDependents(uuid: string): Promise<Dependent[]> {
       kind: "intervals",
       id: `${span.n}`,
       name:
-        span.first && span.last
-          ? `${span.first.toISOString().slice(0, 10)} … ${span.last.toISOString().slice(0, 10)}`
+        isoDay(span.first) && isoDay(span.last)
+          ? `${isoDay(span.first)} … ${isoDay(span.last)}`
           : null,
       via: "derived_intervals.derivation_id (ON DELETE CASCADE)",
       effect: "cascade-deleted",
@@ -248,8 +276,10 @@ async function derivationDependents(uuid: string): Promise<Dependent[]> {
         name: p.name,
         via: "derivations.output_point_id",
         effect: "dangles",
-        // The point row survives the delete (NO ACTION would in fact refuse it) but nothing writes
-        // to it any more, so it freezes at its last value and reads as live.
+        // The FK on this column points the OTHER way: it refuses deleting the POINT while the
+        // derivation names it, and says nothing about deleting the derivation. So the point row
+        // survives, nothing writes to it any more, and it freezes at its last value while still
+        // reading as live — which is why it is named here.
         fix: "deactivate the derived point too, or it freezes at its last value and still reads as live",
       });
   }

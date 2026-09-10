@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { reliedUponMessage } from "@/lib/integrity/message";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -90,6 +91,8 @@ export default function AreaBuilderDialog({
   const [locState, setLocState] = useState("");
   const [locPostcode, setLocPostcode] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** The named dependents from a refused archive; non-null turns the button into "Archive anyway". */
+  const [blockedBy, setBlockedBy] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +107,7 @@ export default function AreaBuilderDialog({
     setTab("general");
     setError(null);
     setConfirmDelete(false);
+    setBlockedBy(null);
     registerModal("area-builder-dialog");
     return () => unregisterModal("area-builder-dialog");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -244,19 +248,32 @@ export default function AreaBuilderDialog({
     }
   };
 
-  const del = async () => {
+  /**
+   * Archive the site.
+   *
+   * The server refuses while a dashboard, automation or derivation still references the area, and
+   * NAMES them. That refusal is worth surfacing in full — but it must not be a dead end: archiving
+   * a site a dashboard happens to reference is an ordinary thing to want, and archiving is
+   * reversible (the status goes straight back to active). So a refusal offers `force`, and the
+   * button that offers it says what it is doing.
+   */
+  const del = async (force = false) => {
     if (!activeAreaId) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/v4/areas/${activeAreaId}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/v4/areas/${activeAreaId}${force ? "?force=true" : ""}`,
+        { method: "DELETE" },
+      );
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(body?.error ?? "Could not delete");
+        const named = reliedUponMessage(body);
+        setBlockedBy(named);
+        setError(named ?? body?.error ?? "Could not delete");
         return;
       }
+      setBlockedBy(null);
       toast.success("Site archived");
       afterMutation();
       onClose();
@@ -420,14 +437,20 @@ export default function AreaBuilderDialog({
                         Archive this site?
                       </span>
                       <button
-                        onClick={del}
+                        onClick={() => del(blockedBy != null)}
                         disabled={busy}
                         className="rounded-md bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
                       >
-                        Archive
+                        {blockedBy ? "Archive anyway" : "Archive"}
                       </button>
                       <button
-                        onClick={() => setConfirmDelete(false)}
+                        onClick={() => {
+                          setConfirmDelete(false);
+                          // Clear the escalation too, or a later archive of a DIFFERENT site would
+                          // open already showing "Archive anyway" and force on the first click.
+                          setBlockedBy(null);
+                          setError(null);
+                        }}
                         className="text-sm text-gray-400 hover:text-white"
                       >
                         Cancel
@@ -551,7 +574,11 @@ export default function AreaBuilderDialog({
               />
             )}
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {error && (
+              <p className="whitespace-pre-line text-sm text-red-400">
+                {error}
+              </p>
+            )}
           </div>
 
           {/* CREATE footer */}
