@@ -95,11 +95,6 @@ export interface RunDetectorSourcePoints {
 /** `derivations.params` for kind='hws-model'. Sparse overrides on the model constants. */
 export type HwsModelParams = Partial<HwsModelOptions>;
 
-/** `derivations.source_points` for kind='hws-model'. Dual-written, never read — see above. */
-export interface HwsSourcePoints {
-  power: string;
-}
-
 // ---------------------------------------------------------------------------
 // Resolved shapes
 // ---------------------------------------------------------------------------
@@ -324,7 +319,13 @@ export async function listEnabledRunDetectors(
   if (ownerMustBe) {
     const ids = [...new Set(rows.map((r) => r.d.id))];
     if (ids.length === 0) return [];
-    rows = await loadRunDetectorRows([inArray(derivations.id, ids)]);
+    // The kind/enabled predicates are RE-STATED, not dropped: the two reads are separate snapshots,
+    // so a detector disabled between them would otherwise come back as enabled.
+    rows = await loadRunDetectorRows([
+      inArray(derivations.id, ids),
+      eq(derivations.kind, RUN_DETECTOR_KIND),
+      eq(derivations.enabled, true),
+    ]);
   }
 
   const byDerivation = new Map<
@@ -495,6 +496,50 @@ export async function runDetectorRolesForDevices(
   return out;
 }
 
+/**
+ * The enabled-or-not run detector for `role` whose OWNER device is `deviceId`, or null.
+ *
+ * Resolves each candidate's owner with the same energy-then-signal precedence the reader uses,
+ * rather than asking "does any source row of a same-role detector sit on this device" — which would
+ * also match a detector that merely reads a boundary point here and does not own it.
+ *
+ * 🛑 Not concurrency-safe, and cannot be: two creates whose signals sit on DIFFERENT devices but
+ * whose energy points resolve to the SAME owner both pass this check, and
+ * `derivation_sources_signal_role_unique` (keyed on the signal device) cannot catch them either.
+ * That is the honest cost of an invariant no index can express; it is a single-operator system and
+ * the loser is a duplicate row, not lost data.
+ */
+async function ownerOfRoleOnDevice(
+  db: ReturnType<typeof requirePlanetscaleDb>,
+  role: string,
+  deviceId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({
+      derivationId: derivationSources.derivationId,
+      slot: derivationSources.slot,
+      deviceId: derivationSources.deviceId,
+    })
+    .from(derivationSources)
+    .where(
+      and(
+        eq(derivationSources.kind, RUN_DETECTOR_KIND),
+        eq(derivationSources.role, role),
+      ),
+    );
+  const byDerivation = new Map<string, Map<string, string>>();
+  for (const r of rows) {
+    const slots = byDerivation.get(r.derivationId) ?? new Map();
+    slots.set(r.slot, r.deviceId);
+    byDerivation.set(r.derivationId, slots);
+  }
+  for (const [id, slots] of byDerivation) {
+    const owner = OWNER_SLOTS.map((sl) => slots.get(sl)).find((d) => d != null);
+    if (owner === deviceId) return id;
+  }
+  return null;
+}
+
 export interface EnsureRunDetectorInput {
   /**
    * The area to stamp on the dual-written `derivations.area_id` vestige. 🛑 It no longer decides
@@ -516,12 +561,12 @@ export interface EnsureRunDetectorInput {
 export type EnsureRunDetectorStatus =
   | "created"
   | "exists"
-  | "no-area"
   | "not-trackable"
   | "no-signal-point"
   | "no-energy-point"
   | "no-bounds"
-  | "owner-role-taken";
+  | "owner-role-taken"
+  | "area-role-vestige-taken";
 
 export interface EnsureRunDetectorResult {
   status: EnsureRunDetectorStatus;
@@ -599,52 +644,67 @@ export async function ensureRunDetector(
 
   // The owner this detector WOULD have — energy first, then signal, exactly as the resolver reads it.
   const ownerDeviceId = energyDeviceId ?? signalDeviceId;
-  const [taken] = await db
-    .select({ id: derivations.id })
-    .from(derivationSources)
-    .innerJoin(derivations, eq(derivations.id, derivationSources.derivationId))
-    .where(
-      and(
-        eq(derivationSources.deviceId, ownerDeviceId),
-        eq(derivationSources.kind, RUN_DETECTOR_KIND),
-        eq(derivationSources.role, role),
-      ),
-    )
-    .limit(1);
-  if (taken)
+  // 🛑 Compare OWNERS, not "does any existing row touch this device". A detector that merely reads a
+  // BOUNDARY point on this device does not own it, and refusing that would forbid a legal second
+  // detector — the check has to resolve each candidate's owner the same way the reader does.
+  const takenBy = await ownerOfRoleOnDevice(db, role, ownerDeviceId);
+  if (takenBy)
     return {
       ...base,
       status: "owner-role-taken",
-      conflictingDerivationId: taken.id,
+      conflictingDerivationId: takenBy,
     };
+
+  // 🛑 The `derivations_area_role_unique` VESTIGE. `area_id` decides nothing any more, but the index
+  // on `(area_id, role) WHERE role IS NOT NULL` is still there until 0064 drops it — so two
+  // detectors for one role stamped with the same area cannot both be stored, however legal their
+  // wiring now is. Refused here, by name, rather than surfacing as a 500 on the INSERT.
+  if (areaId) {
+    const [clash] = await db
+      .select({ id: derivations.id })
+      .from(derivations)
+      .where(and(eq(derivations.areaId, areaId), eq(derivations.role, role)))
+      .limit(1);
+    if (clash)
+      return {
+        ...base,
+        status: "area-role-vestige-taken",
+        conflictingDerivationId: clash.id,
+      };
+  }
 
   // Anchored on the SIGNAL POINT uuid, not the area: deterministic AND cross-environment stable
   // (`points.id` is a uuidv5, `devices.id` is not). Minted on the insert path only.
   const id = deriveDerivationId(signalPointUid, RUN_DETECTOR_KIND, role);
   if (!apply) return { ...base, status: "created", derivationId: id };
 
-  await db.insert(derivations).values({
-    id,
-    areaId: areaId ?? null,
-    kind: RUN_DETECTOR_KIND,
-    role,
-    name: input.name,
-    enabled: true,
-    output: "intervals",
-    // Sparse by convention: anything absent inherits `detectorDefaultsForRole` at resolve time.
-    params,
-    // Dual-written and read by nothing (0063). `derivation_sources` below is the twin the engines
-    // resolve from; both are written or neither is.
-    sourcePoints: {
-      signal: signalPointUid,
-      energy: energyPointUid ?? null,
-    } satisfies RunDetectorSourcePoints,
-  });
-  await writeDerivationSources(db, {
-    derivationId: id,
-    kind: RUN_DETECTOR_KIND,
-    role,
-    slots: { signal: signalPointUid, energy: energyPointUid },
+  // 🛑 BOTH WRITES OR NEITHER. The parent alone is worse than nothing: `findDerivationBySource`
+  // above would not see it, so the next call re-mints the SAME deterministic id and dies on the
+  // primary key — an unrecoverable create, by hand, with no way to tell what happened.
+  await db.transaction(async (tx) => {
+    await tx.insert(derivations).values({
+      id,
+      areaId: areaId ?? null,
+      kind: RUN_DETECTOR_KIND,
+      role,
+      name: input.name,
+      enabled: true,
+      output: "intervals",
+      // Sparse by convention: anything absent inherits `detectorDefaultsForRole` at resolve time.
+      params,
+      // Dual-written and read by nothing (0063). `derivation_sources` below is the twin the engines
+      // resolve from.
+      sourcePoints: {
+        signal: signalPointUid,
+        energy: energyPointUid ?? null,
+      } satisfies RunDetectorSourcePoints,
+    });
+    await writeDerivationSources(tx, {
+      derivationId: id,
+      kind: RUN_DETECTOR_KIND,
+      role,
+      slots: { signal: signalPointUid, energy: energyPointUid },
+    });
   });
 
   return { ...base, status: "created", derivationId: id };

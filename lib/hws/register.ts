@@ -160,25 +160,30 @@ export async function ensureHwsDerivation(
   const id = deriveDerivationId(power.pointUid, HWS_MODEL_KIND, null);
   if (!apply) return { status: "created", systemId, derivationId: id };
 
-  await db.insert(derivations).values({
-    id,
-    areaId,
-    kind: HWS_MODEL_KIND,
-    role: null,
-    name: temp.displayName,
-    enabled: true,
-    output: "point",
-    outputPointId: temp.pointUid,
-    // Sparse: the model runs on DEFAULT_HWS_MODEL_OPTIONS unless a constant is overridden here.
-    params: {},
-    // Dual-written with the `derivation_sources` row below; the resolver reads only the latter.
-    sourcePoints: { power: power.pointUid },
-  });
-  await writeDerivationSources(db, {
-    derivationId: id,
-    kind: HWS_MODEL_KIND,
-    role: null,
-    slots: { power: power.pointUid },
+  // 🛑 BOTH WRITES OR NEITHER — see the same note in `ensureRunDetector`. A parent with no source
+  // row is invisible to `findDerivationBySource`, so the retry re-mints the same deterministic id
+  // and dies on the primary key.
+  await db.transaction(async (tx) => {
+    await tx.insert(derivations).values({
+      id,
+      areaId,
+      kind: HWS_MODEL_KIND,
+      role: null,
+      name: temp.displayName,
+      enabled: true,
+      output: "point",
+      outputPointId: temp.pointUid,
+      // Sparse: the model runs on DEFAULT_HWS_MODEL_OPTIONS unless a constant is overridden here.
+      params: {},
+      // Dual-written with the `derivation_sources` row below; the resolver reads only the latter.
+      sourcePoints: { power: power.pointUid },
+    });
+    await writeDerivationSources(tx, {
+      derivationId: id,
+      kind: HWS_MODEL_KIND,
+      role: null,
+      slots: { power: power.pointUid },
+    });
   });
 
   return { status: "created", systemId, derivationId: id };

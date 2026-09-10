@@ -330,13 +330,14 @@ describe("prod→dev readings transfer", () => {
   });
 
   // Regression: from 2026-07-25 every sync run aborted on
-  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id is NOT NULL
-  // / NO ACTION, so a drifted area that owns a dark-mirror device can't be deleted — those rows must
-  // be MOVED to prod's uuid instead.
+  // `devices_primary_area_id_areas_id_fk`, freezing liveone-dev. devices.primary_area_id and
+  // derivations.area_id are NOT NULL / NO ACTION, so a drifted area that owns a dark-mirror device
+  // can't be deleted — those rows must be MOVED to prod's uuid instead.
   //
-  // `derivations.area_id` was the second such dependant and is deliberately NO LONGER here:
-  // migration 0063 made it nullable with ON DELETE SET NULL, so the drifted area's delete clears a
-  // vestige nobody reads instead of being blocked by it.
+  // `derivations.area_id`'s FK became ON DELETE SET NULL in migration 0063, so this repoint no
+  // longer UNBLOCKS the delete — it is retained because the area-scoped HTTP surface still resolves
+  // a derivation through the column, and a dev-only row cleared to NULL would be un-listable with no
+  // prod row following to restore it. Pinned so its eventual removal is a deliberate act.
   it("realigns a drifted area by repointing its NOT NULL dependants, never deleting devices", async () => {
     const table = prodDevSyncManifest().find(
       (entry) => entry.name === "areas",
@@ -344,7 +345,10 @@ describe("prod→dev readings transfer", () => {
     expect(table).toMatchObject({
       mode: "full",
       idDrift: {
-        repoint: [{ table: "devices", cols: ["primary_area_id"] }],
+        repoint: [
+          { table: "devices", cols: ["primary_area_id"] },
+          { table: "derivations", cols: ["area_id"] },
+        ],
         // config-v4 Phase 13 PR 6: `legacy_system_id` is GONE from here — migration 0052 dropped the
         // column, and `neutralize` becomes a literal `UPDATE areas SET <col> = NULL` at runtime.
         neutralize: ["slug"],
@@ -425,10 +429,9 @@ describe("prod→dev readings transfer", () => {
     expect(sql).toContain(
       "UPDATE public.devices x SET primary_area_id = b.new_id FROM _drift b WHERE x.primary_area_id = b.id;",
     );
-    // 🛑 And NOT a derivations repoint: migration 0063's `ON DELETE SET NULL` retired it. A
-    // resurrected repoint would be harmless SQL but a live claim that the column still means
-    // something, so pin its absence rather than just deleting the assertion.
-    expect(sql).not.toContain("UPDATE public.derivations x SET area_id");
+    expect(sql).toContain(
+      "UPDATE public.derivations x SET area_id = b.new_id FROM _drift b WHERE x.area_id = b.id;",
+    );
 
     // Ordering is load-bearing: neutralize → upsert → repoint → delete the drifted parent.
     const at = (needle: string) => {
@@ -444,7 +447,7 @@ describe("prod→dev readings transfer", () => {
     expect(at("INSERT INTO public.areas")).toBeLessThan(
       at("UPDATE public.devices x SET primary_area_id"),
     );
-    expect(at("UPDATE public.devices x SET primary_area_id")).toBeLessThan(
+    expect(at("UPDATE public.derivations x SET area_id")).toBeLessThan(
       at("DELETE FROM public.areas d USING _drift"),
     );
 

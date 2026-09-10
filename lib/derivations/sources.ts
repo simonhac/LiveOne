@@ -22,6 +22,14 @@ import { derivationSources, points } from "@/lib/db/planetscale/schema";
 import { HWS_MODEL_KIND, RUN_DETECTOR_KIND } from "./kinds";
 
 type PgDb = ReturnType<typeof requirePlanetscaleDb>;
+type PgTx = Parameters<Parameters<PgDb["transaction"]>[0]>[0];
+/**
+ * A db handle OR an open transaction. Every caller here writes `derivation_sources` alongside a
+ * `derivations` write, and 🛑 the two MUST land together — a parent whose sources failed to insert
+ * is invisible to `findDerivationBySource`, so a retry re-mints the same deterministic id and dies
+ * on the PK instead. So the callers open a transaction and pass it in.
+ */
+export type DerivationSourceExec = PgDb | PgTx;
 
 /**
  * The slot vocabulary, per kind — the TypeScript twin of `derivation_sources_slot_check`.
@@ -34,18 +42,6 @@ export const SLOTS_BY_KIND = {
   [RUN_DETECTOR_KIND]: ["signal", "energy", "boundary"],
   [HWS_MODEL_KIND]: ["power"],
 } as const satisfies Record<string, readonly string[]>;
-
-export type RunDetectorSlot = (typeof SLOTS_BY_KIND)["run-detector"][number];
-export type HwsModelSlot = (typeof SLOTS_BY_KIND)["hws-model"][number];
-
-/** One resolved input port: which slot, which point, and the device that point belongs to. */
-export interface DerivationSourceRow {
-  slot: string;
-  pointId: string;
-  deviceId: string;
-  /** `points.unit` of the source point — what an interval statistic gets labelled with. */
-  unit: string | null;
-}
 
 /**
  * Write a derivation's source rows, replacing whatever it had.
@@ -60,7 +56,7 @@ export interface DerivationSourceRow {
  * statements run inside the caller's transaction where there is one.
  */
 export async function writeDerivationSources(
-  db: PgDb,
+  db: DerivationSourceExec,
   input: {
     derivationId: string;
     kind: string;
@@ -69,9 +65,27 @@ export async function writeDerivationSources(
     slots: Record<string, string | null | undefined>;
   },
 ): Promise<void> {
+  // 🛑 Refuse a slot this kind does not have, BEFORE the delete. `SLOTS_BY_KIND` is the CHECK's
+  // twin, and without this the delete lands and the insert then dies on the constraint — leaving the
+  // derivation with NO wiring at all. That is not hypothetical: the PATCH route's boundary leg
+  // reaches here with a `boundary` slot, which an `hws-model` does not have.
+  const legal = (SLOTS_BY_KIND as Record<string, readonly string[]>)[
+    input.kind
+  ];
+  if (!legal)
+    throw new Error(
+      `writeDerivationSources: unknown derivation kind '${input.kind}'`,
+    );
   const wanted = Object.entries(input.slots).filter(
     (e): e is [string, string] => typeof e[1] === "string" && e[1] !== "",
   );
+  const illegal = wanted
+    .map(([slot]) => slot)
+    .filter((s) => !legal.includes(s));
+  if (illegal.length > 0)
+    throw new Error(
+      `writeDerivationSources: kind '${input.kind}' has no slot(s) ${illegal.join(", ")} (has: ${legal.join(", ")})`,
+    );
   const deviceByPoint = new Map<string, string>();
   if (wanted.length > 0) {
     const rows = await db
@@ -117,7 +131,7 @@ export async function writeDerivationSources(
  * is real: `derivation_sources_signal_role_unique` for a run-detector, the PK for the rest.
  */
 export async function findDerivationBySource(
-  db: PgDb,
+  db: DerivationSourceExec,
   kind: string,
   role: string | null,
   slot: string,

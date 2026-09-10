@@ -22,8 +22,9 @@ import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
  *   POST { kind, … } → 201 { derivation, status }
  *
  * This is the generic resource, not a run-detector one. `derivations` has always been a generic
- * table — `kind` plus two kind-specific jsonb columns, with `deriveDerivationId(area, kind, role)`
- * minting deterministically for any kind — but until now neither of its two kinds (`run-detector`,
+ * table — `kind` plus two kind-specific jsonb columns, with `deriveDerivationId` minting
+ * deterministically for any kind (over the SOURCE POINT since migration 0063, not the area) — but
+ * until now neither of its two kinds (`run-detector`,
  * `hws-model`) was reachable except from a seed script, which is why a detector could exist on dev
  * and not on prod with nothing to notice the difference.
  *
@@ -178,6 +179,15 @@ export async function POST(
         `A ${role} run detector already owns this device: ` +
           `${result.conflictingDerivationId ?? "unknown"}. Edit that one, or point this detector ` +
           `at a different device's energy/signal points.`,
+      );
+    if (result.status === "area-role-vestige-taken")
+      return refusal(
+        result.status,
+        // Not a rule about the world — a rule about a column that is on its way out. `area_id`
+        // decides nothing, but `derivations_area_role_unique` still exists until 0064 drops it.
+        `This area already carries a ${role} detector (${result.conflictingDerivationId ?? "unknown"}), ` +
+          `and the vestigial \`derivations_area_role_unique\` index will not let a second one be ` +
+          `stamped with the same area. Create it from one of the area's member areas instead.`,
       );
     if (result.status !== "created" && result.status !== "exists")
       return refusal(result.status);
