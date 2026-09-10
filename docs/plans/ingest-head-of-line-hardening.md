@@ -316,6 +316,13 @@ cannot see it because its window floor is `commissioned_on`:
 🛑 Do **not** attempt recovery before the collapse fix is deployed — the stored payloads still carry
 the duplicate pairs and would fail identically.
 
+**Resolved 2026-09-10 via the Amber `/usage` route, and the window below it is empty.** The
+recovery covered 2026-07-07 → 2026-09-08 (12,096 observations, +45,344 samples landed). A follow-up
+run over 2026-06-12 → 2026-07-06 — the rest of Amber's rolling window, which looked like ~3½ more
+weeks decaying by a day per day — published **0** against an empty local store, with the audit
+recording `remote usage data for this interval is NOT AVAILABLE`. The site's Amber data starts at
+2026-07-07, so nothing is expiring and the `~2026-10-05` deadline above is spent, not missed.
+
 ## Secondary fixes
 
 Still worth doing; Flow Control reduces their urgency but does not replace them.

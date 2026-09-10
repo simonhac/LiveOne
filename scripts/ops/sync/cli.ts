@@ -30,6 +30,26 @@ interface WireDevice {
   ownerUserId: string | null;
 }
 
+/**
+ * Where a window stopped, as the route classifies it. 🛑 `published: 0` is THREE outcomes —
+ * the vendor had nothing (`vendor-empty`), we already held it so the vendor was never called
+ * (`already-held`), or it had nothing better (`nothing-superior`). Rendering all three as a bare
+ * `0  ok` is how a run reads as "nothing there" when it means "never asked".
+ */
+export type ChunkOutcome =
+  | "published"
+  | "already-held"
+  | "vendor-empty"
+  | "nothing-superior"
+  | "failed"
+  | "unknown";
+
+export interface ChunkAudit {
+  action: string;
+  outcome: ChunkOutcome;
+  discovery?: string;
+}
+
 /** One vendor window, as the route reports it. `observations` is PUBLISHED, never "inserted". */
 export interface WireChunk {
   start: string;
@@ -39,7 +59,36 @@ export interface WireChunk {
   merged: number;
   durationMs: number;
   ok: boolean;
+  /** Absent on responses from a deployment older than this field. */
+  audits?: ChunkAudit[];
   error?: string;
+}
+
+/** How each outcome reads in the table — the vendor's answer, in the operator's words. */
+const OUTCOME_LABEL: Record<ChunkOutcome, string> = {
+  published: "published",
+  "already-held": "already held — vendor NOT called",
+  "vendor-empty": "vendor has no data for this window",
+  "nothing-superior": "vendor no better than stored",
+  failed: "FAILED",
+  // Deliberately not a guess. The route could not tell, so neither can this.
+  unknown: "completed — outcome not classifiable",
+};
+
+/**
+ * One window's outcome for display. A chunk carries one audit per action, so `both` can report two;
+ * they collapse only when they agree, because "already held" for pricing and "vendor empty" for
+ * usage are different findings and averaging them into one word loses the one you needed.
+ */
+export function describeChunk(c: WireChunk): string {
+  if (!c.ok) return `FAILED — ${c.error ?? "?"}`;
+  // A deployment that predates the audits field: say nothing rather than invent an outcome.
+  if (!c.audits?.length) return "ok";
+  const seen = [...new Set(c.audits.map((a) => a.outcome))];
+  if (seen.length === 1) return OUTCOME_LABEL[seen[0]] ?? seen[0];
+  return c.audits
+    .map((a) => `${a.action}: ${OUTCOME_LABEL[a.outcome] ?? a.outcome}`)
+    .join("; ");
 }
 
 export interface WireSync {
@@ -284,6 +333,12 @@ export async function runSync(ctx: Ctx): Promise<number> {
 
       // A finding, not an error: the command did its job and is reporting what it found.
       if (failed.length || !finished) return EXIT.FINDINGS;
+      // 🛑 `published > 0` is load-bearing, not a redundant guard. Nothing covering the window is
+      // only a FINDING when we put something on the wire and it failed to appear. A run that
+      // published nothing because the vendor HAS nothing (2026-06-12 → 2026-07-06 on Amber) is a
+      // successful probe with a negative answer, and must exit 0 — dropping this term would page
+      // whoever scripted `liveone sync || alert` every time they asked about history that predates
+      // the site.
       if (landed && landed.seriesCovering === 0 && published > 0)
         return EXIT.FINDINGS;
       return EXIT.OK;
@@ -303,9 +358,24 @@ async function post(
     token: s.token,
     // This route reports refusals as `{ error }` — a sentence, not a code. The default 422 handler
     // builds a document-validator message from `{ errors[] }` and would discard it.
+    //
+    // 🛑 An override is an OBJECT, not a `why` function. Passing the bare function typechecked
+    // nowhere and crashed everywhere: `apiFetch` calls `override.why(body)`, so every refusal this
+    // route can return — a malformed date, an unsupported vendor, absent credentials — died with
+    // `TypeError: override.why is not a function` instead of printing the server's own sentence.
     errors: {
-      422: (b: Record<string, unknown>) =>
-        String(b.error ?? "the server refused this sync"),
+      400: {
+        exit: EXIT.FINDINGS,
+        what: "the server refused this sync",
+        why: (b) => String(b.error ?? "refused"),
+        next: "nothing was published",
+      },
+      422: {
+        exit: EXIT.FINDINGS,
+        what: "the server refused this sync",
+        why: (b) => String(b.error ?? "refused"),
+        next: "nothing was published",
+      },
     },
   });
   return out;
@@ -422,7 +492,7 @@ export function renderRun(r: RunResult): string {
         String(c.observations).padStart(11),
         String(c.merged).padStart(7),
         ms(c.durationMs).padStart(9),
-        "  " + (c.ok ? "ok" : `FAILED — ${c.error ?? "?"}`),
+        "  " + describeChunk(c),
       ].join(" "),
     );
 
@@ -430,6 +500,26 @@ export function renderRun(r: RunResult): string {
     "",
     `published    ${r.published} observations across ${r.chunks.length} window(s)`,
   );
+
+  // 🛑 A zero that does not say why is the defect this verb exists to prevent, one level up. The
+  // per-window column already carries it, but the summary is what gets read and pasted, and
+  // "published 0" alone invites exactly the wrong conclusion — that the vendor has nothing, when
+  // the run may never have asked it.
+  if (r.published === 0 && r.chunks.length) {
+    const outcomes = new Set(
+      r.chunks.flatMap((c) => c.audits?.map((a) => a.outcome) ?? []),
+    );
+    if (outcomes.size === 1 && outcomes.has("already-held"))
+      out.push(
+        "             Every window was already held locally, so the vendor was NEVER CALLED.",
+        "             This is not evidence about what the vendor has.",
+      );
+    else if (outcomes.size === 1 && outcomes.has("vendor-empty"))
+      out.push(
+        "             The vendor answered for every window and had no data. This IS evidence",
+        "             the history does not exist upstream — not that the fetch failed.",
+      );
+  }
   if (r.merged)
     // Amber is the only vendor that should ever report a non-zero here: its usage and pricing
     // fetches both carry the import rate, and the collector resolves the pair exactly as the store
