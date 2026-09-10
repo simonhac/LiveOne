@@ -349,13 +349,18 @@ export function blendLoadIntensities(
  * The SITE the detector's device belongs to — the area whose bindings the battery-provenance fold
  * reads — as both its battery device's config and its addressing handle.
  *
- * WHY THIS IS TWO HOPS. `generatorSource` is config on the site's BATTERY device, and the fold is
- * keyed by the site area's handle — but a detector's OWN area is typically a device-level area-of-one
- * with no bindings at all (Daylesford's generator detector hangs off the Selectronic's area and
- * Kinkora's EV detector off the Mondo's; the battery binding is on the site area that contains
- * them). So: detector's area → its member devices → every area those devices belong to → the
- * `role=battery, metric=power` binding → that device's config, and that area's handle. One place to
- * configure: a site that prices its Sankey prices its runs.
+ * WHY THIS IS A HOP AT ALL. `generatorSource` is config on the site's BATTERY device, and the fold
+ * is keyed by the site area's handle — but a detector's OWN device is typically not the battery
+ * device (Daylesford's generator detector owns the Selectronic and Kinkora's EV detector the Mondo;
+ * the battery binding lives on the site area that contains them). So: detector's owner device →
+ * every area that device belongs to → the `role=battery, metric=power` binding → that device's
+ * config, and that area's handle. One place to configure: a site that prices its Sankey prices its
+ * runs.
+ *
+ * Migration 0063 removed the first hop. This used to start from the detector's `area_id`, walk to
+ * that area's member devices, and only then fan out — because a detector was FILED under an area
+ * rather than owned by a device. `det.ownerDeviceId` is that device directly, so the `member` alias
+ * and its join are gone; nothing else about the resolution changed.
  */
 async function resolveSiteForDetector(
   db: PgDb,
@@ -368,7 +373,6 @@ async function resolveSiteForDetector(
   /** The site area's location, for the NEM region the grid signal comes from. */
   location: AreaLocation | null;
 } | null> {
-  const member = alias(areaMembers, "member");
   const sibling = alias(areaMembers, "sibling");
   const [row] = await db
     .select({
@@ -377,8 +381,7 @@ async function resolveSiteForDetector(
       areaId: sibling.areaId,
       location: areas.location,
     })
-    .from(member)
-    .innerJoin(sibling, eq(sibling.deviceId, member.deviceId))
+    .from(sibling)
     .innerJoin(
       areaBindings,
       and(
@@ -400,7 +403,7 @@ async function resolveSiteForDetector(
     .leftJoin(legacyHandles, eq(legacyHandles.areaId, sibling.areaId))
     // INNER, and total: `area_members.area_id` is an FK into `areas`, so this cannot drop a row.
     .innerJoin(areas, eq(areas.id, sibling.areaId))
-    .where(eq(member.areaId, det.areaId))
+    .where(eq(sibling.deviceId, det.ownerDeviceId))
     // ORDINAL, not priority — this must agree with the fold, which picks the battery device as the
     // first `role=battery, metric=power` of `boundPoints`, ordered by `ordinal`
     // (lib/battery-provenance/load.ts). Ordering by `priority` looks equivalent and is not: the two

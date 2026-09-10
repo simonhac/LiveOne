@@ -911,16 +911,20 @@ async function main(): Promise<void> {
         again.body,
       );
 
-      // 🛑 THE PLACEMENT RULE, and the reason it is enforced server-side rather than documented.
-      // A detector must hang off a device's AREA-OF-ONE, never a composite, because
-      // `capabilitiesForDevice` probes each MEMBER handle and never the composite's own — so a
-      // detector on a composite is invisible to the capability that lights its card up.
+      // 🛑 THERE IS NO PLACEMENT RULE ANY MORE — this asserts its ABSENCE, which is the whole point
+      // of migration 0063. A detector used to have to hang off a device's area-of-one, because
+      // `capabilitiesForDevice` probed each MEMBER handle and never the composite's own, so a
+      // detector filed on a composite was invisible to the capability that lights its card up. The
+      // site is now DERIVED from the source points (owner = energy point's device, else signal's),
+      // so the area in the URL decides nothing.
       //
-      // ⚠️ Assert it against a COMPOSITE specifically, not merely "some other area". An earlier
-      // version of this guard demanded that the SIGNAL POINT's device own the area, which reads as
-      // the same rule and is not: Daylesford's generator lives on handle 1 while watching the
-      // DeepSea genset's Engine Speed on handle 14, so that version refused to recreate a detector
-      // that exists in production. Driving the real row here is what caught it.
+      // The assertion is therefore the inverse of the old one: posting the SAME body at a DIFFERENT
+      // area must report `exists` and create nothing. 🛑 It is driven against the real production
+      // detector deliberately — Daylesford's generator watches the DeepSea genset's Engine Speed on
+      // handle 14 while counting energy on handle 1, and an earlier version of the old guard read as
+      // "the signal point's device must own the area", which would have refused to recreate a row
+      // that exists in production. Driving the real row is what caught that, and it is what would
+      // catch an owner-precedence regression here.
       const composite = list.find(
         (a: any) => a.id !== detectorArea.id && a.chartCapable,
       );
@@ -928,46 +932,31 @@ async function main(): Promise<void> {
         list.find((a: any) => a.displayName?.includes("Unified")) ?? composite;
       if (!wrongArea) {
         skip(
-          "wrong-area placement",
-          "no second readable area to misplace onto",
+          "area-independent placement",
+          "no second readable area to post against",
         );
       } else {
-        const misplaced = await call(
+        const elsewhere = await call(
           "POST",
           `/api/v4/areas/${wrongArea.id}/derivations`,
           { body },
         );
-        // A composite refuses; an area-of-one would legitimately CREATE a second detector, so only
-        // assert the refusal when the target really is one (its handle names no member device).
-        const targetMembers = await call(
-          "GET",
-          `/api/v4/areas/${wrongArea.id}`,
+        ok(
+          elsewhere.status === 200,
+          `the same detector posted at ${wrongArea.displayName} → 200 (the area decides nothing)`,
+          elsewhere,
         );
-        const isComposite =
-          (targetMembers.body?.members?.length ?? 0) > 1 ||
-          !targetMembers.body?.members?.some(
-            (m: any) => m.legacySystemId === wrongArea.legacySystemId,
-          );
-        if (!isComposite) {
-          skip(
-            "composite placement refusal",
-            `${wrongArea.displayName} is an area-of-one`,
-          );
-        } else {
-          ok(
-            misplaced.status === 422,
-            `the same detector on the composite ${wrongArea.displayName} → 422`,
-            misplaced,
-          );
-          ok(
-            misplaced.body?.status === "area-not-probed" &&
-              typeof misplaced.body?.detail === "string" &&
-              misplaced.body.detail.includes("area-of-one"),
-            "…explains that the capability probe would never see it",
-            misplaced.body,
-          );
-        }
+        ok(
+          elsewhere.body?.status === "exists" &&
+            elsewhere.body?.derivation?.id === detector.id,
+          "…reports `exists` and names the SAME dx_, rather than creating a second row",
+          elsewhere.body,
+        );
       }
+      // ⚠️ GAP, stated rather than discovered: `owner-role-taken` — the one invariant carried by
+      // code rather than by a constraint — is not driven here. Provoking it needs a SECOND signal
+      // point, on a different device, whose energy point resolves to an owner that already has a
+      // detector for the role, and no such fixture exists on prod. Covered in unit tests only.
 
       const badKind = await call(
         "POST",

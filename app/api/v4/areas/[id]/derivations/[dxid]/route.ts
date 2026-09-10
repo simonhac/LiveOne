@@ -4,6 +4,7 @@ import { loadAreaForOwner } from "@/lib/areas/http";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { derivations, points } from "@/lib/db/planetscale/schema";
 import { derivationWire } from "@/lib/derivations/v4-shapes";
+import { writeDerivationSources } from "@/lib/derivations/sources";
 import { Derivation } from "@/lib/ids";
 
 /**
@@ -60,6 +61,9 @@ export async function PATCH(
   if (!body)
     return NextResponse.json({ error: "Body must be JSON" }, { status: 422 });
 
+  // Set (to a uuid or to null) only when the body asked to move the boundary — `undefined` means
+  // "not in this patch", which is why it cannot just be read off `patch.sourcePoints`.
+  let boundaryPointUid: string | null | undefined;
   const patch: {
     enabled?: boolean;
     name?: string;
@@ -133,6 +137,7 @@ export async function PATCH(
       ...((current.sourcePoints as Record<string, unknown>) ?? {}),
       boundary: uid,
     };
+    boundaryPointUid = uid;
   }
   for (const forbidden of [
     "kind",
@@ -172,5 +177,22 @@ export async function PATCH(
       { error: "Derivation not found on this area" },
       { status: 404 },
     );
+  // Keep the `derivation_sources` twin in step with the jsonb (migration 0063's dual-write window).
+  // 🛑 The resolver reads ONLY the table, so skipping this would leave the wire showing a boundary
+  // point that detection never applies — the exact failure the dual-write exists to avoid. Rewrites
+  // every slot, not just `boundary`, so the row and the column cannot drift apart in any direction.
+  if (boundaryPointUid !== undefined) {
+    const src = (row.sourcePoints ?? {}) as Record<string, unknown>;
+    await writeDerivationSources(requirePlanetscaleDb(), {
+      derivationId: row.id,
+      kind: row.kind,
+      role: row.role,
+      slots: {
+        signal: typeof src.signal === "string" ? src.signal : null,
+        energy: typeof src.energy === "string" ? src.energy : null,
+        boundary: boundaryPointUid,
+      },
+    });
+  }
   return NextResponse.json({ derivation: derivationWire(row) });
 }

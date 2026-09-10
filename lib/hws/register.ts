@@ -18,6 +18,10 @@ import {
   HWS_MODEL_KIND,
   resolveAreaIdForHandle,
 } from "@/lib/derivations/resolve";
+import {
+  findDerivationBySource,
+  writeDerivationSources,
+} from "@/lib/derivations/sources";
 
 const HWS_STEM = "load.hws";
 const TEMP_PHYSICAL_PATH = "derived/load.hws/temperature"; // synthetic, unique per device
@@ -100,7 +104,7 @@ export async function ensureHwsTemperaturePoint(
 }
 
 export interface EnsureDerivationResult {
-  status: "created" | "exists" | "no-points" | "no-area";
+  status: "created" | "exists" | "no-points";
   systemId: number;
   derivationId?: string;
 }
@@ -135,16 +139,25 @@ export async function ensureHwsDerivation(
   const temp = pts.find((p) => p.metricType === "temperature");
   if (!power || !temp) return { status: "no-points", systemId };
 
-  const areaId = await resolveAreaIdForHandle(systemId);
-  if (!areaId) return { status: "no-area", systemId };
+  // Existence by NATURAL KEY (`derivation_sources`), not by minting the id and looking it up — see
+  // `ensureRunDetector` and `lib/derivations/ids.ts` for why that inversion matters.
+  const existingId = await findDerivationBySource(
+    db,
+    HWS_MODEL_KIND,
+    null,
+    "power",
+    power.pointUid,
+  );
+  if (existingId)
+    return { status: "exists", systemId, derivationId: existingId };
 
-  const id = deriveDerivationId(areaId, HWS_MODEL_KIND, null);
-  const [existing] = await db
-    .select({ id: derivations.id })
-    .from(derivations)
-    .where(eq(derivations.id, id))
-    .limit(1);
-  if (existing) return { status: "exists", systemId, derivationId: id };
+  // The `derivations.area_id` vestige, dual-written and read by nothing (0063). A handle that
+  // resolves to no area is no longer a refusal: the model's site is its power point's device.
+  const areaId = await resolveAreaIdForHandle(systemId);
+
+  // Anchored on the POWER POINT uuid rather than the area: deterministic and cross-environment
+  // stable (`points.id` is a uuidv5). Minted on the insert path only.
+  const id = deriveDerivationId(power.pointUid, HWS_MODEL_KIND, null);
   if (!apply) return { status: "created", systemId, derivationId: id };
 
   await db.insert(derivations).values({
@@ -158,7 +171,14 @@ export async function ensureHwsDerivation(
     outputPointId: temp.pointUid,
     // Sparse: the model runs on DEFAULT_HWS_MODEL_OPTIONS unless a constant is overridden here.
     params: {},
+    // Dual-written with the `derivation_sources` row below; the resolver reads only the latter.
     sourcePoints: { power: power.pointUid },
+  });
+  await writeDerivationSources(db, {
+    derivationId: id,
+    kind: HWS_MODEL_KIND,
+    role: null,
+    slots: { power: power.pointUid },
   });
 
   return { status: "created", systemId, derivationId: id };

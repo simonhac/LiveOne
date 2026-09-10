@@ -91,12 +91,6 @@ async function main() {
         `${tag}   ${APPLY ? "created" : "would create"} hws-model derivation ${dv.derivationId}.`,
       );
       break;
-    case "no-area":
-      console.error(
-        `${tag}   ⚠️ system ${systemId} has no resolvable area — the derivation cannot be placed.`,
-      );
-      process.exitCode = 1;
-      break;
     case "no-points":
       console.log(
         `${tag}   (temperature point not written yet — re-run with --apply to create the derivation.)`,

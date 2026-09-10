@@ -7,9 +7,11 @@
  * ONE entry point for a real device OR an area: `getActivePointsForDevice(handle)` already unions an
  * area's member points (areas-backed → member/bound points; real device → its own), so the ATOMIC
  * capabilities fall straight out of `capabilitiesFromPoints`. COMPOUND capabilities are predicates:
- *  - run-tracking       — any member device has an enabled run-detector `derivations` row for a
- *                         trackable role, mapped through `RUN_TRACKING_CAPABILITY`
- *                         (`generator` → `generator-running`, `ev` → `ev-charging`).
+ *  - run-tracking       — any member device is a SOURCE of an enabled run detector for a trackable
+ *                         role (`derivation_sources.device_id`, migration 0063), mapped through
+ *                         `RUN_TRACKING_CAPABILITY` (`generator` → `generator-running`,
+ *                         `ev` → `ev-charging`). Source-of, not filed-under: a device that carries
+ *                         only the detector's signal now lights the card up too.
  *  - `grid-signals`      — the area's location derives a NEM region backed by a seeded OE device
  *                          (`resolveGridContextForDevice`).
  *
@@ -20,7 +22,7 @@ import { PointManager } from "@/lib/point/point-manager";
 import { getAreaForDevice } from "@/lib/areas/resolve";
 import { getAreaMemberDeviceIds } from "@/lib/areas/members";
 import { DeviceRegistry } from "@/lib/registry";
-import { hasEnabledRunDetector } from "@/lib/derivations/resolve";
+import { runDetectorRolesForDevices } from "@/lib/derivations/resolve";
 import { resolveGridContextForDevice } from "@/lib/grid/context";
 import {
   capabilitiesFromPoints,
@@ -37,9 +39,8 @@ import {
   type CapabilityId,
   type TrackableRoleId,
 } from "@/lib/capabilities/registry";
-import { TRACKABLE_ROLE_IDS, type RoleId } from "@/lib/roles/registry";
 import type { CapabilitySet } from "@/lib/capabilities/derive";
-import type { DeviceId } from "@/lib/ids";
+import { Device, type DeviceId } from "@/lib/ids";
 import type { DashboardV4 } from "@/lib/dashboard/v4";
 import { normalizeDocV4 } from "@/lib/dashboard/v4-validate";
 import {
@@ -48,22 +49,34 @@ import {
 } from "@/lib/registry/device-config";
 
 /**
- * The member systemIds behind a handle: an area's `area_members`, or the handle itself (a real device).
+ * The member devices behind a handle: an area's `area_members`, or the handle's own device.
  *
- * Membership is uuid-keyed since slice H, but every consumer here still joins int-keyed columns
- * (`systems.id`, the run-detector lookup), so it converts back. The `!` is safe by the
- * `area_members.device_id` FK — see `DeviceRegistry.ridsForDevices`.
+ * The uuid is the PRIMITIVE since 0063 — the run-detector lookup joins `derivation_sources.device_id`
+ * — and the `rid` rides along because `point_info` and the KV keyspace are still int-addressed.
+ * {@link memberSystemIds} is the thin int-only wrapper the rest of the callers still use. The `!` is
+ * safe by the `area_members.device_id` FK — see `DeviceRegistry.ridsForDevices`.
  */
-export async function memberSystemIds(handle: number): Promise<number[]> {
+export async function memberDevices(
+  handle: number,
+): Promise<{ deviceId: DeviceId; rid: number }[]> {
   const area = await getAreaForDevice(handle);
   if (area) {
     const memberIds = await getAreaMemberDeviceIds(area.id);
     if (memberIds.length) {
       const rids = await DeviceRegistry.ridsForDevices(memberIds);
-      return memberIds.map((id) => rids.get(id)!);
+      return memberIds.map((id) => ({ deviceId: id, rid: rids.get(id)! }));
     }
   }
-  return [handle];
+  const own = await DeviceConfigRegistry.deviceByHandle(handle);
+  return own ? [{ deviceId: own.deviceId, rid: handle }] : [];
+}
+
+export async function memberSystemIds(handle: number): Promise<number[]> {
+  const members = await memberDevices(handle);
+  // A handle that resolves to neither an area nor a device still has to answer with ITSELF: the
+  // caller is about to ask `point_info`-shaped questions of it, and returning [] would silently turn
+  // "unknown device" into "device with nothing on it".
+  return members.length ? members.map((m) => m.rid) : [handle];
 }
 
 /**
@@ -79,25 +92,21 @@ async function resolveDeviceCapabilities(handle: number): Promise<{
   const points = await pm.getActivePointsForDevice(handle, false, false);
   const caps = capabilitiesFromPoints(points);
 
-  // Walk the member devices once: gather run-tracking + merge their config overrides (later member
-  // wins for the same capability). A device's own handle is its own single member.
-  //
-  // Run-tracking is probed per TRACKABLE ROLE, not just for the generator: a detector hangs off the
-  // area-of-one of the device owning its signal point (see `ensureRunDetector`), so the composite's
-  // own handle is never asked — only its members are. Once a role is found, stop probing it, so a
-  // 7-member area doesn't issue 7 lookups for a role the first member already answered.
-  const members = await memberSystemIds(handle);
+  // Walk the member devices once to merge their config overrides (later member wins for the same
+  // capability). A device's own handle is its own single member.
+  const members = await memberDevices(handle);
   const overrides: DeviceConfig["capabilities"] = {};
-  const tracked = new Set<RoleId>();
-  for (const sid of members) {
-    const sys = await DeviceConfigRegistry.deviceByHandle(sid);
+  for (const m of members) {
+    const sys = await DeviceConfigRegistry.deviceByHandle(m.rid);
     if (sys?.config?.capabilities)
       Object.assign(overrides, sys.config.capabilities);
-    for (const role of TRACKABLE_ROLE_IDS) {
-      if (tracked.has(role)) continue;
-      if (await hasEnabledRunDetector(sid, role)) tracked.add(role);
-    }
   }
+  // ONE read for the whole member set, since 0063 (`runDetectorRolesForDevices`). This used to be
+  // `≈ 2·M·R` SEQUENTIAL round trips — a per-member, per-role existence probe inside this same loop,
+  // ~40 of them for a 7-member area, with a short-circuit as the only mitigation.
+  const tracked = await runDetectorRolesForDevices(
+    members.map((m) => Device.toUuid(m.deviceId)),
+  );
   for (const role of tracked) {
     const cap = RUN_TRACKING_CAPABILITY[role as TrackableRoleId];
     if (cap) caps.add(cap);

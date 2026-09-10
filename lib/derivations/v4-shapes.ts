@@ -32,8 +32,15 @@ export interface DerivationRowFacts {
 function sourcePointsWire(kind: string, raw: unknown): Record<string, unknown> {
   const src = (raw ?? {}) as Record<string, unknown>;
   const pt = (v: unknown) => (typeof v === "string" ? Point.encode(v) : null);
+  // `boundary` is emitted, not omitted. It was write-only until 0063: PATCH permits re-pointing it
+  // (it is the one slot that changes where runs are DIVIDED without changing what they measure) and
+  // this projection then refused to show the result back.
   if (kind === RUN_DETECTOR_KIND)
-    return { signal: pt(src.signal), energy: pt(src.energy) };
+    return {
+      signal: pt(src.signal),
+      energy: pt(src.energy),
+      boundary: pt(src.boundary),
+    };
   if (kind === HWS_MODEL_KIND) return { power: pt(src.power) };
   // An unknown kind is served with its source_points withheld rather than guessed at — the row is
   // still listed (so it can be seen and disabled) but nothing claims to know what its uuids mean.

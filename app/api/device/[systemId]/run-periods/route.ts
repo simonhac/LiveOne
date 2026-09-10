@@ -10,11 +10,11 @@ import {
   type DerivedInterval,
 } from "@/lib/db/planetscale/schema";
 import {
-  getRunDetectorForHandleRole,
+  getRunDetectorForDevices,
   type ResolvedRunDetector,
 } from "@/lib/derivations/resolve";
-import { memberSystemIds } from "@/lib/capabilities/server";
-import { Point, type PointId } from "@/lib/ids";
+import { memberDevices } from "@/lib/capabilities/server";
+import { Device, Point, type PointId } from "@/lib/ids";
 import { resolvePointDisplay } from "@/lib/point/display/registry";
 import { getUnitDisplay } from "@/lib/point/unit-display";
 import {
@@ -240,35 +240,25 @@ async function resolveShape(
 }
 
 /**
- * The enabled detector for `(handle, role)`, looking through an AREA'S MEMBERS when the handle
- * itself has none.
+ * The enabled detector for `(handle, role)`, asked of the handle's DEVICES.
  *
- * A detector hangs off the area-of-one of the device that owns its signal point (`ensureRunDetector`
- * says so at length, and `capabilitiesForDevice` probes members for exactly this reason) — never off
- * the composite site area. But a composite is precisely what the caller usually holds: the stacked
- * chart is keyed on Kinkora Unified (handle 8) while the EV detector lives on Kinkora Mondo (6). So
- * ask the handle first, then its members.
+ * The caller usually holds a composite: the stacked chart is keyed on Kinkora Unified (handle 8)
+ * while the EV detector's points sit on Kinkora Mondo (6). Since migration 0063 a detector is
+ * reachable from any device it draws a source from, so the member set is one query rather than a
+ * per-member walk — and `memberDevices` returns the handle's own device for a real device, so the
+ * single-device case is the same call, not a fallback.
  *
- * First member wins. A composite with two detectors for the same role is not a shape that exists
- * here (a role is one physical thing per site), and picking arbitrarily between them would be a
- * worse answer than picking the first — but neither is a *good* answer, so the ambiguity is left
- * visible rather than papered over with a merge.
- *
- * `memberSystemIds` returns `[handle]` for a real device, so the fallback is a no-op — not a second
- * lookup — in the single-device case.
+ * First wins; see `getRunDetectorForDevices` for why the ambiguity is left visible.
  */
 async function resolveDetector(
   handle: number,
   role: string,
 ): Promise<ResolvedRunDetector | null> {
-  const own = await getRunDetectorForHandleRole(handle, role);
-  if (own) return own;
-  for (const member of await memberSystemIds(handle)) {
-    if (member === handle) continue;
-    const det = await getRunDetectorForHandleRole(member, role);
-    if (det) return det;
-  }
-  return null;
+  const members = await memberDevices(handle);
+  return getRunDetectorForDevices(
+    members.map((m) => Device.toUuid(m.deviceId)),
+    role,
+  );
 }
 
 /**

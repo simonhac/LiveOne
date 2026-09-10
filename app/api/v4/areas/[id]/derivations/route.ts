@@ -168,16 +168,16 @@ export async function POST(
       params: detectorParams,
       apply: true,
     });
-    if (result.status === "area-not-probed")
+    if (result.status === "owner-role-taken")
       return refusal(
         result.status,
-        // Name the members it COULD go on. Getting this wrong is the documented failure of the whole
-        // feature (a detector on a composite is invisible to the capability probe that lights its
-        // card up), and "wrong area" without "here are the right ones" leaves the caller guessing.
-        `This area's own handle names no device, so \`capabilitiesForDevice\` never probes it — a ` +
-          `run detector here would be invisible. Put it on the area-of-one of one of its members ` +
-          `(handles: ${result.memberHandles?.join(", ") || "none"}), and pin the dashboard card ` +
-          `to that device.`,
+        // The one placement rule left, and it is about the OWNER DEVICE rather than the area: two
+        // detectors for the same role resolving to the same owner would fight over one
+        // `<stem>/running` point. `derivation_sources_signal_role_unique` cannot express it (their
+        // signals may sit on different devices), so it is checked in code — see `ensureRunDetector`.
+        `A ${role} run detector already owns this device: ` +
+          `${result.conflictingDerivationId ?? "unknown"}. Edit that one, or point this detector ` +
+          `at a different device's energy/signal points.`,
       );
     if (result.status !== "created" && result.status !== "exists")
       return refusal(result.status);
