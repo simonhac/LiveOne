@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import { eq } from "drizzle-orm";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import { areas } from "@/lib/db/planetscale/schema";
@@ -215,6 +216,14 @@ export async function PATCH(
  *
  * A legacy Area addressed by a REAL device handle is refused with 409: it is that device's own area and
  * is load-bearing for the device page.
+ *
+ * ## The second refusal, and why archiving needs one at all
+ *
+ * `derivations.area_id` / `automations.area_id` are NO ACTION FKs, so a HARD delete was already
+ * blocked by Postgres. The soft archive is precisely the path that FK never covered: the row stays,
+ * every FK stays satisfied, and the area simply stops being served — so a dashboard node naming it
+ * renders nothing, with no error anywhere. `refuseIfReliedUpon` names what would go quiet.
+ * `?force=true` proceeds and returns the list in the body, so an override is legible in a log.
  */
 export async function DELETE(
   request: NextRequest,
@@ -235,8 +244,11 @@ export async function DELETE(
     );
   }
 
+  const relied = await refuseIfReliedUpon(request, "area", area.id);
+  if ("response" in relied) return relied.response;
+
   await updateAreaMeta(area.id, { status: "archived" });
   // The archived area must leave the KV subscription registry, or its bindings keep being served.
   await refreshAreaServing(area.id);
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, forced: relied.forced });
 }

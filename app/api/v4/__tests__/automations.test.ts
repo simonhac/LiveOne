@@ -20,6 +20,7 @@
  *     "not yours" must be indistinguishable or the route is an oracle for which ids exist.
  */
 import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import { NextRequest, NextResponse } from "next/server";
 import { Area, Automation, Derivation, Point } from "@/lib/ids";
 
@@ -43,6 +44,10 @@ jest.mock("@/lib/areas/http", () => ({
   loadAreaForOwner: jest.fn(),
   loadAreaForAuth: jest.fn(),
 }));
+// The referential-integrity gate. NOTHING references an automation today, so this is wired mostly
+// to pin that the route asks — see the route's docstring on why an empty finder that is CALLED is
+// different from a question nobody asked.
+jest.mock("@/lib/integrity/http", () => ({ refuseIfReliedUpon: jest.fn() }));
 jest.mock("@/lib/control/point-actions", () => ({
   loadPointByUuid: jest.fn(),
   loadPointByStemMetric: jest.fn(),
@@ -197,6 +202,7 @@ function del(id: string = AU) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(refuseIfReliedUpon).mockResolvedValue({ forced: [] } as never);
   mockAuth.mockResolvedValue({ userId: OWNER, isAdmin: false } as never);
   mockAreaOwner.mockResolvedValue({
     userId: OWNER,
@@ -786,11 +792,22 @@ describe("DELETE — administration, deliberately NOT owner-gated", () => {
 });
 
 describe("DELETE /api/v4/automations/{id}", () => {
+  const mockRelied = jest.mocked(refuseIfReliedUpon);
+
   it("hard-deletes", async () => {
     const res = await del();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true });
+    expect(await res.json()).toEqual({ success: true, forced: [] });
     expect(mockStore.remove).toHaveBeenCalledWith(AU_UUID);
+  });
+
+  it("asks the referential-integrity gate, even though nothing answers today", async () => {
+    await del();
+    expect(mockRelied).toHaveBeenCalledWith(
+      expect.anything(),
+      "automation",
+      AU_UUID,
+    );
   });
 
   it("404s an unknown id", async () => {

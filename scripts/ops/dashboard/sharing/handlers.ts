@@ -325,10 +325,11 @@ async function runDelete(ctx: Ctx): Promise<number> {
       ]);
       const live = links.tokens.filter((t) => !t.revokedAtMs);
 
-      // 🛑 Whose LANDING is this? `users.default_dashboard_id` has no FK to `dashboards`, so
-      // deleting one leaves a dangling preference rather than failing — the owner simply lands
-      // somewhere broken next time, with nothing to connect it to a deletion made days earlier.
-      // Cheap to check (the directory is small) and impossible to notice afterwards.
+      // 🛑 Whose LANDING is this? `users.default_dashboard_id` DOES have an FK — `ON DELETE SET
+      // NULL` — which is precisely why this check earns its keep: the constraint guarantees the
+      // column never dangles, and that is the whole problem. The preference is silently emptied and
+      // the owner simply lands somewhere else next time, with nothing to connect it to a deletion
+      // made days earlier. Cheap to check (the directory is small), impossible to notice afterwards.
       const landsHere: string[] = [];
       try {
         const { users } = await s.get<{

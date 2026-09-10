@@ -140,7 +140,21 @@ export async function PATCH(
   return NextResponse.json({ ok: true, ...share });
 }
 
-/** DELETE — revoke one token. Idempotent: re-revoking an already-revoked token is a 200, not an error. */
+/**
+ * DELETE — revoke one token. Idempotent: re-revoking an already-revoked token is a 200, not an error.
+ *
+ * 🛑 **Deliberately NOT gated by `assertNotReliedUpon`, and this must not be "fixed" later for
+ * consistency.** Every other delete in the v4 tree refuses while something still depends on the
+ * row, because there the dependency is a reason to stop and think. Here the dependency IS THE
+ * REASON TO PROCEED: you revoke a share link when it has leaked, and whoever is currently relying
+ * on it is exactly who you are revoking it from. A 409 would make the security action the slow one
+ * and teach operators to reach for `?force=true` reflexively, which is the habit the refusals
+ * elsewhere exist to prevent.
+ *
+ * Live tokens ARE named — on the DELETE of the DASHBOARD that owns them (`refuseIfReliedUpon` in
+ * `dashboards/[id]/route.ts`), where losing them is a side effect rather than the intent. Same
+ * fact, opposite verdict, because the two acts mean opposite things.
+ */
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },

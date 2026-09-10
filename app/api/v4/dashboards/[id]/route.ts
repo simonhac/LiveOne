@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import {
   updateDashboardDoc,
   updateDashboard,
@@ -140,6 +141,21 @@ export async function PATCH(
   return NextResponse.json({ success: true });
 }
 
+/**
+ * DELETE — a HARD delete, and the only one in the v4 tree that is.
+ *
+ * The FKs do clean up: grants, share tokens and revisions all CASCADE, and
+ * `users.default_dashboard_id` is SET NULL. What none of them do is TELL ANYONE. A grantee loses
+ * access, a live share link dies in someone else's hands, and a user's landing page silently
+ * becomes something else — three outcomes that are correct at the database level and surprising at
+ * the human one. So the delete is gated on naming them.
+ *
+ * 🛑 The revisions are deliberately NOT in that list even though they cascade too: undo history
+ * belongs to the dashboard, and refusing to delete a thing because it has a past would make the
+ * feature a lock. See `lib/integrity/ledger.ts`, `dashboard_revisions.doc`.
+ *
+ * `?force=true` proceeds and reports what it took with it.
+ */
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -147,6 +163,10 @@ export async function DELETE(
   const { id } = await params;
   const r = await loadOwnedDashboard(request, id);
   if ("error" in r) return r.error;
+
+  const relied = await refuseIfReliedUpon(request, "dashboard", r.dashboard.id);
+  if ("response" in relied) return relied.response;
+
   await deleteDashboard(r.dashboard.id);
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, forced: relied.forced });
 }

@@ -40,6 +40,10 @@ jest.mock("@/lib/registry/device-config", () => ({
 jest.mock("@/lib/db/planetscale", () => ({
   requirePlanetscaleDb: jest.fn(),
 }));
+// The referential-integrity gate is a collaborator with its own tests (lib/integrity). Mocked here
+// so these tests keep asserting the ROUTE's behaviour; that the route calls it at all is asserted
+// below, and that it can refuse is asserted with an explicit refusal.
+jest.mock("@/lib/integrity/http", () => ({ refuseIfReliedUpon: jest.fn() }));
 jest.mock("@/lib/areas/http", () => {
   const actual = jest.requireActual("@/lib/areas/http") as object;
   return {
@@ -86,6 +90,7 @@ import { loadAreaForOwner, resolveMemberDeviceRefs } from "@/lib/areas/http";
 import { loadAreaMembers, loadAreaBindings } from "@/lib/areas/v4-load";
 import { capabilitiesForDevice } from "@/lib/capabilities/server";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
+import { refuseIfReliedUpon } from "@/lib/integrity/http";
 import { DeviceConfigRegistry } from "@/lib/registry/device-config";
 import {
   createArea,
@@ -109,6 +114,7 @@ const mockBindings = jest.mocked(loadAreaBindings);
 const mockCaps = jest.mocked(capabilitiesForDevice);
 const mockDb = jest.mocked(requirePlanetscaleDb);
 const mockDeviceByHandle = jest.mocked(DeviceConfigRegistry.deviceByHandle);
+const mockRelied = jest.mocked(refuseIfReliedUpon);
 const mockCreate = jest.mocked(createArea);
 const mockUpdateMeta = jest.mocked(updateAreaMeta);
 const mockReplaceMembers = jest.mocked(replaceMembers);
@@ -165,6 +171,7 @@ beforeEach(() => {
     },
   ] as any);
   mockBindings.mockResolvedValue([]);
+  mockRelied.mockResolvedValue({ forced: [] } as any);
   mockCaps.mockResolvedValue(new Set<string>() as any);
   mockCreate.mockResolvedValue({ id: AREA_UUID, legacySystemId: 1000009 });
   mockDeviceByHandle.mockResolvedValue(null as any);
@@ -331,7 +338,7 @@ describe("DELETE /api/v4/areas/{id}", () => {
   it("archives rather than deleting, and refreshes serving", async () => {
     const res = await areaDELETE(req(), params);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true });
+    expect(await res.json()).toEqual({ success: true, forced: [] });
     expect(mockUpdateMeta).toHaveBeenCalledWith(AREA_UUID, {
       status: "archived",
     });
@@ -340,6 +347,29 @@ describe("DELETE /api/v4/areas/{id}", () => {
 
   it("409s a device's own area (its handle names a real device)", async () => {
     mockDeviceByHandle.mockResolvedValueOnce({ id: 1000002 } as any);
+    const res = await areaDELETE(req(), params);
+    expect(res.status).toBe(409);
+    expect(mockUpdateMeta).not.toHaveBeenCalled();
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  // 🛑 The archive is the path the `derivations.area_id` / `automations.area_id` NO ACTION FKs never
+  // covered: every constraint stays satisfied and the area simply stops being served, so a dashboard
+  // node naming it renders nothing with no error. These two pin that the gate runs, and that a
+  // refusal from it stops the write — not merely that it was consulted.
+  it("consults the referential-integrity gate before archiving", async () => {
+    await areaDELETE(req(), params);
+    expect(mockRelied).toHaveBeenCalledWith(
+      expect.anything(),
+      "area",
+      AREA_UUID,
+    );
+  });
+
+  it("writes nothing when something still relies on the area", async () => {
+    mockRelied.mockResolvedValueOnce({
+      response: NextResponse.json({ error: "relied upon" }, { status: 409 }),
+    } as any);
     const res = await areaDELETE(req(), params);
     expect(res.status).toBe(409);
     expect(mockUpdateMeta).not.toHaveBeenCalled();

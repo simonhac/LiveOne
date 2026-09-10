@@ -76,6 +76,15 @@ function isStructurallyAllowed(rel) {
   return (
     rel === "lib/db/planetscale/schema.ts" || // defines the symbols
     rel === "scripts/check-readings-boundary.mjs" || // this guard (contains the literals)
+    // The reference census (lib/integrity/ledger.ts). It must name EVERY table in the schema —
+    // that is its completeness claim — so an exemption is structural rather than a concession: a
+    // census that skipped three tables would be exactly the thing it exists to prevent.
+    //
+    // 🛑 What makes it safe is not the intent, it is that it CANNOT read. The module imports table
+    // objects to introspect column names and never a database client; `ledger.test.ts` asserts that
+    // (no `requirePlanetscaleDb`, no `drizzle-orm` query builder) so the exemption is pinned by a
+    // test rather than by this comment. If that assertion is ever deleted, delete this line too.
+    rel === "lib/integrity/ledger.ts" ||
     rel.startsWith("lib/readings/") || // the seam
     rel.startsWith("lib/registry/") ||
     // The `scripts/config-v4/` exemption (cutover tooling that rewrote the hot tables, so it could not
