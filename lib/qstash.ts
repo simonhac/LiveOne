@@ -11,14 +11,17 @@ export const qstash = process.env.OBSERVATIONS_QSTASH_TOKEN
   : null;
 
 /**
- * Queue name for observation batches.
- * Uses environment-specific names to separate dev and prod messages.
+ * The FIFO QStash Queue observations used to ride, retired at the 2026-09-10 cutover.
  *
- * @deprecated Being replaced by the flow-control lane keys below. Kept for the whole coexistence
- * window — `OBSERVATIONS_PUBLISH_MODE` still defaults to `"queue"`, and the old queue must remain
- * readable and drainable until it is retired.
+ * Nothing publishes here any more — this exists ONLY so `queue timing` can still classify the log
+ * rows QStash retains from before the flip, which would otherwise render as `foreign` and make a
+ * window that was perfectly healthy look unattributable. It is a log-reading concern, not a
+ * transport: there is no client, no queue name in flight, and no way back to it.
+ *
+ * 🛑 Delete this, and its use in `lib/observations/message-log.ts`, once QStash's log retention no
+ * longer reaches 2026-09-10. At that point it can only ever match zero rows.
  */
-export const OBSERVATIONS_QUEUE_NAME = isProduction()
+export const RETIRED_QUEUE_NAME = isProduction()
   ? "observations"
   : "observations-dev";
 

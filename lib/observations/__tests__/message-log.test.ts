@@ -10,7 +10,7 @@ import { describe, it, expect } from "@jest/globals";
 import { foldMessageLogs, summarise, type RawLog } from "../message-log";
 // The flow key is BUILT, never spelled: its prefix is environment-dependent (`obs` in
 // production, `obs-dev` elsewhere), so a literal would pass or fail on NODE_ENV.
-import { OBSERVATIONS_QUEUE_NAME, observationsFlowKey } from "@/lib/qstash";
+import { RETIRED_QUEUE_NAME, observationsFlowKey } from "@/lib/qstash";
 
 const T = 1_700_000_000_000;
 
@@ -18,7 +18,7 @@ const row = (
   over: Partial<RawLog> & { state: string; time: number },
 ): RawLog => ({
   messageId: "m1",
-  queueName: OBSERVATIONS_QUEUE_NAME,
+  queueName: RETIRED_QUEUE_NAME,
   ...over,
 });
 
@@ -232,7 +232,7 @@ describe("readMessageLog budget", () => {
               messageId: `m${page}`,
               time,
               state: "CREATED",
-              queueName: OBSERVATIONS_QUEUE_NAME,
+              queueName: RETIRED_QUEUE_NAME,
             },
           ],
           cursor: String(cursor ?? time),
@@ -289,7 +289,7 @@ describe("readMessageLog budget", () => {
     // enough to render "Only 1970-01-01 → … was read" — the field added to make truncation honest,
     // lying. Left in the fold it is worse than cosmetic: it sorts to the front of its message and
     // turns `waitMs` into time-since-the-epoch.
-    const good = { messageId: "ok", queueName: OBSERVATIONS_QUEUE_NAME };
+    const good = { messageId: "ok", queueName: RETIRED_QUEUE_NAME };
     const { readMessageLog } = await load({
       logs: async () => ({
         logs: [

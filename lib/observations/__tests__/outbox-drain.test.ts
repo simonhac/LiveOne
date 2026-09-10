@@ -150,13 +150,8 @@ describe("drainOutbox", () => {
   });
 
   it("replays a backfill row on the BACKFILL lane, from the stored payload", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
-    try {
-      state.rows = [{ id: 1, payload: message({ lane: "backfill" }) }];
-      await drainOutbox(10);
-    } finally {
-      delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    }
+    state.rows = [{ id: 1, payload: message({ lane: "backfill" }) }];
+    await drainOutbox(10);
 
     expect(fake().published[0].request.flowControl).toMatchObject({
       key: "obs-dev.backfill",
@@ -164,14 +159,9 @@ describe("drainOutbox", () => {
   });
 
   it("replays a PRE-LANE row on the live lane — the 30-day outbox tail needs no backfill", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
-    try {
-      // A row written before `lane` existed: no field at all.
-      state.rows = [{ id: 1, payload: message({}) }];
-      await drainOutbox(10);
-    } finally {
-      delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    }
+    // A row written before `lane` existed: no field at all.
+    state.rows = [{ id: 1, payload: message({}) }];
+    await drainOutbox(10);
 
     expect(fake().published[0].request.flowControl).toMatchObject({
       key: "obs-dev.live",

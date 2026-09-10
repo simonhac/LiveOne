@@ -14,9 +14,9 @@
  *
  * 🛑 **QStash already records this and we were discarding it.** `qstash.logs()` returns one row per
  * state transition (`CREATED → ACTIVE → DELIVERED | ERROR | RETRY | FAILED`) carrying `time`,
- * `messageId` and the body. `app/api/admin/observations/messages` has called it since the beginning
- * and uses it only to subtract terminated ids from created ones to list "pending" — every timestamp
- * needed for a duration was in hand and thrown away. This module pairs them instead.
+ * `messageId` and the body. The admin pending-messages view called it from the beginning and used it
+ * only to subtract terminated ids from created ones to list "pending" — every timestamp needed for a
+ * duration was in hand and thrown away. This module pairs them instead, and retired that view.
  *
  * 🛑 **Retention is QStash's, not ours.** These logs age out on Upstash's schedule, so this is a
  * FORENSIC read, never a system of record. The durable equivalent is the receiver's own
@@ -28,10 +28,9 @@
 
 import {
   qstash,
-  OBSERVATIONS_QUEUE_NAME,
+  RETIRED_QUEUE_NAME,
   parseObservationsFlowKey,
 } from "@/lib/qstash";
-import { publishMode } from "./publish";
 import type { ObservationLane, QueueMessage } from "./types";
 
 /** One state transition, as QStash reports it. Narrowed to what a duration needs. */
@@ -61,6 +60,10 @@ export interface MessageTiming {
   messageId: string;
   /** `null` for a pre-lane message, and for one we could not classify. Never guessed as `live`. */
   lane: ObservationLane | null;
+  /**
+   * `flow` for everything published since the 2026-09-10 cutover. `queue` only ever appears for log
+   * rows QStash still retains from before it — see `RETIRED_QUEUE_NAME`.
+   */
   transport: "queue" | "flow" | "unknown";
   createdAt: number | null;
   /** `CREATED → first ACTIVE`. How long it sat behind other messages — the head-of-line measure. */
@@ -86,8 +89,6 @@ interface Percentiles {
 
 export interface MessageLog {
   window: { fromMs: number; toMs: number };
-  /** Which transport is carrying messages NOW — for reading the mix below, not derived from it. */
-  mode: "queue" | "flow";
   messages: MessageTiming[];
   summary: {
     messages: number;
@@ -172,7 +173,7 @@ export function foldMessageLogs(logs: RawLog[]): {
     const flowLane = log.flowControlKey
       ? parseObservationsFlowKey(log.flowControlKey)
       : null;
-    const ours = log.queueName === OBSERVATIONS_QUEUE_NAME || flowLane !== null;
+    const ours = flowLane !== null || log.queueName === RETIRED_QUEUE_NAME;
     if (!ours) {
       foreign++;
       continue;
@@ -194,7 +195,7 @@ export function foldMessageLogs(logs: RawLog[]): {
       : null;
     const transport: MessageTiming["transport"] = flowLane
       ? "flow"
-      : withKey?.queueName === OBSERVATIONS_QUEUE_NAME
+      : withKey?.queueName === RETIRED_QUEUE_NAME
         ? "queue"
         : "unknown";
 
@@ -318,11 +319,9 @@ export async function readMessageLog(opts: {
 }): Promise<MessageLog> {
   const toMs = opts.toMs ?? Date.now();
   const window = { fromMs: opts.fromMs, toMs };
-  const mode = publishMode();
   if (!qstash) {
     return {
       window,
-      mode,
       messages: [],
       summary: summarise([]),
       truncated: false,
@@ -364,7 +363,6 @@ export async function readMessageLog(opts: {
   const times = dated.map((r) => r.time);
   return {
     window,
-    mode,
     messages,
     summary: summarise(messages),
     truncated,

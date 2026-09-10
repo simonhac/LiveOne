@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
  * READ-ONLY live snapshot of the observations mirror pipeline: per-lane backlog / in-flight /
- * paused + the legacy queue + DLQ depth, plus PG response-presence / raw-landing. Shares its
- * ingest read with app/api/cron/monitor-observations via lib/observations/flow-control.
+ * paused + DLQ depth, plus PG response-presence / raw-landing. Shares its ingest read with
+ * app/api/cron/monitor-observations via lib/observations/flow-control.
  *
  * This is the snapshot you run when the APP ITSELF is suspect — `liveone queue status` goes
  * through the deployed route, this one talks to QStash directly.
@@ -16,24 +16,22 @@ import { ReadingsDao } from "@/lib/readings";
 
 async function main() {
   const { qstash } = await import("@/lib/qstash");
-  const { readLanes, readGlobalParallelism, readLegacyQueue } = await import(
+  const { readLanes, readGlobalParallelism } = await import(
     "@/lib/observations/flow-control"
   );
-  const { publishMode } = await import("@/lib/observations/publish");
   const line = "─".repeat(70);
 
   console.log(line);
-  console.log(`Observations ingest path (mode=${publishMode()}) + DLQ:`);
+  console.log("Observations ingest path (flow control) + DLQ:");
   if (!qstash) {
     console.log("  (qstash not configured — OBSERVATIONS_QSTASH_TOKEN unset)");
   } else {
     try {
       // Lanes are enumerated, never discovered: a key with nothing waiting, nothing in flight and
       // no pin may not exist in QStash at all, so "0 keys" is what a TOTAL STOP looks like too.
-      const [lanes, global, queue] = await Promise.all([
+      const [lanes, global] = await Promise.all([
         readLanes(),
         readGlobalParallelism().catch(() => null),
-        readLegacyQueue(),
       ]);
       for (const l of lanes) {
         console.log(
@@ -44,13 +42,6 @@ async function main() {
       }
       console.log(
         `  global   parallelism=${global ? `${global.inFlight}/${global.max}` : "n/a"}`,
-      );
-      console.log(
-        `  legacy queue "${queue?.name ?? "n/a"}"  ${
-          queue?.exists
-            ? `lag=${queue.lag}  paused=${queue.paused}  parallelism=${queue.parallelism}`
-            : "(not created)"
-        }`,
       );
 
       const dlq = await qstash.dlq.listMessages({ count: 100 });

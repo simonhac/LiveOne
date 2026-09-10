@@ -54,7 +54,6 @@ import {
   observationDeliveryOptions,
   laneParallelism,
   messageLane,
-  publishMode,
   publishObservationMessage,
 } from "../publish";
 import {
@@ -159,7 +158,7 @@ describe("every publish site carries the delivery options", () => {
     await publishPoll(device, session, collector);
 
     expect(fake().published).toHaveLength(1);
-    expect(fake().published[0].via).toBe("queue");
+    expect(fake().published[0].via).toBe("flow");
     expect(fake().published[0].request).toMatchObject({
       url: RECEIVER_URL,
       ...observationDeliveryOptions(),
@@ -302,13 +301,7 @@ describe("messageLane", () => {
   });
 });
 
-describe("the transport switch", () => {
-  const saved = process.env.OBSERVATIONS_PUBLISH_MODE;
-  afterEach(() => {
-    if (saved === undefined) delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    else process.env.OBSERVATIONS_PUBLISH_MODE = saved;
-  });
-
+describe("the transport", () => {
   const message = (lane?: "live" | "backfill"): QueueMessage =>
     ({
       env: "dev",
@@ -318,19 +311,7 @@ describe("the transport switch", () => {
       batchTime: "t",
     }) as QueueMessage;
 
-  it("defaults to the legacy queue", () => {
-    expect(publishMode()).toBe("queue");
-  });
-
-  it("publishes to the queue in queue mode, with no flow-control key", async () => {
-    await publishObservationMessage(message("backfill"));
-
-    expect(fake().published[0].via).toBe("queue");
-    expect(fake().published[0].request.flowControl).toBeUndefined();
-  });
-
-  it("publishes on the lane's key in flow mode", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
+  it("publishes on the lane's flow-control key", async () => {
     await publishObservationMessage(message("backfill"));
     await publishObservationMessage(message("live"));
 
@@ -345,24 +326,33 @@ describe("the transport switch", () => {
     });
   });
 
-  it("labels flow messages so they stay findable once queueName goes empty", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
+  it("never enqueues to a QStash Queue", async () => {
+    // 🛑 The load-bearing half of the 2026-09-10 cutover. The legacy FIFO queue is retired, and a
+    // message that reached it would be delivered — invisibly to `queue status`, which no longer
+    // reads that transport at all, and without lane isolation.
+    await publishObservationMessage(message("live"));
+    await publishObservationMessage(message("backfill"));
+
+    expect(fake().published.every((p) => p.via === "flow")).toBe(true);
+    expect(fake().published.every((p) => p.request.flowControl)).toBeTruthy();
+  });
+
+  it("labels every message so it stays findable with no queueName on the wire", async () => {
+    // `queue timing` classifies our traffic by the lane key and this label. Without it a message
+    // is indistinguishable from any other publish on the shared QStash account.
     await publishObservationMessage(message("live"));
 
     expect(fake().published[0].request.label).toBe(OBSERVATIONS_FLOW_PREFIX);
   });
 
-  it("carries an IDENTICAL delivery bound on both transports", async () => {
-    // The cutover must change only which lane a message waits in — never how long a bad one can
-    // hold it. If these ever diverge, flipping the switch changes the blast radius.
+  it("carries the delivery bound on every lane", async () => {
+    // A lane changes only what a message waits behind — never how long a bad one can hold a slot.
     await publishObservationMessage(message("live"));
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
-    await publishObservationMessage(message("live"));
+    await publishObservationMessage(message("backfill"));
 
-    const [viaQueue, viaFlow] = fake().published;
     const bound = observationDeliveryOptions();
-    expect(viaQueue.request).toMatchObject(bound);
-    expect(viaFlow.request).toMatchObject(bound);
+    for (const entry of fake().published)
+      expect(entry.request).toMatchObject(bound);
   });
 });
 

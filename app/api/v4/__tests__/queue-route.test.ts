@@ -6,12 +6,12 @@
  * 1. **PATCH parallelism must PIN.** Every message we publish carries `flowControl.parallelism`, so
  *    an unpinned operator change is reverted by the very next poll — within ~60 s, mid-incident,
  *    silently. If this assertion ever goes green against a publish-option write, the lever is a lie.
- * 2. **The compat fields must survive.** The CLI runs against a DEPLOYED origin, not this checkout;
- *    an operator on an older `liveone` build hitting the new route mid-incident is the wrong moment
- *    to discover a wire break.
- * 3. **The write goes to the transport actually in use.** This route ships BEFORE the cutover, so
- *    while `OBSERVATIONS_PUBLISH_MODE` is `"queue"` a lane-scoped flow-control write would report
- *    success and change nothing about what is being delivered.
+ * 2. **A lane is required to set parallelism.** The pool ceiling is on the SUM across lanes, so one
+ *    number applied fleet-wide is the accident this refuses. Pause/resume is not gated — "stop
+ *    everything" is the one instruction that should not need qualifying.
+ * 3. **The retired FIFO queue is never written.** It still exists on the QStash account until it is
+ *    deleted, and a write that reached it would report success while changing nothing about what is
+ *    actually delivered.
  */
 import {
   describe,
@@ -76,7 +76,6 @@ const patch = (body: unknown) =>
   );
 
 describe("/api/v4/queue", () => {
-  const savedMode = process.env.OBSERVATIONS_PUBLISH_MODE;
   const savedPool = process.env.PLANETSCALE_POOL_MAX;
 
   beforeEach(() => {
@@ -94,8 +93,6 @@ describe("/api/v4/queue", () => {
   });
 
   afterEach(() => {
-    if (savedMode === undefined) delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    else process.env.OBSERVATIONS_PUBLISH_MODE = savedMode;
     if (savedPool === undefined) delete process.env.PLANETSCALE_POOL_MAX;
     else process.env.PLANETSCALE_POOL_MAX = savedPool;
   });
@@ -107,8 +104,7 @@ describe("/api/v4/queue", () => {
     expect((await get()).status).toBe(403);
   });
 
-  it("GET renders both lanes plus the compat fields an older CLI reads", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
+  it("GET renders every lane, including one QStash has never heard of", async () => {
     fake().setFlow(LIVE, flowState({ waitListSize: 4, parallelismCount: 2 }));
 
     const body = await (await get()).json();
@@ -120,16 +116,16 @@ describe("/api/v4/queue", () => {
     expect(body.lanes[1]).toMatchObject({ idle: true, waiting: 0 });
     expect(body.waiting).toBe(4);
     expect(body.inFlight).toBe(2);
-    // compat
-    expect(body.lag).toBe(4);
     expect(body.paused).toBe(false);
-    expect(typeof body.parallelism).toBe("number");
     expect(typeof body.stalledMinutes).toBe("number");
     expect(body.lastIngestedAt).toEqual(expect.any(String));
+    // Retired at the 2026-09-10 cutover — a reader that still branches on these would be reading a
+    // transport nothing publishes to.
+    expect(body).not.toHaveProperty("mode");
+    expect(body).not.toHaveProperty("legacyQueue");
   });
 
   it("PATCH parallelism PINS it, per lane", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(LIVE, flowState());
     fake().setFlow(BACKFILL, flowState({ parallelismMax: 2 }));
 
@@ -143,7 +139,6 @@ describe("/api/v4/queue", () => {
   });
 
   it("PATCH parallelism: null unpins, handing control back to the publish option", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(LIVE, flowState({ isPinnedParallelism: true }));
 
     expect((await patch({ lane: "live", parallelism: null })).status).toBe(200);
@@ -153,7 +148,6 @@ describe("/api/v4/queue", () => {
   });
 
   it("refuses an unscoped parallelism write under flow control", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     const res = await patch({ parallelism: 3 });
     expect(res.status).toBe(422);
     expect((await res.json()).error).toMatch(/lane must be one of/);
@@ -161,7 +155,6 @@ describe("/api/v4/queue", () => {
   });
 
   it("validates parallelism against the SUM across lanes, not the lane alone", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(LIVE, flowState({ parallelismMax: 8 }));
     fake().setFlow(BACKFILL, flowState({ parallelismMax: 2 }));
 
@@ -173,33 +166,36 @@ describe("/api/v4/queue", () => {
   });
 
   it("pause with no lane means the whole path", async () => {
-    process.env.OBSERVATIONS_PUBLISH_MODE = "flow";
     fake().setFlow(LIVE, flowState());
     fake().setFlow(BACKFILL, flowState());
 
     const body = await (await patch({ paused: true })).json();
     expect(fake().flowCalls.map((c) => c.op)).toEqual(["pause", "pause"]);
     expect(body.pausedLanes).toEqual(["live", "backfill"]);
-    expect(body.paused).toBe(true); // compat: every lane paused
+    expect(body.paused).toBe(true); // every lane paused
   });
 
-  it("under mode=queue the write goes to the QUEUE, not to a lane nothing publishes to", async () => {
-    delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    fake().setQueue({ paused: false, lag: 0, parallelism: 1 });
+  it("refuses a parallelism write that names no lane", async () => {
+    // 🛑 The route is the enforcement point; the CLI's own refusal is a nicety on top. A cap set
+    // fleet-wide is how one lane's number silently becomes the other's.
+    fake().setFlow(LIVE, flowState());
+    fake().setFlow(BACKFILL, flowState());
 
-    // No lane: the shape the `liveone queue` build deployed today sends.
-    expect((await patch({ parallelism: 5 })).status).toBe(200);
-    expect(fake().queueUpserts).toEqual([{ parallelism: 5 }]);
+    const res = await patch({ parallelism: 5 });
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/lane/);
     expect(fake().flowCalls).toHaveLength(0);
   });
 
-  it("refuses a lane-scoped write while the legacy queue is the transport", async () => {
-    delete process.env.OBSERVATIONS_PUBLISH_MODE;
-    fake().setQueue({ paused: false, lag: 0, parallelism: 1 });
+  it("never writes the retired FIFO queue", async () => {
+    // It still exists on the QStash account until it is deleted. A write that reached it would
+    // report success and change nothing about what is actually being delivered.
+    fake().setQueue({ paused: false, lag: 1053, parallelism: 5 });
+    fake().setFlow(LIVE, flowState());
+    fake().setFlow(BACKFILL, flowState());
 
-    const res = await patch({ lane: "live", paused: true });
-    expect(res.status).toBe(422);
-    expect((await res.json()).error).toMatch(/has no lanes/);
+    expect((await patch({ lane: "live", parallelism: 5 })).status).toBe(200);
+    expect((await patch({ paused: true })).status).toBe(200);
     expect(fake().queueUpserts).toHaveLength(0);
   });
 
