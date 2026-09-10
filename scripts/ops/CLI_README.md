@@ -77,6 +77,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone queue pause](#liveone-queue-pause)  _(writes)_
     - [liveone queue resume](#liveone-queue-resume)  _(writes)_
     - [liveone queue parallelism](#liveone-queue-parallelism)  _(writes)_
+  - [liveone sync](#liveone-sync)  _(writes)_
   - [liveone api](#liveone-api)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
@@ -112,6 +113,7 @@ Subcommands:
   derivation             Derived signals — run detectors and the HWS model: list, create, enable, recompute.
   user                   The user directory — who exists, what they own. Admin-only.
   queue                  The observations ingest path — per-lane status, and the levers to unblock it.
+  sync                   Re-fetch a historical window from a device's vendor, on the backfill lane.  (writes)
   api                    One authenticated request to the deployed API, as you.  (writes)
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
@@ -3102,6 +3104,74 @@ Examples:
   liveone queue parallelism
   liveone queue parallelism 5 --lane=live --apply
   liveone queue parallelism 0 --lane=backfill --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone sync
+
+Re-fetch a historical window from a device's vendor, on the backfill lane.
+
+```
+Re-fetch a historical window from a device's vendor, on the backfill lane.
+
+When to use:
+  Reach for this when a device is MISSING history a vendor still holds — a gap found by
+  `liveone device history --list-series`, or a device connected after the fact. For what the
+  ingest path is doing while it runs, use `liveone queue`.
+
+Admin/owner only, http-only. Prints `target: <origin> as <you>` on stderr first.
+
+Reports PUBLISHED and LANDED as separate numbers, and never says "inserted". Publishing is
+the near end of an asynchronous pipeline: on 2026-09-09 a backfill reported success ten times
+while materialising zero rows. `landed` is a read of the serving store AFTER the lane drains,
+through the same path a dashboard would use.
+
+Chunked to the VENDOR's own window (Amber answers at most 7 days), so the caller passes the
+range it wants and never a number the vendor imposed. Every message rides the `backfill` lane.
+
+Usage:
+  liveone sync <device> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --start <YYYY-MM-DD>       First local day to re-fetch (inclusive)
+  --end <YYYY-MM-DD>         Last local day to re-fetch (inclusive)
+  --action <action>          Which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap.  (one of: usage, pricing, both)
+  --verify                   After publishing, wait for the lane to drain and read the serving store back (default: on with --apply)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone sync 10002 --start=2026-07-07 --end=2026-09-08 --action=usage
+  liveone sync 10002 --start=2026-07-07 --end=2026-09-08 --action=usage --apply
 
 Exit codes:
   0    success

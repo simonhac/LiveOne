@@ -76,6 +76,9 @@ export const TIERS: TierManifest = {
     "scripts/ops/area/cli.ts",
     "scripts/ops/user/cli.ts",
     "scripts/ops/queue/cli.ts",
+    // The `sync` verb — the only WRITER among the composed http modules, so it carries the
+    // dry-run gate itself rather than inheriting one.
+    "scripts/ops/sync/cli.ts",
     // The `derivation` domain — read+write over the v4 derivations resource, same rules as above.
     "scripts/ops/derivation/cli.ts",
     // Cross-domain plumbing (flag groups, ref resolution, the shared history verb).

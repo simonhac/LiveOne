@@ -1,6 +1,10 @@
 # Ops CLI: queue control, area wiring, and vendor sync
 
-**Status:** proposed, not started · raised 2026-09-09, out of the ingest stall of the same day
+**Status:** in progress · raised 2026-09-09, out of the ingest stall of the same day
+
+**Landed:** §1 `liveone queue` (status/pause/resume/parallelism, plus `timing` and `outbox`, which
+this doc did not anticipate), and §3 `liveone sync`. **Not started:** §2, the two area sub-resources
+(`area devices`, `area role`).
 
 ## Why
 
@@ -20,7 +24,7 @@ it. That is the gap this plan closes, in that order.
 
 ## Scope and order
 
-### 1. `liveone queue` — the incident-time domain (do first)
+### 1. ✅ `liveone queue` — the incident-time domain (do first)
 
 ```
 liveone queue status                     # paused, lag, parallelism — the one-line health read
@@ -63,7 +67,7 @@ and with `GET …/resolution`, which already reports "what resolved and how".
 Ordering is enforced server-side and the CLI should surface it: a bound point's device must already
 be a member, so `area devices` populates the pool and `area role` picks within it.
 
-### 3. `liveone sync` — one shape for every syncable vendor
+### 3. ✅ `liveone sync` — one shape for every syncable vendor
 
 ```
 liveone sync <device> --start YYYY-MM-DD --end YYYY-MM-DD [--action usage|pricing|both] [--apply]
@@ -117,6 +121,12 @@ So pick one, deliberately, and record it:
 
 Recommendation: **(a) for the two area routes, (b) for queue and sync.** That keeps the `/api/admin`
 boundary intact while making the incident-time verbs reachable headlessly — which is the whole point.
+
+✅ **(b) was taken, for both.** `/api/v4/queue{,/timing,/outbox}` and `/api/v4/devices/:id/sync` are
+enumerated in `cliTokenRoutes` — never a `(.*)` wildcard, so the next verb in either family is not
+pre-admitted — and each authorizes in-handler (`requireAdmin`; `requireDeviceAccess` with
+`requireWrite`, whose `canWrite` is admin-or-owner and excludes the public-read term, so an
+ownerless device is not syncable by a stranger holding a CLI token).
 
 ## Verification
 

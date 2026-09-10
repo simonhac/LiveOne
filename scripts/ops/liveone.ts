@@ -29,6 +29,7 @@ import { authCommand, runAuth } from "./auth/cli";
 import { findCommand, runFind } from "./find/cli";
 import { apiCommand, runApi } from "./api/cli";
 import { queueCommand, runQueue } from "./queue/cli";
+import { syncCommand, runSync } from "./sync/cli";
 
 export const cmd = defineCommand({
   name: "liveone",
@@ -51,6 +52,9 @@ export const cmd = defineCommand({
     derivation: derivationCommand,
     user: userCommand,
     queue: queueCommand,
+    // A root-level VERB like `find`, not a domain group: a sync names ONE device and ONE window,
+    // and there is no second thing to do to a sync.
+    sync: syncCommand,
     // A root-level VERB like `find`: one raw authenticated request, for endpoints no verb covers.
     api: apiCommand,
   },
@@ -69,6 +73,7 @@ const DOMAINS: Record<string, (ctx: Ctx) => Promise<number>> = {
   derivation: runDerivation,
   user: runUser,
   queue: runQueue,
+  sync: runSync,
   api: runApi,
 };
 
