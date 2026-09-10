@@ -120,7 +120,18 @@ export async function GET(
  * Returns the freshly-read aggregate rather than the legacy `{ ok: true }`: a PATCH here can change
  * derived state the caller did not name (a `location` edit re-derives the grid region), so echoing the
  * new state is both the §9.2 house style and the only answer that cannot be stale.
- *   403 not yours · 404 unknown · 409 slug taken · 422 bad body.
+ *   403 not yours · 404 unknown · 409 slug taken · 409 relied upon · 422 bad body.
+ *
+ * 🛑 **`status: "archived"` is a DELETE by another name, and is gated identically.** `DELETE` on
+ * this resource IS this PATCH plus a serving refresh — same `updateAreaMeta`, same column, same
+ * user-visible outcome (the area leaves `listReadableAreas` and the KV registry). Gating one
+ * entrance and not the other would leave a refusal that reads as protection and is a formality;
+ * anything that could not be deleted could still be archived, silently. So the referential check
+ * lives on the TRANSITION, not on the verb.
+ *
+ * Only `active → archived` is gated. Un-archiving breaks nothing, and re-archiving an already
+ * archived area changes nothing — a gate on either would refuse a no-op, which teaches operators
+ * that the refusal is noise.
  */
 export async function PATCH(
   request: NextRequest,
@@ -174,6 +185,7 @@ export async function PATCH(
       );
     patch.displayTimezone = body.displayTimezone;
   }
+  let archiving = false;
   if (body.status !== undefined) {
     if (body.status !== "active" && body.status !== "archived")
       return NextResponse.json(
@@ -181,12 +193,19 @@ export async function PATCH(
         { status: 422 },
       );
     patch.status = body.status;
+    archiving = body.status === "archived" && area.status !== "archived";
   }
   if (body.location !== undefined) {
     patch.location = mergeAreaLocation(
       area.location,
       locationPatchFromBody(body.location),
     );
+  }
+
+  // Before ANY write: an archive is a delete, so it clears the same gate. See the docstring.
+  if (archiving) {
+    const relied = await refuseIfReliedUpon(request, "area", area.id);
+    if ("response" in relied) return relied.response;
   }
 
   try {

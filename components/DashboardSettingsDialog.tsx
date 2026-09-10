@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { reliedUponMessage } from "@/lib/integrity/message";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 import { Trash2, X, Star, RefreshCw } from "lucide-react";
@@ -185,7 +186,10 @@ export default function DashboardSettingsDialog({
         onDeleted();
       } else {
         const body = await res.json().catch(() => ({}));
-        setError(body?.error ?? "Could not delete");
+        // A 409 from the referential-integrity gate carries the LIST — grantees, live links, users
+        // whose landing page this is. Showing only `body.error` here would render the anonymous
+        // count that gate exists to replace.
+        setError(reliedUponMessage(body) ?? body?.error ?? "Could not delete");
       }
     } finally {
       setBusy(false);
@@ -363,7 +367,11 @@ export default function DashboardSettingsDialog({
                   </p>
                 </div>
               )}
-              {error && <p className="text-sm text-red-400">{error}</p>}
+              {error && (
+                <p className="whitespace-pre-line text-sm text-red-400">
+                  {error}
+                </p>
+              )}
             </div>
           )}
           {activeTab === "general" ? (

@@ -47,13 +47,32 @@ describe("the reference census is complete", () => {
     );
   });
 
-  it("excludes a row's own identity", () => {
+  it("excludes a row's own identity, and ONLY that", () => {
     const keys = referenceCandidates().map((c) => key(c.table, c.column));
-    // Primary keys with no FK of their own: identity, not reference.
+    // A LONE primary-key column with no FK: identity, not reference.
     expect(keys).not.toContain("areas.id");
     expect(keys).not.toContain("users.clerk_user_id");
-    // …but a column that is BOTH primary key and foreign key is still a reference.
+    // A column that is both primary key and foreign key is still a reference.
     expect(keys).toContain("derived_intervals.derivation_id");
+    // 🛑 REGRESSION. The rule first read "part of the primary key", which excluded this — a Clerk
+    // user reference with no FK, inside a composite PK — while every completeness assertion in this
+    // file kept passing. A composite key is a TUPLE OF REFERENCES; only a lone column is identity.
+    expect(keys).toContain("dashboard_grants.user_id");
+  });
+
+  it("treats a foreign key as a reference whatever it is named", () => {
+    // Rule 1 exists so that a reference Postgres already knows about can never depend on the naming
+    // heuristic to be seen. It happens to add nothing today (every FK column here also matches
+    // `_id`/`_rid`), and that is precisely why it needs a test rather than an observation.
+    const candidates = referenceCandidates();
+    const fkColumns = candidates.filter((c) => c.fkOnDelete);
+    expect(fkColumns.length).toBeGreaterThanOrEqual(20);
+    for (const c of fkColumns)
+      expect(
+        candidates.some((x) => x.table === c.table && x.column === c.column)
+          ? "ok"
+          : `${c.table}.${c.column} has an FK but is not a candidate`,
+      ).toBe("ok");
   });
 
   it("classifies every candidate column, by name", () => {
@@ -165,8 +184,13 @@ describe("the extractors read the shapes the writers store", () => {
 
   it("finds all three of an automation trigger's references", () => {
     const f = extractor("automations", "trigger");
+    // The real kinds, spelled as `lib/automations/types.ts` stores them — a fixture with an
+    // invented `kind` agrees with itself and proves nothing about the writer.
     expect(
-      f({ kind: "run", source: { kind: "derivation", derivationId: "d1" } }),
+      f({
+        kind: "charge-session",
+        source: { kind: "derivation", derivationId: "d1" },
+      }),
     ).toEqual(["d1"]);
     expect(
       f({ kind: "charge-session", source: { kind: "point", pointId: "p1" } }),
@@ -232,6 +256,8 @@ describe("the census cannot become an access path", () => {
    */
   it("imports no database client and builds no queries", () => {
     const src = readFileSync(join(__dirname, "..", "ledger.ts"), "utf8");
+
+    // Naming a client. Covers the import and any re-derivation of one.
     for (const forbidden of [
       "requirePlanetscaleDb",
       "planetscaleDb",
@@ -241,6 +267,28 @@ describe("the census cannot become an access path", () => {
       expect(
         src.includes(forbidden)
           ? `ledger.ts references ${forbidden} — it must stay introspection-only`
+          : "ok",
+      ).toBe("ok");
+
+    // 🛑 And the query-builder verbs, because naming a client is not the only way to use one. The
+    // first version of this test checked the four strings above and nothing else, which a review
+    // pointed out is evaded by a single line that takes the client as an argument:
+    //
+    //     export const readHot = (db: any) => db.select().from(pointReadings);
+    //
+    // That is the exact shape the exemption must not permit, so it is checked directly.
+    for (const verb of [
+      ".select(",
+      ".from(",
+      ".insert(",
+      ".update(",
+      ".delete(",
+      ".execute(",
+      ".transaction(",
+    ])
+      expect(
+        src.includes(verb)
+          ? `ledger.ts calls ${verb} — a census describes the schema, it does not query it`
           : "ok",
       ).toBe("ok");
   });

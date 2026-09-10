@@ -124,9 +124,20 @@ const REFERENCE_SHAPED_NAME = /(_id|_rid|_by)$/;
 /**
  * Every column that could hold a reference, read out of the schema.
  *
- * A column that is part of its table's primary key and has no FK is the row's OWN identity, not a
- * reference to something else, so it is excluded — that is what keeps `areas.id` and
- * `users.clerk_user_id` out while keeping `derived_intervals.derivation_id` (PK *and* FK) in.
+ * Three rules, and the exclusion is the one that needs stating carefully:
+ *
+ * 1. **Any column with a foreign key is a candidate**, whatever it is named and whatever its type.
+ *    A reference Postgres already knows about must never depend on the naming heuristic below to be
+ *    seen — the heuristic exists to catch the ones the database does NOT know about.
+ * 2. Otherwise, `uuid` / `jsonb` / a name ending `_id`, `_rid` or `_by`.
+ * 3. Minus a row's own identity — but ONLY a **single-column** primary key with no FK.
+ *
+ * 🛑 That last rule used to read "part of the primary key", and it was wrong in the way this whole
+ * module exists to prevent: it silently excluded `dashboard_grants.user_id`, a Clerk user reference
+ * with no FK sitting inside a composite PK, while every completeness assertion kept passing. In a
+ * join table the composite key IS a pair of references — that is what makes it a join table — so
+ * only a lone PK column can be identity. `areas.id` and `users.clerk_user_id` stay out;
+ * `dashboard_grants.user_id` and `derived_intervals.derivation_id` come in.
  */
 export function referenceCandidates(): Candidate[] {
   const out: Candidate[] = [];
@@ -141,17 +152,21 @@ export function referenceCandidates(): Candidate[] {
         | "no action";
       for (const c of fk.reference().columns) fks.set(c.name, action);
     }
-    const pk = new Set<string>([
+    // The row's own identity can only be a LONE primary-key column. A composite PK is a tuple of
+    // references, so none of its members is excluded on identity grounds.
+    const pkColumns = [
       ...cfg.columns.filter((c) => c.primary).map((c) => c.name),
       ...cfg.primaryKeys.flatMap((k) => k.columns.map((c) => c.name)),
-    ]);
+    ];
+    const soleIdentity = pkColumns.length === 1 ? pkColumns[0] : null;
     for (const c of cfg.columns) {
       const shaped =
+        fks.has(c.name) ||
         c.columnType === "PgUUID" ||
         c.columnType === "PgJsonb" ||
         REFERENCE_SHAPED_NAME.test(c.name);
       if (!shaped) continue;
-      if (pk.has(c.name) && !fks.has(c.name)) continue;
+      if (c.name === soleIdentity && !fks.has(c.name)) continue;
       out.push({
         table: cfg.name,
         column: c.name,
@@ -478,6 +493,18 @@ export const REFERENCE_LEDGER: LedgerEntry[] = [
   {
     column: dashboardGrants.dashboardId,
     verdict: { protectedBy: "fk", onDelete: "cascade" },
+  },
+  {
+    // 🛑 The column that exposed the old identity rule: half of a composite PK, no FK, and a real
+    // reference. It is listed as unprotected for the same reason as every other owner/grantee
+    // column — Clerk owns the user record and nothing here deletes one — but the point is that the
+    // census now MAKES that a decision rather than an omission.
+    column: dashboardGrants.userId,
+    verdict: {
+      protectedBy: "deliberately-unprotected",
+      reason:
+        "a Clerk user id. Clerk owns the user record and this system never deletes one, so there is no delete to refuse; the local `users` table is a mirror written on demand and is not an FK target for grantees.",
+    },
   },
   {
     column: shareTokens.dashboardId,
