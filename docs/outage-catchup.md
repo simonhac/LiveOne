@@ -119,6 +119,26 @@ the env var **`REPAIR_SETTLEMENT_GRACE_DAYS`** (`GRACE_DAYS_OVERRIDE` is the con
 redeploy to revert. It also re-fetches days that are still settling. The per-vendor `liveone sync`
 above reaches the same window directly, with none of that.
 
+### 3b. What the vendor will never return — `liveone import`
+
+Some values have no history endpoint at all, so a sync cannot reach them however early you run it.
+Sigenergy's instantaneous power and SoC are the case: they are recoverable only where the vendor's
+`itemList` happened to carry them, and the EV / rest-of-house split is reconstructible only across
+holes of ≤15 min (`lib/vendors/sigenergy/derive-power.ts`). Past that, no re-fetch will ever help.
+
+`liveone import` writes readings **you** supply, for exactly that case:
+
+```bash
+# CSV: a header, then point,interval_end,value — one pt_ id per row, timestamps on the 5-min grid
+npm run liveone -- import <device> --file=rows.csv --quality=interpolated --apply
+```
+
+🛑 **`--quality` is required and there is no default.** It is the only record of whether a number was
+measured or reconstructed, and everything downstream reads it. Grade the CONFIDENCE in the value,
+not the route it arrived by — `derive-power.ts` writes the vendor's own late-arriving samples as
+`good` for that reason. Reach for `sync` first every time: its data arrives measured, and it cannot
+be mistyped. Then run step 4, as for any other repair.
+
 ## 4. Rebuild everything derived from the repaired days
 
 Derived rows are pure functions of their sources, so they must be recomputed **after** the sources
@@ -148,13 +168,37 @@ A permanently-missing window is a fact about the data, not a failure to be retri
 fault — this is the open gap named in the coverage-repair framework: nothing yet records that a
 hole has been *accepted*.
 
+### Recorded losses
+
+**Kutis (Sigenergy, system 13) — 2026-09-10 23:40 → 2026-09-11 08:30 local (8.5 h).**
+Energy, solar/battery/grid power and battery SoC all recovered on their own: the vendor's
+`itemList` carries the instantaneous fields, so the nightly backfill's derive pass wrote them
+verbatim. What did **not** recover was the EV / rest-of-house split — `load.ev/power` and
+`load.rest-of-house/power` — because the split is the one quantity the energy counters cannot
+separate, and `derive-power.ts` interpolates it only across holes of ≤3 intervals (15 min).
+
+Not accepted as lost: **reconstructed** on 2026-09-11 and imported with `data_quality:
+"interpolated"`, so it is distinguishable from measurement everywhere the marker is read. Method,
+for the record:
+
+- Total load is *exact*, not inferred. The vendor's balance identity gives
+  `rest-of-house + ev = solar + grid + battery` in LiveOne's inflow-positive signs; measured against
+  2,199 known-good samples on this site it holds to a mean error of 0.00 W (σ 0.09 W, max 4 W).
+  All three inputs were present for all 106 intervals.
+- Only the **split** is inferred, as `ev = 0`. Two independent supports: `load.ev/power` is zero at
+  every non-null sample across the surrounding 48 h, and the reconstructed total never exceeds
+  884 W across the whole window — far below any rate at which this charger draws.
+
+The verb is `liveone import` (§3), which exists because of this window.
+
 ## What this exercise showed should be built
 
 1. **A single `liveone catchup <since>` verb.** Every step above is manual, and the ordering
    (spool → vendor → derived) matters. Doing it by hand at 2 am is how a step gets skipped.
    *(Partly done: steps 3 and 4 are now verbs — `liveone sync` covers all three backfillable
-   vendors and `liveone device recompute` rebuilds the scoped derived rows — so what is left to
-   build is the orchestration, not the primitives.)*
+   vendors, `liveone device recompute` rebuilds the scoped derived rows, and `liveone import`
+   writes the values no vendor will return again — so what is left to build is the orchestration,
+   not the primitives.)*
 2. **Per-site liveness alerting on the hub.** Kinkora kept collecting while sheephouse was dead for
    ~5 h and nothing said so; the outage was noticed by a human looking at a dashboard. A watchdog
    comparing each site's journal rate against its own baseline would have caught it in minutes.

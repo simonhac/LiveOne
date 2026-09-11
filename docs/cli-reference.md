@@ -124,6 +124,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone queue resume](../scripts/ops/CLI_README.md#liveone-queue-resume) — Resume dispatching after a pause.  _(writes)_
     - [liveone queue parallelism](../scripts/ops/CLI_README.md#liveone-queue-parallelism) — Read, or PIN, how many messages a lane delivers concurrently. The SUM across lanes is capped by the PG pool.  _(writes)_
   - [liveone sync](../scripts/ops/CLI_README.md#liveone-sync) — Re-fetch a historical window from a device's vendor, on the backfill lane.  _(writes)_
+  - [liveone import](../scripts/ops/CLI_README.md#liveone-import) — Write readings you supply into a device's 5-minute serving store.  _(writes)_
   - [liveone api](../scripts/ops/CLI_README.md#liveone-api) — One authenticated request to the deployed API, as you.  _(writes)_
 - [cli-reference](../scripts/ops/CLI_README.md#cli-reference) — Regenerate the committed CLI documentation from the tools' own declarations.  _(writes)_
 - [cli-conformance](../scripts/ops/CLI_README.md#cli-conformance) — Check that every operator CLI is registered and on the shared harness.

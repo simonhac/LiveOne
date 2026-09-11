@@ -110,6 +110,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone queue resume](#liveone-queue-resume)  _(writes)_
     - [liveone queue parallelism](#liveone-queue-parallelism)  _(writes)_
   - [liveone sync](#liveone-sync)  _(writes)_
+  - [liveone import](#liveone-import)  _(writes)_
   - [liveone api](#liveone-api)  _(writes)_
 - [cli-reference](#cli-reference)  _(writes)_
 - [cli-conformance](#cli-conformance)
@@ -149,6 +150,7 @@ Subcommands:
   user                   The user directory — who exists, what they own. Admin-only.
   queue                  The observations ingest path — per-lane status, and the levers to unblock it.
   sync                   Re-fetch a historical window from a device's vendor, on the backfill lane.  (writes)
+  import                 Write readings you supply into a device's 5-minute serving store.  (writes)
   api                    One authenticated request to the deployed API, as you.  (writes)
 
 Run `liveone <subcommand> --help` for a subcommand's own options.
@@ -5024,6 +5026,78 @@ Examples:
 Exit codes:
   0    success
   1    completed, with findings or no results
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+### liveone import
+
+Write readings you supply into a device's 5-minute serving store.
+
+```
+Write readings you supply into a device's 5-minute serving store.
+
+When to use:
+  Use this ONLY for a value no vendor will return again. If the vendor still holds the window,
+  `liveone sync` is the right verb — it needs no file and its data arrives measured.
+  After an import, run `liveone device recompute` for the same days: nothing rebuilds a past
+  day's aggregates or flow matrix on its own.
+
+Admin/owner only, http-only. Prints `target: <origin> as <you>` on stderr first.
+
+--file is a CSV with a header and three columns: point,interval_end,value.
+  point         a pt_… id belonging to THIS device (any other is refused, whole-request)
+  interval_end  ISO timestamp, on a 5-minute boundary, the interval's END
+  value         a number, or a string for a text point
+Use `-` to read the CSV from stdin.
+
+--quality is REQUIRED and is the point of the verb: it is the only record of whether a number
+was measured or reconstructed. Grade the confidence in the VALUE, not how it reached you.
+
+Writes are an UPSERT on (point, interval_end), so re-running a corrected file is the intended
+way to repair a bad import. Rows are chunked; a file of any size is one command.
+
+Usage:
+  liveone import <device> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --file <path>              CSV of point,interval_end,value — or `-` for stdin
+  --quality <marker>         REQUIRED — the data_quality to stamp on every row. `calculated` = exact by identity from a measured series; `interpolated` = a genuine guess of ours; `good` = a measurement.  (one of: billable, b, good, actual, a, calculated, interpolated, estimated, e, forecast, f, unknown, .)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone import kutis --file=rows.csv --quality=interpolated
+  liveone import kutis --file=rows.csv --quality=interpolated --apply
+  liveone import 13 --file=- --quality=calculated --apply --yes
+
+Exit codes:
+  0    success
+  1    the file parsed but the server wrote fewer rows than it was sent
   2    usage error
   3    authentication failure
   5    upstream failure

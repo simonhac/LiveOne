@@ -85,6 +85,10 @@ export const TIERS: TierManifest = {
     // The `sync` verb — the only WRITER among the composed http modules, so it carries the
     // dry-run gate itself rather than inheriting one.
     "scripts/ops/sync/cli.ts",
+    // The `import` verb — `sync`'s manual sibling, and the ONLY CLI that writes readings the
+    // operator supplies rather than a vendor does. Nothing downstream can second-guess what it
+    // wrote, so it is held to the full standard.
+    "scripts/ops/import/cli.ts",
     // The `derivation` domain — read+write over the v4 derivations resource, same rules as above.
     "scripts/ops/derivation/cli.ts",
     // The `owner` domain — ownership transfer with share-back, the one CLI that can move an object
