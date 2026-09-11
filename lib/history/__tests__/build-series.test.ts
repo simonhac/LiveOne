@@ -218,3 +218,88 @@ describe("buildSeriesFromAggRows", () => {
     expect(out).toHaveLength(0);
   });
 });
+
+describe("a lifetime counter's .last is served unrounded", () => {
+  /**
+   * 🛑 Real values, straight off Daylesford's `load_wh_total` on 2026-09-09. Consecutive readings
+   * differ by 86 and 85 Wh on a value of ~5.55 million, so `toPrecision(4)` moves each by up to
+   * ±500 Wh — proportionally nothing against the value, roughly 1000% of the increment anyone
+   * actually reads. Served rounded, a whole day of this series collapsed from 288 distinct readings
+   * to 9, all ending in three zeros, and the counter could not be chained across an outage to
+   * better than ±1 kWh — which is the entire reason `.last` is exposed on an energy point.
+   */
+  const COUNTER = [5551623, 5551709, 5551794];
+
+  const counterPoint = () =>
+    fakePoint({
+      index: 7,
+      systemId: 1,
+      transform: "d",
+      metricType: "energy",
+      metricUnit: "Wh",
+    });
+
+  const rowsFor = (field: "last" | "delta", values: number[]): AggRow[] =>
+    values.map((v, i) => ({
+      system_id: 1,
+      point_id: 7,
+      interval_end: (i + 1) * FIVE,
+      [field]: v,
+    })) as AggRow[];
+
+  it("keeps every digit of the meter reading", async () => {
+    const out = await buildSeriesFromAggRows(
+      rowsFor("last", COUNTER),
+      [seriesInfo(counterPoint(), "last")],
+      "5m",
+      device,
+      FIVE,
+      3 * FIVE,
+    );
+    expect(out[0].history.data).toEqual(COUNTER);
+  });
+
+  it("preserves the increments that rounding destroyed", async () => {
+    // The property that matters: consecutive differences survive the serializer. Under
+    // toPrecision(4) all three collapse to 5552000 and every increment becomes 0.
+    const out = await buildSeriesFromAggRows(
+      rowsFor("last", COUNTER),
+      [seriesInfo(counterPoint(), "last")],
+      "5m",
+      device,
+      FIVE,
+      3 * FIVE,
+    );
+    const data = out[0].history.data as number[];
+    expect([data[1] - data[0], data[2] - data[1]]).toEqual([86, 85]);
+  });
+
+  it("still rounds the counter's own delta — small numbers, nothing to lose", async () => {
+    // Scoped to `.last`: `.delta` carries few significant figures, so the display precision is
+    // doing no harm there and the exemption should not spread.
+    const out = await buildSeriesFromAggRows(
+      rowsFor("delta", [86.12345]),
+      [seriesInfo(counterPoint(), "delta")],
+      "5m",
+      device,
+      FIVE,
+      FIVE,
+    );
+    expect(out[0].history.data).toEqual([86.12]);
+  });
+
+  it("still rounds .last on a point that is NOT a counter", async () => {
+    // The exemption keys on `transform: 'd'`, not on the aggregation alone — a power point's
+    // `.last` is an instantaneous reading and gets the usual display precision.
+    const power = fakePoint({ index: 8, systemId: 1, metricType: "power" });
+    const out = await buildSeriesFromAggRows(
+      [{ system_id: 1, point_id: 8, interval_end: FIVE, last: 1.23456 }],
+      [seriesInfo(power, "last")],
+      "5m",
+      device,
+      FIVE,
+      FIVE,
+    );
+    expect(out[0].history.data).toEqual([1.235]);
+  });
+});

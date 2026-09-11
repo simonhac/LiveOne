@@ -18,7 +18,7 @@ import {
   type WireBinding,
   type WireMember,
 } from "./model";
-import { describeBinding, renderDiff, slotOf } from "./render";
+import { chainRanks, describeBinding, renderDiff, slotOf } from "./render";
 import { putBindings, putMembers } from "./client";
 
 async function runDevicesList(ctx: Ctx): Promise<number> {
@@ -134,11 +134,14 @@ async function runRoleList(ctx: Ctx): Promise<number> {
       (a, b) => slotOf(a).localeCompare(slotOf(b)) || a.priority - b.priority,
     );
     const boundIds = new Set(agg.bindings.map((b) => b.pointId));
+    const ranks = chainRanks(agg.bindings, pool);
 
     ctx.emit(
       {
         area: agg.area,
-        bindings: sorted,
+        bindings: sorted.map((b) =>
+          ranks.has(b.pointId) ? { ...b, chainRank: ranks.get(b.pointId) } : b,
+        ),
         ...(wantPoints
           ? {
               points: pool.map((p) => ({
@@ -155,7 +158,8 @@ async function runRoleList(ctx: Ctx): Promise<number> {
         const out = [`${agg.area.name} (${agg.area.id})`, ""];
         if (!sorted.length)
           out.push("  (no bindings — union-default resolution)");
-        for (const b of sorted) out.push(`  ${describeBinding(b, pool)}`);
+        for (const b of sorted)
+          out.push(`  ${describeBinding(b, pool, ranks.get(b.pointId))}`);
         out.push(
           "",
           `${sorted.length} binding(s) across ${agg.members.length} device(s).`,

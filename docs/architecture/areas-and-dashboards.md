@@ -74,6 +74,28 @@ never a silent pick; `GET /api/v4/areas/{id}/resolution` reports what resolved a
 point whose `(logical_path, metric_type)` doesn't fit the role is **rejected at bind time**, not
 flagged with an advisory dot.
 
+**`priority` is a fallback chain, and what it orders is the SERVING KEY — not the slot.** A slot
+legitimately holds several points with different logical paths (`load.hvac/power`, `load.pool/power`,
+…): those are separate circuits and all of them serve. Two bindings sharing
+`{logical_path}/{metric_type}` are two instruments measuring one quantity, and that string is
+simultaneously the latest-hash field name and the middle of the series id — so exactly one can be the
+area's answer. `lib/areas/binding-chain.ts` is the single definition, ordering by
+(`points.active`, `priority`, `ordinal`, uuid); an inactive point cannot hold rank 0, because the
+chain exists precisely to survive that.
+
+Rank 0 serves history, charts and the Sankey: a stored series has one provenance, and stitching two
+instruments under one series id would make that id a lie. The **live** map is where the chain moves —
+fallbacks publish alongside the winner under `"{path}#{rank}"`, and `resolveChainFields`
+(`lib/latest-values-store.ts`) promotes the best-ranked one whose measurement is within
+`CHAIN_FALLBACK_STALE_MS`. Precedence is settled at READ time on purpose: it keeps the ingest path
+free of a read-modify-write, and staleness can only be judged honestly at the moment it is asked.
+
+Until this existed, only `resolveSlotsFromData` — reachable solely through the read-only
+`/resolution` report — read `priority` at all. Every serving path took the bindings as an unordered
+set, so binding two points to one slot produced a coin flip: Kinkora's `bidi.battery/soc` answered
+both "304/304 days" and "81/304 days" to the same request, depending on which of two identical series
+ids landed last.
+
 This replaced v3's all-or-nothing cliff, where adding one binding silently switched an area from
 "union of members' points" to "bindings select everything".
 

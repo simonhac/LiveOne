@@ -230,6 +230,75 @@ describe("kv-cache-manager", () => {
       );
     });
 
+    it("writes a chain FALLBACK to its ranked field, and the winner to the bare path", async () => {
+      const { kv } = await import("../kv");
+
+      // Area A prefers this point (no rank recorded); Area B holds it as a rank-1 backstop. One
+      // reading, two Areas, two different field names — which is why the rank is read per-Area here
+      // rather than once for the whole write.
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: {
+          "0199aaaa-0000-7000-8000-00000000000a": [AREA_A, AREA_B],
+        },
+        fallbackRanks: {
+          "0199aaaa-0000-7000-8000-00000000000a": { [AREA_B]: 1 },
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValue(
+        10,
+        "0199aaaa-0000-7000-8000-00000000000a",
+        "bidi.battery/soc",
+        87,
+        1731627600000,
+        1731627605000,
+        "%",
+        "Battery SOC",
+      );
+
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        expect.objectContaining({ "bidi.battery/soc": expect.any(Object) }),
+      );
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_B}`,
+        expect.objectContaining({ "bidi.battery/soc#1": expect.any(Object) }),
+      );
+      // The SOURCE DEVICE's own hash is never chained — a device has one point per path.
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:device:${SOURCE_DEVICE}`,
+        expect.objectContaining({ "bidi.battery/soc": expect.any(Object) }),
+      );
+    });
+
+    it("treats a registry entry written before chains existed as all-rank-0", async () => {
+      const { kv } = await import("../kv");
+
+      (kv.get as jest.MockedFunction<any>).mockResolvedValueOnce({
+        pointSubscribers: {
+          "0199aaaa-0000-7000-8000-00000000000a": [AREA_A],
+        },
+        lastUpdatedTimeMs: Date.now(),
+      });
+
+      await updateLatestPointValue(
+        10,
+        "0199aaaa-0000-7000-8000-00000000000a",
+        "bidi.battery/soc",
+        87,
+        1731627600000,
+        1731627605000,
+        "%",
+        "Battery SOC",
+      );
+
+      expect(kv.hset).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        expect.objectContaining({ "bidi.battery/soc": expect.any(Object) }),
+      );
+    });
+
     it("ignores a pre-PR-3 `{handle}.{ordinal}` subscriber ref rather than mis-routing it", async () => {
       const { kv } = await import("../kv");
 
@@ -329,6 +398,11 @@ describe("kv-cache-manager", () => {
       logicalPath: string | null,
       pointRid: number,
       metricType = "power",
+      // Chain position, when a test deliberately binds two points to one path. Every other fixture
+      // leaves it at 0 — which is what the fleet looks like today, and what keeps these assertions
+      // about the pre-chain behaviour honest.
+      priority = 0,
+      active = true,
     ): AreaBindingRow => ({
       areaId,
       sourceDeviceId: deviceUuid,
@@ -337,6 +411,8 @@ describe("kv-cache-manager", () => {
       logicalPath,
       metricType,
       ordinal: 0,
+      priority,
+      active,
     });
 
     const member = (
@@ -558,8 +634,12 @@ describe("kv-cache-manager", () => {
 
       // The escape hatch that makes this a decision rather than a prohibition: bind Fronius's
       // `load/power` deliberately and it is served, carrying the charts and Sankey with it.
-      mockBindingRows = [bound(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39)];
-      mockMemberRows = [member(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39)];
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39),
+      ];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(5), "uid-fronius-load", "load", 39),
+      ];
 
       const summary = await buildSubscriptionRegistry();
 
@@ -649,6 +729,160 @@ describe("kv-cache-manager", () => {
         "bidi.grid/power",
       );
       expect(summary.gcDeletedFields).toBe(1);
+    });
+
+    // ── fallback chains ─────────────────────────────────────────────────────────────────────────
+
+    it("ranks two bindings on ONE path instead of letting them flap last-write-wins", async () => {
+      const { kv } = await import("../kv");
+
+      // The Kinkora `bidi.battery/soc` case. Both points are BOUND, so the contested rule never
+      // fired: both subscribed, both wrote the same field, and the Area's value alternated between
+      // two physical devices depending on poll arrival order. Now priority orders them and they
+      // write different fields.
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(5), "uid-fronius", "bidi.battery", 507, "soc", 1),
+        bound(AREA_A_UUID, d(6), "uid-mondo", "bidi.battery", 658, "soc", 0),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      // Both still subscribe — a fallback that received nothing could never take over.
+      expect(entryFor(kv, d(6))?.pointSubscribers["uid-mondo"]).toEqual([
+        AREA_A,
+      ]);
+      expect(entryFor(kv, d(5))?.pointSubscribers["uid-fronius"]).toEqual([
+        AREA_A,
+      ]);
+      // …but only the loser carries a rank, and only the loser's field is suffixed.
+      expect(entryFor(kv, d(6))?.fallbackRanks).toBeUndefined();
+      expect(entryFor(kv, d(5))?.fallbackRanks).toEqual({
+        "uid-fronius": { [AREA_A]: 1 },
+      });
+      expect(summary.servedPathsByArea[AREA_A]).toEqual([
+        "bidi.battery/soc",
+        "bidi.battery/soc#1",
+      ]);
+      // A resolved chain is reported in rank order, and is NOT a contested path.
+      expect(summary.chains).toEqual([
+        { areaId: AREA_A, path: "bidi.battery/soc", pointRids: [658, 507] },
+      ]);
+      expect(summary.contested).toEqual([]);
+    });
+
+    it("writes no fallbackRanks at all when nothing is chained", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(5), "uid-a", "load.hvac", 1),
+        bound(AREA_A_UUID, d(5), "uid-b", "load.pool", 2, "power", 1),
+      ];
+
+      await buildSubscriptionRegistry();
+
+      // Different paths in one slot are not a chain — both serve the bare field, and the registry
+      // entry is byte-identical to what a pre-chain build wrote.
+      expect(entryFor(kv, d(5))?.fallbackRanks).toBeUndefined();
+      expect(Object.keys(entryFor(kv, d(5)))).toEqual([
+        "pointSubscribers",
+        "lastUpdatedTimeMs",
+      ]);
+    });
+
+    it("promotes the active binding when the preferred point is inactive", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [
+        bound(
+          AREA_A_UUID,
+          d(6),
+          "uid-dead",
+          "bidi.battery",
+          658,
+          "soc",
+          0,
+          false,
+        ),
+        bound(AREA_A_UUID, d(5), "uid-live", "bidi.battery", 507, "soc", 1),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(summary.chains).toEqual([
+        { areaId: AREA_A, path: "bidi.battery/soc", pointRids: [507, 658] },
+      ]);
+      expect(entryFor(kv, d(5))?.fallbackRanks).toBeUndefined();
+      expect(entryFor(kv, d(6))?.fallbackRanks).toEqual({
+        "uid-dead": { [AREA_A]: 1 },
+      });
+    });
+
+    it("keeps a fallback's field out of the GC's reach", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(6), "uid-mondo", "bidi.battery", 658, "soc", 0),
+        bound(AREA_A_UUID, d(5), "uid-fronius", "bidi.battery", 507, "soc", 1),
+      ];
+      (kv.hkeys as jest.MockedFunction<any>).mockResolvedValue([
+        "bidi.battery/soc",
+        "bidi.battery/soc#1",
+        "bidi.grid/power", // genuine residue
+      ]);
+
+      const summary = await buildSubscriptionRegistry();
+
+      // Sweeping `#1` every rebuild would leave the chain with nothing to fall back TO.
+      expect(kv.hdel).toHaveBeenCalledWith(
+        `test:latest:area:${AREA_A}`,
+        "bidi.grid/power",
+      );
+      expect(summary.gcDeletedFields).toBe(1);
+    });
+
+    it("a chain fallback does not contest a member point out of existence", async () => {
+      const { kv } = await import("../kv");
+
+      // The fallback's field is `#1`, so it is not a second claimant of the bare path. The member
+      // point is still excluded — by the WINNER, exactly as one binding always excluded it.
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(6), "uid-mondo", "bidi.battery", 658, "soc", 0),
+        bound(AREA_A_UUID, d(5), "uid-fronius", "bidi.battery", 507, "soc", 1),
+      ];
+      mockMemberRows = [
+        member(AREA_A_UUID, d(7), "uid-third", "bidi.battery", 703, "soc"),
+        member(AREA_A_UUID, d(7), "uid-other", "load", 704),
+      ];
+
+      const summary = await buildSubscriptionRegistry();
+
+      expect(summary.contested).toEqual([
+        { areaId: AREA_A, path: "bidi.battery/soc", pointRids: [658, 703] },
+      ]);
+      expect(entryFor(kv, d(7))?.pointSubscribers["uid-third"]).toBeUndefined();
+      expect(entryFor(kv, d(7))?.pointSubscribers["uid-other"]).toEqual([
+        AREA_A,
+      ]);
+    });
+
+    it("ranks per AREA — the same point can be one Area's winner and another's fallback", async () => {
+      const { kv } = await import("../kv");
+
+      mockBindingRows = [
+        bound(AREA_A_UUID, d(5), "uid-fronius", "bidi.battery", 507, "soc", 0),
+        bound(AREA_A_UUID, d(6), "uid-mondo", "bidi.battery", 658, "soc", 1),
+        bound(AREA_B_UUID, d(5), "uid-fronius", "bidi.battery", 507, "soc", 1),
+        bound(AREA_B_UUID, d(6), "uid-mondo", "bidi.battery", 658, "soc", 0),
+      ];
+
+      await buildSubscriptionRegistry();
+
+      expect(entryFor(kv, d(5))?.fallbackRanks).toEqual({
+        "uid-fronius": { [AREA_B]: 1 },
+      });
+      expect(entryFor(kv, d(6))?.fallbackRanks).toEqual({
+        "uid-mondo": { [AREA_A]: 1 },
+      });
     });
 
     it("does not read or sweep the hash of an area absent from the registry", async () => {

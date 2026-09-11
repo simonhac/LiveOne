@@ -162,14 +162,38 @@ export async function buildSeriesFromAggRows(
     const seriesPath = getSeriesPath(series);
     const seriesId = seriesPath.toString();
 
+    /**
+     * 🛑 A lifetime counter's `.last` is served UNROUNDED. Everywhere else `toPrecision(4)` is a
+     * sensible display precision, because the value and the information it carries are the same
+     * scale — 12345 W becomes 12350 W, 0.05% off, and nobody minds.
+     *
+     * A `transform: 'd'` counter is the one series where those two scales come apart. Its value is
+     * ~5,551,623 Wh and the quantity anyone actually reads off it is the DIFFERENCE between
+     * consecutive samples — 86 Wh. Rounding to 4 significant figures moves it by up to ±500 Wh:
+     * proportionally trivial against the value, roughly 1000% of the increment. Served that way,
+     * one day of Daylesford's `load/energy.last` collapsed from 288 distinct readings to 9, all
+     * ending in three zeros, and chaining counter values across an outage — the entire reason
+     * `.last` is exposed on an energy point at all — could not be done to better than ±1 kWh.
+     *
+     * It costs nothing: `5551623` and its rounded form `5552000` are both seven digits, so there is
+     * no payload saving to weigh against the loss. Scoped to `.last` on a counter rather than
+     * offered as a `precision=` flag, because the default being wrong is not something a caller
+     * should have to know to ask about — and a blanket flag would also unround every power average
+     * in the response, where the rounding is doing real work.
+     */
+    const isCounterLast =
+      series.aggregationField === "last" && series.point.transform === "d";
+
     // Build field data - database CTE provides dense timeline with NULLs for gaps
     const fieldData: (number | string | null)[] = rows.map((row) => {
       const value = row.value;
       // For quality (string), push as-is; for numbers, apply precision
       if (typeof value === "string") {
         return value;
+      } else if (value === null) {
+        return null;
       } else {
-        return value === null ? null : parseFloat(value.toPrecision(4));
+        return isCounterLast ? value : parseFloat(value.toPrecision(4));
       }
     });
 

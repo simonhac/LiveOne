@@ -13,12 +13,14 @@ import {
 import { Area, Device, Point, type AreaId, type DeviceId } from "@/lib/ids";
 import { requirePlanetscaleDb } from "@/lib/db/planetscale";
 import {
+  chainFallbackField,
   getLatestValues,
   getLatestValuesForSubject,
   LatestValue,
   LatestValuesMap,
 } from "./latest-values-store";
-import { getAreaBindings } from "@/lib/areas/bindings";
+import { getAreaBindings, type AreaBindingRow } from "@/lib/areas/bindings";
+import { rankBindingChains } from "@/lib/areas/binding-chain";
 import { getAreaMemberPointsForServing } from "@/lib/areas/members";
 import { isDisplayDerivedHere } from "@/lib/areas/derived-display-paths";
 
@@ -62,6 +64,22 @@ export interface SubscriptionRegistryEntry {
    * Re-running {@link buildSubscriptionRegistry} is a REQUIRED deploy step for this keyspace change.
    */
   pointSubscribers: Record<string, string[]>;
+  /**
+   * Source point uuid → subscriber Area TypeID → the point's CHAIN RANK in that Area, for chain
+   * FALLBACKS only (rank ≥ 1). A rank-0 winner is absent, so on a fleet where no slot binds two
+   * points for one path — which is every environment today — this field is absent entirely.
+   *
+   * It exists so `updateLatestPointValue` can pick the field NAME to write (`path` vs `path#rank`)
+   * without a second lookup; it deliberately does NOT arbitrate. Every writer writes its own field
+   * unconditionally and the reader settles precedence (`resolveChainFields`), which keeps the ingest
+   * path free of a read-modify-write and makes staleness a question answered when it is asked.
+   *
+   * ⚠️ PERSISTED, and ADDITIVE on purpose: an entry written by an older build has no `fallbackRanks`,
+   * which reads as "every subscriber is rank 0" — i.e. exactly the pre-chain behaviour — and an older
+   * build reading a newer entry ignores the field for the same result. Neither direction can
+   * mis-route a value, so this needed no keyspace bump.
+   */
+  fallbackRanks?: Record<string, Record<string, number>>;
   lastUpdatedTimeMs: number; // Unix timestamp in milliseconds when registry was last updated
 }
 
@@ -133,16 +151,22 @@ export async function updateLatestPointValue(
   }
   await kv.hset(latestValuesKey(source), { [pointPath]: pointValue });
 
-  // Look up the Areas that subscribe to this specific source point
-  const subscriberAreaIds = await getPointSubscribers(systemId, pointUid);
+  // Look up the Areas that subscribe to this specific source point, each with this point's rank in
+  // that Area's chain for `pointPath` (0 unless another binding outranks it there).
+  const subscribers = await getPointSubscribers(systemId, pointUid);
 
   // Update each subscriber Area's cache (only for subscribed points). One hset per Area; the refs are
   // already deduped per Area by the registry, so no grouping pass is needed any more.
-  if (subscriberAreaIds.length > 0) {
+  //
+  // The FIELD is rank-dependent: a chain winner writes the bare path exactly as before, a fallback
+  // writes `path#rank` beside it. Rank is per-Area — the same point can be an Area's preferred
+  // instrument and another's backstop — which is why this is computed here and not once above. The
+  // source device's own hash is never chained: a device has one point per path by construction.
+  if (subscribers.length > 0) {
     await Promise.all(
-      subscriberAreaIds.map((areaId) =>
+      subscribers.map(({ areaId, rank }) =>
         kv.hset(latestValuesKey(areaSubject(areaId)), {
-          [pointPath]: pointValue,
+          [chainFallbackField(pointPath, rank)]: pointValue,
         }),
       ),
     );
@@ -161,7 +185,7 @@ export async function updateLatestPointValue(
 async function getPointSubscribers(
   sourceSystemId: number,
   sourcePointUid: string,
-): Promise<AreaId[]> {
+): Promise<Array<{ areaId: AreaId; rank: number }>> {
   const device = await kvDeviceSubjectForHandle(sourceSystemId);
   if (!device) return [];
   const entry = await kv.get<SubscriptionRegistryEntry>(
@@ -170,10 +194,12 @@ async function getPointSubscribers(
 
   const refs = entry?.pointSubscribers?.[sourcePointUid];
   if (!refs) return [];
+  // Absent for every rank-0 winner, and for every entry written before chains existed.
+  const ranks = entry?.fallbackRanks?.[sourcePointUid];
 
-  const out: AreaId[] = [];
+  const out: Array<{ areaId: AreaId; rank: number }> = [];
   for (const ref of refs) {
-    if (Area.is(ref)) out.push(ref);
+    if (Area.is(ref)) out.push({ areaId: ref, rank: ranks?.[ref] ?? 0 });
     else
       console.warn(
         `[KV] subscription ref "${ref}" is not an ar_ TypeID (pre-PR-3 entry) — ignoring; rebuild the registry`,
@@ -197,6 +223,8 @@ export interface SubscriptionRegistrySummary {
   sourceDevices: number;
   edges: number;
   contested: ContestedServingPath[];
+  /** Bound paths resolved into a `priority` fallback chain. Informational, not a problem. */
+  chains: ChainedServingPath[];
   gcDeletedFields: number;
   /** Unbound member points withheld because the display layer derives their path. */
   suppressed: SuppressedServingPath[];
@@ -252,14 +280,27 @@ export interface ContestedServingPath {
   pointRids: number[];
 }
 
+/** A serving path several BINDINGS claim, resolved into a fallback chain by `priority`. */
+export interface ChainedServingPath {
+  areaId: AreaId;
+  /** The path the chain serves: `stem/metricType`. */
+  path: string;
+  /** `points.rid` in RANK ORDER — `[0]` serves the path, the rest are fallbacks. */
+  pointRids: number[];
+}
+
 /** What one registry rebuild derived, for logging, the admin route, and the area-hash GC. */
 export interface SubscriptionRegistryBuild {
   subscriptions: Map<DeviceId, Map<string, Set<AreaId>>>;
   contested: ContestedServingPath[];
+  /** Bound paths with more than one claimant, resolved by `priority` rather than contested. */
+  chains: ChainedServingPath[];
   /** Unbound candidates withheld because the display layer derives the path. */
   suppressed: SuppressedServingPath[];
   /** Per subscriber Area, the latest-hash field names its serving set legitimately covers. */
   servedPathsByArea: Map<AreaId, Set<string>>;
+  /** Source point uuid → subscriber Area → its chain rank. Chain FALLBACKS only (rank ≥ 1). */
+  fallbackRanks: Map<string, Map<AreaId, number>>;
 }
 
 /** One candidate point for one Area, from either leg, normalised for classification. */
@@ -270,6 +311,14 @@ interface ServingCandidate {
   /** `null` for a stemless point: it has no latest-hash field, so it claims no path. */
   path: string | null;
   bound: boolean;
+  /**
+   * Position in this Area's chain for {@link ServingCandidate.path} — 0 serves the path, ≥1 is a
+   * fallback. Always 0 for a member candidate: only bindings carry a priority, and a member point
+   * that contends for a path is excluded rather than ranked (nothing authored an order for it).
+   */
+  rank: number;
+  /** The latest-hash field this candidate writes: the path, or `path#rank` for a fallback. */
+  field: string | null;
 }
 
 /**
@@ -301,35 +350,59 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
     return m;
   };
 
+  // Ranked PER AREA, because `priority` is area-scoped — ranking the whole fleet's bindings in one
+  // pass would order one site's battery against another's. Within an Area, two bindings sharing a
+  // serving key are a chain: the winner takes the bare field, the rest take `path#rank` and are
+  // published alongside it, so a reader can fall back when the winner goes quiet
+  // (`resolveChainFields`, lib/latest-values-store.ts). Before this they both wrote the SAME field
+  // and the Area's value flapped last-write-wins between two physical devices — the very ambiguity
+  // this function already refuses to tolerate between two MEMBER points, silently tolerated between
+  // two bound ones (`contested` below only fires when a claimant is unbound).
+  const bindingsByArea = new Map<string, AreaBindingRow[]>();
   for (const b of await getAreaBindings()) {
-    // A bound point wins the dedupe: it is served regardless of contention, so `bound` must not be
-    // downgraded if the same point also arrives via the member leg.
-    candidatesFor(b.areaId).set(b.pointUid, {
-      sourceDeviceId: b.sourceDeviceId,
-      pointUid: b.pointUid,
-      pointRid: b.pointRid,
-      path: b.logicalPath ? `${b.logicalPath}/${b.metricType}` : null,
-      bound: true,
-    });
+    const list = bindingsByArea.get(b.areaId);
+    if (list) list.push(b);
+    else bindingsByArea.set(b.areaId, [b]);
+  }
+  for (const [areaId, rows] of bindingsByArea) {
+    for (const { item: b, rank } of rankBindingChains(rows)) {
+      const path = b.logicalPath ? `${b.logicalPath}/${b.metricType}` : null;
+      // A bound point wins the dedupe: it is served regardless of contention, so `bound` must not be
+      // downgraded if the same point also arrives via the member leg.
+      candidatesFor(areaId).set(b.pointUid, {
+        sourceDeviceId: b.sourceDeviceId,
+        pointUid: b.pointUid,
+        pointRid: b.pointRid,
+        path,
+        bound: true,
+        rank,
+        field: path === null ? null : chainFallbackField(path, rank),
+      });
+    }
   }
   for (const m of await getAreaMemberPointsForServing()) {
     const c = candidatesFor(m.areaId);
     // The same point being BOTH bound and a member is the normal case; it must stay one candidate,
     // or it would look like two claimants of its own path and contest itself out of existence.
     if (c.has(m.pointUid)) continue;
+    const path = `${m.logicalPath}/${m.metricType}`;
     c.set(m.pointUid, {
       sourceDeviceId: m.sourceDeviceId,
       pointUid: m.pointUid,
       pointRid: m.pointRid,
-      path: `${m.logicalPath}/${m.metricType}`,
+      path,
       bound: false,
+      rank: 0,
+      field: path,
     });
   }
 
   const subscriptions = new Map<DeviceId, Map<string, Set<AreaId>>>();
   const contested: ContestedServingPath[] = [];
+  const chains: ChainedServingPath[] = [];
   const suppressed: SuppressedServingPath[] = [];
   const servedPathsByArea = new Map<AreaId, Set<string>>();
+  const fallbackRanks = new Map<string, Map<AreaId, number>>();
 
   for (const [areaUuid, candidates] of byArea) {
     const areaId = Area.encode(areaUuid);
@@ -345,17 +418,20 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
       if (c.bound && c.path !== null) boundPaths.add(c.path);
     }
 
-    // Claimants per path. A stemless point claims nothing (`path === null`).
+    // Claimants per latest-hash FIELD, not per path — which is the same thing for everything except
+    // a chain fallback, whose field is `path#rank`. That is precisely the point: a fallback writes
+    // its own field, so it neither contests the winner nor blocks a member point that would have
+    // been contested anyway. A stemless point claims nothing (`field === null`).
     const claimants = new Map<string, ServingCandidate[]>();
     for (const c of candidates.values()) {
-      if (c.path === null) continue;
-      const list = claimants.get(c.path);
+      if (c.field === null) continue;
+      const list = claimants.get(c.field);
       if (list) list.push(c);
-      else claimants.set(c.path, [c]);
+      else claimants.set(c.field, [c]);
     }
 
     for (const c of candidates.values()) {
-      if (!c.bound && c.path !== null && claimants.get(c.path)!.length > 1) {
+      if (!c.bound && c.field !== null && claimants.get(c.field)!.length > 1) {
         continue; // contested — reported below, once per path
       }
       // The display layer computes this path for itself, and prefers a real point over its own
@@ -377,7 +453,25 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
         c.pointUid,
         areaId,
       );
-      if (c.path !== null) served.add(c.path);
+      // The field, not the path: `served` is what the GC keeps, and deleting a fallback's field on
+      // every rebuild would leave the chain with nothing to fall back TO.
+      if (c.field !== null) served.add(c.field);
+      if (c.rank > 0) {
+        let perArea = fallbackRanks.get(c.pointUid);
+        if (!perArea) fallbackRanks.set(c.pointUid, (perArea = new Map()));
+        perArea.set(areaId, c.rank);
+      }
+    }
+
+    // Chains, reported at info level rather than warned: a chain is authored intent that RESOLVED,
+    // the opposite of a contested path. Worth printing because "which instrument is this area
+    // actually reading?" has a non-obvious answer once a slot holds more than one.
+    for (const [path, list] of chainsByPath(candidates)) {
+      chains.push({
+        areaId,
+        path,
+        pointRids: list.map((c) => c.pointRid),
+      });
     }
 
     for (const [path, list] of claimants) {
@@ -391,7 +485,32 @@ async function buildSubscriptionsFromBindings(): Promise<SubscriptionRegistryBui
     }
   }
 
-  return { subscriptions, contested, suppressed, servedPathsByArea };
+  return {
+    subscriptions,
+    contested,
+    chains,
+    suppressed,
+    servedPathsByArea,
+    fallbackRanks,
+  };
+}
+
+/** The multi-member chains in one Area's candidate set, in rank order, keyed by the served path. */
+function chainsByPath(
+  candidates: Map<string, ServingCandidate>,
+): Map<string, ServingCandidate[]> {
+  const byPath = new Map<string, ServingCandidate[]>();
+  for (const c of candidates.values()) {
+    if (!c.bound || c.path === null) continue;
+    const list = byPath.get(c.path);
+    if (list) list.push(c);
+    else byPath.set(c.path, [c]);
+  }
+  for (const [path, list] of byPath) {
+    if (list.length < 2) byPath.delete(path);
+    else list.sort((a, b) => a.rank - b.rank);
+  }
+  return byPath;
 }
 
 /**
@@ -444,8 +563,14 @@ async function gcAreaLatestFields(
  */
 export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistrySummary> {
   // Example: { "dv_01k9…": { "0199a1…": ["ar_01ka…", "ar_01kb…"] } }
-  const { subscriptions, contested, suppressed, servedPathsByArea } =
-    await buildSubscriptionsFromBindings();
+  const {
+    subscriptions,
+    contested,
+    chains,
+    suppressed,
+    servedPathsByArea,
+    fallbackRanks,
+  } = await buildSubscriptionsFromBindings();
 
   // Write subscriptions to KV with timestamp
   const now = Date.now();
@@ -459,13 +584,18 @@ export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistryS
 
     // Convert Map<string, Set<AreaId>> to Record<string, string[]>
     const pointSubscribers: Record<string, string[]> = {};
+    const ranks: Record<string, Record<string, number>> = {};
     for (const [pointUid, subscriberAreaIds] of pointMap.entries()) {
       pointSubscribers[pointUid] = Array.from(subscriberAreaIds);
       edges += subscriberAreaIds.size;
+      const perArea = fallbackRanks.get(pointUid);
+      if (perArea) ranks[pointUid] = Object.fromEntries(perArea);
     }
 
     const entry: SubscriptionRegistryEntry = {
       pointSubscribers,
+      // Omitted rather than written empty, so the common fleet-wide case stores nothing new at all.
+      ...(Object.keys(ranks).length > 0 ? { fallbackRanks: ranks } : {}),
       lastUpdatedTimeMs: now,
     };
     updates.push(kv.set(key, entry));
@@ -496,6 +626,12 @@ export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistryS
     );
   }
 
+  for (const ch of chains) {
+    console.log(
+      `[SubscriptionRegistry] area ${ch.areaId}: "${ch.path}" is a fallback chain — rid ${ch.pointRids[0]} serves it, then ${ch.pointRids.slice(1).join(", ")}`,
+    );
+  }
+
   for (const c of contested) {
     console.warn(
       `[SubscriptionRegistry] area ${c.areaId}: "${c.path}" is claimed by ${c.pointRids.length} points (rids ${c.pointRids.join(", ")}) — not auto-served; bind one of them to pick a winner`,
@@ -503,13 +639,14 @@ export async function buildSubscriptionRegistry(): Promise<SubscriptionRegistryS
   }
 
   console.log(
-    `Built subscription registry for ${subscriptions.size} source device(s), ${edges} edge(s) (deleted ${deletions.length} stale entries, ${contested.length} contested path(s), ${suppressed.length} display-derived path(s) withheld, GC'd ${gcDeletedFields} area field(s))`,
+    `Built subscription registry for ${subscriptions.size} source device(s), ${edges} edge(s) (deleted ${deletions.length} stale entries, ${chains.length} chained path(s), ${contested.length} contested path(s), ${suppressed.length} display-derived path(s) withheld, GC'd ${gcDeletedFields} area field(s))`,
   );
 
   return {
     sourceDevices: subscriptions.size,
     edges,
     contested,
+    chains,
     suppressed,
     gcDeletedFields,
     servedPathsByArea: Object.fromEntries(

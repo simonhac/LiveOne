@@ -16,6 +16,7 @@ import {
   points,
 } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
+import { rankBindingChains, type Ranked } from "./binding-chain";
 
 /** An Area's binding point refs, ordered by ordinal. */
 export interface BindingRef {
@@ -24,31 +25,53 @@ export interface BindingRef {
   role: string;
   metricType: string;
   ordinal: number;
+  /** `area_bindings.priority` — the slot's fallback order, lowest first. */
+  priority: number;
+  /** `points.logical_path` — with `metricType`, the serving key a chain contends over. */
+  logicalPath: string | null;
+  /** `points.active`. */
+  active: boolean;
 }
 
 /**
- * The point refs bound to the multi-device Area the integer `handle` names, ordered by
- * ordinal. Empty if no such Area / no bindings. Consumed by the area-native branch of
- * `PointManager._resolvePointsForHandle`.
+ * The point refs bound to the multi-device Area the integer `handle` names, **ranked into chains**
+ * (`lib/areas/binding-chain.ts`). Empty if no such Area / no bindings. Consumed by the area-native
+ * branch of `PointManager._resolvePointsForHandle`, which takes `rank === 0`.
+ *
+ * Ranked rather than filtered here so the caller states which question it is asking. The serving
+ * paths want the winners; anything reporting on an Area's wiring wants the whole chain.
+ *
+ * The ORDER BY is now the chain comparator's business, not SQL's — `rankBindingChains` sorts by
+ * (active, priority, ordinal, uuid) and returns chain-then-rank order, so the previous bare
+ * `ORDER BY ordinal` would only have been re-sorted.
  */
 export async function getAreaBindingRefs(
   handle: number,
-): Promise<BindingRef[]> {
+): Promise<Ranked<BindingRef>[]> {
   const rows = await requirePlanetscaleDb()
     .select({
       pointUid: areaBindings.pointUid,
       role: areaBindings.role,
+      // From `area_bindings`, not `points`, deliberately: `resolveSlotsFromData` treats a binding
+      // whose metric disagrees with its point's as non-matching, so the binding's own copy is the
+      // one every other reader judges the slot by. They agree in fact (both are the raw point
+      // metric); reading it from here keeps a future disagreement visible in one place.
       metricType: areaBindings.metricType,
       ordinal: areaBindings.ordinal,
+      priority: areaBindings.priority,
+      logicalPath: points.logicalPath,
+      active: points.active,
     })
     .from(areaBindings)
     .innerJoin(areas, eq(areaBindings.areaId, areas.id))
     .innerJoin(legacyHandles, eq(legacyHandles.areaId, areas.id))
+    // INNER and total: `point_uid` is NOT NULL with an FK into `points`, so this cannot drop a
+    // binding — it only carries the point's serving identity alongside it.
+    .innerJoin(points, eq(points.id, areaBindings.pointUid))
     // Located by the addressing handle alone — no `kind` filter. Only multi-device Areas have bindings,
     // so an identity handle resolves to zero rows here regardless.
-    .where(eq(legacyHandles.handle, handle))
-    .orderBy(areaBindings.ordinal);
-  return rows;
+    .where(eq(legacyHandles.handle, handle));
+  return rankBindingChains(rows);
 }
 
 /** A flat row for rebuilding the KV subscription registry from SQL. */
@@ -70,6 +93,10 @@ export interface AreaBindingRow {
   logicalPath: string | null;
   metricType: string;
   ordinal: number;
+  /** `area_bindings.priority` — the chain's order within a serving key. Lowest wins. */
+  priority: number;
+  /** `points.active`. An inactive point is ranked behind every active contender for its path. */
+  active: boolean;
 }
 
 /**
@@ -106,6 +133,8 @@ export async function getAreaBindings(): Promise<AreaBindingRow[]> {
         logicalPath: points.logicalPath,
         metricType: points.metricType,
         ordinal: areaBindings.ordinal,
+        priority: areaBindings.priority,
+        active: points.active,
       })
       .from(areaBindings)
       .innerJoin(areas, eq(areaBindings.areaId, areas.id))
