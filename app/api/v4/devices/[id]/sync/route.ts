@@ -6,16 +6,14 @@ import { devices as devicesTable } from "@/lib/db/planetscale/schema";
 import { eq } from "drizzle-orm";
 import { Device } from "@/lib/ids";
 import { parseDateISO } from "@/lib/date-utils";
-import { getDeviceCredentials } from "@/lib/secure-credentials";
 import { createPollCollector } from "@/lib/observations/poll-collector";
 import { sessionManager } from "@/lib/session-manager";
 import { getNextSessionId, formatSessionId } from "@/lib/session-id";
 import {
-  AMBER_MAX_SYNC_DAYS,
-  updateUsage,
-  updateForecasts,
-} from "@/lib/vendors/amber/client";
-import type { AmberSyncResult } from "@/lib/vendors/amber/types";
+  legFor,
+  SYNCABLE_VENDORS,
+  type ChunkAudit,
+} from "@/lib/vendors/sync-legs";
 
 /**
  * `POST /api/v4/devices/{id}/sync` — re-fetch a historical window from the vendor, for `liveone sync`.
@@ -44,6 +42,21 @@ import type { AmberSyncResult } from "@/lib/vendors/amber/types";
  * of magnitude in how long the vendor takes to answer, and the failure of overrunning is a bare 504
  * with no report of the chunks that DID publish — work done and invisible, which is worse than
  * refusing. The caller resumes from `nextStart`; `liveone sync` does this in a loop.
+ *
+ * ## One verb, every backfillable vendor
+ *
+ * Everything above is the same whoever the vendor is, so it lives here and the per-vendor part lives
+ * in `lib/vendors/sync-legs.ts`: Amber, Sigenergy and OpenElectricity are one concept — *one device,
+ * one window, re-fetch what the vendor still holds*. They used to be three, and the two that were
+ * not Amber were reachable only as `/api/cron/*-backfill` driven through the raw `liveone api`
+ * escape hatch, which gives up the published/landed discipline this route exists to enforce.
+ *
+ * 🛑 **This route publishes; it does NOT rebuild derived tables.** It cannot: the budget is 45 s and
+ * it must leave room to walk further windows, where a rebuild needs the lane to land first (which is
+ * why `/api/cron/sigenergy-backfill` carries `maxDuration = 300` and a 60 s landing poll). The split
+ * is publish (here) → verify landing (`liveone sync`, `--verify` on by default) → rebuild
+ * (`liveone device recompute`). The unattended cron routes still recompute for themselves, because
+ * nobody is watching them.
  */
 
 export const maxDuration = 60;
@@ -53,62 +66,6 @@ const BUDGET_MS = 45_000;
 
 const err = (message: string, status = 422) =>
   NextResponse.json({ error: message }, { status });
-
-/**
- * Where one vendor window stopped, and so WHY it published what it did.
- *
- * 🛑 `observations: 0` is not one outcome, it is three, and the number cannot tell them apart.
- * On 2026-09-10 a recovery run over 2026-06-12 → 2026-07-06 published 0 and a control re-run of the
- * already-recovered 2026-07-07 → 2026-07-13 published 0, for opposite reasons — the first because
- * Amber has no data that far back, the second because we already held it and the vendor was never
- * called. Separating them meant minting a prod database role to read `discovery` out of
- * `sessions.response`, which is an absurd cost for "did the vendor have anything?" and exactly the
- * class of unreadable number this route exists to abolish.
- */
-type ChunkOutcome =
-  /** Stage 4 ran: superior records were fetched and published. */
-  | "published"
-  /** Stage 1 exit — local already holds complete billable data. THE VENDOR WAS NOT CALLED. */
-  | "already-held"
-  /** Stage 2 exit — the vendor answered, with nothing for this window. */
-  | "vendor-empty"
-  /** Stage 3 exit — the vendor had records, none better than what is already stored. */
-  | "nothing-superior"
-  /** A stage errored; see `error`. */
-  | "failed"
-  /** The audit's shape is not one this classifier recognises. Say so; do not pick a plausible one. */
-  | "unknown";
-
-/**
- * Classify by HOW FAR the audit got, not by matching its prose. `updateUsage`/`updateForecasts`
- * push exactly one entry per stage they reach and stop at the first early exit, so the stage COUNT
- * is the exit point — a structural fact, where `discovery` is human text that may be reworded.
- */
-function classifyAudit(audit: AmberSyncResult): ChunkOutcome {
-  if (!audit.success) return "failed";
-  // Stage 4 is the only stage that STORES, so reaching it is what "published" means. Keyed off the
-  // count reaching 4 rather than a bare `default:`, so an audit with no stages at all — which
-  // should be impossible, stage 1 always runs — cannot fall through into the happy answer.
-  if (audit.stages.length >= 4) return "published";
-  switch (audit.stages.length) {
-    case 1:
-      return "already-held";
-    case 2:
-      return "vendor-empty";
-    case 3:
-      return "nothing-superior";
-    default:
-      return "unknown";
-  }
-}
-
-/** What the vendor path said about itself, carried back so a zero explains itself. */
-interface ChunkAudit {
-  action: AmberSyncResult["action"];
-  outcome: ChunkOutcome;
-  /** The audit's own last words — the most specific thing known about this window. */
-  discovery?: string;
-}
 
 /** One vendor window's outcome. `observations` is what was PUBLISHED — see the 🛑 above. */
 interface ChunkResult {
@@ -123,9 +80,6 @@ interface ChunkResult {
   audits: ChunkAudit[];
   error?: string;
 }
-
-const ACTIONS = ["usage", "pricing", "both"] as const;
-type Action = (typeof ACTIONS)[number];
 
 /** Days from `a` to `b` inclusive. */
 function daysBetween(a: CalendarDate, b: CalendarDate): number {
@@ -144,9 +98,6 @@ export async function POST(
     .select({
       // `rid` IS the integer handle the vendor/session layer calls `systemId`.
       rid: devicesTable.rid,
-      vendor: devicesTable.vendor,
-      vendorSiteId: devicesTable.vendorSiteId,
-      name: devicesTable.name,
     })
     .from(devicesTable)
     .where(eq(devicesTable.id, uuid))
@@ -161,10 +112,15 @@ export async function POST(
   });
   if (auth instanceof NextResponse) return auth;
 
-  if (row.vendor !== "amber")
+  // Everything vendor-specific comes off the registry view from here on, so there is one source of
+  // truth for the vendor, the site id, the owner and the day offset.
+  const device = auth.device;
+
+  const leg = legFor(device.vendorType);
+  if (!leg)
     return err(
-      `sync is not implemented for vendor "${row.vendor}" — only amber has a historical ` +
-        `re-fetch path today`,
+      `sync is not implemented for vendor "${device.vendorType}" — a historical re-fetch ` +
+        `needs a vendor history API, and only ${SYNCABLE_VENDORS.join(", ")} have one`,
     );
 
   const body = (await request.json().catch(() => null)) as {
@@ -175,10 +131,23 @@ export async function POST(
   } | null;
   if (!body) return err("Body must be JSON");
 
-  const action: Action =
-    body.action === undefined ? "both" : (body.action as Action);
-  if (!ACTIONS.includes(action))
-    return err(`action must be one of: ${ACTIONS.join(", ")}`);
+  // 🛑 An action names a HALF of a vendor's surface, so a vendor with one surface must refuse it
+  // rather than ignore it. Ignoring would let `--action=usage` against Sigenergy look like it had
+  // narrowed something, and silently fetch everything.
+  let action: string | null;
+  if (leg.actions === null) {
+    if (body.action !== undefined)
+      return err(
+        `vendor "${device.vendorType}" has no action axis — it has a single historical ` +
+          `surface, so drop --action`,
+      );
+    action = null;
+  } else {
+    action =
+      body.action === undefined ? leg.defaultAction : String(body.action);
+    if (action === null || !leg.actions.includes(action))
+      return err(`action must be one of: ${leg.actions.join(", ")}`);
+  }
 
   if (typeof body.start !== "string" || typeof body.end !== "string")
     return err("start and end are required, as YYYY-MM-DD local days");
@@ -196,26 +165,12 @@ export async function POST(
 
   const dryRun = body.dryRun === true;
 
-  // Credentials from Clerk privateMetadata, the same source the minutely poll uses. The DEVICE's
-  // `vendorSiteId` wins over the credential's, exactly as the poll path does — the credential's
-  // siteId is optional in the Add Device form, so for many devices it is simply absent.
-  const { ownerClerkUserId } = auth.device;
-  const stored = ownerClerkUserId
-    ? await getDeviceCredentials(ownerClerkUserId, systemId)
-    : null;
-  if (!stored?.apiKey)
-    return err(`No Amber credentials configured for system ${systemId}`, 400);
-  const credentials = {
-    apiKey: stored.apiKey,
-    siteId: row.vendorSiteId || stored.siteId,
-  };
-
   const totalDays = daysBetween(first, last);
 
   // The windows this walk WOULD use, computed without touching the vendor.
   const plan: Array<{ start: string; end: string; days: number }> = [];
   for (let c = first; c.compare(last) <= 0; ) {
-    const days = Math.min(AMBER_MAX_SYNC_DAYS, daysBetween(c, last));
+    const days = Math.min(leg.maxDays, daysBetween(c, last));
     plan.push({
       start: c.toString(),
       end: c.add({ days: days - 1 }).toString(),
@@ -225,13 +180,24 @@ export async function POST(
   }
 
   const head = {
-    device: { id, systemId, name: row.name, vendor: row.vendor },
+    device: {
+      id,
+      systemId,
+      name: device.displayName,
+      vendor: device.vendorType,
+    },
     window: { start: first.toString(), end: last.toString(), days: totalDays },
     action,
-    vendorMaxDays: AMBER_MAX_SYNC_DAYS,
+    vendorMaxDays: leg.maxDays,
     lane: "backfill" as const,
     plan,
   };
+
+  // Credentials and any vendor client are resolved ONCE, before the walk — a missing credential is
+  // worth learning before committing to minutes of fetching, and it is a property of the device
+  // rather than of any one window. A dry run stops right after it, having learned exactly that.
+  const prepared = await leg.prepare(device);
+  if ("error" in prepared) return err(prepared.error, prepared.status);
 
   // 🛑 A dry run touches NOTHING — no vendor fetch, no session rows, no publish. The credential and
   // vendor checks above have already run, which is the part worth learning before committing; going
@@ -262,7 +228,7 @@ export async function POST(
       break;
     }
 
-    const days = Math.min(AMBER_MAX_SYNC_DAYS, daysBetween(cursor, last));
+    const days = Math.min(leg.maxDays, daysBetween(cursor, last));
     const chunkEnd = cursor.add({ days: days - 1 });
     const startedAt = Date.now();
 
@@ -279,43 +245,30 @@ export async function POST(
 
     let ok = true;
     let error: string | undefined;
-    const audits: AmberSyncResult[] = [];
+    let audits: ChunkAudit[] = [];
+    let response: unknown = null;
     try {
-      if (action === "usage" || action === "both") {
-        const audit = await updateUsage(
-          systemId,
-          cursor,
-          days,
-          credentials,
-          session,
-          false,
-          collector,
-        );
-        audits.push(audit);
-        if (!audit.success) {
-          ok = false;
-          error = audit.summary.error ?? "usage sync failed";
-        }
-      }
-      if (action === "pricing" || action === "both") {
-        const audit = await updateForecasts(
-          systemId,
-          cursor,
-          days,
-          credentials,
-          session,
-          false,
-          collector,
-        );
-        audits.push(audit);
-        if (!audit.success) {
-          ok = false;
-          error = audit.summary.error ?? "pricing sync failed";
-        }
-      }
+      const outcome = await prepared.run({
+        device,
+        start: cursor,
+        end: chunkEnd,
+        days,
+        action,
+        session,
+        collector,
+      });
+      ok = outcome.ok;
+      error = outcome.error;
+      audits = outcome.audits;
+      response = outcome.response;
     } catch (e) {
       ok = false;
       error = e instanceof Error ? e.message : String(e);
+      // 🛑 A throw still gets an audit. `audits: []` on a chunk that ran would render as a bare
+      // `0  failed` with nothing saying which half of the vendor refused.
+      audits = [
+        { action: action ?? "fetch", outcome: "failed", discovery: error },
+      ];
     }
 
     const observations = collector.observations.length;
@@ -330,7 +283,7 @@ export async function POST(
         successful: ok,
         error: error ?? null,
         numRows: observations,
-        response: audits,
+        response,
       },
       collector,
     );
@@ -343,15 +296,7 @@ export async function POST(
       merged,
       durationMs: Date.now() - startedAt,
       ok,
-      audits: audits.map((audit) => ({
-        action: audit.action,
-        outcome: classifyAudit(audit),
-        // The LAST stage's discovery, which is the one describing why the walk stopped. An
-        // earlier stage's text would describe a step that then continued.
-        ...(audit.stages.at(-1)?.discovery
-          ? { discovery: audit.stages.at(-1)!.discovery }
-          : {}),
-      })),
+      audits,
       ...(error ? { error } : {}),
     });
 

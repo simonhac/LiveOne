@@ -66,6 +66,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone device points](../scripts/ops/CLI_README.md#liveone-device-points) — A device's point inventory: pt_… id, path, metric, unit.
     - [liveone device latest](../scripts/ops/CLI_README.md#liveone-device-latest) — The device's current values, from the serving cache.
     - [liveone device history](../scripts/ops/CLI_README.md#liveone-device-history) — Time series for a device, in the OpenNEM shape /api/history serves.
+    - [liveone device recompute](../scripts/ops/CLI_README.md#liveone-device-recompute) — Rebuild the rows derived FROM a device's readings, over a window of local days.  _(writes)_
   - [liveone area](../scripts/ops/CLI_README.md#liveone-area) — Inspect and WIRE areas — devices, role bindings, latest values, history, flows.
     - [liveone area list](../scripts/ops/CLI_README.md#liveone-area-list) — List the areas you can read: id, handle, name.
     - [liveone area show](../scripts/ops/CLI_README.md#liveone-area-show) — An area's full aggregate: meta, members, bindings, capabilities.

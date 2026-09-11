@@ -88,28 +88,58 @@ The spool drains within a minute or two of the collector coming back; confirm wi
 
 ## 3. Vendor backfills — what is actually recoverable
 
+**One verb covers every vendor that has a history API**, because they are one concept — *one device,
+one window, re-fetch what the vendor still holds*:
+
+```bash
+npm run liveone -- sync <device> --start=YYYY-MM-DD --end=YYYY-MM-DD          # dry run
+npm run liveone -- sync <device> --start=YYYY-MM-DD --end=YYYY-MM-DD --apply
+```
+
+It reports `published` (what went onto the backfill lane) and `landed` (a read of the serving store
+after the lane drains) as separate numbers, and a zero says which of the three zeros it is. Per
+vendor:
+
 | vendor | recoverable | how |
 | --- | --- | --- |
-| `fusher` / `musher` (flyhub) | ✅ fully, while spooled | step 2 |
-| `openelectricity` | ✅ | public API; the normal poll backfills it |
-| `amber` | ✅ (~90-day window) | settles on its own; `/api/cron/repair-coverage?vendor=amber` after the grace |
-| `sigenergy` | ⚠️ **energy only** | `/api/cron/sigenergy-backfill` (runs daily anyway); power/SoC are live-poll and lost |
-| `selectronic`, `mondo`, `tesla` | ❌ | live-poll only — no history endpoint. What was not polled is gone. |
+| `fusher` / `musher` (flyhub) | ✅ fully, while spooled | step 2 — nothing to call |
+| `openelectricity` | ✅ | `liveone sync`; the normal poll usually beats you to it |
+| `amber` | ✅ (~90-day window) | `liveone sync --action=usage\|pricing\|both` — the only vendor with an action axis |
+| `sigenergy` | ⚠️ **energy + most power/SoC** | `liveone sync`; power/SoC come back wherever the vendor's `itemList` carried them (`derive-power.ts`), and the nightly cron re-does a trailing 7 days anyway |
+| `selectronic`, `mondo`, `tesla` | ❌ | live-poll only — no history endpoint. What was not polled is gone, and `sync` refuses rather than looking like a fix. |
 | `helper` (derived) | ✅ | recompute from the repaired sources — step 4 |
 
-To force a repair *inside* the 7-day grace, the runner honours `GRACE_DAYS_OVERRIDE` and
-`?lookback=N`; overriding the grace re-fetches days that are still settling, so prefer waiting for
-the weekly sweep unless the data is needed now.
+🛑 **A sync does NOT rebuild derived tables** — not for any vendor. It cannot: a rebuild has to wait
+for the lane to land, and the route's budget is 45 s. Step 4 is the other half, and a run that
+published anything prints the exact command.
+
+Forcing a repair *inside* the 7-day grace is the thing not to do. The runner reads its override from
+the env var **`REPAIR_SETTLEMENT_GRACE_DAYS`** (`GRACE_DAYS_OVERRIDE` is the const, not the knob), at
+**module scope** — so changing it on prod is a Vercel env change plus a redeploy, and a second
+redeploy to revert. It also re-fetches days that are still settling. The per-vendor `liveone sync`
+above reaches the same window directly, with none of that.
 
 ## 4. Rebuild everything derived from the repaired days
 
 Derived rows are pure functions of their sources, so they must be recomputed **after** the sources
-are as good as they are going to get, or they bake in the hole:
+are as good as they are going to get, or they bake in the hole. Two verbs, both scoped, both naming
+their window:
 
-- 5-min → daily: `POST /api/cron/daily {"action":"regenerate","date":"<gap day>"}`
-- run detectors: `liveone derivation recompute <derivation> --date=<gap day> --apply`
-  (🛑 always scoped — never the unscoped cron form)
-- area flow / provenance: `recomputeDerivedForDeviceDays` (the backfill routes call it themselves)
+```bash
+# agg_1d + the attributed flow matrix of every Area this device's points bind into
+npm run liveone -- device recompute <device> --start=<gap day> --end=<gap day> --apply
+
+# run detectors (generator runs, EV charge sessions) — one derivation, one day
+npm run liveone -- derivation recompute <dx_…> --date=<gap day> --apply
+```
+
+🛑 **Neither has an unscoped form, and that is the point.** Their fleet-wide twins do:
+`POST /api/cron/daily {"action":"regenerate"}` with no date resolves to *all available history*
+(`parseDateParams`), and the derivations cron's filter is optional — a full-range unscoped regenerate
+through it once collapsed 71 dev rows to 3. Reach for `/api/cron/daily` only when you mean the whole
+fleet, and always with a `date=`; it is also the only thing that re-runs the fleet-wide HWS, battery
+learning and backlog reheal passes, which is why it costs a 300 s budget and `device recompute` does
+not.
 
 ## 5. Write down what stayed lost
 
@@ -122,6 +152,9 @@ hole has been *accepted*.
 
 1. **A single `liveone catchup <since>` verb.** Every step above is manual, and the ordering
    (spool → vendor → derived) matters. Doing it by hand at 2 am is how a step gets skipped.
+   *(Partly done: steps 3 and 4 are now verbs — `liveone sync` covers all three backfillable
+   vendors and `liveone device recompute` rebuilds the scoped derived rows — so what is left to
+   build is the orchestration, not the primitives.)*
 2. **Per-site liveness alerting on the hub.** Kinkora kept collecting while sheephouse was dead for
    ~5 h and nothing said so; the outage was noticed by a human looking at a dashboard. A watchdog
    comparing each site's journal rate against its own baseline would have caught it in minutes.
