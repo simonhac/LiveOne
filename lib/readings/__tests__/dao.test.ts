@@ -809,16 +809,42 @@ describe("ReadingsDao operational readers", () => {
       },
     ]);
 
-    const out = await ReadingsDao.agg5mCoverageForPoints([p1, p2], exec);
+    const out = await ReadingsDao.agg5mCoverageForPoints(
+      [p1, p2],
+      { samples: true },
+      exec,
+    );
     expect(out.get(p1)).toEqual({
       firstMs: Date.parse("2026-01-01T00:00:00Z"),
       lastMs: Date.parse("2026-01-02T00:00:00Z"),
       samples: 288,
     });
     expect(out.get(p2)).toBeNull();
-    await expect(ReadingsDao.agg5mCoverageForPoints([], exec)).resolves.toEqual(
-      new Map(),
-    );
+    await expect(
+      ReadingsDao.agg5mCoverageForPoints([], undefined, exec),
+    ).resolves.toEqual(new Map());
+  });
+
+  it("returns extents without a row count unless asked", async () => {
+    // 🛑 The count is a `count(*)` over every 5m row the point owns, while the extents beside it are
+    // index probes. Unconditional, it 504'd `list=series` for a device with a year of history.
+    // `samples: null` means "nobody paid for the count" — distinct from a point with no rows, which
+    // is absent from the map entirely.
+    const p1 = point(11, 1);
+    const { exec } = makeFakeExec([
+      {
+        pointRid: 11,
+        first: new Date("2026-01-01T00:00:00Z"),
+        last: new Date("2026-01-02T00:00:00Z"),
+        samples: null,
+      },
+    ]);
+    const out = await ReadingsDao.agg5mCoverageForPoints([p1], undefined, exec);
+    expect(out.get(p1)).toEqual({
+      firstMs: Date.parse("2026-01-01T00:00:00Z"),
+      lastMs: Date.parse("2026-01-02T00:00:00Z"),
+      samples: null,
+    });
   });
 
   it("returns planner estimates and DB-relative raw landing health", async () => {

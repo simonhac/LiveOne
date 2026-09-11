@@ -319,9 +319,12 @@ export class PointManager {
 
       // Determine aggregation fields based on metric type
       let aggregationFields: string[];
+      let onDemandFields: ReadonlySet<string> | undefined;
       if (point.metricType === "energy") {
-        // Energy: only delta (+ quality for data source tracking)
-        aggregationFields = ["delta", "quality"];
+        // Energy: delta (+ quality for data source tracking), and the raw counter behind them —
+        // see `getSupportedIntervals`. `last` is ON DEMAND: reachable by name, never offered.
+        aggregationFields = ["delta", "quality", "last"];
+        onDemandFields = PointManager.ENERGY_ON_DEMAND;
       } else if (point.metricType === "soc") {
         // SOC: last for 5m, avg/min/max/last for 1d (+ quality)
         aggregationFields = ["last", "avg", "min", "max", "quality"];
@@ -332,7 +335,12 @@ export class PointManager {
 
       // Create SeriesInfo for each aggregation
       seriesInfos.push(
-        ...createSeriesInfos(systemIdentifier, point, aggregationFields),
+        ...createSeriesInfos(
+          systemIdentifier,
+          point,
+          aggregationFields,
+          onDemandFields,
+        ),
       );
     }
 
@@ -419,6 +427,13 @@ export class PointManager {
    * @param typedOnly - If true, only includes points with type hierarchy (excludes fallback paths). Default: false
    * @returns Series matching the criteria
    */
+  /**
+   * Series an energy point HAS but does not advertise. See `SeriesInfo.onDemand`.
+   */
+  private static readonly ENERGY_ON_DEMAND: ReadonlySet<string> = new Set([
+    "last",
+  ]);
+
   async getSeriesForDevice(
     handle: number,
     filter?: string[],
@@ -457,6 +472,14 @@ export class PointManager {
 
         return micromatch.isMatch(pathWithoutDevice, filter);
       });
+    } else {
+      // 🛑 No patterns means "what does this device have?", and an ON DEMAND series is not part of
+      // that answer — it is reachable only by asking for it by name. Today that is an energy
+      // counter's `.last`: a real stored value, and the wrong one for almost every question, since
+      // `.delta` is the quantity an energy point means and a lifetime counter renders as a straight
+      // line climbing to 200 MWh. Filtering here rather than at the call sites keeps "unasked-for"
+      // a property of the series rather than something each consumer has to remember.
+      seriesInfos = seriesInfos.filter((series) => !series.onDemand);
     }
 
     return seriesInfos;

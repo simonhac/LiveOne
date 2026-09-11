@@ -164,8 +164,15 @@ export interface ActivePointLatest {
 export interface Agg5mCoverage {
   firstMs: number;
   lastMs: number;
-  /** Exact 5m-row count — rides the same grouped index scan as the MIN/MAX. */
-  samples: number;
+  /**
+   * Exact 5m-row count, or null when it was not asked for — see `agg5mCoverageForPoints`.
+   *
+   * 🛑 This is NOT free alongside the MIN/MAX, though a comment here used to say it was. `min`/`max`
+   * on an indexed column are two probes per group; `count(*)` has to read every row in the group.
+   * On a device with a year of 5-minute history that is millions of rows, and CLAUDE.md's rule is
+   * explicit: never `COUNT(*)` the big tables.
+   */
+  samples: number | null;
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────────────────────────────────
@@ -638,9 +645,18 @@ async function latestForActivePoints(
   }));
 }
 
-/** Indexed MIN/MAX coverage for a set of agg5m points. Missing points map to null. */
+/**
+ * Indexed MIN/MAX coverage for a set of agg5m points. Missing points map to null.
+ *
+ * 🛑 `samples` is OPT-IN, and the default is off. The extents come from index probes and cost
+ * nothing; the count is a full scan of every row in every group, and asking for it on a device with
+ * a year of 5-minute history reads millions of rows. It was unconditional until 2026-09-11, when a
+ * 197k-row backfill pushed `list=series` for one device into repeated 504s — the cost had been
+ * there all along, sitting just under the timeout.
+ */
 async function agg5mCoverageForPoints(
   points: PointId[],
+  opts?: { samples?: boolean },
   exec?: ReadingsExec,
 ): Promise<Map<PointId, Agg5mCoverage | null>> {
   const out = new Map<PointId, Agg5mCoverage | null>(
@@ -654,12 +670,16 @@ async function agg5mCoverageForPoints(
   const pointByRid = new Map<number, PointId>(
     [...ridByPoint].map(([p, r]) => [r, p]),
   );
+  const wantSamples = opts?.samples === true;
   const rows = await db
     .select({
       pointRid: pointReadingsAgg5m.pointRid,
       first: sql<Date | null>`min(${pointReadingsAgg5m.intervalEnd})`,
       last: sql<Date | null>`max(${pointReadingsAgg5m.intervalEnd})`,
-      samples: sql<number>`count(*)::int`,
+      // Only when asked. `null` is not "zero rows" — it is "nobody paid for the count".
+      samples: wantSamples
+        ? sql<number | null>`count(*)::int`
+        : sql<number | null>`null::int`,
     })
     .from(pointReadingsAgg5m)
     .where(inArray(pointReadingsAgg5m.pointRid, rids))
@@ -670,7 +690,7 @@ async function agg5mCoverageForPoints(
     out.set(point, {
       firstMs: new Date(row.first as string | number | Date).getTime(),
       lastMs: new Date(row.last as string | number | Date).getTime(),
-      samples: Number(row.samples),
+      samples: row.samples == null ? null : Number(row.samples),
     });
   }
   return out;

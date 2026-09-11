@@ -71,7 +71,14 @@ export function getSupportedIntervals(
 
   if (metricType === MetricType.ENERGY) {
     // Energy delta available in both 5m and 1d
-    return aggregationField === AggregationField.DELTA ? ["5m", "1d"] : [];
+    if (aggregationField === AggregationField.DELTA) return ["5m", "1d"];
+    // 🛑 `last` on an energy point is the METER READING — the raw counter, for a `transform: 'd'`
+    // point. It is stored (agg_5m.last / agg_1d.last) and there is no other way to read it, which
+    // matters when a repair has to chain new counter values onto the ones either side of a gap.
+    // It is marked ON DEMAND in `getAllSeriesForDevice`, so it never shows up unasked: for almost
+    // every question `.delta` is the answer, and a lifetime counter on a chart is a straight line.
+    if (aggregationField === AggregationField.LAST) return ["5m", "1d"];
+    return [];
   } else if (metricType === MetricType.SOC) {
     // SOC: last in both, avg/min/max only in 1d
     if (aggregationField === AggregationField.LAST) {
