@@ -9,7 +9,7 @@ Commands below are given for both deploy targets. On the **Fly hub** they run th
 
 ## Is it alive?
 
-Three signals, in increasing order of trustworthiness:
+Four signals, in increasing order of trustworthiness:
 
 1. **The inspector** — `https://usher.liveone.energy` (Cloudflare Access SSO) on the Fly hub, or
    `http://<pi>:3000` if you exposed it locally. Shows each source's last tick, its live snapshot,
@@ -17,6 +17,15 @@ Three signals, in increasing order of trustworthiness:
 2. **Point readings still arriving** in LiveOne for the relevant devices.
 3. **A growing blackbox journal.** This is the real liveness signal, because it records what was
    _collected_ — it stays true even when the receiver is down.
+4. **The per-site heartbeat** (BetterStack). The only signal that does not depend on anything in
+   this system being healthy enough to report — it fires whether gusher is down, the hub is wedged,
+   the hub is dead, or Fly is down. **Silence is the alarm**, so you never have to remember to check
+   it. Configured per site by `heartbeatUrlEnv` in `usher.yaml`; unset = no heartbeat, silently.
+
+   🛑 It pings only when a tick **delivered real device readings**. Deliberately not "the push
+   succeeded": on a read error with a supervisor attached the hub still delivers the synthetic
+   control-plane points and reports success, so a generator that had stopped answering entirely
+   would otherwise keep the monitor green.
 
 ```bash
 # Fly
@@ -30,6 +39,33 @@ systemctl status usher
 journalctl -u usher -f
 wc -l /var/lib/usher/blackbox/$(date -u +%F).jsonl
 ```
+
+### A collector that stopped
+
+The hub now defends itself on three fronts, so a dead collector should self-correct:
+
+- **A wedged run loop** — the watchdog notices a site that has not _started_ a tick for
+  `max(4 x cadence, 5 min)` and calls `process.exit(1)`. Fly restarts the machine. This is
+  deliberate: the wedge lives in socket/library state below our abstractions, and a fresh process is
+  the only guaranteed clean slate. A commanded generator run survives it — `stopAt` is persisted
+  before the start write and re-armed on resume.
+- **A crashing run loop** — restarted in-process with backoff (`loop crashed: … — restarting in Nms`).
+- **A stranded spool** — drained by a 60 s timer independent of the poll loops, so a backlog can no
+  longer be held hostage by the loop that collected it.
+
+Note the restart is hub-wide: exiting for one site restarts the other too (~20–30 s, covered by the
+spool).
+
+**The warning sign to look for** is repeated tick failures that _recover_. Grep for:
+
+```bash
+fly logs -a liveone-flyhub | grep "consecutive failed ticks"
+```
+
+A source that logs this and then goes quiet again has not healed — it has had a near miss. On
+2026-09-11 the Daylesford collector had two such episodes (4 hung reads, then 6) in the three hours
+before it wedged for good, and nothing was watching for them. The watchdog cannot catch these by
+design, because the loop recovers each time.
 
 ## Store triage
 

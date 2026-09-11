@@ -39,6 +39,12 @@ const DeepseaSourceSchema = z.object({
   type: z.literal("deepsea"),
   siteId: z.string(),
   apiKeyEnv: z.string(),
+  /**
+   * Optional: names the env var holding this site's dead-man's-switch ping URL (a BetterStack
+   * heartbeat). Indirection like `apiKeyEnv`/`passkeyEnv`, not a derived name — secrets and URLs
+   * stay out of the yaml. Unset = no heartbeat for this site, silently.
+   */
+  heartbeatUrlEnv: z.string().optional(),
   /** opt-in remote start/stop (see ControlConfigSchema); absent = read-only, fail-closed */
   control: ControlConfigSchema.optional(),
   host: z.string(),
@@ -78,6 +84,12 @@ const FroniusSourceSchema = z.object({
   type: z.literal("fronius"),
   siteId: z.string(),
   apiKeyEnv: z.string(),
+  /**
+   * Optional: names the env var holding this site's dead-man's-switch ping URL (a BetterStack
+   * heartbeat). Indirection like `apiKeyEnv`/`passkeyEnv`, not a derived name — secrets and URLs
+   * stay out of the yaml. Unset = no heartbeat for this site, silently.
+   */
+  heartbeatUrlEnv: z.string().optional(),
   /** internal inverter poll (s) — the Site self-polls this fast; default 2 */
   invPollSec: z.number().positive().default(2),
   /** push cadence (s) — the run-loop harvests the minutely report; default 60 */

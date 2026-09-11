@@ -25,6 +25,15 @@ export interface SourceTickState {
   /** most recent error message (sticky until the next error) + when it happened */
   lastError?: string;
   lastErrorAt?: string;
+  /**
+   * Ticks that have failed back-to-back, reset by the first success.
+   *
+   * The leading indicator the 2026-09-11 postmortem asked for. That collector did not fail from a
+   * standing start: it had two self-recovering episodes (4 hung reads, then 6) in the three hours
+   * before it wedged for good. A stall watchdog cannot see those — the loop recovered both times —
+   * but this counter can, and a device that keeps timing out is a device about to die.
+   */
+  consecutiveErrors: number;
 }
 
 interface UsherRegistry {

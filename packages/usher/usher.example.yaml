@@ -41,6 +41,10 @@ sources:
   - type: deepsea
     siteId: sheephouse
     apiKeyEnv: MUSHER_API_KEY # reuse the hub's existing system-14 gusher key (no rotation at cutover)
+    # Dead-man's-switch: pinged only when a tick DELIVERS REAL READINGS, so a device that has
+    # stopped answering goes quiet even while control-plane pushes keep succeeding. Names the env
+    # var / Fly secret holding the ping URL; unset = no heartbeat for this site, silently.
+    heartbeatUrlEnv: SHEEPHOUSE_HEARTBEAT_URL
     host: 10.0.1.244
     port: 502
     # Remote start/stop (POST /api/usher/control/sheephouse/run). OPT-IN and fail-closed: omit this
@@ -66,6 +70,7 @@ sources:
   - type: fronius
     siteId: kinkora
     apiKeyEnv: KINKORA_API_KEY
+    heartbeatUrlEnv: KINKORA_HEARTBEAT_URL
     invPollSec: 2
     pushSec: 60
     inverters:

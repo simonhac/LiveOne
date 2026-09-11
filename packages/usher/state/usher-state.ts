@@ -21,6 +21,8 @@ export function recordTick(_entry: ScheduledEntry, r: TickResult): void {
     pushOk: r.pushOk,
     lastError: r.error ?? prev?.lastError,
     lastErrorAt: r.error ? r.at : prev?.lastErrorAt,
+    // A tick with no error clears the run, whatever else it reported.
+    consecutiveErrors: r.error ? (prev?.consecutiveErrors ?? 0) + 1 : 0,
   });
 }
 
