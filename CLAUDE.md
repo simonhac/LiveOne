@@ -39,6 +39,11 @@ PLANETSCALE_PROD_BRANCH_ID=<prod branch id>                    # arms the DB-env
 # PLANETSCALE_POOL_MAX=10                                      # optional pool size
 CRONS_ENABLED=true                                            # scheduled crons run ONLY when "true" (every env, incl. prod); dev/preview leave unset = off. Admin/x-claude/?force=true bypass.
 
+# External monitoring (BetterStack). Both fail silent when unset — dev/preview must never ping
+# production's monitors, so leave them unset outside prod.
+COLLECTOR_HEARTBEAT_URL=<BetterStack heartbeat ping URL>      # pinged by /api/cron/minutely ONLY on a scheduled run that polled >=1 device successfully. Silence = the poll loop is dead OR nothing is landing (a dead PG stops the pings) — the one collector signal independent of PG, the alert webhook and Vercel cron.
+HEALTH_CHECK_KEY=<shared secret>                              # required in the X-Health-Key header by /api/health/devices (503 + list when any device is stale). Gated because this repo is PUBLIC and site names are infra detail. Unset = fail closed (404).
+
 # Vercel KV (for latest point values cache)
 KV_REST_API_URL=<your-kv-url>
 KV_REST_API_TOKEN=<your-kv-token>

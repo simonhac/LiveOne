@@ -13,6 +13,7 @@ const publicRoutes = [
   "/sign-up(.*)",
   "/.well-known(.*)", // Tesla partner public key (.pem) — Tesla fetches it unauthenticated
   "/api/health", // Health check endpoint for monitoring
+  "/api/health/devices", // per-device poll health for an external monitor — gated by X-Health-Key, not Clerk
   "/api/cron(.*)", // Cron endpoints have their own authentication via CRON_SECRET
   "/api/push(.*)", // Push endpoints authenticate via API key in request body
   "/api/gush(.*)", // gusher generic push receiver — authenticates via API key in request body

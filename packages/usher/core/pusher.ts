@@ -3,8 +3,16 @@
  *
  * POSTs self-describing readings to `/api/gush` with auth (siteId + apiKey) and retry/backoff on
  * transient failures. Abstracted so an alternative sink (e.g. MqttSink) can drop in later without
- * touching the sources. A successful store also updates the device's operational state on the server
- * (`device_state`), so LiveOne's existing freshness alerting doubles as the heartbeat.
+ * touching the sources.
+ *
+ * 🛑 A successful store DOES update the device's operational state on the server (`device_state`,
+ * written by /api/gush) — but do not read that as "the server will notice if we stop". It won't:
+ * `/api/cron/monitor-observations` skips push vendors outright (`if (adapter.dataSource === "push")
+ * continue;`), because a pusher has no schedule the server can hold it to. This comment used to
+ * claim that freshness alerting "doubles as the heartbeat" for us. It never did, and on 2026-09-11
+ * that gap was 4 h 49 m of silence.
+ *
+ * The hub's liveness signal is its own, and it is external: see core/heartbeat.ts.
  */
 
 import type { GushRequestBody, PushReading } from "@liveone/protocol";
