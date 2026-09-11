@@ -186,10 +186,11 @@ terminal additionally requires `--yes`.
 `npm run liveone -- <domain> <command>` (`scripts/ops/liveone.ts`) is the operator CLI: domains
 `auth` (sign the CLI in as you), `dashboard` (edit `dashboards.doc`), `derivation` (run detectors
 and the HWS model: list, create, set, enable/disable, delete, recompute, intervals — addressed by
-`dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), and the read-only
-`device` / `area` / `user` (list, show, latest values, history; `area flows` downloads the
-rolled-up Sankey matrix for a period). Run `-- <domain> --help` for verbs; the generated
-reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
+`dx_`/name/role, never by an area; `create` names the DEVICE the detector is about), `sync` (re-fetch
+a window from a device's vendor), and `device` / `area` / `user` (list, show, latest values, history;
+`area flows` downloads the rolled-up Sankey matrix for a period — all read-only except
+`device recompute`). Run `-- <domain> --help` for verbs; the generated reference is
+`docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
 
 - **First run:** `npm run liveone -- auth login` — a browser hand-off mints a `lo_cli_` token,
   stored per-origin in `~/.config/liveone/cli-auth.json` (0600). Prod, preview and localhost logins
@@ -217,6 +218,18 @@ reference is `docs/cli-reference.md`, the architecture doc is `docs/cli.md`.
   CASCADEs). It refuses until the derivation is **disabled** — `--force` does not waive that — and
   then names what still relies on it; `--force` is the answer to that list, not a shortcut past it.
   To stop a detector whose history you want, `disable` is the whole operation.
+- **Repairing a gap is three verbs, in order.** `liveone sync <device> --start --end` re-fetches from
+  the vendor (amber, sigenergy, openelectricity — the per-vendor legs are `lib/vendors/sync-legs.ts`;
+  a live-poll vendor has no history endpoint and is refused, not no-op'd) and reports `published` and
+  `landed` as separate numbers. It does **not** rebuild derived rows — nothing does, for a past day —
+  so `liveone device recompute <device> --start --end` rebuilds `agg_1d` + the per-Area flow matrix,
+  and `liveone derivation recompute <dx_> --date` rebuilds the run detectors. Each names its window;
+  none has an unscoped form. The runbook is `docs/outage-catchup.md`.
+- 🛑 `device recompute` is scoped on purpose. Its fleet-wide twin, `POST /api/cron/daily`
+  `{"action":"regenerate"}`, reads a **missing date as all available history** (`parseDateParams`),
+  and also re-runs HWS, battery learning, run periods and two reheal passes out to *now* — measured
+  on prod, a one-day backfill spent an entire 300 s budget in it. Reach for the cron only when you
+  mean the whole fleet, and always with a `date=`.
 
 #### Development API Authentication
 

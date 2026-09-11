@@ -63,6 +63,7 @@ Data goes to stdout; all diagnostics go to stderr. Mutating commands are **dry b
     - [liveone device points](#liveone-device-points)
     - [liveone device latest](#liveone-device-latest)
     - [liveone device history](#liveone-device-history)
+    - [liveone device recompute](#liveone-device-recompute)  _(writes)_
   - [liveone area](#liveone-area)
     - [liveone area list](#liveone-area-list)
     - [liveone area show](#liveone-area-show)
@@ -2003,9 +2004,11 @@ When to use:
   semantic grouping (areas, bindings, flows) use `area`; for what a dashboard shows use
   `dashboard`.
 
-Read-only, and http-only: every verb calls the deployed API as you (`liveone auth login`),
-and prints `target: <origin> as <you>` on stderr first — read it to know which environment
-answered. Ids are per-environment.
+Http-only: every verb calls the deployed API as you (`liveone auth login`), and prints
+`target: <origin> as <you>` on stderr first — read it to know which environment answered.
+Ids are per-environment.
+
+Every verb here READS except `recompute`, which writes and is dry-run by default.
 
 Usage:
   liveone device <subcommand> [options]
@@ -2018,6 +2021,7 @@ Subcommands:
   points                 A device's point inventory: pt_… id, path, metric, unit.
   latest                 The device's current values, from the serving cache.
   history                Time series for a device, in the OpenNEM shape /api/history serves.
+  recompute              Rebuild the rows derived FROM a device's readings, over a window of local days.  (writes)
 
 Run `liveone device <subcommand> --help` for a subcommand's own options.
 
@@ -2309,6 +2313,78 @@ Examples:
 Exit codes:
   0    success
   1    no series matched (the window, or the --list-series subject)
+  2    usage error
+  3    authentication failure
+  5    upstream failure
+  130  interrupted
+```
+
+#### liveone device recompute
+
+Rebuild the rows derived FROM a device's readings, over a window of local days.
+
+```
+Rebuild the rows derived FROM a device's readings, over a window of local days.
+
+When to use:
+  Run this AFTER a `liveone sync` (or any other repair) has landed, for the same window.
+  Derived rows are pure functions of their sources and nothing rebuilds a past day on its
+  own, so a backfill without this leaves the dashboards showing the hole it just filled.
+  For RUN DETECTORS — generator runs, EV charge sessions — use `derivation recompute`
+  instead; they are derivations and are rebuilt by their own scoped verb.
+
+Rebuilds `agg_1d` for each day, then the attributed flow matrix of every Area the
+device's points bind into, re-folding the battery blend first where the Area has one.
+
+SCOPED, deliberately: it does not run the fleet-wide HWS, battery-learning and backlog
+reheal passes that `/api/cron/daily` does. Those exist to find days that went stale for
+reasons unconnected to this repair, and sweeping the fleet's backlog is the nightly
+sweep's job — measured on prod, a one-day backfill spent an entire 300s budget in it.
+
+🛑 The window is REQUIRED and capped at 31 days. There is no unscoped form and no
+'absent means everything': the fleet-wide twin reads a missing date as ALL HISTORY, and a
+verb whose dangerous case is the one you get by typing less will eventually be typed
+less. Days are the DEVICE's local days — the boundaries its daily aggregates roll up on.
+
+Usage:
+  liveone device recompute <device> [options]
+
+  This command WRITES. It is dry by default: nothing changes without --apply.
+
+Arguments:
+  <device>               A device: its dv_… id, integer handle, slug, or name
+
+Options:
+  --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
+  --date <YYYY-MM-DD>        A single local day
+  --start <YYYY-MM-DD>       Window start (local days)
+  --end <YYYY-MM-DD>         Window end, inclusive (local days)
+
+Common options:
+  --format <string>          Output format (default: human on a terminal, json otherwise)  (one of: human, json)
+  --quiet                    Suppress non-essential output on stderr
+  --color                    Colourise human output (default: on a terminal)
+  --help                     Show this help and exit
+  --apply                    Actually write. Without it nothing is changed.
+  --dry-run                  Report what would change and write nothing (the default)
+  --yes                      Skip the confirmation prompt. Required with --apply off a terminal.
+
+Output:
+  --format human   aligned text — the default at a terminal
+  --format json    JSON on stdout — the default when stdout is not a terminal
+  Data goes to stdout; all diagnostics go to stderr.
+
+External access:
+  API       Calls the deployed LiveOne API as the signed-in user, with a stored CLI token.
+            A missing, expired or revoked token is exit 3; an API failure is exit 5.
+
+Examples:
+  liveone device recompute kutis --date=2026-09-10
+  liveone device recompute 13 --start=2026-09-10 --end=2026-09-11 --apply
+
+Exit codes:
+  0    success
+  1    completed, with findings or no results
   2    usage error
   3    authentication failure
   5    upstream failure
@@ -4903,6 +4979,11 @@ through the same path a dashboard would use.
 Chunked to the VENDOR's own window (Amber answers at most 7 days), so the caller passes the
 range it wants and never a number the vendor imposed. Every message rides the `backfill` lane.
 
+Covers every vendor with a history API: amber, sigenergy, openelectricity. A live-poll vendor
+(selectronic, mondo, tesla) has no history endpoint at all, and is refused rather than
+no-op'd. A sync PUBLISHES; it does not rebuild derived tables — run `liveone device recompute`
+for the same window afterwards, which a run that published anything reminds you to do.
+
 Usage:
   liveone sync <device> [options]
 
@@ -4915,7 +4996,7 @@ Options:
   --base-url <origin>        Target origin (default: your stored default, else https://www.liveone.energy)
   --start <YYYY-MM-DD>       First local day to re-fetch (inclusive)
   --end <YYYY-MM-DD>         Last local day to re-fetch (inclusive)
-  --action <action>          Which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap.  (one of: usage, pricing, both)
+  --action <action>          AMBER ONLY — which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap. Refused for a vendor with one historical surface.  (one of: usage, pricing, both)
   --verify                   After publishing, wait for the lane to drain and read the serving store back. --no-verify skips it, and the report then says the landing was NOT checked.  (default: true)
 
 Common options:

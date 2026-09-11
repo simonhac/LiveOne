@@ -61,6 +61,15 @@ describe("flags", () => {
   it("rejects an action the vendor has no notion of", () => {
     expect(failure([...WINDOW, "--action=everything"])).toMatch(/action/);
   });
+
+  it("does not invent an action when none was asked for", () => {
+    // 🛑 The handler must send NO action when the flag is absent, so the server can apply the
+    // vendor's own default — or, for a vendor with a single historical surface, have no action at
+    // all. A local `?? "both"` would send Amber's vocabulary to Sigenergy and turn "you did not ask
+    // for this" into a 422 the caller never caused.
+    expect(success(WINDOW).flags.action).toBeUndefined();
+    expect(success([...WINDOW, "--action=usage"]).flags.action).toBe("usage");
+  });
 });
 
 describe("the plan (dry run)", () => {
@@ -136,6 +145,28 @@ describe("the run", () => {
   it("never uses the word that was the lie", () => {
     // "Rows inserted: 1008 / Success: YES", for a backfill that inserted nothing.
     expect(renderRun(base)).not.toMatch(/inserted/i);
+  });
+
+  it("names the rebuild a sync deliberately did not do", () => {
+    // 🛑 A sync publishes readings; `agg_1d` and the area flow matrix are pure functions of them and
+    // do NOT rebuild themselves for a past window. Reporting a successful sync without saying so
+    // leaves the dashboards showing the hole that was just filled — the same class of half-truth as
+    // "published" standing in for "landed".
+    const out = renderRun(base);
+    expect(out).toMatch(/NOT rebuilt/);
+    expect(out).toMatch(
+      /liveone device recompute 10002 --start=2026-07-07 --end=2026-07-13/,
+    );
+  });
+
+  it("does not ask for a rebuild when nothing was published", () => {
+    expect(renderRun({ ...base, published: 0, chunks: [] })).not.toMatch(
+      /device recompute/,
+    );
+  });
+
+  it("says a vendor has no action axis rather than printing null", () => {
+    expect(renderRun({ ...base, action: null })).toMatch(/action {7}—/);
   });
 
   it("reports published and landed as SEPARATE numbers", () => {

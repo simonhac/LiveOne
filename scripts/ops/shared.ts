@@ -124,6 +124,41 @@ export interface DeviceRef {
   name: string;
 }
 
+/**
+ * A device, as `GET /api/v4/devices` lists it — every id the vendor levers need in one read.
+ *
+ * Lives here because five domains had copied it (`sync`, `device`, `derivation`, `owner`,
+ * `area wiring`), and a `vendor` field that four of them omitted is exactly the kind of divergence
+ * that makes a shared list mean five different things. `sync` and `device` read it from here;
+ * migrating the other three is a follow-up, not a prerequisite.
+ */
+export interface WireDevice {
+  id: string | null;
+  legacySystemId: number;
+  name: string;
+  slug: string | null;
+  vendor: string;
+  vendorSiteId: string | null;
+  status: string;
+  ownerUserId: string | null;
+}
+
+export async function listDevices(s: ApiSession): Promise<WireDevice[]> {
+  const { devices } = await s.get<{ devices: WireDevice[] }>("/api/v4/devices");
+  return devices;
+}
+
+/** List + resolve a device ref, the one way every domain should address a device. */
+export async function resolveDevice(
+  s: ApiSession,
+  ref: string,
+): Promise<WireDevice> {
+  return resolveRef(await listDevices(s), ref, {
+    noun: "device",
+    listCmd: "liveone device list",
+  });
+}
+
 /** An area, as `/api/v4/areas` lists it. */
 export interface WireArea {
   id: string | null;

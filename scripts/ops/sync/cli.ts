@@ -13,22 +13,22 @@
  *
  * Everything publishes on the **backfill** lane, so a multi-week replay cannot delay live minutely
  * ingest — the failure that started all of this.
+ *
+ * ONE verb for every vendor with a history API — Amber, Sigenergy and OpenElectricity. They are one
+ * concept (*one device, one window, re-fetch what the vendor still holds*), and the two that were not
+ * Amber used to be reachable only as `/api/cron/*-backfill` driven through the raw `liveone api`
+ * escape hatch — which gives up the published/landed reporting above, i.e. the entire reason this
+ * verb exists. The per-vendor part lives server-side in `lib/vendors/sync-legs.ts`.
+ *
+ * 🛑 **A sync does not rebuild derived tables** — not for any vendor. Publishing and rebuilding are
+ * separated because a rebuild has to wait for the lane to land first, and the route's budget cannot
+ * hold both. `liveone device recompute` is the second step, and a run that published anything says
+ * so rather than leaving the caller to remember.
  */
 import { defineCommand, EXIT, type Ctx } from "@/lib/cli/cli";
 import { withApiSession, type ApiSession } from "@/lib/cli-kit/api-session";
 import { apiFetch } from "@/lib/cli-kit/http";
-import { BASE_URL_FLAG, bool, resolveRef, str, usage } from "../shared";
-
-interface WireDevice {
-  id: string | null;
-  legacySystemId: number;
-  name: string;
-  slug: string | null;
-  vendor: string;
-  vendorSiteId: string | null;
-  status: string;
-  ownerUserId: string | null;
-}
+import { BASE_URL_FLAG, bool, resolveDevice, str, usage } from "../shared";
 
 /**
  * Where a window stopped, as the route classifies it. 🛑 `published: 0` is THREE outcomes —
@@ -94,7 +94,8 @@ export function describeChunk(c: WireChunk): string {
 export interface WireSync {
   device: { id: string; systemId: number; name: string; vendor: string };
   window: { start: string; end: string; days: number };
-  action: string;
+  /** Null for a vendor with one historical surface — see the `--action` flag. */
+  action: string | null;
   dryRun: boolean;
   vendorMaxDays: number;
   lane: string;
@@ -116,6 +117,12 @@ interface WireSeries {
   samples?: number | null;
 }
 
+/**
+ * Amber's action axis, and only Amber's: it answers `/usage` and `/prices` separately, so a caller
+ * can fetch the half that is actually missing. Sigenergy and OpenElectricity have a single
+ * historical surface each, and the SERVER refuses an action for them rather than ignoring one — an
+ * ignored `--action` would look like it had narrowed something and silently fetch everything.
+ */
 const ACTIONS = ["usage", "pricing", "both"] as const;
 
 /** `YYYY-MM-DD`, and a real date. The server re-checks; this names the flag that is wrong. */
@@ -134,11 +141,6 @@ function requireDay(ctx: Ctx, flag: string): string {
       `pass --${flag}=YYYY-MM-DD`,
     );
   return raw;
-}
-
-async function listDevices(s: ApiSession): Promise<WireDevice[]> {
-  const { devices } = await s.get<{ devices: WireDevice[] }>("/api/v4/devices");
-  return devices;
 }
 
 /**
@@ -194,7 +196,11 @@ export const syncCommand = defineCommand({
     "while materialising zero rows. `landed` is a read of the serving store AFTER the lane drains,\n" +
     "through the same path a dashboard would use.\n\n" +
     "Chunked to the VENDOR's own window (Amber answers at most 7 days), so the caller passes the\n" +
-    "range it wants and never a number the vendor imposed. Every message rides the `backfill` lane.",
+    "range it wants and never a number the vendor imposed. Every message rides the `backfill` lane.\n\n" +
+    "Covers every vendor with a history API: amber, sigenergy, openelectricity. A live-poll vendor\n" +
+    "(selectronic, mondo, tesla) has no history endpoint at all, and is refused rather than\n" +
+    "no-op'd. A sync PUBLISHES; it does not rebuild derived tables — run `liveone device recompute`\n" +
+    "for the same window afterwards, which a run that published anything reminds you to do.",
   uses: ["api"],
   args: [
     {
@@ -219,7 +225,7 @@ export const syncCommand = defineCommand({
       type: "string",
       placeholder: "action",
       values: [...ACTIONS],
-      help: "Which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap.",
+      help: "AMBER ONLY — which half to fetch: usage (energy + cost), pricing (rates), or both (default: both). Prefer the narrowest that covers the gap. Refused for a vendor with one historical surface.",
     },
     verify: {
       type: "boolean",
@@ -250,21 +256,16 @@ export async function runSync(ctx: Ctx): Promise<number> {
       "the window is inclusive of both ends",
       "swap them",
     );
-  const action = str(ctx, "action") ?? "both";
-  if (!(ACTIONS as readonly string[]).includes(action))
-    throw usage(
-      `invalid --action "${action}"`,
-      "a sync fetches usage, pricing, or both",
-      `pass one of ${ACTIONS.join(", ")}`,
-    );
+  // 🛑 No local default. The vendor's action axis — whether it has one at all, and what it defaults
+  // to — is the SERVER's to know, and inventing `both` here would send an action to a vendor that
+  // has none, turning "you did not ask for this" into a 422 the caller did not cause. The parser has
+  // already checked the value against ACTIONS.
+  const action = str(ctx, "action");
 
   return withApiSession(
     ctx,
     async (s) => {
-      const device = await resolveRef(await listDevices(s), ref, {
-        noun: "device",
-        listCmd: "liveone device list",
-      });
+      const device = await resolveDevice(s, ref);
       if (!device.id)
         throw usage(
           `device ${ref} has no dv_ id on this origin`,
@@ -279,7 +280,7 @@ export async function runSync(ctx: Ctx): Promise<number> {
       const first = await post(s, path, {
         start,
         end,
-        action,
+        ...(action === undefined ? {} : { action }),
         dryRun: ctx.dryRun,
       });
 
@@ -296,7 +297,7 @@ export async function runSync(ctx: Ctx): Promise<number> {
         const next = await post(s, path, {
           start: cursor,
           end,
-          action,
+          ...(action === undefined ? {} : { action }),
           dryRun: false,
         });
         runs.push(next);
@@ -320,7 +321,9 @@ export async function runSync(ctx: Ctx): Promise<number> {
           name: device.name,
         },
         window: { start, end },
-        action,
+        // The SERVER's resolved action, not the flag: it applied the vendor's default, and for a
+        // vendor with no action axis the honest answer is null rather than an invented "both".
+        action: first.action,
         lane: "backfill",
         chunks,
         published,
@@ -446,7 +449,7 @@ export function renderPlan(w: WireSync): string {
   const out = [
     `device       ${w.device.systemId}  ${w.device.name}  (${w.device.vendor})`,
     `window       ${w.window.start} → ${w.window.end}   (${w.window.days} days)`,
-    `action       ${w.action}`,
+    `action       ${w.action ?? "—  (this vendor has one historical surface)"}`,
     `chunks       ${n} × ≤${w.vendorMaxDays} days  — the vendor's own limit`,
     `lane         ${w.lane}  — cannot delay live ingest`,
     "",
@@ -466,7 +469,7 @@ export function renderPlan(w: WireSync): string {
 interface RunResult {
   device: { id: string; systemId: number; name: string };
   window: { start: string; end: string };
-  action: string;
+  action: string | null;
   lane: string;
   chunks: WireChunk[];
   published: number;
@@ -480,7 +483,7 @@ export function renderRun(r: RunResult): string {
   const out = [
     `device       ${r.device.systemId}  ${r.device.name}`,
     `window       ${r.window.start} → ${r.window.end}`,
-    `action       ${r.action}   lane ${r.lane}`,
+    `action       ${r.action ?? "—"}   lane ${r.lane}`,
     "",
     "window                      days   published  merged  duration  outcome",
   ];
@@ -544,6 +547,18 @@ export function renderRun(r: RunResult): string {
     out.push(
       `landed       ${r.landed.seriesCovering} of ${r.landed.seriesTotal} series now cover the window` +
         (r.landed.waitedMs ? `  (after ${ms(r.landed.waitedMs)})` : ""),
+    );
+
+  // 🛑 Publishing is two thirds of a repair. The daily aggregates and the area flow matrix are pure
+  // functions of these readings and do NOT rebuild themselves for a past window, so a sync that
+  // stopped here leaves the dashboards still showing the hole it just filled. Printed rather than
+  // done, because a rebuild has to wait for the lane to land and this verb has already reported
+  // whether it did.
+  if (r.published > 0)
+    out.push(
+      "",
+      "Derived rows are NOT rebuilt by a sync. Next:",
+      `  liveone device recompute ${r.device.systemId} --start=${r.window.start} --end=${r.window.end} --apply`,
     );
 
   if (r.failed)
