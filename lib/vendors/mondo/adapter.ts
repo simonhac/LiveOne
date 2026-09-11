@@ -4,10 +4,12 @@ import type {
   CredentialField,
   FetchContext,
   FetchResult,
+  PointReadingInput,
 } from "../types";
 import type { DeviceConfigView } from "@/lib/registry/device-config";
 import type { CommonPollingData } from "@/lib/types/common";
 import type { LatestReadingData } from "@/lib/types/readings";
+import { batterySocReading, type MondoLiveUsage } from "./live-usage";
 
 interface MondoCredentials {
   email: string;
@@ -302,13 +304,26 @@ export class MondoAdapter extends BaseVendorAdapter {
         });
       }
 
-      console.log(`[Mondo] Fetch complete: ${readings.length} readings`);
+      // Battery state of charge, which `/subcircuit` does not carry at all. Best-effort and
+      // deliberately AFTER the readings above: SoC is a nice-to-have, and a poll that returned
+      // eight circuits of power and energy must not be failed by one extra request.
+      const soc = await this.fetchBatterySoc(device, accessToken);
+      if (soc) readings.push(soc.reading);
+
+      console.log(
+        `[Mondo] Fetch complete: ${readings.length} readings` +
+          (soc
+            ? ` (battery SoC ${soc.reading.rawValue}%)`
+            : " (no battery SoC)"),
+      );
 
       return {
         success: true,
         readings,
         recordsProcessed: readings.length,
-        rawResponse: subcircuitData,
+        rawResponse: soc
+          ? { ...subcircuitData, liveUsage: soc.rawResponse }
+          : subcircuitData,
       };
     } catch (error) {
       console.error(`[Mondo] Fetch error:`, error);
@@ -316,6 +331,52 @@ export class MondoAdapter extends BaseVendorAdapter {
         success: false,
         error: error instanceof Error ? error.message : String(error),
       };
+    }
+  }
+
+  /**
+   * Battery state of charge, from the endpoint the vendor's own "Live usage" card reads.
+   *
+   * 🛑 `/subcircuit/{id}` — the endpoint the rest of this poll uses — has no SoC field, and for a
+   * long time the adapter recorded that as `batterySOC: null` with the comment "Not available from
+   * the subcircuit endpoint". True of the endpoint, and false of the vendor: the platform shows a
+   * battery percentage on every page load, and it comes from here.
+   *
+   * 🛑 The path takes the monitoring point GROUP id, not a monitoring point id — a point id is a
+   * 403, not a 404, so getting it wrong looks like a permissions problem. `vendorSiteId` IS the
+   * group id (it is what `/subcircuit/` is keyed by too), so there is nothing extra to configure.
+   *
+   * Best-effort by design: returns null on any failure rather than throwing, so a vendor hiccup
+   * here cannot cost us the circuit readings the caller already has in hand.
+   */
+  private async fetchBatterySoc(
+    device: DeviceConfigView,
+    accessToken: string,
+  ): Promise<{ reading: PointReadingInput; rawResponse: unknown } | null> {
+    const url = `${this.baseUrl}/liveusage/widget/${device.vendorSiteId}`;
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        console.warn(
+          `[Mondo] Live usage fetch failed (${response.status}); no battery SoC this poll`,
+        );
+        return null;
+      }
+
+      const body = (await response.json()) as MondoLiveUsage;
+      const reading = batterySocReading(body, Date.now());
+      return reading ? { reading, rawResponse: body } : null;
+    } catch (error) {
+      console.warn(
+        `[Mondo] Live usage fetch threw; no battery SoC this poll:`,
+        error,
+      );
+      return null;
     }
   }
 
@@ -517,7 +578,10 @@ export class MondoAdapter extends BaseVendorAdapter {
         loadW,
         batteryW,
         gridW,
-        batterySOC: null, // Not available from subcircuit endpoint
+        // `/subcircuit/` genuinely has none. The POLL gets SoC from `/liveusage/widget/` instead
+        // (see `fetchBatterySoc`); this is the connection-test path, where it is not worth a
+        // second request.
+        batterySOC: null,
         solarKwhTotal,
         loadKwhTotal,
         batteryInKwhTotal,
